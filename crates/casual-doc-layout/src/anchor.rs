@@ -34,6 +34,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::DashStyle;
 
 use crate::block::BlockFragment;
+// Separate `use` line to minimize import-block merge conflicts.
+use crate::display::ShapeTransform;
 use crate::flow::flow_anchored_text_box;
 use crate::page::{
     AnchorContent, AnchorStroke, AnchorZ, PaginatedLayout, PlacedAnchor, PlacedFragment,
@@ -589,6 +591,12 @@ fn collect_inlines(
                         behind_doc: drawing.anchor.behind_doc,
                         z,
                         descr: drawing.descr.clone(),
+                        transform: shape_transform(
+                            rect,
+                            drawing.flip_h,
+                            drawing.flip_v,
+                            drawing.rotation,
+                        ),
                     },
                 );
             }
@@ -628,6 +636,9 @@ fn collect_inlines(
                         behind_doc: anchor.behind_doc,
                         z,
                         descr: None,
+                        // Rotated text-box CONTENT is a follow-up; the box paints
+                        // axis-aligned for now.
+                        transform: None,
                     },
                 );
             }
@@ -745,6 +756,12 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: picture.descr.clone(),
+                        transform: shape_transform(
+                            rect,
+                            picture.flip_h,
+                            picture.flip_v,
+                            picture.rotation,
+                        ),
                     },
                 );
             }
@@ -777,6 +794,9 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: None,
+                        // Rotated text-box CONTENT is a follow-up; the box paints
+                        // axis-aligned for now.
+                        transform: None,
                     },
                 );
             }
@@ -870,6 +890,12 @@ fn place_group_children(
                         behind_doc,
                         z,
                         descr: None,
+                        transform: shape_transform(
+                            rect,
+                            shape.flip_h,
+                            shape.flip_v,
+                            shape.rotation,
+                        ),
                     },
                 );
             }
@@ -1077,6 +1103,31 @@ fn ratio(numerator: i64, denominator: i64) -> f64 {
 
 fn rgba(c: Rgba) -> [u8; 4] {
     [c.r, c.g, c.b, c.a]
+}
+
+/// Builds the paint transform for a float from its model `a:xfrm` fields,
+/// rotating/flipping about the (already-resolved) `rect`'s center. Returns `None`
+/// when the object is unrotated and unflipped (the common case) so it paints
+/// through the identity path.
+fn shape_transform(
+    rect: Rect,
+    flip_h: bool,
+    flip_v: bool,
+    rotation: Option<i32>,
+) -> Option<ShapeTransform> {
+    let rotation = rotation.unwrap_or(0);
+    if rotation == 0 && !flip_h && !flip_v {
+        return None;
+    }
+    Some(ShapeTransform {
+        rotation,
+        flip_h,
+        flip_v,
+        center: Point::new(
+            Twip(rect.origin.x.raw() + rect.size.width.raw() / 2),
+            Twip(rect.origin.y.raw() + rect.size.height.raw() / 2),
+        ),
+    })
 }
 
 fn shape_stroke(stroke: Option<ShapeStroke>) -> Option<AnchorStroke> {

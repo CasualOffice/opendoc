@@ -11067,9 +11067,9 @@ mod tests {
             list.items
                 .iter()
                 .find_map(|item| match item {
-                    PaintItem::Image { media, rect, crop } if media == "word/media/image1.png" => {
-                        Some((*rect, *crop))
-                    }
+                    PaintItem::Image {
+                        media, rect, crop, ..
+                    } if media == "word/media/image1.png" => Some((*rect, *crop)),
                     _ => None,
                 })
                 .expect("an image paint item")

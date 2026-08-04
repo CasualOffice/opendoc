@@ -14,6 +14,8 @@ use casual_doc_model::v1::{DashStyle, Fill, LineEnd};
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockFragment, ResolvedEdge};
+// Separate `use` line to minimize import-block merge conflicts.
+use crate::display::ShapeTransform;
 use crate::model::ModelPos;
 use crate::text::TextBoxStroke;
 use crate::units::{Point, Rect, Size, Twip};
@@ -218,6 +220,11 @@ pub struct PlacedAnchor {
     /// The float's alt text (`wp:docPr@descr`), preserved for accessibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descr: Option<String>,
+    /// The rotation/flip (`a:xfrm@rot`/`@flipH`/`@flipV`) painted about the
+    /// float's center, if any. Applied to the emitted shape/image; rotated
+    /// text-box content is a follow-up (content stays axis-aligned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<ShapeTransform>,
 }
 
 /// A column separator rule (`w:cols/@w:sep`) to paint on a page: a thin vertical

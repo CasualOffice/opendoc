@@ -24,6 +24,8 @@ use casual_doc_layout::display::{DisplayList, PaintItem};
 use casual_doc_layout::display::{
     Color as DisplayColor, Fill, Gradient, GradientKind, ShapeGeometry, ShapeOutline,
 };
+// Separate `use` line to minimize import-block merge conflicts.
+use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
@@ -197,6 +199,7 @@ pub fn render(
                 stroke,
                 head_end,
                 tail_end,
+                transform,
             } => {
                 render_shape(
                     surface,
@@ -207,6 +210,7 @@ pub fn render(
                     tail_end.as_ref(),
                     dpi,
                     clip_stack.last(),
+                    object_transform(transform.as_ref(), dpi),
                 );
             }
             PaintItem::Glyphs { run } => {
@@ -232,6 +236,7 @@ pub fn render(
                 media: id,
                 rect,
                 crop,
+                transform,
             } => {
                 render_image(
                     id,
@@ -241,6 +246,7 @@ pub fn render(
                     dpi,
                     media,
                     clip_stack.last(),
+                    object_transform(transform.as_ref(), dpi),
                 );
             }
             PaintItem::Line { from, to, stroke } => {
@@ -289,6 +295,7 @@ pub fn render(
 ///
 /// A degenerate box (zero/negative device size) renders nothing in either
 /// case; there is no area to paint into.
+#[allow(clippy::too_many_arguments)]
 fn render_image(
     media_id: &str,
     rect: Rect,
@@ -297,12 +304,13 @@ fn render_image(
     dpi: f32,
     media: &dyn MediaSource,
     clip: Option<&Mask>,
+    transform: Transform,
 ) {
     let Some(bytes) = media.media_bytes(media_id) else {
         return;
     };
     let Some(source) = decode_to_pixmap(bytes) else {
-        render_undecodable_placeholder(rect, surface, dpi, clip);
+        render_undecodable_placeholder(rect, surface, dpi, clip, transform);
         return;
     };
     // A crop (`a:srcRect`) selects a sub-rectangle of the SOURCE pixels; that
@@ -328,15 +336,22 @@ fn render_image(
         return;
     }
     // Scale the source pixmap to the destination box, then translate to its
-    // top-left; `draw_pixmap` maps pixmap space through this transform.
-    let transform = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
+    // top-left; `draw_pixmap` maps pixmap space through this transform. The
+    // object transform (rotation/flip about the box center) is applied AFTER the
+    // placement, so the picture rotates in page space.
+    let placement = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
         ..PixmapPaint::default()
     };
-    surface
-        .pixmap
-        .draw_pixmap(0, 0, source.as_ref(), &paint, transform, clip);
+    surface.pixmap.draw_pixmap(
+        0,
+        0,
+        source.as_ref(),
+        &paint,
+        transform.pre_concat(placement),
+        clip,
+    );
 }
 
 /// Extracts the visible source sub-rectangle described by an `a:srcRect` crop
@@ -380,6 +395,7 @@ fn render_undecodable_placeholder(
     surface: &mut Surface,
     dpi: f32,
     clip: Option<&Mask>,
+    transform: Transform,
 ) {
     let dx = rect.origin.x.to_device_px(dpi);
     let dy = rect.origin.y.to_device_px(dpi);
@@ -404,7 +420,7 @@ fn render_undecodable_placeholder(
         if let Some(path) = builder.finish() {
             surface
                 .pixmap
-                .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+                .stroke_path(&path, &paint, &stroke, transform, clip);
         }
     }
 
@@ -417,7 +433,7 @@ fn render_undecodable_placeholder(
     if let Some(path) = cross.finish() {
         surface
             .pixmap
-            .stroke_path(&path, &paint, &stroke, Transform::identity(), clip);
+            .stroke_path(&path, &paint, &stroke, transform, clip);
     }
 }
 
@@ -846,6 +862,31 @@ fn paint_path(
 /// Paints a floating DrawingML shape: its geometry filled (solid or gradient) and
 /// stroked (with a preset dash pattern), plus start/end arrowheads for a line.
 #[allow(clippy::too_many_arguments)]
+/// Builds the device-space affine transform for an object transform: a rotation
+/// and/or flips about the object's center (`a:xfrm`). Identity when the
+/// descriptor is absent or a no-op, so the common unrotated path is unchanged.
+///
+/// DrawingML applies `flipH`/`flipV` before `rot`, both about the center, so the
+/// matrix is `T(c) · R(rot) · Flip · T(-c)`.
+fn object_transform(transform: Option<&ShapeTransform>, dpi: f32) -> Transform {
+    let Some(t) = transform else {
+        return Transform::identity();
+    };
+    if t.rotation == 0 && !t.flip_h && !t.flip_v {
+        return Transform::identity();
+    }
+    let cx = t.center.x.to_device_px(dpi);
+    let cy = t.center.y.to_device_px(dpi);
+    let angle_deg = t.rotation as f32 / 60_000.0;
+    let sx = if t.flip_h { -1.0 } else { 1.0 };
+    let sy = if t.flip_v { -1.0 } else { 1.0 };
+    Transform::from_translate(cx, cy)
+        .pre_concat(Transform::from_rotate(angle_deg))
+        .pre_concat(Transform::from_scale(sx, sy))
+        .pre_concat(Transform::from_translate(-cx, -cy))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_shape(
     surface: &mut Surface,
     geometry: &ShapeGeometry,
@@ -855,6 +896,7 @@ fn render_shape(
     tail_end: Option<&LineEnd>,
     dpi: f32,
     clip: Option<&Mask>,
+    transform: Transform,
 ) {
     // Build the geometry path and its device-pixel bounds (the gradient extent).
     let (path, bounds) = match geometry {
@@ -896,13 +938,9 @@ fn render_shape(
             }
         }
         paint.anti_alias = true;
-        surface.pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            clip,
-        );
+        surface
+            .pixmap
+            .fill_path(&path, &paint, FillRule::Winding, transform, clip);
     }
 
     if let Some(stroke) = stroke {
@@ -922,12 +960,18 @@ fn render_shape(
         };
         surface
             .pixmap
-            .stroke_path(&path, &paint, &sk_stroke, Transform::identity(), clip);
+            .stroke_path(&path, &paint, &sk_stroke, transform, clip);
 
-        // Arrowheads sit at the line's endpoints, oriented along the segment.
+        // Arrowheads sit at the line's endpoints, oriented along the segment. The
+        // endpoints ride the same transform so a rotated/flipped line keeps its
+        // heads attached and correctly oriented.
         if let ShapeGeometry::Line { from, to } = geometry {
-            let a = SkPoint::from_xy(from.x.to_device_px(dpi), from.y.to_device_px(dpi));
-            let b = SkPoint::from_xy(to.x.to_device_px(dpi), to.y.to_device_px(dpi));
+            let mut ends = [
+                SkPoint::from_xy(from.x.to_device_px(dpi), from.y.to_device_px(dpi)),
+                SkPoint::from_xy(to.x.to_device_px(dpi), to.y.to_device_px(dpi)),
+            ];
+            transform.map_points(&mut ends);
+            let [a, b] = ends;
             if let Some(head) = head_end {
                 // The head sits at the start, pointing back along `b -> a`.
                 draw_arrowhead(surface, a, b, head, width, stroke.color, clip);
@@ -1772,6 +1816,7 @@ mod tests {
             media: "pic".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -1793,6 +1838,7 @@ mod tests {
             media: "pic".to_owned(),
             rect,
             crop,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -1956,6 +2002,7 @@ mod tests {
             media: "missing".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(
@@ -1989,6 +2036,7 @@ mod tests {
             media: "junk".to_owned(),
             rect,
             crop: None,
+            transform: None,
         });
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
@@ -2136,6 +2184,8 @@ mod tests {
     };
     use casual_doc_layout::units::{Rect as UnitRect, Size};
     use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind};
+    // Separate `use` line to minimize import-block merge conflicts.
+    use casual_doc_layout::display::ShapeTransform;
 
     fn shape_surface(list: &DisplayList, w: u32, h: u32) -> Surface {
         let mut surface = Surface::new(w, h).unwrap();
@@ -2147,6 +2197,83 @@ mod tests {
             &NoMediaSource,
         );
         surface
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_rotated_shape_paints_at_its_rotated_bounds() {
+        // A 40x8 red rect at (30,10), rotated 90° about its center (50,14): it
+        // becomes an 8x40 tall bar spanning x[46,54], y[-6,34]. A pixel deep in
+        // the rotated (tall) bar is red; a pixel inside the UNrotated (wide) bar
+        // but outside the rotated one is now background.
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Rect {
+                rect: UnitRect::new(Point::new(Twip(30), Twip(10)), Size::new(Twip(40), Twip(8))),
+            },
+            fill: Some(DisplayFill::Solid(ShapeColor::rgb(220, 30, 30))),
+            stroke: None,
+            head_end: None,
+            tail_end: None,
+            transform: Some(ShapeTransform {
+                rotation: 90 * 60_000,
+                flip_h: false,
+                flip_v: false,
+                center: Point::new(Twip(50), Twip(14)),
+            }),
+        });
+        let surface = shape_surface(&list, 100, 60);
+        let inside_rotated = pixel_at(&surface, 100, 50, 30);
+        assert!(
+            inside_rotated[0] > 150 && inside_rotated[1] < 120 && inside_rotated[2] < 120,
+            "the rotated bar paints red where only a 90°-rotated rect reaches (got {inside_rotated:?})"
+        );
+        let was_unrotated = pixel_at(&surface, 100, 30, 14);
+        assert!(
+            was_unrotated[0] > 200 && was_unrotated[1] > 200 && was_unrotated[2] > 200,
+            "the unrotated footprint is now empty background (got {was_unrotated:?})"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_horizontally_flipped_image_swaps_left_and_right() {
+        // A 16x16 PNG (red left, blue right) blitted into the 20x20 box at
+        // (10,10), flipped horizontally about the box center (20,20): the box's
+        // LEFT edge now shows blue and its RIGHT edge red.
+        let red = [220, 30, 30, 255];
+        let blue = [30, 30, 220, 255];
+        let bytes = split_image(16, 16, red, blue);
+        let mut media = MapMediaSource::new();
+        media.insert("pic", bytes);
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect: Rect::new(
+                Point::new(Twip(10), Twip(10)),
+                Size::new(Twip(20), Twip(20)),
+            ),
+            crop: None,
+            transform: Some(ShapeTransform {
+                rotation: 0,
+                flip_h: true,
+                flip_v: false,
+                center: Point::new(Twip(20), Twip(20)),
+            }),
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        // The box spans device px [10,30)²; sample near its left and right edges.
+        let left_px = pixel_at(&surface, 50, 13, 20);
+        let right_px = pixel_at(&surface, 50, 27, 20);
+        assert!(
+            left_px[2] > 150 && left_px[0] < 120,
+            "flipH shows the blue (originally right) half at the box's left edge (got {left_px:?})"
+        );
+        assert!(
+            right_px[0] > 150 && right_px[2] < 120,
+            "and the red (originally left) half at the box's right edge (got {right_px:?})"
+        );
     }
 
     #[test]
@@ -2174,6 +2301,7 @@ mod tests {
             stroke: None,
             head_end: None,
             tail_end: None,
+            transform: None,
         });
         let surface = shape_surface(&list, 100, 20);
 
@@ -2214,6 +2342,7 @@ mod tests {
             stroke: None,
             head_end: None,
             tail_end: None,
+            transform: None,
         });
         let surface = shape_surface(&list, 60, 60);
 
@@ -2243,6 +2372,7 @@ mod tests {
                 }),
                 head_end: None,
                 tail_end: None,
+                transform: None,
             });
             shape_surface(&list, 100, 20)
         };
@@ -2287,6 +2417,7 @@ mod tests {
                 width: Some(casual_doc_model::v1::LineEndSize::Large),
                 length: Some(casual_doc_model::v1::LineEndSize::Large),
             }),
+            transform: None,
         });
         let surface = shape_surface(&list, 100, 60);
 
