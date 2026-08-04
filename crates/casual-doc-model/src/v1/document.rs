@@ -609,34 +609,44 @@ impl Document {
                         level: numbering_override.level,
                     });
                 }
+                // A full `w:lvlOverride/w:lvl` redefinition is bounded exactly
+                // like an abstract level.
+                if let Some(definition) = &numbering_override.definition {
+                    self.validate_numbering_level(definition)?;
+                }
             }
         }
         // Level domain: level start values, format/text bounds, and per-level
         // property references.
         for (_, abstract_num) in self.definitions.abstract_numbering.iter() {
             for level in &abstract_num.levels {
-                check_domain(level.start <= 32_767, "numbering.level.start")?;
-                if let Some(NumberFormat::Other(token)) = &level.num_fmt {
-                    check_domain(
-                        !token.is_empty() && token.len() <= 64,
-                        "numbering.level.numFmt",
-                    )?;
-                }
-                if let Some(text) = &level.lvl_text {
-                    check_domain(text.len() <= 255, "numbering.level.lvlText")?;
-                }
-                if let Some(properties) = &level.paragraph_properties {
-                    self.check_paragraph_property_refs(properties)?;
-                }
-                if let Some(properties) = &level.run_properties {
-                    self.check_run_property_refs(properties)?;
-                }
-                if let Some(style) = level.style_ref
-                    && !self.style_exists(style)
-                {
-                    return Err(ModelError::DanglingStyleRef(style.node_id()));
-                }
+                self.validate_numbering_level(level)?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_numbering_level(&self, level: &NumberingLevel) -> Result<(), ModelError> {
+        check_domain(level.start <= 32_767, "numbering.level.start")?;
+        if let Some(NumberFormat::Other(token)) = &level.num_fmt {
+            check_domain(
+                !token.is_empty() && token.len() <= 64,
+                "numbering.level.numFmt",
+            )?;
+        }
+        if let Some(text) = &level.lvl_text {
+            check_domain(text.len() <= 255, "numbering.level.lvlText")?;
+        }
+        if let Some(properties) = &level.paragraph_properties {
+            self.check_paragraph_property_refs(properties)?;
+        }
+        if let Some(properties) = &level.run_properties {
+            self.check_run_property_refs(properties)?;
+        }
+        if let Some(style) = level.style_ref
+            && !self.style_exists(style)
+        {
+            return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
         Ok(())
     }

@@ -290,15 +290,22 @@ pub enum MultiLevelType {
     HybridMultilevel,
 }
 
-/// A per-instance numbering level override.
+/// A per-instance numbering level override (`w:num/w:lvlOverride`).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NumberingOverride {
-    /// Level index.
+    /// Level index (`w:lvlOverride@w:ilvl`).
     pub level: u8,
-    /// Overriding start value.
+    /// Overriding start value (`w:startOverride`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<u16>,
+    /// A full per-instance level redefinition (`w:lvlOverride/w:lvl`): when
+    /// present, this instance replaces the abstract level's format, text, style,
+    /// and properties for [`level`](Self::level), not just its start value.
+    /// Additive: omitted when absent so pre-existing snapshots serialize
+    /// byte-identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<NumberingLevel>,
 }
 
 /// A numbering instance (its id is the map key).

@@ -2129,19 +2129,26 @@ fn numbering_xml(
         let mut a = start("w:abstractNumId");
         a.push_attribute(("w:val", abstract_id_token(instance.abstract_ref).as_str()));
         w.write_event(Event::Empty(a)).map_err(pkg)?;
-        // Per-instance start overrides (`w:lvlOverride/w:startOverride`) so a
-        // restarted list round-trips its restart value.
+        // Per-instance overrides (`w:lvlOverride`): a `w:startOverride` restart
+        // and/or a full `w:lvl` level redefinition, in CT_LvlOverride schema
+        // order (startOverride before lvl).
         for over in &instance.overrides {
+            if over.start.is_none() && over.definition.is_none() {
+                continue;
+            }
+            let mut lo = start("w:lvlOverride");
+            lo.push_attribute(("w:ilvl", over.level.to_string().as_str()));
+            w.write_event(Event::Start(lo)).map_err(pkg)?;
             if let Some(start_value) = over.start {
-                let mut lo = start("w:lvlOverride");
-                lo.push_attribute(("w:ilvl", over.level.to_string().as_str()));
-                w.write_event(Event::Start(lo)).map_err(pkg)?;
                 let mut so = start("w:startOverride");
                 so.push_attribute(("w:val", start_value.to_string().as_str()));
                 w.write_event(Event::Empty(so)).map_err(pkg)?;
-                w.write_event(Event::End(BytesEnd::new("w:lvlOverride")))
-                    .map_err(pkg)?;
             }
+            if let Some(definition) = &over.definition {
+                write_level(&mut w, definition)?;
+            }
+            w.write_event(Event::End(BytesEnd::new("w:lvlOverride")))
+                .map_err(pkg)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:num")))
             .map_err(pkg)?;
