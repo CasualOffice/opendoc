@@ -72,8 +72,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
   assert.equal(by["Footnotes & endnotes"].editable, "none");
   assert.equal(by["Fields"].editable, "none");
-  // Math has a bounded typed/rendered subset, but remains partial and read-only.
-  assert.equal(by["Math (OMML)"].modeled, "partial");
+  // Math is fully typed as of Layer 1 (all 20 OMML math elements mapped or
+  // raw-retained), but rendering is a bounded subset and it stays read-only.
+  assert.equal(by["Math (OMML)"].modeled, "full");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
   // Rendering is not "full" where the fidelity audit confirmed unpainted

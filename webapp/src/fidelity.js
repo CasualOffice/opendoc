@@ -71,8 +71,8 @@ const FIDELITY = [
   },
   {
     family: "Math (OMML)",
-    note: "Raw OMML is preserved for export. Rows/text, fractions, sub/superscripts, radicals, and delimiters have a bounded typed model and deterministic inline rendering; other constructs use an explicit text placeholder. Not editable.",
-    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "The full OMML math element set is typed — rows/text, fractions, sub/superscripts and pre-scripts, radicals, delimiters, functions, n-ary operators, matrices, equation arrays, accents, bars, limits, group-characters, and box/border-box wrappers — and the raw OMML is preserved verbatim (rare constructs like phantom spacing stay raw-retained, still lossless). Rendering paints the common arms inline; box/border-box border rules and full Word-parity typesetting remain partial. Not editable.",
+    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
     family: "Charts",
