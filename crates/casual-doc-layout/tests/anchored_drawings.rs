@@ -12,7 +12,9 @@
 use casual_doc_layout::anchor::place_floats;
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::display::PaintItem;
+use casual_doc_layout::display::{
+    Fill as DisplayFill, PaintItem, ShapeGeometry as DisplayShapeGeometry,
+};
 use casual_doc_layout::flow::{build_galley, build_galley_cached, flow_header_footer};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::page::{AnchorContent, Page};
@@ -1361,8 +1363,8 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
     // the paragraph flow cursor.
     let list = compose_page(page);
     let fill = list.items.iter().find_map(|item| match item {
-        PaintItem::Rect {
-            rect,
+        PaintItem::Shape {
+            geometry: DisplayShapeGeometry::Rect { rect },
             fill: Some(_),
             ..
         } => Some(*rect),
@@ -1511,14 +1513,17 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
         .iter()
         .filter_map(|item| match item {
             PaintItem::Image { .. } => Some("image"),
-            PaintItem::Rect { fill: Some(c), .. }
-                if *c
-                    == (casual_doc_layout::display::Color {
-                        r: 200,
-                        g: 200,
-                        b: 200,
-                        a: 255,
-                    }) =>
+            PaintItem::Shape {
+                geometry: DisplayShapeGeometry::Rect { .. },
+                fill: Some(DisplayFill::Solid(c)),
+                ..
+            } if *c
+                == (casual_doc_layout::display::Color {
+                    r: 200,
+                    g: 200,
+                    b: 200,
+                    a: 255,
+                }) =>
             {
                 Some("rect")
             }
@@ -1614,15 +1619,20 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
     ));
 
     let list = compose_page(&layout.pages[0]);
-    assert!(
-        list.items
-            .iter()
-            .any(|item| matches!(item, PaintItem::Ellipse { .. }))
-    );
     assert!(list.items.iter().any(|item| matches!(
         item,
-        PaintItem::RoundedRect {
-            radius: Twip(360),
+        PaintItem::Shape {
+            geometry: DisplayShapeGeometry::Ellipse { .. },
+            ..
+        }
+    )));
+    assert!(list.items.iter().any(|item| matches!(
+        item,
+        PaintItem::Shape {
+            geometry: DisplayShapeGeometry::RoundedRect {
+                radius: Twip(360),
+                ..
+            },
             ..
         }
     )));
@@ -1730,7 +1740,13 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     assert_eq!(
         list.items
             .iter()
-            .filter(|item| matches!(item, PaintItem::Polygon { .. }))
+            .filter(|item| matches!(
+                item,
+                PaintItem::Shape {
+                    geometry: DisplayShapeGeometry::Polygon { .. },
+                    ..
+                }
+            ))
             .count(),
         3
     );
