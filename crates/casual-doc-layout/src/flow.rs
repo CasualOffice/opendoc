@@ -2913,7 +2913,7 @@ fn textbox_item(
         blocks: flowed.blocks,
         size: flowed.size,
         border: text_box.border.map(text_box_stroke),
-        fill: text_box.fill.map(rgba),
+        fill: text_box.fill.as_ref().map(|fill| rgba(fill.flat_color())),
         content_layout: flowed.content_layout,
     }
 }
@@ -8600,6 +8600,7 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                border: None,
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
@@ -8736,6 +8737,7 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    border: None,
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
@@ -10428,6 +10430,7 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    border: None,
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
@@ -10539,6 +10542,7 @@ mod tests {
                     }),
                     descr: None,
                     crop,
+                    border: None,
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
@@ -10604,7 +10608,7 @@ mod tests {
     fn a_text_box_flows_its_paragraph_and_composes_text_inside_a_bordered_box() {
         use crate::compose::compose_paragraph;
         use crate::display::PaintItem;
-        use casual_doc_model::v1::{Extent, Rgba, ShapeStroke, TextBox};
+        use casual_doc_model::v1::{Extent, Fill, Rgba, ShapeStroke, TextBox};
 
         // A paragraph whose only inline is an authored-size text box holding one
         // paragraph, fill, and a 30-twip outline.
@@ -10616,12 +10620,12 @@ mod tests {
                 width_emu: 1_270_000,
                 height_emu: 635_000,
             }),
-            fill: Some(Rgba {
+            fill: Some(Fill::Solid(Rgba {
                 r: 1,
                 g: 2,
                 b: 3,
                 a: 255,
-            }),
+            })),
             border: Some(ShapeStroke {
                 color: Rgba {
                     r: 4,
@@ -10812,6 +10816,7 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                border: None,
                 flip_h: false,
                 flip_v: false,
                 rotation: None,

@@ -106,6 +106,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
         descr: Some("A floating logo".to_owned()),
         relative_height: None,
         crop: None,
+        border: None,
         flip_h: false,
         flip_v: false,
         rotation: None,
@@ -220,7 +221,7 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
 }
 
 use casual_doc_model::v1::{
-    GroupChild, GroupPicture, GroupShape, GroupTextBox, GroupTransform, PointEmu, Rgba,
+    Fill, GroupChild, GroupPicture, GroupShape, GroupTextBox, GroupTransform, PointEmu, Rgba,
     ShapeAdjustment, ShapeGeometry, ShapeStroke, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
     WordprocessingGroup,
@@ -289,6 +290,7 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
         descr: None,
         relative_height: None,
         crop: None,
+        border: None,
         flip_h: false,
         flip_v: false,
         rotation: None,
@@ -307,6 +309,7 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        border: None,
         flip_h: false,
         flip_v: false,
         rotation: None,
@@ -337,6 +340,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        border: None,
         flip_h: false,
         flip_v: false,
         rotation: None,
@@ -367,6 +371,7 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
         descr: None,
         relative_height: None,
         crop: None,
+        border: None,
         flip_h: false,
         flip_v: false,
         rotation: None,
@@ -1289,12 +1294,12 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
             width_emu: 1_828_800,
             height_emu: 914_400,
         }),
-        fill: Some(Rgba {
+        fill: Some(Fill::Solid(Rgba {
             r: 255,
             g: 255,
             b: 255,
             a: 255,
-        }),
+        })),
         border: Some(ShapeStroke {
             color: Rgba {
                 r: 10,
@@ -1416,12 +1421,12 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             geometry: ShapeGeometry::Rectangle,
             preset: None,
             adjustments: Vec::new(),
-            fill: Some(Rgba {
+            fill: Some(Fill::Solid(Rgba {
                 r: 200,
                 g: 200,
                 b: 200,
                 a: 255,
-            }),
+            })),
             stroke: None,
             flip_h: false,
             flip_v: false,
@@ -1452,6 +1457,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
                 },
                 descr: None,
                 crop: None,
+                border: None,
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
@@ -1537,12 +1543,12 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             geometry,
             preset: None,
             adjustments,
-            fill: Some(Rgba {
+            fill: Some(Fill::Solid(Rgba {
                 r: 20,
                 g: 80,
                 b: 160,
                 a: 255,
-            }),
+            })),
             stroke: None,
             flip_h: false,
             flip_v: false,
@@ -1633,12 +1639,12 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             geometry,
             preset: None,
             adjustments: Vec::new(),
-            fill: Some(Rgba {
+            fill: Some(Fill::Solid(Rgba {
                 r: 60,
                 g: 120,
                 b: 180,
                 a: 255,
-            }),
+            })),
             stroke: None,
             flip_h: false,
             flip_v: false,

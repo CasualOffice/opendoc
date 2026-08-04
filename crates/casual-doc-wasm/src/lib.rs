@@ -17657,6 +17657,7 @@ mod tests {
                         descr: None,
                         relative_height: None,
                         crop: None,
+                        border: None,
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
