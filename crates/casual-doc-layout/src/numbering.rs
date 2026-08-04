@@ -24,11 +24,22 @@
 //! (even across intervening non-list paragraphs — Word's "continued list"), while a
 //! different `numId` referencing the same abstract definition restarts. Advancing a
 //! level resets every deeper level of the same instance (the standard nesting
-//! reset; per-level `w:lvlRestart` is not yet modeled — see the crate deferrals).
+//! reset; per-level `w:lvlRestart` is not yet applied — see the deferrals).
+//!
+//! ## Effective level resolution
+//!
+//! The level a paragraph paints is resolved, not read straight off the abstract:
+//! a per-instance `w:lvlOverride/w:lvl` full redefinition (its own
+//! numFmt/lvlText/start/suff/justification and properties) replaces the abstract
+//! level, and a `w:startOverride` still wins over that effective level's start.
+//! This applies to substituted deeper levels (`%n`) too, so a multi-level marker
+//! reflects each level's per-instance override.
 //!
 //! ## Deferrals
 //!
-//! - `w:lvlRestart` / non-default restart anchoring (model does not carry it).
+//! - `w:lvlRestart` / non-default restart anchoring (the standard nesting reset is
+//!   applied; per-level restart anchors are not).
+//! - `w:numStyleLink` / `w:styleLink` List-Style level indirection.
 //! - `w:numFmt` unknown/producer-specific tokens fall back to decimal
 //!   (`cardinalText`/`ordinalText` are spelled out in English).
 
@@ -38,6 +49,8 @@ use casual_doc_model::v1::{
     AbstractNumbering, Definitions, Indentation, LevelSuffix, NumberFormat, NumberingInstanceId,
     NumberingLevel, NumberingRef, RunProperties, TabStop,
 };
+// Kept on a separate `use` line to minimize import-block merge conflicts.
+use casual_doc_model::v1::NumberingInstance;
 
 use crate::text::{GlyphRun, Line, LineLayout};
 use crate::units::{Point, Twip};
@@ -99,10 +112,12 @@ impl NumberingState {
     ) -> Option<ResolvedMarker> {
         let instance = definitions.numbering.get(&reference.instance)?;
         let abstract_num = definitions.abstract_numbering.get(&instance.abstract_ref)?;
-        let level = level_def(abstract_num, reference.level)?;
+        // The effective level: a per-instance `w:lvlOverride/w:lvl` full
+        // redefinition replaces the abstract level (format/text/start/suff/…).
+        let level = effective_level(instance, abstract_num, reference.level)?;
 
-        // A per-instance start override (`w:startOverride`) wins over the level's
-        // own `w:start`.
+        // A per-instance start override (`w:startOverride`) wins over the
+        // effective level's own `w:start`.
         let start = instance
             .overrides
             .iter()
@@ -122,7 +137,7 @@ impl NumberingState {
         self.counters
             .retain(|(inst, lvl), _| !(*inst == reference.instance && *lvl > reference.level));
 
-        let text = self.format_marker(reference.instance, abstract_num, level);
+        let text = self.format_marker(reference.instance, instance, abstract_num, level);
 
         Some(ResolvedMarker {
             text,
@@ -146,7 +161,8 @@ impl NumberingState {
     /// A bullet level renders its `lvlText` glyph verbatim.
     fn format_marker(
         &self,
-        instance: NumberingInstanceId,
+        instance_id: NumberingInstanceId,
+        instance: &NumberingInstance,
         abstract_num: &AbstractNumbering,
         level: &NumberingLevel,
     ) -> String {
@@ -170,7 +186,13 @@ impl NumberingState {
                 Some(digit) if (1..=9).contains(&digit) => {
                     chars.next();
                     let target = (digit - 1) as u8;
-                    out.push_str(&self.format_level_value(instance, abstract_num, level, target));
+                    out.push_str(&self.format_level_value(
+                        instance_id,
+                        instance,
+                        abstract_num,
+                        level,
+                        target,
+                    ));
                 }
                 // A lone `%` (or `%0`) is a literal percent sign.
                 _ => out.push('%'),
@@ -185,16 +207,17 @@ impl NumberingState {
     /// level is `isLgl`, which forces every substituted value to decimal.
     fn format_level_value(
         &self,
-        instance: NumberingInstanceId,
+        instance_id: NumberingInstanceId,
+        instance: &NumberingInstance,
         abstract_num: &AbstractNumbering,
         current: &NumberingLevel,
         target: u8,
     ) -> String {
-        let target_level = level_def(abstract_num, target);
+        let target_level = effective_level(instance, abstract_num, target);
         let start = target_level.map_or(1, |l| l.start as u32);
         let value = self
             .counters
-            .get(&(instance, target))
+            .get(&(instance_id, target))
             .copied()
             .unwrap_or(start);
         let fmt = if current.is_lgl {
@@ -206,6 +229,22 @@ impl NumberingState {
         };
         format_number(value, fmt)
     }
+}
+
+/// The level a paragraph paints for `level` of `instance`: a per-instance
+/// `w:lvlOverride/w:lvl` full redefinition when the instance carries one,
+/// otherwise the abstract definition's level.
+fn effective_level<'a>(
+    instance: &'a NumberingInstance,
+    abstract_num: &'a AbstractNumbering,
+    level: u8,
+) -> Option<&'a NumberingLevel> {
+    instance
+        .overrides
+        .iter()
+        .find(|o| o.level == level)
+        .and_then(|o| o.definition.as_ref())
+        .or_else(|| level_def(abstract_num, level))
 }
 
 /// Finds the definition for `level` in an abstract numbering (levels are stored in
@@ -747,6 +786,8 @@ mod tests {
         AbstractNumbering, AbstractNumberingId, NumberingInstance, NumberingLevel,
         ParagraphProperties,
     };
+    // Separate `use` line to minimize import-block merge conflicts.
+    use casual_doc_model::v1::NumberingOverride;
 
     fn lvl(level: u8, fmt: NumberFormat, text: &str) -> NumberingLevel {
         NumberingLevel {
@@ -795,6 +836,34 @@ mod tests {
         (definitions, ids)
     }
 
+    /// One instance whose abstract carries `levels` and that itself carries the
+    /// per-instance `overrides` (`w:lvlOverride`).
+    fn defs_with_overrides(
+        levels: Vec<NumberingLevel>,
+        overrides: Vec<NumberingOverride>,
+    ) -> (Definitions, NumberingInstanceId) {
+        let mut definitions = Definitions::default();
+        let abs_id = AbstractNumberingId::new(NodeId::from_parts(1000, 1).unwrap());
+        definitions.abstract_numbering.insert(
+            abs_id,
+            AbstractNumbering {
+                levels,
+                multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
+            },
+        );
+        let inst = NumberingInstanceId::new(NodeId::from_parts(2000, 1).unwrap());
+        definitions.numbering.insert(
+            inst,
+            NumberingInstance {
+                abstract_ref: abs_id,
+                overrides,
+            },
+        );
+        (definitions, inst)
+    }
+
     fn num_ref(instance: NumberingInstanceId, level: u8) -> NumberingRef {
         NumberingRef { instance, level }
     }
@@ -835,6 +904,65 @@ mod tests {
         assert_eq!(marker_text(&mut s, &defs, &num_ref(ids[1], 0)), "1.");
         // The first instance continues where it left off.
         assert_eq!(marker_text(&mut s, &defs, &num_ref(ids[0], 0)), "3.");
+    }
+
+    #[test]
+    fn full_level_override_replaces_abstract_level() {
+        // Abstract level 0 is decimal `%1.`; the instance's `w:lvlOverride/w:lvl`
+        // redefines it to upperRoman `%1)` starting at 3 — the paragraph must
+        // paint the override's format/text/start, not the abstract default.
+        let mut definition = lvl(0, NumberFormat::UpperRoman, "%1)");
+        definition.start = 3;
+        let (defs, inst) = defs_with_overrides(
+            vec![lvl(0, NumberFormat::Decimal, "%1.")],
+            vec![NumberingOverride {
+                level: 0,
+                start: None,
+                definition: Some(definition),
+            }],
+        );
+        let mut s = NumberingState::new();
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 0)), "III)");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 0)), "IV)");
+    }
+
+    #[test]
+    fn start_override_wins_over_override_definition_start() {
+        // A `w:startOverride` (5) still wins over the override level's own start (3).
+        let mut definition = lvl(0, NumberFormat::UpperRoman, "%1)");
+        definition.start = 3;
+        let (defs, inst) = defs_with_overrides(
+            vec![lvl(0, NumberFormat::Decimal, "%1.")],
+            vec![NumberingOverride {
+                level: 0,
+                start: Some(5),
+                definition: Some(definition),
+            }],
+        );
+        let mut s = NumberingState::new();
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 0)), "V)");
+    }
+
+    #[test]
+    fn override_definition_applies_to_substituted_deeper_level() {
+        // The instance overrides level 0's format to upperRoman; a level-1 marker
+        // substituting `%1` must reflect the override's format, not the abstract's.
+        let over0 = lvl(0, NumberFormat::UpperRoman, "%1.");
+        let (defs, inst) = defs_with_overrides(
+            vec![
+                lvl(0, NumberFormat::Decimal, "%1."),
+                lvl(1, NumberFormat::Decimal, "%1.%2"),
+            ],
+            vec![NumberingOverride {
+                level: 0,
+                start: None,
+                definition: Some(over0),
+            }],
+        );
+        let mut s = NumberingState::new();
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 0)), "I.");
+        // `%1` uses level 0's overridden upperRoman; `%2` uses level 1's decimal.
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 1)), "I.1");
     }
 
     #[test]
