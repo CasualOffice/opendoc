@@ -60,15 +60,16 @@ Derived from a 14-agent, evidence-cited model-completeness sweep, prevalence-ran
 | ✅ | Sdt building-block gallery/category | `w:docPartObj/w:docPartGallery`/`w:docPartCategory` | S |
 | ✅ | Auto-hyphenation settings | `w:autoHyphenation`/`w:hyphenationZone`/`w:consecutiveHyphenLimit`/`w:doNotHyphenateCaps` | S |
 | ✅ | Math `bar`/`groupChr` | `m:bar`,`m:groupChr` | S |
+| ✅ | Tracked table row/cell ins/del | `w:trPr/w:ins\|w:del`, `w:tcPr/w:cellIns\|w:cellDel` | M |
+| ✅ | Tracked property-change markers | `w:pPrChange`/`w:rPrChange`/`w:tblPrChange`/`w:trPrChange`/`w:tcPrChange`/`w:tblGridChange` | M |
+| ✅ | Paragraph text direction | `w:pPr/w:textDirection` | S |
+| ✅ | Clear tab | `w:tab@val=clear` (`TabAlignment::Clear`) | S |
 | 🔄 | Full per-instance level override | `w:lvlOverride/w:lvl` (full level, not just startOverride) | M |
-| 🔄 | Tracked table row/cell ins/del | `w:trPr/w:ins\|w:del`, `w:tcPr/w:cellIns\|w:cellDel` | M |
 | 🔄 | Page-number format → enum | `w:pgNumType@fmt`/`@start` | S |
 | 🔄 | Section-properties revision | `w:sectPrChange` | M |
-| 🔄 | Paragraph text direction | `w:pPr/w:textDirection` | S |
 | 🔄 | Wrap polygon | `wp:wrapPolygon` | M |
-| ⬜ | Clear tab | `w:tab@val=clear` | S |
 
-Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (21/21).** Tier 2: 11 merged, 6 in flight, 1 remaining (`w:tab@val=clear`) — Layer 1 is effectively closing out.
+Legend: ✅ merged · 🔄 in flight · ⬜ not started. **All Tier 1 complete (21/21).** Tier 2: 15 merged, 4 in flight (`lvlOverride/lvl`, `pgNumType@fmt`→enum, `sectPrChange`, `wrapPolygon`), 0 not-started — **Layer 1 is closing out.** A completeness-critic sweep of the import disposition report is running to confirm no common construct remains dropped before the layer is declared done.
 
 ### Tier 3 — none.
 
