@@ -389,15 +389,18 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 transform: anchor.transform,
             });
             // A framed picture's `pic:spPr/a:ln` paints as a stroked rectangle over
-            // the picture box (pictures are rectangular).
+            // the picture box (pictures are rectangular). It rides the same
+            // [`PaintItem::Shape`] outline path as shape borders so its color,
+            // width, and preset dash (`a:prstDash`) all paint — a dashed frame
+            // dashes, a solid frame stays solid.
             if let Some(border) = border {
-                list.push(PaintItem::Rect {
-                    rect: anchor.rect,
+                list.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: anchor.rect },
                     fill: None,
-                    stroke: Some(Stroke {
-                        color: rgba(border.color),
-                        width: stroke_px(border.width),
-                    }),
+                    stroke: Some(shape_outline(border)),
+                    head_end: None,
+                    tail_end: None,
+                    transform: anchor.transform,
                 });
             }
         }
@@ -1858,10 +1861,60 @@ mod tests {
         assert!(
             matches!(
                 &list.items[1],
-                PaintItem::Rect { rect: r, fill: None, stroke: Some(s) }
-                    if *r == rect && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
+                PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: r },
+                    fill: None,
+                    stroke: Some(s),
+                    ..
+                }
+                    if *r == rect
+                        && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
+                        && matches!(s.dash, DashStyle::Solid)
             ),
-            "the frame paints as a stroked rect over the picture box"
+            "the frame paints as a stroked rect shape over the picture box"
+        );
+    }
+
+    #[test]
+    fn a_dashed_picture_frame_carries_its_dash_onto_the_stroked_shape() {
+        // The border stroke's `a:prstDash` must ride onto the composed frame so a
+        // dashed picture frame paints dashed (a solid control stays solid).
+        let rect = Rect::new(
+            Point::new(Twip(100), Twip(200)),
+            Size::new(Twip(500), Twip(400)),
+        );
+        let frame = |dash| {
+            let anchor = anchor_at(
+                AnchorContent::Image {
+                    media: "word/media/image1.png".to_owned(),
+                    crop: None,
+                    border: Some(AnchorStroke {
+                        color: [10, 20, 30, 255],
+                        width: Twip(20),
+                        dash,
+                    }),
+                },
+                rect,
+            );
+            let mut list = DisplayList::new();
+            compose_anchor(&mut list, &anchor);
+            let PaintItem::Shape {
+                stroke: Some(outline),
+                ..
+            } = &list.items[1]
+            else {
+                panic!("the frame paints as a stroked shape");
+            };
+            outline.dash
+        };
+
+        assert!(
+            matches!(frame(DashStyle::Dash), DashStyle::Dash),
+            "a dashed frame carries its dash onto the stroke"
+        );
+        assert!(
+            matches!(frame(DashStyle::Solid), DashStyle::Solid),
+            "a solid frame stays solid"
         );
     }
 
