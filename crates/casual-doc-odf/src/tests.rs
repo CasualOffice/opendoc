@@ -829,6 +829,47 @@ fn unknown_parts_are_retained_repackaged_and_fixed_point() {
 }
 
 #[test]
+fn hand_built_retained_parts_are_sanitized_on_export() {
+    // A host-supplied retained set with a duplicate key and an unsafe traversal
+    // path must not yield a duplicate or non-admissible package.
+    let bytes = image_package(
+        image_content("Pictures/pic.dat"),
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let mut retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    retained.unknown.insert(
+        "Pictures/pic.dat".to_owned(),
+        RetainedPart {
+            media_type: "image/png".to_owned(),
+            bytes: vec![9],
+        },
+    );
+    retained.unknown.insert(
+        "../evil.png".to_owned(),
+        RetainedPart {
+            media_type: "image/png".to_owned(),
+            bytes: vec![9],
+        },
+    );
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    assert_eq!(out.read_part("Pictures/pic.dat").unwrap(), b"\x89PNG\r\n");
+    assert!(out.read_part("../evil.png").is_err());
+}
+
+#[test]
 fn reserved_name_image_is_not_retained_or_repackaged() {
     // A crafted href pointing at a regenerated semantic part must not be retained
     // (repackaging it would emit a duplicate ZIP entry).

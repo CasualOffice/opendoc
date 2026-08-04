@@ -1710,9 +1710,11 @@ pub fn referenced_retained_parts(
             used.parts.entry(name).or_insert_with(|| part.clone());
         }
     }
-    // Unknown parts are carried verbatim regardless of edits.
+    // Unknown parts are carried verbatim regardless of edits. Skip a name a
+    // caller may also have placed in `parts` (the two are disjoint on the capture
+    // path but the fields are public), so a part is never written twice.
     for (name, part) in &retained.unknown {
-        if !crate::package::is_unsafe_retained_name(name) {
+        if !crate::package::is_unsafe_retained_name(name) && !used.parts.contains_key(name) {
             used.unknown.insert(name.clone(), part.clone());
         }
     }

@@ -724,11 +724,13 @@ fn is_reserved_part_name(name: &str) -> bool {
         || name.ends_with('/')
 }
 
-/// Whether a part name must not be retained/repackaged: a reserved regenerated
-/// part, or an active-content path blocked by the package profile. Applied at
-/// both retention capture and (via the export helper) repackaging.
+/// Whether a part name must not be retained/repackaged: an unsafe ZIP path
+/// (traversal/absolute/backslash/empty), a reserved regenerated part, or an
+/// active-content path blocked by the package profile. Applied at both retention
+/// capture and (via the export helper) repackaging, so a caller-supplied
+/// `OdfRetainedParts` with a hostile name is rejected too.
 pub(crate) fn is_unsafe_retained_name(name: &str) -> bool {
-    is_reserved_part_name(name) || is_active_content_path(name)
+    !is_safe_manifest_path(name) || is_reserved_part_name(name) || is_active_content_path(name)
 }
 
 pub(crate) fn normalized_part_path(path: &str) -> String {
