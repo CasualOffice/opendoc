@@ -24,22 +24,23 @@
 //! (even across intervening non-list paragraphs — Word's "continued list"), while a
 //! different `numId` referencing the same abstract definition restarts. Advancing a
 //! level resets every deeper level of the same instance (the standard nesting
-//! reset; per-level `w:lvlRestart` is not yet applied — see the deferrals).
+//! reset), except where a deeper level's `w:lvlRestart` opts out (`0` = never
+//! restart; a one-based `k` = restart only under a level numbered `<= k`).
 //!
-//! ## Effective level resolution
+//! ## Effective definition resolution
 //!
-//! The level a paragraph paints is resolved, not read straight off the abstract:
-//! a per-instance `w:lvlOverride/w:lvl` full redefinition (its own
-//! numFmt/lvlText/start/suff/justification and properties) replaces the abstract
-//! level, and a `w:startOverride` still wins over that effective level's start.
-//! This applies to substituted deeper levels (`%n`) too, so a multi-level marker
-//! reflects each level's per-instance override.
+//! The abstract and level a paragraph paints are resolved, not read straight off
+//! the instance: a `w:numStyleLink` on the abstract is followed to the List-Style
+//! paragraph style and on to the abstract that actually defines the levels (the
+//! reusable-definition side carries the matching `w:styleLink`; the follow is
+//! bounded so a cycle cannot loop), a per-instance `w:lvlOverride/w:lvl` full
+//! redefinition (its own numFmt/lvlText/start/suff/justification and properties)
+//! replaces the abstract level, and a `w:startOverride` still wins over that
+//! effective level's start. Override resolution applies to substituted deeper
+//! levels (`%n`) too.
 //!
 //! ## Deferrals
 //!
-//! - `w:lvlRestart` / non-default restart anchoring (the standard nesting reset is
-//!   applied; per-level restart anchors are not).
-//! - `w:numStyleLink` / `w:styleLink` List-Style level indirection.
 //! - `w:numFmt` unknown/producer-specific tokens fall back to decimal
 //!   (`cardinalText`/`ordinalText` are spelled out in English).
 
@@ -111,9 +112,12 @@ impl NumberingState {
         reference: &NumberingRef,
     ) -> Option<ResolvedMarker> {
         let instance = definitions.numbering.get(&reference.instance)?;
-        let abstract_num = definitions.abstract_numbering.get(&instance.abstract_ref)?;
+        let declared = definitions.abstract_numbering.get(&instance.abstract_ref)?;
+        // Follow a `w:numStyleLink` List-Style indirection to the abstract that
+        // actually defines the levels.
+        let abstract_num = resolve_abstract(definitions, declared);
         // The effective level: a per-instance `w:lvlOverride/w:lvl` full
-        // redefinition replaces the abstract level (format/text/start/suff/…).
+        // redefinition replaces the (linked) abstract level (format/text/start/…).
         let level = effective_level(instance, abstract_num, reference.level)?;
 
         // A per-instance start override (`w:startOverride`) wins over the
@@ -132,10 +136,17 @@ impl NumberingState {
             .get(&key)
             .map_or(start, |v| v.saturating_add(1));
         self.counters.insert(key, value);
-        // Entering (or re-touching) a level resets every deeper level of the same
-        // instance, so the next time a deeper level appears it restarts at its start.
-        self.counters
-            .retain(|(inst, lvl), _| !(*inst == reference.instance && *lvl > reference.level));
+        // Entering (or re-touching) a level resets deeper levels of the same
+        // instance, so the next time a deeper level appears it restarts at its
+        // start — unless that deeper level's `w:lvlRestart` opts out.
+        let advanced = reference.level;
+        self.counters.retain(|(inst, lvl), _| {
+            if *inst != reference.instance || *lvl <= advanced {
+                return true;
+            }
+            let restart = effective_level(instance, abstract_num, *lvl).and_then(|l| l.lvl_restart);
+            !level_resets_on(restart, advanced, *lvl)
+        });
 
         let text = self.format_marker(reference.instance, instance, abstract_num, level);
 
@@ -251,6 +262,60 @@ fn effective_level<'a>(
 /// document order, not necessarily dense or sorted).
 fn level_def(abstract_num: &AbstractNumbering, level: u8) -> Option<&NumberingLevel> {
     abstract_num.levels.iter().find(|l| l.level == level)
+}
+
+/// Follows a `w:numStyleLink` List-Style indirection to the abstract that
+/// actually defines the levels.
+///
+/// An abstract may defer its numbering to a numbering-defining paragraph style
+/// (`w:numStyleLink`), whose `w:pPr/w:numPr` points back at the instance — and so
+/// the abstract — that holds the real levels (the reusable-definition side
+/// carries the matching `w:styleLink`). The follow is bounded, and a self-link is
+/// short-circuited, so a `numStyleLink`/`styleLink` cycle cannot loop forever.
+fn resolve_abstract<'a>(
+    definitions: &'a Definitions,
+    abstract_num: &'a AbstractNumbering,
+) -> &'a AbstractNumbering {
+    let mut current = abstract_num;
+    for _ in 0..8 {
+        let Some(style_id) = current.num_style_link else {
+            break;
+        };
+        let Some(style) = definitions.styles.get(&style_id) else {
+            break;
+        };
+        let Some(reference) = style.paragraph.as_ref().and_then(|p| p.numbering) else {
+            break;
+        };
+        let Some(instance) = definitions.numbering.get(&reference.instance) else {
+            break;
+        };
+        let Some(next) = definitions.abstract_numbering.get(&instance.abstract_ref) else {
+            break;
+        };
+        if std::ptr::eq(next, current) {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
+/// Whether a deeper level (its own `w:ilvl` = `self_level`) restarts its counter
+/// when a shallower level `advanced` (also a `w:ilvl`) is used, per the deeper
+/// level's `w:lvlRestart`:
+///
+/// - `None` — the default: restart whenever any shallower level advances.
+/// - `Some(0)` — never restart (continuous numbering, e.g. legal styles).
+/// - `Some(k)` — restart only when a level whose one-based number is `<= k`
+///   (i.e. `ilvl < k`) advances; a `k` beyond this level is ignored (default).
+fn level_resets_on(restart: Option<u8>, advanced: u8, self_level: u8) -> bool {
+    match restart {
+        None => true,
+        Some(0) => false,
+        Some(anchor) if u16::from(anchor) > u16::from(self_level) + 1 => true,
+        Some(anchor) => advanced < anchor,
+    }
 }
 
 /// Whether a `lvlText` contains a `%n` (n in 1..=9) counter placeholder.
@@ -786,8 +851,9 @@ mod tests {
         AbstractNumbering, AbstractNumberingId, NumberingInstance, NumberingLevel,
         ParagraphProperties,
     };
-    // Separate `use` line to minimize import-block merge conflicts.
+    // Separate `use` lines to minimize import-block merge conflicts.
     use casual_doc_model::v1::NumberingOverride;
+    use casual_doc_model::v1::{Style, StyleId, StyleKind};
 
     fn lvl(level: u8, fmt: NumberFormat, text: &str) -> NumberingLevel {
         NumberingLevel {
@@ -870,6 +936,34 @@ mod tests {
 
     fn marker_text(state: &mut NumberingState, defs: &Definitions, r: &NumberingRef) -> String {
         state.resolve(defs, r).expect("resolves").text
+    }
+
+    /// A minimal paragraph (List) style whose `pPr/numPr` points at `numbering`.
+    fn list_style(numbering: NumberingRef) -> Style {
+        Style {
+            kind: StyleKind::Paragraph,
+            is_default: false,
+            name: None,
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: Some(ParagraphProperties {
+                numbering: Some(numbering),
+                ..ParagraphProperties::default()
+            }),
+            run: None,
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+        }
     }
 
     #[test]
@@ -963,6 +1057,155 @@ mod tests {
         assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 0)), "I.");
         // `%1` uses level 0's overridden upperRoman; `%2` uses level 1's decimal.
         assert_eq!(marker_text(&mut s, &defs, &num_ref(inst, 1)), "I.1");
+    }
+
+    #[test]
+    fn num_style_link_resolves_through_to_the_defining_abstract() {
+        // A `numStyleLink` abstract carries no levels of its own; it defers to a
+        // List Style whose `pPr/numPr` points at the instance/abstract that holds
+        // the real levels (the `styleLink` side). Resolving the deferring instance
+        // must paint that abstract's format, not nothing.
+        let mut definitions = Definitions::default();
+        let style_id = StyleId::new(NodeId::from_parts(3000, 1).unwrap());
+        // The reusable definition (holds the levels; `styleLink` back to the style).
+        let real_abs = AbstractNumberingId::new(NodeId::from_parts(1001, 1).unwrap());
+        definitions.abstract_numbering.insert(
+            real_abs,
+            AbstractNumbering {
+                levels: vec![lvl(0, NumberFormat::LowerLetter, "%1)")],
+                multi_level_type: None,
+                num_style_link: None,
+                style_link: Some(style_id),
+            },
+        );
+        // The deferring abstract: no levels, points at the List Style.
+        let link_abs = AbstractNumberingId::new(NodeId::from_parts(1002, 1).unwrap());
+        definitions.abstract_numbering.insert(
+            link_abs,
+            AbstractNumbering {
+                levels: Vec::new(),
+                multi_level_type: None,
+                num_style_link: Some(style_id),
+                style_link: None,
+            },
+        );
+        let real_inst = NumberingInstanceId::new(NodeId::from_parts(2001, 1).unwrap());
+        definitions.numbering.insert(
+            real_inst,
+            NumberingInstance {
+                abstract_ref: real_abs,
+                overrides: Vec::new(),
+            },
+        );
+        let link_inst = NumberingInstanceId::new(NodeId::from_parts(2002, 1).unwrap());
+        definitions.numbering.insert(
+            link_inst,
+            NumberingInstance {
+                abstract_ref: link_abs,
+                overrides: Vec::new(),
+            },
+        );
+        definitions.styles.insert(
+            style_id,
+            list_style(NumberingRef {
+                instance: real_inst,
+                level: 0,
+            }),
+        );
+
+        let mut s = NumberingState::new();
+        // Without the indirection this would be `None`/absent; with it the marker
+        // paints the linked abstract's lowerLetter format.
+        assert_eq!(
+            marker_text(&mut s, &definitions, &num_ref(link_inst, 0)),
+            "a)"
+        );
+        assert_eq!(
+            marker_text(&mut s, &definitions, &num_ref(link_inst, 0)),
+            "b)"
+        );
+    }
+
+    #[test]
+    fn num_style_link_cycle_terminates() {
+        // An abstract whose `numStyleLink` resolves (via its style) back to itself
+        // must not loop; with no levels of its own it simply produces no marker.
+        let mut definitions = Definitions::default();
+        let style_id = StyleId::new(NodeId::from_parts(3100, 1).unwrap());
+        let abs = AbstractNumberingId::new(NodeId::from_parts(1101, 1).unwrap());
+        definitions.abstract_numbering.insert(
+            abs,
+            AbstractNumbering {
+                levels: Vec::new(),
+                multi_level_type: None,
+                num_style_link: Some(style_id),
+                style_link: Some(style_id),
+            },
+        );
+        let inst = NumberingInstanceId::new(NodeId::from_parts(2101, 1).unwrap());
+        definitions.numbering.insert(
+            inst,
+            NumberingInstance {
+                abstract_ref: abs,
+                overrides: Vec::new(),
+            },
+        );
+        definitions.styles.insert(
+            style_id,
+            list_style(NumberingRef {
+                instance: inst,
+                level: 0,
+            }),
+        );
+
+        let mut s = NumberingState::new();
+        assert!(s.resolve(&definitions, &num_ref(inst, 0)).is_none());
+    }
+
+    #[test]
+    fn lvl_restart_zero_never_resets_deeper_level() {
+        // Level 1 has `w:lvlRestart="0"`: it must keep counting when level 0
+        // advances, instead of restarting (continuous numbering).
+        let mut levels = vec![
+            lvl(0, NumberFormat::Decimal, "%1."),
+            lvl(1, NumberFormat::Decimal, "%2)"),
+        ];
+        levels[1].lvl_restart = Some(0);
+        let (defs, ids) = defs_with(levels, 1);
+        let n = ids[0];
+        let mut s = NumberingState::new();
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 0)), "1.");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 1)), "1)");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 1)), "2)");
+        // Level 0 advances; a default deeper level would reset to `1)`, but
+        // lvlRestart=0 keeps it counting.
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 0)), "2.");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 1)), "3)");
+    }
+
+    #[test]
+    fn lvl_restart_anchor_limits_which_level_resets() {
+        // Level 2 restarts only under level 0 (one-based anchor `1`): a level-1
+        // advance must NOT reset it, but a level-0 advance must.
+        let mut levels = vec![
+            lvl(0, NumberFormat::Decimal, "%1."),
+            lvl(1, NumberFormat::Decimal, "%2)"),
+            lvl(2, NumberFormat::LowerRoman, "%3."),
+        ];
+        levels[2].lvl_restart = Some(1);
+        let (defs, ids) = defs_with(levels, 1);
+        let n = ids[0];
+        let mut s = NumberingState::new();
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 0)), "1.");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 2)), "i.");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 2)), "ii.");
+        // Level 1 advances: anchor=1 means only a level-0 change resets level 2,
+        // so it keeps counting.
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 1)), "1)");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 2)), "iii.");
+        // Level 0 advances: that IS the anchor, so level 2 restarts.
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 0)), "2.");
+        assert_eq!(marker_text(&mut s, &defs, &num_ref(n, 2)), "i.");
     }
 
     #[test]
