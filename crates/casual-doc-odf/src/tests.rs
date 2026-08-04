@@ -792,6 +792,43 @@ fn only_referenced_retained_parts_are_repackaged() {
 }
 
 #[test]
+fn unknown_parts_are_retained_repackaged_and_fixed_point() {
+    // A non-semantic part (a thumbnail) survives a preserving export even with no
+    // media, and round-trips byte-identically.
+    let bytes = image_package(
+        CONTENT.to_vec(),
+        r#"<m:file-entry m:full-path="Thumbnails/thumbnail.png" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Thumbnails/thumbnail.png",
+            bytes: b"THUMB".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    assert!(retained.parts.is_empty());
+    assert!(retained.unknown.contains_key("Thumbnails/thumbnail.png"));
+
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    assert_eq!(out.read_part("Thumbnails/thumbnail.png").unwrap(), b"THUMB");
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexported =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexported.bytes, preserved.bytes);
+}
+
+#[test]
 fn reserved_name_image_is_not_retained_or_repackaged() {
     // A crafted href pointing at a regenerated semantic part must not be retained
     // (repackaging it would emit a duplicate ZIP entry).

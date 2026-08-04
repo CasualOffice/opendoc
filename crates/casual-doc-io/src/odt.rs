@@ -181,11 +181,7 @@ impl FormatExporter for OdtAdapter {
                     // Report exactly how many parts were repackaged (the subset
                     // the current document references), not the whole source set.
                     let carried = retained
-                        .map(|retained| {
-                            referenced_retained_parts(request.document, retained)
-                                .parts
-                                .len()
-                        })
+                        .map(|retained| referenced_retained_parts(request.document, retained).len())
                         .unwrap_or(0);
                     if carried != 0 {
                         report

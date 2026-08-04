@@ -1700,6 +1700,7 @@ pub fn referenced_retained_parts(
     retained: &crate::OdfRetainedParts,
 ) -> crate::OdfRetainedParts {
     let mut used = crate::OdfRetainedParts::default();
+    // Media-referenced parts: only those a Drawing still references.
     for (_, media) in document.definitions().media.iter() {
         let name = crate::package::normalized_part_path(&media.part_name);
         if crate::package::is_unsafe_retained_name(&name) {
@@ -1707,6 +1708,12 @@ pub fn referenced_retained_parts(
         }
         if let Some(part) = retained.parts.get(&name) {
             used.parts.entry(name).or_insert_with(|| part.clone());
+        }
+    }
+    // Unknown parts are carried verbatim regardless of edits.
+    for (name, part) in &retained.unknown {
+        if !crate::package::is_unsafe_retained_name(name) {
+            used.unknown.insert(name.clone(), part.clone());
         }
     }
     used
@@ -1866,8 +1873,9 @@ fn package(
             .map_err(|_| OdfError::SerializationFailed)?;
     }
     // Retained parts are opaque bytes; store them verbatim in deterministic
-    // (sorted) order after the semantic parts, before the manifest.
-    for (name, part) in &retained.parts {
+    // (sorted) order after the semantic parts, before the manifest. Media-
+    // referenced parts precede unknown parts; the two key sets are disjoint.
+    for (name, part) in retained.parts.iter().chain(retained.unknown.iter()) {
         zip.start_file(name.as_str(), stored)
             .map_err(|_| OdfError::SerializationFailed)?;
         zip.write_all(&part.bytes)
@@ -1923,7 +1931,7 @@ fn build_manifest(
             r#"<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>"#,
         );
     }
-    for (name, part) in &retained.parts {
+    for (name, part) in retained.parts.iter().chain(retained.unknown.iter()) {
         manifest.push_str("<manifest:file-entry manifest:full-path=\"");
         manifest.push_str(&quick_xml::escape::escape(name));
         manifest.push_str("\" manifest:media-type=\"");

@@ -34,7 +34,9 @@ a general ODT support claim.
   image bytes are retained (bounded, opaque) in the source envelope; a
   `PreserveWhenSafe` export now re-emits `draw:frame` and repackages those bytes
   with deterministic manifest entries, so images survive a semantic edit and
-  reopen as a byte + semantic fixed point. Reserved/active-content and orphaned
+  reopen as a byte + semantic fixed point. Safe *unknown* non-semantic parts
+  (thumbnails, settings, configurations, unreferenced pictures) are also retained
+  and carried verbatim through an edit. Reserved/active-content and orphaned
   parts are never repackaged. New public API: `OdfRetainedParts`, `RetainedPart`,
   `OdtPackage::retained_media_parts`, `write_odt_with_retained_parts`,
   `referenced_retained_parts`; new `OdfImportLimits` retained-part bounds; the ODT

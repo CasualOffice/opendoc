@@ -1,6 +1,6 @@
 # 97 — ODT Edit-Tolerant Preservation
 
-**Status:** Checkpoints 1–2 implemented (retention capture + `draw:frame` export); checkpoint 3 (safe unknown-part carry) pending
+**Status:** Checkpoints 1–3 implemented (retention capture, `draw:frame` export, and safe unknown-part carry)
 **Date:** 2026-08-05
 **Tracker:** MFIO-006 (Slice E continuation) / MFIO-007 inputs
 **Parents:** `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md`, `95-ODT-IMPORT-PROFILE.md`, `96-ODT-EXPORT-PROFILE.md`

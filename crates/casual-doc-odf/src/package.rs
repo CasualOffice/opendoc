@@ -43,15 +43,26 @@ pub struct RetainedPart {
 /// deterministic (sorted) order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OdfRetainedParts {
-    /// Retained parts by normalized part name.
+    /// Retained parts referenced by document media, by normalized part name.
+    /// These are re-emitted only while a `Drawing` still references them.
     pub parts: std::collections::BTreeMap<String, RetainedPart>,
+    /// Retained safe *unknown* parts (thumbnails, settings, configurations, and
+    /// other opaque non-semantic parts) not referenced by media, carried verbatim
+    /// regardless of edits.
+    pub unknown: std::collections::BTreeMap<String, RetainedPart>,
 }
 
 impl OdfRetainedParts {
     /// Whether nothing is retained.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.parts.is_empty()
+        self.parts.is_empty() && self.unknown.is_empty()
+    }
+
+    /// Total retained-part count across both categories.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.parts.len() + self.unknown.len()
     }
 }
 
@@ -584,10 +595,11 @@ impl<'a> OdtPackage<'a> {
                 .entry(normalized_part_path(&media.part_name))
                 .or_insert_with(|| media.media_type.clone());
         }
+        let media_names: std::collections::BTreeSet<String> = wanted.keys().cloned().collect();
         let mut retained = OdfRetainedParts::default();
         let mut total = 0_usize;
         for (name, media_type) in wanted {
-            if retained.parts.len() >= limits.max_retained_parts {
+            if retained.len() >= limits.max_retained_parts {
                 break;
             }
             // Never retain a reserved/regenerated part or active-content path;
@@ -619,6 +631,44 @@ impl<'a> OdtPackage<'a> {
             total = next_total;
             retained
                 .parts
+                .insert(name, RetainedPart { media_type, bytes });
+        }
+
+        // Carry safe *unknown* non-semantic parts (thumbnails, settings,
+        // configurations, unreferenced pictures) verbatim, sharing the same
+        // count/byte budget. Reserved/regenerated and active-content parts and
+        // media-referenced parts are excluded.
+        let entries: Vec<(String, String)> = self
+            .manifest_entries
+            .iter()
+            .map(|entry| (entry.full_path.clone(), entry.media_type.clone()))
+            .collect();
+        for (full_path, media_type) in entries {
+            if retained.len() >= limits.max_retained_parts {
+                break;
+            }
+            let name = normalized_part_path(&full_path);
+            if is_unsafe_retained_name(&name)
+                || media_names.contains(&name)
+                || retained.unknown.contains_key(&name)
+            {
+                continue;
+            }
+            let Ok(bytes) = self.read_part(&full_path) else {
+                continue;
+            };
+            if bytes.len() > limits.max_retained_part_bytes {
+                continue;
+            }
+            let Some(next_total) = total.checked_add(bytes.len()) else {
+                break;
+            };
+            if next_total > limits.max_retained_total_bytes {
+                break;
+            }
+            total = next_total;
+            retained
+                .unknown
                 .insert(name, RetainedPart { media_type, bytes });
         }
         Ok(retained)
