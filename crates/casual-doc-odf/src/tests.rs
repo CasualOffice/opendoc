@@ -170,6 +170,269 @@ fn named_styles_part_and_parent_chain_apply_to_content() {
     ));
 }
 
+const STYLES_PREFIX: &str = r#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm" fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm" style:print-orientation="portrait"/></style:page-layout></office:automatic-styles>"#;
+
+/// Wraps a `<office:master-styles>` body in a full styles.xml document with a
+/// bound page-layout so the importer creates a section for the header/footer.
+fn styles_with_master(master_body: &str) -> Vec<u8> {
+    format!("{STYLES_PREFIX}{master_body}</office:document-styles>").into_bytes()
+}
+
+/// Builds an ODT package from the shared content plus a styles.xml part.
+fn package_with_styles(styles: Vec<u8>) -> Vec<u8> {
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: CONTENT.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: STYLES_PART,
+            bytes: styles,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ])
+}
+
+#[test]
+fn master_page_header_and_footer_are_imported_deterministically() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>Header text</text:p></style:header><style:footer><text:p>Footer<text:tab/>Right</text:p></style:footer></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+
+    imported.document.validate().unwrap();
+    // The page-layout in styles.xml produces its own pre-existing style-catalog
+    // findings; plain header/footer content must add none of its own.
+    assert!(
+        !imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature.starts_with("odf.master-page")),
+        "plain header/footer content should not degrade: {:?}",
+        imported.report.entries
+    );
+
+    let section = &imported.document.definitions().sections[0];
+    assert_eq!(section.headers.len(), 1);
+    assert_eq!(section.footers.len(), 1);
+    let header_ref = section.headers[0];
+    let footer_ref = section.footers[0];
+    assert_eq!(
+        header_ref.kind,
+        casual_doc_model::v1::HeaderFooterKind::Default
+    );
+    assert_eq!(
+        footer_ref.kind,
+        casual_doc_model::v1::HeaderFooterKind::Default
+    );
+
+    let header = imported
+        .document
+        .definitions()
+        .headers
+        .get(&header_ref.reference)
+        .expect("header definition");
+    let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+        panic!("header paragraph")
+    };
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("header run")
+    };
+    assert_eq!(run.text, "Header text");
+
+    let footer = imported
+        .document
+        .definitions()
+        .footers
+        .get(&footer_ref.reference)
+        .expect("footer definition");
+    let BlockNode::Paragraph(paragraph) = &footer.blocks[0] else {
+        panic!("footer paragraph")
+    };
+    assert!(matches!(paragraph.inlines[1], InlineNode::Tab(_)));
+
+    // Import is deterministic for identical bytes.
+    let again = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    assert_eq!(imported, again);
+}
+
+#[test]
+fn even_page_header_maps_to_even_kind() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>Odd</text:p></style:header><style:header-left><text:p>Even</text:p></style:header-left></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+
+    let section = &imported.document.definitions().sections[0];
+    assert_eq!(section.headers.len(), 2);
+    let kinds: Vec<_> = section
+        .headers
+        .iter()
+        .map(|reference| reference.kind)
+        .collect();
+    assert!(kinds.contains(&casual_doc_model::v1::HeaderFooterKind::Default));
+    assert!(kinds.contains(&casual_doc_model::v1::HeaderFooterKind::Even));
+    assert_ne!(section.headers[0].reference, section.headers[1].reference);
+    assert!(
+        imported
+            .document
+            .definitions()
+            .settings
+            .even_and_odd_headers
+    );
+}
+
+#[test]
+fn unsupported_header_content_is_reported_not_dropped_silently() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p><text:span text:style-name="Bold">Title</text:span></text:p></style:header><style:header-first><text:p>First</text:p></style:header-first></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+
+    // The span text survives, but its formatting and the first-page region are
+    // explicit findings.
+    let header = &imported.document.definitions().sections[0].headers[0];
+    let header = imported
+        .document
+        .definitions()
+        .headers
+        .get(&header.reference)
+        .unwrap();
+    let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("run")
+    };
+    assert_eq!(run.text, "Title");
+    assert!(run.properties.bold.is_none());
+
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.master-page.run-formatting")
+    );
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.master-page.first-page-region")
+    );
+}
+
+#[test]
+fn oversized_header_content_fails_closed() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>a</text:p><text:p>b</text:p></style:header></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let error = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits {
+            max_paragraphs: 1,
+            ..OdfImportLimits::default()
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        OdfError::LimitExceeded {
+            limit: "odf_content_paragraphs",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn master_page_round_trips_as_a_byte_and_semantic_fixed_point() {
+    let styles = styles_with_master(
+        r#"<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>Header</text:p></style:header><style:header-left><text:p>Even</text:p></style:header-left><style:footer><text:p>Page<text:tab/>1</text:p></style:footer></style:master-page></office:master-styles>"#,
+    );
+    let bytes = package_with_styles(styles);
+    let document = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap()
+        .document;
+
+    let first = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    // Deterministic output for identical input.
+    let second = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+    // Header/footer content flows to styles.xml, not content.xml.
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(
+        styles_out
+            .contains(r#"<style:master-page style:name="Standard" style:page-layout-name="pm1">"#)
+    );
+    assert!(styles_out.contains("<style:header><text:p>Header</text:p></style:header>"));
+    assert!(styles_out.contains("<style:header-left><text:p>Even</text:p></style:header-left>"));
+    assert!(styles_out.contains("<style:footer><text:p>Page<text:tab/>1</text:p></style:footer>"));
+    let content_out = String::from_utf8(package.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!content_out.contains("Header"));
+
+    // Semantic round trip: reopening the written bytes reproduces the model.
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, document);
+    // Byte fixed point: re-exporting the reopened model is identical.
+    let reexported =
+        crate::write_odt(&reopened.document, crate::OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, first.bytes);
+}
+
+#[test]
+fn geometry_only_styles_have_no_master_page() {
+    let bytes = package_with_styles(styles_with_master(""));
+    let document = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap()
+        .document;
+    let export = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(!styles_out.contains("master-page"));
+    assert!(!styles_out.contains("xmlns:text"));
+}
+
 #[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");

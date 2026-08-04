@@ -2,9 +2,13 @@
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering, PaperSource,
-    SectionBoundary, SectionColumns, SectionId,
+    BlockNode, Break, BreakKind, DocGrid, HeaderFooter, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, InlineNode, LineNumbering, NoteProperties, PageBorders, PageNumbering,
+    PaperSource, Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary,
+    SectionColumns, SectionId, Tab,
 };
+
+use crate::master_page::{HeaderFooterInline, HeaderFooterRegion, MasterPageContent};
 use casual_doc_package::{
     BoundedPackage, CancellationToken, PackageEntry, PackageLimits, PartCompression,
 };
@@ -336,12 +340,61 @@ impl<'a> OdtPackage<'a> {
                 seed = seed.wrapping_mul(33).wrapping_add(byte as u64);
             }
             let mut ids = IdGenerator::new(seed);
+            // Mint the section id first so its byte-stable value is unaffected by
+            // any header/footer content sharing this generator.
             let section_id = SectionId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
-            imported
-                .document
-                .definitions_mut()
-                .sections
-                .push(SectionBoundary {
+
+            // Lift the first master-page's header/footer content (bounded).
+            let master = match styles.as_deref() {
+                Some(bytes) => crate::master_page::parse_master_page(bytes, limits)?,
+                None => MasterPageContent::default(),
+            };
+            let mut header_defs: Vec<(HeaderFooterId, HeaderFooter)> = Vec::new();
+            let mut footer_defs: Vec<(HeaderFooterId, HeaderFooter)> = Vec::new();
+            let mut header_refs: Vec<HeaderFooterRef> = Vec::new();
+            let mut footer_refs: Vec<HeaderFooterRef> = Vec::new();
+            let mut even_present = false;
+            // Deterministic region order: default header, even header, then the
+            // matching footers. Every node id is drawn from `ids` so header/footer
+            // block content stays globally unique against the body.
+            let regions = [
+                (master.default_header, HeaderFooterKind::Default, true),
+                (master.even_header, HeaderFooterKind::Even, true),
+                (master.default_footer, HeaderFooterKind::Default, false),
+                (master.even_footer, HeaderFooterKind::Even, false),
+            ];
+            for (region, kind, is_header) in regions {
+                let Some(region) = region else {
+                    continue;
+                };
+                if matches!(kind, HeaderFooterKind::Even) {
+                    even_present = true;
+                }
+                let reference =
+                    HeaderFooterId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+                let blocks = build_header_footer_blocks(&region, &mut ids)?;
+                if is_header {
+                    header_defs.push((reference, HeaderFooter { blocks }));
+                    header_refs.push(HeaderFooterRef { kind, reference });
+                } else {
+                    footer_defs.push((reference, HeaderFooter { blocks }));
+                    footer_refs.push(HeaderFooterRef { kind, reference });
+                }
+            }
+            let added_header_footer = !header_defs.is_empty() || !footer_defs.is_empty();
+
+            {
+                let definitions = imported.document.definitions_mut();
+                for (id, header_footer) in header_defs {
+                    definitions.headers.insert(id, header_footer);
+                }
+                for (id, header_footer) in footer_defs {
+                    definitions.footers.insert(id, header_footer);
+                }
+                if even_present {
+                    definitions.settings.even_and_odd_headers = true;
+                }
+                definitions.sections.push(SectionBoundary {
                     id: section_id,
                     page_size: geometry.size,
                     page_margins: geometry.margins,
@@ -352,8 +405,8 @@ impl<'a> OdtPackage<'a> {
                         equal_width: None,
                         columns: Vec::new(),
                     },
-                    headers: Vec::new(),
-                    footers: Vec::new(),
+                    headers: header_refs,
+                    footers: footer_refs,
                     section_type: None,
                     title_page: None,
                     vertical_alignment: None,
@@ -368,9 +421,75 @@ impl<'a> OdtPackage<'a> {
                     text_direction: geometry.text_direction,
                     bidi: false,
                 });
+            }
+
+            if !master.findings.is_empty() {
+                imported
+                    .report
+                    .entries
+                    .extend(master.findings.into_iter().map(
+                        |(feature, model_outcome, retention_outcome)| crate::CompatibilityEntry {
+                            feature,
+                            occurrences: 1,
+                            model_outcome,
+                            retention_outcome,
+                        },
+                    ));
+                imported.report.entries.sort_by(|a, b| {
+                    a.feature
+                        .cmp(&b.feature)
+                        .then(a.model_outcome.cmp(&b.model_outcome))
+                        .then(a.retention_outcome.cmp(&b.retention_outcome))
+                });
+            }
+
+            // Header/footer block content is arbitrary text, so re-validate the
+            // document to keep import atomic if any model invariant is violated.
+            if added_header_footer {
+                imported
+                    .document
+                    .validate()
+                    .map_err(|_| OdfError::InvalidModel)?;
+            }
         }
         Ok(imported)
     }
+}
+
+/// Builds bounded header/footer paragraphs into schema-v1 blocks, drawing every
+/// node id from the shared section id generator so header/footer content stays
+/// globally unique against body content. Text fragments are already maximal, so
+/// no two adjacent runs are equivalent.
+fn build_header_footer_blocks(
+    region: &HeaderFooterRegion,
+    ids: &mut IdGenerator,
+) -> Result<Vec<BlockNode>, OdfError> {
+    let mut blocks = Vec::with_capacity(region.paragraphs.len());
+    for paragraph in &region.paragraphs {
+        let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+        let mut inlines = Vec::with_capacity(paragraph.inlines.len());
+        for inline in &paragraph.inlines {
+            let inline_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+            inlines.push(match inline {
+                HeaderFooterInline::Text(text) => InlineNode::Run(Run {
+                    id: inline_id,
+                    properties: RunProperties::default(),
+                    text: text.clone(),
+                }),
+                HeaderFooterInline::Tab => InlineNode::Tab(Tab { id: inline_id }),
+                HeaderFooterInline::LineBreak => InlineNode::Break(Break {
+                    id: inline_id,
+                    kind: BreakKind::Line,
+                }),
+            });
+        }
+        blocks.push(BlockNode::Paragraph(Paragraph {
+            id,
+            properties: ParagraphProperties::default(),
+            inlines,
+        }));
+    }
+    Ok(blocks)
 }
 
 fn validate_manifest(package: &BoundedPackage<'_>, manifest: &Manifest) -> Result<(), OdfError> {

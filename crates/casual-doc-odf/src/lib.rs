@@ -7,6 +7,7 @@ mod content;
 mod error;
 mod export;
 mod manifest;
+mod master_page;
 mod metadata;
 mod package;
 mod page_style;

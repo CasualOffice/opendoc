@@ -111,6 +111,16 @@ When schema-v1 sections are present, the writer emits a deterministic
 `styles.xml` page-layout definition and manifest entry for page geometry.
 Section column count, gap, and separator settings are emitted when present.
 Supported section writing modes are emitted as `style:writing-mode`.
+When the first section carries header/footer references, the writer emits a
+`style:master-page` (bound to the page-layout) with the bounded plain-text
+subset: `HeaderFooterKind::Default` maps to `style:header`/`style:footer` and
+`Even` to `style:header-left`/`style:footer-left`. The `text` namespace and the
+`office:master-styles` block are only added when a header/footer is present, so
+geometry-only output stays byte-identical. Header/footer content reuses the body
+block/paragraph/text writer so escaping, `text:s` spacing, and DoS counters are
+shared; run/paragraph formatting, first-page (`First`) references, non-paragraph
+blocks, and duplicate references are explicit loss findings. Supported
+header/footer content is a semantic and byte fixed point.
 
 ## 6. Acceptance gates
 

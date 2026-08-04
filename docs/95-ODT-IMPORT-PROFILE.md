@@ -67,9 +67,19 @@ The work lands as reviewable commits:
   and restored deterministically. Duplicate source IDs, nested notes, malformed
   containers, and over-limit note counts fail atomically. Authored citation text
   is reported as degraded because schema v1 does not model that display label.
+- Master-page header/footer content is mapped as a bounded plain-text subset:
+  `style:header`/`style:footer` become `HeaderFooterKind::Default` definitions and
+  section references, `style:header-left`/`style:footer-left` become
+  `HeaderFooterKind::Even` (and set `even_and_odd_headers`). Paragraphs of plain
+  runs, `text:s`, `text:tab`, and `text:line-break` are mapped; run/paragraph
+  formatting, headings, lists, tables, links, notes, first-page regions, and
+  additional master-pages are explicit findings rather than silent loss. All
+  header/footer node ids are minted from the same page-geometry generator that
+  mints the section id, so identity stays deterministic and globally unique; the
+  document is re-validated so any invariant violation fails the import atomically.
 - Style defaults and broader properties, advanced list counters/label layout,
-  table formatting, media, metadata,
-  and the remaining structures in sections 4 and 6 remain in progress. Generic
+  table formatting, media, metadata, header/footer formatting and fields, and the
+  remaining structures in sections 4 and 6 remain in progress. Generic
   WASM open/export methods and capability-driven browser Open/Save controls are
   implemented, while the native SDK and production ODT gates remain incomplete;
   this is still not a general support claim.
@@ -148,6 +158,10 @@ Equal-width column count, gap, and separator flags are mapped from the same
 page-layout element.
 Writing modes `lr-tb`, `tb-rl`, and `bt-lr` map to the section text-direction
 model.
+The first master-page's `style:header`/`style:footer` (and `-left` even-page)
+regions are lifted into that same section as `HeaderFooter` definitions and
+references, using node ids drawn from the section id generator so header/footer
+identity is deterministic and disjoint from body content.
 
 - Namespace seeds are derived from admitted semantic source facts, not ZIP entry
   order or host filenames.

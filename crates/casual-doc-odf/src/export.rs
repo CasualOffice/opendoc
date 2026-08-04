@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, InlineNode,
-    LevelJustification, LevelSuffix, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table,
-    TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, HeaderFooterKind,
+    InlineNode, LevelJustification, LevelSuffix, Note, NoteId, NoteKind, NoteReference,
+    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties,
+    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -816,6 +816,123 @@ impl Writer {
         })
     }
 
+    /// Resolves the first section's header/footer references into deterministic
+    /// styles.xml fragments. Content is limited to the bounded plain-text subset
+    /// (paragraphs, plain runs, tabs, and line breaks); anything richer is a loss
+    /// finding so no header/footer detail disappears silently.
+    fn render_master_page(&mut self, document: &Document) -> Result<MasterPageXml, OdfError> {
+        let mut parts = MasterPageXml::default();
+        let Some(section) = document.definitions().sections.first() else {
+            return Ok(parts);
+        };
+        for reference in &section.headers {
+            match reference.kind {
+                HeaderFooterKind::Default | HeaderFooterKind::Even => {
+                    let Some(header_footer) =
+                        document.definitions().headers.get(&reference.reference)
+                    else {
+                        continue;
+                    };
+                    let fragment = self.render_header_footer(&header_footer.blocks)?;
+                    let slot = if matches!(reference.kind, HeaderFooterKind::Even) {
+                        &mut parts.even_header
+                    } else {
+                        &mut parts.default_header
+                    };
+                    store_master_slot(slot, fragment, &mut self.reporter);
+                }
+                HeaderFooterKind::First => self.reporter.record(
+                    "odt.export.header_footer.first_page",
+                    ModelOutcome::Degraded,
+                ),
+            }
+        }
+        for reference in &section.footers {
+            match reference.kind {
+                HeaderFooterKind::Default | HeaderFooterKind::Even => {
+                    let Some(header_footer) =
+                        document.definitions().footers.get(&reference.reference)
+                    else {
+                        continue;
+                    };
+                    let fragment = self.render_header_footer(&header_footer.blocks)?;
+                    let slot = if matches!(reference.kind, HeaderFooterKind::Even) {
+                        &mut parts.even_footer
+                    } else {
+                        &mut parts.default_footer
+                    };
+                    store_master_slot(slot, fragment, &mut self.reporter);
+                }
+                HeaderFooterKind::First => self.reporter.record(
+                    "odt.export.header_footer.first_page",
+                    ModelOutcome::Degraded,
+                ),
+            }
+        }
+        Ok(parts)
+    }
+
+    /// Serializes one header/footer's blocks into a self-contained XML fragment by
+    /// swapping the content buffer, so the reusable counters and loss reporting
+    /// still aggregate while the emitted bytes are captured separately.
+    fn render_header_footer(&mut self, blocks: &[BlockNode]) -> Result<String, OdfError> {
+        let outer = std::mem::take(&mut self.xml);
+        let result = self.render_header_footer_blocks(blocks);
+        let fragment = std::mem::replace(&mut self.xml, outer);
+        result.map(|()| fragment)
+    }
+
+    fn render_header_footer_blocks(&mut self, blocks: &[BlockNode]) -> Result<(), OdfError> {
+        for block in blocks {
+            self.visit_block()?;
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    self.render_header_footer_paragraph(paragraph)?
+                }
+                _ => self
+                    .reporter
+                    .record("odt.export.header_footer.block", ModelOutcome::Omitted),
+            }
+        }
+        Ok(())
+    }
+
+    fn render_header_footer_paragraph(&mut self, paragraph: &Paragraph) -> Result<(), OdfError> {
+        if paragraph.properties != ParagraphProperties::default() {
+            self.reporter.record(
+                "odt.export.header_footer.paragraph_properties",
+                ModelOutcome::Omitted,
+            );
+        }
+        self.push("<text:p>")?;
+        for inline in &paragraph.inlines {
+            self.visit_inline()?;
+            match inline {
+                InlineNode::Run(run) => {
+                    if run.properties != RunProperties::default() {
+                        self.reporter.record(
+                            "odt.export.header_footer.run_properties",
+                            ModelOutcome::Omitted,
+                        );
+                    }
+                    self.write_text(&run.text)?;
+                }
+                InlineNode::Tab(_) => self.push("<text:tab/>")?,
+                InlineNode::Break(node) => {
+                    if node.kind != BreakKind::Line {
+                        self.reporter
+                            .record("odt.export.header_footer.break", ModelOutcome::Degraded);
+                    }
+                    self.push("<text:line-break/>")?;
+                }
+                _ => self
+                    .reporter
+                    .record("odt.export.header_footer.inline", ModelOutcome::Omitted),
+            }
+        }
+        self.push("</text:p>")
+    }
+
     fn write_inlines(&mut self, inlines: &[InlineNode], depth: usize) -> Result<(), OdfError> {
         self.check_depth(depth)?;
         for inline in inlines {
@@ -1467,6 +1584,9 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         writer.push("<text:p/>")?;
     }
     writer.push(CONTENT_SUFFIX)?;
+    // Render master-page header/footer fragments before finishing the reporter so
+    // their loss findings are captured; the content buffer is restored intact.
+    let master_page = writer.render_master_page(document)?;
     let styles = automatic_styles_xml(
         &writer.paragraph_styles,
         &writer.run_styles,
@@ -1498,7 +1618,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let page_styles = page_styles_xml(document);
+    let page_styles = page_styles_xml(document, &master_page);
     let bytes = package(
         &content,
         page_styles.as_deref(),
@@ -1562,7 +1682,35 @@ fn package(
     Ok(bytes)
 }
 
-fn page_styles_xml(document: &Document) -> Option<Vec<u8>> {
+/// Deterministic styles.xml header/footer fragments keyed by page type.
+#[derive(Default)]
+struct MasterPageXml {
+    default_header: Option<String>,
+    even_header: Option<String>,
+    default_footer: Option<String>,
+    even_footer: Option<String>,
+}
+
+impl MasterPageXml {
+    fn is_empty(&self) -> bool {
+        self.default_header.is_none()
+            && self.even_header.is_none()
+            && self.default_footer.is_none()
+            && self.even_footer.is_none()
+    }
+}
+
+/// Stores a rendered fragment in its slot, reporting (and dropping) a duplicate
+/// reference to the same page type rather than emitting two regions.
+fn store_master_slot(slot: &mut Option<String>, fragment: String, reporter: &mut Reporter) {
+    if slot.is_some() {
+        reporter.record("odt.export.header_footer.duplicate", ModelOutcome::Omitted);
+        return;
+    }
+    *slot = Some(fragment);
+}
+
+fn page_styles_xml(document: &Document, master: &MasterPageXml) -> Option<Vec<u8>> {
     let section = document.definitions().sections.first()?;
     let cm = |twips: i32| format!("{:.4}cm", f64::from(twips) * 2.54 / 1440.0);
     let orientation = matches!(
@@ -1599,7 +1747,48 @@ fn page_styles_xml(document: &Document) -> Option<Vec<u8>> {
             )
         })
         .unwrap_or_default();
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\" office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles></office:document-styles>", cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator, writing_mode).into_bytes())
+    // The text namespace and master-styles are only emitted when a header/footer
+    // is present, so geometry-only output stays byte-identical to prior releases.
+    let text_ns = if master.is_empty() {
+        " "
+    } else {
+        " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+    };
+    let master_styles = master_styles_xml(master);
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{}office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles>{}</office:document-styles>", text_ns, cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator, writing_mode, master_styles).into_bytes())
+}
+
+/// Builds the `<office:master-styles>` block binding the page-layout to the
+/// header/footer regions. ODF orders header regions before footer regions.
+fn master_styles_xml(master: &MasterPageXml) -> String {
+    if master.is_empty() {
+        return String::new();
+    }
+    let mut xml = String::from(
+        "<office:master-styles><style:master-page style:name=\"Standard\" style:page-layout-name=\"pm1\">",
+    );
+    if let Some(fragment) = &master.default_header {
+        xml.push_str("<style:header>");
+        xml.push_str(fragment);
+        xml.push_str("</style:header>");
+    }
+    if let Some(fragment) = &master.even_header {
+        xml.push_str("<style:header-left>");
+        xml.push_str(fragment);
+        xml.push_str("</style:header-left>");
+    }
+    if let Some(fragment) = &master.default_footer {
+        xml.push_str("<style:footer>");
+        xml.push_str(fragment);
+        xml.push_str("</style:footer>");
+    }
+    if let Some(fragment) = &master.even_footer {
+        xml.push_str("<style:footer-left>");
+        xml.push_str(fragment);
+        xml.push_str("</style:footer-left>");
+    }
+    xml.push_str("</style:master-page></office:master-styles>");
+    xml
 }
 
 fn metadata_xml(
