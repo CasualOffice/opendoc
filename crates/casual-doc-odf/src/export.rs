@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, Definitions, Document, GroupChild, HeaderFooterKind,
-    InlineNode, LevelJustification, LevelSuffix, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RunProperties,
-    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, Definitions, Document, DocumentDefaults, GroupChild,
+    HeaderFooterKind, InlineNode, LevelJustification, LevelSuffix, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind,
+    RunProperties, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
+    VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1372,67 +1373,7 @@ fn automatic_styles_xml(
             "\" style:family=\"text\"><style:text-properties",
             max_content_bytes,
         )?;
-        if let Some(bold) = style.bold {
-            push_bounded(
-                &mut xml,
-                if bold {
-                    " fo:font-weight=\"bold\""
-                } else {
-                    " fo:font-weight=\"normal\""
-                },
-                max_content_bytes,
-            )?;
-        }
-        if let Some(italic) = style.italic {
-            push_bounded(
-                &mut xml,
-                if italic {
-                    " fo:font-style=\"italic\""
-                } else {
-                    " fo:font-style=\"normal\""
-                },
-                max_content_bytes,
-            )?;
-        }
-        if let Some(underline) = style.underline {
-            push_bounded(
-                &mut xml,
-                if underline {
-                    " style:text-underline-style=\"solid\""
-                } else {
-                    " style:text-underline-style=\"none\""
-                },
-                max_content_bytes,
-            )?;
-        }
-        if let Some(strike) = style.strike {
-            push_bounded(
-                &mut xml,
-                if strike {
-                    " style:text-line-through-style=\"solid\""
-                } else {
-                    " style:text-line-through-style=\"none\""
-                },
-                max_content_bytes,
-            )?;
-        }
-        if let Some((red, green, blue)) = style.color {
-            push_bounded(&mut xml, " fo:color=\"#", max_content_bytes)?;
-            push_bounded(
-                &mut xml,
-                &format!("{red:02x}{green:02x}{blue:02x}"),
-                max_content_bytes,
-            )?;
-            push_bounded(&mut xml, "\"", max_content_bytes)?;
-        }
-        if let Some(size) = style.size_half_points {
-            push_bounded(&mut xml, " fo:font-size=\"", max_content_bytes)?;
-            push_bounded(&mut xml, &(size / 2).to_string(), max_content_bytes)?;
-            if size % 2 != 0 {
-                push_bounded(&mut xml, ".5", max_content_bytes)?;
-            }
-            push_bounded(&mut xml, "pt\"", max_content_bytes)?;
-        }
+        push_run_text_properties(&mut xml, style, max_content_bytes)?;
         push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     let mut unique_list_styles = BTreeMap::<&str, &OdtListStyle>::new();
@@ -1503,6 +1444,129 @@ fn automatic_styles_xml(
     Ok(xml)
 }
 
+/// Serializes the supported `<style:text-properties>` attribute subset for a run
+/// style; the caller emits the enclosing element and its closing tag.
+fn push_run_text_properties(
+    xml: &mut String,
+    style: &OdtRunStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some(bold) = style.bold {
+        push_bounded(
+            xml,
+            if bold {
+                " fo:font-weight=\"bold\""
+            } else {
+                " fo:font-weight=\"normal\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some(italic) = style.italic {
+        push_bounded(
+            xml,
+            if italic {
+                " fo:font-style=\"italic\""
+            } else {
+                " fo:font-style=\"normal\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some(underline) = style.underline {
+        push_bounded(
+            xml,
+            if underline {
+                " style:text-underline-style=\"solid\""
+            } else {
+                " style:text-underline-style=\"none\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some(strike) = style.strike {
+        push_bounded(
+            xml,
+            if strike {
+                " style:text-line-through-style=\"solid\""
+            } else {
+                " style:text-line-through-style=\"none\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some((red, green, blue)) = style.color {
+        push_bounded(xml, " fo:color=\"#", max_content_bytes)?;
+        push_bounded(
+            xml,
+            &format!("{red:02x}{green:02x}{blue:02x}"),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(size) = style.size_half_points {
+        push_bounded(xml, " fo:font-size=\"", max_content_bytes)?;
+        push_bounded(xml, &(size / 2).to_string(), max_content_bytes)?;
+        if size % 2 != 0 {
+            push_bounded(xml, ".5", max_content_bytes)?;
+        }
+        push_bounded(xml, "pt\"", max_content_bytes)?;
+    }
+    Ok(())
+}
+
+/// Serializes the `<office:styles>` document defaults for the supported subset
+/// (paragraph alignment and the direct run subset). Returns an empty string when
+/// nothing supported is present; unsupported default detail is reported.
+fn default_styles_xml(
+    defaults: Option<&DocumentDefaults>,
+    reporter: &mut Reporter,
+    max_content_bytes: usize,
+) -> Result<String, OdfError> {
+    let Some(defaults) = defaults else {
+        return Ok(String::new());
+    };
+    let mut body = String::new();
+    if let Some(paragraph) = &defaults.paragraph {
+        let mut remainder = paragraph.clone();
+        let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
+        if remainder != ParagraphProperties::default() {
+            reporter.record(
+                "odt.export.document_defaults.paragraph",
+                ModelOutcome::Omitted,
+            );
+        }
+        if let Some(alignment) = alignment {
+            push_bounded(
+                &mut body,
+                "<style:default-style style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"",
+                max_content_bytes,
+            )?;
+            push_bounded(&mut body, alignment.value(), max_content_bytes)?;
+            push_bounded(&mut body, "\"/></style:default-style>", max_content_bytes)?;
+        }
+    }
+    if let Some(run) = &defaults.run {
+        let (style, remainder) = split_run_properties(run);
+        if remainder != RunProperties::default() {
+            reporter.record("odt.export.document_defaults.run", ModelOutcome::Omitted);
+        }
+        if !style.is_empty() {
+            push_bounded(
+                &mut body,
+                "<style:default-style style:family=\"text\"><style:text-properties",
+                max_content_bytes,
+            )?;
+            push_run_text_properties(&mut body, &style, max_content_bytes)?;
+            push_bounded(&mut body, "/></style:default-style>", max_content_bytes)?;
+        }
+    }
+    if body.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("<office:styles>{body}</office:styles>"))
+}
+
 fn push_escaped_attribute(
     output: &mut String,
     value: &str,
@@ -1541,6 +1605,8 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
     definition_remainder.numbering = Default::default();
     definition_remainder.footnotes = Default::default();
     definition_remainder.endnotes = Default::default();
+    // Document defaults are emitted into styles.xml, so they are not a loss.
+    definition_remainder.document_defaults = Default::default();
     if definition_remainder != Definitions::default() {
         writer
             .reporter
@@ -1582,21 +1648,20 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         }
     }
     writer.write_blocks(document.body(), 0)?;
-    if document.definitions().document_defaults.is_some() {
-        // Import maps style:default-style into document defaults; emitting them
-        // back is a later checkpoint, so disclose rather than silently drop.
-        writer
-            .reporter
-            .record("odt.export.document_defaults", ModelOutcome::Omitted);
-    }
     writer.report_unreferenced_notes();
     if writer.paragraphs_written == 0 {
         writer.push("<text:p/>")?;
     }
     writer.push(CONTENT_SUFFIX)?;
-    // Render master-page header/footer fragments before finishing the reporter so
-    // their loss findings are captured; the content buffer is restored intact.
+    // Render master-page header/footer fragments and document defaults before
+    // finishing the reporter so their loss findings are captured; the content
+    // buffer is restored intact.
     let master_page = writer.render_master_page(document)?;
+    let default_styles = default_styles_xml(
+        document.definitions().document_defaults.as_ref(),
+        &mut writer.reporter,
+        limits.max_content_bytes,
+    )?;
     let styles = automatic_styles_xml(
         &writer.paragraph_styles,
         &writer.run_styles,
@@ -1607,9 +1672,11 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .len()
         .checked_add(styles.len())
         .and_then(|value| value.checked_add(writer.xml.len()))
-        // Header/footer markup lives in styles.xml (built via a buffer swap), so
-        // fold its bytes in here or it would escape the content byte budget.
+        // Header/footer and default-style markup live in styles.xml (built via a
+        // buffer swap / separate string), so fold their bytes in here or they
+        // would escape the content byte budget.
         .and_then(|value| value.checked_add(master_page.total_len()))
+        .and_then(|value| value.checked_add(default_styles.len()))
         .ok_or(OdfError::LimitExceeded {
             limit: "odt_export_content_bytes",
             observed: usize::MAX,
@@ -1631,7 +1698,7 @@ pub fn write_odt(document: &Document, limits: OdfExportLimits) -> Result<OdtExpo
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let page_styles = page_styles_xml(document, &master_page);
+    let page_styles = page_styles_xml(document, &master_page, &default_styles);
     let bytes = package(
         &content,
         page_styles.as_deref(),
@@ -1744,8 +1811,32 @@ fn store_master_slot(slot: &mut Option<String>, fragment: String, reporter: &mut
     *slot = Some(fragment);
 }
 
-fn page_styles_xml(document: &Document, master: &MasterPageXml) -> Option<Vec<u8>> {
-    let section = document.definitions().sections.first()?;
+fn page_styles_xml(
+    document: &Document,
+    master: &MasterPageXml,
+    default_styles: &str,
+) -> Option<Vec<u8>> {
+    let section = document.definitions().sections.first();
+    // styles.xml exists when there is page geometry or document defaults. A
+    // master-page (headers/footers) only ever accompanies a section.
+    if section.is_none() && default_styles.is_empty() {
+        return None;
+    }
+    let automatic_styles = section.map(page_layout_xml).unwrap_or_default();
+    // The text namespace and master-styles are only emitted when a header/footer
+    // is present, so geometry-only output stays byte-identical to prior releases.
+    let text_ns = if master.is_empty() {
+        " "
+    } else {
+        " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+    };
+    let master_styles = master_styles_xml(master);
+    // ODF orders office:styles, then office:automatic-styles, then master-styles.
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{text_ns}office:version=\"1.4\">{default_styles}{automatic_styles}{master_styles}</office:document-styles>").into_bytes())
+}
+
+/// Builds the `<office:automatic-styles>` page-layout block for one section.
+fn page_layout_xml(section: &casual_doc_model::v1::SectionBoundary) -> String {
     let cm = |twips: i32| format!("{:.4}cm", f64::from(twips) * 2.54 / 1440.0);
     let orientation = matches!(
         section.orientation,
@@ -1781,15 +1872,20 @@ fn page_styles_xml(document: &Document, master: &MasterPageXml) -> Option<Vec<u8
             )
         })
         .unwrap_or_default();
-    // The text namespace and master-styles are only emitted when a header/footer
-    // is present, so geometry-only output stays byte-identical to prior releases.
-    let text_ns = if master.is_empty() {
-        " "
-    } else {
-        " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
-    };
-    let master_styles = master_styles_xml(master);
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{}office:version=\"1.4\"><office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles>{}</office:document-styles>", text_ns, cm(section.page_size.width_twips), cm(section.page_size.height_twips), cm(section.page_margins.top_twips), cm(section.page_margins.bottom_twips), cm(section.page_margins.start_twips), cm(section.page_margins.end_twips), orientation, section.columns.count, gap, separator, writing_mode, master_styles).into_bytes())
+    format!(
+        "<office:automatic-styles><style:page-layout style:name=\"pm1\"><style:page-layout-properties fo:page-width=\"{}\" fo:page-height=\"{}\" fo:margin-top=\"{}\" fo:margin-bottom=\"{}\" fo:margin-left=\"{}\" fo:margin-right=\"{}\" style:print-orientation=\"{}\" style:column-count=\"{}\"{}{}{} /></style:page-layout></office:automatic-styles>",
+        cm(section.page_size.width_twips),
+        cm(section.page_size.height_twips),
+        cm(section.page_margins.top_twips),
+        cm(section.page_margins.bottom_twips),
+        cm(section.page_margins.start_twips),
+        cm(section.page_margins.end_twips),
+        orientation,
+        section.columns.count,
+        gap,
+        separator,
+        writing_mode
+    )
 }
 
 /// Builds the `<office:master-styles>` block binding the page-layout to the

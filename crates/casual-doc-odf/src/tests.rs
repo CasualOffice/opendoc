@@ -525,15 +525,24 @@ fn document_default_styles_map_to_document_defaults() {
     );
     assert_eq!(defaults.run.as_ref().unwrap().bold, Some(true));
 
-    // Export does not yet re-emit defaults; the loss must be disclosed.
-    let export = crate::write_odt(&imported.document, crate::OdfExportLimits::default()).unwrap();
-    assert!(
-        export
-            .report
-            .entries
-            .iter()
-            .any(|entry| entry.feature == "odt.export.document_defaults")
-    );
+    // Export emits an office:styles default-style block and round-trips.
+    let document = imported.document;
+    let first = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    let second = crate::write_odt(&document, crate::OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(package.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(
+        "<office:styles><style:default-style style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"center\"/></style:default-style>"
+    ));
+    assert!(styles_out.contains(
+        "<style:default-style style:family=\"text\"><style:text-properties fo:font-weight=\"bold\"/></style:default-style></office:styles>"
+    ));
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, document);
+    let reexported =
+        crate::write_odt(&reopened.document, crate::OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, first.bytes);
 }
 
 #[test]

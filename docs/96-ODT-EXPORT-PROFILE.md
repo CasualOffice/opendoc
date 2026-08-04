@@ -107,6 +107,13 @@ Numeric page/word statistics and typed custom properties are emitted as their
 corresponding ODT metadata elements.
 Total editing time is emitted as a canonical `PT#H#M` duration.
 
+When document defaults are present, the writer emits a deterministic
+`styles.xml` `office:styles` block with `style:default-style` entries for the
+paragraph and text families (alignment and the supported direct run subset),
+reusing the automatic-style property serializer. Defaults are emitted even when
+no section exists, and unsupported default detail is reported. Supported defaults
+form a semantic and byte fixed point.
+
 When schema-v1 sections are present, the writer emits a deterministic
 `styles.xml` page-layout definition and manifest entry for page geometry.
 Section column count, gap, and separator settings are emitted when present.

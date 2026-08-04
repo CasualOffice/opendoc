@@ -82,8 +82,9 @@ The work lands as reviewable commits:
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point
   size) into `DocumentDefaults`, the cascade base the shared model already
   honors, so unstyled runs inherit them without baking properties into each run.
-  Unsupported default properties remain findings, and export currently discloses
-  the defaults as a loss pending its own writer checkpoint.
+  Unsupported default properties remain findings. The matching doc 96 writer
+  emits an `office:styles` default-style block, forming a semantic and byte fixed
+  point for this subset.
 - Broader style properties, advanced list counters/label layout,
   table formatting, media, metadata, header/footer formatting and fields, and the
   remaining structures in sections 4 and 6 remain in progress. Generic
