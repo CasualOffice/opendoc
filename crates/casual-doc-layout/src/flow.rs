@@ -506,7 +506,7 @@ pub fn build_galley_cached(
                     constraints,
                 };
                 let box_metrics = box_metrics(&props);
-                let break_control = break_control(&props);
+                let break_control = paragraph_break_control(&props, &paragraph.inlines);
                 let decor = paragraph_decor(&props, content_width);
                 // A paragraph carrying an inline text box is never cached: the box's
                 // flowed fragments are not folded into the paragraph hash, so a
@@ -1077,7 +1077,7 @@ fn flow_paragraph(
         id: paragraph.id,
         lines,
         box_metrics: box_metrics(&props),
-        break_control: break_control(&props),
+        break_control: paragraph_break_control(&props, &paragraph.inlines),
         decor: paragraph_decor(&props, width),
     }
 }
@@ -5764,6 +5764,57 @@ fn break_control(properties: &ParagraphProperties) -> BreakControl {
         // OOXML default is ON: an unset `w:widowControl` still protects widows.
         widow_control: properties.widow_control.unwrap_or(true),
     }
+}
+
+/// A paragraph's [`BreakControl`], plus the interim keep-with-next heuristic for
+/// issue #359: a paragraph that carries a floating drawing anchored to the
+/// paragraph/line is kept with its following paragraph, so a page break cannot
+/// strand the anchored graphic at a page bottom while its continuation flows onto
+/// the next page.
+///
+/// Word's `keepNext` only *acts* when the group overflows the remaining space, so
+/// this never moves a group that already fits — it only prevents an incorrect
+/// split. The real cure for the underlying vertical drift is line-height
+/// fidelity against the document's fonts (see the PR); this keeps the common
+/// author-styled title/logo blocks together meanwhile.
+fn paragraph_break_control(
+    properties: &ParagraphProperties,
+    inlines: &[InlineNode],
+) -> BreakControl {
+    let mut break_control = break_control(properties);
+    if !break_control.keep_next && carries_flow_relative_float(inlines) {
+        break_control.keep_next = true;
+    }
+    break_control
+}
+
+/// Whether `inlines` carry a floating **overlay** drawing anchored to the
+/// paragraph or line — a `wp:wrapNone` graphic (it floats over/under the text
+/// without reflowing it) positioned `relativeFrom="paragraph"|"line"`, so its
+/// position follows the paragraph's flow. This is the author-styled
+/// heading/logo decoration pattern (issue #359).
+///
+/// Deliberately narrow: a **wrapping** float (`wrapSquare`/`wrapTight`/…) is a
+/// layout element that text flows around, not an overlay pinned to a single
+/// paragraph, so it is excluded — forcing keep-with-next on it would wrongly
+/// perturb flow-around pagination. A page/margin-anchored float (fixed page
+/// position, independent of where the paragraph lands) is excluded too.
+///
+/// Such a paragraph is given implicit keep-with-next (see the call site) so a
+/// page break cannot strand the overlaid graphic from the content it decorates.
+fn carries_flow_relative_float(inlines: &[InlineNode]) -> bool {
+    let flow_relative_overlay = |anchor: &DrawingAnchor| {
+        matches!(anchor.wrap, WrapMode::None)
+            && matches!(
+                anchor.vertical.relative_from,
+                VerticalAnchor::Paragraph | VerticalAnchor::Line
+            )
+    };
+    inlines.iter().any(|inline| match inline {
+        InlineNode::AnchoredDrawing(drawing) => flow_relative_overlay(&drawing.anchor),
+        InlineNode::Group(group) => group.anchor.as_ref().is_some_and(flow_relative_overlay),
+        _ => false,
+    })
 }
 
 /// Maps paragraph spacing/indent to the fragment's box metrics. `before`/`after`

@@ -386,6 +386,78 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
     })
 }
 
+#[test]
+fn a_paragraph_relative_anchor_gets_implicit_keep_with_next() {
+    // Issue #359: a paragraph carrying a floating drawing anchored to the
+    // paragraph is given implicit keep-with-next, so a page break cannot strand
+    // the anchored graphic at a page bottom while its continuation flows onto the
+    // next page (the author's title-line-1 + logo, title-line-2 block). A
+    // page/margin-anchored float, which floats at a fixed page position
+    // regardless of where its paragraph lands, is left unaffected.
+    let (media_id, definitions) = media_defs();
+    let blocks = vec![
+        // Title line 1, carrying a paragraph-anchored logo.
+        BlockNode::Paragraph(Paragraph {
+            id: node(10),
+            properties: ParagraphProperties::default(),
+            inlines: vec![anchored_at_paragraph(11, media_id), run(12, "Title line 1")],
+        }),
+        // Title line 2 — the continuation that must stay with line 1.
+        BlockNode::Paragraph(Paragraph {
+            id: node(13),
+            properties: ParagraphProperties::default(),
+            inlines: vec![run(14, "Title line 2")],
+        }),
+        // A body paragraph with a vertically PAGE-anchored float (floats at a
+        // fixed page position regardless of where the paragraph lands).
+        BlockNode::Paragraph(Paragraph {
+            id: node(15),
+            properties: ParagraphProperties::default(),
+            inlines: vec![anchored(16, media_id, 0, 5_000, false), run(17, "Body")],
+        }),
+        // A body paragraph with a paragraph-anchored but WRAPPING (`wrapSquare`)
+        // float — a side image text flows around, not an overlay decoration.
+        BlockNode::Paragraph(Paragraph {
+            id: node(18),
+            properties: ParagraphProperties::default(),
+            inlines: vec![wrapping_at_paragraph(19, media_id), run(20, "Wrapped")],
+        }),
+    ];
+    let doc = Document::new(node(1), blocks, definitions).unwrap();
+    let shaper = ParleyShaper::new();
+    let galley = build_galley(&doc, &shaper, config().content_area().size.width);
+
+    let keep_next = |index: usize| {
+        let BlockFragment::Paragraph { break_control, .. } = &galley[index] else {
+            panic!("expected a paragraph fragment");
+        };
+        break_control.keep_next
+    };
+    assert!(
+        keep_next(0),
+        "a paragraph-anchored wrapNone overlay keeps with the next paragraph"
+    );
+    assert!(!keep_next(1), "a plain paragraph is unaffected");
+    assert!(
+        !keep_next(2),
+        "a page-anchored float floats independently and is not kept"
+    );
+    assert!(
+        !keep_next(3),
+        "a wrapping (wrapSquare) side float is a flow element and is not kept"
+    );
+}
+
+/// A paragraph-anchored but wrapping (`wrapSquare`) float — a side image text
+/// flows around, as opposed to a `wrapNone` overlay decoration.
+fn wrapping_at_paragraph(id: u64, media: MediaId) -> InlineNode {
+    let InlineNode::AnchoredDrawing(mut drawing) = anchored_at_paragraph(id, media) else {
+        unreachable!("anchored_at_paragraph builds an anchored drawing");
+    };
+    drawing.anchor.wrap = WrapMode::Square;
+    InlineNode::AnchoredDrawing(drawing)
+}
+
 fn one_cell_table(
     table_id: u64,
     row_id: u64,
