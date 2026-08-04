@@ -5,27 +5,29 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::v1::{
     Alignment, AltChunk, AltChunkProperties, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
     BlockNode, BlockSdt, Bookmark, BookmarkEnd, BookmarkId, BookmarkStart, BorderEdge, Break,
-    BreakKind, CellVerticalAlignment, CnfStyle, ColorScheme, ColumnDef, Comment, CommentId,
-    CommentRangeEnd, CommentRangeStart, CommentReference, CropRect, DefinitionMap, DocGrid,
-    DocGridType, Drawing, DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent,
-    ExternalTarget, Field, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData,
-    FormFieldKind, FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape,
-    GroupTextBox, GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
-    HorizontalRule, HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt,
-    InternalTarget, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
+    BreakKind, CellMergeAnnotation, CellMergeRevision, CellVerticalAlignment, CnfStyle,
+    ColorScheme, ColumnDef, Comment, CommentId, CommentRangeEnd, CommentRangeStart,
+    CommentReference, CropRect, DashStyle, DefinitionMap, DocGrid, DocGridType, Drawing,
+    DrawingAnchor, EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, ExternalTarget, Field,
+    FieldKind, FormCheckBox, FormCheckBoxSize, FormDropDown, FormFieldData, FormFieldKind,
+    FormTextInput, FormTextType, GridColumn, GroupChild, GroupPicture, GroupShape, GroupTextBox,
+    GroupTransform, HR_FULL_WIDTH_PERMILLE, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule,
+    HorizontalRuleAlign, Hyperlink, HyperlinkTarget, InlineNode, InlineSdt, InternalTarget,
+    LineEnd, LineEndKind, LineEndSize, LineNumberRestart, LineNumbering, MAX_DESCR_BYTES, MAX_EMU,
     MAX_FIELD_INSTRUCTION_BYTES, MAX_FORM_FIELD_ENTRIES, MAX_FORM_FIELD_STRING_BYTES,
     MAX_MATH_BYTES, MAX_REVISION_DEPTH, MAX_SDT_DEPTH, MAX_SHAPE_ADJUSTMENTS,
     MAX_SHAPE_FORMULA_BYTES, MAX_SHAPE_GUIDE_NAME_BYTES, MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH,
-    Math, MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
-    NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NoteReference, PageBorderDisplay,
-    PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation, PageSize,
-    PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu, PositionalTab,
-    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision,
-    RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol,
-    SdtControlData, SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties,
-    SectionBoundary, SectionColumns, SectionId, SectionType, ShapeAdjustment, ShapeGeometry,
-    ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
+    MarkRevision, MarkRevisionKind, Math, MathExpression, MediaId, MoveKind, MoveRangeEnd,
+    MoveRangeStart, NoBreakHyphen, NoteId, NoteKind, NoteNumberMark, NoteNumberRestart,
+    NotePosition, NoteProperties, NoteReference, PageBorderDisplay, PageBorderOffset, PageBorders,
+    PageMargins, PageNumbering, PageOrientation, PageSize, PageVerticalAlignment, PaperSource,
+    Paragraph, ParagraphProperties, PointEmu, PositionalTab, PositionalTabAlignment,
+    PositionalTabLeader, PositionalTabRelativeTo, PropChange, Revision, RevisionKind, RgbColor,
+    Rgba, Run, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    SdtControlKind, SdtDataBinding, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary,
+    SectionColumns, SectionId, SectionType, Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke,
+    SoftHyphen, StyleKind, Symbol, Tab, TabAlignment, TabLeader, TabStop, TableAnchor,
     TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
     TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties,
     TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor, TextBoxVerticalOverflow,
@@ -41,7 +43,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
-    symbol_glyph,
+    parse_shading, parse_table_width, symbol_glyph,
 };
 use crate::report::Reporter;
 use crate::styles::Styles;
@@ -69,6 +71,9 @@ enum Segment {
         extent: Option<Extent>,
         descr: Option<String>,
         crop: Option<CropRect>,
+        flip_h: bool,
+        flip_v: bool,
+        rotation: Option<i32>,
     },
     /// A first-class embedded object (chart / SmartArt diagram / OLE object).
     EmbeddedObject {
@@ -98,6 +103,12 @@ enum Segment {
     NoteReference {
         kind: NoteKind,
         note: NoteId,
+    },
+    /// The auto-number mark inside a note's own body (`w:footnoteRef` /
+    /// `w:endnoteRef`), printing that note's own number.
+    NoteNumberMark {
+        kind: NoteKind,
+        properties: RunProperties,
     },
     /// A reference to a comment definition.
     CommentReference {
@@ -183,6 +194,9 @@ enum Segment {
         descr: Option<String>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
+        flip_h: bool,
+        flip_v: bool,
+        rotation: Option<i32>,
     },
 }
 
@@ -294,6 +308,11 @@ struct ShapeBuilder {
     textbox_blocks: Option<Vec<BlockNode>>,
     /// The shape's text-body box model and overflow/autofit policy.
     body_properties: TextBoxBodyProperties,
+    /// The shape's `a:xfrm@flipH`/`@flipV` mirror flags and `@rot` rotation
+    /// (60000ths of a degree), captured on the `a:xfrm` start.
+    flip_h: bool,
+    flip_v: bool,
+    rotation: Option<i32>,
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -557,6 +576,11 @@ struct ContentFrame {
     pending_extent: Option<Extent>,
     pending_srcrect: Option<CropRect>,
     pending_inline_descr: Option<String>,
+    /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
+    /// picture (no open shape builder), consumed by `commit_drawing`.
+    pending_flip_h: bool,
+    pending_flip_v: bool,
+    pending_rotation: Option<i32>,
     drawing_extra: bool,
     pict_depth: u32,
     pending_graphic: PendingGraphic,
@@ -741,6 +765,11 @@ struct BodyParser<'a> {
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
     pending_inline_descr: Option<String>,
+    /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
+    /// picture (no open shape builder), consumed by `commit_drawing`.
+    pending_flip_h: bool,
+    pending_flip_v: bool,
+    pending_rotation: Option<i32>,
     drawing_extra: bool,
     /// Depth of an open `w:pict` (legacy VML picture); `pending_embed` holds its
     /// `v:imagedata@r:id` until the picture closes.
@@ -799,6 +828,13 @@ struct BodyParser<'a> {
     style_ref_depth: u32,
     /// The `a:ln@w` outline width (EMU) of the open outline.
     ln_width_emu: i64,
+    /// The `a:prstDash@val` dash pattern captured inside the open `a:ln`, applied
+    /// to the shape's stroke when the outline closes.
+    ln_dash: Option<DashStyle>,
+    /// The `a:headEnd` decoration captured inside the open `a:ln`.
+    ln_head_end: Option<LineEnd>,
+    /// The `a:tailEnd` decoration captured inside the open `a:ln`.
+    ln_tail_end: Option<LineEnd>,
     /// The open DrawingML color element being accumulated (base + modifiers).
     pending_color: Option<PendingColor>,
     /// The resolved 12-slot theme color palette (DrawingML `schemeClr` targets),
@@ -1016,6 +1052,9 @@ impl<'a> BodyParser<'a> {
             pending_extent: None,
             pending_srcrect: None,
             pending_inline_descr: None,
+            pending_flip_h: false,
+            pending_flip_v: false,
+            pending_rotation: None,
             drawing_extra: false,
             pict_depth: 0,
             vml_capture: None,
@@ -1032,6 +1071,9 @@ impl<'a> BodyParser<'a> {
             xfrm_target: XfrmTarget::None,
             ln_depth: 0,
             ln_width_emu: 0,
+            ln_dash: None,
+            ln_head_end: None,
+            ln_tail_end: None,
             style_ref_depth: 0,
             pending_color: None,
             palette,
@@ -1780,6 +1822,18 @@ impl BodyParser<'_> {
                     None => self.reporter.report(b"endnoteReference"),
                 }
             }
+            // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
+            // which appears INSIDE a footnote/endnote body and prints that note's
+            // number. It carries the enclosing run's formatting; the element name
+            // alone fixes its kind.
+            b"footnoteRef" if self.run_open => self.push_segment(Segment::NoteNumberMark {
+                kind: NoteKind::Footnote,
+                properties: self.run_properties.clone(),
+            }),
+            b"endnoteRef" if self.run_open => self.push_segment(Segment::NoteNumberMark {
+                kind: NoteKind::Endnote,
+                properties: self.run_properties.clone(),
+            }),
             // A comment reference (inside a run) resolves to a comment id.
             b"commentReference" if self.run_open => {
                 match attribute_value(element, b"id")
@@ -2019,6 +2073,52 @@ impl BodyParser<'_> {
             // and never commits an enclosing real revision. The arm is
             // UNCONDITIONAL (both branches handle every wrapper name) so start and
             // end stay balanced, exactly like tables' `suppressed_tbl_depth`.
+            // A tracked paragraph-mark insertion/deletion (`w:pPr>w:rPr>w:ins` or
+            // `w:del`): the pilcrow itself is a tracked change. Captured onto the
+            // paragraph's `mark_revision`. The empty element balances via the
+            // `suppressed_revision_depth` close arm (it is not incremented here, so
+            // this must NOT fall through to the generic arm below). `moveFrom`/
+            // `moveTo` on the mark are not modeled and stay suppressed there.
+            b"ins" | b"del" if self.mark_rpr_depth > 0 && self.ppr_depth > 0 && !self.run_open => {
+                let kind = if local == b"ins" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.paragraph_properties.mark_revision = Some(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+                // Balance the matching close (Empty events call on_end too).
+                self.suppressed_revision_depth += 1;
+            }
+            // A tracked table-row insertion/deletion (`w:trPr > w:ins` / `w:del`):
+            // the whole row is a tracked change. Captured onto the row's
+            // `row_revision`; balanced via `suppressed_revision_depth` like the
+            // paragraph-mark case, and placed before the generic revision arm so
+            // it is not suppressed-and-dropped.
+            b"ins" | b"del" if self.trpr_depth > 0 => {
+                let kind = if local == b"ins" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.tables.set_row_revision(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+                self.suppressed_revision_depth += 1;
+            }
             b"ins" | b"del" | b"moveFrom" | b"moveTo" => {
                 if self.paragraph_open
                     && !self.run_open
@@ -2039,6 +2139,9 @@ impl BodyParser<'_> {
                     self.pending_extent = None;
                     self.pending_srcrect = None;
                     self.pending_inline_descr = None;
+                    self.pending_flip_h = false;
+                    self.pending_flip_v = false;
+                    self.pending_rotation = None;
                     self.drawing_extra = false;
                     self.blipfill_depth = 0;
                     self.pending_graphic = PendingGraphic::default();
@@ -2236,6 +2339,9 @@ impl BodyParser<'_> {
                         extent: ZERO_EXTENT,
                         child_offset: PointEmu { x_emu: 0, y_emu: 0 },
                         child_extent: ZERO_EXTENT,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
                     },
                     children: Vec::new(),
                 });
@@ -2265,6 +2371,9 @@ impl BodyParser<'_> {
                     srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 });
             }
             // A picture INSIDE a group (`pic:pic`): open a picture shape builder so
@@ -2288,6 +2397,9 @@ impl BodyParser<'_> {
                     srcrect: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 });
             }
             // A shape/picture transform container (`wps:spPr` / `pic:spPr`): its
@@ -2314,6 +2426,23 @@ impl BodyParser<'_> {
             }
             b"normAutofit" if self.pending_shape.is_some() => {
                 self.capture_normal_text_box_autofit(element);
+            }
+            // The `a:xfrm` transform wrapper: capture its `@flipH`/`@flipV` mirror
+            // flags and `@rot` rotation (60000ths of a degree), routed to the group
+            // transform or the open shape per `xfrm_target`. A lone/inline or
+            // anchored picture (no open shape) buffers them on the parser until
+            // `commit_drawing`.
+            b"xfrm" if self.drawing_depth > 0 && self.xfrm_target != XfrmTarget::None => {
+                let flip_h = matches!(
+                    attribute_value(element, b"flipH").as_deref(),
+                    Some("1") | Some("true")
+                );
+                let flip_v = matches!(
+                    attribute_value(element, b"flipV").as_deref(),
+                    Some("1") | Some("true")
+                );
+                let rotation = attr_i32(element, b"rot");
+                self.set_xfrm_flip_rot(flip_h, flip_v, rotation);
             }
             // `a:off`/`a:ext`/`a:chOff`/`a:chExt` inside an `a:xfrm`: route to the
             // group transform or the shape geometry per `xfrm_target`. (The
@@ -2433,8 +2562,27 @@ impl BodyParser<'_> {
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
             b"ln" if self.pending_shape.is_some() => {
+                if self.ln_depth == 0 {
+                    self.ln_dash = None;
+                    self.ln_head_end = None;
+                    self.ln_tail_end = None;
+                }
                 self.ln_depth += 1;
                 self.ln_width_emu = attr_i64(element, b"w").filter(|w| *w >= 0).unwrap_or(0);
+            }
+            // A preset dash pattern (`a:prstDash@val`) inside the open outline: buffer
+            // it until the `a:ln` closes and applies it to the shape's stroke.
+            b"prstDash" if self.ln_depth > 0 => {
+                self.ln_dash = attribute_value(element, b"val")
+                    .as_deref()
+                    .and_then(parse_dash_style);
+            }
+            // A line-end decoration (`a:headEnd`/`a:tailEnd`) inside the open outline.
+            b"headEnd" if self.ln_depth > 0 => {
+                self.ln_head_end = Some(parse_line_end(element));
+            }
+            b"tailEnd" if self.ln_depth > 0 => {
+                self.ln_tail_end = Some(parse_line_end(element));
             }
             // An explicit `a:noFill`: clears the shape fill or (inside `a:ln`) the
             // stroke, so a later default is not assumed.
@@ -2788,10 +2936,13 @@ impl BodyParser<'_> {
                 }
             }
             b"numFmt" if self.section_note_scope.is_some() => {
-                let format =
-                    attribute_value(element, b"val").filter(|v| !v.is_empty() && v.len() <= 32);
-                if let Some(props) = self.section_note_props() {
-                    props.number_format = format;
+                match (
+                    crate::numbering::number_format(element),
+                    self.section_note_props(),
+                ) {
+                    (Some(value), Some(props)) => props.number_format = Some(value),
+                    (None, _) => self.reporter.report(b"numFmt"),
+                    _ => {}
                 }
             }
             b"numStart" if self.section_note_scope.is_some() => {
@@ -2986,16 +3137,10 @@ impl BodyParser<'_> {
                     VerticalMerge::Continue
                 });
             }
-            b"tcW" if self.tcpr_depth > 0 => {
-                // Only `dxa` (twips) widths are modeled; `pct`/`auto` are reported.
-                let is_dxa = attribute_value(element, b"type")
-                    .map(|kind| kind == "dxa")
-                    .unwrap_or(true);
-                match attr_i32(element, b"w") {
-                    Some(width) if is_dxa => self.tables.set_cell_width(width.clamp(0, 31_680)),
-                    _ => self.reporter.report(b"tcW"),
-                }
-            }
+            b"tcW" if self.tcpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_cell_width(width),
+                None => self.reporter.report(b"tcW"),
+            },
             // ---- table properties (`w:tblPr`) --------------------------------
             b"tblStyle" if self.tblpr_depth > 0 => {
                 match self.resolve_style(element, StyleKind::Table) {
@@ -3010,15 +3155,10 @@ impl BodyParser<'_> {
                 Some(alignment) => self.tables.set_table_alignment(alignment),
                 None => self.reporter.report(b"jc"),
             },
-            b"tblW" if self.tblpr_depth > 0 => {
-                let is_dxa = attribute_value(element, b"type")
-                    .map(|kind| kind == "dxa")
-                    .unwrap_or(true);
-                match attr_i32(element, b"w") {
-                    Some(width) if is_dxa => self.tables.set_table_width(width.clamp(0, 31_680)),
-                    _ => self.reporter.report(b"tblW"),
-                }
-            }
+            b"tblW" if self.tblpr_depth > 0 => match parse_table_width(element) {
+                Some(width) => self.tables.set_table_width(width),
+                None => self.reporter.report(b"tblW"),
+            },
             b"tblLayout" if self.tblpr_depth > 0 => {
                 match attribute_value(element, b"type").as_deref() {
                     Some("fixed") => self.tables.set_table_layout(TableLayout::Fixed),
@@ -3068,8 +3208,8 @@ impl BodyParser<'_> {
             // a `w:tblPr`/`w:tcPr` was left unclosed by malformed markup) is not
             // misrouted to the table/cell — it wins at the paragraph arm below.
             b"shd" if self.tblpr_depth > 0 && self.ppr_depth == 0 => {
-                let fill = self.shading_fill(element);
-                self.tables.set_table_shading(fill);
+                let shading = self.parse_shd(element);
+                self.tables.set_table_shading(shading);
             }
             // ---- row properties (`w:trPr`) -----------------------------------
             b"cnfStyle" if self.trpr_depth > 0 => {
@@ -3113,8 +3253,8 @@ impl BodyParser<'_> {
                     .set_cell_conditional_format(parse_cnf_style(element));
             }
             b"shd" if self.tcpr_depth > 0 && self.ppr_depth == 0 => {
-                let fill = self.shading_fill(element);
-                self.tables.set_cell_shading(fill);
+                let shading = self.parse_shd(element);
+                self.tables.set_cell_shading(shading);
             }
             // Border / margin containers open an edge-capture scope. The
             // table-vs-cell level is `tblpr_depth`/`tcpr_depth`; the scope
@@ -3136,7 +3276,7 @@ impl BodyParser<'_> {
             // Paragraph shading (`w:shd`), a direct `w:pPr` child — NOT the mark's
             // `w:rPr` shd (a run property, left reported), and not a cell/table shd.
             b"shd" if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 => {
-                self.paragraph_properties.shading.fill = self.shading_fill(element);
+                self.paragraph_properties.shading = self.parse_shd(element);
             }
             // Run border (`w:bdr`): a single edge directly on the run's `w:rPr`
             // (not a `pBdr`-style container). Reuses the shared edge builder.
@@ -3146,7 +3286,7 @@ impl BodyParser<'_> {
             },
             // Run shading (`w:shd`): the same fill-only modeling as paragraph/cell.
             b"shd" if self.rpr_depth > 0 => {
-                self.run_properties.shading.fill = self.shading_fill(element);
+                self.run_properties.shading = self.parse_shd(element);
             }
             // A `w:tabs` container: its `w:tab` children are custom tab stops.
             b"tabs" if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => self.in_tabs = true,
@@ -3174,12 +3314,68 @@ impl BodyParser<'_> {
                     _ => self.reporter.report(b"textDirection"),
                 }
             }
+            // Paragraph text-flow direction (`w:textDirection`), a direct `w:pPr`
+            // child — not the section's (`self.section` guards that arm above) nor a
+            // cell's (`tcpr_depth` guards that arm above). Reuses the shared vocab.
+            b"textDirection"
+                if self.ppr_depth > 0 && self.rpr_depth == 0 && self.mark_rpr_depth == 0 =>
+            {
+                match attribute_value(element, b"val").as_deref() {
+                    Some("lrTb") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::LrTb)
+                    }
+                    Some("tbRl") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::TbRl)
+                    }
+                    Some("btLr") => {
+                        self.paragraph_properties.text_direction = Some(TextDirection::BtLr)
+                    }
+                    _ => self.reporter.report(b"textDirection"),
+                }
+            }
             b"tcFitText" if self.tcpr_depth > 0 => self
                 .tables
                 .set_cell_fit_text(is_true(attribute_value(element, b"val").as_deref())),
             b"hideMark" if self.tcpr_depth > 0 => self
                 .tables
                 .set_cell_hide_mark(is_true(attribute_value(element, b"val").as_deref())),
+            // Tracked cell insertion/deletion (`w:tcPr > w:cellIns` / `w:cellDel`):
+            // the cell itself is a tracked change. Each is an empty element whose
+            // close falls to the on_end catch-all, so no counter balancing is
+            // needed (unlike the shared `w:ins`/`w:del` names).
+            b"cellIns" | b"cellDel" if self.tcpr_depth > 0 => {
+                let kind = if local == b"cellIns" {
+                    MarkRevisionKind::Insertion
+                } else {
+                    MarkRevisionKind::Deletion
+                };
+                self.tables.set_cell_revision(MarkRevision {
+                    kind,
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                });
+            }
+            // Tracked cell merge (`w:tcPr > w:cellMerge`): the cell's vertical-merge
+            // role changed under tracked changes; the current/original annotations
+            // are retained alongside the author/date/id.
+            b"cellMerge" if self.tcpr_depth > 0 => {
+                self.tables.set_cell_merge(CellMergeRevision {
+                    author: attribute_value(element, b"author")
+                        .filter(|value| !value.is_empty() && value.len() <= 255),
+                    date: attribute_value(element, b"date")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    revision_id: attribute_value(element, b"id")
+                        .filter(|value| !value.is_empty() && value.len() <= 64),
+                    vmerge: cell_merge_annotation(attribute_value(element, b"vMerge").as_deref()),
+                    vmerge_orig: cell_merge_annotation(
+                        attribute_value(element, b"vMergeOrig").as_deref(),
+                    ),
+                });
+            }
             // ---- content controls (`w:sdt`) ----------------------------------
             // A content control wraps flow content. Its scope (inline around runs,
             // block around paragraphs/tables, or a deferred passthrough) is decided
@@ -3631,9 +3827,22 @@ impl BodyParser<'_> {
             b"srgbClr" | b"schemeClr" | b"sysClr" if self.pending_color.is_some() => {
                 self.commit_color();
             }
-            // An outline closes: leave the shape's captured stroke, drop the depth.
+            // An outline closes: apply the buffered dash/line-ends to the shape's
+            // captured stroke (if any), then drop the depth and clear the buffers.
             b"ln" if self.ln_depth > 0 => {
                 self.ln_depth = self.ln_depth.saturating_sub(1);
+                if self.ln_depth == 0 {
+                    if let Some(shape) = self.pending_shape.as_mut()
+                        && let Some(stroke) = shape.stroke.as_mut()
+                    {
+                        stroke.dash = self.ln_dash;
+                        stroke.head_end = self.ln_head_end;
+                        stroke.tail_end = self.ln_tail_end;
+                    }
+                    self.ln_dash = None;
+                    self.ln_head_end = None;
+                    self.ln_tail_end = None;
+                }
             }
             b"lnRef" | b"fillRef" | b"effectRef" | b"fontRef" if self.style_ref_depth > 0 => {
                 self.style_ref_depth = self.style_ref_depth.saturating_sub(1);
@@ -3826,6 +4035,34 @@ impl BodyParser<'_> {
         }
     }
 
+    /// Routes an `a:xfrm`'s `@flipH`/`@flipV`/`@rot` to the group transform or the
+    /// open shape, per [`Self::xfrm_target`]. A lone/inline or anchored picture has
+    /// no open shape builder, so its flags land on the parser's pending-drawing
+    /// fields for [`Self::commit_drawing`].
+    fn set_xfrm_flip_rot(&mut self, flip_h: bool, flip_v: bool, rotation: Option<i32>) {
+        match self.xfrm_target {
+            XfrmTarget::Group => {
+                if let Some(group) = self.group_stack.last_mut() {
+                    group.transform.flip_h = flip_h;
+                    group.transform.flip_v = flip_v;
+                    group.transform.rotation = rotation;
+                }
+            }
+            XfrmTarget::Shape => {
+                if let Some(shape) = self.pending_shape.as_mut() {
+                    shape.flip_h = flip_h;
+                    shape.flip_v = flip_v;
+                    shape.rotation = rotation;
+                } else {
+                    self.pending_flip_h = flip_h;
+                    self.pending_flip_v = flip_v;
+                    self.pending_rotation = rotation;
+                }
+            }
+            XfrmTarget::None => {}
+        }
+    }
+
     /// Captures the supported `wps:bodyPr` attributes. Invalid authored tokens
     /// leave the schema default in place and are reported, never allowed to
     /// create an unbounded layout value.
@@ -3934,6 +4171,11 @@ impl BodyParser<'_> {
                 shape.stroke = Some(ShapeStroke {
                     color: rgba,
                     width_emu: color.stroke_width_emu,
+                    // Dash/line-end are applied from the outline buffers when the
+                    // enclosing `a:ln` closes (they follow the fill in schema order).
+                    dash: None,
+                    head_end: None,
+                    tail_end: None,
                 });
             }
         }
@@ -4047,6 +4289,9 @@ impl BodyParser<'_> {
                 extent: shape.extent,
                 descr: shape.descr,
                 crop: shape.srcrect,
+                flip_h: shape.flip_h,
+                flip_v: shape.flip_v,
+                rotation: shape.rotation,
             }));
         }
         if let Some(blocks) = shape.textbox_blocks.take() {
@@ -4062,6 +4307,9 @@ impl BodyParser<'_> {
                 fill: shape.fill,
                 border: shape.stroke,
                 body_properties: shape.body_properties,
+                flip_h: shape.flip_h,
+                flip_v: shape.flip_v,
+                rotation: shape.rotation,
             }));
         }
         Some(GroupChild::Shape(GroupShape {
@@ -4073,6 +4321,9 @@ impl BodyParser<'_> {
             adjustments: shape.adjustments,
             fill: shape.fill,
             stroke: shape.stroke,
+            flip_h: shape.flip_h,
+            flip_v: shape.flip_v,
+            rotation: shape.rotation,
         }))
     }
 
@@ -4174,6 +4425,9 @@ impl BodyParser<'_> {
         let anchor = self.pending_anchor.take();
         let crop = self.pending_srcrect.take();
         let inline_descr = self.pending_inline_descr.take();
+        let flip_h = std::mem::take(&mut self.pending_flip_h);
+        let flip_v = std::mem::take(&mut self.pending_flip_v);
+        let rotation = self.pending_rotation.take();
         match self.pending_embed.take() {
             Some(embed) => match self.media_index.get(&embed) {
                 Some(media) => {
@@ -4185,6 +4439,9 @@ impl BodyParser<'_> {
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
                             crop,
+                            flip_h,
+                            flip_v,
+                            rotation,
                         });
                         // Any remaining unmodeled detail (e.g. a click-link) is
                         // still surfaced so the anchored drawing is never silently
@@ -4202,6 +4459,9 @@ impl BodyParser<'_> {
                         extent,
                         descr: inline_descr,
                         crop,
+                        flip_h,
+                        flip_v,
+                        rotation,
                     });
                 }
                 None => self.reporter.report(b"drawing"),
@@ -4317,6 +4577,9 @@ impl BodyParser<'_> {
                         extent: None,
                         descr: None,
                         crop: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
                     }),
                     None => self.reporter.report(b"pict"),
                 },
@@ -4357,6 +4620,9 @@ impl BodyParser<'_> {
                     descr: None,
                     relative_height,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 }));
             }
             // Inline VML image: not floating (no absolute box/z-order), but the
@@ -4375,6 +4641,9 @@ impl BodyParser<'_> {
                 extent,
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }));
         }
         // A VML text box (`v:textbox`): placement depends on both its container and
@@ -4471,6 +4740,9 @@ impl BodyParser<'_> {
             adjustments: Vec::new(),
             fill,
             stroke,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         Ok(Some(Segment::Group(self.vml_group_of_one(
             anchor,
@@ -4507,6 +4779,9 @@ impl BodyParser<'_> {
             adjustments: Vec::new(),
             fill: vml_fill(&drawing.fill),
             stroke: vml_stroke(&drawing.stroke),
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         Ok(Segment::Group(self.vml_group_of_one(
             anchor,
@@ -4536,35 +4811,25 @@ impl BodyParser<'_> {
                 extent,
                 child_offset: PointEmu { x_emu: 0, y_emu: 0 },
                 child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             },
             children: vec![child],
         })
     }
 
-    /// Parses a `w:shd`'s background fill: an explicit sRGB `@w:fill` becomes an
-    /// `RgbColor`; `auto`/theme fills yield `None`. A real pattern (`@w:val` other
-    /// than `clear`/`nil`) or a non-`auto` pattern color (`@w:color`) is also
-    /// reported (degraded) so no visible shading is silently lost.
-    fn shading_fill(&mut self, element: &BytesStart<'_>) -> Option<RgbColor> {
-        let pattern_modeled = matches!(
-            attribute_value(element, b"val").as_deref(),
-            None | Some("clear") | Some("nil")
-        );
-        let pattern_color_default = matches!(
-            attribute_value(element, b"color").as_deref(),
-            None | Some("auto")
-        );
-        // A theme fill/color (`w:themeFill`/`w:themeColor`) carries a visible
-        // background we do not model as sRGB; report it so it is not silently
-        // lost (Word routinely emits `themeFill` without a duplicate `w:fill`).
-        let has_theme = attribute_value(element, b"themeFill").is_some()
-            || attribute_value(element, b"themeColor").is_some();
-        if !pattern_modeled || !pattern_color_default || has_theme {
+    /// Parses a `w:shd` into a modeled [`Shading`] (explicit sRGB `@w:fill` and/or a
+    /// `@w:themeFill` palette slot with tint/shade), reporting when unmodeled detail
+    /// remains — a real pattern (`@w:val` other than `clear`/`nil`), a non-`auto`
+    /// pattern foreground (`@w:color`/`@w:themeColor`), or an unmappable `@w:themeFill`
+    /// — so no visible shading is silently lost.
+    fn parse_shd(&mut self, element: &BytesStart<'_>) -> Shading {
+        let (shading, degraded) = parse_shading(element);
+        if degraded {
             self.reporter.report(b"shd");
         }
-        attribute_value(element, b"fill")
-            .filter(|value| value != "auto")
-            .and_then(|value| parse_rgb(&value))
+        shading
     }
 
     /// Routes a border/margin edge child (`top`/`start`/…) to the table or cell
@@ -4657,6 +4922,9 @@ impl BodyParser<'_> {
             Some("end" | "right") => TabAlignment::End,
             Some("decimal") => TabAlignment::Decimal,
             Some("bar") => TabAlignment::Bar,
+            // A cleared tab (`w:val="clear"`) suppresses an inherited/default stop
+            // at `w:pos`; captured (not dropped) so the suppression survives.
+            Some("clear") => TabAlignment::Clear,
             _ => {
                 self.reporter.report(b"tab");
                 return;
@@ -4885,6 +5153,9 @@ impl BodyParser<'_> {
             pending_extent: self.pending_extent.take(),
             pending_srcrect: self.pending_srcrect.take(),
             pending_inline_descr: self.pending_inline_descr.take(),
+            pending_flip_h: std::mem::take(&mut self.pending_flip_h),
+            pending_flip_v: std::mem::take(&mut self.pending_flip_v),
+            pending_rotation: self.pending_rotation.take(),
             drawing_extra: std::mem::take(&mut self.drawing_extra),
             pict_depth: std::mem::take(&mut self.pict_depth),
             pending_graphic: std::mem::take(&mut self.pending_graphic),
@@ -4956,6 +5227,9 @@ impl BodyParser<'_> {
         self.pending_extent = frame.pending_extent;
         self.pending_srcrect = frame.pending_srcrect;
         self.pending_inline_descr = frame.pending_inline_descr;
+        self.pending_flip_h = frame.pending_flip_h;
+        self.pending_flip_v = frame.pending_flip_v;
+        self.pending_rotation = frame.pending_rotation;
         self.drawing_extra = frame.drawing_extra;
         self.pict_depth = frame.pict_depth;
         self.pending_graphic = frame.pending_graphic;
@@ -5775,6 +6049,9 @@ impl BodyParser<'_> {
                 extent,
                 descr,
                 crop,
+                flip_h,
+                flip_v,
+                rotation,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Drawing {
@@ -5783,6 +6060,9 @@ impl BodyParser<'_> {
                     extent,
                     descr,
                     crop,
+                    flip_h,
+                    flip_v,
+                    rotation,
                 }))
             }
             Segment::AnchoredDrawing {
@@ -5792,6 +6072,9 @@ impl BodyParser<'_> {
                 descr,
                 relative_height,
                 crop,
+                flip_h,
+                flip_v,
+                rotation,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
@@ -5802,6 +6085,9 @@ impl BodyParser<'_> {
                     descr,
                     relative_height,
                     crop,
+                    flip_h,
+                    flip_v,
+                    rotation,
                 }))
             }
             Segment::EmbeddedObject {
@@ -5850,9 +6136,11 @@ impl BodyParser<'_> {
                 for child in children {
                     inlines.push(self.segment_to_inline(child)?);
                 }
+                let kind = FieldKind::parse(&instruction);
                 Ok(InlineNode::Field(Field {
                     id,
                     instruction,
+                    kind,
                     inlines,
                     form,
                 }))
@@ -5926,6 +6214,14 @@ impl BodyParser<'_> {
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))
+            }
+            Segment::NoteNumberMark { kind, properties } => {
+                let id = self.next_id()?;
+                Ok(InlineNode::NoteNumberMark(NoteNumberMark {
+                    id,
+                    kind,
+                    properties,
+                }))
             }
             Segment::CommentReference { comment } => {
                 let id = self.next_id()?;
@@ -6085,6 +6381,69 @@ fn table_alignment(element: &BytesStart<'_>) -> Option<Alignment> {
 
 fn attr_i64(element: &BytesStart<'_>, name: &[u8]) -> Option<i64> {
     attribute_value(element, name).and_then(|value| value.parse().ok())
+}
+
+/// Maps a tracked cell-merge annotation token (`ST_AnnotationVMerge`) to
+/// [`CellMergeAnnotation`]; an absent or unrecognized value yields `None`.
+fn cell_merge_annotation(value: Option<&str>) -> Option<CellMergeAnnotation> {
+    match value {
+        Some("cont") => Some(CellMergeAnnotation::Cont),
+        Some("rest") => Some(CellMergeAnnotation::Rest),
+        _ => None,
+    }
+}
+
+/// Maps an `a:prstDash@val` (`ST_PresetLineDashVal`) token to a [`DashStyle`].
+/// An unrecognized token yields `None` (the outline stays solid).
+fn parse_dash_style(token: &str) -> Option<DashStyle> {
+    Some(match token {
+        "solid" => DashStyle::Solid,
+        "dot" => DashStyle::Dot,
+        "dash" => DashStyle::Dash,
+        "lgDash" => DashStyle::LargeDash,
+        "dashDot" => DashStyle::DashDot,
+        "lgDashDot" => DashStyle::LargeDashDot,
+        "lgDashDotDot" => DashStyle::LargeDashDotDot,
+        "sysDash" => DashStyle::SystemDash,
+        "sysDot" => DashStyle::SystemDot,
+        "sysDashDot" => DashStyle::SystemDashDot,
+        "sysDashDotDot" => DashStyle::SystemDashDotDot,
+        _ => return None,
+    })
+}
+
+/// Parses an `a:headEnd`/`a:tailEnd` (`CT_LineEndProperties`) into a [`LineEnd`].
+/// A missing/unrecognized `@type` defaults to [`LineEndKind::None`]; unrecognized
+/// `@w`/`@len` size tokens drop that attribute.
+fn parse_line_end(element: &BytesStart<'_>) -> LineEnd {
+    let kind = match attribute_value(element, b"type").as_deref() {
+        Some("triangle") => LineEndKind::Triangle,
+        Some("stealth") => LineEndKind::Stealth,
+        Some("diamond") => LineEndKind::Diamond,
+        Some("oval") => LineEndKind::Oval,
+        Some("arrow") => LineEndKind::Arrow,
+        _ => LineEndKind::None,
+    };
+    LineEnd {
+        kind,
+        width: attribute_value(element, b"w")
+            .as_deref()
+            .and_then(parse_line_end_size),
+        length: attribute_value(element, b"len")
+            .as_deref()
+            .and_then(parse_line_end_size),
+    }
+}
+
+/// Maps an `a:headEnd`/`a:tailEnd` `@w`/`@len` size token (`ST_LineEndWidth`/
+/// `ST_LineEndLength`) to a [`LineEndSize`]. Unrecognized tokens yield `None`.
+fn parse_line_end_size(token: &str) -> Option<LineEndSize> {
+    Some(match token {
+        "sm" => LineEndSize::Small,
+        "med" => LineEndSize::Medium,
+        "lg" => LineEndSize::Large,
+        _ => return None,
+    })
 }
 
 /// Parses a `w:tblpPr` (`CT_TblPPr`) into a [`TableFloatPosition`]. Unrecognized
@@ -6814,6 +7173,9 @@ fn vml_stroke(stroke: &VmlStroke) -> Option<ShapeStroke> {
             a: 255,
         }),
         width_emu: twip_emu_len(stroke.weight_twips.unwrap_or(0)),
+        dash: None,
+        head_end: None,
+        tail_end: None,
     })
 }
 
@@ -6832,6 +7194,9 @@ fn vml_path_outline(fill: &VmlFill, stroke: &VmlStroke) -> ShapeStroke {
     ShapeStroke {
         color,
         width_emu: stroke.weight_twips.map(twip_emu_len).unwrap_or(0),
+        dash: None,
+        head_end: None,
+        tail_end: None,
     }
 }
 

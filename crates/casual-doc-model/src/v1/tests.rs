@@ -970,7 +970,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
         grid: Vec::new(),
         grid_change: None,
         properties: TableProperties {
-            width_twips: Some(9000),
+            width: Some(TableWidth::dxa(9000)),
             layout: Some(TableLayout::Fixed),
             look: TableLook {
                 first_row: true,
@@ -978,6 +978,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
             },
             shading: Shading {
                 fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+                ..Shading::default()
             },
             ..TableProperties::default()
         },
@@ -1167,7 +1168,7 @@ fn over_range_table_width_is_rejected() {
         grid: Vec::new(),
         grid_change: None,
         properties: TableProperties {
-            width_twips: Some(40_000),
+            width: Some(TableWidth::dxa(40_000)),
             ..TableProperties::default()
         },
         rows: vec![TableRow {
@@ -1604,6 +1605,7 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
         },
         shading: Shading {
             fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
+            ..Shading::default()
         },
         tabs: vec![TabStop {
             position_twips: 2160,
@@ -1677,6 +1679,7 @@ fn field_with_cached_result_validates_and_round_trips_json() {
     let field = Field {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
+        kind: FieldKind::Page,
         inlines: vec![run_inline(tid(11), "7")],
         form: None,
     };
@@ -1700,6 +1703,7 @@ fn field_with_empty_cached_result_is_valid() {
     let field = Field {
         id: tid(10),
         instruction: " TIME ".to_owned(),
+        kind: FieldKind::Time { format: None },
         inlines: Vec::new(),
         form: None,
     };
@@ -1711,6 +1715,7 @@ fn empty_field_instruction_is_rejected() {
     let field = Field {
         id: tid(10),
         instruction: String::new(),
+        kind: FieldKind::default(),
         inlines: Vec::new(),
         form: None,
     };
@@ -1720,6 +1725,78 @@ fn empty_field_instruction_is_rejected() {
             property: "field.instruction"
         })
     ));
+}
+
+#[test]
+fn field_kind_parses_each_common_kind() {
+    assert_eq!(FieldKind::parse(" PAGE "), FieldKind::Page);
+    assert_eq!(FieldKind::parse("PAGE \\* MERGEFORMAT"), FieldKind::Page);
+    assert_eq!(FieldKind::parse(" NUMPAGES "), FieldKind::NumPages);
+    assert_eq!(
+        FieldKind::parse(r#" DATE \@ "M/d/yyyy" "#),
+        FieldKind::Date {
+            format: Some("M/d/yyyy".to_owned()),
+        }
+    );
+    assert_eq!(FieldKind::parse(" DATE "), FieldKind::Date { format: None });
+    assert_eq!(
+        FieldKind::parse(r#"TIME \@ "h:mm am/pm""#),
+        FieldKind::Time {
+            format: Some("h:mm am/pm".to_owned()),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(" REF _Ref12345 \\h "),
+        FieldKind::Ref {
+            bookmark: "_Ref12345".to_owned(),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(" PAGEREF _Ref12345 \\h "),
+        FieldKind::PageRef {
+            bookmark: "_Ref12345".to_owned(),
+        }
+    );
+    assert_eq!(FieldKind::parse(r#" TOC \o "1-3" \h "#), FieldKind::Toc);
+    assert_eq!(
+        FieldKind::parse(" SEQ Figure \\* ARABIC "),
+        FieldKind::Seq {
+            name: "Figure".to_owned(),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(r#" STYLEREF "Heading 1" "#),
+        FieldKind::StyleRef {
+            style: "Heading 1".to_owned(),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(r#" HYPERLINK "http://example.com/a?b=1&c=2" "#),
+        FieldKind::Hyperlink {
+            target: Some("http://example.com/a?b=1&c=2".to_owned()),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(r#" HYPERLINK \l "anchor" "#),
+        FieldKind::Hyperlink {
+            target: Some("anchor".to_owned()),
+        }
+    );
+    // The keyword match is exact: PAGEREF is not PAGE, and an unknown keyword
+    // (or a bare switch) projects to `Other` with the upper-cased keyword.
+    assert_eq!(
+        FieldKind::parse(" MERGEFIELD Name "),
+        FieldKind::Other {
+            keyword: "MERGEFIELD".to_owned(),
+        }
+    );
+    assert_eq!(
+        FieldKind::parse(" ref lower "),
+        FieldKind::Ref {
+            bookmark: "lower".to_owned(),
+        }
+    );
+    assert_eq!(FieldKind::parse("   "), FieldKind::default());
 }
 
 fn symbol_paragraph(symbol: Symbol) -> BlockNode {
@@ -1792,6 +1869,7 @@ fn field_inside_a_hyperlink_is_rejected() {
     let inner_field = InlineNode::Field(Field {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
+        kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
     });
@@ -1827,6 +1905,9 @@ fn hyperlink_inside_a_field_is_rejected() {
     let field = Field {
         id: tid(10),
         instruction: " REF a ".to_owned(),
+        kind: FieldKind::Ref {
+            bookmark: "a".to_owned(),
+        },
         inlines: vec![inner_link],
         form: None,
     };
@@ -1841,12 +1922,16 @@ fn nested_field_inside_a_field_is_rejected() {
     let inner = InlineNode::Field(Field {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
+        kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
     });
     let field = Field {
         id: tid(10),
         instruction: " = ".to_owned(),
+        kind: FieldKind::Other {
+            keyword: "=".to_owned(),
+        },
         inlines: vec![inner],
         form: None,
     };
@@ -1861,6 +1946,7 @@ fn duplicate_id_inside_a_field_result_is_rejected() {
     let field = Field {
         id: tid(10),
         instruction: " PAGE ".to_owned(),
+        kind: FieldKind::Page,
         inlines: vec![run_inline(tid(10), "7")], // run id collides with field id
         form: None,
     };
@@ -1875,6 +1961,9 @@ fn legacy_form_field_validates_and_round_trips_json() {
     let field = Field {
         id: tid(10),
         instruction: " FORMDROPDOWN ".to_owned(),
+        kind: FieldKind::Other {
+            keyword: "FORMDROPDOWN".to_owned(),
+        },
         inlines: Vec::new(),
         form: Some(FormFieldData {
             name: Some("Color".to_owned()),
@@ -1902,6 +1991,9 @@ fn form_field_payload_disagreeing_with_instruction_is_rejected() {
     let field = Field {
         id: tid(10),
         instruction: " FORMTEXT ".to_owned(),
+        kind: FieldKind::Other {
+            keyword: "FORMTEXT".to_owned(),
+        },
         inlines: Vec::new(),
         form: Some(FormFieldData {
             name: None,
@@ -1927,6 +2019,9 @@ fn form_field_overlong_name_is_rejected() {
     let field = Field {
         id: tid(10),
         instruction: " FORMTEXT ".to_owned(),
+        kind: FieldKind::Other {
+            keyword: "FORMTEXT".to_owned(),
+        },
         inlines: Vec::new(),
         form: Some(FormFieldData {
             name: Some("n".repeat(MAX_FORM_FIELD_STRING_BYTES + 1)),
@@ -2042,6 +2137,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
             width_emu: 1_000_000,
             height_emu: 500_000,
         },
+        flip_h: false,
+        flip_v: false,
+        rotation: None,
     };
     let group = WordprocessingGroup {
         id: tid(30),
@@ -2092,7 +2190,13 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                         a: 255,
                     },
                     width_emu: 9525,
+                    dash: None,
+                    head_end: None,
+                    tail_end: None,
                 }),
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }),
             GroupChild::TextBox(GroupTextBox {
                 id: tid(32),
@@ -2108,6 +2212,9 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 fill: None,
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             }),
         ],
     };
@@ -2163,6 +2270,9 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                     width_emu: 1_000_000,
                     height_emu: 500_000,
                 },
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             },
             children: vec![GroupChild::Shape(GroupShape {
                 id: tid(31),
@@ -2179,6 +2289,9 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 }],
                 fill: None,
                 stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         }));
     document.validate().unwrap();

@@ -611,7 +611,10 @@ fn table_row_and_cell_properties_are_mapped() {
     let table = first_table(&import).expect("table modeled");
     // Table properties.
     assert_eq!(table.properties.alignment, Some(Alignment::Center));
-    assert_eq!(table.properties.width_twips, Some(9000));
+    assert_eq!(
+        table.properties.width,
+        Some(casual_doc_model::v1::TableWidth::dxa(9000))
+    );
     assert_eq!(table.properties.layout, Some(TableLayout::Fixed));
     assert!(table.properties.look.first_row);
     assert!(table.properties.look.no_v_band);
@@ -760,13 +763,14 @@ fn table_and_row_property_change_revisions_do_not_overwrite() {
 }
 
 #[test]
-fn theme_shading_is_reported_not_silently_dropped() {
-    // Regression (adversarial review, major): a w:themeFill carries a visible
-    // background we do not model as sRGB; it must be reported (Word emits it
-    // without a duplicate w:fill).
+fn theme_shading_fill_is_captured_not_reported() {
+    // A w:themeFill carries a visible background (Word emits it without a duplicate
+    // w:fill). It is now modeled as a theme-slot fill — captured, not degraded — so
+    // it resolves against the palette and round-trips.
+    use casual_doc_model::v1::{ThemeColor, ThemeColorRef};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl><w:tr><w:tc>
-            <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1"/></w:tcPr>
+            <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1" w:themeFillShade="80"/></w:tcPr>
             <w:p><w:r><w:t>c</w:t></w:r></w:p>
         </w:tc></w:tr></w:tbl>
     </w:body></w:document>"#;
@@ -774,11 +778,20 @@ fn theme_shading_is_reported_not_silently_dropped() {
     let cell = &first_table(&import).expect("table").rows[0].cells[0];
     assert!(
         cell.properties.shading.fill.is_none(),
-        "theme fill not sRGB"
+        "theme fill carries no concrete sRGB"
+    );
+    assert_eq!(
+        cell.properties.shading.theme_fill,
+        Some(ThemeColor {
+            slot: ThemeColorRef::Accent1,
+            theme_tint: None,
+            theme_shade: Some(0x80),
+        }),
+        "the themeFill slot and shade are captured"
     );
     assert!(
-        features(&import).contains(&"shd"),
-        "theme shading reported, not silently dropped"
+        !features(&import).contains(&"shd"),
+        "a modeled theme fill is not reported as degraded"
     );
 }
 
@@ -897,8 +910,9 @@ fn border_edge_without_a_style_is_reported_not_modeled() {
 
 #[test]
 fn degraded_table_properties_are_reported_not_silently_mapped() {
-    // pct table width, a table jc=both (justify), an unknown vAlign, and a
-    // patterned shd are each reported; the modeled fill is still captured.
+    // A table jc=both (justify), an unknown vAlign, and a patterned shd are each
+    // reported; the modeled fill is still captured. The pct table width is now
+    // typed (`WidthType::Pct`), not reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl>
             <w:tblPr><w:tblW w:type="pct" w:w="5000"/><w:jc w:val="both"/></w:tblPr>
@@ -910,9 +924,16 @@ fn degraded_table_properties_are_reported_not_silently_mapped() {
     </w:body></w:document>"#;
     let import = import(xml);
     let table = first_table(&import).expect("table modeled");
-    assert_eq!(table.properties.width_twips, None, "pct width not modeled");
+    assert_eq!(
+        table.properties.width,
+        Some(casual_doc_model::v1::TableWidth::pct(5000)),
+        "pct width is typed"
+    );
     assert_eq!(table.properties.alignment, None, "justify not modeled");
-    assert!(features(&import).contains(&"tblW"));
+    assert!(
+        !features(&import).contains(&"tblW"),
+        "pct width not reported"
+    );
     assert!(features(&import).contains(&"jc"));
     assert!(features(&import).contains(&"vAlign"));
     // The patterned shd is reported but its fill is still captured (partial).
@@ -1092,13 +1113,19 @@ fn paragraph_borders_shading_and_tabs_are_mapped() {
             b: 0xEE
         })
     );
-    // Two modeled tab stops (the `clear` tab is reported, not modeled).
-    assert_eq!(p.tabs.len(), 2);
+    // Three modeled tab stops: the `clear` tab is now captured (a suppression of an
+    // inherited/default stop), not dropped-and-reported.
+    assert_eq!(p.tabs.len(), 3);
     assert_eq!(p.tabs[0].alignment, TabAlignment::Center);
     assert_eq!(p.tabs[0].position_twips, 2160);
     assert_eq!(p.tabs[0].leader, Some(TabLeader::Dot));
     assert_eq!(p.tabs[1].alignment, TabAlignment::End);
-    assert!(features(&import).contains(&"tab"), "clear tab reported");
+    assert_eq!(p.tabs[2].alignment, TabAlignment::Clear);
+    assert_eq!(p.tabs[2].position_twips, 100);
+    assert!(
+        !features(&import).contains(&"tab"),
+        "a modeled clear tab is not reported"
+    );
 }
 
 #[test]
@@ -3169,7 +3196,10 @@ fn real_producer_table_merges_map_grid_span_and_vertical_merge() {
     // Row 1, cell 1 spans two grid columns (w:gridSpan) and carries a dxa width.
     let spanning = &table.rows[0].cells[0];
     assert_eq!(spanning.properties.grid_span, Some(2));
-    assert_eq!(spanning.properties.width_twips, Some(2027));
+    assert_eq!(
+        spanning.properties.width,
+        Some(casual_doc_model::v1::TableWidth::dxa(2027))
+    );
 
     // Row 2 opens a vertical merge; row 3 continues it (w:vMerge).
     assert_eq!(
@@ -3191,9 +3221,9 @@ fn real_producer_table_merges_map_grid_span_and_vertical_merge() {
 }
 
 #[test]
-fn nested_tables_nest_and_percent_cell_width_is_reported() {
+fn nested_tables_nest_and_percent_cell_width_is_typed() {
     // A table whose cell contains a nested table; the outer cell also carries a
-    // percentage width (w:tcW type="pct"), which is not modeled and is reported.
+    // percentage width (w:tcW type="pct"), now carried as a typed `WidthType::Pct`.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:tbl>
             <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
@@ -3210,9 +3240,12 @@ fn nested_tables_nest_and_percent_cell_width_is_reported() {
     assert_eq!(outer.grid.len(), 1);
     assert_eq!(outer.grid[0].width_twips, Some(5000));
     let cell = &outer.rows[0].cells[0];
-    // Percentage width is not modeled (dxa only); it stays None and is reported.
-    assert_eq!(cell.properties.width_twips, None);
-    assert!(features(&import).contains(&"tcW"));
+    // Percentage width is now typed (fiftieths of a percent) and not reported.
+    assert_eq!(
+        cell.properties.width,
+        Some(casual_doc_model::v1::TableWidth::pct(2500))
+    );
+    assert!(!features(&import).contains(&"tcW"));
 
     // The cell holds its paragraph and then a nested table (document order).
     assert!(matches!(cell.blocks[0], BlockNode::Paragraph(_)));
@@ -3301,6 +3334,8 @@ fn simple_field_maps_instruction_and_cached_result() {
         panic!("expected a field");
     };
     assert_eq!(field.instruction, " PAGE ");
+    // The instruction is additionally projected to a typed kind.
+    assert_eq!(field.kind, casual_doc_model::v1::FieldKind::Page);
     let mut text = String::new();
     field.inlines.iter().for_each(|c| inline_text(c, &mut text));
     assert_eq!(text, "7");
@@ -3555,6 +3590,9 @@ fn drawingml_text_box_is_modeled_and_does_not_corrupt_the_paragraph() {
                 a: 255,
             },
             width_emu: 19_050,
+            dash: None,
+            head_end: None,
+            tail_end: None,
         })
     );
     assert_eq!(
@@ -4273,11 +4311,12 @@ fn revision_inside_a_hyperlink_is_modeled() {
 }
 
 #[test]
-fn paragraph_mark_insertion_is_reported_and_run_property_change_is_modeled() {
+fn paragraph_mark_insertion_and_run_property_change_are_modeled() {
     // A `w:ins` inside `w:pPr>w:rPr` (paragraph-mark insertion) is not a run
-    // range: it is reported and produces no Revision node. A `w:rPrChange` on the
-    // run IS modeled (its prior snapshot on `prop_change`); the text is intact.
-    use casual_doc_model::v1::InlineNode;
+    // range: it produces no Revision node, but IS modeled as the paragraph's
+    // `mark_revision`. A `w:rPrChange` on the run IS modeled (its prior snapshot
+    // on `prop_change`); the text is intact.
+    use casual_doc_model::v1::{InlineNode, MarkRevisionKind};
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
         <w:p>
             <w:pPr><w:rPr><w:ins w:id="1"/></w:rPr></w:pPr>
@@ -4295,7 +4334,13 @@ fn paragraph_mark_insertion_is_reported_and_run_property_change_is_modeled() {
         .iter()
         .for_each(|i| inline_text(i, &mut text));
     assert_eq!(text, "body");
-    assert!(features(&import).contains(&"ins"));
+    let mark_revision = paragraph(&import, 0)
+        .properties
+        .mark_revision
+        .as_ref()
+        .expect("paragraph-mark insertion is modeled");
+    assert_eq!(mark_revision.kind, MarkRevisionKind::Insertion);
+    assert_eq!(mark_revision.revision_id.as_deref(), Some("1"));
     // The run's rPrChange is modeled (empty prior), not reported.
     let InlineNode::Run(run) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected a run");
@@ -6031,15 +6076,17 @@ fn common_omml_constructs_receive_a_typed_projection() {
 
 #[test]
 fn unsupported_omml_keeps_raw_markup_without_a_projection() {
+    // `m:box` (a logical grouping box) is outside the projected subset: the OMML
+    // is retained verbatim and no typed projection is produced.
     let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
-        <m:oMath><m:m><m:mr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+        <m:oMath><m:box><m:e><m:r><m:t>x</m:t></m:r></m:e></m:box></m:oMath>
     </w:p></w:body></w:document>"#;
     let import = import(xml);
     let InlineNode::Math(math) = &paragraph(&import, 0).inlines[0] else {
         panic!("expected retained math");
     };
     assert!(math.expression.is_none());
-    assert!(math.omml.contains("<m:m>"));
+    assert!(math.omml.contains("<m:box>"));
     assert_eq!(math.text, "x");
 }
 

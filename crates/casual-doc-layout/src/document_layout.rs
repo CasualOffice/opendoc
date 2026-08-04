@@ -441,7 +441,8 @@ fn collect_inline_endnotes(inlines: &[InlineNode], out: &mut Vec<NoteId>) {
             | InlineNode::NoBreakHyphen(_)
             | InlineNode::SoftHyphen(_)
             | InlineNode::PositionalTab(_)
-            | InlineNode::NoteReference(_) => {}
+            | InlineNode::NoteReference(_)
+            | InlineNode::NoteNumberMark(_) => {}
         }
     }
 }
@@ -1253,6 +1254,9 @@ mod cross_paragraph_float_tests {
             descr: None,
             relative_height: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         let target = node(2);
         let prose = "following paragraph text wraps beside the floating object ".repeat(90);
@@ -1303,6 +1307,9 @@ mod cross_paragraph_float_tests {
             descr: None,
             relative_height: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         let target = node(11);
         let document = Document::new(
@@ -1453,6 +1460,9 @@ mod cross_paragraph_float_tests {
             descr: None,
             relative_height: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         });
         let table_id = node(950);
         let cell_paragraph = node(953);

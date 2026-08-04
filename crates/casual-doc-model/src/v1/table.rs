@@ -3,13 +3,86 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Alignment, BlockNode, PropChange, RgbColor, StyleId};
+use super::{Alignment, BlockNode, MarkRevision, PropChange, RgbColor, StyleId, ThemeColor};
 use crate::NodeId;
 
 /// Maximum table nesting depth enforced by validation. A root-level table is
 /// depth 1; a table inside one of its cells is depth 2. Import caps at the same
 /// value so authored and imported documents share one bound.
 pub const MAX_TABLE_DEPTH: u32 = 32;
+
+/// The unit a preferred table or cell width is expressed in (`w:tblW`/`w:tcW`
+/// `@w:type`, `ST_TblWidth`, ECMA-376 §17.18.90).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WidthType {
+    /// Absolute width in twips (`dxa`). The default when a width is present but
+    /// its type is omitted.
+    #[default]
+    Dxa,
+    /// Percentage of the reference width, in fiftieths of a percent (`pct`);
+    /// `5000` is 100%.
+    Pct,
+    /// Width chosen automatically by the layout algorithm (`auto`).
+    Auto,
+    /// No preferred width (`nil`).
+    Nil,
+}
+
+/// A preferred table or cell width (`w:tblW`/`w:tcW`, `CT_TblWidth`). The `value`
+/// is interpreted per `width_type`: twips for `dxa`, fiftieths of a percent for
+/// `pct` (`5000` = 100%), and carried as `0` for `auto`/`nil`, which express no
+/// magnitude. Carrying the type (rather than assuming `dxa`) lets AutoFit-to-window
+/// (`pct`) and content-sized (`auto`) widths round-trip.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TableWidth {
+    /// Width magnitude (`w:w`): twips for `dxa`, fiftieths of a percent for `pct`,
+    /// `0` for `auto`/`nil`.
+    pub value: i32,
+    /// The unit `value` is measured in (`w:type`).
+    pub width_type: WidthType,
+}
+
+impl TableWidth {
+    /// Constructs an absolute (`dxa`) width in twips.
+    #[must_use]
+    pub fn dxa(twips: i32) -> Self {
+        Self {
+            value: twips,
+            width_type: WidthType::Dxa,
+        }
+    }
+
+    /// Constructs a percentage (`pct`) width in fiftieths of a percent.
+    #[must_use]
+    pub fn pct(fiftieths: i32) -> Self {
+        Self {
+            value: fiftieths,
+            width_type: WidthType::Pct,
+        }
+    }
+
+    /// The absolute width in twips, when (and only when) this is a `dxa` width.
+    /// `pct`/`auto`/`nil` widths carry no twip magnitude and yield `None`, so
+    /// layout that only understands absolute widths ignores them as before.
+    #[must_use]
+    pub fn dxa_twips(&self) -> Option<i32> {
+        (self.width_type == WidthType::Dxa).then_some(self.value)
+    }
+
+    /// Whether `value` lies in the domain of its `width_type`: twips
+    /// (`0..=31_680`) for `dxa`, fiftieths of a percent (`0..=5_000`, i.e.
+    /// `0..=100%`) for `pct`, and exactly `0` for the magnitude-less `auto`/`nil`.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        match self.width_type {
+            WidthType::Dxa => (0..=31_680).contains(&self.value),
+            WidthType::Pct => (0..=5_000).contains(&self.value),
+            WidthType::Auto | WidthType::Nil => self.value == 0,
+        }
+    }
+}
 
 /// One column in a table's shared grid (`w:gridCol`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -39,13 +112,18 @@ pub struct Shading {
     /// Background fill (`w:fill`), explicit sRGB; `auto` yields `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<RgbColor>,
+    /// Theme background fill (`w:themeFill`, with optional `w:themeFillTint`/
+    /// `w:themeFillShade`), a palette slot resolved by the consumer. Word emits
+    /// this without a duplicate concrete `w:fill`, so it is modeled separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_fill: Option<ThemeColor>,
 }
 
 impl Shading {
     /// Whether this shading carries no modeled value (serializes to nothing).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.fill.is_none()
+        self.fill.is_none() && self.theme_fill.is_none()
     }
 }
 
@@ -349,9 +427,10 @@ pub struct TableProperties {
     /// Table alignment (`w:jc`); start/center/end (justify reported at import).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alignment: Option<Alignment>,
-    /// Preferred table width in twips, `dxa` only (`w:tblW`; `0..=31_680`).
+    /// Preferred table width (`w:tblW`), typed by unit: absolute (`dxa`),
+    /// percentage (`pct`, AutoFit-to-window), automatic (`auto`), or none (`nil`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub width_twips: Option<i32>,
+    pub width: Option<TableWidth>,
     /// Layout algorithm (`w:tblLayout`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<TableLayout>,
@@ -459,6 +538,11 @@ pub struct TableRowProperties {
     /// Per-row default cell spacing in twips, `dxa` only (`w:tblCellSpacing`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cell_spacing_twips: Option<i32>,
+    /// Tracked insertion/deletion of the whole row (`w:trPr > w:ins` / `w:del`).
+    /// Additive, omitted when absent; re-emitted inside `w:trPr` before
+    /// `w:trPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_revision: Option<MarkRevision>,
     /// Row-properties format-change revision (`w:trPrChange`): the prior row
     /// properties plus author/date/id. Additive, omitted when absent; re-emitted
     /// as the last child of `w:trPr`.
@@ -498,6 +582,45 @@ pub enum TextDirection {
     BtLr,
 }
 
+/// A tracked cell merge's vertical-merge annotation (`ST_AnnotationVMerge`):
+/// whether the cell is the continuation of, or the start (rest) of, a merged
+/// vertical span under the tracked merge.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellMergeAnnotation {
+    /// A continued cell in the merged span (`cont`).
+    Cont,
+    /// The starting cell of the merged span (`rest`).
+    Rest,
+}
+
+/// A tracked cell merge (`w:tcPr > w:cellMerge`, `CT_CellMergeTrackChange`): the
+/// cell's vertical-merge role changed under tracked changes. Unlike a cell
+/// insertion/deletion (a plain [`MarkRevision`]), a merge also records the
+/// current and original vertical-merge annotations.
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring [`MarkRevision`] and [`super::Revision`] metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellMergeRevision {
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
+    /// The cell's vertical-merge annotation after the merge (`w:vMerge`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmerge: Option<CellMergeAnnotation>,
+    /// The cell's original vertical-merge annotation (`w:vMergeOrig`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmerge_orig: Option<CellMergeAnnotation>,
+}
+
 /// Typed table-cell properties. An empty value serializes to `{}`.
 // Not `Copy`: `TableBorders` owns a `String` (a border style token).
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -513,9 +636,10 @@ pub struct TableCellProperties {
     /// Vertical merge role (`w:vMerge`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vertical_merge: Option<VerticalMerge>,
-    /// Cell width in twips when the source width type is `dxa` (`0..=31_680`).
+    /// Preferred cell width (`w:tcW`), typed by unit: absolute (`dxa`),
+    /// percentage (`pct`), automatic (`auto`), or none (`nil`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub width_twips: Option<i32>,
+    pub width: Option<TableWidth>,
     /// Cell background shading (`w:shd`).
     #[serde(default, skip_serializing_if = "Shading::is_empty")]
     pub shading: Shading,
@@ -540,6 +664,15 @@ pub struct TableCellProperties {
     /// Hide the end-of-cell mark; affects auto-fit height (`w:hideMark`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_mark: bool,
+    /// Tracked insertion/deletion of the cell (`w:tcPr > w:cellIns` / `w:cellDel`).
+    /// Additive, omitted when absent; re-emitted inside `w:tcPr` before
+    /// `w:tcPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_revision: Option<MarkRevision>,
+    /// Tracked cell merge (`w:tcPr > w:cellMerge`). Additive, omitted when absent;
+    /// re-emitted inside `w:tcPr` before `w:tcPrChange`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_merge: Option<CellMergeRevision>,
     /// Cell-properties format-change revision (`w:tcPrChange`): the prior cell
     /// properties plus author/date/id. Additive, omitted when absent; re-emitted
     /// as the last child of `w:tcPr`.

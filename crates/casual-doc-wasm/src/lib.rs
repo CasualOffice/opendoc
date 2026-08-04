@@ -55,8 +55,8 @@ use casual_doc_model::v1::{
     PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
     RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
     StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, VerticalAlignment, VerticalAnchor, VerticalMerge,
-    VerticalPosition, WrapMode,
+    TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
+    VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
@@ -2752,7 +2752,7 @@ impl WasmDocument {
                 cells.push(TableCell {
                     id: cell_id,
                     properties: TableCellProperties {
-                        width_twips: Some(col_w),
+                        width: Some(TableWidth::dxa(col_w)),
                         ..TableCellProperties::default()
                     },
                     blocks: vec![BlockNode::Paragraph(Paragraph {
@@ -2872,7 +2872,11 @@ impl WasmDocument {
                 .get(row as usize)
                 .is_some_and(|r| r.properties.header),
             column_width_twips: active_column_width(t, col as usize).unwrap_or(-1),
-            table_width_twips: t.properties.width_twips.unwrap_or(-1),
+            table_width_twips: t
+                .properties
+                .width
+                .and_then(|width| width.dxa_twips())
+                .unwrap_or(-1),
             table_indent_twips: t.properties.indent_twips.unwrap_or(0),
             fixed_layout: t.properties.layout == Some(TableLayout::Fixed),
             row_height_twips: t
@@ -2939,7 +2943,7 @@ impl WasmDocument {
         }
         if let Some(width) = patch.table_width_twips {
             ensure_optional_twips("table width", width)?;
-            replacement.properties.width_twips = (width >= 0).then_some(width);
+            replacement.properties.width = (width >= 0).then(|| TableWidth::dxa(width));
         }
         if let Some(indent) = patch.table_indent_twips {
             ensure_signed_twips("table indent", indent)?;
@@ -3023,7 +3027,7 @@ impl WasmDocument {
             }
             replacement.grid[column].width_twips = (width >= 0).then_some(width);
             for row in &mut replacement.rows {
-                row.cells[column].properties.width_twips = (width >= 0).then_some(width);
+                row.cells[column].properties.width = (width >= 0).then(|| TableWidth::dxa(width));
             }
         }
 
@@ -3097,7 +3101,7 @@ impl WasmDocument {
         }
         for row in &mut replacement.rows {
             if let Some(cell) = row.cells.get_mut(col) {
-                cell.properties.width_twips = Some(width_twips);
+                cell.properties.width = Some(TableWidth::dxa(width_twips));
             }
         }
         self.apply_action_as(
@@ -3144,7 +3148,7 @@ impl WasmDocument {
         for (column, width) in distributed.iter().enumerate() {
             replacement.grid[column].width_twips = Some(*width);
             for row in &mut replacement.rows {
-                row.cells[column].properties.width_twips = Some(*width);
+                row.cells[column].properties.width = Some(TableWidth::dxa(*width));
             }
         }
         self.apply_action_as(
@@ -3482,7 +3486,7 @@ impl WasmDocument {
         let mut props = find_table(&self.document, table)
             .map(|t| t.properties.clone())
             .ok_or_else(|| to_js("table not found".into()))?;
-        props.width_twips = (width_twips >= 0).then_some(width_twips.clamp(0, 31_680));
+        props.width = (width_twips >= 0).then(|| TableWidth::dxa(width_twips.clamp(0, 31_680)));
         self.apply_action(vec![Operation::SetTableProperties {
             table,
             properties: Box::new(props),
@@ -7523,6 +7527,8 @@ impl WasmDocument {
             AbstractNumbering {
                 levels: (0..=8).map(|level| list_level(numbered, level)).collect(),
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         defs.numbering.insert(
@@ -7574,6 +7580,8 @@ impl WasmDocument {
                     .map(|level| checklist_level(checked, level))
                     .collect(),
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         defs.numbering.insert(
@@ -11444,13 +11452,15 @@ fn set_table_borders_preset(bd: &mut TableBorders, edges: &str, mk: impl Fn() ->
     }
 }
 
-/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar) → model.
+/// Ruler tab-alignment code (0 start / 1 center / 2 end / 3 decimal / 4 bar /
+/// 5 clear) → model.
 fn tab_alignment_from_code(code: u8) -> TabAlignment {
     match code {
         1 => TabAlignment::Center,
         2 => TabAlignment::End,
         3 => TabAlignment::Decimal,
         4 => TabAlignment::Bar,
+        5 => TabAlignment::Clear,
         _ => TabAlignment::Start,
     }
 }
@@ -11463,6 +11473,7 @@ fn tab_alignment_code(alignment: TabAlignment) -> i32 {
         TabAlignment::End => 2,
         TabAlignment::Decimal => 3,
         TabAlignment::Bar => 4,
+        TabAlignment::Clear => 5,
     }
 }
 
@@ -12608,10 +12619,13 @@ fn active_column_width(table: &Table, col_index: usize) -> Option<i32> {
         .get(col_index)
         .and_then(|col| col.width_twips)
         .or_else(|| {
-            table
-                .rows
-                .iter()
-                .find_map(|row| row.cells.get(col_index)?.properties.width_twips)
+            table.rows.iter().find_map(|row| {
+                row.cells
+                    .get(col_index)?
+                    .properties
+                    .width
+                    .and_then(|width| width.dxa_twips())
+            })
         })
 }
 
@@ -13003,7 +13017,7 @@ fn split_table_cell_counts(
             let mut cells = Vec::with_capacity(columns);
             let mut first = anchor;
             first.properties.grid_span = None;
-            first.properties.width_twips = Some(widths[0]);
+            first.properties.width = Some(TableWidth::dxa(widths[0]));
             cells.push(first);
             for width in widths.iter().skip(1) {
                 cells.push(empty_table_cell(ids, Some(*width))?);
@@ -13024,7 +13038,7 @@ fn empty_table_cell(ids: &mut IdGenerator, width_twips: Option<i32>) -> Result<T
     Ok(TableCell {
         id: cell_id,
         properties: TableCellProperties {
-            width_twips,
+            width: width_twips.map(TableWidth::dxa),
             ..TableCellProperties::default()
         },
         blocks: vec![empty_paragraph_block(ids)?],
@@ -13103,6 +13117,7 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
         run_properties: None,
         style_ref: None,
         lvl_restart: None,
+        pstyle: None,
     }
 }
 
@@ -17314,7 +17329,7 @@ mod tests {
         assert!(
             t.rows
                 .iter()
-                .all(|row| row.cells[0].properties.width_twips == Some(2_160))
+                .all(|row| row.cells[0].properties.width == Some(TableWidth::dxa(2_160)))
         );
         assert_eq!(d.table_info(&caret).column_width_twips(), 2_160);
 
@@ -17947,6 +17962,9 @@ mod tests {
                         descr: None,
                         relative_height: None,
                         crop: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
                     }),
                 ],
             })],

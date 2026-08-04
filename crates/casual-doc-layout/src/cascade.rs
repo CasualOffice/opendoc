@@ -707,7 +707,10 @@ mod tests {
 
     fn shaded_cell(fill: RgbColor) -> TableCellProperties {
         TableCellProperties {
-            shading: Shading { fill: Some(fill) },
+            shading: Shading {
+                fill: Some(fill),
+                ..Shading::default()
+            },
             ..TableCellProperties::default()
         }
     }

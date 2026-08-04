@@ -6,12 +6,13 @@
 //! from `w:tbl`/`w:tr`/`w:tc` events; finished paragraphs (and nested tables)
 //! are routed into the innermost open cell via [`TableStack::push_block`].
 
-use casual_doc_model::v1::{Alignment, RgbColor};
+use casual_doc_model::v1::{Alignment, Shading};
 use casual_doc_model::v1::{
-    BlockNode, BorderEdge, CellMargins, CellVerticalAlignment, CnfStyle, GridColumn, HeightRule,
-    MAX_TABLE_DEPTH, Paragraph, ParagraphProperties, PropChange, StyleId, Table, TableBorders,
-    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TextDirection, VerticalMerge,
+    BlockNode, BorderEdge, CellMargins, CellMergeRevision, CellVerticalAlignment, CnfStyle,
+    GridColumn, HeightRule, MAX_TABLE_DEPTH, MarkRevision, Paragraph, ParagraphProperties,
+    PropChange, StyleId, Table, TableBorders, TableCell, TableCellProperties, TableFloatPosition,
+    TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties, TableWidth,
+    TextDirection, VerticalMerge,
 };
 use casual_doc_model::{IdGenerator, NodeId};
 
@@ -178,17 +179,17 @@ impl TableStack {
         }
     }
 
-    /// Sets the (dxa) width on the current cell.
-    pub(crate) fn set_cell_width(&mut self, width_twips: i32) {
+    /// Sets the preferred width on the current cell (`w:tcW`).
+    pub(crate) fn set_cell_width(&mut self, width: TableWidth) {
         if let Some(cell) = self.current_cell() {
-            cell.properties.width_twips = Some(width_twips);
+            cell.properties.width = Some(width);
         }
     }
 
-    /// Sets the background shading fill on the current cell.
-    pub(crate) fn set_cell_shading(&mut self, fill: Option<RgbColor>) {
+    /// Sets the background shading on the current cell.
+    pub(crate) fn set_cell_shading(&mut self, shading: Shading) {
         if let Some(cell) = self.current_cell() {
-            cell.properties.shading.fill = fill;
+            cell.properties.shading = shading;
         }
     }
 
@@ -210,6 +211,27 @@ impl TableStack {
     pub(crate) fn set_cell_text_direction(&mut self, direction: TextDirection) {
         if let Some(cell) = self.current_cell() {
             cell.properties.text_direction = Some(direction);
+        }
+    }
+
+    /// Records a tracked row insertion/deletion on the current open row.
+    pub(crate) fn set_row_revision(&mut self, revision: MarkRevision) {
+        if let Some(properties) = self.row_properties() {
+            properties.row_revision = Some(revision);
+        }
+    }
+
+    /// Records a tracked cell insertion/deletion on the current cell.
+    pub(crate) fn set_cell_revision(&mut self, revision: MarkRevision) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.cell_revision = Some(revision);
+        }
+    }
+
+    /// Records a tracked cell merge on the current cell.
+    pub(crate) fn set_cell_merge(&mut self, merge: CellMergeRevision) {
+        if let Some(cell) = self.current_cell() {
+            cell.properties.cell_merge = Some(merge);
         }
     }
 
@@ -313,10 +335,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the preferred table width in twips (`w:tblW` dxa).
-    pub(crate) fn set_table_width(&mut self, width_twips: i32) {
+    /// Sets the preferred table width (`w:tblW`).
+    pub(crate) fn set_table_width(&mut self, width: TableWidth) {
         if let Some(properties) = self.table_properties() {
-            properties.width_twips = Some(width_twips);
+            properties.width = Some(width);
         }
     }
 
@@ -397,10 +419,10 @@ impl TableStack {
         }
     }
 
-    /// Sets the table background shading fill (`w:shd`).
-    pub(crate) fn set_table_shading(&mut self, fill: Option<RgbColor>) {
+    /// Sets the table background shading (`w:shd`).
+    pub(crate) fn set_table_shading(&mut self, shading: Shading) {
         if let Some(properties) = self.table_properties() {
-            properties.shading.fill = fill;
+            properties.shading = shading;
         }
     }
 

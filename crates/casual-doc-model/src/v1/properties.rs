@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId};
+use super::{
+    BorderEdge, NumberingInstanceId, RevisionGroup, SectionId, Shading, StyleId, TextDirection,
+};
 
 /// A format-change tracked revision (`w:rPrChange`, `w:pPrChange`,
 /// `w:tblPrChange`, `w:trPrChange`, `w:tcPrChange`, `w:tblGridChange`): the
@@ -37,6 +39,47 @@ pub struct PropChange<P> {
     pub editor_group: Option<RevisionGroup>,
     /// The prior properties snapshot (the values the change replaced).
     pub prior: Box<P>,
+}
+
+/// Whether a tracked mark change (a paragraph mark, or a table row/cell) was
+/// inserted or deleted.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkRevisionKind {
+    /// The mark was inserted (`w:pPr > w:rPr > w:ins`, `w:trPr > w:ins`, or
+    /// `w:tcPr > w:cellIns`) — a tracked insertion (for a paragraph mark, a
+    /// split).
+    Insertion,
+    /// The mark was deleted (`w:pPr > w:rPr > w:del`, `w:trPr > w:del`, or
+    /// `w:tcPr > w:cellDel`) — a tracked deletion (for a paragraph mark, a merge
+    /// with the next paragraph).
+    Deletion,
+}
+
+/// A tracked insertion/deletion carrying only revision metadata, modeling a
+/// content mark (not a span) inserted or deleted under tracked changes: a
+/// paragraph mark (`w:pPr > w:rPr > w:ins`/`w:del`) — the pilcrow itself, a
+/// tracked split/merge distinct from any change to the paragraph's runs — and,
+/// reusing the same shape, a tracked table row (`w:trPr > w:ins`/`w:del`) or
+/// cell (`w:tcPr > w:cellIns`/`w:cellDel`) insertion/deletion.
+///
+/// Author/date/id are retained as the producer wrote them (opaque, bounded),
+/// mirroring [`super::Revision`] and [`PropChange`] metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkRevision {
+    /// Whether the mark was inserted or deleted.
+    pub kind: MarkRevisionKind,
+    /// The revision author, if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The revision date as written (ISO-8601 string), if declared (<= 64 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The producer's revision id (`w:id`) as written, if declared (<= 64 bytes).
+    /// Opaque and non-unique across changes — a grouping key, not a node identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_id: Option<String>,
 }
 
 /// A paragraph border set (`w:pBdr`); any subset of edges. Reuses the shared
@@ -86,6 +129,9 @@ pub enum TabAlignment {
     Decimal,
     /// A vertical bar.
     Bar,
+    /// Clears (suppresses) an inherited/default tab stop at this position
+    /// (`w:val="clear"`); carries no leader.
+    Clear,
 }
 
 /// A custom tab stop's leader glyph (`w:tab/@w:leader`).
@@ -104,7 +150,8 @@ pub enum TabLeader {
     Heavy,
 }
 
-/// A custom tab stop (`w:tabs > w:tab`). A `clear` tab is not modeled (reported).
+/// A custom tab stop (`w:tabs > w:tab`). A `clear` tab is modeled as a
+/// [`TabAlignment::Clear`] stop (a suppression of an inherited/default stop).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TabStop {
@@ -260,6 +307,16 @@ pub struct RgbColor {
 pub struct ThemeColor {
     /// The referenced slot.
     pub slot: ThemeColorRef,
+    /// Tint applied to the slot color (`w:themeTint`/`w:themeFillTint`), a hex byte
+    /// `00..=FF`: the fraction of the slot color kept while the remainder blends
+    /// toward white. Absent leaves the slot color unmodified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_tint: Option<u8>,
+    /// Shade applied to the slot color (`w:themeShade`/`w:themeFillShade`), a hex
+    /// byte `00..=FF`: the fraction of the slot color kept while the remainder
+    /// blends toward black. Absent leaves the slot color unmodified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme_shade: Option<u8>,
 }
 
 /// A run color: theme reference or explicit RGB.
@@ -906,6 +963,11 @@ pub struct ParagraphProperties {
     /// Vertical alignment of text on the line (`w:textAlignment`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_alignment: Option<VerticalTextAlignment>,
+    /// Paragraph text-flow direction (`w:textDirection`), reusing the same
+    /// `TextDirection` vocabulary as sections and table cells. Additive, omitted
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_direction: Option<TextDirection>,
     /// Formatting of the paragraph mark itself (`w:pPr > w:rPr`) — the run
     /// properties applied to the end-of-paragraph glyph. `Some` (even when
     /// default) means the `w:rPr` was present; additive, omitted when absent.
@@ -916,6 +978,11 @@ pub struct ParagraphProperties {
     /// re-emitted as the last child of `w:pPr`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prop_change: Option<PropChange<ParagraphProperties>>,
+    /// Tracked insertion/deletion of the paragraph mark itself
+    /// (`w:pPr > w:rPr > w:ins` / `w:del`). Additive, omitted when absent;
+    /// re-emitted as the first child of the mark's `w:rPr`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mark_revision: Option<MarkRevision>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).

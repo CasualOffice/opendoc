@@ -277,6 +277,18 @@ pub struct Drawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// Maximum drawing alt-text (`wp:docPr@descr`) length, in UTF-8 bytes.
@@ -498,6 +510,18 @@ pub struct AnchoredDrawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// An 8-bit-per-channel RGBA color used by floating-object fills and outlines.
@@ -531,7 +555,8 @@ pub struct PointEmu {
     pub y_emu: i64,
 }
 
-/// The outline (`a:ln`) of a floating shape: a resolved color and a width in EMU.
+/// The outline (`a:ln`) of a floating shape: a resolved color and a width in EMU,
+/// plus an optional preset dash pattern and head/tail line-end decorations.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ShapeStroke {
@@ -539,6 +564,97 @@ pub struct ShapeStroke {
     pub color: Rgba,
     /// The outline width in EMU (`a:ln@w`; `0..=MAX_EMU`).
     pub width_emu: i64,
+    /// The preset dash pattern (`a:ln > a:prstDash@val`), if authored. `None`
+    /// leaves the outline solid (the DrawingML default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dash: Option<DashStyle>,
+    /// The line's start decoration (`a:ln > a:headEnd`), e.g. an arrowhead on a
+    /// connector or callout leader, if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_end: Option<LineEnd>,
+    /// The line's end decoration (`a:ln > a:tailEnd`), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_end: Option<LineEnd>,
+}
+
+/// A preset line dash pattern (`a:prstDash@val`, `ST_PresetLineDashVal`). An
+/// unrecognized token is not captured (the outline stays solid); only the common
+/// preset patterns are modeled. This carries the dash choice through round-trips;
+/// rendering the pattern is a follow-up.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DashStyle {
+    /// An unbroken line (`solid`).
+    Solid,
+    /// A dotted line (`dot`).
+    Dot,
+    /// A dashed line (`dash`).
+    Dash,
+    /// A large-dash line (`lgDash`).
+    LargeDash,
+    /// A dash-dot line (`dashDot`).
+    DashDot,
+    /// A large-dash-dot line (`lgDashDot`).
+    LargeDashDot,
+    /// A large-dash-dot-dot line (`lgDashDotDot`).
+    LargeDashDotDot,
+    /// A system dashed line (`sysDash`).
+    SystemDash,
+    /// A system dotted line (`sysDot`).
+    SystemDot,
+    /// A system dash-dot line (`sysDashDot`).
+    SystemDashDot,
+    /// A system dash-dot-dot line (`sysDashDotDot`).
+    SystemDashDotDot,
+}
+
+/// A line-end decoration (`a:headEnd`/`a:tailEnd`): the arrowhead type plus the
+/// optional relative width/length size tokens. Carried through round-trips;
+/// drawing the arrowhead is a follow-up.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineEnd {
+    /// The arrowhead type (`@type`, `ST_LineEndType`).
+    pub kind: LineEndKind,
+    /// The arrowhead width relative to the line (`@w`, `ST_LineEndWidth`), if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<LineEndSize>,
+    /// The arrowhead length relative to the line (`@len`, `ST_LineEndLength`), if
+    /// set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<LineEndSize>,
+}
+
+/// A line-end arrowhead type (`a:headEnd`/`a:tailEnd` `@type`, `ST_LineEndType`).
+/// An unrecognized token is treated as [`LineEndKind::None`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineEndKind {
+    /// No decoration (`none`).
+    None,
+    /// A triangle arrowhead (`triangle`).
+    Triangle,
+    /// A stealth (concave) arrowhead (`stealth`).
+    Stealth,
+    /// A diamond terminator (`diamond`).
+    Diamond,
+    /// An oval terminator (`oval`).
+    Oval,
+    /// An open arrow (`arrow`).
+    Arrow,
+}
+
+/// A line-end size token (`@w`, `ST_LineEndWidth`; `@len`, `ST_LineEndLength`):
+/// the arrowhead's width/length relative to the line weight.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LineEndSize {
+    /// Small (`sm`).
+    Small,
+    /// Medium (`med`).
+    Medium,
+    /// Large (`lg`).
+    Large,
 }
 
 /// The preset geometry of a simple DrawingML shape (`a:prstGeom@prst`). Only the
@@ -605,6 +721,18 @@ pub struct GroupTransform {
     pub child_offset: PointEmu,
     /// The child-space size (`a:chExt`).
     pub child_extent: Extent,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the group across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the group across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A picture child of a [`WordprocessingGroup`] (`pic:pic`): an embedded picture
@@ -627,6 +755,18 @@ pub struct GroupPicture {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the picture across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the picture across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// DrawingML text-box internal margins (`wps:bodyPr@lIns/tIns/rIns/bIns`), in
@@ -815,6 +955,16 @@ pub struct GroupTextBox {
     /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
     #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
     pub body_properties: TextBoxBodyProperties,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the box across its vertical axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the box across its horizontal axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A shape child of a [`WordprocessingGroup`] (`wps:wsp`/`wps:cxnSp` with no
@@ -844,6 +994,18 @@ pub struct GroupShape {
     /// The outline (`a:ln`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<ShapeStroke>,
+    /// Horizontal flip (`a:xfrm@flipH`): mirror the shape across its vertical
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_h: bool,
+    /// Vertical flip (`a:xfrm@flipV`): mirror the shape across its horizontal
+    /// axis.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub flip_v: bool,
+    /// Clockwise rotation about the box center (`a:xfrm@rot`, in 60000ths of a
+    /// degree), if authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i32>,
 }
 
 /// A child of a [`WordprocessingGroup`], in the group's child coordinate space.
@@ -1064,6 +1226,15 @@ pub struct Field {
     pub id: NodeId,
     /// The field instruction (non-empty, at most `MAX_FIELD_INSTRUCTION_BYTES`).
     pub instruction: String,
+    /// The typed field-kind projection derived from `instruction`.
+    ///
+    /// This is an additive, best-effort classification of the leading field
+    /// keyword and its common switch/argument (see [`FieldKind::parse`]); the
+    /// raw `instruction` string remains authoritative for export and exact
+    /// round-trip. Defaults to [`FieldKind::Other`] for legacy payloads that
+    /// predate this field.
+    #[serde(default)]
+    pub kind: FieldKind,
     /// The cached-result inline content (possibly empty; leaf inlines only).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inlines: Vec<InlineNode>,
@@ -1071,6 +1242,177 @@ pub struct Field {
     /// form field. `None` for an ordinary field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<FormFieldData>,
+}
+
+/// A typed projection of a Word field's leading instruction keyword and its
+/// common switch/argument.
+///
+/// This is an additive, best-effort classification: [`Field::instruction`]
+/// stays authoritative for export, and any unrecognized instruction projects to
+/// [`FieldKind::Other`] carrying the (upper-cased) leading keyword.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FieldKind {
+    /// `PAGE` — the current page number.
+    Page,
+    /// `NUMPAGES` — the total number of pages.
+    NumPages,
+    /// `DATE` — the current date, with the optional `\@` picture switch.
+    Date {
+        /// The date format picture (`\@ "…"`), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
+    },
+    /// `TIME` — the current time, with the optional `\@` picture switch.
+    Time {
+        /// The time format picture (`\@ "…"`), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
+    },
+    /// `REF` — a cross-reference to a bookmark.
+    Ref {
+        /// The referenced bookmark name.
+        bookmark: String,
+    },
+    /// `PAGEREF` — the page number of a bookmark.
+    PageRef {
+        /// The referenced bookmark name.
+        bookmark: String,
+    },
+    /// `TOC` — a table of contents.
+    Toc,
+    /// `SEQ` — a sequence counter.
+    Seq {
+        /// The sequence name.
+        name: String,
+    },
+    /// `STYLEREF` — text from the nearest paragraph of a named style.
+    StyleRef {
+        /// The referenced style name or id.
+        style: String,
+    },
+    /// `HYPERLINK` — a hyperlink to a target URL or internal anchor.
+    Hyperlink {
+        /// The hyperlink target (URL, or the `\l` anchor), if present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
+    /// Any other field: the upper-cased leading keyword is retained for
+    /// classification (the full instruction stays on [`Field::instruction`]).
+    Other {
+        /// The upper-cased leading keyword (may be empty for a blank
+        /// instruction).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        keyword: String,
+    },
+}
+
+impl Default for FieldKind {
+    fn default() -> Self {
+        FieldKind::Other {
+            keyword: String::new(),
+        }
+    }
+}
+
+impl FieldKind {
+    /// Classifies a field `instruction` by its leading keyword (case-insensitive)
+    /// and its common switch/argument.
+    ///
+    /// This never fails: an unrecognized or malformed instruction yields
+    /// [`FieldKind::Other`]. The result is a projection only — the raw
+    /// instruction remains authoritative for export.
+    pub fn parse(instruction: &str) -> FieldKind {
+        let tokens = tokenize_field_instruction(instruction);
+        let Some(keyword) = tokens.first() else {
+            return FieldKind::Other {
+                keyword: String::new(),
+            };
+        };
+        let keyword = keyword.to_ascii_uppercase();
+        let arguments = &tokens[1..];
+        // The first token that is not a `\`-switch: the primary identifier a
+        // producer always writes immediately after the keyword.
+        let first_argument = || {
+            arguments
+                .iter()
+                .find(|token| !token.starts_with('\\'))
+                .cloned()
+        };
+        // The token immediately following a named `\`-switch (e.g. `\@`).
+        let switch_argument = |name: &str| {
+            arguments
+                .iter()
+                .position(|token| token.eq_ignore_ascii_case(name))
+                .and_then(|index| arguments.get(index + 1))
+                .cloned()
+        };
+        match keyword.as_str() {
+            "PAGE" => FieldKind::Page,
+            "NUMPAGES" => FieldKind::NumPages,
+            "DATE" => FieldKind::Date {
+                format: switch_argument("\\@"),
+            },
+            "TIME" => FieldKind::Time {
+                format: switch_argument("\\@"),
+            },
+            "TOC" => FieldKind::Toc,
+            "REF" => match first_argument() {
+                Some(bookmark) => FieldKind::Ref { bookmark },
+                None => FieldKind::Other { keyword },
+            },
+            "PAGEREF" => match first_argument() {
+                Some(bookmark) => FieldKind::PageRef { bookmark },
+                None => FieldKind::Other { keyword },
+            },
+            "SEQ" => match first_argument() {
+                Some(name) => FieldKind::Seq { name },
+                None => FieldKind::Other { keyword },
+            },
+            "STYLEREF" => match first_argument() {
+                Some(style) => FieldKind::StyleRef { style },
+                None => FieldKind::Other { keyword },
+            },
+            "HYPERLINK" => FieldKind::Hyperlink {
+                target: first_argument(),
+            },
+            _ => FieldKind::Other { keyword },
+        }
+    }
+}
+
+/// Splits a field instruction into whitespace-separated tokens, treating a
+/// double-quoted span as a single token (quotes stripped) and a `\`-switch as
+/// its own token. Best-effort: unterminated quotes run to the end.
+fn tokenize_field_instruction(instruction: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut characters = instruction.chars().peekable();
+    while let Some(&character) = characters.peek() {
+        if character.is_whitespace() {
+            characters.next();
+        } else if character == '"' {
+            characters.next();
+            let mut token = String::new();
+            for character in characters.by_ref() {
+                if character == '"' {
+                    break;
+                }
+                token.push(character);
+            }
+            tokens.push(token);
+        } else {
+            let mut token = String::new();
+            while let Some(&character) = characters.peek() {
+                if character.is_whitespace() || character == '"' {
+                    break;
+                }
+                token.push(character);
+                characters.next();
+            }
+            tokens.push(token);
+        }
+    }
+    tokens
 }
 
 /// Maximum length, in UTF-8 bytes, of a form-field string (name, default text,
@@ -1262,6 +1604,24 @@ pub struct NoteReference {
     pub kind: NoteKind,
     /// The referenced note (resolves in `Definitions::footnotes`/`endnotes`).
     pub note: NoteId,
+}
+
+/// The auto-number mark inside a note's own body (`w:footnoteRef` /
+/// `w:endnoteRef`): the point where the note renders its own number. Unlike
+/// [`NoteReference`] (the body-side mark that points AT a note), this appears
+/// INSIDE the footnote/endnote definition and prints that note's number. It
+/// carries the run formatting of its enclosing run (typically the note's
+/// reference character style), so the number round-trips with its styling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteNumberMark {
+    /// Stable identity.
+    pub id: NodeId,
+    /// Whether this is a footnote's (`w:footnoteRef`) or an endnote's
+    /// (`w:endnoteRef`) auto-number mark.
+    pub kind: NoteKind,
+    /// The run properties of the enclosing run (the mark's own formatting).
+    pub properties: RunProperties,
 }
 
 /// An inline reference to a comment definition (`w:commentReference`).
@@ -1773,6 +2133,111 @@ pub enum MathExpression {
         /// Delimited expression.
         content: Box<MathExpression>,
     },
+    /// A named function applied to an argument (e.g. `sin x`), from `m:func`.
+    Function {
+        /// The function-name expression (the `m:fName`).
+        name: Box<MathExpression>,
+        /// The argument expression (the `m:e`).
+        argument: Box<MathExpression>,
+    },
+    /// A base decorated with a combining accent character, from `m:acc`.
+    Accent {
+        /// The accent character (`m:accPr/m:chr@m:val`); empty means the OOXML
+        /// default combining circumflex.
+        accent: String,
+        /// The accented base expression.
+        base: Box<MathExpression>,
+    },
+    /// A base with a limit set below or above it, from `m:limLow`/`m:limUpp`.
+    Limit {
+        /// The base expression (the `m:e`).
+        base: Box<MathExpression>,
+        /// The limit expression (the `m:lim`).
+        limit: Box<MathExpression>,
+        /// Whether the limit sits below or above the base.
+        position: LimitPosition,
+    },
+    /// An n-ary operator (integral, summation, product, …), from `m:nary`.
+    Nary {
+        /// The operator character (`m:naryPr/m:chr@m:val`); empty means the
+        /// OOXML default integral sign.
+        operator: String,
+        /// The optional lower bound / subscript (the `m:sub`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lower: Option<Box<MathExpression>>,
+        /// The optional upper bound / superscript (the `m:sup`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        upper: Option<Box<MathExpression>>,
+        /// The operand expression (the `m:e`).
+        base: Box<MathExpression>,
+    },
+    /// A matrix of expression cells in row-major order, from `m:m`.
+    Matrix {
+        /// The rows of cells (non-empty).
+        rows: Vec<MathMatrixRow>,
+    },
+    /// A vertically stacked equation array, from `m:eqArr`.
+    EqArray {
+        /// The stacked rows (non-empty).
+        rows: Vec<MathExpression>,
+    },
+    /// A base with an overline or underline rule, from `m:bar`.
+    Bar {
+        /// Whether the rule sits above (overline) or below (underline) the base.
+        position: BarPosition,
+        /// The barred base expression.
+        base: Box<MathExpression>,
+    },
+    /// A base grouped by a stretchy character (e.g. over-/under-brace), from
+    /// `m:groupChr`.
+    GroupChar {
+        /// The grouping character (`m:groupChrPr/m:chr@m:val`); empty means the
+        /// OOXML default top curly bracket.
+        character: String,
+        /// Whether the grouping character sits above or below the base.
+        position: GroupPosition,
+        /// The grouped base expression.
+        base: Box<MathExpression>,
+    },
+}
+
+/// Whether a [`MathExpression::Bar`] rule sits above or below its base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarPosition {
+    /// The rule sits above the base (an overline; `m:pos` `top`).
+    Top,
+    /// The rule sits below the base (an underline; `m:pos` `bot`).
+    Bottom,
+}
+
+/// Whether a [`MathExpression::GroupChar`] character sits above or below its
+/// base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupPosition {
+    /// The character sits above the base (e.g. an over-brace; `m:pos` `top`).
+    Top,
+    /// The character sits below the base (e.g. an under-brace; `m:pos` `bot`).
+    Bottom,
+}
+
+/// Whether a [`MathExpression::Limit`] places its limit below or above the base.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitPosition {
+    /// The limit sits below the base (`m:limLow`).
+    Lower,
+    /// The limit sits above the base (`m:limUpp`).
+    Upper,
+}
+
+/// One row of a [`MathExpression::Matrix`]: an ordered list of cell expressions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MathMatrixRow {
+    /// The cell expressions in column order (non-empty).
+    pub cells: Vec<MathExpression>,
 }
 
 /// An inline math object (an OMML `m:oMath` or `m:oMathPara` subtree).
@@ -1833,6 +2298,9 @@ pub enum InlineNode {
     Group(WordprocessingGroup),
     /// An inline reference to a footnote or endnote.
     NoteReference(NoteReference),
+    /// The auto-number mark inside a note's own body (`w:footnoteRef` /
+    /// `w:endnoteRef`), printing that note's own number.
+    NoteNumberMark(NoteNumberMark),
     /// An inline reference to a comment.
     CommentReference(CommentReference),
     /// The start marker of a comment's anchored range.
@@ -1882,6 +2350,7 @@ impl InlineNode {
             Self::TextBox(text_box) => text_box.id,
             Self::Group(group) => group.id,
             Self::NoteReference(note) => note.id,
+            Self::NoteNumberMark(mark) => mark.id,
             Self::CommentReference(comment) => comment.id,
             Self::CommentRangeStart(node) => node.id,
             Self::CommentRangeEnd(node) => node.id,

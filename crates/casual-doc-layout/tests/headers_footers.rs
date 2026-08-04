@@ -52,6 +52,7 @@ fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
     InlineNode::Field(Field {
         id: node(id),
         instruction: instruction.to_owned(),
+        kind: casual_doc_model::v1::FieldKind::parse(instruction),
         inlines: vec![run(id + 1, cached)],
         form: None,
     })
@@ -536,6 +537,9 @@ fn a_header_can_contain_an_inline_image() {
             }),
             descr: None,
             crop: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
         })],
     });
     let header = flow_header_footer(&doc, &[header_block], &shaper, WIDTH);

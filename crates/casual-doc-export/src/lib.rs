@@ -683,6 +683,153 @@ mod semantic_tests {
     }
 
     #[test]
+    fn shape_stroke_dash_and_arrowheads_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, DashStyle, GroupChild, InlineNode, LineEndKind, LineEndSize,
+        };
+        use std::io::Read;
+
+        // A grouped shape whose outline is dash-dotted with a medium/large triangle
+        // head-end and a stealth tail-end (a common dashed connector/callout leader),
+        // plus a second shape carrying only a large-dash pattern. Each
+        // `a:prstDash@val` / `a:headEnd` / `a:tailEnd` must survive the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Connector"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="0"/></a:xfrm><a:prstGeom prst="line"/><a:ln w="19050"><a:solidFill><a:srgbClr val="00FF00"/></a:solidFill><a:prstDash val="dashDot"/><a:headEnd type="triangle" w="med" len="lg"/><a:tailEnd type="stealth"/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Rectangle"/><wps:spPr><a:xfrm><a:off x="0" y="200000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/><a:ln w="9525"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill><a:prstDash val="lgDash"/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+
+        let GroupChild::Shape(connector) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        let stroke = connector.stroke.expect("the connector outline");
+        assert_eq!(stroke.dash, Some(DashStyle::DashDot));
+        let head = stroke.head_end.expect("the head-end arrowhead");
+        assert_eq!(head.kind, LineEndKind::Triangle);
+        assert_eq!(head.width, Some(LineEndSize::Medium));
+        assert_eq!(head.length, Some(LineEndSize::Large));
+        let tail = stroke.tail_end.expect("the tail-end arrowhead");
+        assert_eq!(tail.kind, LineEndKind::Stealth);
+        assert_eq!(tail.width, None);
+        assert_eq!(tail.length, None);
+
+        let GroupChild::Shape(rectangle) = &group.children[1] else {
+            panic!("expected a shape");
+        };
+        let rect_stroke = rectangle.stroke.expect("the rectangle outline");
+        assert_eq!(rect_stroke.dash, Some(DashStyle::LargeDash));
+        assert_eq!(rect_stroke.head_end, None);
+        assert_eq!(rect_stroke.tail_end, None);
+
+        assert_eq!(m1, m2, "dash + arrowheads survive write -> reopen");
+
+        // The writer emits the decorations in `CT_LineProperties` schema order
+        // (fill, then prstDash, then headEnd, then tailEnd) inside the `a:ln`.
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut written = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut written)
+            .unwrap();
+        let dash = written
+            .find(r#"<a:prstDash val="dashDot"/>"#)
+            .expect("prstDash");
+        let head = written
+            .find(r#"<a:headEnd type="triangle" w="med" len="lg"/>"#)
+            .expect("headEnd");
+        let tail = written
+            .find(r#"<a:tailEnd type="stealth"/>"#)
+            .expect("tailEnd");
+        assert!(dash < head && head < tail, "prstDash < headEnd < tailEnd");
+    }
+
+    #[test]
+    fn group_flip_and_rotation_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode};
+
+        // A `wpg:wgp` whose group transform is rotated + flipped on both axes, a
+        // child shape rotated + flipped horizontally, and a child text box rotated
+        // + flipped vertically. Each `a:xfrm@rot`/`@flipH`/`@flipV` must survive.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2000000" cy="1000000"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm rot="1200000" flipH="1" flipV="1"><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="1000000"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Rectangle"/><wps:spPr><a:xfrm rot="600000" flipH="1"><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Text Box"/><wps:spPr><a:xfrm rot="300000" flipV="1"><a:off x="200000" y="100000"/><a:ext cx="800000" cy="300000"/></a:xfrm><a:prstGeom prst="rect"/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        assert_eq!(group.transform.rotation, Some(1_200_000));
+        assert!(group.transform.flip_h);
+        assert!(group.transform.flip_v);
+
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(shape.rotation, Some(600_000));
+        assert!(shape.flip_h);
+        assert!(!shape.flip_v);
+
+        let GroupChild::TextBox(text_box) = &group.children[1] else {
+            panic!("expected a text box");
+        };
+        assert_eq!(text_box.rotation, Some(300_000));
+        assert!(!text_box.flip_h);
+        assert!(text_box.flip_v);
+
+        assert_eq!(m1, m2, "group flip + rotation survive write -> reopen");
+    }
+
+    #[test]
+    fn anchored_picture_flip_and_rotation_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        // A floating picture whose `pic:spPr/a:xfrm` is rotated and flipped on both
+        // axes (a mirrored, rotated logo). The `@rot`/`@flipH`/`@flipV` must survive
+        // import -> write -> reopen. Imported through a package so `r:embed` resolves.
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm rot="900000" flipH="1" flipV="1"><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &paragraph.inlines[0] else {
+            panic!(
+                "expected an anchored drawing, got {:?}",
+                paragraph.inlines[0]
+            );
+        };
+        assert_eq!(drawing.rotation, Some(900_000));
+        assert!(drawing.flip_h);
+        assert!(drawing.flip_v);
+
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"<a:xfrm rot="900000" flipH="1" flipV="1">"#),
+            "the writer emits @rot/@flipH/@flipV on the picture transform"
+        );
+
+        let m2 = reopen(&written);
+        assert_eq!(
+            m1, m2,
+            "anchored picture flip + rotation survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn angular_shape_presets_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, GroupChild, InlineNode, ShapeGeometry};
 
@@ -759,6 +906,122 @@ mod semantic_tests {
             })
             .collect();
         assert_eq!(run_text, "beforeafter");
+    }
+
+    #[test]
+    fn typed_omml_constructs_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, LimitPosition, MathExpression};
+
+        // One paragraph carrying six equations, one per newly-typed OMML
+        // construct: function, accent, lower limit, n-ary summation, matrix, and
+        // equation array. The retained OMML stays authoritative for export, so
+        // each must survive write -> reopen verbatim, and its typed projection
+        // must match the expected variant on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:func><m:fName><m:r><m:t>sin</m:t></m:r></m:fName><m:e><m:r><m:t>x</m:t></m:r></m:e></m:func></m:oMath>
+            <m:oMath><m:acc><m:accPr><m:chr m:val="^"/></m:accPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:acc></m:oMath>
+            <m:oMath><m:limLow><m:e><m:r><m:t>lim</m:t></m:r></m:e><m:lim><m:r><m:t>n</m:t></m:r></m:lim></m:limLow></m:oMath>
+            <m:oMath><m:nary><m:naryPr><m:chr m:val="&#8721;"/></m:naryPr><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup><m:e><m:r><m:t>x</m:t></m:r></m:e></m:nary></m:oMath>
+            <m:oMath><m:m><m:mr><m:e><m:r><m:t>a</m:t></m:r></m:e><m:e><m:r><m:t>b</m:t></m:r></m:e></m:mr></m:m></m:oMath>
+            <m:oMath><m:eqArr><m:e><m:r><m:t>a</m:t></m:r></m:e><m:e><m:r><m:t>b</m:t></m:r></m:e></m:eqArr></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the typed equations survive write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 6, "one projection per equation");
+        assert!(matches!(expressions[0], MathExpression::Function { .. }));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::Accent { accent, .. } if accent == "^"
+        ));
+        assert!(matches!(
+            expressions[2],
+            MathExpression::Limit {
+                position: LimitPosition::Lower,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[3],
+            MathExpression::Nary { operator, lower: Some(_), upper: Some(_), .. }
+                if operator == "\u{2211}"
+        ));
+        assert!(matches!(
+            expressions[4],
+            MathExpression::Matrix { rows } if rows.len() == 1 && rows[0].cells.len() == 2
+        ));
+        assert!(matches!(
+            expressions[5],
+            MathExpression::EqArray { rows } if rows.len() == 2
+        ));
+    }
+
+    #[test]
+    fn typed_bar_and_group_char_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BarPosition, BlockNode, GroupPosition, InlineNode, MathExpression,
+        };
+
+        // One paragraph carrying three equations: an overbar (`m:bar` top), an
+        // underbar (`m:bar` bot), and an over-brace grouping character
+        // (`m:groupChr`). The retained OMML stays authoritative for export, so
+        // each must survive write -> reopen verbatim, and its typed projection
+        // must match the expected variant on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p>
+            <m:oMath><m:bar><m:barPr><m:pos m:val="top"/></m:barPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:bar></m:oMath>
+            <m:oMath><m:bar><m:barPr><m:pos m:val="bot"/></m:barPr><m:e><m:r><m:t>y</m:t></m:r></m:e></m:bar></m:oMath>
+            <m:oMath><m:groupChr><m:groupChrPr><m:chr m:val="&#9182;"/><m:pos m:val="top"/></m:groupChrPr><m:e><m:r><m:t>z</m:t></m:r></m:e></m:groupChr></m:oMath>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the typed bar/groupChr equations survive round trip"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let expressions: Vec<&MathExpression> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Math(math) => math.expression.as_ref(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.len(), 3, "one projection per equation");
+        assert!(matches!(
+            expressions[0],
+            MathExpression::Bar {
+                position: BarPosition::Top,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[1],
+            MathExpression::Bar {
+                position: BarPosition::Bottom,
+                ..
+            }
+        ));
+        assert!(matches!(
+            expressions[2],
+            MathExpression::GroupChar { character, position: GroupPosition::Top, .. }
+                if character == "\u{23DE}"
+        ));
     }
 
     #[test]
@@ -869,6 +1132,243 @@ mod semantic_tests {
     }
 
     #[test]
+    fn run_theme_color_with_tint_and_shade_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, Color, InlineNode, ThemeColor, ThemeColorRef};
+        // Word writes a concrete `w:val` fallback beside `w:themeColor`; the theme
+        // reference — with its hex-byte `w:themeTint`/`w:themeShade` — is what must
+        // be captured and round-tripped (the concrete fallback is recomputed).
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p>
+                <w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeTint="99"/></w:rPr><w:t>tint</w:t></w:r>
+                <w:r><w:rPr><w:color w:val="2E74B5" w:themeColor="hyperlink" w:themeShade="BF"/></w:rPr><w:t>shade</w:t></w:r>
+            </w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the run theme colors survive write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Run(tint_run) = &paragraph.inlines[0] else {
+            panic!("expected a run");
+        };
+        assert_eq!(
+            tint_run.properties.color,
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+                theme_tint: Some(0x99),
+                theme_shade: None,
+            })),
+            "themeColor + themeTint is captured, not the concrete w:val fallback"
+        );
+        let InlineNode::Run(shade_run) = &paragraph.inlines[1] else {
+            panic!("expected a run");
+        };
+        assert_eq!(
+            shade_run.properties.color,
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Hyperlink,
+                theme_tint: None,
+                theme_shade: Some(0xBF),
+            })),
+        );
+    }
+
+    #[test]
+    fn shading_theme_fill_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, ThemeColor, ThemeColorRef};
+        // Word emits `w:themeFill` (with optional `w:themeFillTint`/`w:themeFillShade`)
+        // *without* a duplicate concrete `w:fill`, on paragraphs, tables, and cells.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent2" w:themeFillTint="33"/></w:pPr>
+                <w:r><w:t>para</w:t></w:r></w:p>
+            <w:tbl>
+                <w:tblPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent4"/></w:tblPr>
+                <w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid>
+                <w:tr><w:tc>
+                    <w:tcPr><w:shd w:val="clear" w:color="auto" w:themeFill="accent1" w:themeFillShade="80"/></w:tcPr>
+                    <w:p><w:r><w:t>cell</w:t></w:r></w:p>
+                </w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the theme fills survive write -> reopen unchanged");
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent2,
+                theme_tint: Some(0x33),
+                theme_shade: None,
+            }),
+        );
+        assert_eq!(
+            paragraph.properties.shading.fill, None,
+            "the theme fill carries no concrete fill"
+        );
+
+        let BlockNode::Table(table) = &m1.body()[1] else {
+            panic!("expected a table");
+        };
+        assert_eq!(
+            table.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent4,
+                theme_tint: None,
+                theme_shade: None,
+            }),
+        );
+        let cell = &table.rows[0].cells[0];
+        assert_eq!(
+            cell.properties.shading.theme_fill,
+            Some(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+                theme_tint: None,
+                theme_shade: Some(0x80),
+            }),
+        );
+    }
+
+    #[test]
+    fn typed_table_and_cell_widths_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TableWidth, WidthType};
+        // AutoFit-to-window: the table's preferred width is a percentage (pct,
+        // fiftieths of a percent — 5000 = 100%), and the cell's width is
+        // content-sized (auto). Both the magnitude and the unit must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr><w:tblW w:type="pct" w:w="5000"/></w:tblPr>
+                <w:tblGrid><w:gridCol w:w="4500"/></w:tblGrid>
+                <w:tr>
+                    <w:tc><w:tcPr><w:tcW w:type="auto" w:w="0"/></w:tcPr>
+                        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "typed widths are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        assert_eq!(
+            table.properties.width,
+            Some(TableWidth::pct(5000)),
+            "pct table width round-trips with its type",
+        );
+        assert_eq!(
+            table.rows[0].cells[0].properties.width,
+            Some(TableWidth {
+                value: 0,
+                width_type: WidthType::Auto,
+            }),
+            "auto cell width round-trips with its type",
+        );
+    }
+
+    #[test]
+    fn tracked_table_row_revisions_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, MarkRevisionKind};
+        // A tracked row insertion (`w:trPr>w:ins`, with author/date/id) and a
+        // tracked row deletion (`w:trPr>w:del`). Both were dropped at import;
+        // now they are modeled on `row_revision` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr>
+                    <w:trPr><w:ins w:id="11" w:author="Ada" w:date="2021-01-02T03:04:05Z"/></w:trPr>
+                    <w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>
+                </w:tr>
+                <w:tr>
+                    <w:trPr><w:del w:id="12" w:author="Bo"/></w:trPr>
+                    <w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>
+                </w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "row revisions are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        let ins = table.rows[0]
+            .properties
+            .row_revision
+            .as_ref()
+            .expect("row insertion modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        assert_eq!(ins.date.as_deref(), Some("2021-01-02T03:04:05Z"));
+        assert_eq!(ins.revision_id.as_deref(), Some("11"));
+        let del = table.rows[1]
+            .properties
+            .row_revision
+            .as_ref()
+            .expect("row deletion modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.author.as_deref(), Some("Bo"));
+    }
+
+    #[test]
+    fn tracked_table_cell_revisions_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, CellMergeAnnotation, MarkRevisionKind};
+        // Tracked cell insertion (`w:cellIns`), deletion (`w:cellDel`), and merge
+        // (`w:cellMerge` with vMerge/vMergeOrig annotations). Each was dropped at
+        // import; now modeled on `cell_revision`/`cell_merge` and must round-trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellIns w:id="21" w:author="Ada"/></w:tcPr>
+                    <w:p><w:r><w:t>a</w:t></w:r></w:p>
+                </w:tc></w:tr>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellDel w:id="22" w:author="Bo" w:date="2022-02-02T00:00:00Z"/></w:tcPr>
+                    <w:p><w:r><w:t>b</w:t></w:r></w:p>
+                </w:tc></w:tr>
+                <w:tr><w:tc>
+                    <w:tcPr><w:cellMerge w:id="23" w:author="Cy" w:vMerge="cont" w:vMergeOrig="rest"/></w:tcPr>
+                    <w:p><w:r><w:t>c</w:t></w:r></w:p>
+                </w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "cell revisions are a write -> reopen fixed point");
+
+        let BlockNode::Table(table) = &m2.body()[0] else {
+            panic!("expected a table");
+        };
+        let ins = table.rows[0].cells[0]
+            .properties
+            .cell_revision
+            .as_ref()
+            .expect("cell insertion modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        let del = table.rows[1].cells[0]
+            .properties
+            .cell_revision
+            .as_ref()
+            .expect("cell deletion modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.date.as_deref(), Some("2022-02-02T00:00:00Z"));
+        let merge = table.rows[2].cells[0]
+            .properties
+            .cell_merge
+            .as_ref()
+            .expect("cell merge modeled");
+        assert_eq!(merge.author.as_deref(), Some("Cy"));
+        assert_eq!(merge.vmerge, Some(CellMergeAnnotation::Cont));
+        assert_eq!(merge.vmerge_orig, Some(CellMergeAnnotation::Rest));
+    }
+
+    #[test]
     fn expanded_table_properties_survive_the_semantic_round_trip() {
         // The additive table/row/cell properties: tblOverlap, tblCellSpacing,
         // tblInd, tblCaption/tblDescription; a per-row jc + tblCellSpacing; and
@@ -959,6 +1459,64 @@ mod semantic_tests {
         assert_eq!(
             m1, m2,
             "the inline-construct model survives write -> reopen unchanged"
+        );
+    }
+
+    #[test]
+    fn typed_field_kinds_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, FieldKind, InlineNode};
+
+        // One paragraph carrying five `w:fldSimple` fields whose instructions
+        // exercise distinct typed kinds. The raw instruction stays authoritative
+        // for export, so each must survive write -> reopen verbatim, and its
+        // typed `kind` projection must match on both sides of the round trip.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p>
+            <w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" DATE \@ &quot;M/d/yyyy&quot; "><w:r><w:t>1/2/2020</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" REF _Ref1 \h "><w:r><w:t>x</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" HYPERLINK &quot;http://example.com/a?b=1&amp;c=2&quot; "><w:r><w:t>link</w:t></w:r></w:fldSimple>
+            <w:fldSimple w:instr=" MERGEFIELD Name "><w:r><w:t>n</w:t></w:r></w:fldSimple>
+        </w:p></w:body></w:document>"#;
+
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the typed fields survive write -> reopen");
+
+        let BlockNode::Paragraph(paragraph) = &m2.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let kinds: Vec<&FieldKind> = paragraph
+            .inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Field(field) => Some(&field.kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds.len(), 5, "one typed kind per field");
+        assert_eq!(kinds[0], &FieldKind::Page);
+        assert_eq!(
+            kinds[1],
+            &FieldKind::Date {
+                format: Some("M/d/yyyy".to_owned()),
+            }
+        );
+        assert_eq!(
+            kinds[2],
+            &FieldKind::Ref {
+                bookmark: "_Ref1".to_owned(),
+            }
+        );
+        assert_eq!(
+            kinds[3],
+            &FieldKind::Hyperlink {
+                target: Some("http://example.com/a?b=1&c=2".to_owned()),
+            }
+        );
+        assert_eq!(
+            kinds[4],
+            &FieldKind::Other {
+                keyword: "MERGEFIELD".to_owned(),
+            }
         );
     }
 
@@ -2042,6 +2600,68 @@ mod semantic_tests {
     }
 
     #[test]
+    fn paragraph_text_direction_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TextDirection};
+        // A direct `w:pPr/w:textDirection` (vertical flow) is a paragraph-level
+        // property, distinct from the section's and a cell's textDirection.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:textDirection w:val="tbRl"/></w:pPr><w:r><w:t>vertical</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the paragraph text direction survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.text_direction,
+            Some(TextDirection::TbRl),
+            "the pPr textDirection is captured"
+        );
+    }
+
+    #[test]
+    fn cleared_tab_stop_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, TabAlignment};
+        // A `w:tab w:val="clear"` suppresses an inherited/default stop at its
+        // position; it must be captured (not dropped) so the suppression survives.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:tabs>
+                <w:tab w:val="clear" w:pos="720"/>
+                <w:tab w:val="left" w:pos="1440"/>
+            </w:tabs></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the cleared tab stop survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.properties.tabs.len(),
+            2,
+            "both stops are captured"
+        );
+        assert_eq!(paragraph.properties.tabs[0].position_twips, 720);
+        assert_eq!(
+            paragraph.properties.tabs[0].alignment,
+            TabAlignment::Clear,
+            "the cleared stop is modeled, not dropped"
+        );
+        assert_eq!(
+            paragraph.properties.tabs[1].alignment,
+            TabAlignment::Start,
+            "the ordinary stop is unaffected"
+        );
+    }
+
+    #[test]
     fn theme_color_and_format_schemes_survive_the_semantic_round_trip() {
         // A full theme: a 12-slot clrScheme (sysClr with lastClr for dk1/lt1,
         // srgbClr for the rest), a fontScheme, and an fmtScheme. The clrScheme is
@@ -2343,6 +2963,81 @@ mod semantic_tests {
     }
 
     #[test]
+    fn numbering_style_links_survive_the_semantic_round_trip() {
+        // A level's `w:pStyle` (the heading-style binding) and an abstract's
+        // `w:styleLink` / `w:numStyleLink` (the reusable List-Style bindings)
+        // reference paragraph styles by id; styles.xml is parsed first so the
+        // numbering part can resolve them to StyleIds. All three must survive
+        // import -> write -> reopen as a fixed point.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>
+                <w:r><w:t>item</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+        let styles = br#"<w:styles xmlns:w="urn:w">
+            <w:style w:type="paragraph" w:styleId="MyHeading"><w:name w:val="My Heading"/></w:style>
+            <w:style w:type="paragraph" w:styleId="MyList"><w:name w:val="My List"/></w:style>
+        </w:styles>"#;
+        let numbering = br#"<w:numbering xmlns:w="urn:w">
+            <w:abstractNum w:abstractNumId="0">
+                <w:styleLink w:val="MyList"/>
+                <w:numStyleLink w:val="MyHeading"/>
+                <w:lvl w:ilvl="0"><w:start w:val="1"/><w:pStyle w:val="MyHeading"/></w:lvl></w:abstractNum>
+            <w:num w:numId="3"><w:abstractNumId w:val="0"/></w:num>
+        </w:numbering>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/numbering.xml", numbering),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let m1 = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        let (_, abstract_num) = m1.definitions().abstract_numbering.iter().next().unwrap();
+        // The three links resolved to real (Some) paragraph-style ids.
+        assert!(
+            abstract_num.style_link.is_some(),
+            "styleLink resolved to a StyleId"
+        );
+        assert!(
+            abstract_num.num_style_link.is_some(),
+            "numStyleLink resolved to a StyleId"
+        );
+        assert!(
+            abstract_num.levels[0].pstyle.is_some(),
+            "level pStyle resolved to a StyleId"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let m2 = import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document;
+        assert_eq!(
+            m1, m2,
+            "level pStyle + abstract styleLink/numStyleLink survive write -> reopen"
+        );
+    }
+
+    #[test]
     fn expanded_settings_survive_the_semantic_round_trip() {
         // settings.xml carrying the newly modeled settings (evenAndOddHeaders,
         // defaultTabStop, trackChanges, documentProtection, a proofState, a zoom,
@@ -2400,6 +3095,76 @@ mod semantic_tests {
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "expanded settings survive write -> reopen");
+    }
+
+    #[test]
+    fn document_default_note_props_survive_the_semantic_round_trip() {
+        // settings.xml carrying the document-default footnote/endnote property
+        // containers (`w:footnotePr`/`w:endnotePr`), each with a placement, a typed
+        // numFmt, a numStart, and a numRestart. They survive write -> reopen as a
+        // fixed point; the endnote's `lowerLetter` exercises a second typed token.
+        use casual_doc_model::v1::{NoteNumberRestart, NotePosition, NumberFormat};
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#;
+        let settings = br#"<w:settings xmlns:w="urn:w">
+            <w:footnotePr>
+                <w:pos w:val="beneathText"/>
+                <w:numFmt w:val="lowerRoman"/>
+                <w:numStart w:val="2"/>
+                <w:numRestart w:val="eachPage"/>
+            </w:footnotePr>
+            <w:endnotePr>
+                <w:pos w:val="docEnd"/>
+                <w:numFmt w:val="lowerLetter"/>
+                <w:numRestart w:val="continuous"/>
+            </w:endnotePr>
+        </w:settings>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/settings.xml", settings),
+        ]);
+        let mut src_package = DocxPackage::open(&source, PackageLimits::default()).unwrap();
+        let import = import_package(
+            &mut src_package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        let m1 = import.document;
+        let s = m1.definitions().settings.clone();
+        assert_eq!(s.footnote_props.position, Some(NotePosition::BeneathText));
+        assert_eq!(
+            s.footnote_props.number_format,
+            Some(NumberFormat::LowerRoman)
+        );
+        assert_eq!(s.footnote_props.number_start, Some(2));
+        assert_eq!(
+            s.footnote_props.number_restart,
+            Some(NoteNumberRestart::EachPage)
+        );
+        assert_eq!(s.endnote_props.position, Some(NotePosition::DocumentEnd));
+        assert_eq!(
+            s.endnote_props.number_format,
+            Some(NumberFormat::LowerLetter)
+        );
+        assert_eq!(
+            s.endnote_props.number_restart,
+            Some(NoteNumberRestart::Continuous)
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "document-default note props survive write -> reopen"
+        );
     }
 
     #[test]
@@ -2489,6 +3254,80 @@ mod semantic_tests {
         assert_eq!(
             m1, m2,
             "footnotes + endnotes + refs survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn note_number_marks_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{InlineNode, NoteKind, VerticalAlignment};
+
+        // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`) lives
+        // INSIDE the note body and prints that note's number. It was dropped at
+        // import; now it is modeled as `InlineNode::NoteNumberMark`, carrying its
+        // enclosing run's formatting, and must survive write -> reopen.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:r><w:t>a</w:t></w:r><w:r><w:footnoteReference w:id="2"/></w:r></w:p>
+            <w:p><w:r><w:t>b</w:t></w:r><w:r><w:endnoteReference w:id="5"/></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
+        // The footnote's body opens with the number mark carrying superscript
+        // formatting; the endnote's is a bare mark (default formatting).
+        let footnotes = br#"<w:footnotes xmlns:w="urn:w"><w:footnote w:id="2"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t> fn body</w:t></w:r></w:p></w:footnote></w:footnotes>"#;
+        let endnotes = br#"<w:endnotes xmlns:w="urn:w"><w:endnote w:id="5"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t> en body</w:t></w:r></w:p></w:endnote></w:endnotes>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/footnotes.xml", footnotes),
+            ("word/endnotes.xml", endnotes),
+        ]);
+        let m1 = reopen(&source);
+
+        // The footnote body's first inline is the footnote number mark with its
+        // superscript formatting; the endnote body's is an endnote mark.
+        let footnote = m1
+            .definitions()
+            .footnotes
+            .iter()
+            .next()
+            .expect("a footnote definition")
+            .1;
+        let casual_doc_model::v1::BlockNode::Paragraph(fn_para) = &footnote.blocks[0] else {
+            panic!("expected a footnote body paragraph");
+        };
+        let InlineNode::NoteNumberMark(fn_mark) = &fn_para.inlines[0] else {
+            panic!("expected a footnote number mark as the first inline");
+        };
+        assert_eq!(fn_mark.kind, NoteKind::Footnote);
+        assert_eq!(
+            fn_mark.properties.vertical_alignment,
+            Some(VerticalAlignment::Superscript),
+            "the mark carries its enclosing run's formatting"
+        );
+
+        let endnote = m1
+            .definitions()
+            .endnotes
+            .iter()
+            .next()
+            .expect("an endnote definition")
+            .1;
+        let casual_doc_model::v1::BlockNode::Paragraph(en_para) = &endnote.blocks[0] else {
+            panic!("expected an endnote body paragraph");
+        };
+        assert!(
+            matches!(&en_para.inlines[0], InlineNode::NoteNumberMark(m) if m.kind == NoteKind::Endnote),
+            "the endnote body opens with an endnote number mark"
+        );
+
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "note number marks (with formatting) survive write -> reopen"
         );
     }
 
@@ -2825,7 +3664,7 @@ mod semantic_tests {
         // landscape page orientation. The writer must emit each in CT_SectPr order
         // so the reopened model is a fixed point.
         use casual_doc_model::v1::{
-            LineNumberRestart, NoteNumberRestart, NotePosition, PageBorderDisplay,
+            LineNumberRestart, NoteNumberRestart, NotePosition, NumberFormat, PageBorderDisplay,
             PageBorderOffset, PageOrientation, TextDirection,
         };
         let xml = br#"<w:document xmlns:w="urn:w"><w:body>
@@ -2879,6 +3718,10 @@ mod semantic_tests {
         assert_eq!(
             section.footnote_props.number_restart,
             Some(NoteNumberRestart::EachSection)
+        );
+        assert_eq!(
+            section.footnote_props.number_format,
+            Some(NumberFormat::LowerRoman)
         );
         assert_eq!(section.footnote_props.number_start, Some(2));
         assert_eq!(section.text_direction, Some(TextDirection::TbRl));
@@ -3117,6 +3960,62 @@ mod semantic_tests {
         assert_eq!(
             m1, m2,
             "paragraph-mark run properties survive write -> reopen"
+        );
+    }
+
+    #[test]
+    fn paragraph_mark_revision_survives_the_semantic_round_trip() {
+        // A tracked paragraph-mark change (`w:pPr>w:rPr>w:ins`/`w:del`): the
+        // pilcrow itself is a tracked insertion (a split) or deletion (a merge),
+        // distinct from any run-level revision. The first paragraph's mark is a
+        // tracked insertion with author/date/id; the second's mark is a tracked
+        // deletion alongside mark formatting (both must coexist in the mark rPr).
+        use casual_doc_model::v1::{BlockNode, MarkRevisionKind};
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:pPr><w:rPr><w:ins w:id="7" w:author="Ada" w:date="2021-03-04T05:06:07Z"/></w:rPr></w:pPr>
+                <w:r><w:t>a</w:t></w:r></w:p>
+            <w:p><w:pPr><w:rPr><w:del w:id="8" w:author="Bo"/><w:b/></w:rPr></w:pPr>
+                <w:r><w:t>b</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let m1 = import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document;
+        let BlockNode::Paragraph(p0) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let ins = p0
+            .properties
+            .mark_revision
+            .as_ref()
+            .expect("mark revision modeled");
+        assert_eq!(ins.kind, MarkRevisionKind::Insertion);
+        assert_eq!(ins.author.as_deref(), Some("Ada"));
+        assert_eq!(ins.date.as_deref(), Some("2021-03-04T05:06:07Z"));
+        assert_eq!(ins.revision_id.as_deref(), Some("7"));
+        let BlockNode::Paragraph(p1) = &m1.body()[1] else {
+            panic!("expected a paragraph");
+        };
+        let del = p1
+            .properties
+            .mark_revision
+            .as_ref()
+            .expect("mark revision modeled");
+        assert_eq!(del.kind, MarkRevisionKind::Deletion);
+        assert_eq!(del.author.as_deref(), Some("Bo"));
+        assert_eq!(
+            p1.properties
+                .mark_run
+                .as_ref()
+                .expect("mark formatting coexists with the revision")
+                .bold,
+            Some(true),
+            "the deleted mark keeps its own formatting"
+        );
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m1, m2,
+            "paragraph-mark insertion/deletion revisions survive write -> reopen"
         );
     }
 

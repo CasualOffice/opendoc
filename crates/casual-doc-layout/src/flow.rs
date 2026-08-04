@@ -620,6 +620,7 @@ const fn tab_alignment_key(alignment: TabAlignment) -> u8 {
         TabAlignment::End => 2,
         TabAlignment::Decimal => 3,
         TabAlignment::Bar => 4,
+        TabAlignment::Clear => 5,
     }
 }
 
@@ -1175,13 +1176,12 @@ fn flow_table(
             // banded-row or header-row fill. Only then does the table's own
             // direct `w:shd` apply through the cell extent.
             let style_layer = &style_layers[row_index][index];
-            let shading = cell
-                .properties
-                .shading
-                .fill
-                .or(style_layer.shading)
-                .or(table.properties.shading.fill)
-                .map(|c| [c.r, c.g, c.b, 255]);
+            // Each level resolves its own `w:shd` (concrete sRGB *or* a `w:themeFill`
+            // slot against the palette); the cell wins, then the table-style layer
+            // (concrete only), then the table's own direct shading.
+            let shading = shading_rgba(&cell.properties.shading, ctx.palette)
+                .or_else(|| style_layer.shading.map(|c| [c.r, c.g, c.b, 255]))
+                .or_else(|| shading_rgba(&table.properties.shading, ctx.palette));
             // Word insets a cell's content by `w:tcMar` (per-cell), falling back to
             // the table's `w:tblCellMar`, then to Word's built-in default. Content
             // therefore flows at the reduced inner width; composition offsets it by
@@ -1796,7 +1796,12 @@ fn solve_table_columns(
                     .is_some()
                     .then_some(&style_layers[row_index][cell_index]);
                 let (cmin, cmax) = block_intrinsic(&cell.blocks, shaper, ctx, table_style);
-                let cpref = cmax.max(cell.properties.width_twips.unwrap_or(0));
+                let cell_pref = cell
+                    .properties
+                    .width
+                    .and_then(|width| width.dxa_twips())
+                    .unwrap_or(0);
+                let cpref = cmax.max(cell_pref);
                 // A spanning cell's demand is shared over the columns it covers.
                 let per_min = div_ceil(cmin, span as i32);
                 let per_pref = div_ceil(cpref, span as i32);
@@ -1817,7 +1822,8 @@ fn solve_table_columns(
 
     let spec = table
         .properties
-        .width_twips
+        .width
+        .and_then(|width| width.dxa_twips())
         .map_or(WidthSpec::Auto, WidthSpec::Dxa);
     let layout = match table.properties.layout {
         Some(TableLayout::Fixed) => TableLayout::Fixed,
@@ -2595,6 +2601,12 @@ fn collect_items_with_measure<'a>(
                 }));
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
+            // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
+            // inside a note body. Painting its number needs the enclosing note's
+            // ordinal, which is not threaded into local inline flow; the mark is
+            // preserved in the model and round-trips. Omitting it here does not
+            // regress (the mark was previously dropped at import).
+            InlineNode::NoteNumberMark(_) => {}
             // `w:commentReference` is a zero-width model marker. Its visible
             // affordance belongs to the host review UI; shaping placeholder
             // text here changes line wrapping and leaks a superscript
@@ -3785,6 +3797,45 @@ fn layout_math_expression(
             }
             math_row(children)
         }
+        MathExpression::Function { name, argument } => {
+            // A function apply lays out as its name followed by its argument on a
+            // shared baseline (e.g. `sin x`).
+            let name = layout_math_expression(shaper, name, base, scale_permille)?;
+            let argument = layout_math_expression(shaper, argument, base, scale_permille)?;
+            math_row(vec![name, argument])
+        }
+        MathExpression::Nary {
+            operator,
+            lower,
+            upper,
+            base: operand,
+        } => {
+            // The operator glyph carries the bounds as sub/superscripts, followed
+            // by the operand on the shared baseline.
+            let operator = shape_math_text(shaper, operator, base, scale_permille)?;
+            let bound_scale = scaled_permille(scale_permille, 700);
+            let lower = match lower.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, bound_scale)?),
+                None => None,
+            };
+            let upper = match upper.as_deref() {
+                Some(value) => Some(layout_math_expression(shaper, value, base, bound_scale)?),
+                None => None,
+            };
+            let operator = script_box(operator, lower, upper, base.size)?;
+            let operand = layout_math_expression(shaper, operand, base, scale_permille)?;
+            math_row(vec![operator, operand])
+        }
+        // Accents, limits, matrices, and equation arrays need dedicated 2-D
+        // geometry that this projection does not yet lay out. Returning `None`
+        // falls back to the bounded plain-text placeholder, exactly as an
+        // unprojected (opaque) equation does — no regression, no invented layout.
+        MathExpression::Accent { .. }
+        | MathExpression::Limit { .. }
+        | MathExpression::Matrix { .. }
+        | MathExpression::EqArray { .. }
+        | MathExpression::Bar { .. }
+        | MathExpression::GroupChar { .. } => None,
     }
 }
 
@@ -4273,7 +4324,9 @@ fn layout_fielded_line(
         } else {
             let stop = tabs::resolve_stop(tabs[i - 1], pen, tab_stops, default_tab, constraints);
             let mut l = match stop.alignment {
-                TabAlignment::Start | TabAlignment::Bar => stop.position,
+                // A resolved stop is never `Clear` (filtered out of resolution);
+                // fold it in defensively at the stop position.
+                TabAlignment::Start | TabAlignment::Bar | TabAlignment::Clear => stop.position,
                 TabAlignment::End | TabAlignment::Decimal => stop.position - seg.width.raw(),
                 TabAlignment::Center => stop.position - seg.width.raw() / 2,
             };
@@ -4487,7 +4540,7 @@ fn styled_owned_run(
             underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
-        shading: shading_rgba(&effective.shading),
+        shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
     }
 }
@@ -4530,7 +4583,7 @@ fn build_styled_run<'a>(
             underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
-        shading: shading_rgba(&properties.shading),
+        shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
     }
 }
@@ -4611,7 +4664,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             underline_style: effective.underline_style.unwrap_or_default(),
         },
         highlight: effective.highlight.and_then(highlight_rgba),
-        shading: shading_rgba(&effective.shading),
+        shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
     }
 }
@@ -4837,7 +4890,7 @@ fn build_script_run<'a>(
             underline_style: properties.underline_style.unwrap_or_default(),
         },
         highlight: properties.highlight.and_then(highlight_rgba),
-        shading: shading_rgba(&properties.shading),
+        shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
     }
 }
@@ -4867,7 +4920,7 @@ fn push_small_caps_runs<'a>(
         underline_style: properties.underline_style.unwrap_or_default(),
     };
     let highlight = properties.highlight.and_then(highlight_rgba);
-    let shading = shading_rgba(&properties.shading);
+    let shading = shading_rgba(&properties.shading, ctx.palette);
     let family = requested_family(properties, ctx.scheme);
     for (span, was_lower) in small_caps_spans(text) {
         let size = if was_lower {
@@ -4930,10 +4983,14 @@ fn run_color(color: Option<Color>, palette: Option<&ResolvedPalette>) -> [u8; 4]
         // same as an unset color, but it explicitly overrides an inherited color.
         Some(Color::Auto) => [0, 0, 0, 255],
         Some(Color::Theme(theme)) => match palette {
-            // The model carries no tint/shade on a theme color yet, so the factors
-            // are `None` today; routing every theme color through `apply_tint_shade`
-            // keeps the resolution complete for when the model gains them.
-            Some(palette) => apply_tint_shade(palette.slot(theme.slot), None, None),
+            // Resolve the slot, then apply the model's `w:themeTint`/`w:themeShade`
+            // (each a hex byte scaled to a `0.0..=1.0` factor); an absent factor
+            // leaves the channel unchanged.
+            Some(palette) => apply_tint_shade(
+                palette.slot(theme.slot),
+                theme.theme_tint.map(tint_shade_factor),
+                theme.theme_shade.map(tint_shade_factor),
+            ),
             None => [0, 0, 0, 255],
         },
         None => [0, 0, 0, 255],
@@ -5024,6 +5081,12 @@ fn default_system_color(value: &str) -> [u8; 4] {
 /// black) to an RGB, each a `0.0..=1.0` factor; `None` leaves the channel
 /// unchanged. Alpha is preserved. Ready for when the model carries theme
 /// tint/shade — [`run_color`] routes every resolved theme color through it.
+/// Scales a `w:themeTint`/`w:themeShade` hex byte (`00..=FF`) to the `0.0..=1.0`
+/// factor [`apply_tint_shade`] expects.
+fn tint_shade_factor(byte: u8) -> f32 {
+    f32::from(byte) / 255.0
+}
+
 fn apply_tint_shade(rgb: [u8; 4], tint: Option<f32>, shade: Option<f32>) -> [u8; 4] {
     let adjust = |c: u8| -> u8 {
         let mut v = f32::from(c);
@@ -5519,10 +5582,23 @@ fn highlight_rgba(color: HighlightColor) -> Option<[u8; 4]> {
     Some([r, g, b, 255])
 }
 
-/// A run's `w:rPr/w:shd` fill resolved to an opaque RGBA background, or `None`
-/// when the run declares no fill (`auto`/absent/theme-only).
-fn shading_rgba(shading: &casual_doc_model::v1::Shading) -> Option<[u8; 4]> {
-    shading.fill.map(|color| [color.r, color.g, color.b, 255])
+/// A `w:shd` background resolved to an opaque RGBA: an explicit sRGB `w:fill` wins;
+/// otherwise a `w:themeFill` slot resolves against the palette (with any tint/shade).
+/// `None` when no fill is declared (or a theme fill has no palette to resolve).
+fn shading_rgba(
+    shading: &casual_doc_model::v1::Shading,
+    palette: Option<&ResolvedPalette>,
+) -> Option<[u8; 4]> {
+    if let Some(color) = shading.fill {
+        return Some([color.r, color.g, color.b, 255]);
+    }
+    let theme = shading.theme_fill?;
+    let palette = palette?;
+    Some(apply_tint_shade(
+        palette.slot(theme.slot),
+        theme.theme_tint.map(tint_shade_factor),
+        theme.theme_shade.map(tint_shade_factor),
+    ))
 }
 
 /// Deterministic placeholder label for an unrendered `w:altChunk` block (see
@@ -6555,6 +6631,8 @@ mod tests {
         let props = RunProperties {
             color: Some(Color::Theme(ThemeColor {
                 slot: ThemeColorRef::Accent1,
+                theme_tint: None,
+                theme_shade: None,
             })),
             ..RunProperties::default()
         };
@@ -6627,10 +6705,77 @@ mod tests {
             run_color(
                 Some(Color::Theme(ThemeColor {
                     slot: ThemeColorRef::Dark1,
+                    theme_tint: None,
+                    theme_shade: None,
                 })),
                 None,
             ),
             [0, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn a_theme_color_shade_resolves_through_run_color() {
+        use casual_doc_model::v1::{
+            Color, ColorScheme, RgbColor, SchemeColor, ThemeColor, ThemeColorRef,
+        };
+        let scheme = ColorScheme {
+            accent1: SchemeColor::Srgb(RgbColor {
+                r: 100,
+                g: 100,
+                b: 100,
+            }),
+            ..ColorScheme::default()
+        };
+        let palette = resolve_palette(&scheme);
+        // `w:themeShade="80"` (0x80/0xFF ~ 0.502) darkens each channel toward black:
+        // 100 * 0.502 -> 50.
+        let shaded = run_color(
+            Some(Color::Theme(ThemeColor {
+                slot: ThemeColorRef::Accent1,
+                theme_tint: None,
+                theme_shade: Some(0x80),
+            })),
+            Some(&palette),
+        );
+        assert_eq!(
+            shaded,
+            [50, 50, 50, 255],
+            "the model tint/shade is wired into apply_tint_shade"
+        );
+    }
+
+    #[test]
+    fn shading_rgba_resolves_a_theme_fill_via_the_palette() {
+        use casual_doc_model::v1::{
+            ColorScheme, RgbColor, SchemeColor, Shading, ThemeColor, ThemeColorRef,
+        };
+        let scheme = ColorScheme {
+            accent2: SchemeColor::Srgb(RgbColor {
+                r: 0x44,
+                g: 0x88,
+                b: 0xCC,
+            }),
+            ..ColorScheme::default()
+        };
+        let palette = resolve_palette(&scheme);
+        let shading = Shading {
+            fill: None,
+            theme_fill: Some(ThemeColor {
+                slot: ThemeColorRef::Accent2,
+                theme_tint: None,
+                theme_shade: None,
+            }),
+        };
+        assert_eq!(
+            shading_rgba(&shading, Some(&palette)),
+            Some([0x44, 0x88, 0xCC, 255]),
+            "a themeFill resolves to the palette slot"
+        );
+        assert_eq!(
+            shading_rgba(&shading, None),
+            None,
+            "a theme-only fill cannot resolve without a palette"
         );
     }
 
@@ -6720,6 +6865,7 @@ mod tests {
                     g: 0xEE,
                     b: 0xFF,
                 }),
+                ..Shading::default()
             },
             ..RunProperties::default()
         };
@@ -7735,7 +7881,7 @@ mod tests {
     use casual_doc_model::v1::{
         BorderEdge, CellMargins, GridColumn, HeightRule, RgbColor, RowHeight, Shading, Table,
         TableBorders, TableCell, TableCellProperties, TableProperties, TableRow as ModelRow,
-        TableRowProperties,
+        TableRowProperties, TableWidth,
     };
 
     fn node(id: u64) -> NodeId {
@@ -7882,7 +8028,7 @@ mod tests {
             properties: TableProperties {
                 tbl_bidi_visual: bidi_visual,
                 alignment: Some(alignment),
-                width_twips: Some(3000),
+                width: Some(TableWidth::dxa(3000)),
                 layout: Some(TableLayout::Fixed),
                 indent_twips: Some(600),
                 ..TableProperties::default()
@@ -7953,7 +8099,7 @@ mod tests {
             ],
             grid_change: None,
             properties: TableProperties {
-                width_twips: Some(6000),
+                width: Some(TableWidth::dxa(6000)),
                 layout: Some(TableLayout::Fixed),
                 cell_spacing_twips: Some(spacing),
                 ..TableProperties::default()
@@ -8343,7 +8489,7 @@ mod tests {
                     text_cell(
                         60,
                         TableCellProperties {
-                            width_twips: Some(4000),
+                            width: Some(TableWidth::dxa(4000)),
                             ..TableCellProperties::default()
                         },
                         "a",
@@ -8454,6 +8600,9 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         });
         let preview = InlineNode::EmbeddedObject(EmbeddedObject {
@@ -8488,6 +8637,7 @@ mod tests {
         let field = InlineNode::Field(Field {
             id: node(705),
             instruction: "DOCPROPERTY Title".to_owned(),
+            kind: casual_doc_model::v1::FieldKind::parse("DOCPROPERTY Title"),
             inlines: vec![run_node(
                 706,
                 "cached-field-result",
@@ -8586,6 +8736,9 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })],
             )],
         };
@@ -9786,6 +9939,7 @@ mod tests {
             properties: TableProperties {
                 shading: Shading {
                     fill: Some(table_fill),
+                    ..Shading::default()
                 },
                 ..TableProperties::default()
             },
@@ -9799,6 +9953,7 @@ mod tests {
                         TableCellProperties {
                             shading: Shading {
                                 fill: Some(cell_fill),
+                                ..Shading::default()
                             },
                             ..TableCellProperties::default()
                         },
@@ -9860,6 +10015,7 @@ mod tests {
             table_cell: Some(TableCellProperties {
                 shading: Shading {
                     fill: Some(base_fill),
+                    ..Shading::default()
                 },
                 ..TableCellProperties::default()
             }),
@@ -9872,6 +10028,7 @@ mod tests {
                 table_cell: Some(TableCellProperties {
                     shading: Shading {
                         fill: Some(header_fill),
+                        ..Shading::default()
                     },
                     ..TableCellProperties::default()
                 }),
@@ -10271,6 +10428,9 @@ mod tests {
                     }),
                     descr: None,
                     crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 }),
                 run_node(13, " after", RunProperties::default()),
             ],
@@ -10379,6 +10539,9 @@ mod tests {
                     }),
                     descr: None,
                     crop,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })],
             })
         };
@@ -10467,6 +10630,9 @@ mod tests {
                     a: 255,
                 },
                 width_emu: 19_050,
+                dash: None,
+                head_end: None,
+                tail_end: None,
             }),
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![paragraph(
@@ -10646,6 +10812,9 @@ mod tests {
                 }),
                 descr: None,
                 crop: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
             })],
         });
         let para = BlockNode::Paragraph(Paragraph {
@@ -11028,8 +11197,11 @@ mod tests {
                     run_properties: level_rpr,
                     style_ref: None,
                     lvl_restart: None,
+                    pstyle: None,
                 }],
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         definitions.numbering.insert(

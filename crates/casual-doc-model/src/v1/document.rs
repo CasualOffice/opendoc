@@ -202,6 +202,9 @@ impl Document {
             )?;
             check_domain(setting.val.len() <= 255, "settings.compatSetting.val")?;
         }
+        for props in [&settings.footnote_props, &settings.endnote_props] {
+            check_note_props(props)?;
+        }
         Ok(())
     }
 
@@ -393,18 +396,7 @@ impl Document {
                 check_domain((0..=32_767).contains(&value), "section.paper_source")?;
             }
             for props in [&section.footnote_props, &section.endnote_props] {
-                if let Some(format) = &props.number_format {
-                    check_domain(
-                        !format.is_empty() && format.len() <= 32,
-                        "section.note_props.number_format",
-                    )?;
-                }
-                if let Some(start) = props.number_start {
-                    check_domain(
-                        (0..=1_000_000).contains(&start),
-                        "section.note_props.number_start",
-                    )?;
-                }
+                check_note_props(props)?;
             }
             for header in &section.headers {
                 if !self.definitions.headers.contains_key(&header.reference) {
@@ -962,8 +954,8 @@ impl Document {
         {
             return Err(ModelError::DanglingStyleRef(style.node_id()));
         }
-        if let Some(width) = properties.width_twips {
-            check_domain((0..=31_680).contains(&width), "table.width")?;
+        if let Some(width) = properties.width {
+            check_domain(width.is_valid(), "table.width")?;
         }
         // `both` (justify) is not a valid `ST_JcTable` value, and the table
         // importer never yields it (it maps `both` -> None). Reject it so an
@@ -1036,8 +1028,8 @@ impl Document {
         if let Some(span) = properties.grid_span {
             check_domain((1..=16_384).contains(&span), "table.cell.grid_span")?;
         }
-        if let Some(width) = properties.width_twips {
-            check_domain((0..=31_680).contains(&width), "table.cell.width")?;
+        if let Some(width) = properties.width {
+            check_domain(width.is_valid(), "table.cell.width")?;
         }
         check_borders(&properties.borders, "table.cell.borders")?;
         check_margins(&properties.margins, "table.cell.margins")?;
@@ -1196,6 +1188,7 @@ impl Document {
                             && field.instruction.len() <= MAX_FIELD_INSTRUCTION_BYTES,
                         "field.instruction",
                     )?;
+                    validate_field_kind(&field.kind)?;
                     check_form_field(field)?;
                     // A field's cached result may be empty; when present it is
                     // validated as leaf inlines (in_wrapper rejects any wrapper).
@@ -1262,6 +1255,13 @@ impl Document {
                     if !resolved {
                         return Err(ModelError::DanglingNoteRef(note.note.node_id()));
                     }
+                    previous_run_properties = None;
+                }
+                // A note auto-number mark is an inert leaf carrying only its own
+                // run formatting (like a symbol); it prints the enclosing note's
+                // number and resolves against no definition.
+                InlineNode::NoteNumberMark(mark) => {
+                    self.check_run_property_refs(&mark.properties)?;
                     previous_run_properties = None;
                 }
                 InlineNode::CommentReference(reference) => {
@@ -1791,6 +1791,7 @@ fn accumulate_inline_limits(
         | InlineNode::AnchoredDrawing(_)
         | InlineNode::EmbeddedObject(_)
         | InlineNode::NoteReference(_)
+        | InlineNode::NoteNumberMark(_)
         | InlineNode::CommentReference(_)
         | InlineNode::CommentRangeStart(_)
         | InlineNode::CommentRangeEnd(_)
@@ -2083,6 +2084,25 @@ fn check_opt_bound(
 /// `MAX_FORM_FIELD_ENTRIES` entries, and the kind-specific payload agrees with
 /// the field instruction's `FORM…` token (a `TextInput` payload only on a
 /// FORMTEXT field, and so on). Absent (`None`) for an ordinary field.
+/// Bounds the strings carried by a [`FieldKind`] projection. Each is derived
+/// from the (already length-bounded) instruction, so this only guards against a
+/// hand-built model whose kind strings exceed the instruction ceiling.
+fn validate_field_kind(kind: &FieldKind) -> Result<(), ModelError> {
+    let within = |value: &str| value.len() <= MAX_FIELD_INSTRUCTION_BYTES;
+    let ok = match kind {
+        FieldKind::Page | FieldKind::NumPages | FieldKind::Toc => true,
+        FieldKind::Date { format } | FieldKind::Time { format } => {
+            format.as_deref().is_none_or(within)
+        }
+        FieldKind::Ref { bookmark } | FieldKind::PageRef { bookmark } => within(bookmark),
+        FieldKind::Seq { name } => within(name),
+        FieldKind::StyleRef { style } => within(style),
+        FieldKind::Hyperlink { target } => target.as_deref().is_none_or(within),
+        FieldKind::Other { keyword } => within(keyword),
+    };
+    check_domain(ok, "field.kind")
+}
+
 fn check_form_field(field: &Field) -> Result<(), ModelError> {
     let Some(form) = &field.form else {
         return Ok(());
@@ -2144,6 +2164,21 @@ fn check_form_field(field: &Field) -> Result<(), ModelError> {
                 )?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Validates a footnote/endnote property container's numbering bounds (shared by
+/// per-section `w:footnotePr`/`w:endnotePr` and the document-default settings pair).
+fn check_note_props(props: &NoteProperties) -> Result<(), ModelError> {
+    if let Some(NumberFormat::Other(token)) = &props.number_format {
+        check_domain(
+            !token.is_empty() && token.len() <= 64,
+            "note_props.number_format",
+        )?;
+    }
+    if let Some(start) = props.number_start {
+        check_domain((0..=1_000_000).contains(&start), "note_props.number_start")?;
     }
     Ok(())
 }
@@ -2219,6 +2254,60 @@ fn validate_math_expression(expression: &MathExpression) -> Result<(), ModelErro
                 check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
                 visit(content, depth + 1, nodes, text_bytes)?;
             }
+            MathExpression::Function { name, argument } => {
+                visit(name, depth + 1, nodes, text_bytes)?;
+                visit(argument, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Accent { accent, base } => {
+                *text_bytes = text_bytes.saturating_add(accent.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Limit { base, limit, .. } => {
+                visit(base, depth + 1, nodes, text_bytes)?;
+                visit(limit, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Nary {
+                operator,
+                lower,
+                upper,
+                base,
+            } => {
+                *text_bytes = text_bytes.saturating_add(operator.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                if let Some(lower) = lower {
+                    visit(lower, depth + 1, nodes, text_bytes)?;
+                }
+                if let Some(upper) = upper {
+                    visit(upper, depth + 1, nodes, text_bytes)?;
+                }
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::Matrix { rows } => {
+                check_domain(!rows.is_empty(), "math.expression.matrix.rows")?;
+                for row in rows {
+                    check_domain(!row.cells.is_empty(), "math.expression.matrix.cells")?;
+                    for cell in &row.cells {
+                        visit(cell, depth + 1, nodes, text_bytes)?;
+                    }
+                }
+            }
+            MathExpression::EqArray { rows } => {
+                check_domain(!rows.is_empty(), "math.expression.eqArray.rows")?;
+                for row in rows {
+                    visit(row, depth + 1, nodes, text_bytes)?;
+                }
+            }
+            MathExpression::Bar { base, .. } => {
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
+            MathExpression::GroupChar {
+                character, base, ..
+            } => {
+                *text_bytes = text_bytes.saturating_add(character.len());
+                check_domain(*text_bytes <= MAX_MATH_BYTES, "math.expression.textBytes")?;
+                visit(base, depth + 1, nodes, text_bytes)?;
+            }
         }
         Ok(())
     }
@@ -2284,6 +2373,78 @@ fn math_expression_size(expression: &MathExpression) -> (usize, usize) {
                     .1
                     .saturating_add(open.len())
                     .saturating_add(close.len()),
+            )
+        }
+        MathExpression::Function { name, argument } => {
+            let name = math_expression_size(name);
+            let argument = math_expression_size(argument);
+            (
+                1usize.saturating_add(name.0).saturating_add(argument.0),
+                name.1.saturating_add(argument.1),
+            )
+        }
+        MathExpression::Accent { accent, base } => {
+            let base = math_expression_size(base);
+            (
+                base.0.saturating_add(1),
+                base.1.saturating_add(accent.len()),
+            )
+        }
+        MathExpression::Limit { base, limit, .. } => {
+            let base = math_expression_size(base);
+            let limit = math_expression_size(limit);
+            (
+                1usize.saturating_add(base.0).saturating_add(limit.0),
+                base.1.saturating_add(limit.1),
+            )
+        }
+        MathExpression::Nary {
+            operator,
+            lower,
+            upper,
+            base,
+        } => {
+            let mut size = math_expression_size(base);
+            size.0 = size.0.saturating_add(1);
+            size.1 = size.1.saturating_add(operator.len());
+            for bound in [lower, upper].into_iter().flatten() {
+                let child = math_expression_size(bound);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::Matrix { rows } => {
+            let mut size = (1usize, 0usize);
+            for row in rows {
+                for cell in &row.cells {
+                    let child = math_expression_size(cell);
+                    size.0 = size.0.saturating_add(child.0);
+                    size.1 = size.1.saturating_add(child.1);
+                }
+            }
+            size
+        }
+        MathExpression::EqArray { rows } => {
+            let mut size = (1usize, 0usize);
+            for row in rows {
+                let child = math_expression_size(row);
+                size.0 = size.0.saturating_add(child.0);
+                size.1 = size.1.saturating_add(child.1);
+            }
+            size
+        }
+        MathExpression::Bar { base, .. } => {
+            let base = math_expression_size(base);
+            (base.0.saturating_add(1), base.1)
+        }
+        MathExpression::GroupChar {
+            character, base, ..
+        } => {
+            let base = math_expression_size(base);
+            (
+                base.0.saturating_add(1),
+                base.1.saturating_add(character.len()),
             )
         }
     }

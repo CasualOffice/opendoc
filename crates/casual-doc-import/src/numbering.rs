@@ -7,7 +7,7 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, DefinitionMap, LevelJustification, LevelSuffix,
     MultiLevelType, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
-    NumberingOverride, NumberingRef, ParagraphProperties, RunProperties,
+    NumberingOverride, NumberingRef, ParagraphProperties, RunProperties, StyleKind,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -16,6 +16,7 @@ use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{apply_paragraph_property, apply_run_property, attribute_value};
 use crate::report::Reporter;
+use crate::styles::Styles;
 
 /// Resolved numbering definitions plus the numId -> instance index.
 #[derive(Debug, Default)]
@@ -58,6 +59,9 @@ struct RawLevel {
     suff: Option<LevelSuffix>,
     is_lgl: bool,
     lvl_restart: Option<u8>,
+    /// Raw `w:lvl/w:pStyle@val` (a style id token); resolved to a `StyleId`
+    /// against the parsed styles in the assembly pass.
+    pstyle: Option<String>,
     paragraph: ParagraphProperties,
     has_paragraph: bool,
     run: RunProperties,
@@ -69,6 +73,10 @@ struct RawAbstract {
     id: String,
     levels: Vec<RawLevel>,
     multi_level_type: Option<MultiLevelType>,
+    /// Raw `w:numStyleLink@val` (a style id token); resolved in the assembly pass.
+    num_style_link: Option<String>,
+    /// Raw `w:styleLink@val` (a style id token); resolved in the assembly pass.
+    style_link: Option<String>,
 }
 
 struct RawNum {
@@ -78,12 +86,15 @@ struct RawNum {
     overrides: Vec<(u8, u16)>,
 }
 
-/// Parses the numbering part, allocating ids from `ids`.
+/// Parses the numbering part, allocating ids from `ids`. `styles` (parsed first)
+/// resolves the numbering <-> style links (`w:pStyle`, `w:numStyleLink`,
+/// `w:styleLink`), which reference paragraph styles by their id token.
 pub(crate) fn parse(
     xml: &[u8],
     ids: &mut IdGenerator,
     reporter: &mut Reporter,
     config: ImportConfig,
+    styles: &Styles,
 ) -> Result<Numbering, ImportError> {
     let (abstracts, nums) = parse_raw(xml, reporter, config)?;
 
@@ -114,6 +125,12 @@ pub(crate) fn parse(
                     run_properties: level.has_run.then_some(level.run),
                     style_ref: None,
                     lvl_restart: level.lvl_restart,
+                    pstyle: resolve_style_link(
+                        styles,
+                        level.pstyle.as_deref(),
+                        reporter,
+                        b"pStyle",
+                    ),
                 });
             }
         }
@@ -123,6 +140,18 @@ pub(crate) fn parse(
             AbstractNumbering {
                 levels,
                 multi_level_type: raw.multi_level_type,
+                num_style_link: resolve_style_link(
+                    styles,
+                    raw.num_style_link.as_deref(),
+                    reporter,
+                    b"numStyleLink",
+                ),
+                style_link: resolve_style_link(
+                    styles,
+                    raw.style_link.as_deref(),
+                    reporter,
+                    b"styleLink",
+                ),
             },
         );
     }
@@ -180,6 +209,26 @@ pub(crate) fn parse(
 fn next_id(ids: &mut IdGenerator) -> Result<casual_doc_model::NodeId, ImportError> {
     ids.next_id()
         .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })
+}
+
+/// Resolves a captured `w:pStyle`/`w:numStyleLink`/`w:styleLink` id token to a
+/// paragraph `StyleId`. An absent link is `None`; a token that names no
+/// paragraph style is dropped and reported (no silent loss), mirroring how the
+/// styles parser handles dangling references.
+fn resolve_style_link(
+    styles: &Styles,
+    name: Option<&str>,
+    reporter: &mut Reporter,
+    label: &[u8],
+) -> Option<casual_doc_model::v1::StyleId> {
+    let name = name?;
+    match styles.resolve(name, StyleKind::Paragraph) {
+        Some(id) => Some(id),
+        None => {
+            reporter.report(label);
+            None
+        }
+    }
 }
 
 #[derive(Default)]
@@ -339,6 +388,38 @@ fn on_start(
                 None => reporter.report(local),
             }
         }
+        // `w:lvl/w:pStyle@val`: the paragraph style this level binds to (captured
+        // raw; resolved once styles are threaded in). Only at level scope — a
+        // `w:pStyle` inside the level's `w:pPr` is intercepted above by ppr_depth.
+        b"pStyle" if state.current_level.is_some() => {
+            match attribute_value(element, b"val").filter(|value| !value.is_empty()) {
+                Some(name) => set_level(state, |level| level.pstyle = Some(name)),
+                None => reporter.report(local),
+            }
+        }
+        // `w:numStyleLink@val` / `w:styleLink@val` on the abstract definition: the
+        // numbering <-> List-Style bindings (captured raw; resolved later). Only
+        // at abstract scope, before any level opens.
+        b"numStyleLink" if state.current_abstract.is_some() && state.current_level.is_none() => {
+            match attribute_value(element, b"val").filter(|value| !value.is_empty()) {
+                Some(name) => {
+                    if let Some(abstract_num) = state.current_abstract.as_mut() {
+                        abstract_num.num_style_link = Some(name);
+                    }
+                }
+                None => reporter.report(local),
+            }
+        }
+        b"styleLink" if state.current_abstract.is_some() && state.current_level.is_none() => {
+            match attribute_value(element, b"val").filter(|value| !value.is_empty()) {
+                Some(name) => {
+                    if let Some(abstract_num) = state.current_abstract.as_mut() {
+                        abstract_num.style_link = Some(name);
+                    }
+                }
+                None => reporter.report(local),
+            }
+        }
         // `w:multiLevelType@val` on the abstract definition.
         b"multiLevelType" if state.current_abstract.is_some() => {
             match attribute_value(element, b"val")
@@ -396,7 +477,7 @@ fn on_start(
         }
         // A `w:lvlOverride/w:lvl` full-format override is not representable in the
         // per-instance model (only start is); its children fall through and are
-        // reported. Unmapped numbering detail (lvlRestart, pStyle, ...) is too.
+        // reported. Any still-unmapped numbering detail is too.
         _ if state.current_abstract.is_some() || state.current_num.is_some() => {
             reporter.report(local);
         }
@@ -463,7 +544,7 @@ fn multi_level_type_from(value: &str) -> Option<MultiLevelType> {
     })
 }
 
-fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
+pub(crate) fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
     let value = attribute_value(element, b"val").filter(|value| !value.is_empty())?;
     Some(match value.as_str() {
         "decimal" => NumberFormat::Decimal,

@@ -265,6 +265,7 @@ fn multilevel_list() -> Document {
             run_properties: None,
             style_ref: None,
             lvl_restart: None,
+            pstyle: None,
         }
     };
     let mut definitions = Definitions::default();
@@ -277,6 +278,8 @@ fn multilevel_list() -> Document {
                 level(2, NumberFormat::LowerRoman, "%3."),
             ],
             multi_level_type: None,
+            num_style_link: None,
+            style_link: None,
         },
     );
     definitions.numbering.insert(
@@ -349,8 +352,11 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                 run_properties: None,
                 style_ref: None,
                 lvl_restart: None,
+                pstyle: None,
             }],
             multi_level_type: None,
+            num_style_link: None,
+            style_link: None,
         },
     );
     definitions.numbering.insert(

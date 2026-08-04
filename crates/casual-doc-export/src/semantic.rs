@@ -19,31 +19,33 @@ use std::io::{Cursor, Write};
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
-    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellVerticalAlignment,
-    CnfStyle, Color, ColorScheme, Comment, CommentId, CoreProperties, CropRect, CustomProperty,
-    CustomValue, DefinitionMap, Definitions, DocGridType, Document, DocumentDefaults,
-    DocumentProtectionEdit, DocumentSettings, DropCapFrame, DropCapMode, EmbeddedKind,
-    EmbeddedObject, EmbeddedPart, EmphasisMark, Extent, FontCollection, FontDescriptor,
-    FontFamilyKind, FontPitch, FontRef, FontScheme, FormCheckBoxSize, FormFieldData, FormFieldKind,
-    FormTextType, FrameHorizontalAlignment, FrameHorizontalAnchor, FrameVerticalAlignment,
-    FrameVerticalAnchor, FrameWrap, GridColumn, GroupChild, GroupShape, GroupTextBox,
-    GroupTransform, HeaderFooterId, HeaderFooterKind, HeightRule, HighlightColor, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, HorizontalRuleAlign, HyperlinkTarget, InlineNode,
-    LevelJustification, LevelSuffix, LineNumberRestart, LineRule, MediaId, MediaReference,
-    MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition, NoteProperties,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, PageBorderDisplay,
-    PageBorderOffset, PageOrientation, PageVerticalAlignment, ParagraphProperties, Person,
-    PointEmu, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState,
-    PropChange, RevisionKind, RgbColor, Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
-    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
-    SdtProperties, SectionBoundary, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
-    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
-    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeFontRef, VerticalAlign,
+    AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
+    CellMergeRevision, CellVerticalAlignment, CnfStyle, Color, ColorScheme, Comment, CommentId,
+    CoreProperties, CropRect, CustomProperty, CustomValue, DashStyle, DefinitionMap, Definitions,
+    DocGridType, Document, DocumentDefaults, DocumentProtectionEdit, DocumentSettings,
+    DropCapFrame, DropCapMode, EmbeddedKind, EmbeddedObject, EmbeddedPart, EmphasisMark, Extent,
+    FontCollection, FontDescriptor, FontFamilyKind, FontPitch, FontRef, FontScheme,
+    FormCheckBoxSize, FormFieldData, FormFieldKind, FormTextType, FrameHorizontalAlignment,
+    FrameHorizontalAnchor, FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap, GridColumn,
+    GroupChild, GroupShape, GroupTextBox, GroupTransform, HeaderFooterId, HeaderFooterKind,
+    HeightRule, HighlightColor, HorizontalAlign, HorizontalAnchor, HorizontalPosition,
+    HorizontalRuleAlign, HyperlinkTarget, InlineNode, LevelJustification, LevelSuffix, LineEnd,
+    LineEndKind, LineEndSize, LineNumberRestart, LineRule, MarkRevision, MarkRevisionKind, MediaId,
+    MediaReference, MoveKind, Note, NoteId, NoteKind, NoteNumberRestart, NotePosition,
+    NoteProperties, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    PageBorderDisplay, PageBorderOffset, PageOrientation, PageVerticalAlignment,
+    ParagraphProperties, Person, PointEmu, PositionalTabAlignment, PositionalTabLeader,
+    PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor, Rgba, RunFontHint,
+    RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind,
+    SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType, ShapeAdjustment,
+    ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment, TabLeader, Table,
+    TableAnchor, TableBorders, TableCell, TableCellProperties, TableFloatPosition, TableLayout,
+    TableOverlap, TableProperties, TableRow, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
     VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -1919,6 +1921,8 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
         el.push_attribute(("w:val", style.as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
+    write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
     if !settings.compat.is_empty() {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
@@ -2018,6 +2022,19 @@ fn numbering_xml(
             ));
             w.write_event(Event::Empty(mlt)).map_err(pkg)?;
         }
+        // `w:styleLink` then `w:numStyleLink` in CT_AbstractNum schema order,
+        // after multiLevelType and before the levels. Each emits the linked
+        // paragraph style's id token so it re-imports to the same StyleId.
+        if let Some(style_link) = abstract_num.style_link {
+            let mut el = start("w:styleLink");
+            el.push_attribute(("w:val", style_id_token(style_link).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        if let Some(num_style_link) = abstract_num.num_style_link {
+            let mut el = start("w:numStyleLink");
+            el.push_attribute(("w:val", style_id_token(num_style_link).as_str()));
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
         for level in &abstract_num.levels {
             write_level(&mut w, level)?;
         }
@@ -2073,6 +2090,14 @@ fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Resul
     if let Some(restart) = level.lvl_restart {
         let mut el = start("w:lvlRestart");
         el.push_attribute(("w:val", restart.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    // `w:pStyle` (the level's paragraph-style binding) follows lvlRestart, before
+    // isLgl. Emitted with the referenced style's id token so it re-imports to the
+    // same StyleId.
+    if let Some(pstyle) = level.pstyle {
+        let mut el = start("w:pStyle");
+        el.push_attribute(("w:val", style_id_token(pstyle).as_str()));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if level.is_lgl {
@@ -2482,7 +2507,7 @@ fn write_section_note_props(
     }
     if let Some(format) = &props.number_format {
         let mut el = start("w:numFmt");
-        el.push_attribute(("w:val", format.as_str()));
+        el.push_attribute(("w:val", number_format_token(format)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
     if let Some(start_num) = props.number_start {
@@ -2752,6 +2777,66 @@ fn push_prop_change_attrs<P>(el: &mut BytesStart<'_>, change: &PropChange<P>) {
     }
 }
 
+/// Writes a tracked mark insertion/deletion as an empty element carrying the
+/// revision's author/date/id. The element names differ by container (a row uses
+/// `w:ins`/`w:del`; a cell uses `w:cellIns`/`w:cellDel`), so the caller passes
+/// them.
+fn write_mark_revision(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    revision: &MarkRevision,
+    insertion: &str,
+    deletion: &str,
+) -> Result<(), ExportError> {
+    let mut el = start(match revision.kind {
+        MarkRevisionKind::Insertion => insertion,
+        MarkRevisionKind::Deletion => deletion,
+    });
+    if let Some(author) = &revision.author {
+        el.push_attribute(("w:author", author.as_str()));
+    }
+    if let Some(date) = &revision.date {
+        el.push_attribute(("w:date", date.as_str()));
+    }
+    if let Some(id) = &revision.revision_id {
+        el.push_attribute(("w:id", id.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+fn cell_merge_annotation_token(annotation: CellMergeAnnotation) -> &'static str {
+    match annotation {
+        CellMergeAnnotation::Cont => "cont",
+        CellMergeAnnotation::Rest => "rest",
+    }
+}
+
+/// Writes a tracked cell merge (`w:cellMerge`): author/date/id plus the current
+/// and original vertical-merge annotations.
+fn write_cell_merge(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    merge: &CellMergeRevision,
+) -> Result<(), ExportError> {
+    let mut el = start("w:cellMerge");
+    if let Some(author) = &merge.author {
+        el.push_attribute(("w:author", author.as_str()));
+    }
+    if let Some(date) = &merge.date {
+        el.push_attribute(("w:date", date.as_str()));
+    }
+    if let Some(id) = &merge.revision_id {
+        el.push_attribute(("w:id", id.as_str()));
+    }
+    if let Some(vmerge) = merge.vmerge {
+        el.push_attribute(("w:vMerge", cell_merge_annotation_token(vmerge)));
+    }
+    if let Some(vmerge_orig) = merge.vmerge_orig {
+        el.push_attribute(("w:vMergeOrig", cell_merge_annotation_token(vmerge_orig)));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
 fn write_table_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &TableProperties,
@@ -2791,11 +2876,8 @@ fn write_table_properties(
         jc.push_attribute(("w:val", alignment_token(alignment)));
         w.write_event(Event::Empty(jc)).map_err(pkg)?;
     }
-    if let Some(width) = properties.width_twips {
-        let mut el = start("w:tblW");
-        el.push_attribute(("w:type", "dxa"));
-        el.push_attribute(("w:w", width.to_string().as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if let Some(width) = properties.width {
+        write_table_width(w, "w:tblW", width)?;
     }
     if let Some(spacing) = properties.cell_spacing_twips {
         let mut el = start("w:tblCellSpacing");
@@ -3031,6 +3113,11 @@ fn write_row_properties(
         el.push_attribute(("w:val", alignment_token(alignment)));
         w.write_event(Event::Empty(el)).map_err(pkg)?;
     }
+    // A tracked row insertion/deletion (`w:ins`/`w:del`) follows the base row
+    // properties and precedes `w:trPrChange` in CT_TrPr.
+    if let Some(revision) = &properties.row_revision {
+        write_mark_revision(w, revision, "w:ins", "w:del")?;
+    }
     // `w:trPrChange` is the last child of `w:trPr`; its `w:trPr` is the prior
     // snapshot. An all-default prior still emits a bare `<w:trPr/>`.
     if let Some(change) = &properties.prop_change {
@@ -3074,11 +3161,8 @@ fn write_cell_properties(
     }
     w.write_event(Event::Start(start("w:tcPr"))).map_err(pkg)?;
     write_cnf_style(w, properties.conditional_format)?;
-    if let Some(width) = properties.width_twips {
-        let mut el = start("w:tcW");
-        el.push_attribute(("w:type", "dxa"));
-        el.push_attribute(("w:w", width.to_string().as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if let Some(width) = properties.width {
+        write_table_width(w, "w:tcW", width)?;
     }
     if let Some(span) = properties.grid_span {
         let mut el = start("w:gridSpan");
@@ -3131,6 +3215,15 @@ fn write_cell_properties(
     if properties.hide_mark {
         w.write_event(Event::Empty(start("w:hideMark")))
             .map_err(pkg)?;
+    }
+    // Tracked cell changes (`w:cellIns`/`w:cellDel`/`w:cellMerge`) form
+    // EG_CellMarkupElements, following the base cell properties and preceding
+    // `w:tcPrChange` in CT_TcPr.
+    if let Some(revision) = &properties.cell_revision {
+        write_mark_revision(w, revision, "w:cellIns", "w:cellDel")?;
+    }
+    if let Some(merge) = &properties.cell_merge {
+        write_cell_merge(w, merge)?;
     }
     // `w:tcPrChange` is the last child of `w:tcPr`; its `w:tcPr` is the prior
     // snapshot. An all-default prior still emits a bare `<w:tcPr/>`.
@@ -3230,18 +3323,58 @@ fn write_shading(
     w: &mut Writer<Cursor<Vec<u8>>>,
     shading: &casual_doc_model::v1::Shading,
 ) -> Result<(), ExportError> {
-    if let Some(fill) = &shading.fill {
-        let mut el = start("w:shd");
-        el.push_attribute(("w:val", "clear"));
-        el.push_attribute(("w:color", "auto"));
-        el.push_attribute(("w:fill", rgb_hex(fill).as_str()));
-        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    if shading.is_empty() {
+        return Ok(());
     }
+    let mut el = start("w:shd");
+    el.push_attribute(("w:val", "clear"));
+    el.push_attribute(("w:color", "auto"));
+    // Theme background fill (`w:themeFill` + optional tint/shade); the formatted
+    // tint/shade strings must outlive the attribute pushes.
+    let tint_str;
+    let shade_str;
+    if let Some(theme) = &shading.theme_fill {
+        el.push_attribute(("w:themeFill", theme_color_token(theme.slot)));
+        if let Some(tint) = theme.theme_tint {
+            tint_str = format!("{tint:02X}");
+            el.push_attribute(("w:themeFillTint", tint_str.as_str()));
+        }
+        if let Some(shade) = theme.theme_shade {
+            shade_str = format!("{shade:02X}");
+            el.push_attribute(("w:themeFillShade", shade_str.as_str()));
+        }
+    }
+    let fill_str;
+    if let Some(fill) = &shading.fill {
+        fill_str = rgb_hex(fill);
+        el.push_attribute(("w:fill", fill_str.as_str()));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
     Ok(())
 }
 
 fn rgb_hex(color: &RgbColor) -> String {
     format!("{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+/// The `w:themeColor`/`w:themeFill` token (`ST_ThemeColor`) for a theme slot. The
+/// twelve canonical slot spellings; the four mapped aliases Word also accepts
+/// normalize to these on import.
+fn theme_color_token(slot: ThemeColorRef) -> &'static str {
+    match slot {
+        ThemeColorRef::Dark1 => "dark1",
+        ThemeColorRef::Light1 => "light1",
+        ThemeColorRef::Dark2 => "dark2",
+        ThemeColorRef::Light2 => "light2",
+        ThemeColorRef::Accent1 => "accent1",
+        ThemeColorRef::Accent2 => "accent2",
+        ThemeColorRef::Accent3 => "accent3",
+        ThemeColorRef::Accent4 => "accent4",
+        ThemeColorRef::Accent5 => "accent5",
+        ThemeColorRef::Accent6 => "accent6",
+        ThemeColorRef::Hyperlink => "hyperlink",
+        ThemeColorRef::FollowedHyperlink => "followedHyperlink",
+    }
 }
 
 fn write_paragraph(
@@ -3454,10 +3587,50 @@ fn write_paragraph_properties(
         w.write_event(Event::End(BytesEnd::new("w:tabs")))
             .map_err(pkg)?;
     }
+    if let Some(direction) = properties.text_direction {
+        let mut el = start("w:textDirection");
+        el.push_attribute((
+            "w:val",
+            match direction {
+                TextDirection::LrTb => "lrTb",
+                TextDirection::TbRl => "tbRl",
+                TextDirection::BtLr => "btLr",
+            },
+        ));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
     // The paragraph-mark run properties (`w:pPr > w:rPr`) precede `w:sectPr` in
     // CT_PPr. A `Some(default)` still emits a bare `<w:rPr/>` so the mark's
     // presence round-trips (the property writer elides an all-default value).
-    if let Some(mark_run) = &properties.mark_run {
+    // A tracked paragraph-mark insertion/deletion (`w:ins`/`w:del`) is the FIRST
+    // child of the mark's `w:rPr` (CT_ParaRPr order), so when it is present the
+    // mark rPr is written explicitly: the change element, then the mark's own run
+    // property children (if any). Otherwise the existing path is preserved
+    // exactly: `Some(default)` emits a bare `<w:rPr/>`, `Some(non-default)` its
+    // full rPr, `None` nothing.
+    if let Some(revision) = &properties.mark_revision {
+        w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+        let element = match revision.kind {
+            MarkRevisionKind::Insertion => "w:ins",
+            MarkRevisionKind::Deletion => "w:del",
+        };
+        let mut el = start(element);
+        if let Some(author) = &revision.author {
+            el.push_attribute(("w:author", author.as_str()));
+        }
+        if let Some(date) = &revision.date {
+            el.push_attribute(("w:date", date.as_str()));
+        }
+        if let Some(id) = &revision.revision_id {
+            el.push_attribute(("w:id", id.as_str()));
+        }
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+        if let Some(mark_run) = &properties.mark_run {
+            write_run_property_children(w, mark_run)?;
+        }
+        w.write_event(Event::End(BytesEnd::new("w:rPr")))
+            .map_err(pkg)?;
+    } else if let Some(mark_run) = &properties.mark_run {
         if **mark_run == RunProperties::default() {
             w.write_event(Event::Empty(start("w:rPr"))).map_err(pkg)?;
         } else {
@@ -3903,6 +4076,20 @@ fn write_inline(
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
         }
+        // A note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`), inside a
+        // footnote/endnote body. It carries no id (the number is the enclosing
+        // note's), and re-emits its enclosing run's formatting.
+        InlineNode::NoteNumberMark(mark) => {
+            let element = match mark.kind {
+                NoteKind::Footnote => "w:footnoteRef",
+                NoteKind::Endnote => "w:endnoteRef",
+            };
+            w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+            write_run_properties(w, &mark.properties)?;
+            w.write_event(Event::Empty(start(element))).map_err(pkg)?;
+            w.write_event(Event::End(BytesEnd::new("w:r")))
+                .map_err(pkg)?;
+        }
         InlineNode::CommentReference(comment_ref) => {
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
             let mut el = start("w:commentReference");
@@ -3933,19 +4120,17 @@ fn write_inline(
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
-            let (cx, cy) = drawing
-                .extent
-                .as_ref()
-                .map(|extent| (extent.width_emu, extent.height_emu))
-                .unwrap_or((0, 0));
             write_drawing(
                 w,
                 &embed,
                 drawing.extent.as_ref(),
-                cx,
-                cy,
                 drawing.descr.as_deref(),
                 drawing.crop.as_ref(),
+                Xfrm2D {
+                    rotation: drawing.rotation,
+                    flip_h: drawing.flip_h,
+                    flip_v: drawing.flip_v,
+                },
             )?;
         }
         // An anchored (floating) drawing: a `w:drawing`/`wp:anchor` carrying the
@@ -4096,11 +4281,11 @@ fn write_drawing(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     extent: Option<&Extent>,
-    cx: i64,
-    cy: i64,
     descr: Option<&str>,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
+    let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
     w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
     w.write_event(Event::Start(start("w:drawing")))
         .map_err(pkg)?;
@@ -4122,7 +4307,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop)?;
+    write_pic_graphic(w, embed, cx, cy, crop, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4167,6 +4352,7 @@ fn write_pic_graphic(
     cx: i64,
     cy: i64,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
         .map_err(pkg)?;
@@ -4200,7 +4386,12 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:spPr")))
         .map_err(pkg)?;
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(
+        xfrm.rotation,
+        xfrm.flip_h,
+        xfrm.flip_v,
+    )))
+    .map_err(pkg)?;
     let mut off = start("a:off");
     off.push_attribute(("x", "0"));
     off.push_attribute(("y", "0"));
@@ -4283,7 +4474,18 @@ fn write_anchored_drawing(
         doc_pr.push_attribute(("descr", descr.as_str()));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, drawing.crop.as_ref())?;
+    write_pic_graphic(
+        w,
+        embed,
+        cx,
+        cy,
+        drawing.crop.as_ref(),
+        Xfrm2D {
+            rotation: drawing.rotation,
+            flip_h: drawing.flip_h,
+            flip_v: drawing.flip_v,
+        },
+    )?;
     w.write_event(Event::End(BytesEnd::new("wp:anchor")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -4441,6 +4643,11 @@ fn write_wgp(
                         picture.offset,
                         picture.extent,
                         picture.crop.as_ref(),
+                        Xfrm2D {
+                            rotation: picture.rotation,
+                            flip_h: picture.flip_h,
+                            flip_v: picture.flip_v,
+                        },
                     )?;
                 }
             }
@@ -4458,7 +4665,12 @@ fn write_group_xfrm(
     w: &mut Writer<Cursor<Vec<u8>>>,
     transform: &GroupTransform,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(
+        transform.rotation,
+        transform.flip_h,
+        transform.flip_v,
+    )))
+    .map_err(pkg)?;
     write_point(w, "a:off", transform.offset)?;
     write_ext(w, "a:ext", transform.extent)?;
     write_point(w, "a:chOff", transform.child_offset)?;
@@ -4495,6 +4707,7 @@ fn write_group_picture(
     offset: PointEmu,
     extent: Extent,
     crop: Option<&CropRect>,
+    xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
     w.write_event(Event::Start(start("pic:nvPicPr")))
@@ -4523,7 +4736,7 @@ fn write_group_picture(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("pic:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, offset, extent)?;
+    write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -4546,7 +4759,14 @@ fn write_group_shape(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, shape.offset, shape.extent)?;
+    write_shape_xfrm(
+        w,
+        shape.offset,
+        shape.extent,
+        shape.rotation,
+        shape.flip_h,
+        shape.flip_v,
+    )?;
     let preset = shape
         .preset
         .as_deref()
@@ -4580,7 +4800,14 @@ fn write_group_text_box(
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))
         .map_err(pkg)?;
-    write_shape_xfrm(w, text_box.offset, text_box.extent)?;
+    write_shape_xfrm(
+        w,
+        text_box.offset,
+        text_box.extent,
+        text_box.rotation,
+        text_box.flip_h,
+        text_box.flip_v,
+    )?;
     write_prst_geom(w, "rect")?;
     if let Some(fill) = text_box.fill {
         write_solid_fill(w, fill)?;
@@ -4608,13 +4835,44 @@ fn write_group_text_box(
     Ok(())
 }
 
-/// Emits an `a:xfrm` for a shape/picture (off + ext only).
+/// The rotation + flip orientation of an `a:xfrm` (`@rot`/`@flipH`/`@flipV`),
+/// carried through the picture/drawing writers so their argument lists stay small.
+#[derive(Clone, Copy, Default)]
+struct Xfrm2D {
+    rotation: Option<i32>,
+    flip_h: bool,
+    flip_v: bool,
+}
+
+/// Builds an `a:xfrm` start element carrying the optional `@rot` rotation
+/// (60000ths of a degree) and `@flipH`/`@flipV` mirror flags, in schema order
+/// (`rot`, then `flipH`, then `flipV`). An identity transform adds no attributes.
+fn xfrm_start(rotation: Option<i32>, flip_h: bool, flip_v: bool) -> BytesStart<'static> {
+    let mut el = start("a:xfrm");
+    if let Some(rotation) = rotation {
+        el.push_attribute(("rot", rotation.to_string().as_str()));
+    }
+    if flip_h {
+        el.push_attribute(("flipH", "1"));
+    }
+    if flip_v {
+        el.push_attribute(("flipV", "1"));
+    }
+    el
+}
+
+/// Emits an `a:xfrm` for a shape/picture (off + ext), carrying its rotation and
+/// flip flags on the `a:xfrm` element.
 fn write_shape_xfrm(
     w: &mut Writer<Cursor<Vec<u8>>>,
     offset: PointEmu,
     extent: Extent,
+    rotation: Option<i32>,
+    flip_h: bool,
+    flip_v: bool,
 ) -> Result<(), ExportError> {
-    w.write_event(Event::Start(start("a:xfrm"))).map_err(pkg)?;
+    w.write_event(Event::Start(xfrm_start(rotation, flip_h, flip_v)))
+        .map_err(pkg)?;
     write_point(w, "a:off", offset)?;
     write_ext(w, "a:ext", extent)?;
     w.write_event(Event::End(BytesEnd::new("a:xfrm")))
@@ -4687,7 +4945,8 @@ fn write_solid_fill(w: &mut Writer<Cursor<Vec<u8>>>, color: Rgba) -> Result<(), 
     Ok(())
 }
 
-/// Emits an `a:ln` outline (width + solid fill), or `a:ln > a:noFill` when absent.
+/// Emits an `a:ln` outline (width + solid fill, plus any dash/line-end
+/// decorations in schema order), or `a:ln > a:noFill` when absent.
 fn write_outline(
     w: &mut Writer<Cursor<Vec<u8>>>,
     stroke: Option<ShapeStroke>,
@@ -4697,7 +4956,16 @@ fn write_outline(
             let mut ln = start("a:ln");
             ln.push_attribute(("w", stroke.width_emu.to_string().as_str()));
             w.write_event(Event::Start(ln)).map_err(pkg)?;
+            // Schema order (`CT_LineProperties`): fill, then prstDash, then the
+            // head/tail line-end decorations.
             write_solid_fill(w, stroke.color)?;
+            if let Some(dash) = stroke.dash {
+                let mut prst = start("a:prstDash");
+                prst.push_attribute(("val", dash_style_token(dash)));
+                w.write_event(Event::Empty(prst)).map_err(pkg)?;
+            }
+            write_line_end(w, "a:headEnd", stroke.head_end)?;
+            write_line_end(w, "a:tailEnd", stroke.tail_end)?;
             w.write_event(Event::End(BytesEnd::new("a:ln")))
                 .map_err(pkg)?;
         }
@@ -4710,6 +4978,67 @@ fn write_outline(
         }
     }
     Ok(())
+}
+
+/// Emits an `a:headEnd`/`a:tailEnd` line-end decoration (`@type` plus any
+/// `@w`/`@len` size tokens) when present.
+fn write_line_end(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    tag: &str,
+    line_end: Option<LineEnd>,
+) -> Result<(), ExportError> {
+    let Some(line_end) = line_end else {
+        return Ok(());
+    };
+    let mut el = start(tag);
+    el.push_attribute(("type", line_end_kind_token(line_end.kind)));
+    if let Some(width) = line_end.width {
+        el.push_attribute(("w", line_end_size_token(width)));
+    }
+    if let Some(length) = line_end.length {
+        el.push_attribute(("len", line_end_size_token(length)));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// Maps a [`DashStyle`] to its `a:prstDash@val` (`ST_PresetLineDashVal`) token.
+fn dash_style_token(dash: DashStyle) -> &'static str {
+    match dash {
+        DashStyle::Solid => "solid",
+        DashStyle::Dot => "dot",
+        DashStyle::Dash => "dash",
+        DashStyle::LargeDash => "lgDash",
+        DashStyle::DashDot => "dashDot",
+        DashStyle::LargeDashDot => "lgDashDot",
+        DashStyle::LargeDashDotDot => "lgDashDotDot",
+        DashStyle::SystemDash => "sysDash",
+        DashStyle::SystemDot => "sysDot",
+        DashStyle::SystemDashDot => "sysDashDot",
+        DashStyle::SystemDashDotDot => "sysDashDotDot",
+    }
+}
+
+/// Maps a [`LineEndKind`] to its `@type` (`ST_LineEndType`) token.
+fn line_end_kind_token(kind: LineEndKind) -> &'static str {
+    match kind {
+        LineEndKind::None => "none",
+        LineEndKind::Triangle => "triangle",
+        LineEndKind::Stealth => "stealth",
+        LineEndKind::Diamond => "diamond",
+        LineEndKind::Oval => "oval",
+        LineEndKind::Arrow => "arrow",
+    }
+}
+
+/// Maps a [`LineEndSize`] to its `@w`/`@len` (`ST_LineEndWidth`/`ST_LineEndLength`)
+/// token.
+fn line_end_size_token(size: LineEndSize) -> &'static str {
+    match size {
+        LineEndSize::Small => "sm",
+        LineEndSize::Medium => "med",
+        LineEndSize::Large => "lg",
+    }
 }
 
 fn hex_rgb(color: Rgba) -> String {
@@ -5081,6 +5410,9 @@ fn write_text_box(
             width_emu: 0,
             height_emu: 0,
         }),
+        None,
+        false,
+        false,
     )?;
     write_prst_geom(w, "rect")?;
     if let Some(fill) = text_box.fill {
@@ -5450,6 +5782,20 @@ fn write_run_properties(
         return Ok(());
     }
     w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+    write_run_property_children(w, properties)?;
+    w.write_event(Event::End(BytesEnd::new("w:rPr")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Writes the CHILDREN of a run's `w:rPr` (every property element, in CT_RPr
+/// schema order) without the enclosing `w:rPr` start/end. Shared by
+/// [`write_run_properties`] and the paragraph-mark rPr writer, which must
+/// prepend the mark's tracked change (`w:ins`/`w:del`) before these children.
+fn write_run_property_children(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    properties: &RunProperties,
+) -> Result<(), ExportError> {
     if let Some(style_ref) = properties.style_ref {
         let mut el = start("w:rStyle");
         el.push_attribute(("w:val", style_id_token(style_ref).as_str()));
@@ -5561,9 +5907,26 @@ fn write_run_properties(
             el.push_attribute(("w:val", "auto"));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
-        // Color::Theme is not yet emitted by import (a later Layer-1 item); it
-        // round-trips through the opaque retention path until then.
-        Some(Color::Theme(_)) | None => {}
+        Some(Color::Theme(theme)) => {
+            let mut el = start("w:color");
+            // `CT_Color` requires `@w:val`; the concrete fallback Word writes beside
+            // `@w:themeColor` is not modeled, so emit `auto` and let the theme
+            // reference carry the palette slot (with any tint/shade).
+            el.push_attribute(("w:val", "auto"));
+            el.push_attribute(("w:themeColor", theme_color_token(theme.slot)));
+            let tint_str;
+            let shade_str;
+            if let Some(tint) = theme.theme_tint {
+                tint_str = format!("{tint:02X}");
+                el.push_attribute(("w:themeTint", tint_str.as_str()));
+            }
+            if let Some(shade) = theme.theme_shade {
+                shade_str = format!("{shade:02X}");
+                el.push_attribute(("w:themeShade", shade_str.as_str()));
+            }
+            w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        None => {}
     }
     if let Some(size) = properties.size_half_points {
         let mut el = start("w:sz");
@@ -5645,8 +6008,6 @@ fn write_run_properties(
         w.write_event(Event::End(BytesEnd::new("w:rPrChange")))
             .map_err(pkg)?;
     }
-    w.write_event(Event::End(BytesEnd::new("w:rPr")))
-        .map_err(pkg)?;
     Ok(())
 }
 
@@ -5720,6 +6081,7 @@ fn tab_alignment_token(alignment: TabAlignment) -> &'static str {
         TabAlignment::End => "end",
         TabAlignment::Decimal => "decimal",
         TabAlignment::Bar => "bar",
+        TabAlignment::Clear => "clear",
     }
 }
 
@@ -5741,6 +6103,30 @@ fn emphasis_token(emphasis: EmphasisMark) -> &'static str {
         EmphasisMark::Circle => "circle",
         EmphasisMark::UnderDot => "underDot",
     }
+}
+
+/// The `w:type` token for a preferred table/cell width unit (`ST_TblWidth`).
+fn width_type_token(width_type: WidthType) -> &'static str {
+    match width_type {
+        WidthType::Dxa => "dxa",
+        WidthType::Pct => "pct",
+        WidthType::Auto => "auto",
+        WidthType::Nil => "nil",
+    }
+}
+
+/// Writes a `CT_TblWidth` element (`w:tblW`/`w:tcW`) carrying both `@w:w` and
+/// `@w:type` so the typed width round-trips.
+fn write_table_width<W: std::io::Write>(
+    w: &mut Writer<W>,
+    name: &str,
+    width: TableWidth,
+) -> Result<(), ExportError> {
+    let mut el = start(name);
+    el.push_attribute(("w:type", width_type_token(width.width_type)));
+    el.push_attribute(("w:w", width.value.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
 }
 
 fn alignment_token(alignment: Alignment) -> &'static str {

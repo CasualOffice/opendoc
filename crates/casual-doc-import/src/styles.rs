@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     Alignment, BorderEdge, CellMargins, CellVerticalAlignment, DefinitionMap, DocumentDefaults,
-    HeightRule, ParagraphBorders, ParagraphProperties, RgbColor, RowHeight, RunProperties, Shading,
-    Style, StyleId, StyleKind, TabAlignment, TabLeader, TabStop, TableBorders, TableCellProperties,
-    TableLayout, TableLook, TableOverlap, TableProperties, TableRowProperties, TableStyleOverride,
+    HeightRule, ParagraphBorders, ParagraphProperties, RowHeight, RunProperties, Style, StyleId,
+    StyleKind, TabAlignment, TabLeader, TabStop, TableBorders, TableCellProperties, TableLayout,
+    TableLook, TableOverlap, TableProperties, TableRowProperties, TableStyleOverride,
     TableStyleRegion, TextDirection, VerticalMerge,
 };
 use quick_xml::Reader;
@@ -25,7 +25,7 @@ use crate::error::ImportError;
 use crate::numbering::Numbering;
 use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
-    style_kind_from,
+    parse_shading, parse_table_width, style_kind_from,
 };
 use crate::report::Reporter;
 
@@ -830,8 +830,8 @@ fn read_table_container(
                 Some(alignment) => props.alignment = Some(alignment),
                 None => ctx.report(b"jc"),
             },
-            b"tblW" => match dxa_twips(&child) {
-                Some(width) => props.width_twips = Some(width.clamp(0, 31_680)),
+            b"tblW" => match parse_table_width(&child) {
+                Some(width) => props.width = Some(width),
                 None => ctx.report(b"tblW"),
             },
             b"tblCellSpacing" => match dxa_twips(&child) {
@@ -862,9 +862,11 @@ fn read_table_container(
                 }
             }
             b"shd" => {
-                props.shading = Shading {
-                    fill: shading_fill(&child, ctx),
+                let (shading, degraded) = parse_shading(&child);
+                if degraded {
+                    ctx.report(b"shd");
                 }
+                props.shading = shading;
             }
             b"tblCellMar" => {
                 if open {
@@ -965,8 +967,8 @@ fn read_cell_container(
         };
         let mut consumed = false;
         match child.local_name().as_ref() {
-            b"tcW" => match dxa_twips(&child) {
-                Some(width) => props.width_twips = Some(width.clamp(0, 31_680)),
+            b"tcW" => match parse_table_width(&child) {
+                Some(width) => props.width = Some(width),
                 None => ctx.report(b"tcW"),
             },
             b"gridSpan" => match attribute_value(&child, b"val")
@@ -996,9 +998,11 @@ fn read_cell_container(
                 }
             }
             b"shd" => {
-                props.shading = Shading {
-                    fill: shading_fill(&child, ctx),
+                let (shading, degraded) = parse_shading(&child);
+                if degraded {
+                    ctx.report(b"shd");
                 }
+                props.shading = shading;
             }
             b"tcMar" => {
                 if open {
@@ -1316,27 +1320,6 @@ fn border_edge(element: &BytesStart<'_>) -> Option<BorderEdge> {
         color,
         space_points,
     })
-}
-
-/// Parses a `w:shd`'s background fill (explicit sRGB `@w:fill`); a real pattern,
-/// a non-`auto` pattern color, or a theme fill/color is reported (degraded).
-fn shading_fill(element: &BytesStart<'_>, ctx: &mut Ctx) -> Option<RgbColor> {
-    let pattern_modeled = matches!(
-        attribute_value(element, b"val").as_deref(),
-        None | Some("clear") | Some("nil")
-    );
-    let pattern_color_default = matches!(
-        attribute_value(element, b"color").as_deref(),
-        None | Some("auto")
-    );
-    let has_theme = attribute_value(element, b"themeFill").is_some()
-        || attribute_value(element, b"themeColor").is_some();
-    if !pattern_modeled || !pattern_color_default || has_theme {
-        ctx.report(b"shd");
-    }
-    attribute_value(element, b"fill")
-        .filter(|value| value != "auto")
-        .and_then(|value| parse_rgb(&value))
 }
 
 /// Applies a `w:tblLook`: explicit boolean attributes when present, else the
