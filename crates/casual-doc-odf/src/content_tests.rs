@@ -86,8 +86,16 @@ fn embedded_image_frame_maps_to_drawing_and_media_reference() {
 fn linked_and_unsafe_image_hrefs_are_blocked() {
     for href in [
         "http://evil.example/x.png",
+        "HTTP://evil.example/x.png",
+        "file:///etc/passwd",
+        "data:image/png;base64,AAAA",
         "../secret.png",
+        "Pictures/../../etc/passwd",
+        "Pictures/..",
+        "..",
         "/etc/passwd",
+        "C:\\Windows\\x.png",
+        "Pictures\\x.png",
         "",
     ] {
         let xml = draw_content(&format!(

@@ -2653,18 +2653,24 @@ fn is_svg_title_or_desc(name: &ResolvedName) -> bool {
     name.namespace == NamespaceKind::Svg && matches!(name.local.as_slice(), b"title" | b"desc")
 }
 
-/// Whether an `xlink:href` is a safe internal package image part (not an external
-/// URL, absolute path, parent-directory traversal, or in-document fragment).
+/// Whether an `xlink:href` is a safe internal package image part: a relative
+/// ZIP path with no URI scheme, drive letter, absolute/UNC prefix, backslash,
+/// parent-directory traversal, in-document fragment, or control character. Any
+/// `:` is rejected, which blocks every scheme (`http:`, `file:`, `data:`,
+/// `javascript:`) and Windows drive letters at once — legitimate ODF part names
+/// (e.g. `Pictures/foo.png`) never contain one.
 fn is_safe_media_href(href: &str) -> bool {
     !href.is_empty()
         && href.len() <= 1024
-        && !href.contains("://")
+        && !href.contains(':')
+        && !href.contains('\\')
         && !href.starts_with('/')
         && !href.starts_with('#')
+        && href != ".."
         && !href.starts_with("../")
         && !href.contains("/../")
-        && !href.contains('\\')
-        && !href.contains('\0')
+        && !href.ends_with("/..")
+        && !href.chars().any(|character| character.is_control())
 }
 
 /// Infers the media (content) type from a package part-name extension.
