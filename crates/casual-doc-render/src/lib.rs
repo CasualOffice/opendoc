@@ -650,9 +650,9 @@ fn draw_decoration(
 }
 
 /// Draws an underline in its `w:u@val` line style. Single/double/thick are drawn
-/// exactly; dotted/dashed/dot-dash as patterned segments; wave and words are
-/// approximated by a single line (a true sine wave / per-word gapping is a
-/// follow-up), so they still underline rather than disappearing.
+/// exactly; dotted/dashed/dot-dash as patterned segments; wave is a real sine
+/// squiggle. `words` (underline words only, not the spaces) keeps its `single`
+/// base line — the per-word gapping is a separate follow-up.
 #[allow(clippy::too_many_arguments)]
 fn draw_underline(
     surface: &mut Surface,
@@ -680,8 +680,45 @@ fn draw_underline(
         }
     };
     match style {
-        UnderlineStyle::Single | UnderlineStyle::Wavy | UnderlineStyle::Words => {
+        UnderlineStyle::Single | UnderlineStyle::Words => {
             line(surface, x, advance, y_center, thickness);
+        }
+        UnderlineStyle::Wavy => {
+            // A true squiggle: a sine wave along the run's advance at the
+            // underline offset, its amplitude and period scaled to the decoration
+            // thickness (which tracks the font size), stroked at the decoration
+            // thickness. The wave's vertical spread is what distinguishes it from
+            // the flat single line. (The model collapses wave/wavyHeavy/wavyDouble
+            // into one `Wavy`, so all three render as a single-weight squiggle.)
+            let amplitude = (thickness * 1.5).max(1.0);
+            let period = (thickness * 6.0).max(4.0);
+            // Sample finely enough that the polyline reads as a smooth curve.
+            let step = (period / 8.0).clamp(0.75, 2.0);
+            let wave_y =
+                |px: f32| y_center + amplitude * (std::f32::consts::TAU * px / period).sin();
+            let mut builder = PathBuilder::new();
+            builder.move_to(x, wave_y(0.0));
+            let mut px = step;
+            while px < advance {
+                builder.line_to(x + px, wave_y(px));
+                px += step;
+            }
+            builder.line_to(x + advance, wave_y(advance));
+            if let Some(path) = builder.finish() {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+                paint.anti_alias = true;
+                surface.pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &Stroke {
+                        width: thickness.max(1.0),
+                        ..Stroke::default()
+                    },
+                    Transform::identity(),
+                    clip,
+                );
+            }
         }
         UnderlineStyle::Double => {
             let gap = (thickness * 2.0).max(1.5);
@@ -1766,6 +1803,47 @@ mod tests {
             "the double underline ({}) lays down more ink than a single ({})",
             dark_pixel_count(&double),
             dark_pixel_count(&single),
+        );
+    }
+
+    #[test]
+    fn a_wavy_underline_spreads_ink_above_and_below_the_flat_line() {
+        use casual_doc_layout::text::Decoration;
+        // "Hello" has no descenders, so every dark pixel below the baseline is the
+        // underline. A flat single line is confined to a thin band of rows; a sine
+        // squiggle necessarily reaches above and below that band (its amplitude) —
+        // that vertical spread is what a wave has and a flat line does not.
+        let (single, baseline) = render_decorated(Decoration {
+            underline: true,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
+        });
+        let (wavy, _) = render_decorated(Decoration {
+            underline: true,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Wavy,
+            ..Decoration::default()
+        });
+        // The flat line's center is its densest row in the below-baseline region.
+        let center = (baseline + 1..baseline + 20)
+            .max_by_key(|&y| band_dark(&single, y, y + 1))
+            .expect("a densest underline row");
+        // The "wings" are the rows a few pixels above and below that center — where
+        // a thin flat line lays ~no ink but a wave's peaks/troughs do.
+        let wings = |s: &Surface| -> usize {
+            band_dark(s, center.saturating_sub(4), center.saturating_sub(1))
+                + band_dark(s, center + 2, center + 5)
+        };
+        let single_wings = wings(&single);
+        let wavy_wings = wings(&wavy);
+        assert!(
+            wavy_wings > single_wings + 15,
+            "the wavy underline spreads ink into the rows above/below the flat \
+             line's center (wavy {wavy_wings} vs flat {single_wings})"
+        );
+        // It still underlines — visible ink below the baseline.
+        assert!(
+            band_dark(&wavy, baseline + 1, baseline + 20) > 20,
+            "the wavy underline still paints a visible line below the baseline"
         );
     }
 
