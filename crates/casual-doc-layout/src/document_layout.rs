@@ -551,7 +551,15 @@ fn build_body_galley(
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
 ) -> Vec<BlockFragment> {
-    build_galley_for_blocks_inner(document, shaper, blocks, width, exclusions, review_view)
+    build_galley_for_blocks_inner(
+        document,
+        shaper,
+        blocks,
+        width,
+        exclusions,
+        review_view,
+        None,
+    )
 }
 
 /// Lays a whole [`Document`] out into a finished, ready-to-render
