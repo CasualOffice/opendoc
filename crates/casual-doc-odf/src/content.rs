@@ -1543,12 +1543,14 @@ fn read_text_style_properties(
                 style.style.run_properties.size_half_points.is_some()
             }
             (NamespaceKind::Fo, b"font-family") => {
-                let family = value.trim();
-                if family.is_empty() || family.len() > 255 {
+                // Do NOT trim: a family name is free text the writer emits
+                // verbatim, so trimming here would break the round-trip fixed
+                // point for a padded name. Bound length only (matches FontName).
+                if value.is_empty() || value.len() > 255 {
                     false
                 } else {
                     style.style.run_properties.font_ref = Some(FontRef::Named(FontName {
-                        name: family.to_owned(),
+                        name: value.clone(),
                     }));
                     true
                 }
@@ -1560,7 +1562,9 @@ fn read_text_style_properties(
                 }
                 None => false,
             },
-            (NamespaceKind::Fo, b"text-transform") => match value.as_str() {
+            // Keyword-valued; tolerate insignificant surrounding whitespace a
+            // producer may add (parity with parse_text_position).
+            (NamespaceKind::Fo, b"text-transform") => match value.trim() {
                 "uppercase" => {
                     style.style.run_properties.all_caps = Some(true);
                     true
@@ -1571,7 +1575,7 @@ fn read_text_style_properties(
                 }
                 _ => false,
             },
-            (NamespaceKind::Fo, b"font-variant") => match value.as_str() {
+            (NamespaceKind::Fo, b"font-variant") => match value.trim() {
                 "small-caps" => {
                     style.style.run_properties.small_caps = Some(true);
                     true

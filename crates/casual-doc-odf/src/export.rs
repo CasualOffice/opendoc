@@ -392,9 +392,13 @@ fn split_run_properties(properties: &RunProperties) -> (OdtRunStyle, RunProperti
         remainder.color = None;
     }
     // Font family: only the primary Named slot maps to `fo:font-family`. Theme
-    // fonts and the complex/east-asian/h-ansi slots stay in the remainder and are
-    // reported, so nothing is silently lost.
-    if let Some(FontRef::Named(name)) = &remainder.font_ref {
+    // fonts, the complex/east-asian/h-ansi slots, and a family carrying a
+    // character we cannot serialize stay in the remainder and are reported, so
+    // nothing is silently lost and an unrepresentable name never aborts the
+    // whole export.
+    if let Some(FontRef::Named(name)) = &remainder.font_ref
+        && is_representable(&name.name)
+    {
         style.font_family = Some(name.name.clone());
         remainder.font_ref = None;
     }
@@ -2828,6 +2832,67 @@ mod tests {
         assert_eq!(run.properties.all_caps, Some(true));
         assert_eq!(run.properties.small_caps, Some(true));
 
+        let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+    }
+
+    #[test]
+    fn font_family_with_control_char_degrades_not_aborts_export() {
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
+            panic!("run")
+        };
+        // A tab is legal in the model (only length is validated) but not
+        // serializable; it must degrade, not abort the whole export.
+        run.properties.font_ref = Some(FontRef::Named(FontName {
+            name: "Ar\tial".to_owned(),
+        }));
+        let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(!content.contains("fo:font-family"));
+        assert!(
+            export
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "odt.export.run_properties")
+        );
+        package.import_document(OdfImportLimits::default()).unwrap();
+    }
+
+    #[test]
+    fn padded_font_family_round_trips_without_trimming() {
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
+            panic!("run")
+        };
+        // Import must not trim, or a padded name drifts and breaks the fixed
+        // point. The writer emits the name verbatim.
+        run.properties.font_ref = Some(FontRef::Named(FontName {
+            name: " Arial ".to_owned(),
+        }));
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        let BlockNode::Paragraph(paragraph) = &reopened.document.body()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("run")
+        };
+        assert_eq!(
+            run.properties.font_ref,
+            Some(FontRef::Named(FontName {
+                name: " Arial ".to_owned(),
+            }))
+        );
         let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
         assert_eq!(first.bytes, second.bytes);
     }
