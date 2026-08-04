@@ -184,12 +184,12 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await page.locator("#pages").focus();
   await page.keyboard.press("Shift+F10");
   await menu.locator('[data-command-id="table.insert"]').click();
-  await expect(
-    submenu.locator('[data-command-id="table.insert.rowAbove"]'),
-  ).toBeDisabled();
-  await expect(
-    submenu.locator('[data-command-id="table.insert.rowAbove"] .menu-item-hint'),
-  ).toContainText("cannot be tracked");
+  // Disabled rows are greyed in place with no reason text (Google Docs style):
+  // the menu no longer widens to explain why; the reason lives in the title.
+  const blockedRow = submenu.locator('[data-command-id="table.insert.rowAbove"]');
+  await expect(blockedRow).toBeDisabled();
+  await expect(blockedRow.locator(".menu-item-hint")).toHaveCount(0);
+  await expect(blockedRow).toHaveAttribute("title", /cannot be tracked/);
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
@@ -222,6 +222,9 @@ test("the menu is contextual — a table cell exposes table tools a text selecti
   const menu = page.locator(".editor-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu.locator('[data-command-id="format.menu"]')).toBeVisible();
+  // On prose the text-arrangement rows are separate top-level entries.
+  await expect(menu.locator('[data-command-id="paragraph.list"]')).toBeVisible();
+  await expect(menu.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
   await expect(menu.locator('[data-command-id="table.insert"]')).toHaveCount(0);
   await expect(menu.locator('[data-command-id="table.delete"]')).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -233,5 +236,22 @@ test("the menu is contextual — a table cell exposes table tools a text selecti
   await expect(menu.locator('[data-command-id="table.insert"]')).toBeVisible();
   await expect(menu.locator('[data-command-id="table.delete"]')).toBeVisible();
   await expect(menu.locator('[data-command-id="table.select"]')).toBeVisible();
+
+  // The cell menu leads with the table tools; the generic text rows are demoted
+  // into a single trailing "Format ▸" submenu (no separate List / Paragraph
+  // top-level rows), so it stays compact.
+  await expect(menu.locator('[data-command-id="paragraph.list"]')).toHaveCount(0);
+  await expect(menu.locator('[data-command-id="paragraph.properties"]')).toHaveCount(0);
+  const order = await menu
+    .locator(".menu-item")
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.commandId));
+  expect(order.indexOf("table.insert")).toBeLessThan(order.indexOf("format.menu"));
+
+  // Nothing is lost: the collapsed submenu still holds text styling and the
+  // paragraph dialog.
+  await menu.locator('[data-command-id="format.menu"]').click();
+  const formatSubmenu = page.locator(".editor-submenu");
+  await expect(formatSubmenu.locator('[data-command-id="format.bold"]')).toBeVisible();
+  await expect(formatSubmenu.locator('[data-command-id="paragraph.properties"]')).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
