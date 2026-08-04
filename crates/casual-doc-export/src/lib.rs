@@ -2007,12 +2007,14 @@ mod semantic_tests {
     }
 
     #[test]
-    fn external_hyperlink_survives_the_semantic_round_trip() {
+    fn external_hyperlink_with_anchor_fragment_survives_the_semantic_round_trip() {
         // An external hyperlink resolves through a relationship; the writer must
         // regenerate `document.xml.rels` so the reopened model carries the same
-        // URL. Source is a full package (the URL only resolves with its rels).
+        // URL. A `w:anchor` alongside `r:id` is an in-target fragment (a named
+        // location within the external target), not an internal bookmark.
+        use casual_doc_model::v1::{BlockNode, HyperlinkTarget, InlineNode};
         let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
-            <w:p><w:hyperlink r:id="rId100" w:tooltip="visit">
+            <w:p><w:hyperlink r:id="rId100" w:anchor="section2" w:tooltip="visit">
                 <w:r><w:t>Example</w:t></w:r></w:hyperlink></w:p>
         </w:body></w:document>"#;
         let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a" TargetMode="External"/></Relationships>"#;
@@ -2027,6 +2029,22 @@ mod semantic_tests {
         )
         .unwrap()
         .document;
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Hyperlink(link) = &paragraph.inlines[0] else {
+            panic!("expected a hyperlink");
+        };
+        let HyperlinkTarget::External(ext) = &link.target else {
+            panic!("expected an external target");
+        };
+        assert_eq!(ext.url, "https://example.com/a");
+        assert_eq!(
+            ext.anchor.as_deref(),
+            Some("section2"),
+            "the in-target fragment is captured alongside the base URL"
+        );
 
         let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
         let mut package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
@@ -2043,6 +2061,39 @@ mod semantic_tests {
             m1, m2,
             "the external-hyperlink model survives write -> reopen unchanged"
         );
+    }
+
+    #[test]
+    fn building_block_gallery_and_category_survive_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, SdtControlKind};
+        // A building-block content control (`w:docPartObj`) carrying its gallery and
+        // category; both survive write -> reopen as a fixed point.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:p><w:sdt>
+                <w:sdtPr><w:docPartObj>
+                    <w:docPartGallery w:val="Quick Parts"/>
+                    <w:docPartCategory w:val="General"/>
+                </w:docPartObj></w:sdtPr>
+                <w:sdtContent><w:r><w:t>bb</w:t></w:r></w:sdtContent></w:sdt></w:p>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(
+            m1, m2,
+            "the building-block gallery survives write -> reopen unchanged"
+        );
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Sdt(sdt) = &paragraph.inlines[0] else {
+            panic!("expected an inline content control");
+        };
+        assert_eq!(
+            sdt.properties.control_kind,
+            Some(SdtControlKind::BuildingBlockGallery)
+        );
+        assert_eq!(sdt.properties.gallery.as_deref(), Some("Quick Parts"));
+        assert_eq!(sdt.properties.category.as_deref(), Some("General"));
     }
 
     #[test]

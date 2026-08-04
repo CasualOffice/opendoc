@@ -951,7 +951,10 @@ impl WasmDocument {
                         anchor: anchor.to_owned(),
                     })
                 } else {
-                    HyperlinkTarget::External(ExternalTarget { url: href.clone() })
+                    HyperlinkTarget::External(ExternalTarget {
+                        url: href.clone(),
+                        anchor: None,
+                    })
                 };
                 ops.push(Operation::SetHyperlink {
                     range: EditRange {
@@ -1193,7 +1196,10 @@ impl WasmDocument {
                 anchor: anchor.to_owned(),
             })
         } else {
-            HyperlinkTarget::External(ExternalTarget { url: target })
+            HyperlinkTarget::External(ExternalTarget {
+                url: target,
+                anchor: None,
+            })
         };
         let id = self
             .edit_ids
@@ -14044,6 +14050,7 @@ mod tests {
             links[0].link.target,
             HyperlinkTarget::External(ExternalTarget {
                 url: "https://example.com/document".to_owned(),
+                anchor: None,
             })
         );
 

@@ -3107,6 +3107,7 @@ fn external_hyperlink_maps_to_a_hyperlink_node() {
         link.target,
         HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
             url: "https://example.com/docs".to_owned(),
+            anchor: None,
         })
     );
     assert_eq!(link.tooltip.as_deref(), Some("see docs"));
@@ -5751,9 +5752,14 @@ fn block_content_control_without_sdt_pr_does_not_panic() {
 }
 
 #[test]
-fn building_block_gallery_forms_report_the_lost_distinction() {
+fn building_block_gallery_captures_gallery_and_category_without_reporting() {
+    // The modern `w:docPartObj` form is fully captured — kind plus the
+    // gallery/category children — so nothing is reported.
     let xml = br#"<w:document xmlns:w="urn:w"><w:body>
-        <w:p><w:sdt><w:sdtPr><w:docPartObj/></w:sdtPr>
+        <w:p><w:sdt><w:sdtPr><w:docPartObj>
+            <w:docPartGallery w:val="Quick Parts"/>
+            <w:docPartCategory w:val="General"/>
+        </w:docPartObj></w:sdtPr>
             <w:sdtContent><w:r><w:t>gallery</w:t></w:r></w:sdtContent></w:sdt></w:p>
     </w:body></w:document>"#;
     let import = import(xml);
@@ -5763,8 +5769,27 @@ fn building_block_gallery_forms_report_the_lost_distinction() {
         sdt.properties.control_kind,
         Some(SdtControlKind::BuildingBlockGallery)
     );
-    // The docPartObj vs docPartList distinction collapses to one kind: reported.
-    assert!(features(&import).contains(&"docPartObj"));
+    assert_eq!(sdt.properties.gallery.as_deref(), Some("Quick Parts"));
+    assert_eq!(sdt.properties.category.as_deref(), Some("General"));
+    assert!(!features(&import).contains(&"docPartObj"));
+}
+
+#[test]
+fn legacy_building_block_list_form_is_reported() {
+    // The legacy `w:docPartList` form collapses to the same kind and is normalized
+    // to `w:docPartObj` on export, so its form change is reported.
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:sdt><w:sdtPr><w:docPartList/></w:sdtPr>
+            <w:sdtContent><w:r><w:t>gallery</w:t></w:r></w:sdtContent></w:sdt></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let para = paragraph(&import, 0);
+    let sdt = find_inline_sdt(&para.inlines).expect("gallery sdt");
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::BuildingBlockGallery)
+    );
+    assert!(features(&import).contains(&"docPartList"));
 }
 
 #[test]

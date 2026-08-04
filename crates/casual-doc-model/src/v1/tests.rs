@@ -3320,6 +3320,8 @@ fn full_sdt_props() -> SdtProperties {
             prefix_mappings: Some("xmlns:ns0='urn:contoso'".to_owned()),
         }),
         data: None,
+        gallery: None,
+        category: None,
     }
 }
 

@@ -2573,6 +2573,7 @@ mod tests {
     fn external(url: &str) -> HyperlinkTarget {
         HyperlinkTarget::External(casual_doc_model::v1::ExternalTarget {
             url: url.to_owned(),
+            anchor: None,
         })
     }
 
