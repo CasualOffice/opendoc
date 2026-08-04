@@ -147,6 +147,12 @@ pub struct OdfImportLimits {
     pub max_space_repeat: usize,
     /// Maximum distinct source-feature buckets before folding into one overflow entry.
     pub max_report_features: usize,
+    /// Maximum retained source parts for edit-tolerant preservation.
+    pub max_retained_parts: usize,
+    /// Maximum bytes of any single retained source part.
+    pub max_retained_part_bytes: usize,
+    /// Maximum aggregate bytes across all retained source parts.
+    pub max_retained_total_bytes: usize,
 }
 
 impl OdfImportLimits {
@@ -188,6 +194,12 @@ impl OdfImportLimits {
     pub const HARD_MAX_SPACE_REPEAT: usize = 1_000_000;
     /// Compiled maximum distinct source-feature buckets before overflow folding.
     pub const HARD_MAX_REPORT_FEATURES: usize = 16_384;
+    /// Compiled maximum retained source parts.
+    pub const HARD_MAX_RETAINED_PARTS: usize = 65_536;
+    /// Compiled maximum bytes of any single retained source part.
+    pub const HARD_MAX_RETAINED_PART_BYTES: usize = 512 * 1024 * 1024;
+    /// Compiled maximum aggregate retained source bytes.
+    pub const HARD_MAX_RETAINED_TOTAL_BYTES: usize = 1024 * 1024 * 1024;
 
     fn validate(self) -> Result<(), OdfError> {
         for (limit, value, hard_ceiling) in [
@@ -274,6 +286,21 @@ impl OdfImportLimits {
                 self.max_report_features,
                 Self::HARD_MAX_REPORT_FEATURES,
             ),
+            (
+                "odf_retained_parts",
+                self.max_retained_parts,
+                Self::HARD_MAX_RETAINED_PARTS,
+            ),
+            (
+                "odf_retained_part_bytes",
+                self.max_retained_part_bytes,
+                Self::HARD_MAX_RETAINED_PART_BYTES,
+            ),
+            (
+                "odf_retained_total_bytes",
+                self.max_retained_total_bytes,
+                Self::HARD_MAX_RETAINED_TOTAL_BYTES,
+            ),
         ] {
             if value > hard_ceiling {
                 return Err(OdfError::InvalidLimitConfiguration {
@@ -309,6 +336,9 @@ impl Default for OdfImportLimits {
             max_text_bytes: 128 * 1024 * 1024,
             max_space_repeat: 65_536,
             max_report_features: 4_096,
+            max_retained_parts: 4_096,
+            max_retained_part_bytes: 64 * 1024 * 1024,
+            max_retained_total_bytes: 256 * 1024 * 1024,
         }
     }
 }

@@ -23,6 +23,9 @@ const FUZZ_LIMITS: OdfImportLimits = OdfImportLimits {
     max_text_bytes: 512 * 1024,
     max_space_repeat: 8_192,
     max_report_features: 512,
+    max_retained_parts: 256,
+    max_retained_part_bytes: 4 * 1024 * 1024,
+    max_retained_total_bytes: 16 * 1024 * 1024,
 };
 
 fuzz_target!(|data: &[u8]| {

@@ -2,7 +2,7 @@
 
 use casual_doc_odf::{
     CompatibilityReport as OdfCompatibilityReport, ModelOutcome as OdfModelOutcome, ODT_MIME,
-    OdfExportLimits, OdfImportLimits, OdfPackageLimits, OdtPackage,
+    OdfExportLimits, OdfImportLimits, OdfPackageLimits, OdfRetainedParts, OdtPackage,
     RetentionOutcome as OdfRetentionOutcome, write_odt,
 };
 
@@ -17,6 +17,9 @@ use crate::{
 struct OdtSourceState {
     original_bytes: Option<Vec<u8>>,
     version: String,
+    /// Source parts retained for edit-tolerant preservation (empty unless the
+    /// import requested retention).
+    retained: OdfRetainedParts,
 }
 
 /// Built-in ODT importer for the currently implemented bounded semantic subset.
@@ -85,6 +88,13 @@ impl FormatImporter for OdtAdapter {
         let imported = package
             .import_document(self.import_limits)
             .map_err(|error| AdapterError::new(format!("ODT semantic import: {error}")))?;
+        let retained = if request.retain_source {
+            package
+                .retained_media_parts(&imported.document, self.import_limits)
+                .map_err(|error| AdapterError::new(format!("ODT source retention: {error}")))?
+        } else {
+            OdfRetainedParts::default()
+        };
         Ok(ImportArtifact {
             document: imported.document,
             resources: DocumentResources::default(),
@@ -94,6 +104,7 @@ impl FormatImporter for OdtAdapter {
                 OdtSourceState {
                     original_bytes: request.retain_source.then(|| request.bytes.to_vec()),
                     version: version.clone(),
+                    retained,
                 },
             ),
             report: convert_report(&imported.report, request.retain_source),
@@ -157,6 +168,15 @@ impl FormatExporter for OdtAdapter {
                     report
                         .entries
                         .push(export_loss("odt.export.source_envelope", 1));
+                    // Retention is captured but the preserving writer that
+                    // re-emits it (doc 97, checkpoint 2) is not wired yet, so the
+                    // retained parts are disclosed as pending rather than lost.
+                    let retained = matching_source.map_or(0, |source| source.retained.parts.len());
+                    if retained != 0 {
+                        report
+                            .entries
+                            .push(export_loss("odt.export.retained_parts_pending", retained));
+                    }
                 }
                 (exported.bytes, report, "1.4".to_owned())
             }
@@ -277,6 +297,77 @@ mod tests {
             .unwrap();
         writer.write_all(CONTENT).unwrap();
         writer.finish().unwrap().into_inner()
+    }
+
+    fn odt_bytes_with_image() -> Vec<u8> {
+        let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame svg:width="2cm" svg:height="2cm"><draw:image xlink:href="Pictures/img.png"/></draw:frame></text:p></office:text></office:body></office:document-content>"#;
+        let manifest = format!(
+            r#"<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.4"><manifest:file-entry manifest:full-path="/" manifest:media-type="{ODT_MIME}" manifest:version="1.4"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="Pictures/img.png" manifest:media-type="image/png"/></manifest:manifest>"#
+        );
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer.start_file("mimetype", stored).unwrap();
+        writer.write_all(ODT_MIME.as_bytes()).unwrap();
+        writer
+            .start_file("META-INF/manifest.xml", deflated)
+            .unwrap();
+        writer.write_all(manifest.as_bytes()).unwrap();
+        writer.start_file("content.xml", deflated).unwrap();
+        writer.write_all(content).unwrap();
+        writer.start_file("Pictures/img.png", deflated).unwrap();
+        writer.write_all(b"\x89PNG\r\nIMG").unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn retained_source_captures_referenced_image_bytes() {
+        let bytes = odt_bytes_with_image();
+        let adapter = OdtAdapter::default();
+        let imported = adapter
+            .import(ImportRequest {
+                bytes: &bytes,
+                retain_source: true,
+            })
+            .unwrap();
+        let state = imported.source.state::<OdtSourceState>().unwrap();
+        let part = state
+            .retained
+            .parts
+            .get("Pictures/img.png")
+            .expect("retained image part");
+        assert_eq!(part.media_type, "image/png");
+        assert_eq!(part.bytes, b"\x89PNG\r\nIMG");
+
+        // PreserveWhenSafe discloses the captured-but-not-yet-emitted parts.
+        let exported = adapter
+            .export(ExportRequest {
+                document: &imported.document,
+                resources: &imported.resources,
+                source: Some(&imported.source),
+                source_unchanged: false,
+                mode: ExportMode::PreserveWhenSafe,
+            })
+            .unwrap();
+        assert!(exported.report.entries.iter().any(|entry| {
+            entry.feature == "odt.export.retained_parts_pending" && entry.occurrences == 1
+        }));
+
+        // Without retention nothing is captured.
+        let plain = adapter
+            .import(ImportRequest {
+                bytes: &bytes,
+                retain_source: false,
+            })
+            .unwrap();
+        assert!(
+            plain
+                .source
+                .state::<OdtSourceState>()
+                .unwrap()
+                .retained
+                .is_empty()
+        );
     }
 
     #[test]

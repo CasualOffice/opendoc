@@ -2,7 +2,7 @@
 
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
-    BlockNode, Break, BreakKind, DocGrid, HeaderFooter, HeaderFooterId, HeaderFooterKind,
+    BlockNode, Break, BreakKind, DocGrid, Document, HeaderFooter, HeaderFooterId, HeaderFooterKind,
     HeaderFooterRef, InlineNode, LineNumbering, MediaId, MediaReference, NoteProperties,
     PageBorders, PageNumbering, PaperSource, Paragraph, ParagraphProperties, Run, RunProperties,
     SectionBoundary, SectionColumns, SectionId, Tab,
@@ -28,6 +28,32 @@ pub const STYLES_PART: &str = "styles.xml";
 pub const META_PART: &str = "meta.xml";
 /// OpenDocument Text media type.
 pub const ODT_MIME: &str = "application/vnd.oasis.opendocument.text";
+
+/// A source part retained byte-verbatim for edit-tolerant preservation. The
+/// bytes are opaque octets — never parsed, executed, or fetched.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetainedPart {
+    /// The part's declared media (content) type.
+    pub media_type: String,
+    /// The part's opaque bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// A bounded set of retained source parts keyed by normalized part name, in
+/// deterministic (sorted) order.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OdfRetainedParts {
+    /// Retained parts by normalized part name.
+    pub parts: std::collections::BTreeMap<String, RetainedPart>,
+}
+
+impl OdfRetainedParts {
+    /// Whether nothing is retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+}
 
 /// Supported ODF document/profile versions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -540,6 +566,56 @@ impl<'a> OdtPackage<'a> {
             }
         }
         Ok(imported)
+    }
+
+    /// Reads the bounded byte content of packaged parts referenced by the
+    /// document's media, for edit-tolerant preservation. Over-bound or unreadable
+    /// parts are skipped (never a hard failure); the model itself is unchanged.
+    /// The bytes are opaque and never parsed or executed.
+    pub fn retained_media_parts(
+        &mut self,
+        document: &Document,
+        limits: OdfImportLimits,
+    ) -> Result<OdfRetainedParts, OdfError> {
+        let mut wanted: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (_, media) in document.definitions().media.iter() {
+            wanted
+                .entry(normalized_part_path(&media.part_name))
+                .or_insert_with(|| media.media_type.clone());
+        }
+        let mut retained = OdfRetainedParts::default();
+        let mut total = 0_usize;
+        for (name, media_type) in wanted {
+            if retained.parts.len() >= limits.max_retained_parts {
+                break;
+            }
+            let Some(full_path) = self
+                .manifest_entries
+                .iter()
+                .find(|entry| normalized_part_path(&entry.full_path) == name)
+                .map(|entry| entry.full_path.clone())
+            else {
+                continue;
+            };
+            let Ok(bytes) = self.read_part(&full_path) else {
+                continue;
+            };
+            if bytes.len() > limits.max_retained_part_bytes {
+                continue;
+            }
+            let Some(next_total) = total.checked_add(bytes.len()) else {
+                break;
+            };
+            if next_total > limits.max_retained_total_bytes {
+                break;
+            }
+            total = next_total;
+            retained
+                .parts
+                .insert(name, RetainedPart { media_type, bytes });
+        }
+        Ok(retained)
     }
 }
 
