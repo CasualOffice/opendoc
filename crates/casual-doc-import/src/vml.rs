@@ -166,7 +166,7 @@ fn parse_len(token: &str) -> Option<Len> {
 
 /// A solid RGBA color parsed from a VML `fillcolor`/`strokecolor` or a
 /// `v:fill`/`v:stroke` `color`. A `v:fill` gradient's stops are each a
-/// [`VmlColor`] (see [`VmlGradientStop`]).
+/// [`VmlColor`] (see `VmlGradientStop`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VmlColor {
     /// Red channel.
@@ -368,7 +368,7 @@ pub struct VmlWrap {
 }
 
 /// A shape's fill: whether it is filled, its primary flat color, and — for a
-/// `v:fill type="gradient"`/`"gradientRadial"` — the parsed [`VmlGradient`].
+/// `v:fill type="gradient"`/`"gradientRadial"` — the parsed `VmlGradient`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VmlFill {
     /// Whether the shape is filled (`filled`, default `true`).
