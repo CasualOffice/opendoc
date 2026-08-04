@@ -578,6 +578,71 @@ mod semantic_tests {
     }
 
     #[test]
+    fn tight_wrap_polygon_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode, PointEmu, WrapMode};
+
+        // A floating picture with a tight wrap whose `wp:wrapPolygon` carries a
+        // contour (`wp:start` + `wp:lineTo` in EMU). The polygon must survive
+        // import -> write -> reopen (previously dropped, degrading to the bbox).
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="0" y="0"/><wp:lineTo x="457200" y="228600"/><wp:lineTo x="0" y="457200"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::AnchoredDrawing(drawing) = &paragraph.inlines[0] else {
+            panic!(
+                "expected an anchored drawing, got {:?}",
+                paragraph.inlines[0]
+            );
+        };
+        assert_eq!(drawing.anchor.wrap, WrapMode::Tight);
+        assert_eq!(
+            drawing.anchor.wrap_polygon.as_deref(),
+            Some(
+                [
+                    PointEmu { x_emu: 0, y_emu: 0 },
+                    PointEmu {
+                        x_emu: 457_200,
+                        y_emu: 228_600,
+                    },
+                    PointEmu {
+                        x_emu: 0,
+                        y_emu: 457_200,
+                    },
+                    PointEmu { x_emu: 0, y_emu: 0 },
+                ]
+                .as_slice()
+            )
+        );
+
+        // The writer emits the contour inside the tight wrap in schema order.
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        let wrap = written_xml.find("<wp:wrapTight").expect("wrapTight");
+        let poly = written_xml.find("<wp:wrapPolygon").expect("wrapPolygon");
+        let start = written_xml
+            .find(r#"<wp:start x="0" y="0"/>"#)
+            .expect("wrap start");
+        let line = written_xml
+            .find(r#"<wp:lineTo x="457200" y="228600"/>"#)
+            .expect("wrap lineTo");
+        assert!(
+            wrap < poly && poly < start && start < line,
+            "wrapTight > wrapPolygon > start > lineTo in schema order"
+        );
+
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "the tight wrap polygon survives write -> reopen");
+    }
+
+    #[test]
     fn inline_drawing_crop_and_alt_text_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{BlockNode, CropRect, InlineNode};
 
@@ -655,7 +720,11 @@ mod semantic_tests {
         };
         assert_eq!(group.relative_height, Some(251_659_264));
         assert_eq!(
-            group.anchor.expect("the group anchor").wrap_distances,
+            group
+                .anchor
+                .as_ref()
+                .expect("the group anchor")
+                .wrap_distances,
             casual_doc_model::v1::WrapDistances {
                 top_emu: 12_700,
                 bottom_emu: 25_400,
@@ -3854,7 +3923,7 @@ mod semantic_tests {
                     p.inlines.first(),
                     Some(casual_doc_model::v1::InlineNode::TextBox(text_box))
                         if text_box.anchor.is_some()
-                            && text_box.anchor.expect("the text-box anchor").wrap_distances
+                            && text_box.anchor.as_ref().expect("the text-box anchor").wrap_distances
                                 == casual_doc_model::v1::WrapDistances {
                                     top_emu: 12_700,
                                     bottom_emu: 25_400,

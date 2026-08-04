@@ -4590,7 +4590,7 @@ fn write_anchored_drawing(
     extent.push_attribute(("cx", cx.to_string().as_str()));
     extent.push_attribute(("cy", cy.to_string().as_str()));
     w.write_event(Event::Empty(extent)).map_err(pkg)?;
-    write_wrap(w, anchor.wrap)?;
+    write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Picture 1"));
@@ -4673,10 +4673,10 @@ fn write_group(
     if let Some(anchor) = anchor {
         write_position_h(w, &anchor.horizontal)?;
         write_position_v(w, &anchor.vertical)?;
-        write_wrap_after_extent(w, group, anchor.wrap)?;
+        write_wrap_after_extent(w, group, anchor.wrap, anchor.wrap_polygon.as_deref())?;
     } else {
         write_extent_only(w, group)?;
-        write_wrap(w, WrapMode::None)?;
+        write_wrap(w, WrapMode::None, None)?;
         write_group_body(w, group, ctx)?;
         close_group_drawing(w)?;
         return Ok(());
@@ -4703,9 +4703,10 @@ fn write_wrap_after_extent(
     w: &mut Writer<Cursor<Vec<u8>>>,
     group: &WordprocessingGroup,
     wrap: WrapMode,
+    polygon: Option<&[PointEmu]>,
 ) -> Result<(), ExportError> {
     write_extent_only(w, group)?;
-    write_wrap(w, wrap)?;
+    write_wrap(w, wrap, polygon)?;
     let mut doc_pr = start("wp:docPr");
     doc_pr.push_attribute(("id", "1"));
     doc_pr.push_attribute(("name", "Group 1"));
@@ -5297,7 +5298,11 @@ fn write_text_child(
 /// Emits the wrap element for an anchor. `wrapNone` is an empty element; the
 /// others carry a `wrapText="bothSides"` (the round-trip only reads the element
 /// name, so the attribute is fixed scaffold).
-fn write_wrap(w: &mut Writer<Cursor<Vec<u8>>>, wrap: WrapMode) -> Result<(), ExportError> {
+fn write_wrap(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    wrap: WrapMode,
+    polygon: Option<&[PointEmu]>,
+) -> Result<(), ExportError> {
     match wrap {
         WrapMode::None => {
             w.write_event(Event::Empty(start("wp:wrapNone")))
@@ -5311,13 +5316,44 @@ fn write_wrap(w: &mut Writer<Cursor<Vec<u8>>>, wrap: WrapMode) -> Result<(), Exp
             };
             let mut el = start(tag);
             el.push_attribute(("wrapText", "bothSides"));
-            w.write_event(Event::Empty(el)).map_err(pkg)?;
+            // A tight/through wrap can carry a `wp:wrapPolygon` contour; emit it
+            // (in schema order, inside the wrap element) when the anchor has one.
+            match polygon {
+                Some(points) if matches!(wrap, WrapMode::Tight | WrapMode::Through) => {
+                    w.write_event(Event::Start(el)).map_err(pkg)?;
+                    write_wrap_polygon(w, points)?;
+                    w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
+                }
+                _ => {
+                    w.write_event(Event::Empty(el)).map_err(pkg)?;
+                }
+            }
         }
         WrapMode::TopAndBottom => {
             w.write_event(Event::Empty(start("wp:wrapTopAndBottom")))
                 .map_err(pkg)?;
         }
     }
+    Ok(())
+}
+
+/// Emits a `wp:wrapPolygon` contour: its ordered vertices as `wp:start` (the
+/// first point) then `wp:lineTo` (the rest), each an EMU `@x`/`@y` `CT_Point2D`.
+fn write_wrap_polygon(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    points: &[PointEmu],
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("wp:wrapPolygon")))
+        .map_err(pkg)?;
+    for (index, point) in points.iter().enumerate() {
+        let tag = if index == 0 { "wp:start" } else { "wp:lineTo" };
+        let mut el = start(tag);
+        el.push_attribute(("x", point.x_emu.to_string().as_str()));
+        el.push_attribute(("y", point.y_emu.to_string().as_str()));
+        w.write_event(Event::Empty(el)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("wp:wrapPolygon")))
+        .map_err(pkg)?;
     Ok(())
 }
 
@@ -5555,7 +5591,7 @@ fn write_text_box(
                 height_emu: 0,
             }),
         )?;
-        write_wrap(w, anchor.wrap)?;
+        write_wrap(w, anchor.wrap, anchor.wrap_polygon.as_deref())?;
         "wp:anchor"
     } else {
         let mut frame = start("wp:inline");

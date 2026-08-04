@@ -11712,17 +11712,17 @@ fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Dr
     for inline in inlines {
         match inline {
             InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
-                return Some(drawing.anchor);
+                return Some(drawing.anchor.clone());
             }
             InlineNode::TextBox(text_box) => {
                 if text_box.id == object {
-                    return text_box.anchor;
+                    return text_box.anchor.clone();
                 }
                 if let Some(anchor) = object_anchor(&text_box.blocks, object) {
                     return Some(anchor);
                 }
             }
-            InlineNode::Group(group) if group.id == object => return group.anchor,
+            InlineNode::Group(group) if group.id == object => return group.anchor.clone(),
             InlineNode::Hyperlink(hyperlink) => {
                 if let Some(anchor) = object_anchor_in_inlines(&hyperlink.inlines, object) {
                     return Some(anchor);
@@ -17681,6 +17681,7 @@ mod tests {
             },
             wrap: WrapMode::Square,
             wrap_distances: casual_doc_model::v1::WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: false,
         }
     }

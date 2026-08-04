@@ -239,6 +239,12 @@ struct PendingAnchor {
     wrap: Option<WrapMode>,
     /// The `wp:anchor@distT/distB/distL/distR` text-exclusion distances.
     wrap_distances: WrapDistances,
+    /// The tight/through wrap contour (`wp:wrapPolygon` > `wp:start`/`wp:lineTo`),
+    /// accumulated while the polygon element is open.
+    wrap_polygon: Option<Vec<PointEmu>>,
+    /// Whether a `wp:wrapPolygon` is currently open (so a `wp:start`/`wp:lineTo`
+    /// point routes to `wrap_polygon` rather than being scaffolding).
+    in_wrap_polygon: bool,
     /// The `wp:docPr@descr` alt text (bounded).
     descr: Option<String>,
     /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
@@ -267,6 +273,7 @@ impl PendingAnchor {
             },
             wrap: self.wrap.unwrap_or(WrapMode::None),
             wrap_distances: self.wrap_distances,
+            wrap_polygon: self.wrap_polygon.clone(),
             behind_doc: self.behind_doc,
         }
     }
@@ -2320,12 +2327,40 @@ impl BodyParser<'_> {
                     anchor.capture_buffer.clear();
                 }
             }
-            // The wrap mode (`wp:wrap*`, an empty element).
+            // The wrap mode (`wp:wrap*`). `wrapTight`/`wrapThrough` may be non-empty,
+            // carrying a `wp:wrapPolygon` contour parsed below.
             b"wrapSquare" | b"wrapTight" | b"wrapThrough" | b"wrapTopAndBottom" | b"wrapNone"
                 if self.pending_anchor.is_some() =>
             {
                 if let Some(anchor) = self.pending_anchor.as_mut() {
                     anchor.wrap = Some(wrap_mode(local));
+                }
+            }
+            // The tight/through wrap contour (`wp:wrapPolygon`): open the point
+            // accumulator so its `wp:start`/`wp:lineTo` children are captured.
+            b"wrapPolygon" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.in_wrap_polygon = true;
+                    anchor.wrap_polygon = Some(Vec::new());
+                }
+            }
+            // A wrap-contour vertex (`wp:start`/`wp:lineTo`, `CT_Point2D` `@x`/`@y`
+            // in EMU). Guarded by an open `wp:wrapPolygon` so it never collides with
+            // the table-margin `w:start` element parsed elsewhere.
+            b"start" | b"lineTo"
+                if self
+                    .pending_anchor
+                    .as_ref()
+                    .is_some_and(|anchor| anchor.in_wrap_polygon) =>
+            {
+                let point = PointEmu {
+                    x_emu: attr_i64(element, b"x").unwrap_or(0),
+                    y_emu: attr_i64(element, b"y").unwrap_or(0),
+                };
+                if let Some(anchor) = self.pending_anchor.as_mut()
+                    && let Some(points) = anchor.wrap_polygon.as_mut()
+                {
+                    points.push(point);
                 }
             }
             // `wp:docPr@descr` is the drawing's alt text (accessibility): modeled on
@@ -3941,6 +3976,12 @@ impl BodyParser<'_> {
             b"positionH" | b"positionV" if self.pending_anchor.is_some() => {
                 if let Some(anchor) = self.pending_anchor.as_mut() {
                     anchor.capture_axis = None;
+                }
+            }
+            // A `wp:wrapPolygon` closes: stop routing points to the contour.
+            b"wrapPolygon" if self.pending_anchor.is_some() => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.in_wrap_polygon = false;
                 }
             }
             // A DrawingML color element closes: fold its modifiers and assign the
@@ -7211,6 +7252,8 @@ fn vml_anchor_at(
         },
         wrap: vml_wrap_mode(drawing.wrap.mode),
         wrap_distances: vml_wrap_distances(drawing.wrap),
+        // VML text wrapping has no polygon contour.
+        wrap_polygon: None,
         behind_doc: position.behind_doc(),
     };
     (anchor, position.z_index.map(vml_rel_height))

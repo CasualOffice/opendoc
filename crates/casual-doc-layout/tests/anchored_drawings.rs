@@ -101,6 +101,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
             },
             wrap: WrapMode::None,
             wrap_distances: Default::default(),
+            wrap_polygon: None,
             behind_doc,
         },
         descr: Some("A floating logo".to_owned()),
@@ -239,6 +240,7 @@ fn page_anchor(h: i64, v: i64) -> DrawingAnchor {
         },
         wrap: WrapMode::None,
         wrap_distances: Default::default(),
+        wrap_polygon: None,
         behind_doc: false,
     }
 }
@@ -255,6 +257,7 @@ fn paragraph_anchor() -> DrawingAnchor {
         },
         wrap: WrapMode::None,
         wrap_distances: Default::default(),
+        wrap_polygon: None,
         behind_doc: false,
     }
 }
@@ -274,6 +277,7 @@ fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
             bottom_emu: bottom_twips * 635,
             ..WrapDistances::default()
         },
+        wrap_polygon: None,
         behind_doc: false,
     }
 }
@@ -335,6 +339,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
             },
             wrap: WrapMode::None,
             wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: false,
         },
         descr: None,
@@ -366,6 +371,7 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
             },
             wrap: WrapMode::None,
             wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
             behind_doc: false,
         },
         descr: None,

@@ -2152,8 +2152,17 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 relative_from: VerticalAnchor::Paragraph,
                 position: VerticalPosition::Offset(0),
             },
-            wrap: WrapMode::None,
+            wrap: WrapMode::Tight,
             wrap_distances: Default::default(),
+            // A wrap contour so the JSON round trip also exercises `wrap_polygon`.
+            wrap_polygon: Some(vec![
+                PointEmu { x_emu: 0, y_emu: 0 },
+                PointEmu {
+                    x_emu: 100_000,
+                    y_emu: 50_000,
+                },
+                PointEmu { x_emu: 0, y_emu: 0 },
+            ]),
             behind_doc: false,
         }),
         relative_height: Some(251_659_264),
