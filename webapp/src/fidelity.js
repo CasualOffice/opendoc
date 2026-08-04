@@ -41,7 +41,7 @@ const FIDELITY = [
   },
   {
     family: "Images & inline drawings",
-    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip; vector formats (EMF/WMF, SVG) and undecodable images show a placeholder. No insert-image or image-edit surface.",
+    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. No insert-image or image-edit surface.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
