@@ -905,6 +905,99 @@ fn missing_image_part_is_reported() {
     );
 }
 
+fn fixture_odt() -> Vec<u8> {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p>Body</text:p><text:p><draw:frame svg:width="2cm" svg:height="2cm"><draw:image xlink:href="Pictures/img.png"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let styles = br#"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:styles><style:default-style style:family="paragraph"><style:text-properties fo:font-weight="bold"/></style:default-style></office:styles><office:automatic-styles><style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm" fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm" style:print-orientation="portrait"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"><style:header><text:p>Head</text:p></style:header><style:footer><text:p>Foot</text:p></style:footer></style:master-page></office:master-styles></office:document-styles>"#.to_vec();
+    let meta = br#"<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" office:version="1.4"><office:meta><dc:title>Fixture</dc:title></office:meta></office:document-meta>"#.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/><m:file-entry m:full-path="meta.xml" m:media-type="text/xml"/><m:file-entry m:full-path="Pictures/img.png" m:media-type="image/png"/><m:file-entry m:full-path="Thumbnails/thumbnail.png" m:media-type="image/png"/><m:file-entry m:full-path="settings.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let text = |name: &'static str, bytes: Vec<u8>| Entry {
+        name,
+        bytes,
+        compression: CompressionMethod::Deflated,
+        local_extra: false,
+    };
+    package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        text(MANIFEST_PART, manifest),
+        text(CONTENT_PART, content),
+        text(STYLES_PART, styles),
+        text("meta.xml", meta),
+        text("Pictures/img.png", b"\x89PNG\r\nIMG".to_vec()),
+        text("Thumbnails/thumbnail.png", b"THUMB".to_vec()),
+        text("settings.xml", b"<x/>".to_vec()),
+    ])
+}
+
+#[test]
+fn realistic_multipart_odt_round_trips_and_preserves() {
+    // One fixture exercises the whole stack: defaults + page-layout +
+    // master-page header/footer + metadata + embedded image + unknown parts.
+    let bytes = fixture_odt();
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    imported.document.validate().unwrap();
+
+    let definitions = imported.document.definitions();
+    assert_eq!(definitions.sections[0].page_size.width_twips, 11_906);
+    assert_eq!(definitions.sections[0].headers.len(), 1);
+    assert_eq!(definitions.sections[0].footers.len(), 1);
+    assert_eq!(
+        definitions
+            .document_defaults
+            .as_ref()
+            .and_then(|d| d.run.as_ref())
+            .and_then(|r| r.bold),
+        Some(true)
+    );
+    assert_eq!(definitions.media.len(), 1);
+    assert_eq!(
+        imported
+            .document
+            .properties()
+            .and_then(|p| p.core.title.as_deref()),
+        Some("Fixture")
+    );
+
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    assert!(retained.parts.contains_key("Pictures/img.png"));
+    assert!(retained.unknown.contains_key("Thumbnails/thumbnail.png"));
+    assert!(retained.unknown.contains_key("settings.xml"));
+
+    // Preserving export keeps geometry, header/footer, defaults, the image, and
+    // the unknown parts; the reopened document matches and re-exports identically.
+    let preserved =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&preserved.bytes, OdfPackageLimits::default()).unwrap();
+    assert_eq!(
+        out.read_part("Pictures/img.png").unwrap(),
+        b"\x89PNG\r\nIMG"
+    );
+    assert_eq!(out.read_part("Thumbnails/thumbnail.png").unwrap(), b"THUMB");
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    assert_eq!(reopened.document.definitions().media.len(), 1);
+    assert_eq!(reopened.document.definitions().sections[0].headers.len(), 1);
+
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexported =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexported.bytes, preserved.bytes);
+}
+
 #[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
