@@ -5,10 +5,10 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BookmarkId, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    Extent, GroupChild, HeaderFooterKind, HyperlinkTarget, InlineNode, LevelJustification,
+    Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget, InlineNode, LevelJustification,
     LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId,
     Paragraph, ParagraphProperties, RevisionKind, RunProperties, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, VerticalMerge,
+    TableCellProperties, TableRow, TableRowProperties, VerticalAlignment, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -271,6 +271,16 @@ struct OdtRunStyle {
     strike: Option<bool>,
     color: Option<(u8, u8, u8)>,
     size_half_points: Option<u32>,
+    /// A named font family (`fo:font-family`). Theme fonts and the complex/
+    /// east-asian font slots are not captured here and stay in the remainder.
+    font_family: Option<String>,
+    /// Superscript (`Some(true)`) or subscript (`Some(false)`) via
+    /// `style:text-position`; baseline is the default and stays `None`.
+    super_sub: Option<bool>,
+    /// `fo:text-transform="uppercase"`.
+    all_caps: Option<bool>,
+    /// `fo:font-variant="small-caps"`.
+    small_caps: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -314,7 +324,10 @@ impl OdtRunStyle {
     }
 
     fn name(&self) -> String {
-        format!(
+        // Base codes are always present; the newer families append a code only
+        // when set, so a style using only the original subset keeps its exact
+        // historical name and byte output.
+        let mut name = format!(
             "T_b{}_i{}_u{}_s{}_c{}_z{}",
             tri_state(self.bold),
             tri_state(self.italic),
@@ -326,8 +339,34 @@ impl OdtRunStyle {
             self.size_half_points
                 .map(|size| size.to_string())
                 .unwrap_or_else(|| "n".to_owned()),
-        )
+        );
+        if let Some(family) = &self.font_family {
+            // A font family is not a valid NCName fragment (spaces, punctuation),
+            // so identify it by a deterministic hash of its exact bytes.
+            name.push_str(&format!("_f{:016x}", font_family_hash(family)));
+        }
+        if let Some(super_sub) = self.super_sub {
+            name.push_str(if super_sub { "_pu" } else { "_pd" });
+        }
+        if let Some(all_caps) = self.all_caps {
+            name.push_str(if all_caps { "_a1" } else { "_a0" });
+        }
+        if let Some(small_caps) = self.small_caps {
+            name.push_str(if small_caps { "_k1" } else { "_k0" });
+        }
+        name
     }
+}
+
+/// Deterministic FNV-1a hash of a font family name, used only to mint a unique,
+/// NCName-safe style name suffix. Not security-sensitive.
+fn font_family_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 const fn tri_state(value: Option<bool>) -> &'static str {
@@ -352,6 +391,27 @@ fn split_run_properties(properties: &RunProperties) -> (OdtRunStyle, RunProperti
         style.color = Some((color.r, color.g, color.b));
         remainder.color = None;
     }
+    // Font family: only the primary Named slot maps to `fo:font-family`. Theme
+    // fonts and the complex/east-asian/h-ansi slots stay in the remainder and are
+    // reported, so nothing is silently lost.
+    if let Some(FontRef::Named(name)) = &remainder.font_ref {
+        style.font_family = Some(name.name.clone());
+        remainder.font_ref = None;
+    }
+    match remainder.vertical_alignment {
+        Some(VerticalAlignment::Superscript) => {
+            style.super_sub = Some(true);
+            remainder.vertical_alignment = None;
+        }
+        Some(VerticalAlignment::Subscript) => {
+            style.super_sub = Some(false);
+            remainder.vertical_alignment = None;
+        }
+        // Baseline is an explicit reset only DOCX produces; leave it reported.
+        _ => {}
+    }
+    style.all_caps = remainder.all_caps.take();
+    style.small_caps = remainder.small_caps.take();
     (style, remainder)
 }
 
@@ -1653,6 +1713,44 @@ fn push_run_text_properties(
         }
         push_bounded(xml, "pt\"", max_content_bytes)?;
     }
+    if let Some(family) = &style.font_family {
+        push_bounded(xml, " fo:font-family=\"", max_content_bytes)?;
+        push_escaped_attribute(xml, family, max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(super_sub) = style.super_sub {
+        push_bounded(
+            xml,
+            if super_sub {
+                " style:text-position=\"super\""
+            } else {
+                " style:text-position=\"sub\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some(all_caps) = style.all_caps {
+        push_bounded(
+            xml,
+            if all_caps {
+                " fo:text-transform=\"uppercase\""
+            } else {
+                " fo:text-transform=\"none\""
+            },
+            max_content_bytes,
+        )?;
+    }
+    if let Some(small_caps) = style.small_caps {
+        push_bounded(
+            xml,
+            if small_caps {
+                " fo:font-variant=\"small-caps\""
+            } else {
+                " fo:font-variant=\"normal\""
+            },
+            max_content_bytes,
+        )?;
+    }
     Ok(())
 }
 
@@ -2297,7 +2395,7 @@ fn is_representable(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use casual_doc_model::v1::{BlockNode, InlineNode, RgbColor};
+    use casual_doc_model::v1::{BlockNode, FontName, InlineNode, RgbColor};
 
     use super::*;
     use crate::{OdfImportLimits, OdfPackageLimits, OdfVersion, OdtPackage, import_content_xml};
@@ -2678,6 +2776,63 @@ mod tests {
     }
 
     #[test]
+    fn extended_run_properties_round_trip_to_a_fixed_point() {
+        let mut document = core_document();
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
+            panic!("run")
+        };
+        run.properties.font_ref = Some(FontRef::Named(FontName {
+            name: "Times New Roman".to_owned(),
+        }));
+        run.properties.vertical_alignment = Some(VerticalAlignment::Superscript);
+        run.properties.all_caps = Some(true);
+        run.properties.small_caps = Some(true);
+
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+        let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+        assert!(content.contains("fo:font-family=\"Times New Roman\""));
+        assert!(content.contains("style:text-position=\"super\""));
+        assert!(content.contains("fo:text-transform=\"uppercase\""));
+        assert!(content.contains("fo:font-variant=\"small-caps\""));
+        // These are no longer reported as an unsupported remainder.
+        assert!(
+            !first
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "odt.export.run_properties")
+        );
+
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        reopened.document.validate().unwrap();
+        let BlockNode::Paragraph(paragraph) = &reopened.document.body()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("run")
+        };
+        assert_eq!(
+            run.properties.font_ref,
+            Some(FontRef::Named(FontName {
+                name: "Times New Roman".to_owned(),
+            }))
+        );
+        assert_eq!(
+            run.properties.vertical_alignment,
+            Some(VerticalAlignment::Superscript)
+        );
+        assert_eq!(run.properties.all_caps, Some(true));
+        assert_eq!(run.properties.small_caps, Some(true));
+
+        let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
+    }
+
+    #[test]
     fn unsupported_formatting_is_reported_and_limits_fail_atomically() {
         let mut document = core_document();
         let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
@@ -2687,7 +2842,9 @@ mod tests {
             panic!("run")
         };
         run.properties.bold = Some(true);
-        run.properties.all_caps = Some(true);
+        // `hidden` (fo:display / text:display) is still outside the supported
+        // run subset, so it must surface as a reported remainder.
+        run.properties.hidden = Some(true);
         let exported = write_odt(&document, OdfExportLimits::default()).unwrap();
         assert!(
             exported

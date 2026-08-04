@@ -6,12 +6,13 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    Drawing, Extent, ExternalTarget, GridColumn, Hyperlink, HyperlinkTarget, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH,
-    MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    Drawing, Extent, ExternalTarget, FontName, FontRef, GridColumn, Hyperlink, HyperlinkTarget,
+    InlineNode, InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU,
+    MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
     NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
     Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalMerge,
+    TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalAlignment,
+    VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -1541,6 +1542,46 @@ fn read_text_style_properties(
                 style.style.run_properties.size_half_points = parse_half_points(&value);
                 style.style.run_properties.size_half_points.is_some()
             }
+            (NamespaceKind::Fo, b"font-family") => {
+                let family = value.trim();
+                if family.is_empty() || family.len() > 255 {
+                    false
+                } else {
+                    style.style.run_properties.font_ref = Some(FontRef::Named(FontName {
+                        name: family.to_owned(),
+                    }));
+                    true
+                }
+            }
+            (NamespaceKind::Style, b"text-position") => match parse_text_position(&value) {
+                Some(alignment) => {
+                    style.style.run_properties.vertical_alignment = Some(alignment);
+                    true
+                }
+                None => false,
+            },
+            (NamespaceKind::Fo, b"text-transform") => match value.as_str() {
+                "uppercase" => {
+                    style.style.run_properties.all_caps = Some(true);
+                    true
+                }
+                "none" => {
+                    style.style.run_properties.all_caps = Some(false);
+                    true
+                }
+                _ => false,
+            },
+            (NamespaceKind::Fo, b"font-variant") => match value.as_str() {
+                "small-caps" => {
+                    style.style.run_properties.small_caps = Some(true);
+                    true
+                }
+                "normal" => {
+                    style.style.run_properties.small_caps = Some(false);
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -1611,6 +1652,28 @@ fn parse_toggle(value: &str, enabled: &str, disabled: &str) -> Option<bool> {
         value if value == enabled => Some(true),
         value if value == disabled => Some(false),
         _ => None,
+    }
+}
+
+/// Maps an ODF `style:text-position` value to a vertical alignment. Accepts the
+/// `super`/`sub` keywords the writer emits and the `<percent> [<percent>]` form
+/// real producers use (positive rise → superscript, negative → subscript, `0%`
+/// baseline → none). The optional second (size) token is not modeled.
+fn parse_text_position(value: &str) -> Option<VerticalAlignment> {
+    let first = value.split_whitespace().next()?;
+    if first == "super" {
+        return Some(VerticalAlignment::Superscript);
+    }
+    if first == "sub" {
+        return Some(VerticalAlignment::Subscript);
+    }
+    let percent: i32 = first.strip_suffix('%')?.parse().ok()?;
+    if percent > 0 {
+        Some(VerticalAlignment::Superscript)
+    } else if percent < 0 {
+        Some(VerticalAlignment::Subscript)
+    } else {
+        None
     }
 }
 
@@ -4214,6 +4277,18 @@ fn merge_run_properties(target: &mut RunProperties, overlay: &RunProperties) {
     }
     if overlay.size_half_points.is_some() {
         target.size_half_points = overlay.size_half_points;
+    }
+    if overlay.font_ref.is_some() {
+        target.font_ref = overlay.font_ref.clone();
+    }
+    if overlay.vertical_alignment.is_some() {
+        target.vertical_alignment = overlay.vertical_alignment;
+    }
+    if overlay.all_caps.is_some() {
+        target.all_caps = overlay.all_caps;
+    }
+    if overlay.small_caps.is_some() {
+        target.small_caps = overlay.small_caps;
     }
 }
 

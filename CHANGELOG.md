@@ -62,6 +62,14 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Broader run properties (fidelity parity, T2a)**: the run-property round trip
+  now covers font family (`fo:font-family`), superscript/subscript
+  (`style:text-position`), all-caps (`fo:text-transform`), and small-caps
+  (`fo:font-variant`) on both import and export, beyond the prior
+  bold/italic/underline/strike/color/size subset. A latent bug where
+  style-inheritance resolution silently dropped run properties outside that
+  original subset was fixed. Theme fonts, the complex/east-asian font slots, and
+  highlight remain reported remainders.
 - **Hyperlink & bookmark export (round-trip parity)**: hyperlinks and bookmarks
   were imported faithfully but dropped on export (a silent round-trip loss).
   Export now re-emits `text:a` wrappers (external URLs with fragments, and

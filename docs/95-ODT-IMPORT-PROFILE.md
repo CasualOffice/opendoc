@@ -283,9 +283,10 @@ adapter does and does not do today. It is a *bounded, deterministic subset* of
 OpenDocument Text, not a general ODT support claim.
 
 **Admitted and semantically mapped.** ODF 1.2–1.4 text packages: paragraphs and
-runs with a bounded direct/named-style property subset (alignment, bold, italic,
-underline, strike, RGB colour, half-point size, parent-style chains, document
-style defaults); bounded bullet/decimal lists with nesting and per-item
+runs with a bounded direct/named-style property subset (alignment; bold, italic,
+underline, strike, RGB colour, half-point size, font family, superscript/
+subscript, all-caps, small-caps; parent-style chains, document style defaults);
+bounded bullet/decimal lists with nesting and per-item
 start-value overrides; tables with inferred/declared grids, header/repeated rows,
 and rectangular merges; safe internal and external hyperlinks and paired
 bookmarks; footnotes and endnotes; page-layout geometry and the first master
