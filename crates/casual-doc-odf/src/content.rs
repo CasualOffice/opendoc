@@ -8,9 +8,9 @@ use casual_doc_model::v1::{
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
     ExternalTarget, GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget,
     LevelJustification, LevelSuffix, MAX_TABLE_DEPTH, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell, TableCellProperties,
-    TableProperties, TableRow, TableRowProperties, VerticalMerge,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
+    NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table,
+    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -1670,6 +1670,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut open_list_items = Vec::new();
     let mut list_count = 0_usize;
     let mut list_instances = 0_usize;
+    let mut list_overrides: BTreeMap<(usize, u8), u16> = BTreeMap::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
     let mut table_cell_count = 0_usize;
@@ -1800,6 +1801,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attribute_bytes,
                             &open_lists,
                             &mut open_list_items,
+                            &mut list_overrides,
                             &mut reporter,
                         )?;
                     } else if text_body_depth.is_some()
@@ -2222,6 +2224,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &notes,
         &bookmarks,
         &style_catalog.lists,
+        &list_overrides,
         &style_catalog.defaults,
         &mut reporter,
     )?;
@@ -2323,17 +2326,40 @@ fn start_list_item(
     attribute_bytes: &mut usize,
     open_lists: &[OpenList],
     open_list_items: &mut Vec<OpenListItem>,
+    list_overrides: &mut BTreeMap<(usize, u8), u16>,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
-    if open_lists.last().is_none_or(|list| depth != list.depth + 1) {
+    let Some(list) = open_lists.last() else {
+        return Err(OdfError::MalformedContent);
+    };
+    if depth != list.depth + 1 {
         return Err(OdfError::MalformedContent);
     }
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Text
-            && matches!(local.as_ref(), b"start-value" | b"style-override")
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"start-value" {
+            // A start-value restarts this level's counter. The model represents
+            // it as a per-instance level-start override; the first item to carry
+            // it establishes the instance start. A later, conflicting restart
+            // cannot be represented, so it is reported instead.
+            let value = decode_attribute(&attribute)?
+                .parse::<u16>()
+                .map_err(|_| OdfError::MalformedContent)?;
+            match list_overrides.entry((list.instance, list.level)) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    if *entry.get() != value {
+                        reporter
+                            .report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
+                    }
+                }
+            }
+        } else if namespace_kind(&namespace) == NamespaceKind::Text
+            && local.as_ref() == b"style-override"
         {
             reporter.report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
         } else if !is_namespace_declaration(&attribute) {
@@ -4222,6 +4248,7 @@ fn build_document(
     notes: &[NoteDraft],
     bookmarks: &[BookmarkDraft],
     list_styles: &ListStyles,
+    list_overrides: &BTreeMap<(usize, u8), u16>,
     defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
@@ -4314,6 +4341,19 @@ fn build_document(
             AbstractNumberingId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
         let instance_id =
             NumberingInstanceId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        // Per-item start-value restarts map to per-instance level-start overrides,
+        // emitted in ascending level order for determinism.
+        let overrides: Vec<NumberingOverride> = levels
+            .keys()
+            .filter_map(|level| {
+                list_overrides
+                    .get(&(instance, *level))
+                    .map(|start| NumberingOverride {
+                        level: *level,
+                        start: Some(*start),
+                    })
+            })
+            .collect();
         definitions.abstract_numbering.insert(
             abstract_id,
             AbstractNumbering {
@@ -4343,7 +4383,7 @@ fn build_document(
             instance_id,
             NumberingInstance {
                 abstract_ref: abstract_id,
-                overrides: Vec::new(),
+                overrides,
             },
         );
         numbering_ids.insert(instance, instance_id);

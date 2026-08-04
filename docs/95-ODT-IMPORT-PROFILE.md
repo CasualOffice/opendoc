@@ -51,7 +51,9 @@ The work lands as reviewable commits:
 - Checkpoint 7 maps bounded bullet/decimal list styles, the first paragraph of
   each list item, and nested list levels into deterministic normalized numbering
   definitions. Implementation-dependent defaults, missing/conflicting levels,
-  continuation, per-item overrides, and unsupported label details are reported;
+  continuation and unsupported label details are reported; a list-item
+  `text:start-value` maps to a per-instance numbering start override (a
+  conflicting later mid-list restart is still reported);
   list count and depth are independently bounded.
 - Checkpoint 8 maps tables in body order, including declared or inferred grids,
   header rows, bounded row/cell repetition, empty cells, nested tables and other

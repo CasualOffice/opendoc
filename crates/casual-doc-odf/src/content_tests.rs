@@ -5,8 +5,9 @@ use casual_doc_model::v1::{
 use casual_doc_package::CancellationToken;
 
 use crate::{
-    ModelOutcome, OdfError, OdfImportLimits, OdfVersion, RetentionOutcome, import_content_xml,
-    import_content_xml_with_cancellation,
+    ModelOutcome, OdfError, OdfExportLimits, OdfImportLimits, OdfPackageLimits, OdfVersion,
+    OdtPackage, RetentionOutcome, import_content_xml, import_content_xml_with_cancellation,
+    write_odt,
 };
 
 fn content(version: &str, body: &str) -> Vec<u8> {
@@ -45,6 +46,79 @@ fn paragraph(import: &crate::OdtImport, index: usize) -> &casual_doc_model::v1::
         panic!("expected paragraph")
     };
     paragraph
+}
+
+#[test]
+fn list_item_start_value_maps_to_numbering_override() {
+    let styles = r#"<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#;
+    let body = r#"<text:list text:style-name="L1"><text:list-item text:start-value="5"><text:p>item</text:p></text:list-item></text:list>"#;
+    let import = import_content_xml(
+        &styled_content(styles, body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let (_, instance) = import
+        .document
+        .definitions()
+        .numbering
+        .iter()
+        .next()
+        .expect("numbering instance");
+    assert_eq!(instance.overrides.len(), 1);
+    assert_eq!(instance.overrides[0].level, 0);
+    assert_eq!(instance.overrides[0].start, Some(5));
+    // A mapped start-value is not reported as an unrepresented item override.
+    assert!(
+        !import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.list.item-override")
+    );
+
+    // The override reaches the ODT output (as the list-style start) and the
+    // written package reopens to a valid, render-equivalent document that
+    // re-exports byte-identically.
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(content.contains("text:start-value=\"5\""));
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn conflicting_later_start_value_is_reported() {
+    // Two items in the same list with different start-values: the first maps to
+    // an override, the second (a mid-list restart) cannot and is reported.
+    let styles = r#"<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#;
+    let body = r#"<text:list text:style-name="L1"><text:list-item text:start-value="5"><text:p>a</text:p></text:list-item><text:list-item text:start-value="9"><text:p>b</text:p></text:list-item></text:list>"#;
+    let import = import_content_xml(
+        &styled_content(styles, body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let (_, instance) = import
+        .document
+        .definitions()
+        .numbering
+        .iter()
+        .next()
+        .unwrap();
+    assert_eq!(instance.overrides[0].start, Some(5));
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.list.item-override")
+    );
 }
 
 #[test]
@@ -351,16 +425,31 @@ fn list_limits_and_unsupported_counter_controls_are_explicit() {
         r#"<text:list text:style-name="N" text:continue-numbering="true"><text:list-item text:start-value="7"><text:p>x</text:p></text:list-item></text:list>"#,
     );
     let imported = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
-    for feature in ["odf.list.continuation", "odf.list.item-override"] {
-        assert!(
-            imported
-                .report
-                .entries
-                .iter()
-                .any(|entry| entry.feature == feature),
-            "missing {feature}"
-        );
-    }
+    // Continuation across lists is still deferred; the item start-value now maps
+    // to a numbering override rather than being reported as unrepresented.
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.list.continuation"),
+        "missing odf.list.continuation"
+    );
+    assert!(
+        !imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.list.item-override")
+    );
+    let (_, instance) = imported
+        .document
+        .definitions()
+        .numbering
+        .iter()
+        .next()
+        .unwrap();
+    assert_eq!(instance.overrides[0].start, Some(7));
 
     for limits in [
         OdfImportLimits {
