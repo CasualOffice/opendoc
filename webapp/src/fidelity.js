@@ -16,13 +16,13 @@
 const FIDELITY = [
   {
     family: "Paragraphs & text",
-    note: "Typing, IME, selection, navigation, undo/redo, alignment, indentation, spacing, keepNext/keepLines, widow/orphan and contextualSpacing all render and edit. Document-grid line/character snapping and before/after autospacing sizing remain approximate.",
-    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
+    note: "Typing, IME, selection, navigation, undo/redo, alignment, indentation, spacing (incl. line-rule atLeast/exact), keepNext/keepLines, widow/orphan and contextualSpacing all render and edit. The only remainders are niche/bounded: document-grid (CJK) line/character snapping is not applied, and before/after autospacing sizing is a font-size approximation.",
+    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
   },
   {
     family: "Character / run formatting",
-    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash) render; wavy and words-only underlines are approximated as a single line. Rare effects (emphasis marks, outline/shadow, run border) are preserved for export but not painted.",
-    modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
+    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript, small-caps, and run-level shading (w:shd) render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash) render, and wavy underlines paint as a squiggle; the rarer words-only underline draws as a continuous line. Niche effects (emphasis marks, outline/shadow/emboss, run border) are preserved for export but not painted.",
+    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
   },
   {
     family: "Paragraph & named styles",
@@ -36,12 +36,12 @@ const FIDELITY = [
   },
   {
     family: "Lists & numbering",
-    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering now resolves per-instance level/start overrides, numStyleLink/styleLink indirection, and lvlRestart, and paints spelled-out formats — so multi-level and style-based lists label correctly. Bullet-picture glyphs (lvlPicBulletId) and checklist/multilevel-gallery authoring remain gaps.",
-    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
+    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering now resolves per-instance level/start overrides, numStyleLink/styleLink indirection, and lvlRestart, and paints spelled-out formats — so multi-level and style-based lists label correctly. The only render remainder is niche bullet-picture glyphs (lvlPicBulletId); multilevel-gallery/checklist authoring is an editing (not rendering) gap.",
+    modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {
     family: "Images & inline drawings",
-    note: "PNG/JPEG render as true in-flow boxes and round-trip; other formats (EMF/WMF, SVG, GIF, BMP, TIFF) and undecodable images show a placeholder. No insert-image or image-edit surface.",
+    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip; vector formats (EMF/WMF, SVG) and undecodable images show a placeholder. No insert-image or image-edit surface.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
@@ -56,7 +56,7 @@ const FIDELITY = [
   },
   {
     family: "Footnotes & endnotes",
-    note: "Modeled and round-tripped; reference/body placement in layout is still partial. Not editable.",
+    note: "Reference markers and page-bottom note bands render — with space reservation, per-column bands, cross-page continuation, and end-of-document endnote placement (covered by 14 layout tests). The note separator rule and the in-body auto-number glyph are not yet drawn. Not editable.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
@@ -106,7 +106,7 @@ const FIDELITY = [
   },
   {
     family: "Content controls (w:sdt)",
-    note: "SDT wrappers model and round-trip; their text content flows and edits as ordinary paragraphs. Control chrome and checked/checkbox and date-picker states are not rendered.",
+    note: "SDT wrappers model and round-trip; content flows and edits as ordinary paragraphs, and checkbox content-controls paint their checked/unchecked state glyph. Control bounding chrome, placeholder/prompt text, and dropdown/combo/date-picker chrome are not rendered.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
 ];
