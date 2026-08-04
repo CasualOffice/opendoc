@@ -280,7 +280,7 @@ pub fn build_galley_with_report_view(
         line_spacing_reduction: 0,
         paragraph_float_exclusions: None,
     };
-    let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
+    let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
 }
 
@@ -343,7 +343,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         line_spacing_reduction: 0,
         paragraph_float_exclusions: exclusions,
     };
-    flow_blocks(blocks, shaper, content_width, &mut ctx)
+    flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -405,7 +405,7 @@ fn flow_running_blocks(
         line_spacing_reduction,
         paragraph_float_exclusions: None,
     };
-    flow_blocks(blocks, shaper, content_width, &mut ctx)
+    flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
 
 /// Builds the galley like [`build_galley`], but reuses the shaped lines of
@@ -588,7 +588,7 @@ pub fn build_galley_cached(
                 // hit-testing and the editing bridge still resolve — reach the
                 // galley. The wrapper itself contributes no box. (These recursed
                 // children are not paragraph-cached, but block SDTs are rare.)
-                galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx));
+                galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx).0);
             }
             // TODO(altchunk): the embedded part's actual content (HTML/RTF/nested
             // WordprocessingML) is not parsed or modeled — only an opaque part
@@ -875,14 +875,24 @@ fn collapse_contextual_spacing(
     }
 }
 
+/// Flows a block sequence into a galley and reports the float floor: the maximum
+/// bottom extent (from the sequence's top, in twips) reached by any square-family
+/// wrap float anchored in the sequence. A `wrapSquare` float is out-of-flow, so it
+/// never stacks in-flow height, but its anchoring container (a table cell) must
+/// still grow to contain it. The body/textbox callers ignore the floor (page-level
+/// float geometry owns body floats); [`flow_table`] uses it as a cell minimum
+/// height so the row grows to hold the anchored object (issue #359).
 fn flow_blocks(
     blocks: &[BlockNode],
     shaper: &dyn LineShaper,
     width: Twip,
     ctx: &mut FlowCtx,
-) -> Vec<BlockFragment> {
+) -> (Vec<BlockFragment>, Twip) {
     let mut galley = Vec::new();
     let mut index = 0;
+    // Maximum bottom extent of any square-family wrap float anchored in this
+    // sequence (see the doc comment). `Twip::ZERO` when there is no such float.
+    let mut float_floor = Twip::ZERO;
     // Tracks the previous paragraph for `w:contextualSpacing` collapsing; any
     // non-paragraph block resets it (adjacency is broken across tables etc.).
     let mut prev_para: Option<ContextualNeighbor> = None;
@@ -934,6 +944,19 @@ fn flow_blocks(
                     .resolve_paragraph(&paragraph.properties)
                     .contextual_spacing;
                 let galley_index = galley.len();
+                // This paragraph's top edge, before it is pushed. A square-wrap
+                // float anchored here spans `[anchor_top, anchor_top + clearance)`.
+                let anchor_top = galley
+                    .iter()
+                    .map(BlockFragment::height)
+                    .fold(Twip::ZERO, |a, h| a + h);
+                if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
+                    .iter()
+                    .map(|carry| carry.height)
+                    .max()
+                {
+                    float_floor = float_floor.max(anchor_top + clearance);
+                }
                 galley.push(flow_paragraph_with_carries(
                     paragraph,
                     shaper,
@@ -963,7 +986,13 @@ fn flow_blocks(
                 // contexts also flow. Nested SDTs recurse naturally. The nested
                 // flow does its own contextual collapsing; treat the wrapper as
                 // an adjacency break at this level.
-                galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
+                let sdt_top = galley
+                    .iter()
+                    .map(BlockFragment::height)
+                    .fold(Twip::ZERO, |a, h| a + h);
+                let (sub, sub_floor) = flow_blocks(&sdt.blocks, shaper, width, ctx);
+                float_floor = float_floor.max(sdt_top + sub_floor);
+                galley.extend(sub);
                 prev_para = None;
                 active_carries.clear();
             }
@@ -977,7 +1006,7 @@ fn flow_blocks(
         }
         index += 1;
     }
-    galley
+    (galley, float_floor)
 }
 
 /// Flows one paragraph while carrying square-family wrap-float exclusions across
@@ -1217,6 +1246,12 @@ fn flow_table(
             indent,
         );
         let mut cells = Vec::new();
+        // Parallel to `cells`: each cell's square-wrap float floor (the bottom
+        // extent of any out-of-flow wrapSquare object anchored in the cell). A
+        // wrapSquare float stacks no in-flow height, so the cell must be grown to
+        // contain it here — otherwise the row collapses to its (tiny) text height
+        // and the anchored object overflows into the next row (issue #359).
+        let mut cell_floors: Vec<Twip> = Vec::new();
         let mut col = 0usize;
         for (index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
@@ -1290,12 +1325,13 @@ fn flow_table(
                     .is_some()
                     .then(|| style_layer.clone()),
             );
-            let blocks = if matches!(merge_role, VerticalMergeRole::Continue) {
-                Vec::new()
+            let (blocks, cell_float_floor) = if matches!(merge_role, VerticalMergeRole::Continue) {
+                (Vec::new(), Twip::ZERO)
             } else {
                 flow_blocks(&cell.blocks, shaper, inner_width, ctx)
             };
             ctx.table_style = outer_table_style;
+            cell_floors.push(cell_float_floor);
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
@@ -1324,7 +1360,17 @@ fn flow_table(
                 VerticalMergeRole::Restart { end_row, .. } => end_row == row_index,
                 VerticalMergeRole::None => true,
             })
-            .map(|(_, cell)| cell.occupied_height())
+            .map(|(index, cell)| {
+                // Grow the cell to contain any wrapSquare float anchored in it: the
+                // float's clearance is measured from the cell's content top, so it
+                // demands the row be at least as tall as its non-content insets plus
+                // that clearance. Cells with no such float add nothing (floor 0).
+                let float_pad = cell_floors[index]
+                    .raw()
+                    .saturating_sub(cell.content_height().raw())
+                    .max(0);
+                Twip(cell.occupied_height().raw() + float_pad)
+            })
             .max()
             .unwrap_or(Twip::ZERO);
         let (height, clip) = resolve_row_height(&row.properties, content_h);
@@ -3204,7 +3250,7 @@ fn flow_text_box_with_ctx(
     ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
         .min(u64::from(u32::MAX)) as u32;
     ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
-    let flowed = flow_blocks(blocks, shaper, inner_width, ctx);
+    let (flowed, _float_floor) = flow_blocks(blocks, shaper, inner_width, ctx);
     ctx.text_scale = previous_scale;
     ctx.line_spacing_reduction = previous_reduction;
     ctx.para_style = previous_para_style;
@@ -3727,6 +3773,20 @@ fn shape_complex_inline_with_objects(
     let mut out = Vec::new();
     let mut cursor_y = Twip::ZERO;
     let mut start = 0usize;
+    // The right edge of any left square-family wrap exclusion seen so far. A
+    // wrapSquare float is out-of-flow — it excludes text HORIZONTALLY over its
+    // vertical span and must never reserve in-flow vertical height. This tab/field
+    // compatibility path cannot narrow a line mid-assembly, so the exclusion is not
+    // turned into a vertical barrier (which pushed the following text below the
+    // float — issue #359). Instead it starts the following chunk's pen past the
+    // float, exactly as Word advances a tab that lands inside a float to the
+    // float's right edge; the float's own height is reserved as its cell's minimum
+    // height in [`flow_table`] so the row still grows to contain the object.
+    let mut left_floor = Twip::ZERO;
+    let chunk_constraints = |left_floor: Twip| LineConstraints {
+        first_line_indent: Twip(constraints.first_line_indent.raw() + left_floor.raw()),
+        ..constraints
+    };
     for (index, item) in items.iter().enumerate() {
         if !matches!(
             item,
@@ -3740,7 +3800,7 @@ fn shape_complex_inline_with_objects(
                 &items[start..index],
                 tab_stops,
                 default_tab,
-                constraints,
+                chunk_constraints(left_floor),
                 range,
             );
             stack_lines(&mut out, chunk.lines, &mut cursor_y);
@@ -3750,7 +3810,15 @@ fn shape_complex_inline_with_objects(
             FlowItem::Math { size, runs, rules } => {
                 math_line(*size, runs.clone(), rules.clone(), range)
             }
-            FlowItem::FloatExclusion { height, .. } => float_barrier_line(*height, range),
+            FlowItem::FloatExclusion { side, width, .. } => {
+                // Only a left exclusion moves the following text's start edge; a
+                // right-side float leaves the leading pen at the margin.
+                if matches!(side, InlineFloatSide::Left) {
+                    left_floor = left_floor.max(*width);
+                }
+                start = index + 1;
+                continue;
+            }
             _ => unreachable!(),
         };
         stack_lines(&mut out, vec![object_line], &mut cursor_y);
@@ -3762,7 +3830,7 @@ fn shape_complex_inline_with_objects(
             &items[start..],
             tab_stops,
             default_tab,
-            constraints,
+            chunk_constraints(left_floor),
             range,
         );
         stack_lines(&mut out, chunk.lines, &mut cursor_y);
@@ -7060,6 +7128,145 @@ mod tests {
              (expected >= ~{}, got {})",
             logo_width.raw(),
             with.raw()
+        );
+    }
+
+    #[test]
+    fn a_wrap_square_float_leaves_its_tagline_beside_it_not_below() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, Definitions, DrawingAnchor, Extent,
+            GridColumn, HorizontalAnchor, HorizontalPosition, MediaId, MediaReference, Tab, Table,
+            TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+            VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+        };
+
+        // The loan.docx partner-logo layout: a table cell whose first paragraph
+        // carries a left-margin `wrapSquare` logo, followed by a tagline paragraph
+        // that positions its text with a leading TAB. The wrapSquare float is
+        // out-of-flow: it must NOT reserve in-flow vertical height, so the tagline
+        // stays on its own first line BESIDE the logo (issue #359, which had turned
+        // the carried exclusion into a full-height barrier that dropped the text
+        // below the float). The cell must still grow to CONTAIN the logo.
+        let logo_height = Twip(1400);
+        let logo_width = Twip(2000);
+        let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
+        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: NodeId::from_parts(70, 1).unwrap(),
+            media,
+            extent: Extent {
+                width_emu: i64::from(logo_width.raw()) * 635,
+                height_emu: i64::from(logo_height.raw()) * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Offset(-7),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Paragraph,
+                    position: VerticalPosition::Offset(0),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        let tagline = paragraph(
+            63,
+            vec![
+                InlineNode::Tab(Tab {
+                    id: NodeId::from_parts(64, 1).unwrap(),
+                }),
+                run_node(65, "tagline", RunProperties::default()),
+            ],
+        );
+        let cell = TableCell {
+            id: NodeId::from_parts(60, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(61, vec![float]), tagline],
+        };
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid: vec![GridColumn {
+                width_twips: Some(6000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell],
+            }],
+        });
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdLogo".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/logo.png".to_owned(),
+            },
+        );
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document_with_definitions(vec![table], definitions),
+            &shaper,
+            Twip::from_points(400),
+        );
+
+        let BlockFragment::TableRow { cells, height, .. } = &galley[0] else {
+            panic!("expected a table row");
+        };
+        let BlockFragment::Paragraph { lines, .. } = &cells[0].blocks[1] else {
+            panic!("expected the tagline paragraph fragment");
+        };
+
+        // The tagline is a single line at the paragraph's top — NOT preceded by a
+        // float-height barrier. Its height is one text line, far under the float's
+        // clearance, and its glyphs sit near y=0 within the paragraph.
+        let tagline_height = cells[0].blocks[1].height();
+        assert!(
+            tagline_height.raw() < logo_height.raw() / 2,
+            "the wrapSquare float must not reserve in-flow height in the tagline \
+             paragraph (height {} should be one line, well under the float {})",
+            tagline_height.raw(),
+            logo_height.raw(),
+        );
+        let first = &lines.lines[0];
+        assert!(
+            !first.runs.is_empty() && !first.runs[0].glyphs.is_empty(),
+            "the tagline text shaped onto the paragraph's first line"
+        );
+        assert!(
+            first.runs[0].origin.y.raw() < 400,
+            "the tagline glyphs sit at the paragraph top beside the logo, not \
+             dropped below a barrier (got y={})",
+            first.runs[0].origin.y.raw(),
+        );
+
+        // The text still clears the logo horizontally (its leading tab advances
+        // past the float's right edge, as Word does).
+        assert!(
+            first.runs[0].origin.x.raw() >= logo_width.raw() - 50,
+            "the tagline starts to the right of the logo (got x={})",
+            first.runs[0].origin.x.raw(),
+        );
+
+        // The out-of-flow float still grows the cell so the row contains the logo,
+        // even though it reserves no in-flow height.
+        assert!(
+            height.raw() >= logo_height.raw() - 50,
+            "the row grows to contain the anchored logo (row height {} >= float {})",
+            height.raw(),
+            logo_height.raw(),
         );
     }
 
