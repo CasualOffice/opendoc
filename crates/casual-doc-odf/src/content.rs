@@ -6,11 +6,12 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, Break, BreakKind, Color, Definitions, Document, DocumentDefaults,
-    ExternalTarget, GridColumn, Hyperlink, HyperlinkTarget, InlineNode, InternalTarget,
-    LevelJustification, LevelSuffix, MAX_TABLE_DEPTH, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride,
-    NumberingRef, Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table,
-    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalMerge,
+    Drawing, Extent, ExternalTarget, GridColumn, Hyperlink, HyperlinkTarget, InlineNode,
+    InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH,
+    MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
+    Paragraph, ParagraphProperties, RgbColor, Run, RunProperties, Tab, Table, TableCell,
+    TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -26,6 +27,8 @@ const XLINK_NS: &[u8] = b"http://www.w3.org/1999/xlink";
 const STYLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const FO_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const TABLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:table:1.0";
+const DRAW_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const SVG_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,6 +40,8 @@ enum NamespaceKind {
     Style,
     Fo,
     Table,
+    Draw,
+    Svg,
     Foreign,
 }
 
@@ -326,6 +331,7 @@ enum InlineDraft {
         index: usize,
         kind: NoteKind,
     },
+    Drawing(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -339,6 +345,21 @@ struct LinkDraft {
 struct BookmarkDraft {
     name: String,
     paired: bool,
+}
+
+/// A bounded embedded-image `draw:frame` reference (no bytes; the packaged part
+/// is referenced, not decoded).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DrawingDraft {
+    /// Safe internal package part name (the `draw:image/@xlink:href`).
+    part_name: String,
+    /// Content type inferred from the part-name extension.
+    media_type: String,
+    /// Natural width/height in EMU, when both `svg:width` and `svg:height` parse.
+    width_emu: Option<i64>,
+    height_emu: Option<i64>,
+    /// `svg:title`/`svg:desc` alt text, if present.
+    descr: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1671,6 +1692,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut list_count = 0_usize;
     let mut list_instances = 0_usize;
     let mut list_overrides: BTreeMap<(usize, u8), u16> = BTreeMap::new();
+    let mut drawings: Vec<DrawingDraft> = Vec::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
     let mut table_cell_count = 0_usize;
@@ -1821,6 +1843,40 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut leaf_depth,
                             &mut reporter,
                         )?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
+                        && is_name(&name, NamespaceKind::Draw, b"frame")
+                    {
+                        // Sub-parse the frame subtree off the main state machine.
+                        // parse_draw_frame consumes the matching `End`, so the
+                        // depth increment made for this `Start` is undone below.
+                        if let Some(draft) = parse_draw_frame(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut text_bytes,
+                            cancellation,
+                            &mut reporter,
+                        )? {
+                            let index = drawings.len();
+                            drawings.push(draft);
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            push_inline_draft(
+                                current.as_mut().ok_or(OdfError::MalformedContent)?,
+                                &mut active_link,
+                                InlineDraft::Drawing(index),
+                            );
+                        }
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else {
                         process_start(
                             &reader,
@@ -2225,6 +2281,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &bookmarks,
         &style_catalog.lists,
         &list_overrides,
+        &drawings,
         &style_catalog.defaults,
         &mut reporter,
     )?;
@@ -2413,6 +2470,248 @@ fn list_numbering(
         level: list.level,
         style_name: list.style_name.clone(),
     }))
+}
+
+/// Sub-parses a `draw:frame`'s subtree from the live reader, extracting a bounded
+/// embedded-image reference. The frame's `Start` has already been read by the
+/// caller; this consumes its children and matching `End`, so the caller must undo
+/// the depth increment it made for the frame. Returns `None` (with a finding)
+/// when the frame carries no safe embedded image.
+#[allow(clippy::too_many_arguments)]
+fn parse_draw_frame(
+    reader: &mut NsReader<&[u8]>,
+    frame: &BytesStart<'_>,
+    frame_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    text_bytes: &mut usize,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Option<DrawingDraft>, OdfError> {
+    let mut width_emu = None;
+    let mut height_emu = None;
+    for attribute in frame.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Svg {
+            match local.as_ref() {
+                b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
+                b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
+                _ => {}
+            }
+        }
+    }
+
+    let mut href: Option<String> = None;
+    let mut descr: Option<String> = None;
+    let mut capture_depth: Option<usize> = None;
+    let mut descr_text = String::new();
+    let mut reported_unsupported = false;
+    let mut sub_depth = 0_usize;
+    let mut buffer = Vec::new();
+
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof => return Err(OdfError::MalformedContent),
+            Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce(
+                    "odf_content_xml_depth",
+                    frame_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    limits.max_xml_depth,
+                )?;
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                if is_active(&name) {
+                    return Err(OdfError::ActiveContent);
+                }
+                if is_name(&name, NamespaceKind::Draw, b"image") {
+                    if href.is_none() {
+                        href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
+                    } else {
+                        count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    }
+                } else if capture_depth.is_none() && is_svg_title_or_desc(&name) {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    capture_depth = Some(sub_depth);
+                } else {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    if !reported_unsupported {
+                        reported_unsupported = true;
+                        reporter
+                            .report("odf.draw.frame-content".to_owned(), ModelOutcome::Degraded);
+                    }
+                }
+            }
+            Event::Empty(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                if is_active(&name) {
+                    return Err(OdfError::ActiveContent);
+                }
+                if is_name(&name, NamespaceKind::Draw, b"image") && href.is_none() {
+                    href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
+                } else {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                }
+            }
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                if capture_depth == Some(sub_depth) {
+                    capture_depth = None;
+                    let trimmed = descr_text.trim();
+                    if descr.is_none() && !trimmed.is_empty() {
+                        descr = Some(trimmed.to_owned());
+                    }
+                    descr_text.clear();
+                }
+                sub_depth -= 1;
+            }
+            Event::Text(text) if capture_depth.is_some() => {
+                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| OdfError::MalformedContent)?;
+                *text_bytes = text_bytes
+                    .checked_add(value.len())
+                    .ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
+                if descr_text.len().saturating_add(value.len()) <= MAX_DESCR_BYTES {
+                    descr_text.push_str(&value);
+                }
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+
+    let Some(href) = href else {
+        reporter.report("odf.draw.image-missing".to_owned(), ModelOutcome::Omitted);
+        return Ok(None);
+    };
+    if !is_safe_media_href(&href) {
+        reporter.report_with_retention(
+            "odf.draw.linked-image".to_owned(),
+            ModelOutcome::Omitted,
+            RetentionOutcome::Blocked,
+        );
+        return Ok(None);
+    }
+    let descr = descr.filter(|value| !value.is_empty() && value.len() <= MAX_DESCR_BYTES);
+    Ok(Some(DrawingDraft {
+        media_type: media_type_from_href(&href),
+        part_name: href,
+        width_emu,
+        height_emu,
+        descr,
+    }))
+}
+
+fn read_href(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<String>, OdfError> {
+    let mut href = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Xlink && local.as_ref() == b"href" {
+            href = Some(decode_attribute(&attribute)?);
+        }
+    }
+    Ok(href)
+}
+
+fn is_svg_title_or_desc(name: &ResolvedName) -> bool {
+    name.namespace == NamespaceKind::Svg && matches!(name.local.as_slice(), b"title" | b"desc")
+}
+
+/// Whether an `xlink:href` is a safe internal package image part (not an external
+/// URL, absolute path, parent-directory traversal, or in-document fragment).
+fn is_safe_media_href(href: &str) -> bool {
+    !href.is_empty()
+        && href.len() <= 1024
+        && !href.contains("://")
+        && !href.starts_with('/')
+        && !href.starts_with('#')
+        && !href.starts_with("../")
+        && !href.contains("/../")
+        && !href.contains('\\')
+        && !href.contains('\0')
+}
+
+/// Infers the media (content) type from a package part-name extension.
+fn media_type_from_href(href: &str) -> String {
+    let extension = href
+        .rsplit('.')
+        .next()
+        .filter(|extension| !extension.contains('/'))
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
+    .to_owned()
+}
+
+/// Parses an ODF physical length (`svg:width`/`svg:height`) into EMU within the
+/// model domain, returning `None` for unsupported units or out-of-range values.
+fn parse_emu(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let split = value
+        .find(|character: char| character.is_ascii_alphabetic())
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    let number = number.trim().parse::<f64>().ok()?;
+    if !number.is_finite() || number < 0.0 {
+        return None;
+    }
+    let emu = match unit.trim() {
+        "cm" => number * 360_000.0,
+        "mm" => number * 36_000.0,
+        "in" => number * 914_400.0,
+        "pt" => number * 12_700.0,
+        "pc" => number * 152_400.0,
+        _ => return None,
+    };
+    if !(0.0..=(MAX_EMU as f64)).contains(&emu) {
+        return None;
+    }
+    Some(emu.round() as i64)
 }
 
 const MAX_TABLE_COLUMNS: usize = 16_384;
@@ -4184,7 +4483,8 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::LineBreak
             | InlineDraft::BookmarkStart(_)
             | InlineDraft::BookmarkEnd(_)
-            | InlineDraft::NoteReference { .. } => {}
+            | InlineDraft::NoteReference { .. }
+            | InlineDraft::Drawing(_) => {}
         }
     }
     Ok(total)
@@ -4263,6 +4563,7 @@ fn build_document(
     bookmarks: &[BookmarkDraft],
     list_styles: &ListStyles,
     list_overrides: &BTreeMap<(usize, u8), u16>,
+    drawings: &[DrawingDraft],
     defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
@@ -4428,6 +4729,21 @@ fn build_document(
             ids.next_id().map_err(|_| OdfError::InvalidModel)?,
         ));
     }
+    // One media reference per drawing occurrence; the packaged part is referenced
+    // (not embedded), so no image bytes enter the model.
+    let mut media_ids = Vec::with_capacity(drawings.len());
+    for drawing in drawings {
+        let media_id = MediaId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        definitions.media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: drawing.part_name.clone(),
+                media_type: drawing.media_type.clone(),
+                part_name: drawing.part_name.clone(),
+            },
+        );
+        media_ids.push(media_id);
+    }
     for (index, note) in notes.iter().enumerate() {
         let blocks = build_blocks(
             &note.blocks,
@@ -4436,6 +4752,8 @@ fn build_document(
             &bookmark_ids,
             &numbering_ids,
             &note_ids,
+            &media_ids,
+            drawings,
         )?;
         match note.kind {
             NoteKind::Footnote => {
@@ -4457,6 +4775,8 @@ fn build_document(
         &bookmark_ids,
         &numbering_ids,
         &note_ids,
+        &media_ids,
+        drawings,
     )?;
     definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
@@ -4521,6 +4841,7 @@ fn hash_block_drafts(hash: &mut u64, blocks: &[BlockDraft]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_blocks(
     drafts: &[BlockDraft],
     paragraphs: &[ParagraphDraft],
@@ -4528,6 +4849,8 @@ fn build_blocks(
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    media_ids: &[MediaId],
+    drawings: &[DrawingDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -4538,6 +4861,8 @@ fn build_blocks(
                 bookmark_ids,
                 numbering_ids,
                 note_ids,
+                media_ids,
+                drawings,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -4546,6 +4871,8 @@ fn build_blocks(
                 bookmark_ids,
                 numbering_ids,
                 note_ids,
+                media_ids,
+                drawings,
             )?),
         });
     }
@@ -4558,6 +4885,8 @@ fn build_paragraph(
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    media_ids: &[MediaId],
+    drawings: &[DrawingDraft],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -4572,7 +4901,14 @@ fn build_paragraph(
     Ok(Paragraph {
         id,
         properties,
-        inlines: build_inlines(&draft.inlines, ids, bookmark_ids, note_ids)?,
+        inlines: build_inlines(
+            &draft.inlines,
+            ids,
+            bookmark_ids,
+            note_ids,
+            media_ids,
+            drawings,
+        )?,
     })
 }
 
@@ -4584,6 +4920,7 @@ fn build_empty_paragraph(ids: &mut IdGenerator) -> Result<BlockNode, OdfError> {
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_table(
     draft: &TableDraft,
     paragraphs: &[ParagraphDraft],
@@ -4591,6 +4928,8 @@ fn build_table(
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    media_ids: &[MediaId],
+    drawings: &[DrawingDraft],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -4608,6 +4947,8 @@ fn build_table(
                         bookmark_ids,
                         numbering_ids,
                         note_ids,
+                        media_ids,
+                        drawings,
                     )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
@@ -4743,6 +5084,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
                 },
             );
         }
+        InlineDraft::Drawing(index) => {
+            hash_bytes(hash, b"drawing");
+            hash_bytes(hash, &index.to_le_bytes());
+        }
     }
 }
 
@@ -4780,6 +5125,8 @@ fn build_inlines(
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     note_ids: &[NoteId],
+    media_ids: &[MediaId],
+    drawings: &[DrawingDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -4815,7 +5162,7 @@ fn build_inlines(
                 id,
                 target: target.clone(),
                 tooltip: None,
-                inlines: build_inlines(children, ids, bookmark_ids, note_ids)?,
+                inlines: build_inlines(children, ids, bookmark_ids, note_ids, media_ids, drawings)?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,
@@ -4830,6 +5177,28 @@ fn build_inlines(
                     id,
                     kind: *kind,
                     note: *note_ids.get(*index).ok_or(OdfError::InvalidModel)?,
+                })
+            }
+            InlineDraft::Drawing(index) => {
+                let media = *media_ids.get(*index).ok_or(OdfError::InvalidModel)?;
+                let draft = drawings.get(*index).ok_or(OdfError::InvalidModel)?;
+                let extent = match (draft.width_emu, draft.height_emu) {
+                    (Some(width_emu), Some(height_emu)) => Some(Extent {
+                        width_emu,
+                        height_emu,
+                    }),
+                    _ => None,
+                };
+                InlineNode::Drawing(Drawing {
+                    id,
+                    media,
+                    extent,
+                    descr: draft.descr.clone(),
+                    crop: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
                 })
             }
         });
@@ -5009,6 +5378,8 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == STYLE_NS => NamespaceKind::Style,
         ResolveResult::Bound(Namespace(value)) if *value == FO_NS => NamespaceKind::Fo,
         ResolveResult::Bound(Namespace(value)) if *value == TABLE_NS => NamespaceKind::Table,
+        ResolveResult::Bound(Namespace(value)) if *value == DRAW_NS => NamespaceKind::Draw,
+        ResolveResult::Bound(Namespace(value)) if *value == SVG_NS => NamespaceKind::Svg,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -5035,6 +5406,8 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Style => "style",
         NamespaceKind::Fo => "fo",
         NamespaceKind::Table => "table",
+        NamespaceKind::Draw => "draw",
+        NamespaceKind::Svg => "svg",
         NamespaceKind::Foreign => "foreign",
     }
 }

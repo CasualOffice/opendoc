@@ -79,6 +79,18 @@ The work lands as reviewable commits:
   header/footer node ids are minted from the same page-geometry generator that
   mints the section id, so identity stays deterministic and globally unique; the
   document is re-validated so any invariant violation fails the import atomically.
+- Embedded-image `draw:frame`s are mapped as bounded references: an inline
+  `draw:frame` with a `draw:image` whose `xlink:href` is a safe internal package
+  part becomes a `Drawing` node plus a `MediaReference` (relationship/part name
+  and extension-inferred media type). No image bytes are decoded or held in the
+  model — the packaged part is only referenced — so semantic export cannot
+  reproduce the bytes and reports the drawing as a loss (media export stays
+  coupled to source preservation). External/linked hrefs, parent-directory
+  traversal, absolute paths, and in-document fragments are blocked without
+  fetching; `svg:width`/`svg:height` map to an EMU extent and `svg:title`/`desc`
+  to alt text. The sub-parse is bounded by the same depth/element/attribute/text
+  budgets as the body. Manifest media-type cross-check and non-inline/anchored
+  frames remain future hardening.
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point

@@ -1,6 +1,6 @@
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BreakKind, Color, HyperlinkTarget, InlineNode, NoteKind, NumberFormat,
-    RgbColor, VerticalMerge,
+    Alignment, BlockNode, BreakKind, Color, Extent, HyperlinkTarget, InlineNode, NoteKind,
+    NumberFormat, RgbColor, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
 
@@ -46,6 +46,65 @@ fn paragraph(import: &crate::OdtImport, index: usize) -> &casual_doc_model::v1::
         panic!("expected paragraph")
     };
     paragraph
+}
+
+const DRAW_CONTENT_HEAD: &str = r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text>"#;
+
+fn draw_content(body: &str) -> Vec<u8> {
+    format!("{DRAW_CONTENT_HEAD}{body}</office:text></office:body></office:document-content>")
+        .into_bytes()
+}
+
+#[test]
+fn embedded_image_frame_maps_to_drawing_and_media_reference() {
+    let xml = draw_content(
+        r#"<text:p><draw:frame svg:width="2cm" svg:height="3cm"><draw:image xlink:href="Pictures/img.png"/><svg:title>alt text</svg:title></draw:frame></text:p>"#,
+    );
+    let import = import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+
+    assert_eq!(import.document.definitions().media.len(), 1);
+    let (media_id, media) = import.document.definitions().media.iter().next().unwrap();
+    assert_eq!(media.part_name, "Pictures/img.png");
+    assert_eq!(media.media_type, "image/png");
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected drawing")
+    };
+    assert_eq!(drawing.media, *media_id);
+    assert_eq!(drawing.descr.as_deref(), Some("alt text"));
+    assert_eq!(
+        drawing.extent,
+        Some(Extent {
+            width_emu: 720_000,
+            height_emu: 1_080_000,
+        })
+    );
+}
+
+#[test]
+fn linked_and_unsafe_image_hrefs_are_blocked() {
+    for href in [
+        "http://evil.example/x.png",
+        "../secret.png",
+        "/etc/passwd",
+        "",
+    ] {
+        let xml = draw_content(&format!(
+            r#"<text:p><draw:frame><draw:image xlink:href="{href}"/></draw:frame></text:p>"#
+        ));
+        let import =
+            import_content_xml(&xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+        import.document.validate().unwrap();
+        assert!(
+            import.document.definitions().media.is_empty(),
+            "href {href:?} must not create media"
+        );
+        assert!(paragraph(&import, 0).inlines.is_empty());
+        assert!(import.report.entries.iter().any(|entry| {
+            entry.feature == "odf.draw.linked-image" || entry.feature == "odf.draw.image-missing"
+        }));
+    }
 }
 
 #[test]
