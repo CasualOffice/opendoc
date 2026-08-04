@@ -4347,7 +4347,12 @@ fn read_link_target(
     Ok(target)
 }
 
-fn has_blocked_link_scheme(href: &str) -> bool {
+/// Whether `href` carries a scheme outside the safe allowlist. Shared by the
+/// importer (blocks unsafe schemes from becoming model links) and the exporter
+/// (must not re-emit an unsafe scheme the importer would refuse), so the two
+/// sides share one allowlist. A schemeless href (relative, or a `#anchor`
+/// fragment) is never blocked.
+pub(crate) fn has_blocked_link_scheme(href: &str) -> bool {
     let Some((scheme, _)) = href.split_once(':') else {
         return false;
     };

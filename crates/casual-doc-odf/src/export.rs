@@ -999,16 +999,30 @@ impl Writer {
                         },
                         HyperlinkTarget::Internal(target) => format!("#{}", target.anchor),
                     };
-                    let max = self.limits.max_content_bytes;
-                    self.push("<text:a xlink:type=\"simple\" xlink:href=\"")?;
-                    push_escaped_attribute(&mut self.xml, &href, max)?;
-                    if let Some(tooltip) = &link.tooltip {
-                        self.push("\" office:title=\"")?;
-                        push_escaped_attribute(&mut self.xml, tooltip, max)?;
+                    let tooltip_ok = link.tooltip.as_deref().is_none_or(is_representable);
+                    if crate::content::has_blocked_link_scheme(&href)
+                        || !is_representable(&href)
+                        || !tooltip_ok
+                    {
+                        // Mirror the importer's scheme allowlist so a blocked
+                        // scheme is never re-emitted as a live link, and never
+                        // abort the whole export on a value we cannot serialize:
+                        // degrade to the inner text, dropping the link wrapper.
+                        self.reporter
+                            .record("odt.export.hyperlink", ModelOutcome::Degraded);
+                        self.write_inlines(&link.inlines, depth + 1)?;
+                    } else {
+                        let max = self.limits.max_content_bytes;
+                        self.push("<text:a xlink:type=\"simple\" xlink:href=\"")?;
+                        push_escaped_attribute(&mut self.xml, &href, max)?;
+                        if let Some(tooltip) = &link.tooltip {
+                            self.push("\" office:title=\"")?;
+                            push_escaped_attribute(&mut self.xml, tooltip, max)?;
+                        }
+                        self.push("\">")?;
+                        self.write_inlines(&link.inlines, depth + 1)?;
+                        self.push("</text:a>")?;
                     }
-                    self.push("\">")?;
-                    self.write_inlines(&link.inlines, depth + 1)?;
-                    self.push("</text:a>")?;
                 }
                 InlineNode::Field(field) => {
                     self.reporter
@@ -1188,6 +1202,15 @@ impl Writer {
                 .record("odt.export.bookmark", ModelOutcome::Omitted);
             return Ok(());
         };
+        if !is_representable(&name) {
+            // A name with characters we cannot serialize (e.g. control chars a
+            // validated model still permits) would otherwise abort the whole
+            // export; drop the marker with a finding instead. Both the start and
+            // end markers share this name, so they skip together and stay paired.
+            self.reporter
+                .record("odt.export.bookmark", ModelOutcome::Omitted);
+            return Ok(());
+        }
         let max = self.limits.max_content_bytes;
         self.push("<text:")?;
         self.push(element)?;
@@ -2262,6 +2285,14 @@ fn enforce(limit: &'static str, observed: usize, allowed: usize) -> Result<(), O
 
 fn is_xml_character(character: char) -> bool {
     matches!(character as u32, 0x20..=0xd7ff | 0xe000..=0xfffd | 0x10000..=0x10ffff)
+}
+
+/// Whether every character of `value` can be serialized into ODF output. Used to
+/// guard attribute values (bookmark names, hrefs, tooltips) so a value the model
+/// permits but we cannot emit degrades gracefully rather than aborting the whole
+/// export.
+fn is_representable(value: &str) -> bool {
+    value.chars().all(is_xml_character)
 }
 
 #[cfg(test)]

@@ -67,8 +67,13 @@ a general ODT support claim.
   Export now re-emits `text:a` wrappers (external URLs with fragments, and
   `#anchor` internal targets, plus `office:title` screen-tips) and
   `text:bookmark-start`/`-end` markers, reaching a byte-exact fixed point with the
-  importer. `xmlns:xlink` is now declared in the semantic content header. First
-  slice of the ODT→DOCX fidelity-parity effort.
+  importer. `xmlns:xlink` is now declared in the semantic content header. The
+  exporter mirrors the importer's hyperlink-scheme allowlist — a blocked scheme
+  (`javascript:`, `data:`, `file:`, …) a non-ODT-origin document might carry is
+  degraded to plain text rather than re-emitted as a live link — and a bookmark
+  name, href, or tooltip carrying an unserializable character degrades that one
+  marker/link with a finding instead of aborting the whole export. First slice of
+  the ODT→DOCX fidelity-parity effort.
 - **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
   `meta:creation-date` and the last modification as `dc:date` (the ODF-native
   elements the importer reads), instead of the non-ODF `dcterms:created`/

@@ -216,6 +216,64 @@ fn hyperlinks_and_bookmarks_survive_export_round_trip() {
 }
 
 #[test]
+fn bookmark_name_with_control_char_degrades_not_aborts_export() {
+    // A validated model may carry a bookmark name with a control char (a tab,
+    // here via `&#9;`, survives import). Emitting it must not abort the whole
+    // export; the marker is dropped with a finding instead.
+    let body = r#"<text:p><text:bookmark text:name="a&#9;b"/>x</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let export = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        !content_xml.contains("text:bookmark"),
+        "unserializable bookmark must be dropped, not emitted: {content_xml}"
+    );
+    // The document still reopens.
+    package.import_document(OdfImportLimits::default()).unwrap();
+}
+
+#[test]
+fn export_degrades_hyperlink_with_blocked_scheme() {
+    // A blocked scheme the importer would refuse must not be re-emitted as a
+    // live link (a non-ODT-origin document can carry one). Export degrades it to
+    // the inner text, matching the importer's allowlist.
+    let import = import_content_xml(
+        &content(
+            "1.4",
+            r#"<text:p><text:a xlink:type="simple" xlink:href="https://ok.example/">clickme</text:a></text:p>"#,
+        ),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    if let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0]
+        && let InlineNode::Hyperlink(link) = &mut paragraph.inlines[0]
+        && let HyperlinkTarget::External(target) = &mut link.target
+    {
+        target.url = "javascript:alert(1)".to_owned();
+    }
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        !content_xml.contains("javascript:") && !content_xml.contains("<text:a"),
+        "blocked scheme must not survive export: {content_xml}"
+    );
+    assert!(
+        content_xml.contains("clickme"),
+        "inner text must survive: {content_xml}"
+    );
+}
+
+#[test]
 fn list_item_start_value_maps_to_numbering_override() {
     let styles = r#"<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#;
     let body = r#"<text:list text:style-name="L1"><text:list-item text:start-value="5"><text:p>item</text:p></text:list-item></text:list>"#;
