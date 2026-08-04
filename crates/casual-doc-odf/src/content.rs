@@ -2343,19 +2343,33 @@ fn start_list_item(
             // A start-value restarts this level's counter. The model represents
             // it as a per-instance level-start override; the first item to carry
             // it establishes the instance start. A later, conflicting restart
-            // cannot be represented, so it is reported instead.
-            let value = decode_attribute(&attribute)?
+            // cannot be represented, so it is reported instead. An out-of-range,
+            // non-positive, or malformed value degrades that item rather than
+            // failing the whole import; in-domain values are clamped like the
+            // list-style path.
+            match decode_attribute(&attribute)?
                 .parse::<u16>()
-                .map_err(|_| OdfError::MalformedContent)?;
-            match list_overrides.entry((list.instance, list.level)) {
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(value);
-                }
-                std::collections::btree_map::Entry::Occupied(entry) => {
-                    if *entry.get() != value {
-                        reporter
-                            .report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
+                .ok()
+                .filter(|value| *value >= 1)
+            {
+                Some(value) => {
+                    let value = value.min(32_767);
+                    match list_overrides.entry((list.instance, list.level)) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            if *entry.get() != value {
+                                reporter.report(
+                                    "odf.list.item-override".to_owned(),
+                                    ModelOutcome::Degraded,
+                                );
+                            }
+                        }
                     }
+                }
+                None => {
+                    reporter.report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
                 }
             }
         } else if namespace_kind(&namespace) == NamespaceKind::Text
@@ -4342,18 +4356,23 @@ fn build_document(
         let instance_id =
             NumberingInstanceId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
         // Per-item start-value restarts map to per-instance level-start overrides,
-        // emitted in ascending level order for determinism.
-        let overrides: Vec<NumberingOverride> = levels
-            .keys()
-            .filter_map(|level| {
-                list_overrides
-                    .get(&(instance, *level))
-                    .map(|start| NumberingOverride {
-                        level: *level,
-                        start: Some(*start),
-                    })
-            })
-            .collect();
+        // emitted in ascending level order for determinism. A bullet level cannot
+        // carry a start-value in the writer, so such an override is dropped with a
+        // report rather than silently folded away.
+        let mut overrides: Vec<NumberingOverride> = Vec::new();
+        for (level, resolved) in &levels {
+            let Some(start) = list_overrides.get(&(instance, *level)) else {
+                continue;
+            };
+            if resolved.num_fmt == NumberFormat::Bullet {
+                reporter.report("odf.list.item-override".to_owned(), ModelOutcome::Degraded);
+                continue;
+            }
+            overrides.push(NumberingOverride {
+                level: *level,
+                start: Some(*start),
+            });
+        }
         definitions.abstract_numbering.insert(
             abstract_id,
             AbstractNumbering {

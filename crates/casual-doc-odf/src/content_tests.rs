@@ -92,6 +92,87 @@ fn list_item_start_value_maps_to_numbering_override() {
 }
 
 #[test]
+fn out_of_range_and_invalid_item_start_values_degrade_not_abort() {
+    let styles = r#"<text:list-style style:name="L"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style>"#;
+    // 40000 is in u16 range but exceeds the model domain: clamp like the style
+    // path. 70000 / 0 / empty are non-representable: degrade the item, never
+    // abort the whole import.
+    for (value, expected) in [
+        ("40000", Some(32_767_u16)),
+        ("70000", None),
+        ("0", None),
+        ("", None),
+    ] {
+        let body = format!(
+            r#"<text:list text:style-name="L"><text:list-item text:start-value="{value}"><text:p>x</text:p></text:list-item></text:list>"#
+        );
+        let import = import_content_xml(
+            &styled_content(styles, &body),
+            OdfVersion::V1_4,
+            OdfImportLimits::default(),
+        )
+        .unwrap();
+        import.document.validate().unwrap();
+        let (_, instance) = import
+            .document
+            .definitions()
+            .numbering
+            .iter()
+            .next()
+            .unwrap();
+        match expected {
+            Some(start) => {
+                assert_eq!(
+                    instance.overrides.first().and_then(|o| o.start),
+                    Some(start)
+                )
+            }
+            None => {
+                assert!(
+                    instance.overrides.is_empty(),
+                    "value {value:?} should not map"
+                );
+                assert!(
+                    import
+                        .report
+                        .entries
+                        .iter()
+                        .any(|entry| entry.feature == "odf.list.item-override")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bullet_level_item_start_value_is_dropped_and_reported() {
+    let styles = r#"<text:list-style style:name="B"><text:list-level-style-bullet text:level="1" text:bullet-char="&#8226;"/></text:list-style>"#;
+    let body = r#"<text:list text:style-name="B"><text:list-item text:start-value="5"><text:p>x</text:p></text:list-item></text:list>"#;
+    let import = import_content_xml(
+        &styled_content(styles, body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let (_, instance) = import
+        .document
+        .definitions()
+        .numbering
+        .iter()
+        .next()
+        .unwrap();
+    assert!(instance.overrides.is_empty());
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.list.item-override")
+    );
+}
+
+#[test]
 fn conflicting_later_start_value_is_reported() {
     // Two items in the same list with different start-values: the first maps to
     // an override, the second (a mid-list restart) cannot and is reported.
