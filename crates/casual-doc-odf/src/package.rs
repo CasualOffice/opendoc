@@ -3,9 +3,9 @@
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     BlockNode, Break, BreakKind, DocGrid, HeaderFooter, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, InlineNode, LineNumbering, NoteProperties, PageBorders, PageNumbering,
-    PaperSource, Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary,
-    SectionColumns, SectionId, Tab,
+    HeaderFooterRef, InlineNode, LineNumbering, MediaId, MediaReference, NoteProperties,
+    PageBorders, PageNumbering, PaperSource, Paragraph, ParagraphProperties, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, Tab,
 };
 
 use crate::master_page::{HeaderFooterInline, HeaderFooterRegion, MasterPageContent};
@@ -474,6 +474,63 @@ impl<'a> OdtPackage<'a> {
                 .document
                 .validate()
                 .map_err(|_| OdfError::InvalidModel)?;
+        }
+
+        // Cross-check imported image references against the manifest: adopt the
+        // authoritative media type where the manifest declares one, and disclose
+        // an image whose packaged part is absent (a broken reference that will
+        // not render). The reference is kept so its placement survives.
+        if !imported.document.definitions().media.is_empty() {
+            let mut corrections: Vec<(MediaId, MediaReference)> = Vec::new();
+            let mut missing = false;
+            for (id, media) in imported.document.definitions().media.iter() {
+                let entry = self
+                    .manifest_entries
+                    .iter()
+                    .find(|entry| entry.full_path == media.part_name);
+                let present = entry.is_some() && self.package.contains_part(&media.part_name);
+                if !present {
+                    missing = true;
+                }
+                if let Some(entry) = entry
+                    && !entry.media_type.is_empty()
+                    && entry.media_type.len() <= 255
+                    && entry.media_type != media.media_type
+                {
+                    corrections.push((
+                        *id,
+                        MediaReference {
+                            relationship_id: media.relationship_id.clone(),
+                            media_type: entry.media_type.clone(),
+                            part_name: media.part_name.clone(),
+                        },
+                    ));
+                }
+            }
+            if !corrections.is_empty() {
+                let definitions = imported.document.definitions_mut();
+                for (id, media) in corrections {
+                    definitions.media.insert(id, media);
+                }
+                imported
+                    .document
+                    .validate()
+                    .map_err(|_| OdfError::InvalidModel)?;
+            }
+            if missing {
+                imported.report.entries.push(crate::CompatibilityEntry {
+                    feature: "odf.draw.image-missing-part".to_owned(),
+                    occurrences: 1,
+                    model_outcome: crate::ModelOutcome::Degraded,
+                    retention_outcome: crate::RetentionOutcome::NotApplicable,
+                });
+                imported.report.entries.sort_by(|a, b| {
+                    a.feature
+                        .cmp(&b.feature)
+                        .then(a.model_outcome.cmp(&b.model_outcome))
+                        .then(a.retention_outcome.cmp(&b.retention_outcome))
+                });
+            }
         }
         Ok(imported)
     }

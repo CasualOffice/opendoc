@@ -614,6 +614,91 @@ fn default_style_in_automatic_styles_is_rejected() {
     );
 }
 
+fn image_content(href: &str) -> Vec<u8> {
+    format!(
+        r#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame><draw:image xlink:href="{href}"/></draw:frame></text:p></office:text></office:body></office:document-content>"#
+    )
+    .into_bytes()
+}
+
+fn image_package(content: Vec<u8>, image_entries: &str, extra: &[Entry]) -> Vec<u8> {
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/>{image_entries}</m:manifest>"#
+    )
+    .into_bytes();
+    let mut entries = vec![
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ];
+    entries.extend_from_slice(extra);
+    package(&entries)
+}
+
+#[test]
+fn manifest_media_type_is_authoritative_for_images() {
+    // The href extension (.dat) would infer octet-stream; the manifest declares
+    // image/png, which must win.
+    let bytes = image_package(
+        image_content("Pictures/pic.dat"),
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    let (_, media) = imported.document.definitions().media.iter().next().unwrap();
+    assert_eq!(media.part_name, "Pictures/pic.dat");
+    assert_eq!(media.media_type, "image/png");
+    assert!(
+        !imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.image-missing-part")
+    );
+}
+
+#[test]
+fn missing_image_part_is_reported() {
+    // The draw:image references a part not present in the package/manifest.
+    let bytes = image_package(image_content("Pictures/missing.png"), "", &[]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    imported.document.validate().unwrap();
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.image-missing-part")
+    );
+}
+
 #[test]
 fn mimetype_must_be_first_stored_exact_and_without_extra_data() {
     let mut not_first = minimal_entries("1.4");
