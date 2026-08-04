@@ -924,6 +924,21 @@ fn read_table_container(
                 Some("overlap") => props.overlap = Some(TableOverlap::Overlap),
                 _ => ctx.report(b"tblOverlap"),
             },
+            // Banded-style stripe periods, valid on a table STYLE's `w:tblPr` just
+            // as on a body table's (each an unsigned count in `w:val`). The body
+            // reader types these; the styles reader dropped them.
+            b"tblStyleRowBandSize" => {
+                match attribute_value(&child, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => props.row_band_size = Some(size),
+                    None => ctx.report(b"tblStyleRowBandSize"),
+                }
+            }
+            b"tblStyleColBandSize" => {
+                match attribute_value(&child, b"val").and_then(|value| value.parse::<u32>().ok()) {
+                    Some(size) => props.col_band_size = Some(size),
+                    None => ctx.report(b"tblStyleColBandSize"),
+                }
+            }
             b"jc" => match table_alignment(&child) {
                 Some(alignment) => props.alignment = Some(alignment),
                 None => ctx.report(b"jc"),
