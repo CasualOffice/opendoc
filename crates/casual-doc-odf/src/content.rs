@@ -3760,7 +3760,10 @@ fn read_link_target(
         }
         None
     } else {
-        Some(HyperlinkTarget::External(ExternalTarget { url: href }))
+        Some(HyperlinkTarget::External(ExternalTarget {
+            url: href,
+            anchor: None,
+        }))
     };
     if target.is_none() {
         reporter.report("odf.element.text.a".to_owned(), ModelOutcome::Degraded);
