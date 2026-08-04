@@ -82,13 +82,12 @@ Render the first page of a bundled sample document to a PNG — the full pipelin
 cargo run -p casual-doc-render --example render_docx_page -- page.png
 ```
 
-On a machine with system fonts you can let the shaper fall back to installed
-faces (useful for CJK, symbol, and complex-script text the bundled Latin faces
-do not cover):
+On native, the render crate resolves installed OS faces by default (useful for
+CJK, symbol, and complex-script text the bundled Latin faces do not cover), so no
+feature flag is needed:
 
 ```sh
-cargo run -p casual-doc-render --example render_docx_page \
-  --features system-fonts -- page.png
+cargo run -p casual-doc-render --example render_docx_page -- page.png
 ```
 
 The repository pins Rust **1.96.0** through `rust-toolchain.toml` and supports

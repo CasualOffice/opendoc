@@ -10,9 +10,11 @@ authors.workspace = true
 publish = false
 
 [features]
-# Forwards to `casual-doc-layout/system-fonts`: enables the native OS font
-# fallback so examples/tests that render CJK/complex text pick up installed
-# system faces. OFF by default; compiled out on `wasm32`.
+# Explicit knob that forwards to `casual-doc-layout/system-fonts` (the native OS
+# font fallback). On native this is ALREADY enabled by default through the
+# `cfg(not(wasm32))` target dependency below, so the flag is only needed to force
+# the OS source on in an unusual build; it is compiled out on `wasm32` (the
+# browser path resolves fonts through the host-populated registry instead).
 system-fonts = ["casual-doc-layout/system-fonts"]
 
 [dependencies]
@@ -25,15 +27,39 @@ tiny-skia = "0.11"
 # Raster image decoding for inline pictures. Permissive (MIT-or-Apache-2.0),
 # pure-Rust and WASM-clean: only these codec features are enabled, so no
 # native/C backends are pulled in. PNG/JPEG are the common web formats; GIF/BMP/
-# TIFF are common in Office-authored DOCX (pasted art, scanned pages) and shared
-# the same generic decode path — previously they fell back to a placeholder box.
+# TIFF are common in Office-authored DOCX (pasted art, scanned pages); WEBP is
+# increasingly common in web-sourced art pasted into documents (pure-Rust
+# `image-webp` codec, MIT-or-Apache-2.0). All share the same generic decode
+# path — anything still undecodable falls back to the placeholder box.
 image = { version = "0.25", default-features = false, features = [
     "png",
     "jpeg",
     "gif",
     "bmp",
     "tiff",
+    "webp",
 ] }
+
+# Native/desktop default: the OS system-font fallback is always on, so a native
+# render of CJK / complex-script text resolves an installed OS face through the
+# registry seam instead of painting `.notdef` tofu (the desktop font strategy:
+# OS system fonts, bundled base always). Target-gated to `not(wasm32)`, so the
+# browser/WASM path is unaffected (it uses the host-populated registry instead).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+casual-doc-layout = { workspace = true, features = ["system-fonts"] }
+# SVG (vector image) rasterization straight into a `tiny-skia` Pixmap — the same
+# backend the raster path uses, so a rendered SVG blits like any other image.
+# `resvg` re-exports `usvg` + `tiny_skia` (pinned to our 0.11 so the Pixmap types
+# unify). Native-only: not built for the browser/WASM path, which keeps the
+# placeholder. Licensed `Apache-2.0 OR MIT`.
+#
+# `default-features = false` drops resvg's `text` feature (and `system-fonts`/
+# `memmap-fonts`/`raster-images`) so shape/path rasterization pulls NONE of the
+# text-shaping font stack — specifically the unmaintained `rustybuzz`
+# (RUSTSEC-2026-0206) and `ttf-parser` (RUSTSEC-2026-0192) that `usvg/text` pulls.
+# The documented trade-off: SVG `<text>` is not rendered (paths/shapes/gradients
+# are). Doc-embedded SVGs are logos/vector paths, so this is acceptable.
+resvg = { version = "0.45", default-features = false }
 
 [dev-dependencies]
 casual-doc-import.workspace = true

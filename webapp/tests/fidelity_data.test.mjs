@@ -132,14 +132,14 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Math (OMML)"].modeled, "full");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
-  // Rendering is not "full" where the fidelity audit confirmed unpainted
-  // constructs: run effects/typed underlines (character), docGrid/autospacing
-  // (paragraphs), and level/start overrides + spelled-out formats (lists).
-  assert.equal(by["Paragraphs & text"].rendered, "partial");
+  // Character rendering stays partial only until the wavy-underline squiggle
+  // merges (it is currently drawn as a flat line); emphasis/outline/shadow
+  // effects also stay unpainted. Paragraphs and Lists now render their common
+  // surface in full — the remainders (docGrid/autospace on paragraphs, unknown
+  // numFmt on lists) are niche/bounded, not common gaps.
   assert.equal(by["Character / run formatting"].rendered, "partial");
-  assert.equal(by["Lists & numbering"].rendered, "partial");
   // Numbering is fully modeled as of Layer 1 (overrides/indirection/restart/
-  // numFmt vocabulary all typed + round-trip); only rendering stays partial.
+  // numFmt vocabulary all typed + round-trip) and now renders in full.
   assert.equal(by["Lists & numbering"].modeled, "full");
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");

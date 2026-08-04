@@ -309,7 +309,26 @@ fn render_image(
     let Some(bytes) = media.media_bytes(media_id) else {
         return;
     };
-    let Some(source) = decode_to_pixmap(bytes) else {
+    let dx = rect.origin.x.to_device_px(dpi);
+    let dy = rect.origin.y.to_device_px(dpi);
+    let dw = rect.size.width.to_device_px(dpi);
+    let dh = rect.size.height.to_device_px(dpi);
+    if dw <= 0.0 || dh <= 0.0 {
+        return;
+    }
+    // A raster format decodes directly. A vector SVG — which `image::guess_format`
+    // cannot sniff — rasterizes into a pixmap at the box's device size (native
+    // only; the WASM path has no SVG rasterizer and keeps the placeholder). Any
+    // other format (e.g. an EMF/WMF metafile) has no decoder and falls through to
+    // the placeholder below.
+    let source = decode_to_pixmap(bytes);
+    #[cfg(not(target_arch = "wasm32"))]
+    let source = source.or_else(|| {
+        looks_like_svg(bytes)
+            .then(|| rasterize_svg(bytes, dw.ceil() as u32, dh.ceil() as u32))
+            .flatten()
+    });
+    let Some(source) = source else {
         render_undecodable_placeholder(rect, surface, dpi, clip, transform);
         return;
     };
@@ -326,13 +345,6 @@ fn render_image(
     };
     let (src_w, src_h) = (source.width() as f32, source.height() as f32);
     if src_w <= 0.0 || src_h <= 0.0 {
-        return;
-    }
-    let dx = rect.origin.x.to_device_px(dpi);
-    let dy = rect.origin.y.to_device_px(dpi);
-    let dw = rect.size.width.to_device_px(dpi);
-    let dh = rect.size.height.to_device_px(dpi);
-    if dw <= 0.0 || dh <= 0.0 {
         return;
     }
     // Scale the source pixmap to the destination box, then translate to its
@@ -483,6 +495,51 @@ fn image_dimensions_within_limits(width: u32, height: u32) -> bool {
         && u64::from(width)
             .checked_mul(u64::from(height))
             .is_some_and(|pixels| pixels <= MAX_DECODED_IMAGE_PIXELS)
+}
+
+/// Cheap sniff for an SVG document: an `<svg` tag anywhere in the head (case
+/// -insensitive) — covering a bare `<svg …>`, an `<?xml …?>`/DOCTYPE/comment
+/// preamble, or a namespaced root. Binary raster/metafile formats never contain
+/// it, so this keeps non-SVG bytes off the (comparatively heavy) SVG parser;
+/// [`rasterize_svg`] validates the full document regardless.
+#[cfg(not(target_arch = "wasm32"))]
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(1024)];
+    head.windows(4).any(|w| w.eq_ignore_ascii_case(b"<svg"))
+}
+
+/// Rasterizes an SVG document into a premultiplied-RGBA `tiny-skia` pixmap at the
+/// target box's device-pixel size, so a rendered SVG blits through the exact same
+/// path as a decoded raster image. Native-only (the WASM path keeps the
+/// placeholder). Returns `None` for an unparseable document or a degenerate /
+/// over-budget target size. `resvg` renders straight into the pixmap.
+///
+/// SVG `<text>` is NOT rendered — only shapes/paths/gradients/rasters. `resvg` is
+/// built with `default-features = false` so it pulls no text-shaping font stack
+/// (`usvg/text` → the unmaintained `rustybuzz`/`ttf-parser`, RUSTSEC-2026-0206 /
+/// -0192). Doc-embedded SVGs are logos / vector paths, so this is an acceptable
+/// trade-off; a `<text>`-only SVG rasterizes to nothing and falls to the
+/// placeholder via the empty-pixmap path.
+#[cfg(not(target_arch = "wasm32"))]
+fn rasterize_svg(bytes: &[u8], width_px: u32, height_px: u32) -> Option<Pixmap> {
+    if !image_dimensions_within_limits(width_px, height_px) {
+        return None;
+    }
+    let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default()).ok()?;
+    let size = tree.size();
+    if size.width() <= 0.0 || size.height() <= 0.0 {
+        return None;
+    }
+    let mut pixmap = Pixmap::new(width_px, height_px)?;
+    // Scale the SVG's intrinsic size to fill the destination pixmap 1:1: the box
+    // scale is already baked in by rasterizing at the box's device size, so the
+    // downstream blit maps this pixmap to `rect` with an identity scale.
+    let transform = Transform::from_scale(
+        width_px as f32 / size.width(),
+        height_px as f32 / size.height(),
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(pixmap)
 }
 
 /// Builds the effective clip mask for a `PushClip(rect)`: the rectangle painted
@@ -650,9 +707,9 @@ fn draw_decoration(
 }
 
 /// Draws an underline in its `w:u@val` line style. Single/double/thick are drawn
-/// exactly; dotted/dashed/dot-dash as patterned segments; wave and words are
-/// approximated by a single line (a true sine wave / per-word gapping is a
-/// follow-up), so they still underline rather than disappearing.
+/// exactly; dotted/dashed/dot-dash as patterned segments; wave is a real sine
+/// squiggle. `words` (underline words only, not the spaces) keeps its `single`
+/// base line — the per-word gapping is a separate follow-up.
 #[allow(clippy::too_many_arguments)]
 fn draw_underline(
     surface: &mut Surface,
@@ -680,8 +737,45 @@ fn draw_underline(
         }
     };
     match style {
-        UnderlineStyle::Single | UnderlineStyle::Wavy | UnderlineStyle::Words => {
+        UnderlineStyle::Single | UnderlineStyle::Words => {
             line(surface, x, advance, y_center, thickness);
+        }
+        UnderlineStyle::Wavy => {
+            // A true squiggle: a sine wave along the run's advance at the
+            // underline offset, its amplitude and period scaled to the decoration
+            // thickness (which tracks the font size), stroked at the decoration
+            // thickness. The wave's vertical spread is what distinguishes it from
+            // the flat single line. (The model collapses wave/wavyHeavy/wavyDouble
+            // into one `Wavy`, so all three render as a single-weight squiggle.)
+            let amplitude = (thickness * 1.5).max(1.0);
+            let period = (thickness * 6.0).max(4.0);
+            // Sample finely enough that the polyline reads as a smooth curve.
+            let step = (period / 8.0).clamp(0.75, 2.0);
+            let wave_y =
+                |px: f32| y_center + amplitude * (std::f32::consts::TAU * px / period).sin();
+            let mut builder = PathBuilder::new();
+            builder.move_to(x, wave_y(0.0));
+            let mut px = step;
+            while px < advance {
+                builder.line_to(x + px, wave_y(px));
+                px += step;
+            }
+            builder.line_to(x + advance, wave_y(advance));
+            if let Some(path) = builder.finish() {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+                paint.anti_alias = true;
+                surface.pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &Stroke {
+                        width: thickness.max(1.0),
+                        ..Stroke::default()
+                    },
+                    Transform::identity(),
+                    clip,
+                );
+            }
         }
         UnderlineStyle::Double => {
             let gap = (thickness * 2.0).max(1.5);
@@ -1770,6 +1864,47 @@ mod tests {
     }
 
     #[test]
+    fn a_wavy_underline_spreads_ink_above_and_below_the_flat_line() {
+        use casual_doc_layout::text::Decoration;
+        // "Hello" has no descenders, so every dark pixel below the baseline is the
+        // underline. A flat single line is confined to a thin band of rows; a sine
+        // squiggle necessarily reaches above and below that band (its amplitude) —
+        // that vertical spread is what a wave has and a flat line does not.
+        let (single, baseline) = render_decorated(Decoration {
+            underline: true,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
+        });
+        let (wavy, _) = render_decorated(Decoration {
+            underline: true,
+            underline_style: casual_doc_model::v1::UnderlineStyle::Wavy,
+            ..Decoration::default()
+        });
+        // The flat line's center is its densest row in the below-baseline region.
+        let center = (baseline + 1..baseline + 20)
+            .max_by_key(|&y| band_dark(&single, y, y + 1))
+            .expect("a densest underline row");
+        // The "wings" are the rows a few pixels above and below that center — where
+        // a thin flat line lays ~no ink but a wave's peaks/troughs do.
+        let wings = |s: &Surface| -> usize {
+            band_dark(s, center.saturating_sub(4), center.saturating_sub(1))
+                + band_dark(s, center + 2, center + 5)
+        };
+        let single_wings = wings(&single);
+        let wavy_wings = wings(&wavy);
+        assert!(
+            wavy_wings > single_wings + 15,
+            "the wavy underline spreads ink into the rows above/below the flat \
+             line's center (wavy {wavy_wings} vs flat {single_wings})"
+        );
+        // It still underlines — visible ink below the baseline.
+        assert!(
+            band_dark(&wavy, baseline + 1, baseline + 20) > 20,
+            "the wavy underline still paints a visible line below the baseline"
+        );
+    }
+
+    #[test]
     fn a_plain_run_draws_no_decoration_line() {
         // A plain run has no ink below the baseline (no underline, no descenders).
         let (plain, baseline) = render_decorated(Decoration::default());
@@ -1963,6 +2098,61 @@ mod tests {
     }
 
     #[test]
+    fn a_webp_image_decodes_and_blits_pixels_into_its_rect() {
+        // WEBP is increasingly common in web-sourced art pasted into documents;
+        // it shares the generic decode path (pure-Rust `image-webp` codec) and
+        // used to fall back to the placeholder box. A solid-red raster must now
+        // paint red ink inside the box and leave the surrounding page white.
+        let bytes = solid_image(8, 8, [210, 40, 40, 255], image::ImageFormat::WebP);
+        assert!(
+            decode_to_pixmap(&bytes).is_some(),
+            "WEBP decodes to a pixmap"
+        );
+        let surface = render_one_image(bytes);
+        let inside = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            inside[0] > 150 && inside[0] > inside[2] + 40,
+            "the WEBP red ink lands inside the box (got {inside:?})"
+        );
+        assert_eq!(
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "outside the WEBP image box stays background white"
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn an_svg_image_rasterizes_and_blits_pixels_into_its_rect() {
+        // SVG is vector: `image::guess_format` cannot sniff it, so it needs the
+        // dedicated resvg branch (native). A solid-red SVG must rasterize to real
+        // red ink inside the box and leave the surrounding page white — not the
+        // "undecodable" placeholder the vector path used to fall to.
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="rgb(210,40,40)"/></svg>"#;
+        // The raster decoder cannot sniff a vector SVG (proving the branch is needed)…
+        assert!(
+            decode_to_pixmap(svg).is_none(),
+            "the raster decoder does not handle a vector SVG"
+        );
+        // …but the SVG rasterizer produces a pixmap at the requested box size.
+        assert!(
+            rasterize_svg(svg, 20, 20).is_some(),
+            "the SVG rasterizes to a pixmap"
+        );
+        let surface = render_one_image(svg.to_vec());
+        let inside = pixel_at(&surface, 50, 20, 20);
+        assert!(
+            inside[0] > 150 && inside[1] < 120 && inside[2] < 120,
+            "the SVG's red ink lands inside the box (got {inside:?})"
+        );
+        assert_eq!(
+            pixel_at(&surface, 50, 2, 2),
+            [255, 255, 255, 255],
+            "outside the SVG image box stays background white"
+        );
+    }
+
+    #[test]
     fn an_image_over_the_dimension_limit_is_rejected_before_decode_and_placeholdered() {
         // A very wide but shallow PNG keeps the regression fixture small while
         // proving that encoded byte size alone cannot admit an extreme raster:
@@ -2115,16 +2305,18 @@ mod tests {
         );
     }
 
-    /// End to end with the `system-fonts` feature (native): a CJK run shapes to
-    /// real (non-`.notdef`) glyphs via an OS fallback face, and rasterizes real ink
-    /// — not the tofu box the bundled-only path produces. Gated on the feature +
-    /// native so the deterministic / WASM runs skip it. Whether the host has a CJK
-    /// face is environment-dependent (a headless CI runner may have none); when no
-    /// covering face is found the test returns early rather than failing, since
-    /// there is then no real ink to observe (the coverage-gap behavior is asserted
-    /// by the shaper's own `cjk_with_system_fonts_resolves_a_covering_face`).
+    /// End to end on the native path: a CJK run shapes to real (non-`.notdef`)
+    /// glyphs via an OS fallback face, and rasterizes real ink — not the tofu box
+    /// the bundled-only path produces. The native render crate enables the OS
+    /// system-font source by default (see this crate's `Cargo.toml` target
+    /// dependency), so this runs without an explicit feature flag; WASM is gated
+    /// out. Whether the host has a CJK face is environment-dependent (a headless CI
+    /// runner may have none); when no covering face is found the test returns early
+    /// rather than failing, since there is then no real ink to observe (the
+    /// coverage-gap behavior is asserted by the shaper's own
+    /// `cjk_with_system_fonts_resolves_a_covering_face`).
     #[test]
-    #[cfg(all(feature = "system-fonts", not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn cjk_renders_real_ink_with_system_fonts() {
         let shaper = ParleyShaper::new();
         let node = NodeId::from_parts(1, 1).unwrap();

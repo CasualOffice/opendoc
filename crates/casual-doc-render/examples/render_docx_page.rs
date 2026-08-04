@@ -9,10 +9,11 @@
 //!
 //! Fonts are served through a [`RegistryFontSource`] built from the shaper's
 //! dynamic font registry, so glyphs the shaper resolved to a fallback face render
-//! from that face's bytes. Built with `--features system-fonts` (native), a run of
-//! CJK / symbol / complex-script text that the bundled Latin faces do not cover
-//! shapes and rasterizes with an installed OS font instead of `.notdef` tofu:
-//! `cargo run --example render_docx_page --features system-fonts <out.png>`.
+//! from that face's bytes. On native the render crate enables the OS system-font
+//! source by default, so a run of CJK / symbol / complex-script text that the
+//! bundled Latin faces do not cover shapes and rasterizes with an installed OS font
+//! instead of `.notdef` tofu — no feature flag needed:
+//! `cargo run --example render_docx_page <out.png>`.
 #![allow(clippy::print_stderr)] // a manual example, not library code
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
 use casual_doc_layout::compose::compose_page;

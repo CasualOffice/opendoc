@@ -1,0 +1,24 @@
+[package]
+name = "opendoc-render"
+description = "Batch corpus renderer for OpenDoc visual regression: import -> paginate -> compose -> raster PNG"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+# The native OS font fallback (CJK / complex scripts / symbols) is on by default
+# through `casual-doc-render`'s `cfg(not(wasm32))` target dependency, so this
+# native-only tool renders installed OS faces — not `.notdef` tofu — out of the
+# box, without an extra feature flag.
+
+[dependencies]
+casual-doc-import.workspace = true
+casual-doc-layout.workspace = true
+casual-doc-ooxml.workspace = true
+casual-doc-render.workspace = true
+
+[lints]
+workspace = true

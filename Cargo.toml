@@ -16,6 +16,7 @@ members = [
     "crates/casual-doc-wasm",
     "tools/opendoc-benchmark",
     "tools/opendoc-fidelity",
+    "tools/opendoc-render",
 ]
 resolver = "3"
 

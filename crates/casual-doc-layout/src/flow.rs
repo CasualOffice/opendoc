@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
+use casual_doc_model::v1::FormFieldKind;
 
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
@@ -504,7 +506,7 @@ pub fn build_galley_cached(
                     constraints,
                 };
                 let box_metrics = box_metrics(&props);
-                let break_control = break_control(&props);
+                let break_control = paragraph_break_control(&props, &paragraph.inlines);
                 let decor = paragraph_decor(&props, content_width);
                 // A paragraph carrying an inline text box is never cached: the box's
                 // flowed fragments are not folded into the paragraph hash, so a
@@ -884,6 +886,13 @@ fn flow_blocks(
     // Tracks the previous paragraph for `w:contextualSpacing` collapsing; any
     // non-paragraph block resets it (adjacency is broken across tables etc.).
     let mut prev_para: Option<ContextualNeighbor> = None;
+    // Square-family wrap floats anchored in an earlier paragraph of this block
+    // sequence whose clearance still reaches the current paragraph (each entry's
+    // `height` is the REMAINING clearance). The page-level float pass only maps
+    // top-level body-paragraph floats; this carries a float anchored inside a
+    // table cell / content control to the following paragraphs in the same cell,
+    // so their text wraps beside it instead of under it.
+    let mut active_carries: Vec<ParagraphFloatExclusion> = Vec::new();
     while index < blocks.len() {
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
@@ -894,9 +903,19 @@ fn flow_blocks(
         {
             let mut drop_fragment = flow_paragraph(drop_cap, shaper, width, ctx, &[], true);
             let exclusion = collapse_drop_cap_fragment(&mut drop_fragment, frame);
+            let drop_height = drop_fragment.height();
             galley.push(drop_fragment);
-            let exclusions = exclusion.into_iter().collect::<Vec<_>>();
-            galley.push(flow_paragraph(body, shaper, width, ctx, &exclusions, false));
+            // The drop-cap exclusion plus any active wrap carry both narrow the body.
+            let mut exclusions: Vec<ParagraphFloatExclusion> = active_carries
+                .iter()
+                .filter(|carry| carry.height.raw() > 0)
+                .copied()
+                .collect();
+            exclusions.extend(exclusion);
+            let body_fragment = flow_paragraph(body, shaper, width, ctx, &exclusions, false);
+            let consumed = Twip(drop_height.raw() + body_fragment.height().raw());
+            galley.push(body_fragment);
+            decrement_wrap_carries(&mut active_carries, consumed);
             // A drop-cap frame is a distinct visual context; don't collapse
             // spacing across it.
             prev_para = None;
@@ -915,7 +934,13 @@ fn flow_blocks(
                     .resolve_paragraph(&paragraph.properties)
                     .contextual_spacing;
                 let galley_index = galley.len();
-                galley.push(flow_paragraph(paragraph, shaper, width, ctx, &[], false));
+                galley.push(flow_paragraph_with_carries(
+                    paragraph,
+                    shaper,
+                    width,
+                    ctx,
+                    &mut active_carries,
+                ));
                 let current = ContextualNeighbor {
                     galley_index,
                     style,
@@ -929,6 +954,8 @@ fn flow_blocks(
             BlockNode::Table(table) => {
                 flow_table(table, shaper, width, &mut galley, ctx);
                 prev_para = None;
+                // A float's text wrap does not cross a table boundary.
+                active_carries.clear();
             }
             BlockNode::Sdt(sdt) => {
                 // Transparent wrapper (see the body loop): flow its children
@@ -938,17 +965,63 @@ fn flow_blocks(
                 // an adjacency break at this level.
                 galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
                 prev_para = None;
+                active_carries.clear();
             }
             // TODO(altchunk): same bounded placeholder as the body-flow site
             // above (no fallback blocks in the model to recurse into for real).
             BlockNode::AltChunk(chunk) => {
                 galley.push(alt_chunk_fragment(chunk, shaper, width, ctx));
                 prev_para = None;
+                active_carries.clear();
             }
         }
         index += 1;
     }
     galley
+}
+
+/// Flows one paragraph while carrying square-family wrap-float exclusions across
+/// the block sequence: any still-active carry from an earlier paragraph narrows
+/// this one, then the carries are advanced past this paragraph's height and this
+/// paragraph's own floats are registered (with the clearance that remains BELOW
+/// it) for the following paragraphs. The anchoring paragraph is deliberately not
+/// re-narrowed by its own float here — its overlapping lines are handled by the
+/// paragraph-local exclusion in [`collect_items`] (no double exclusion).
+fn flow_paragraph_with_carries(
+    paragraph: &Paragraph,
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+    active_carries: &mut Vec<ParagraphFloatExclusion>,
+) -> BlockFragment {
+    let leading: Vec<ParagraphFloatExclusion> = active_carries
+        .iter()
+        .filter(|carry| carry.height.raw() > 0)
+        .copied()
+        .collect();
+    let fragment = flow_paragraph(paragraph, shaper, width, ctx, &leading, false);
+    let consumed = fragment.height();
+    decrement_wrap_carries(active_carries, consumed);
+    for float in paragraph_wrap_carries(paragraph, width) {
+        let remaining = Twip((float.height.raw() - consumed.raw()).max(0));
+        if remaining.raw() > 0 {
+            active_carries.push(ParagraphFloatExclusion {
+                side: float.side,
+                width: float.width,
+                height: remaining,
+            });
+        }
+    }
+    fragment
+}
+
+/// Advances every active wrap carry past a flowed paragraph of `consumed` height,
+/// dropping those whose clearance is exhausted.
+fn decrement_wrap_carries(active_carries: &mut Vec<ParagraphFloatExclusion>, consumed: Twip) {
+    for carry in active_carries.iter_mut() {
+        carry.height = Twip((carry.height.raw() - consumed.raw()).max(0));
+    }
+    active_carries.retain(|carry| carry.height.raw() > 0);
 }
 
 fn flow_paragraph(
@@ -1004,7 +1077,7 @@ fn flow_paragraph(
         id: paragraph.id,
         lines,
         box_metrics: box_metrics(&props),
-        break_control: break_control(&props),
+        break_control: paragraph_break_control(&props, &paragraph.inlines),
         decor: paragraph_decor(&props, width),
     }
 }
@@ -2563,7 +2636,17 @@ fn collect_items_with_measure<'a>(
                     out.push(item);
                 }
             }
-            InlineNode::Field(field) => out.push(field_item(field, ctx)),
+            InlineNode::Field(field) => {
+                // A legacy checkbox form field (`w:ffData/w:checkBox`) paints a box
+                // glyph reflecting its state — like Word (and the SDT checkbox
+                // above) — rather than its empty text result. Other field kinds
+                // flow their (recomputable) cached value.
+                if let Some(glyph) = form_checkbox_glyph_run(field, ctx) {
+                    out.push(FlowItem::Run(glyph));
+                } else {
+                    out.push(field_item(field, ctx));
+                }
+            }
             InlineNode::HorizontalRule(rule) => {
                 let rule_width = if intrinsic.is_some() { Twip(1) } else { width };
                 out.push(hr_item(rule, rule_width));
@@ -2821,6 +2904,117 @@ fn float_flow_item(anchor: &DrawingAnchor, extent: &Extent) -> Option<FlowItem<'
         .max(0);
     let width = emu_to_twip(exclusion_emu);
     (width.raw() > 0).then_some(FlowItem::FloatExclusion {
+        side,
+        width,
+        height,
+    })
+}
+
+/// The square-family wrap exclusion each of a paragraph's anchored floats imposes,
+/// each carrying the FULL clearance height measured from the paragraph's top.
+/// [`flow_blocks`] carries these to the FOLLOWING paragraphs in the same block
+/// sequence (e.g. a table cell), so their text wraps beside a float that overlaps
+/// them — the cross-paragraph case the page-level float pass does not cover for
+/// table-cell / content-control content.
+fn paragraph_wrap_carries(
+    paragraph: &Paragraph,
+    content_width: Twip,
+) -> Vec<ParagraphFloatExclusion> {
+    let mut carries = Vec::new();
+    for inline in &paragraph.inlines {
+        let carry = match inline {
+            InlineNode::AnchoredDrawing(drawing) => {
+                wrap_carry(&drawing.anchor, drawing.extent, content_width)
+            }
+            InlineNode::Group(group) => match &group.anchor {
+                Some(anchor) => wrap_carry(anchor, group.extent, content_width),
+                None => None,
+            },
+            _ => None,
+        };
+        if let Some(carry) = carry {
+            carries.push(carry);
+        }
+    }
+    carries
+}
+
+/// One anchored float's square-family wrap exclusion: its side, full width
+/// (`distL + object + distR`), and full clearance height from the anchor
+/// paragraph's top (`vOffset + object + distB`). `None` unless it is a
+/// non-behind, square/tight/through float anchored to the paragraph vertically
+/// and to the margin/column horizontally.
+///
+/// Side detection is geometric so a left-margin logo positioned by a near-zero
+/// `posOffset` (not `align="left"`) is still recognized as a left float — the
+/// specific under-exclusion this fixes.
+fn wrap_carry(
+    anchor: &DrawingAnchor,
+    extent: Extent,
+    content_width: Twip,
+) -> Option<ParagraphFloatExclusion> {
+    if anchor.behind_doc
+        || !matches!(
+            anchor.wrap,
+            WrapMode::Square | WrapMode::Tight | WrapMode::Through
+        )
+        || !matches!(
+            anchor.vertical.relative_from,
+            VerticalAnchor::Paragraph | VerticalAnchor::Line
+        )
+        || !matches!(
+            anchor.horizontal.relative_from,
+            HorizontalAnchor::Margin | HorizontalAnchor::Column
+        )
+    {
+        return None;
+    }
+    let vertical_offset = match anchor.vertical.position {
+        VerticalPosition::Offset(offset) => offset,
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top) => 0,
+        _ => return None,
+    };
+    let height = emu_to_twip(
+        vertical_offset
+            .saturating_add(extent.height_emu)
+            .saturating_add(anchor.wrap_distances.bottom_emu)
+            .max(0),
+    );
+    let width = emu_to_twip(
+        anchor
+            .wrap_distances
+            .start_emu
+            .saturating_add(extent.width_emu)
+            .saturating_add(anchor.wrap_distances.end_emu)
+            .max(0),
+    );
+    if height.raw() <= 0 || width.raw() <= 0 {
+        return None;
+    }
+    // An explicit `align` is authoritative; a `posOffset` resolves geometrically:
+    // the float sits on the side of the column its horizontal centre falls in.
+    let side = match anchor.horizontal.position {
+        HorizontalPosition::Align(HorizontalAlign::Left | HorizontalAlign::Inside) => {
+            InlineFloatSide::Left
+        }
+        HorizontalPosition::Align(HorizontalAlign::Right | HorizontalAlign::Outside) => {
+            InlineFloatSide::Right
+        }
+        HorizontalPosition::Align(HorizontalAlign::Center) => return None,
+        HorizontalPosition::Offset(offset) => {
+            let centre = emu_to_twip(offset)
+                .raw()
+                .saturating_add(emu_to_twip(extent.width_emu).raw() / 2);
+            if centre.saturating_mul(2) <= content_width.raw().max(1) {
+                InlineFloatSide::Left
+            } else {
+                InlineFloatSide::Right
+            }
+        }
+    };
+    // Never exclude the whole column — always leave at least one twip for text.
+    let width = Twip(width.raw().clamp(1, (content_width.raw() - 1).max(1)));
+    Some(ParagraphFloatExclusion {
         side,
         width,
         height,
@@ -3145,6 +3339,41 @@ fn field_item(field: &casual_doc_model::v1::Field, ctx: &mut FlowCtx) -> FlowIte
     };
     let style = field_style(&field.inlines, &value, ctx);
     FlowItem::Field { kind, value, style }
+}
+
+/// If `field` is a legacy checkbox form field (`w:ffData/w:checkBox`, the
+/// FORMCHECKBOX ubiquitous on Word forms), synthesize the box glyph reflecting its
+/// state — `☑` (U+2611) checked, `□` (U+25A1) unchecked — styled by the field's
+/// cached-result run so it sits inline at the field's font size/color. The state
+/// is `w:checked`, else `w:default`, else off. Word paints such a box before its
+/// label; without this the field showed only its empty text result, so the boxes
+/// vanished (docs/60). Uses the same reliably-covered BMP box glyphs the symbol
+/// map resolves legacy checkboxes to, not a producer's symbol font. Returns
+/// `None` for a text-input / drop-down / non-form field.
+fn form_checkbox_glyph_run(
+    field: &casual_doc_model::v1::Field,
+    ctx: &mut FlowCtx,
+) -> Option<StyledRun<'static>> {
+    let FormFieldKind::CheckBox(checkbox) = &field.form.as_ref()?.kind else {
+        return None;
+    };
+    let checked = checkbox.checked.or(checkbox.default).unwrap_or(false);
+    // `□` (U+25A1 WHITE SQUARE) / `☑` (U+2611 BALLOT BOX WITH CHECK): the same
+    // widely-covered BMP box glyphs the symbol map resolves legacy Wingdings
+    // checkboxes to, so they paint reliably (U+2610 BALLOT BOX is often absent and
+    // renders blank).
+    let glyph = if checked { '\u{2611}' } else { '\u{25A1}' };
+    // The field's cached-result run carries the authored font/size/color; reuse it
+    // so the box matches the surrounding text, defaulting when absent.
+    let properties = field
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Run(run) => Some(run.properties.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Some(styled_owned_run(glyph.to_string(), &properties, ctx))
 }
 
 /// Classifies a field instruction by its leading keyword (case-insensitive):
@@ -5537,6 +5766,57 @@ fn break_control(properties: &ParagraphProperties) -> BreakControl {
     }
 }
 
+/// A paragraph's [`BreakControl`], plus the interim keep-with-next heuristic for
+/// issue #359: a paragraph that carries a floating drawing anchored to the
+/// paragraph/line is kept with its following paragraph, so a page break cannot
+/// strand the anchored graphic at a page bottom while its continuation flows onto
+/// the next page.
+///
+/// Word's `keepNext` only *acts* when the group overflows the remaining space, so
+/// this never moves a group that already fits — it only prevents an incorrect
+/// split. The real cure for the underlying vertical drift is line-height
+/// fidelity against the document's fonts (see the PR); this keeps the common
+/// author-styled title/logo blocks together meanwhile.
+fn paragraph_break_control(
+    properties: &ParagraphProperties,
+    inlines: &[InlineNode],
+) -> BreakControl {
+    let mut break_control = break_control(properties);
+    if !break_control.keep_next && carries_flow_relative_float(inlines) {
+        break_control.keep_next = true;
+    }
+    break_control
+}
+
+/// Whether `inlines` carry a floating **overlay** drawing anchored to the
+/// paragraph or line — a `wp:wrapNone` graphic (it floats over/under the text
+/// without reflowing it) positioned `relativeFrom="paragraph"|"line"`, so its
+/// position follows the paragraph's flow. This is the author-styled
+/// heading/logo decoration pattern (issue #359).
+///
+/// Deliberately narrow: a **wrapping** float (`wrapSquare`/`wrapTight`/…) is a
+/// layout element that text flows around, not an overlay pinned to a single
+/// paragraph, so it is excluded — forcing keep-with-next on it would wrongly
+/// perturb flow-around pagination. A page/margin-anchored float (fixed page
+/// position, independent of where the paragraph lands) is excluded too.
+///
+/// Such a paragraph is given implicit keep-with-next (see the call site) so a
+/// page break cannot strand the overlaid graphic from the content it decorates.
+fn carries_flow_relative_float(inlines: &[InlineNode]) -> bool {
+    let flow_relative_overlay = |anchor: &DrawingAnchor| {
+        matches!(anchor.wrap, WrapMode::None)
+            && matches!(
+                anchor.vertical.relative_from,
+                VerticalAnchor::Paragraph | VerticalAnchor::Line
+            )
+    };
+    inlines.iter().any(|inline| match inline {
+        InlineNode::AnchoredDrawing(drawing) => flow_relative_overlay(&drawing.anchor),
+        InlineNode::Group(group) => group.anchor.as_ref().is_some_and(flow_relative_overlay),
+        _ => false,
+    })
+}
+
 /// Maps paragraph spacing/indent to the fragment's box metrics. `before`/`after`
 /// honor `w:beforeAutospacing`/`w:afterAutospacing`: when the auto flag is set,
 /// Word ignores the explicit twip value and uses a font-size-derived default
@@ -6605,6 +6885,182 @@ mod tests {
         assert_eq!(cells[1].x, Twip(3000));
         // Each cell shaped its paragraph.
         assert!(!cells[0].blocks.is_empty() && !cells[1].blocks.is_empty());
+    }
+
+    #[test]
+    fn wrap_carry_recognizes_a_left_margin_offset_float() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, DrawingAnchor, Extent, HorizontalAlign,
+            HorizontalAnchor, HorizontalPosition, VerticalAnchor, VerticalPosition, WrapDistances,
+            WrapMode,
+        };
+        // A left-margin logo positioned by a near-zero `posOffset` (NOT
+        // `align="left"`) must still be recognized as a left-side square wrap of
+        // its full width — the specific under-exclusion this fixes.
+        let anchor = |position| DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Margin,
+                position,
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::Square,
+            wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
+            behind_doc: false,
+        };
+        let extent = Extent {
+            width_emu: 2000 * 635,
+            height_emu: 800 * 635,
+        };
+        let content_width = Twip(9000);
+
+        let offset = wrap_carry(
+            &anchor(HorizontalPosition::Offset(-7)),
+            extent,
+            content_width,
+        )
+        .expect("a left-margin offset float is a left wrap");
+        assert_eq!(offset.side, InlineFloatSide::Left);
+        assert_eq!(offset.width, Twip(2000), "full object width is excluded");
+        assert_eq!(offset.height, Twip(800), "clearance is the object height");
+
+        // An explicit `align="left"` resolves to the same side.
+        let aligned = wrap_carry(
+            &anchor(HorizontalPosition::Align(HorizontalAlign::Left)),
+            extent,
+            content_width,
+        )
+        .expect("an align-left float is a left wrap");
+        assert_eq!(aligned.side, InlineFloatSide::Left);
+
+        // A float whose centre falls in the right half is a right wrap
+        // (offset is in EMU: 3_000_000 EMU ≈ 4724 twips, well past the mid-column).
+        let right = wrap_carry(
+            &anchor(HorizontalPosition::Offset(3_000_000)),
+            extent,
+            content_width,
+        )
+        .expect("a right-positioned offset float is a right wrap");
+        assert_eq!(right.side, InlineFloatSide::Right);
+    }
+
+    #[test]
+    fn a_wrap_square_float_pushes_the_next_cell_paragraph_to_its_right() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent,
+            HorizontalAnchor, HorizontalPosition, MediaId, Table, TableCell, TableCellProperties,
+            TableProperties, TableRow, TableRowProperties, VerticalAnchor, VerticalPosition,
+            WrapDistances, WrapMode,
+        };
+        use casual_doc_model::v1::{Definitions, GridColumn, MediaReference};
+
+        let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
+
+        // Reproduces the loan.docx partner-logo layout: a table cell whose first
+        // paragraph carries a left-margin `wrapSquare` logo (anchored by a
+        // near-zero `posOffset`), followed by the tagline paragraph. The tagline's
+        // line must start to the RIGHT of the logo — not under it.
+        let logo_width = Twip(2000);
+        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: NodeId::from_parts(70, 1).unwrap(),
+            media,
+            extent: Extent {
+                width_emu: i64::from(logo_width.raw()) * 635,
+                height_emu: 900 * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Offset(-7),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Paragraph,
+                    position: VerticalPosition::Offset(0),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        let build = |include_float: bool| {
+            // The logo paragraph holds only the anchored drawing (the empty run the
+            // authoring tool wrote is dropped at import); the control is an empty
+            // paragraph, so the difference isolates the float's effect.
+            let logo_inlines = if include_float {
+                vec![float.clone()]
+            } else {
+                Vec::new()
+            };
+            let cell = TableCell {
+                id: NodeId::from_parts(60, 1).unwrap(),
+                properties: TableCellProperties::default(),
+                blocks: vec![
+                    paragraph(61, logo_inlines),
+                    paragraph(63, vec![run_node(64, "tagline", RunProperties::default())]),
+                ],
+            };
+            let table = BlockNode::Table(Table {
+                id: NodeId::from_parts(50, 1).unwrap(),
+                grid: vec![GridColumn {
+                    width_twips: Some(6000),
+                }],
+                grid_change: None,
+                properties: TableProperties::default(),
+                rows: vec![TableRow {
+                    id: NodeId::from_parts(51, 1).unwrap(),
+                    properties: TableRowProperties::default(),
+                    cells: vec![cell],
+                }],
+            });
+            let mut definitions = Definitions::default();
+            definitions.media.insert(
+                media,
+                MediaReference {
+                    relationship_id: "rIdLogo".to_owned(),
+                    media_type: "image/png".to_owned(),
+                    part_name: "word/media/logo.png".to_owned(),
+                },
+            );
+            let shaper = ParleyShaper::new();
+            let galley = build_galley(
+                &document_with_definitions(vec![table], definitions),
+                &shaper,
+                Twip::from_points(400),
+            );
+            let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+                panic!("expected a table row");
+            };
+            let BlockFragment::Paragraph { lines, .. } = &cells[0].blocks[1] else {
+                panic!("expected the tagline paragraph fragment");
+            };
+            lines.lines[0].runs[0].origin.x
+        };
+
+        let without = build(false);
+        let with = build(true);
+        assert!(
+            without.raw() < 200,
+            "with no float the tagline starts at the cell's left edge (got {})",
+            without.raw()
+        );
+        assert!(
+            with.raw() >= logo_width.raw() - 50,
+            "the wrapSquare float pushes the following tagline to its right \
+             (expected >= ~{}, got {})",
+            logo_width.raw(),
+            with.raw()
+        );
     }
 
     #[test]
@@ -8165,6 +8621,90 @@ mod tests {
             runs,
             vec!["\u{2611}".to_string()],
             "a checkbox with no declared state glyph keeps its transparent recurse"
+        );
+    }
+
+    #[test]
+    fn a_legacy_checkbox_form_field_paints_a_state_distinct_box_glyph() {
+        use casual_doc_model::v1::{Field, FormCheckBox, FormFieldData, FormFieldKind, RgbColor};
+
+        // A legacy `w:ffData/w:checkBox` form field (38 of these on the loan form)
+        // must paint a box glyph — `☑` when checked, `☐` when unchecked — where the
+        // field sits, styled by its cached-result run. Before this it flowed only
+        // its empty text result, so the boxes vanished.
+        fn checkbox_field(checked: Option<bool>, default: Option<bool>) -> InlineNode {
+            InlineNode::Field(Field {
+                id: NodeId::from_parts(20, 1).unwrap(),
+                instruction: " FORMCHECKBOX ".to_owned(),
+                kind: casual_doc_model::v1::FieldKind::default(),
+                // The cached-result run carries the authored size/color the box
+                // should inherit.
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(20, 2).unwrap(),
+                    properties: RunProperties {
+                        size_half_points: Some(24),
+                        color: Some(Color::Rgb(RgbColor {
+                            r: 10,
+                            g: 20,
+                            b: 30,
+                        })),
+                        ..RunProperties::default()
+                    },
+                    text: String::new(),
+                })],
+                form: Some(FormFieldData {
+                    name: None,
+                    enabled: None,
+                    calc_on_exit: None,
+                    help_text: None,
+                    status_text: None,
+                    entry_macro: None,
+                    exit_macro: None,
+                    kind: FormFieldKind::CheckBox(FormCheckBox {
+                        size: None,
+                        default,
+                        checked,
+                    }),
+                }),
+            })
+        }
+
+        let definitions = Definitions::default();
+        // Returns the single emitted glyph run's (text, size, color), all owned.
+        let glyph = |inline: InlineNode| -> (String, Twip, [u8; 4]) {
+            let items = collected_items(&definitions, std::slice::from_ref(&inline));
+            let mut runs = items.into_iter().filter_map(|item| match item {
+                FlowItem::Run(run) => Some((run.text.to_string(), run.size, run.color)),
+                _ => None,
+            });
+            let run = runs.next().expect("a checkbox emits one glyph run");
+            assert!(runs.next().is_none(), "exactly one glyph run");
+            run
+        };
+
+        // Unchecked (no state declared) → the empty ballot box, sized/colored from
+        // the field's cached run.
+        let (text, size, color) = glyph(checkbox_field(None, None));
+        assert_eq!(text, "\u{25A1}", "unchecked → □");
+        assert_eq!(size, Twip::from_points(12), "inherits the field size");
+        assert_eq!(color, [10, 20, 30, 255], "inherits the field color");
+        // `w:checked` on → the checked box.
+        assert_eq!(
+            glyph(checkbox_field(Some(true), None)).0,
+            "\u{2611}",
+            "checked → ☑"
+        );
+        // No `w:checked` but `w:default` on → checked box (default drives state).
+        assert_eq!(
+            glyph(checkbox_field(None, Some(true))).0,
+            "\u{2611}",
+            "default checked → ☑"
+        );
+        // `w:checked` overrides `w:default`.
+        assert_eq!(
+            glyph(checkbox_field(Some(false), Some(true))).0,
+            "\u{25A1}",
+            "explicit unchecked wins over a checked default → □"
         );
     }
 
