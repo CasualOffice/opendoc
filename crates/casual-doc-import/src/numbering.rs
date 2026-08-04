@@ -590,7 +590,16 @@ fn multi_level_type_from(value: &str) -> Option<MultiLevelType> {
 }
 
 pub(crate) fn number_format(element: &BytesStart<'_>) -> Option<NumberFormat> {
-    let value = attribute_value(element, b"val").filter(|value| !value.is_empty())?;
+    number_format_from_str(attribute_value(element, b"val")?)
+}
+
+/// Maps an `ST_NumberFormat` token to a [`NumberFormat`]. Used for `w:numFmt/@w:val`
+/// (via [`number_format`]) and `w:pgNumType/@w:fmt`, which share the vocabulary. An
+/// empty token, or an unknown one over the 64-byte retention bound, yields `None`.
+pub(crate) fn number_format_from_str(value: String) -> Option<NumberFormat> {
+    if value.is_empty() {
+        return None;
+    }
     Some(match value.as_str() {
         "decimal" => NumberFormat::Decimal,
         "bullet" => NumberFormat::Bullet,

@@ -488,6 +488,7 @@ mod tests {
             endnote_props: NoteProperties::default(),
             text_direction: None,
             bidi: false,
+            section_change: None,
         }
     }
 

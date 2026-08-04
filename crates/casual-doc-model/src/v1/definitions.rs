@@ -8,6 +8,9 @@ use super::{
     ParagraphProperties, RunProperties, SectionId, StyleId, StyleKind, TableCellProperties,
     TableProperties, TableRowProperties, TextDirection,
 };
+// Separate `use` line (kept out of the sorted block above) to avoid import-list
+// merge collisions with other agents editing this shared model file.
+use super::PropChange;
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -431,10 +434,10 @@ pub enum PageVerticalAlignment {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageNumbering {
-    /// Number format token (`w:fmt`, e.g. `decimal`/`lowerRoman`); the
-    /// `ST_NumberFormat` vocabulary is kept opaque, bounded to 32 bytes.
+    /// Number format (`w:fmt`, `ST_NumberFormat`); the common vocabulary is typed
+    /// and any other token is retained verbatim via [`NumberFormat::Other`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
+    pub format: Option<NumberFormat>,
     /// Starting page number (`w:start`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<i32>,
@@ -758,6 +761,12 @@ pub struct SectionBoundary {
     /// Right-to-left section layout (`w:bidi`). Additive: omitted when false.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub bidi: bool,
+    /// Section-properties format-change revision (`w:sectPrChange`): the change
+    /// metadata (author/date/id) plus a full prior `w:sectPr` snapshot, reusing the
+    /// same [`PropChange`] shape as `w:pPrChange`/`w:tblPrChange`. The prior snapshot
+    /// never itself carries a further change. Additive: omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_change: Option<PropChange<SectionBoundary>>,
 }
 
 /// A header or footer definition (its id is the map key). Its content reuses the

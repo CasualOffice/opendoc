@@ -1231,6 +1231,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
         endnote_props: Default::default(),
         text_direction: None,
         bidi: false,
+        section_change: None,
     };
     let section_id = section.id;
     definitions.sections = vec![section];
