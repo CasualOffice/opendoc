@@ -33,6 +33,8 @@ use casual_doc_model::v1::{
     TextBoxVerticalOverflow, ThemeColorRef, VerticalAlignment, VerticalAnchor, VerticalMerge,
     VerticalPosition, WrapMode,
 };
+// Separate `use` line to minimize import-block merge conflicts.
+use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
 
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
@@ -3826,17 +3828,300 @@ fn layout_math_expression(
             let operand = layout_math_expression(shaper, operand, base, scale_permille)?;
             math_row(vec![operator, operand])
         }
-        // Accents, limits, matrices, and equation arrays need dedicated 2-D
-        // geometry that this projection does not yet lay out. Returning `None`
-        // falls back to the bounded plain-text placeholder, exactly as an
-        // unprojected (opaque) equation does — no regression, no invented layout.
-        MathExpression::Accent { .. }
-        | MathExpression::Limit { .. }
-        | MathExpression::Matrix { .. }
-        | MathExpression::EqArray { .. }
-        | MathExpression::Bar { .. }
-        | MathExpression::GroupChar { .. } => None,
+        MathExpression::Accent {
+            accent,
+            base: accented,
+        } => {
+            // The accent glyph sits centered above the base. The mark is
+            // decoration: if the shaped face lacks it, render the base alone
+            // rather than dropping the whole equation to the placeholder.
+            let base_box = layout_math_expression(shaper, accented, base, scale_permille)?;
+            let glyph = if accent.is_empty() {
+                "\u{0302}"
+            } else {
+                accent.as_str()
+            };
+            let mark_scale = scaled_permille(scale_permille, 800);
+            match shape_math_text(shaper, glyph, base, mark_scale) {
+                Some(mark) => {
+                    let gap = accent_gap(base, scale_permille);
+                    Some(over_under_box(base_box, mark, gap, true))
+                }
+                None => Some(base_box),
+            }
+        }
+        MathExpression::Limit {
+            base: limit_base,
+            limit,
+            position,
+        } => {
+            // A lower/upper limit is a scaled expression stacked under/over the
+            // base (`lim` with `x -> ∞` below, or an upper limit above).
+            let base_box = layout_math_expression(shaper, limit_base, base, scale_permille)?;
+            let limit_scale = scaled_permille(scale_permille, 700);
+            let limit_box = layout_math_expression(shaper, limit, base, limit_scale)?;
+            let gap = accent_gap(base, scale_permille);
+            let above = matches!(position, LimitPosition::Upper);
+            Some(over_under_box(base_box, limit_box, gap, above))
+        }
+        MathExpression::Bar {
+            position,
+            base: barred,
+        } => {
+            // An over- or under-bar rule spanning the base.
+            let base_box = layout_math_expression(shaper, barred, base, scale_permille)?;
+            let em = scaled_em(base, scale_permille);
+            let top = matches!(position, BarPosition::Top);
+            Some(bar_box(base_box, top, base.color, em))
+        }
+        MathExpression::GroupChar {
+            character,
+            position,
+            base: grouped,
+        } => {
+            // A grouping character (brace/arrow) centered over or under the base.
+            let base_box = layout_math_expression(shaper, grouped, base, scale_permille)?;
+            let above = matches!(position, GroupPosition::Top);
+            let glyph = if !character.is_empty() {
+                character.as_str()
+            } else if above {
+                "\u{23DE}" // top curly bracket
+            } else {
+                "\u{23DF}" // bottom curly bracket
+            };
+            let mark_scale = scaled_permille(scale_permille, 800);
+            match shape_math_text(shaper, glyph, base, mark_scale) {
+                Some(mark) => {
+                    let gap = accent_gap(base, scale_permille);
+                    Some(over_under_box(base_box, mark, gap, above))
+                }
+                None => Some(base_box),
+            }
+        }
+        MathExpression::Matrix { rows } => {
+            // A grid of cell expressions, columns centered, rows baseline-aligned.
+            let mut grid = Vec::with_capacity(rows.len());
+            for row in rows {
+                let mut cells = Vec::with_capacity(row.cells.len());
+                for cell in &row.cells {
+                    cells.push(layout_math_expression(shaper, cell, base, scale_permille)?);
+                }
+                grid.push(cells);
+            }
+            matrix_box(grid, scaled_em(base, scale_permille))
+        }
+        MathExpression::EqArray { rows } => {
+            // Vertically stacked rows, centered, on the math axis.
+            let mut row_boxes = Vec::with_capacity(rows.len());
+            for row in rows {
+                row_boxes.push(layout_math_expression(shaper, row, base, scale_permille)?);
+            }
+            eqarray_box(row_boxes, scaled_em(base, scale_permille))
+        }
     }
+}
+
+/// The em size (twips) at the current nesting scale, bounded for safe arithmetic.
+fn scaled_em(base: &StyledRun<'_>, scale_permille: u16) -> Twip {
+    Twip(
+        (i64::from(base.size.raw()) * i64::from(scale_permille) / 1_000)
+            .clamp(1, i64::from(MAX_MATH_LAYOUT_TWIPS)) as i32,
+    )
+}
+
+/// The vertical gap between a base and an accent/limit/group mark stacked on it.
+fn accent_gap(base: &StyledRun<'_>, scale_permille: u16) -> Twip {
+    Twip((scaled_em(base, scale_permille).raw() / 12).max(6))
+}
+
+/// Stacks `accessory` centered horizontally over (`above`) or under the `base`,
+/// keeping the base's own baseline. Used for accents, limits, and group chars.
+fn over_under_box(mut base: MathBox, mut accessory: MathBox, gap: Twip, above: bool) -> MathBox {
+    let width = base.size.width.max(accessory.size.width);
+    let base_x = Twip((width.raw() - base.size.width.raw()) / 2);
+    let accessory_x = Twip((width.raw() - accessory.size.width.raw()) / 2);
+    let (ascent, height) = if above {
+        let base_y = safe_add(accessory.size.height, gap);
+        translate_math_box(&mut accessory, accessory_x, Twip::ZERO);
+        translate_math_box(&mut base, base_x, base_y);
+        (
+            safe_add(base_y, base.ascent),
+            safe_add(base_y, base.size.height),
+        )
+    } else {
+        let accessory_y = safe_add(base.size.height, gap);
+        translate_math_box(&mut base, base_x, Twip::ZERO);
+        translate_math_box(&mut accessory, accessory_x, accessory_y);
+        (base.ascent, safe_add(accessory_y, accessory.size.height))
+    };
+    let mut runs = base.runs;
+    runs.append(&mut accessory.runs);
+    let mut rules = base.rules;
+    rules.append(&mut accessory.rules);
+    MathBox {
+        size: Size::new(width, height),
+        ascent,
+        descent: height - ascent,
+        runs,
+        rules,
+    }
+}
+
+/// Adds an over- (`top`) or under-bar rule spanning the base's width.
+fn bar_box(mut base: MathBox, top: bool, color: [u8; 4], em: Twip) -> MathBox {
+    let thickness = Twip((em.raw() / 24).max(8));
+    let gap = Twip((em.raw() / 16).max(8));
+    let width = base.size.width;
+    if top {
+        let base_y = safe_add(thickness, gap);
+        translate_math_box(&mut base, Twip::ZERO, base_y);
+        let mut rules = base.rules;
+        rules.insert(
+            0,
+            InlineRule {
+                origin: Point::new(Twip::ZERO, Twip::ZERO),
+                size: Size::new(width, thickness),
+                color,
+            },
+        );
+        let ascent = safe_add(base_y, base.ascent);
+        let height = safe_add(base_y, base.size.height);
+        MathBox {
+            size: Size::new(width, height),
+            ascent,
+            descent: height - ascent,
+            runs: base.runs,
+            rules,
+        }
+    } else {
+        let rule_y = safe_add(base.size.height, gap);
+        let mut rules = base.rules;
+        rules.push(InlineRule {
+            origin: Point::new(Twip::ZERO, rule_y),
+            size: Size::new(width, thickness),
+            color,
+        });
+        let ascent = base.ascent;
+        let height = safe_add(rule_y, thickness);
+        MathBox {
+            size: Size::new(width, height),
+            ascent,
+            descent: height - ascent,
+            runs: base.runs,
+            rules,
+        }
+    }
+}
+
+/// Lays out a matrix: per-column max width, per-row baseline alignment, with
+/// column/row gaps, centered on the math axis. `None` for an empty grid.
+fn matrix_box(rows: Vec<Vec<MathBox>>, em: Twip) -> Option<MathBox> {
+    let n_cols = rows.iter().map(|row| row.len()).max().unwrap_or(0);
+    if rows.is_empty() || n_cols == 0 {
+        return None;
+    }
+    let col_gap = Twip((em.raw() / 4).max(20));
+    let row_gap = Twip((em.raw() / 6).max(12));
+    let mut col_widths = vec![Twip::ZERO; n_cols];
+    let mut row_ascent = Vec::with_capacity(rows.len());
+    let mut row_descent = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut ascent = Twip::ZERO;
+        let mut descent = Twip::ZERO;
+        for (c, cell) in row.iter().enumerate() {
+            col_widths[c] = col_widths[c].max(cell.size.width);
+            ascent = ascent.max(cell.ascent);
+            descent = descent.max(cell.descent);
+        }
+        row_ascent.push(ascent);
+        row_descent.push(descent);
+    }
+    let n_rows = rows.len();
+    let mut runs = Vec::new();
+    let mut rules = Vec::new();
+    let mut y = Twip::ZERO;
+    for (r, row) in rows.into_iter().enumerate() {
+        let baseline = safe_add(y, row_ascent[r]);
+        let mut x = Twip::ZERO;
+        for (c, mut cell) in row.into_iter().enumerate() {
+            let cell_x = safe_add(x, Twip((col_widths[c].raw() - cell.size.width.raw()) / 2));
+            let cell_y = safe_add(baseline, Twip(-cell.ascent.raw()));
+            translate_math_box(&mut cell, cell_x, cell_y);
+            runs.append(&mut cell.runs);
+            rules.append(&mut cell.rules);
+            x = safe_add(x, safe_add(col_widths[c], col_gap));
+        }
+        y = safe_add(baseline, row_descent[r]);
+        if r + 1 < n_rows {
+            y = safe_add(y, row_gap);
+        }
+    }
+    let total_height = y;
+    let mut total_width = Twip::ZERO;
+    for (c, width) in col_widths.iter().enumerate() {
+        total_width = safe_add(total_width, *width);
+        if c + 1 < n_cols {
+            total_width = safe_add(total_width, col_gap);
+        }
+    }
+    let (ascent, descent) = axis_centered(total_height, em);
+    Some(MathBox {
+        size: Size::new(total_width, total_height),
+        ascent,
+        descent,
+        runs,
+        rules,
+    })
+}
+
+/// Lays out an equation array: rows centered horizontally and stacked with row
+/// gaps, centered on the math axis. `None` for no rows.
+fn eqarray_box(rows: Vec<MathBox>, em: Twip) -> Option<MathBox> {
+    if rows.is_empty() {
+        return None;
+    }
+    let row_gap = Twip((em.raw() / 6).max(12));
+    let width = rows
+        .iter()
+        .map(|row| row.size.width)
+        .max()
+        .unwrap_or(Twip::ZERO);
+    let n_rows = rows.len();
+    let mut runs = Vec::new();
+    let mut rules = Vec::new();
+    let mut y = Twip::ZERO;
+    for (r, mut row) in rows.into_iter().enumerate() {
+        let row_x = Twip((width.raw() - row.size.width.raw()) / 2);
+        translate_math_box(&mut row, row_x, y);
+        y = safe_add(y, row.size.height);
+        runs.append(&mut row.runs);
+        rules.append(&mut row.rules);
+        if r + 1 < n_rows {
+            y = safe_add(y, row_gap);
+        }
+    }
+    let total_height = y;
+    let (ascent, descent) = axis_centered(total_height, em);
+    Some(MathBox {
+        size: Size::new(width, total_height),
+        ascent,
+        descent,
+        runs,
+        rules,
+    })
+}
+
+/// Splits `height` into an ascent/descent that centers a stacked construct on
+/// the math axis (roughly a quarter-em above the baseline), keeping
+/// `ascent + descent == height`.
+fn axis_centered(height: Twip, em: Twip) -> (Twip, Twip) {
+    let axis = Twip((em.raw() / 4).max(0));
+    let ascent = Twip(
+        safe_add(Twip(height.raw() / 2), axis)
+            .raw()
+            .min(height.raw()),
+    );
+    (ascent, height - ascent)
 }
 
 fn shape_math_text(
@@ -7299,6 +7584,146 @@ mod tests {
         assert_eq!(lines.lines.len(), 1);
         assert_eq!(lines.lines[0].rules.len(), 1);
         assert!(!lines.lines[0].runs.is_empty());
+    }
+
+    /// A `Math` inline wrapping a typed `expression` (opaque OMML placeholder).
+    fn math_inline(id: u64, text: &str, expression: MathExpression) -> InlineNode {
+        InlineNode::Math(Math {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            omml: "<m:oMath/>".to_owned(),
+            text: text.to_owned(),
+            expression: Some(expression),
+        })
+    }
+
+    /// The single math box a typed expression builds, or a panic if it degraded
+    /// to the plain-text placeholder (a `FlowItem::Run`).
+    fn math_box_of(expression: MathExpression) -> (Size, Vec<GlyphRun>, Vec<InlineRule>) {
+        let definitions = Definitions::default();
+        let inlines = [math_inline(90, "m", expression)];
+        let items = collected_items(&definitions, &inlines);
+        let [FlowItem::Math { size, runs, rules }] = items.as_slice() else {
+            panic!("typed expression must paint a math box, not the placeholder");
+        };
+        (*size, runs.clone(), rules.clone())
+    }
+
+    fn text(value: &str) -> MathExpression {
+        MathExpression::Text {
+            value: value.to_owned(),
+        }
+    }
+
+    #[test]
+    fn typed_accent_stacks_a_centered_mark_over_the_base() {
+        let (size, runs, _) = math_box_of(MathExpression::Accent {
+            accent: "^".to_owned(),
+            base: Box::new(text("x")),
+        });
+        assert!(size.width > Twip::ZERO && size.height > Twip::ZERO);
+        assert_eq!(runs.len(), 2, "the base and the accent mark both render");
+        let ys: std::collections::BTreeSet<i32> =
+            runs.iter().map(|run| run.origin.y.raw()).collect();
+        assert_eq!(
+            ys.len(),
+            2,
+            "the mark sits on a different row than the base"
+        );
+    }
+
+    #[test]
+    fn typed_bar_adds_an_over_or_under_rule() {
+        let (_, _, top_rules) = math_box_of(MathExpression::Bar {
+            position: BarPosition::Top,
+            base: Box::new(text("x")),
+        });
+        assert_eq!(top_rules.len(), 1, "an overbar contributes one rule");
+        assert_eq!(top_rules[0].origin.y, Twip::ZERO, "the overbar sits on top");
+
+        let (size, _, bot_rules) = math_box_of(MathExpression::Bar {
+            position: BarPosition::Bottom,
+            base: Box::new(text("x")),
+        });
+        assert_eq!(bot_rules.len(), 1, "an underbar contributes one rule");
+        assert!(
+            bot_rules[0].origin.y.raw() > 0,
+            "the underbar sits below the base"
+        );
+        assert!(bot_rules[0].size.width <= size.width && bot_rules[0].size.width > Twip::ZERO);
+    }
+
+    #[test]
+    fn typed_limit_stacks_a_reduced_limit_under_or_over() {
+        let (_, lower_runs, _) = math_box_of(MathExpression::Limit {
+            base: Box::new(text("lim")),
+            limit: Box::new(text("n")),
+            position: LimitPosition::Lower,
+        });
+        assert!(lower_runs.len() >= 2, "the base and its limit both render");
+        assert!(
+            lower_runs
+                .iter()
+                .any(|run| run.size < Twip::from_points(11)),
+            "the limit uses reduced deterministic sizing"
+        );
+        // The limit sits below the base baseline (larger y).
+        let base_y = lower_runs
+            .iter()
+            .map(|run| run.origin.y.raw())
+            .min()
+            .unwrap();
+        assert!(
+            lower_runs.iter().any(|run| run.origin.y.raw() > base_y),
+            "a lower limit sits under the base"
+        );
+    }
+
+    #[test]
+    fn typed_group_char_stacks_a_grouping_glyph() {
+        let (size, runs, _) = math_box_of(MathExpression::GroupChar {
+            character: String::new(), // default overbrace
+            position: GroupPosition::Top,
+            base: Box::new(text("x")),
+        });
+        assert!(size.width > Twip::ZERO && size.height > Twip::ZERO);
+        assert!(!runs.is_empty(), "the base renders under the grouping char");
+    }
+
+    #[test]
+    fn typed_matrix_lays_out_a_grid() {
+        use casual_doc_model::v1::MathMatrixRow;
+        let (size, runs, _) = math_box_of(MathExpression::Matrix {
+            rows: vec![
+                MathMatrixRow {
+                    cells: vec![text("a"), text("b")],
+                },
+                MathMatrixRow {
+                    cells: vec![text("c"), text("d")],
+                },
+            ],
+        });
+        assert!(size.width > Twip::ZERO && size.height > Twip::ZERO);
+        assert_eq!(runs.len(), 4, "all four cells render");
+        let xs: std::collections::BTreeSet<i32> =
+            runs.iter().map(|run| run.origin.x.raw()).collect();
+        let ys: std::collections::BTreeSet<i32> =
+            runs.iter().map(|run| run.origin.y.raw()).collect();
+        assert!(xs.len() >= 2, "two columns occupy distinct x positions");
+        assert!(ys.len() >= 2, "two rows occupy distinct y positions");
+    }
+
+    #[test]
+    fn typed_eq_array_stacks_rows() {
+        let (size, runs, _) = math_box_of(MathExpression::EqArray {
+            rows: vec![text("a"), text("b")],
+        });
+        assert!(size.width > Twip::ZERO && size.height > Twip::ZERO);
+        assert_eq!(runs.len(), 2, "both rows render");
+        assert_ne!(
+            runs[0].origin.y.raw(),
+            runs[1].origin.y.raw(),
+            "the rows stack on distinct y positions"
+        );
     }
 
     #[test]
