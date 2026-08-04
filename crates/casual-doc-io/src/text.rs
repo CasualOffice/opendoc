@@ -569,6 +569,9 @@ fn append_inlines(
                 losses.record("plain_text.positional_tab", ModelOutcome::Degraded);
                 output.push('\t')?;
             }
+            InlineNode::NoteNumberMark(_) => {
+                losses.record("plain_text.note_number_mark", ModelOutcome::Omitted);
+            }
         }
     }
     Ok(())

@@ -1048,6 +1048,9 @@ impl Writer {
                 InlineNode::HorizontalRule(_) => self
                     .reporter
                     .record("odt.export.horizontal_rule", ModelOutcome::Omitted),
+                InlineNode::NoteNumberMark(_) => self
+                    .reporter
+                    .record("odt.export.note_number_mark", ModelOutcome::Omitted),
             }
         }
         Ok(())
@@ -2232,9 +2235,12 @@ mod tests {
                     paragraph_properties: None,
                     run_properties: None,
                     style_ref: None,
+                    pstyle: None,
                     lvl_restart: None,
                 }],
                 multi_level_type: None,
+                num_style_link: None,
+                style_link: None,
             },
         );
         document.definitions_mut().numbering.insert(
