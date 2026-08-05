@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
-    BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color, Comment,
-    CommentId, CommentReference, Definitions, Document, DocumentDefaults, Drawing, Extent,
-    ExternalTarget, Field, FieldKind, FontName, FontRef, GridColumn, HeightRule, Hyperlink,
+    BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellMargins, CellVerticalAlignment,
+    Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Drawing,
+    Extent, ExternalTarget, Field, FieldKind, FontName, FontRef, GridColumn, HeightRule, Hyperlink,
     HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix,
     MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind,
     NoteReference, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
@@ -471,6 +471,7 @@ struct TableCellDraft {
     shading_fill: Option<RgbColor>,
     vertical_alignment: Option<CellVerticalAlignment>,
     borders: TableBorders,
+    margins: CellMargins,
     blocks: Vec<BlockDraft>,
 }
 
@@ -539,6 +540,7 @@ struct OpenTableCell {
     shading_fill: Option<RgbColor>,
     vertical_alignment: Option<CellVerticalAlignment>,
     borders: TableBorders,
+    margins: CellMargins,
     blocks: Vec<BlockDraft>,
 }
 
@@ -618,6 +620,8 @@ struct OdfStyle {
     cell_vertical_alignment: Option<CellVerticalAlignment>,
     /// `fo:border[-edge]` edges for a `table-cell` style.
     cell_borders: TableBorders,
+    /// `fo:padding[-edge]` cell content margins for a `table-cell` style, twips.
+    cell_margins: CellMargins,
     /// `style:row-height`/`style:min-row-height` for a `table-row` style.
     row_height: RowHeight,
     /// `table:align` for a `table` style.
@@ -1089,6 +1093,20 @@ fn resolve_style(
             }
             if style.cell_borders != TableBorders::default() {
                 inherited.cell_borders = style.cell_borders.clone();
+            }
+            // Cascade each padding edge independently so a child's one-sided
+            // `fo:padding-left` does not drop a parent's other edges.
+            if style.cell_margins.top_twips.is_some() {
+                inherited.cell_margins.top_twips = style.cell_margins.top_twips;
+            }
+            if style.cell_margins.start_twips.is_some() {
+                inherited.cell_margins.start_twips = style.cell_margins.start_twips;
+            }
+            if style.cell_margins.bottom_twips.is_some() {
+                inherited.cell_margins.bottom_twips = style.cell_margins.bottom_twips;
+            }
+            if style.cell_margins.end_twips.is_some() {
+                inherited.cell_margins.end_twips = style.cell_margins.end_twips;
             }
             if style.row_height != RowHeight::default() {
                 inherited.row_height = style.row_height;
@@ -2002,8 +2020,9 @@ fn read_table_row_style_properties(
 }
 
 /// Reads a `style:table-cell-properties` element, capturing `fo:background-color`
-/// (shading fill) and `style:vertical-align`. Borders, padding, wrap, and other
-/// cell properties are reported and dropped.
+/// (shading fill), `style:vertical-align`, `fo:border[-edge]`, and
+/// `fo:padding[-edge]` (content margins). Wrap and other cell properties are
+/// reported and dropped.
 fn read_table_cell_style_properties(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -2084,6 +2103,29 @@ fn read_table_cell_style_properties(
             }
             (NamespaceKind::Fo, b"border-left") => set_cell_border(style, |b| &mut b.start, &value),
             (NamespaceKind::Fo, b"border-right") => set_cell_border(style, |b| &mut b.end, &value),
+            (NamespaceKind::Fo, b"padding") => match parse_cell_padding(&value) {
+                Some(twips) => {
+                    let margins = &mut style.style.cell_margins;
+                    margins.top_twips = Some(twips);
+                    margins.start_twips = Some(twips);
+                    margins.bottom_twips = Some(twips);
+                    margins.end_twips = Some(twips);
+                    true
+                }
+                None => false,
+            },
+            (NamespaceKind::Fo, b"padding-top") => {
+                set_cell_padding(style, |m| &mut m.top_twips, &value)
+            }
+            (NamespaceKind::Fo, b"padding-bottom") => {
+                set_cell_padding(style, |m| &mut m.bottom_twips, &value)
+            }
+            (NamespaceKind::Fo, b"padding-left") => {
+                set_cell_padding(style, |m| &mut m.start_twips, &value)
+            }
+            (NamespaceKind::Fo, b"padding-right") => {
+                set_cell_padding(style, |m| &mut m.end_twips, &value)
+            }
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -2105,6 +2147,30 @@ fn set_cell_border(
     match parse_fo_border(value) {
         Some(border) => {
             *edge(&mut style.style.cell_borders) = Some(border);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Parses an `fo:padding[-edge]` length to twips within the model's cell-margin
+/// domain (`0..=31_680`). Returns `None` (reported, dropped) for an unparseable
+/// or out-of-domain value, so it never reaches validation and aborts the import.
+fn parse_cell_padding(value: &str) -> Option<i32> {
+    let twips = parse_length_to_twips(value)?;
+    (0..=31_680).contains(&twips).then_some(twips)
+}
+
+/// Sets one edge of a table-cell style's content margins from an `fo:padding-*`
+/// value.
+fn set_cell_padding(
+    style: &mut OpenStyle,
+    edge: impl FnOnce(&mut CellMargins) -> &mut Option<i32>,
+    value: &str,
+) -> bool {
+    match parse_cell_padding(value) {
+        Some(twips) => {
+            *edge(&mut style.style.cell_margins) = Some(twips);
             true
         }
         None => false,
@@ -4466,6 +4532,7 @@ fn start_table_cell(
     let mut shading_fill = None;
     let mut vertical_alignment = None;
     let mut borders = TableBorders::default();
+    let mut margins = CellMargins::default();
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -4478,6 +4545,7 @@ fn start_table_cell(
                         shading_fill = style.cell_shading_fill;
                         vertical_alignment = style.cell_vertical_alignment;
                         borders = style.cell_borders.clone();
+                        margins = style.cell_margins;
                     }
                     None => {
                         reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
@@ -4522,6 +4590,7 @@ fn start_table_cell(
         shading_fill,
         vertical_alignment,
         borders,
+        margins,
         blocks: Vec::new(),
     });
     Ok(())
@@ -4634,6 +4703,7 @@ fn finish_table_cell(
         shading_fill: cell.shading_fill,
         vertical_alignment: cell.vertical_alignment,
         borders: cell.borders,
+        margins: cell.margins,
         blocks: cell.blocks,
     };
     row.slots.extend(std::iter::repeat_n(
@@ -6524,6 +6594,7 @@ fn build_table(
                             },
                             vertical_alignment: cell.vertical_alignment,
                             borders: cell.borders.clone(),
+                            margins: cell.margins,
                             ..TableCellProperties::default()
                         },
                         blocks,

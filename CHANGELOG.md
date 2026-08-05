@@ -89,13 +89,17 @@ a general ODT support claim.
   multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
   (`office:name`, reply structure) is dropped. Active content inside an
   annotation is dropped like anywhere else.
+- **Table cell margins (fidelity parity, T2c-6)**: a cell's content padding
+  (`fo:padding` shorthand and per-edge `fo:padding-top`/`-bottom`/`-left`/`-right`)
+  now round-trips via the `table-cell` style family to the model's `CellMargins`
+  (twips↔pt codec, domain-clamped `0..=31680`); four equal edges collapse to the
+  `fo:padding` shorthand. **This completes the whole table family both
+  directions** — structure, merges, column widths, cell shading/valign/borders/
+  margins, row height, and table width/alignment all round-trip.
 - **Table-level width & alignment (fidelity parity, T2c-5)**: a table's alignment
   (`table:align`) and width (`style:width` absolute / `style:rel-width` relative)
   now round-trip via a new `table` style family, completing table-level geometry.
-  Auto/nil widths and other table properties (borders, shading, margins) are
-  reported. Together with the earlier slices, tables (structure, merges, column
-  widths, cell shading/valign/borders, row height, table width/align) now
-  round-trip both directions.
+  Auto/nil widths and other table properties are reported.
 - **Table row height (fidelity parity, T2c-4)**: a row's height now round-trips
   via a new `table-row` style family — exact height ↔ `style:row-height`, minimum
   ↔ `style:min-row-height` (twips↔pt codec, domain-clamped `0..=31680`). Rows with

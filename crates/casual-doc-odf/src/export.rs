@@ -4,13 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Comment, CommentId,
-    CommentReference, Definitions, Document, DocumentDefaults, Extent, FieldKind, FontRef,
-    GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation, InlineNode,
-    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RowHeight, RunProperties,
-    Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth,
-    VerticalAlignment, VerticalMerge, WidthType,
+    Alignment, BlockNode, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment, Color,
+    Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
+    FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation,
+    InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
+    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RowHeight,
+    RunProperties, Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
+    TableWidth, VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -353,6 +353,7 @@ struct OdtCellStyle {
     fill: Option<(u8, u8, u8)>,
     vertical_align: Option<OdtCellVAlign>,
     borders: OdtCellBorders,
+    margins: OdtCellMargins,
 }
 
 /// The four physical cell-border edges (ODF has no cell inside-H/V borders).
@@ -362,6 +363,26 @@ struct OdtCellBorders {
     left: Option<OdtBorderEdge>,
     bottom: Option<OdtBorderEdge>,
     right: Option<OdtBorderEdge>,
+}
+
+/// The four physical cell content-padding edges (`fo:padding-*`), in twips.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtCellMargins {
+    top: Option<i32>,
+    left: Option<i32>,
+    bottom: Option<i32>,
+    right: Option<i32>,
+}
+
+impl OdtCellMargins {
+    fn from_model(margins: &CellMargins) -> Self {
+        Self {
+            top: margins.top_twips,
+            left: margins.start_twips,
+            bottom: margins.bottom_twips,
+            right: margins.end_twips,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -484,6 +505,12 @@ impl OdtCellStyle {
                 font_family_hash(&format!("{:?}", self.borders))
             ));
         }
+        if self.margins != OdtCellMargins::default() {
+            name.push_str(&format!(
+                "_p{:016x}",
+                font_family_hash(&format!("{:?}", self.margins))
+            ));
+        }
         name
     }
 }
@@ -530,6 +557,42 @@ fn push_cell_properties(
             }
         }
     }
+    let margins = &style.margins;
+    // Collapse four identical padding edges to the `fo:padding` shorthand;
+    // otherwise emit each present edge. Both re-import to the same model.
+    if let (Some(top), Some(left), Some(bottom), Some(right)) =
+        (margins.top, margins.left, margins.bottom, margins.right)
+        && top == left
+        && left == bottom
+        && bottom == right
+    {
+        push_padding_attribute(xml, "fo:padding", top, max_content_bytes)?;
+    } else {
+        for (attr, edge) in [
+            ("fo:padding-top", margins.top),
+            ("fo:padding-left", margins.left),
+            ("fo:padding-bottom", margins.bottom),
+            ("fo:padding-right", margins.right),
+        ] {
+            if let Some(twips) = edge {
+                push_padding_attribute(xml, attr, twips, max_content_bytes)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_padding_attribute(
+    xml: &mut String,
+    attr: &str,
+    twips: i32,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    push_bounded(xml, " ", max_content_bytes)?;
+    push_bounded(xml, attr, max_content_bytes)?;
+    push_bounded(xml, "=\"", max_content_bytes)?;
+    push_bounded(xml, &twips_to_pt(twips), max_content_bytes)?;
+    push_bounded(xml, "\"", max_content_bytes)?;
     Ok(())
 }
 
@@ -1414,6 +1477,9 @@ impl Writer {
             cell_style.borders.left = take_representable_border(&mut remainder.borders.start);
             cell_style.borders.bottom = take_representable_border(&mut remainder.borders.bottom);
             cell_style.borders.right = take_representable_border(&mut remainder.borders.end);
+            // Every in-domain cell margin maps to `fo:padding-*`; take them all.
+            cell_style.margins = OdtCellMargins::from_model(&remainder.margins);
+            remainder.margins = CellMargins::default();
             if remainder != TableCellProperties::default() {
                 self.reporter
                     .record("odt.export.table_cell_properties", ModelOutcome::Omitted);

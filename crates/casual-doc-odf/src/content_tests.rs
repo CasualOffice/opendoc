@@ -689,6 +689,78 @@ fn sequence_field_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn table_cell_padding_imports_and_round_trips_to_a_fixed_point() {
+    // Four DISTINCT `fo:padding-*` edges exercise the importer's per-edge padding
+    // reader and the exporter's per-edge emission, and catch any left/right or
+    // top/bottom transposition (which equal-edge values would hide).
+    let xml = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="ce1" style:family="table-cell"><style:table-cell-properties fo:padding-top="5pt" fo:padding-left="2.5pt" fo:padding-bottom="7.5pt" fo:padding-right="10pt"/></style:style></office:automatic-styles><office:body><office:text><table:table><table:table-column/><table:table-row><table:table-cell table:style-name="ce1"><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("table")
+    };
+    let margins = &table.rows[0].cells[0].properties.margins;
+    // 5pt=100, 2.5pt=50, 7.5pt=150, 10pt=200 twips.
+    assert_eq!(margins.top_twips, Some(100));
+    assert_eq!(margins.start_twips, Some(50)); // fo:padding-left -> start
+    assert_eq!(margins.bottom_twips, Some(150));
+    assert_eq!(margins.end_twips, Some(200)); // fo:padding-right -> end
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"fo:padding-top="5pt""#)
+            && content_xml.contains(r#"fo:padding-left="2.5pt""#)
+            && content_xml.contains(r#"fo:padding-bottom="7.5pt""#)
+            && content_xml.contains(r#"fo:padding-right="10pt""#),
+        "per-edge padding missing: {content_xml}"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn uniform_cell_padding_collapses_to_the_shorthand() {
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    let margins = &mut table.rows[0].cells[0].properties.margins;
+    margins.top_twips = Some(100); // 5pt on every edge
+    margins.start_twips = Some(100);
+    margins.bottom_twips = Some(100);
+    margins.end_twips = Some(100);
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"fo:padding="5pt""#) && !content_xml.contains("fo:padding-top"),
+        "uniform padding shorthand missing: {content_xml}"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    let margins = &table.rows[0].cells[0].properties.margins;
+    assert_eq!(margins.top_twips, Some(100));
+    assert_eq!(margins.end_twips, Some(100));
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn comment_annotation_round_trips_to_a_fixed_point() {
     // A two-word author with an ampersand exercises PCDATA escaping and the
     // whitespace path that a naive `write_text` (which encodes spaces as
