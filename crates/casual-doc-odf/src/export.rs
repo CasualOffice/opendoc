@@ -1757,6 +1757,8 @@ impl Writer {
                     // importer reads back.
                     FieldKind::Page => self.push("<text:page-number/>")?,
                     FieldKind::NumPages => self.push("<text:page-count/>")?,
+                    FieldKind::Date { .. } => self.push("<text:date/>")?,
+                    FieldKind::Time { .. } => self.push("<text:time/>")?,
                     // Other field kinds have no ODF element mapping yet: keep the
                     // cached display text as a degraded projection.
                     _ => {

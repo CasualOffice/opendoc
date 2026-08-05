@@ -607,6 +607,48 @@ fn table_column_widths_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn date_and_time_fields_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::FieldKind;
+    let body =
+        r#"<text:p><text:date>2020-01-01</text:date> <text:time>12:00:00</text:time></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let kinds: Vec<FieldKind> = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            InlineNode::Field(field) => Some(field.kind.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            FieldKind::Date { format: None },
+            FieldKind::Time { format: None }
+        ]
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains("<text:date/>") && content_xml.contains("<text:time/>"),
+        "date/time field elements missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn field_inside_hyperlink_degrades_not_aborts() {
     // The model forbids a Field nested in an inline wrapper, so a page-number
     // inside a hyperlink must fall through to the degrade path (imported as the

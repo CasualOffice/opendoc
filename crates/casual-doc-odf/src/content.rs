@@ -6359,6 +6359,8 @@ fn field_instruction(kind: &FieldKind) -> &'static str {
     match kind {
         FieldKind::Page => "PAGE",
         FieldKind::NumPages => "NUMPAGES",
+        FieldKind::Date { .. } => "DATE",
+        FieldKind::Time { .. } => "TIME",
         _ => "FIELD",
     }
 }
@@ -6567,6 +6569,10 @@ fn field_kind_for(name: &ResolvedName) -> Option<FieldKind> {
     match name.local.as_slice() {
         b"page-number" => Some(FieldKind::Page),
         b"page-count" => Some(FieldKind::NumPages),
+        // The ODF number/data style and cached value are not modeled; the typed
+        // kind (with no DOCX format picture) round-trips.
+        b"date" => Some(FieldKind::Date { format: None }),
+        b"time" => Some(FieldKind::Time { format: None }),
         _ => None,
     }
 }
