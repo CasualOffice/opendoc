@@ -99,8 +99,18 @@ The work lands as reviewable commits:
   traversal, absolute paths, and in-document fragments are blocked without
   fetching; `svg:width`/`svg:height` map to an EMU extent and `svg:title`/`desc`
   to alt text. The sub-parse is bounded by the same depth/element/attribute/text
-  budgets as the body. Manifest media-type cross-check and non-inline/anchored
-  frames remain future hardening.
+  budgets as the body. Manifest media-type cross-check remains future hardening.
+- A floating (anchored) image `draw:frame` — `text:anchor-type="page"` or
+  `"paragraph"` — maps to an `AnchoredDrawing` (first increment): the reference
+  edges come from the anchor type (page → page/page, paragraph → column/paragraph),
+  `svg:x`/`svg:y` become the offset placement, `draw:z-index` the stacking order,
+  and the wrap is the ODF default (`Square`). The frame's graphic style (its
+  `style:wrap`/position/margins) is not yet consulted, so an explicit wrap or
+  alignment is reported (`odf.draw.anchor-style-deferred`) rather than silently
+  applied; `char`/`frame` anchor types keep the image inline with a finding, and a
+  floating frame without an extent falls back to the inline image. A negative or
+  out-of-range `svg:x`/`svg:y` (the unsigned length codec rejects it) is clamped to
+  zero and reported (`odf.draw.anchor-offset-clamped`).
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point
@@ -176,6 +186,7 @@ The initial mapping is intentionally layered:
 | `text:note`                                 | footnote/endnote definition and inline reference   | Mapped                                                                                                         |
 | bookmark start/end/point                    | bookmark definitions and markers                   | Mapped                                                                                                         |
 | `draw:frame` + package image                | media definition and drawing                       | Mapped for embedded package images; linked images blocked/not fetched                                          |
+| `draw:frame` `text:anchor-type="page"`/`"paragraph"` + image | `AnchoredDrawing` | Mapped for offset-positioned floating images (page/paragraph anchor, `svg:x`/`svg:y`, `draw:z-index`, default Square wrap); graphic-style wrap/alignment/distances deferred with a finding |
 | `text:page-number`/`-count`, `text:date`, `text:time`, `text:bookmark-ref`, `text:sequence` | typed `Field` nodes | Mapped for supported field kinds; computed cache and unsupported formats dropped; a field inside a hyperlink degrades |
 | `office:annotation`                         | `CommentReference` + comment definition             | Mapped as a point comment (author, date, flattened body text); the `office:annotation-end` range and thread metadata are dropped |
 | `text:table-of-content`                     | block content control (`BlockSdt`, TOC gallery)     | Mapped: index-body entries become the control's blocks, `text:name`→tag; level-template source dropped; empty TOC dropped |

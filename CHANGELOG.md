@@ -15,6 +15,23 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Floating (anchored) images — first increment (fidelity parity, T5)**: an ODF
+  `draw:frame` with `text:anchor-type="page"` or `"paragraph"` (positioned by
+  `svg:x`/`svg:y`, stacked by `draw:z-index`) now imports to an
+  `InlineNode::AnchoredDrawing` and re-exports through the preserving path to a
+  byte-exact fixed point (previously the floating anchor was dropped and the image
+  fell to the inline path). This increment maps the graphic-style-free reversible
+  core: page/paragraph reference edges, absolute offset positioning, the
+  ODF-default `Square` wrap (no `style:wrap` emitted), z-order, extent, and the
+  image. Everything outside that core is reported and degraded to its nearest
+  representable form — a non-`Square` wrap, text-exclusion distances, alignment
+  positioning, negative offsets, `char`/`frame` anchor types, contour polygons, and
+  the picture transforms (crop/border/flip/rotation) — so nothing is silently lost
+  and the output stays idempotent. Like inline images, a floating image only
+  round-trips through `write_odt_with_retained_parts` (its bytes must be retained);
+  the plain semantic path degrades it to alt text. Wrap variants, distances, and
+  alignment positioning (via a `style:family="graphic"` automatic style) follow in
+  the next increment.
 - **Named paragraph styles (fidelity parity, T4-2)**: a common `office:styles`
   `style:style style:family="paragraph"` now round-trips as a *referenced*
   schema-v1 `Style` identity (`StyleKind::Paragraph`), the paragraph analogue of

@@ -5,14 +5,15 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
-    Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions, Document,
-    DocumentDefaults, Extent, Field, FieldKind, FontRef, FormFieldKind, GroupChild,
-    HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation, InlineNode, LevelJustification,
-    LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId,
-    Paragraph, ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties,
-    SdtControlKind, Spacing, Style, StyleId, StyleKind, Table, TableCell, TableCellProperties,
-    TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment, VerticalMerge, WidthType,
+    Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
+    CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
+    Document, DocumentDefaults, Extent, Field, FieldKind, FontRef, FormFieldKind, GroupChild,
+    HeaderFooterKind, HeightRule, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
+    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision,
+    RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing, Style, StyleId, StyleKind,
+    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
+    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WidthType, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -2378,7 +2379,11 @@ impl Writer {
                     }
                 }
                 InlineNode::AnchoredDrawing(drawing) => {
-                    self.write_alt(drawing.descr.as_deref(), "odt.export.anchored_drawing")?
+                    if let Some(part_name) = self.available_media.get(&drawing.media).cloned() {
+                        self.write_anchored_draw_frame(&part_name, drawing)?;
+                    } else {
+                        self.write_alt(drawing.descr.as_deref(), "odt.export.anchored_drawing")?;
+                    }
                 }
                 InlineNode::Math(math) => {
                     self.reporter
@@ -2656,30 +2661,153 @@ impl Writer {
         self.push("><draw:image xlink:href=\"")?;
         push_escaped_attribute(&mut self.xml, part_name, max)?;
         self.push("\"/>")?;
-        if let Some(descr) = descr {
-            // svg:title is single-line: fold tab/CR/LF to a space and drop any
-            // other non-XML character, degrading rather than aborting the export
-            // (the semantic alt-text path degrades the same input).
-            let sanitized: String = descr
-                .chars()
-                .filter_map(|character| {
-                    if matches!(character, '\t' | '\n' | '\r') {
-                        Some(' ')
-                    } else if is_xml_character(character) {
-                        Some(character)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let trimmed = sanitized.trim();
-            if !trimmed.is_empty() {
-                self.push("<svg:title>")?;
-                self.push(&quick_xml::escape::escape(trimmed))?;
-                self.push("</svg:title>")?;
+        self.write_frame_title(descr)?;
+        self.push("</draw:frame>")
+    }
+
+    /// Writes a floating (anchored) embedded image as a positioned `draw:frame`.
+    /// This increment emits the reversible core — `text:anchor-type`, `svg:x`/`svg:y`
+    /// offsets, `svg:width`/`svg:height`, `draw:z-index`, and the image — with the
+    /// ODF-default (`Square`) wrap carried implicitly (no graphic style). Every model
+    /// state outside that core (a non-Square wrap, exclusion distances, alignment
+    /// positioning, a negative offset, a contour, the picture transforms) is reported
+    /// as a degrade and mapped to its nearest representable form, so the output stays
+    /// a fixed point (import of this frame re-exports identically).
+    fn write_anchored_draw_frame(
+        &mut self,
+        part_name: &str,
+        drawing: &AnchoredDrawing,
+    ) -> Result<(), OdfError> {
+        let max = self.limits.max_content_bytes;
+        let anchor = &drawing.anchor;
+        if anchor.wrap != WrapMode::Square {
+            self.reporter
+                .record("odt.export.anchor_wrap", ModelOutcome::Degraded);
+        }
+        if !anchor.wrap_distances.is_zero() {
+            self.reporter
+                .record("odt.export.anchor_wrap_distances", ModelOutcome::Degraded);
+        }
+        if anchor.wrap_polygon.is_some() {
+            self.reporter
+                .record("odt.export.anchor_wrap_polygon", ModelOutcome::Degraded);
+        }
+        if anchor.behind_doc {
+            self.reporter
+                .record("odt.export.anchor_behind_doc", ModelOutcome::Degraded);
+        }
+        if drawing.crop.is_some()
+            || drawing.border.is_some()
+            || drawing.flip_h
+            || drawing.flip_v
+            || drawing.rotation.is_some()
+        {
+            self.reporter.record(
+                "odt.export.anchor_picture_transform",
+                ModelOutcome::Degraded,
+            );
+        }
+        let anchor_type = self.anchor_type_name(
+            anchor.horizontal.relative_from,
+            anchor.vertical.relative_from,
+        );
+        let x_emu = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
+        let y_emu = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
+        self.push("<draw:frame text:anchor-type=\"")?;
+        self.push(anchor_type)?;
+        self.push("\"")?;
+        if let Some(z_index) = drawing.relative_height {
+            self.push(" draw:z-index=\"")?;
+            self.push(&z_index.to_string())?;
+            self.push("\"")?;
+        }
+        self.push(" svg:x=\"")?;
+        self.push(&emu_to_cm(x_emu))?;
+        self.push("\" svg:y=\"")?;
+        self.push(&emu_to_cm(y_emu))?;
+        self.push("\" svg:width=\"")?;
+        self.push(&emu_to_cm(drawing.extent.width_emu))?;
+        self.push("\" svg:height=\"")?;
+        self.push(&emu_to_cm(drawing.extent.height_emu))?;
+        self.push("\"><draw:image xlink:href=\"")?;
+        push_escaped_attribute(&mut self.xml, part_name, max)?;
+        self.push("\"/>")?;
+        self.write_frame_title(drawing.descr.as_deref())?;
+        self.push("</draw:frame>")
+    }
+
+    /// Maps the model's per-axis anchor references to the single ODF
+    /// `text:anchor-type`. The two combinations this increment's importer produces
+    /// round-trip exactly; any other pair is a reported degrade to the nearest of
+    /// `page`/`paragraph` (idempotent — re-import yields the mapped pair).
+    fn anchor_type_name(
+        &mut self,
+        horizontal: HorizontalAnchor,
+        vertical: VerticalAnchor,
+    ) -> &'static str {
+        match (horizontal, vertical) {
+            (HorizontalAnchor::Page, VerticalAnchor::Page) => "page",
+            (HorizontalAnchor::Column, VerticalAnchor::Paragraph) => "paragraph",
+            _ => {
+                self.reporter
+                    .record("odt.export.anchor_rel", ModelOutcome::Degraded);
+                if matches!(horizontal, HorizontalAnchor::Page)
+                    || matches!(vertical, VerticalAnchor::Page)
+                {
+                    "page"
+                } else {
+                    "paragraph"
+                }
             }
         }
-        self.push("</draw:frame>")
+    }
+
+    /// Clamps a position offset to the non-negative range this increment emits: the
+    /// codec (`emu_to_cm`/`parse_emu`) is unsigned, so a negative offset would fail
+    /// to re-import and break the fixed point. A negative offset is reported and
+    /// clamped to 0. `None` (an alignment position, already reported) is also 0.
+    fn anchor_offset_emu(&mut self, offset: Option<i64>) -> i64 {
+        match offset {
+            Some(value) if value >= 0 => value,
+            Some(_) => {
+                self.reporter
+                    .record("odt.export.anchor_offset_negative", ModelOutcome::Degraded);
+                0
+            }
+            None => {
+                self.reporter
+                    .record("odt.export.anchor_align", ModelOutcome::Degraded);
+                0
+            }
+        }
+    }
+
+    /// Emits a frame's alt text as `svg:title`, shared by the inline and anchored
+    /// frame writers (single-line: tab/CR/LF folded to a space, other non-XML
+    /// characters dropped).
+    fn write_frame_title(&mut self, descr: Option<&str>) -> Result<(), OdfError> {
+        let Some(descr) = descr else {
+            return Ok(());
+        };
+        let sanitized: String = descr
+            .chars()
+            .filter_map(|character| {
+                if matches!(character, '\t' | '\n' | '\r') {
+                    Some(' ')
+                } else if is_xml_character(character) {
+                    Some(character)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let trimmed = sanitized.trim();
+        if !trimmed.is_empty() {
+            self.push("<svg:title>")?;
+            self.push(&quick_xml::escape::escape(trimmed))?;
+            self.push("</svg:title>")?;
+        }
+        Ok(())
     }
 
     fn write_alt(
@@ -3678,6 +3806,23 @@ fn package(
         limits.max_package_bytes,
     )?;
     Ok(bytes)
+}
+
+/// The absolute offset of a horizontal placement, or `None` for an alignment
+/// (which this increment cannot represent in ODF and reports).
+fn horizontal_position_offset(position: HorizontalPosition) -> Option<i64> {
+    match position {
+        HorizontalPosition::Offset(value) => Some(value),
+        HorizontalPosition::Align(_) => None,
+    }
+}
+
+/// The absolute offset of a vertical placement, or `None` for an alignment.
+fn vertical_position_offset(position: VerticalPosition) -> Option<i64> {
+    match position {
+        VerticalPosition::Offset(value) => Some(value),
+        VerticalPosition::Align(_) => None,
+    }
 }
 
 /// Formats an EMU length as centimetres for `svg:width`/`svg:height` (1 cm =

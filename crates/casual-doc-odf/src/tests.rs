@@ -1,6 +1,9 @@
 use std::io::{Cursor, Write};
 
-use casual_doc_model::v1::{Alignment, BlockNode, Color, InlineNode, RgbColor, StyleKind};
+use casual_doc_model::v1::{
+    Alignment, BlockNode, Color, HorizontalAnchor, HorizontalPosition, InlineNode, RgbColor,
+    StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
+};
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
 use zip::write::{FullFileOptions, ZipWriter};
@@ -1044,6 +1047,120 @@ fn preserving_writer_emits_draw_frame_and_repackages_bytes() {
     let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
     assert!(!plain_content.contains("draw:frame"));
     assert!(plain.read_part("Pictures/pic.dat").is_err());
+}
+
+/// A floating (anchored) `draw:frame` — `text:anchor-type` + `svg:x`/`svg:y`
+/// offsets + `draw:z-index` — imports to an `AnchoredDrawing` and re-exports through
+/// the preserving path to a byte-exact fixed point.
+#[test]
+fn floating_anchored_image_round_trips() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame text:anchor-type="page" draw:z-index="2" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+
+    // The frame becomes an anchored drawing: page/page references, offset placement
+    // (5cm/3cm in EMU), the ODF-default Square wrap, and the z-index.
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert_eq!(anchored.extent.width_emu, 4 * 360_000);
+    assert_eq!(anchored.extent.height_emu, 2 * 360_000);
+    assert_eq!(
+        anchored.anchor.horizontal.relative_from,
+        HorizontalAnchor::Page
+    );
+    assert_eq!(anchored.anchor.vertical.relative_from, VerticalAnchor::Page);
+    assert_eq!(
+        anchored.anchor.horizontal.position,
+        HorizontalPosition::Offset(5 * 360_000)
+    );
+    assert_eq!(
+        anchored.anchor.vertical.position,
+        VerticalPosition::Offset(3 * 360_000)
+    );
+    assert_eq!(anchored.anchor.wrap, WrapMode::Square);
+    assert!(!anchored.anchor.behind_doc);
+    assert_eq!(anchored.relative_height, Some(2));
+
+    // Preserving export re-emits the positioned frame (canonical `cm` form) and
+    // repackages the bytes. The default Square wrap carries no graphic style.
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(
+        r#"<draw:frame text:anchor-type="page" draw:z-index="2" svg:x="5.0000cm" svg:y="3.0000cm" svg:width="4.0000cm" svg:height="2.0000cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame>"#
+    ));
+    assert!(!content_out.contains("style:wrap"));
+
+    // Semantic + byte fixed point: re-import equals the model, re-export identical.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// A floating frame with a negative `svg:x` clamps the offset to zero but must
+/// REPORT the drop (not lose it silently); the result still round-trips.
+#[test]
+fn floating_anchor_negative_offset_is_clamped_with_a_finding() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame text:anchor-type="page" svg:x="-2cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.anchor-offset-clamped")
+    );
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    // The negative x is clamped to 0; the valid y survives.
+    assert_eq!(
+        anchored.anchor.horizontal.position,
+        HorizontalPosition::Offset(0)
+    );
+    assert_eq!(
+        anchored.anchor.vertical.position,
+        VerticalPosition::Offset(3 * 360_000)
+    );
 }
 
 #[test]

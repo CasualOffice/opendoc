@@ -17,6 +17,10 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
+    HorizontalPosition, VerticalAnchor, VerticalPosition, WrapMode,
+};
+use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
@@ -378,6 +382,9 @@ enum InlineDraft {
         kind: NoteKind,
     },
     Drawing(usize),
+    /// A floating (anchored) embedded image; the index resolves in the
+    /// `anchored_drawings` vec (a separate media entry, like `Drawing`).
+    AnchoredDrawing(usize),
     /// A typed field (e.g. page number); its cached display content is dropped.
     Field(FieldKind),
     /// A comment anchor (`office:annotation`); the index selects the captured
@@ -485,12 +492,42 @@ struct DrawingDraft {
     descr: Option<String>,
 }
 
-/// A `draw:frame`'s modeled content: either an embedded image or an inline text
-/// box. A frame with neither (or an unsafe/linked image) yields `None`.
+/// A bounded floating (anchored) embedded-image `draw:frame`: an image placed at
+/// an absolute position rather than in the inline flow. This first increment maps
+/// the common page-/paragraph-anchored offset-positioned frame; the anchor's wrap
+/// defaults to `Square` (the ODF default) and text-exclusion distances, alignment
+/// positioning, and the picture transforms are deferred with a finding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AnchoredDrawingDraft {
+    /// Safe internal package part name (the `draw:image/@xlink:href`).
+    part_name: String,
+    /// Content type inferred from the part-name extension.
+    media_type: String,
+    /// Rendered size in EMU (mandatory on an anchor; a frame missing either
+    /// dimension is not anchored).
+    width_emu: i64,
+    height_emu: i64,
+    /// `svg:desc`/`svg:title` alt text, if present.
+    descr: Option<String>,
+    /// The reference edges the offsets measure from, derived from
+    /// `text:anchor-type` (page → page/page, paragraph → column/paragraph).
+    horizontal_rel: HorizontalAnchor,
+    vertical_rel: VerticalAnchor,
+    /// Absolute offsets (`svg:x`/`svg:y`) in EMU; non-negative in this increment.
+    horizontal_offset_emu: i64,
+    vertical_offset_emu: i64,
+    /// `draw:z-index` stacking order, if present.
+    relative_height: Option<u32>,
+}
+
+/// A `draw:frame`'s modeled content: an inline embedded image, an inline text
+/// box, or a floating (anchored) embedded image. A frame with none (or an
+/// unsafe/linked image) yields `None`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum FrameContent {
     Image(DrawingDraft),
     TextBox(TextBoxDraft),
+    AnchoredImage(AnchoredDrawingDraft),
 }
 
 /// A bounded inline `draw:text-box` capture: its body flattened to plain text (a
@@ -2767,6 +2804,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut list_instances = 0_usize;
     let mut list_overrides: BTreeMap<(usize, u8), u16> = BTreeMap::new();
     let mut drawings: Vec<DrawingDraft> = Vec::new();
+    let mut anchored_drawings: Vec<AnchoredDrawingDraft> = Vec::new();
     let mut comments: Vec<CommentDraft> = Vec::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
@@ -2974,6 +3012,11 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                                         body: text_box.body,
                                         extent,
                                     }
+                                }
+                                FrameContent::AnchoredImage(anchored) => {
+                                    let index = anchored_drawings.len();
+                                    anchored_drawings.push(anchored);
+                                    InlineDraft::AnchoredDrawing(index)
                                 }
                             };
                             inline_nodes = checked_increment(inline_nodes)?;
@@ -3875,6 +3918,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &style_catalog.lists,
         &list_overrides,
         &drawings,
+        &anchored_drawings,
         &comments,
         &named_styles,
         &named_paragraph_styles,
@@ -4073,6 +4117,18 @@ fn list_numbering(
 /// caller; this consumes its children and matching `End`, so the caller must undo
 /// the depth increment it made for the frame. Returns `None` (with a finding)
 /// when the frame carries no safe embedded image.
+/// Maps an ODF `text:anchor-type` to the model's per-axis reference edges for the
+/// floating anchor types this increment supports. `as-char` (inline) and the
+/// deferred `char`/`frame` types return `None`. ODF's single anchor-type value is
+/// split into the horizontal and vertical references OOXML models separately.
+fn floating_anchor_rels(anchor_type: &str) -> Option<(HorizontalAnchor, VerticalAnchor)> {
+    match anchor_type {
+        "page" => Some((HorizontalAnchor::Page, VerticalAnchor::Page)),
+        "paragraph" => Some((HorizontalAnchor::Column, VerticalAnchor::Paragraph)),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn parse_draw_frame(
     reader: &mut NsReader<&[u8]>,
@@ -4088,16 +4144,48 @@ fn parse_draw_frame(
 ) -> Result<Option<FrameContent>, OdfError> {
     let mut width_emu = None;
     let mut height_emu = None;
+    let mut anchor_type: Option<String> = None;
+    let mut x_emu: Option<i64> = None;
+    let mut y_emu: Option<i64> = None;
+    // Whether a present `svg:x`/`svg:y` failed to parse (negative or out of range).
+    // `parse_emu` rejects those, so the offset defaults to 0 (signed offsets are a
+    // later increment) — but the drop is reported, not silent, when the frame is
+    // actually anchored.
+    let mut offset_clamped = false;
+    let mut z_index: Option<u32> = None;
+    let mut has_graphic_style = false;
     for attribute in frame.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
         let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
-        if namespace_kind(&namespace) == NamespaceKind::Svg {
-            match local.as_ref() {
+        match namespace_kind(&namespace) {
+            NamespaceKind::Svg => match local.as_ref() {
                 b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
+                b"x" => {
+                    x_emu = parse_emu(&decode_attribute(&attribute)?);
+                    offset_clamped |= x_emu.is_none();
+                }
+                b"y" => {
+                    y_emu = parse_emu(&decode_attribute(&attribute)?);
+                    offset_clamped |= y_emu.is_none();
+                }
                 _ => {}
+            },
+            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+                anchor_type = Some(decode_attribute(&attribute)?);
             }
+            NamespaceKind::Draw => match local.as_ref() {
+                b"z-index" => {
+                    z_index = decode_attribute(&attribute)?
+                        .parse::<i64>()
+                        .ok()
+                        .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
+                }
+                b"style-name" => has_graphic_style = true,
+                _ => {}
+            },
+            _ => {}
         }
     }
 
@@ -4360,6 +4448,58 @@ fn parse_draw_frame(
             return Ok(None);
         }
         let descr = descr.filter(|value| !value.is_empty() && value.len() <= MAX_DESCR_BYTES);
+        // A floating anchor routes to an `AnchoredImage` when the anchor type is one
+        // this increment maps (page/paragraph) and the extent is known; otherwise the
+        // image stays inline and the dropped anchor is reported.
+        if let Some(anchor) = anchor_type.as_deref() {
+            if let Some((horizontal_rel, vertical_rel)) = floating_anchor_rels(anchor) {
+                if has_graphic_style {
+                    // The graphic style's wrap/position/margins are not mapped yet
+                    // (Square wrap and offset positioning are re-derived), so its
+                    // detail is a reported degrade rather than silently kept.
+                    reporter.report(
+                        "odf.draw.anchor-style-deferred".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
+                if let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) {
+                    if offset_clamped {
+                        // A present but negative/out-of-range `svg:x`/`svg:y` is
+                        // clamped to 0; report the drop rather than losing it
+                        // silently (signed offsets are a later increment).
+                        reporter.report(
+                            "odf.draw.anchor-offset-clamped".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                    return Ok(Some(FrameContent::AnchoredImage(AnchoredDrawingDraft {
+                        media_type: media_type_from_href(&href),
+                        part_name: href,
+                        width_emu,
+                        height_emu,
+                        descr,
+                        horizontal_rel,
+                        vertical_rel,
+                        horizontal_offset_emu: x_emu.unwrap_or(0),
+                        vertical_offset_emu: y_emu.unwrap_or(0),
+                        relative_height: z_index,
+                    })));
+                }
+                // An anchor with no extent cannot be modeled (extent is mandatory);
+                // fall through to the inline image so the picture is not lost.
+                reporter.report(
+                    "odf.draw.anchor-extent-missing".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+            } else if anchor != "as-char" {
+                // A floating anchor type this increment does not map (char/frame):
+                // keep the image inline and report the dropped anchor.
+                reporter.report(
+                    "odf.draw.anchor-type-deferred".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+            }
+        }
         return Ok(Some(FrameContent::Image(DrawingDraft {
             media_type: media_type_from_href(&href),
             part_name: href,
@@ -7391,6 +7531,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::BookmarkEnd(_)
             | InlineDraft::NoteReference { .. }
             | InlineDraft::Drawing(_)
+            | InlineDraft::AnchoredDrawing(_)
             | InlineDraft::Field(_)
             | InlineDraft::CommentReference(_)
             | InlineDraft::FormField(_) => {}
@@ -7517,6 +7658,7 @@ fn build_document(
     list_styles: &ListStyles,
     list_overrides: &BTreeMap<(usize, u8), u16>,
     drawings: &[DrawingDraft],
+    anchored_drawings: &[AnchoredDrawingDraft],
     comments: &[CommentDraft],
     named_styles: &BTreeMap<String, RunProperties>,
     named_paragraph_styles: &BTreeMap<String, ParagraphProperties>,
@@ -7711,6 +7853,21 @@ fn build_document(
         );
         media_ids.push(media_id);
     }
+    // One media reference per anchored drawing, mirroring the inline path (the part
+    // is referenced, not embedded); a parallel id vec resolves the build arm.
+    let mut anchored_media_ids = Vec::with_capacity(anchored_drawings.len());
+    for drawing in anchored_drawings {
+        let media_id = MediaId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        definitions.media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: drawing.part_name.clone(),
+                media_type: drawing.media_type.clone(),
+                part_name: drawing.part_name.clone(),
+            },
+        );
+        anchored_media_ids.push(media_id);
+    }
     // One comment definition per annotation. The body is a single flattened
     // plain-text paragraph (empty body -> no blocks); the paired range is not
     // modeled, so each anchor is a point `CommentReference`.
@@ -7836,6 +7993,8 @@ fn build_document(
             &paragraph_style_ids,
             &media_ids,
             drawings,
+            &anchored_media_ids,
+            anchored_drawings,
         )?;
         match note.kind {
             NoteKind::Footnote => {
@@ -7862,6 +8021,8 @@ fn build_document(
         &paragraph_style_ids,
         &media_ids,
         drawings,
+        &anchored_media_ids,
+        anchored_drawings,
     )?;
     definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
@@ -7946,6 +8107,8 @@ fn build_blocks(
     paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
+    anchored_media_ids: &[MediaId],
+    anchored_drawings: &[AnchoredDrawingDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -7961,6 +8124,8 @@ fn build_blocks(
                 paragraph_style_ids,
                 media_ids,
                 drawings,
+                anchored_media_ids,
+                anchored_drawings,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -7974,6 +8139,8 @@ fn build_blocks(
                 paragraph_style_ids,
                 media_ids,
                 drawings,
+                anchored_media_ids,
+                anchored_drawings,
             )?),
             BlockDraft::Toc(toc) => {
                 let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -7989,6 +8156,8 @@ fn build_blocks(
                     paragraph_style_ids,
                     media_ids,
                     drawings,
+                    anchored_media_ids,
+                    anchored_drawings,
                 )?;
                 // A TOC with no captured entries is dropped at import (the model
                 // rejects an empty content control), so `inner` is non-empty here.
@@ -8021,6 +8190,8 @@ fn build_paragraph(
     paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
+    anchored_media_ids: &[MediaId],
+    anchored_drawings: &[AnchoredDrawingDraft],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -8052,6 +8223,8 @@ fn build_paragraph(
             style_ids,
             media_ids,
             drawings,
+            anchored_media_ids,
+            anchored_drawings,
         )?,
     })
 }
@@ -8077,6 +8250,8 @@ fn build_table(
     paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
+    anchored_media_ids: &[MediaId],
+    anchored_drawings: &[AnchoredDrawingDraft],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -8099,6 +8274,8 @@ fn build_table(
                         paragraph_style_ids,
                         media_ids,
                         drawings,
+                        anchored_media_ids,
+                        anchored_drawings,
                     )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
@@ -8259,6 +8436,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"drawing");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::AnchoredDrawing(index) => {
+            hash_bytes(hash, b"anchored-drawing");
+            hash_bytes(hash, &index.to_le_bytes());
+        }
         InlineDraft::Field(kind) => {
             hash_bytes(hash, b"field");
             hash_bytes(hash, field_instruction(kind).as_bytes());
@@ -8360,6 +8541,8 @@ fn build_inlines(
     style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
+    anchored_media_ids: &[MediaId],
+    anchored_drawings: &[AnchoredDrawingDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -8414,6 +8597,8 @@ fn build_inlines(
                     style_ids,
                     media_ids,
                     drawings,
+                    anchored_media_ids,
+                    anchored_drawings,
                 )?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
@@ -8446,6 +8631,46 @@ fn build_inlines(
                     media,
                     extent,
                     descr: draft.descr.clone(),
+                    crop: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                })
+            }
+            InlineDraft::AnchoredDrawing(index) => {
+                let media = *anchored_media_ids
+                    .get(*index)
+                    .ok_or(OdfError::InvalidModel)?;
+                let draft = anchored_drawings
+                    .get(*index)
+                    .ok_or(OdfError::InvalidModel)?;
+                InlineNode::AnchoredDrawing(AnchoredDrawing {
+                    id,
+                    media,
+                    extent: Extent {
+                        width_emu: draft.width_emu,
+                        height_emu: draft.height_emu,
+                    },
+                    // This increment maps only offset positioning with the ODF
+                    // default (`Square`) wrap; distances, alignment, contour, and the
+                    // picture transforms are deferred (left at their defaults).
+                    anchor: DrawingAnchor {
+                        horizontal: AnchorHorizontal {
+                            relative_from: draft.horizontal_rel,
+                            position: HorizontalPosition::Offset(draft.horizontal_offset_emu),
+                        },
+                        vertical: AnchorVertical {
+                            relative_from: draft.vertical_rel,
+                            position: VerticalPosition::Offset(draft.vertical_offset_emu),
+                        },
+                        wrap: WrapMode::Square,
+                        wrap_distances: Default::default(),
+                        wrap_polygon: None,
+                        behind_doc: false,
+                    },
+                    descr: draft.descr.clone(),
+                    relative_height: draft.relative_height,
                     crop: None,
                     border: None,
                     flip_h: false,
@@ -8561,6 +8786,8 @@ fn build_inlines(
                     style_ids,
                     media_ids,
                     drawings,
+                    anchored_media_ids,
+                    anchored_drawings,
                 )?,
             }),
         });
