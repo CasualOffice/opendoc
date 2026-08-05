@@ -13,7 +13,7 @@ use casual_doc_model::v1::{
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, Paragraph,
     ParagraphProperties, RgbColor, RowHeight, Run, RunProperties, Shading, Spacing, Tab, Table,
     TableBorders, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
-    VerticalAlignment, VerticalMerge,
+    TableWidth, VerticalAlignment, VerticalMerge, WidthType,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -415,6 +415,8 @@ struct TableDraft {
     columns: usize,
     /// Declared-column widths in twips; may be shorter than `columns`.
     column_widths: Vec<Option<i32>>,
+    alignment: Option<Alignment>,
+    width: Option<TableWidth>,
     rows: Vec<TableRowDraft>,
 }
 
@@ -479,6 +481,8 @@ struct OpenNote {
 struct OpenTable {
     depth: usize,
     columns: usize,
+    alignment: Option<Alignment>,
+    width: Option<TableWidth>,
     /// Per-declared-column width in twips (from each `table:table-column`'s style,
     /// `number-columns-repeated` expanded). Shorter than `columns` when rows imply
     /// extra columns; those trailing columns have no width.
@@ -567,6 +571,7 @@ enum StyleFamily {
     TableColumn,
     TableCell,
     TableRow,
+    Table,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -588,6 +593,10 @@ struct OdfStyle {
     cell_borders: TableBorders,
     /// `style:row-height`/`style:min-row-height` for a `table-row` style.
     row_height: RowHeight,
+    /// `table:align` for a `table` style.
+    table_alignment: Option<Alignment>,
+    /// `style:width`/`style:rel-width` for a `table` style.
+    table_width: Option<TableWidth>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1250,6 +1259,16 @@ fn process_style_element(
                 style,
                 reporter,
             )?;
+        } else if is_name(name, NamespaceKind::Style, b"table-properties") {
+            read_table_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
         } else {
             count_and_report_attributes(
                 reader,
@@ -1458,6 +1477,7 @@ fn read_style_header(
                 "table-column" => Some(StyleFamily::TableColumn),
                 "table-cell" => Some(StyleFamily::TableCell),
                 "table-row" => Some(StyleFamily::TableRow),
+                "table" => Some(StyleFamily::Table),
                 _ => {
                     reporter.report(
                         "odf.style.unsupported-family".to_owned(),
@@ -1528,6 +1548,7 @@ fn read_default_style_header(
                 "table-column" => Some(StyleFamily::TableColumn),
                 "table-cell" => Some(StyleFamily::TableCell),
                 "table-row" => Some(StyleFamily::TableRow),
+                "table" => Some(StyleFamily::Table),
                 _ => None,
             };
         } else if !is_namespace_declaration(&attribute) {
@@ -1783,6 +1804,94 @@ fn read_paragraph_style_properties(
                 paragraph.page_break_before = value.trim() == "page";
                 paragraph.page_break_before
             }
+            _ => false,
+        };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reads a `style:table-properties` element, capturing `table:align` and the
+/// table width (`style:width` absolute, `style:rel-width` relative). Borders,
+/// shading, margins, and other table properties are reported and dropped.
+fn read_table_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::Table) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.table-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+            (NamespaceKind::Table, b"align") => match value.trim() {
+                "left" | "start" => {
+                    style.style.table_alignment = Some(Alignment::Start);
+                    true
+                }
+                "center" => {
+                    style.style.table_alignment = Some(Alignment::Center);
+                    true
+                }
+                "right" | "end" => {
+                    style.style.table_alignment = Some(Alignment::End);
+                    true
+                }
+                "margins" => {
+                    style.style.table_alignment = Some(Alignment::Justify);
+                    true
+                }
+                _ => false,
+            },
+            (NamespaceKind::Style, b"width") => match parse_length_to_twips(&value) {
+                Some(twips) if (0..=31_680).contains(&twips) => {
+                    style.style.table_width = Some(TableWidth {
+                        value: twips,
+                        width_type: WidthType::Dxa,
+                    });
+                    true
+                }
+                _ => false,
+            },
+            (NamespaceKind::Style, b"rel-width") => match value.trim().strip_suffix('%') {
+                // ODF percent; the model stores fiftieths of a percent (Pct).
+                Some(percent) => match percent.trim().parse::<i32>() {
+                    Ok(percent) if (0..=100).contains(&percent) => {
+                        style.style.table_width = Some(TableWidth {
+                            value: percent * 50,
+                            width_type: WidthType::Pct,
+                        });
+                        true
+                    }
+                    _ => false,
+                },
+                None => false,
+            },
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -3511,6 +3620,7 @@ fn process_table_start(
             attribute_bytes,
             open_tables,
             table_count,
+            automatic_styles,
             reporter,
         ),
         b"table-header-rows" | b"table-rows" => start_table_row_container(
@@ -3677,6 +3787,7 @@ fn start_table(
     attribute_bytes: &mut usize,
     open_tables: &mut Vec<OpenTable>,
     table_count: &mut usize,
+    automatic_styles: &AutomaticStyles,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     if let Some(parent) = open_tables.last()
@@ -3695,17 +3806,37 @@ fn start_table(
         .checked_add(1)
         .ok_or(OdfError::MalformedContent)?;
     enforce("odf_content_table_depth", nesting, limits.max_table_depth)?;
-    count_and_report_attributes(
-        reader,
-        element,
-        attributes,
-        attribute_bytes,
-        limits,
-        reporter,
-    )?;
+    // Count/report every attribute, resolving table:style-name to the table
+    // style's alignment/width rather than reporting it.
+    let mut alignment = None;
+    let mut width = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
+            let style_name = decode_attribute(&attribute)?;
+            match automatic_styles.get(&(StyleFamily::Table, style_name)) {
+                Some(style) => {
+                    alignment = style.table_alignment;
+                    width = style.table_width;
+                }
+                None => {
+                    reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
+                }
+            }
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
     open_tables.push(OpenTable {
         depth,
         columns: 0,
+        alignment,
+        width,
         column_widths: Vec::new(),
         rows: Vec::new(),
         row_container_depth: None,
@@ -4124,6 +4255,8 @@ fn finish_table(
     let draft = TableDraft {
         columns,
         column_widths: table.column_widths,
+        alignment: table.alignment,
+        width: table.width,
         rows: table.rows,
     };
     validate_table_topology(&draft)?;
@@ -5934,7 +6067,11 @@ fn build_table(
             })
             .collect(),
         grid_change: None,
-        properties: TableProperties::default(),
+        properties: TableProperties {
+            alignment: draft.alignment,
+            width: draft.width,
+            ..TableProperties::default()
+        },
         rows,
     })
 }

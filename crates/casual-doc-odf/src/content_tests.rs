@@ -299,6 +299,59 @@ fn inheriting_table_row_style_keeps_its_own_height() {
 }
 
 #[test]
+fn table_level_alignment_and_width_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::{TableWidth, WidthType};
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    table.properties.alignment = Some(Alignment::Center);
+    table.properties.width = Some(TableWidth {
+        value: 720, // 36pt
+        width_type: WidthType::Dxa,
+    });
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<style:style style:name="tb_ac_w720" style:family="table"><style:table-properties table:align="center" style:width="36pt"/></style:style>"#
+        ),
+        "table style missing: {content_xml}"
+    );
+    assert!(
+        content_xml.contains(r#"<table:table table:style-name="tb_ac_w720">"#),
+        "table style ref missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    assert_eq!(table.properties.alignment, Some(Alignment::Center));
+    assert_eq!(
+        table.properties.width,
+        Some(TableWidth {
+            value: 720,
+            width_type: WidthType::Dxa,
+        })
+    );
+
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn table_row_height_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::{HeightRule, RowHeight};
     let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;

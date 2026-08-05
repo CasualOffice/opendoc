@@ -62,6 +62,13 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Table-level width & alignment (fidelity parity, T2c-5)**: a table's alignment
+  (`table:align`) and width (`style:width` absolute / `style:rel-width` relative)
+  now round-trip via a new `table` style family, completing table-level geometry.
+  Auto/nil widths and other table properties (borders, shading, margins) are
+  reported. Together with the earlier slices, tables (structure, merges, column
+  widths, cell shading/valign/borders, row height, table width/align) now
+  round-trip both directions.
 - **Table row height (fidelity parity, T2c-4)**: a row's height now round-trips
   via a new `table-row` style family — exact height ↔ `style:row-height`, minimum
   ↔ `style:min-row-height` (twips↔pt codec, domain-clamped `0..=31680`). Rows with

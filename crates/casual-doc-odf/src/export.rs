@@ -9,7 +9,8 @@ use casual_doc_model::v1::{
     HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
     NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
     ParagraphProperties, RevisionKind, RowHeight, RunProperties, Spacing, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, VerticalAlignment, VerticalMerge,
+    TableCellProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment,
+    VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -607,6 +608,99 @@ fn push_row_properties(
     Ok(())
 }
 
+/// The supported table-level formatting subset (alignment + width), emitted as
+/// one deterministic automatic `table` style.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtTableStyle {
+    align: Option<OdtTableAlign>,
+    /// Absolute width in twips (`style:width`, model `WidthType::Dxa`).
+    width_twips: Option<i32>,
+    /// Relative width in fiftieths of a percent (`style:rel-width`, `Pct`).
+    rel_width_pct50: Option<i32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum OdtTableAlign {
+    Left,
+    Center,
+    Right,
+    Margins,
+}
+
+impl OdtTableAlign {
+    const fn value(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+            Self::Margins => "margins",
+        }
+    }
+
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Left => "l",
+            Self::Center => "c",
+            Self::Right => "r",
+            Self::Margins => "m",
+        }
+    }
+
+    fn from_alignment(alignment: Alignment) -> Self {
+        match alignment {
+            Alignment::Start => Self::Left,
+            Alignment::Center => Self::Center,
+            Alignment::End => Self::Right,
+            Alignment::Justify => Self::Margins,
+        }
+    }
+}
+
+impl OdtTableStyle {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    fn name(&self) -> String {
+        let mut name = String::from("tb");
+        if let Some(align) = self.align {
+            name.push_str("_a");
+            name.push_str(align.code());
+        }
+        if let Some(twips) = self.width_twips {
+            name.push_str(&format!("_w{twips}"));
+        }
+        if let Some(pct50) = self.rel_width_pct50 {
+            name.push_str(&format!("_r{pct50}"));
+        }
+        name
+    }
+}
+
+/// Emits the supported `<style:table-properties>` attributes for a table style.
+fn push_table_properties(
+    xml: &mut String,
+    style: &OdtTableStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some(align) = style.align {
+        push_bounded(xml, " table:align=\"", max_content_bytes)?;
+        push_bounded(xml, align.value(), max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(twips) = style.width_twips {
+        push_bounded(xml, " style:width=\"", max_content_bytes)?;
+        push_bounded(xml, &twips_to_pt(twips), max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(pct50) = style.rel_width_pct50 {
+        push_bounded(xml, " style:rel-width=\"", max_content_bytes)?;
+        push_bounded(xml, &(pct50 / 50).to_string(), max_content_bytes)?;
+        push_bounded(xml, "%\"", max_content_bytes)?;
+    }
+    Ok(())
+}
+
 /// A deterministic, NCName-safe automatic style name for a table column of the
 /// given width (twips). Negative widths (not model-valid, but defensive) use an
 /// `n` marker instead of a bare minus.
@@ -855,6 +949,8 @@ struct Writer {
     cell_styles: BTreeSet<OdtCellStyle>,
     /// Distinct row formatting (height) that needs a `table-row` style.
     row_styles: BTreeSet<OdtRowStyle>,
+    /// Distinct table-level formatting (align/width) that needs a `table` style.
+    table_styles: BTreeSet<OdtTableStyle>,
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
@@ -892,6 +988,7 @@ impl Writer {
             column_styles: BTreeSet::new(),
             cell_styles: BTreeSet::new(),
             row_styles: BTreeSet::new(),
+            table_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
@@ -1118,13 +1215,43 @@ impl Writer {
             self.reporter
                 .record("odt.export.table_grid_change", ModelOutcome::Omitted);
         }
-        if table.properties != Default::default() {
+        // Extract the supported table-level formatting (alignment + width) into a
+        // `table` style; the residue is the reported remainder.
+        let mut table_remainder = table.properties.clone();
+        let mut table_style = OdtTableStyle::default();
+        if let Some(alignment) = table_remainder.alignment.take() {
+            table_style.align = Some(OdtTableAlign::from_alignment(alignment));
+        }
+        match table_remainder.width.take() {
+            Some(TableWidth {
+                value,
+                width_type: WidthType::Dxa,
+            }) => table_style.width_twips = Some(value),
+            Some(TableWidth {
+                value,
+                width_type: WidthType::Pct,
+            }) => table_style.rel_width_pct50 = Some(value),
+            // Auto/Nil carry no representable width; put it back to be reported.
+            other => table_remainder.width = other,
+        }
+        if table_remainder != Default::default() {
             self.reporter
                 .record("odt.export.table_properties", ModelOutcome::Omitted);
         }
+        let table_style_name = (!table_style.is_empty()).then(|| {
+            let name = table_style.name();
+            self.table_styles.insert(table_style);
+            name
+        });
 
         let merges = analyze_table_merges(table)?;
-        self.push("<table:table>")?;
+        if let Some(name) = &table_style_name {
+            self.push("<table:table table:style-name=\"")?;
+            self.push(name)?;
+            self.push("\">")?;
+        } else {
+            self.push("<table:table>")?;
+        }
         // Per-column widths, padded with None where rows imply more columns than
         // the grid declares.
         let widths: Vec<Option<i32>> = (0..columns)
@@ -2069,6 +2196,7 @@ fn hash_bytes_128(hash: &mut u128, bytes: &[u8]) {
     *hash = hash.wrapping_mul(PRIME);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn automatic_styles_xml(
     paragraph_styles: &BTreeSet<OdtParagraphStyle>,
     run_styles: &BTreeSet<OdtRunStyle>,
@@ -2076,6 +2204,7 @@ fn automatic_styles_xml(
     column_styles: &BTreeSet<i32>,
     cell_styles: &BTreeSet<OdtCellStyle>,
     row_styles: &BTreeSet<OdtRowStyle>,
+    table_styles: &BTreeSet<OdtTableStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
     if paragraph_styles.is_empty()
@@ -2084,6 +2213,7 @@ fn automatic_styles_xml(
         && column_styles.is_empty()
         && cell_styles.is_empty()
         && row_styles.is_empty()
+        && table_styles.is_empty()
     {
         return Ok(String::new());
     }
@@ -2120,6 +2250,17 @@ fn automatic_styles_xml(
             max_content_bytes,
         )?;
         push_row_properties(&mut xml, style, max_content_bytes)?;
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
+    }
+    for style in table_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"table\"><style:table-properties",
+            max_content_bytes,
+        )?;
+        push_table_properties(&mut xml, style, max_content_bytes)?;
         push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     for style in paragraph_styles {
@@ -2548,6 +2689,7 @@ fn write_odt_impl(
         &writer.column_styles,
         &writer.cell_styles,
         &writer.row_styles,
+        &writer.table_styles,
         limits.max_content_bytes,
     )?;
     let content_len = content_header
