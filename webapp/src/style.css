@@ -2187,48 +2187,12 @@ body.modal-open {
   min-height: 26px;
 }
 
-/* Vellum's compact two-row font geometry: the authored family stays readable,
-   while highlight remains a real native select behind an icon-sized trigger. */
-.font-family-control select {
-  width: 120px;
-}
-
-.highlight-control {
-  position: relative;
-  justify-content: center;
-  width: var(--h-control);
-  height: var(--h-control);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-}
-
-.highlight-control:hover {
-  background: var(--bg-2);
-}
-
-.highlight-control > .ms {
-  font-size: var(--icon-control);
-  pointer-events: none;
-}
-
-.highlight-control > select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 /* Keep the last Font control visibly inside its group instead of touching the
-   Paragraph divider. The slightly tighter row gap matches the Vellum source. */
+   Paragraph divider. The slightly tighter row gap matches the Vellum source.
+   (Text color + highlight are now real dropdown swatch pickers — see the
+   "Formatting toolbar UX v2" block at the end of this file.) */
 [data-group="font"] .fmt-row-line {
   gap: 2px;
-}
-
-[data-group="font"] .highlight-control {
-  margin-right: 10px;
 }
 
 /* Clipboard group: a big Paste button beside stacked Cut/Copy text rows. */
@@ -4073,4 +4037,531 @@ body:not(.doc-loaded) .drop-title {
   .page-setup-fields {
     gap: 18px;
   }
+}
+
+/* =========================================================================
+   Formatting toolbar UX v2 (Q1–Q5): font menu, color/highlight pickers,
+   grow/shrink, change case, editable zoom, paste-options chip.
+   Dense, industry-standard controls; light/dark + focus rings throughout.
+   ========================================================================= */
+
+.visually-offscreen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+}
+
+/* ---- Font family trigger (replaces the native <select>) -------------------- */
+.font-family-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: 122px;
+  height: var(--h-control);
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  cursor: pointer;
+  transition: border-color 0.11s, background 0.11s;
+}
+
+.font-family-trigger:hover:not(:disabled) {
+  border-color: var(--accent-line);
+}
+
+.font-family-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.font-family-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.font-family-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+
+.font-family-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.font-family-trigger.is-placeholder .font-family-label {
+  color: var(--faint);
+}
+
+.font-family-caret {
+  flex: 0 0 auto;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.ctl.is-mixed .font-family-trigger {
+  border-style: dashed;
+}
+
+/* ---- Grow / shrink font + change-case glyphs ------------------------------- */
+.grow-shrink .grow-glyph {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  font-weight: 600;
+  line-height: 1;
+  font-size: 12px;
+}
+
+.grow-shrink .grow-glyph-big {
+  font-size: 16px;
+}
+
+.grow-shrink .grow-sign {
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 1px;
+}
+
+.case-glyph {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ---- Text-color + highlight split pickers ---------------------------------- */
+.color-control {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  height: var(--h-control);
+  border-radius: var(--radius-sm);
+}
+
+.color-apply {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 26px;
+  height: var(--h-control);
+  padding: 0;
+  border: 1px solid transparent;
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.11s;
+}
+
+.color-apply-glyph {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.color-apply .ms.color-apply-glyph {
+  font-size: var(--icon-control);
+  font-weight: 400;
+}
+
+.color-apply-bar {
+  display: block;
+  width: 16px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12) inset;
+}
+
+.color-apply-bar.is-none {
+  background:
+    linear-gradient(45deg, transparent 44%, var(--error, #d64562) 44% 56%, transparent 56%),
+    var(--surface-alt);
+}
+
+.color-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: var(--h-control);
+  padding: 0;
+  border: 1px solid transparent;
+  border-left: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.color-caret .ms {
+  font-size: 18px;
+}
+
+.color-apply:hover:not(:disabled),
+.color-caret:hover:not(:disabled) {
+  background: var(--bg-2);
+}
+
+.color-apply:disabled,
+.color-caret:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.color-apply:focus-visible,
+.color-caret:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+.color-caret[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Keep the last Font control clear of the Paragraph divider (mirrors the old
+   highlight control's 10px right margin the ribbon-home suite guards). */
+[data-group="font"] .color-control-highlight {
+  margin-right: 10px;
+}
+
+.ctl.color-control.is-mixed .color-apply-bar {
+  background: linear-gradient(135deg, var(--muted) 0 45%, transparent 45% 55%, var(--muted) 55%);
+}
+
+/* ---- Color picker menu ----------------------------------------------------- */
+.color-menu {
+  min-width: 0;
+  width: max-content;
+  padding: 8px;
+}
+
+.color-row-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.color-row-action:hover,
+.color-row-action:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+  outline: none;
+}
+
+.color-chip {
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--sw, #000);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+}
+
+.color-chip-none {
+  background:
+    linear-gradient(45deg, transparent 44%, var(--error, #d64562) 44% 56%, transparent 56%),
+    var(--surface);
+}
+
+.color-more .ms {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 18px);
+  gap: 4px;
+  padding: 4px 2px 6px;
+}
+
+.color-menu[aria-label="Highlight color"] .swatch-grid {
+  grid-template-columns: repeat(8, 18px);
+}
+
+.swatch-cell {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 3px;
+  background: var(--sw);
+  cursor: pointer;
+  transition: transform 0.08s;
+}
+
+.swatch-cell.is-light {
+  border-color: var(--line-strong);
+}
+
+.swatch-cell:hover {
+  transform: scale(1.12);
+}
+
+.swatch-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.swatch-cell.is-active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--accent);
+}
+
+/* ---- Font menu ------------------------------------------------------------- */
+.font-menu {
+  width: 248px;
+  padding: 6px;
+}
+
+.font-menu-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.font-menu-search .ms {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.font-menu-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  outline: none;
+}
+
+.font-menu-list {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.font-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.font-menu-check {
+  flex: 0 0 16px;
+  font-size: 16px;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.font-menu-item.is-current .font-menu-check {
+  opacity: 1;
+}
+
+.font-menu-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.font-menu-item:hover,
+.font-menu-item.is-active,
+.font-menu-item:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+  outline: none;
+}
+
+.font-menu-empty {
+  padding: 14px 8px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/* ---- Editable zoom control ------------------------------------------------- */
+.zoom-value-control {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+}
+
+.zoom-input {
+  width: 62px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 5px 0 0 5px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: text;
+}
+
+.zoom-input:hover {
+  background: var(--bg-2);
+}
+
+.zoom-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--surface);
+}
+
+.zoom-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  border: none;
+  border-radius: 0 5px 5px 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.zoom-caret .ms {
+  font-size: var(--icon-compact);
+}
+
+.zoom-caret:hover,
+.zoom-caret[aria-expanded="true"] {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.zoom-caret:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.zoom-menu {
+  min-width: 148px;
+}
+
+.zoom-menu .zoom-preset .menu-item-label,
+.zoom-menu .zoom-fit .menu-item-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom-menu .menu-check {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  opacity: 0;
+  background: currentcolor;
+  -webkit-mask: var(--check-svg) center / contain no-repeat;
+  mask: var(--check-svg) center / contain no-repeat;
+  --check-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z'/%3E%3C/svg%3E");
+}
+
+.zoom-menu [aria-checked="true"] .menu-check {
+  opacity: 1;
+}
+
+/* ---- Paste-options chip ---------------------------------------------------- */
+.paste-options {
+  position: fixed;
+  z-index: 62;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  box-shadow: var(--shadow-popover);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.paste-options[hidden] {
+  display: none;
+}
+
+.paste-options-icon {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.paste-options-action {
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.paste-options-action:hover,
+.paste-options-action:focus-visible {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: none;
+}
+
+.paste-options-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.paste-options-close .ms {
+  font-size: 16px;
+}
+
+.paste-options-close:hover {
+  background: var(--bg-2);
+  color: var(--ink);
 }

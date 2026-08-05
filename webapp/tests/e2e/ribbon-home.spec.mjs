@@ -57,7 +57,7 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   expect(tileContentFits).toBe(true);
 
   const highlightDividerClearance = await page.evaluate(() => {
-    const highlight = document.querySelector(".highlight-control").getBoundingClientRect();
+    const highlight = document.querySelector(".color-control-highlight").getBoundingClientRect();
     const fontGroup = document.querySelector('[data-group="font"]').getBoundingClientRect();
     return fontGroup.right - highlight.right;
   });
