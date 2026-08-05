@@ -89,6 +89,16 @@ a general ODT support claim.
   multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
   (`office:name`, reply structure) is dropped. Active content inside an
   annotation is dropped like anywhere else.
+- **Tracked changes — insertions (fidelity parity, T6-3)**: an ODF tracked
+  insertion now round-trips to the model's inline `Revision` and back, a
+  byte-exact fixed point. The leading `text:tracked-changes` registry is
+  pre-parsed for author/date (`office:change-info`), the body
+  `text:change-start`/`-end` markers pair by change-id, and the inserted span is
+  captured as a `Revision` wrapping its runs (a merge barrier keeps the inserted
+  text from fusing into the preceding run). Export re-declares each region and
+  wraps the range in markers, minting a change-id when the model's is not a valid
+  unique XML name. This first slice covers same-paragraph insertions; deletions,
+  moves, format changes, and block-spanning ranges degrade with a finding.
 - **Table of contents (fidelity parity, T6-2)**: a block-level
   `text:table-of-content` now round-trips to the model's block content control
   (`BlockNode::Sdt`, a "Table of Contents" building-block gallery) — the
