@@ -14,9 +14,10 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState, apply as apply_edit,
-    caret_run_properties, cell_properties, find_paragraph, find_table, locate_cell,
-    locate_table_cell, locate_table_row, paragraph_properties, run_properties_in_range,
+    CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
+    apply as apply_edit, caret_run_properties, cell_properties, find_paragraph, find_table,
+    locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
+    run_properties_in_range,
 };
 use casual_doc_export::write_document;
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -242,6 +243,7 @@ enum HistoryKind {
     PageSetup,
     StyleChange,
     BookmarkChange,
+    FieldChange,
     Review,
     ReviewTyping,
 }
@@ -268,6 +270,7 @@ impl HistoryKind {
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
             Self::BookmarkChange => "Bookmark change",
+            Self::FieldChange => "Field change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
         }
@@ -318,6 +321,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
+        Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
@@ -1353,6 +1357,39 @@ impl WasmDocument {
             Pos::new(self.document.id(), 0),
             HistoryKind::BookmarkChange,
         )
+        .map_err(to_js)
+    }
+
+    /// Inserts a common field at the caret (`node`, `offset`). `kind` is one of
+    /// `"page"`, `"numpages"`, `"date"`, `"time"`, `"filename"`, `"author"`
+    /// (case-insensitive). `PAGE`/`NUMPAGES` recompute at pagination and ignore
+    /// `result_text`; the clock/context kinds cache `result_text` as their display
+    /// value (this engine reads no clock or filesystem, so the caller supplies the
+    /// already-formatted string). One undoable action. Rejects an unknown kind or a
+    /// caret that does not resolve to an editable paragraph position.
+    #[wasm_bindgen(js_name = insertField)]
+    pub fn insert_field(
+        &mut self,
+        node: &str,
+        offset: u32,
+        kind: &str,
+        result_text: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let common = parse_common_field(kind, result_text.unwrap_or_default()).map_err(to_js)?;
+        let field_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let result_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let field = common.build(field_id, result_id);
+        self.apply(Operation::InsertField {
+            at: Pos::new(nid, offset),
+            field: Box::new(field),
+        })
         .map_err(to_js)
     }
 
@@ -11293,6 +11330,27 @@ fn parse_pos(node: &str, offset: u32) -> Option<ModelPos> {
     Some(ModelPos::new(NodeId::from_str(node).ok()?, offset))
 }
 
+/// Maps a `kind` string from [`WasmDocument::insert_field`] to a [`CommonField`],
+/// threading `result` as the cached display value for the clock/context kinds
+/// (`page`/`numpages` ignore it and recompute). Rejects an unrecognized kind.
+fn parse_common_field(kind: &str, result: String) -> Result<CommonField, String> {
+    match kind.to_ascii_lowercase().as_str() {
+        "page" => Ok(CommonField::Page),
+        "numpages" => Ok(CommonField::NumPages),
+        "date" => Ok(CommonField::Date {
+            format: None,
+            result,
+        }),
+        "time" => Ok(CommonField::Time {
+            format: None,
+            result,
+        }),
+        "filename" => Ok(CommonField::FileName { result }),
+        "author" => Ok(CommonField::Author { result }),
+        other => Err(format!("unknown field kind: {other}")),
+    }
+}
+
 /// A [`ModelRange`] from two string-encoded anchors, or `None` if either id is
 /// malformed.
 fn parse_range(
@@ -13270,6 +13328,15 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // position is a neutral placeholder.
         Operation::CreateBookmark { start, .. } => *start,
         Operation::DeleteBookmark { .. } | Operation::RenameBookmark { .. } => Pos::new(doc_id, 0),
+        // A field is zero-width in the edit anchor space; the caret rests at the
+        // insertion point (immediately before the new field).
+        Operation::InsertField { at, .. } => *at,
+        // `RemoveField` only ever runs as an `InsertField` inverse (undo); rest the
+        // caret where the removed field was — its inverse carries that position.
+        Operation::RemoveField { .. } => match inverse {
+            Operation::InsertField { at, .. } => *at,
+            _ => Pos::new(doc_id, 0),
+        },
     }
 }
 
@@ -14556,6 +14623,92 @@ mod tests {
         let restored = d.bookmark_entries();
         assert_eq!(restored.len(), 1, "bookmark restored by undo");
         assert!(restored[0].ends_with("\tanchor"));
+    }
+
+    #[test]
+    fn parse_common_field_maps_kinds_and_rejects_unknown() {
+        assert!(matches!(
+            parse_common_field("page", String::new()),
+            Ok(CommonField::Page)
+        ));
+        assert!(matches!(
+            parse_common_field("NUMPAGES", String::new()),
+            Ok(CommonField::NumPages)
+        ));
+        assert!(matches!(
+            parse_common_field("Date", "x".to_owned()),
+            Ok(CommonField::Date { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("time", "x".to_owned()),
+            Ok(CommonField::Time { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("filename", "x".to_owned()),
+            Ok(CommonField::FileName { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("author", "x".to_owned()),
+            Ok(CommonField::Author { .. })
+        ));
+        assert!(parse_common_field("bogus", String::new()).is_err());
+    }
+
+    #[test]
+    fn insert_field_then_undo_round_trips_through_wasm() {
+        let paragraph_id = NodeId::from_parts(71, 2).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(71, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(71, 3).unwrap(),
+                    properties: RunProperties::default(),
+                    text: "Page ".to_owned(),
+                })],
+            })],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("valid document");
+        let mut d = wasm_document(document);
+        let node = paragraph_id.to_string();
+
+        // Count the top-level fields in the single paragraph.
+        let field_count = |doc: &WasmDocument| -> usize {
+            doc.document
+                .body()
+                .iter()
+                .filter_map(|block| match block {
+                    BlockNode::Paragraph(p) => Some(p),
+                    _ => None,
+                })
+                .flat_map(|p| &p.inlines)
+                .filter(|inline| matches!(inline, InlineNode::Field(_)))
+                .count()
+        };
+
+        // Insert a PAGE field at the end of the run; `result_text` is ignored.
+        let result = d
+            .insert_field(&node, 5, "page", None)
+            .expect("insert page field");
+        assert_eq!(result.revision(), 1);
+        assert_eq!(field_count(&d), 1, "one field inserted");
+        assert_eq!(d.undo_label(), "Field change");
+
+        // A clock field caches the caller-supplied display text.
+        d.insert_field(&node, 5, "date", Some("8/6/2026".to_owned()))
+            .expect("insert date field");
+        assert_eq!(field_count(&d), 2, "second field inserted");
+
+        // Undo removes each field in turn.
+        d.undo().expect("undo date field");
+        assert_eq!(field_count(&d), 1, "date field removed by undo");
+        d.undo().expect("undo page field");
+        assert_eq!(field_count(&d), 0, "page field removed by undo");
+        // Redo re-inserts.
+        d.redo().expect("redo page field");
+        assert_eq!(field_count(&d), 1, "page field restored by redo");
     }
 
     /// Type a character, confirm the model text changed, then undo and confirm it
