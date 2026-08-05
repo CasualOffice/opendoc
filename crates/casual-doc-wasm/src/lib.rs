@@ -51,6 +51,7 @@ use casual_doc_model::v1::{
     TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
     VerticalMerge, VerticalPosition, WrapMode,
 };
+use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
@@ -244,6 +245,7 @@ enum HistoryKind {
     StyleChange,
     BookmarkChange,
     FieldChange,
+    NoteChange,
     Review,
     ReviewTyping,
 }
@@ -271,6 +273,7 @@ impl HistoryKind {
             Self::StyleChange => "Style change",
             Self::BookmarkChange => "Bookmark change",
             Self::FieldChange => "Field change",
+            Self::NoteChange => "Note change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
         }
@@ -325,6 +328,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
+        Operation::InsertNote { .. } | Operation::RemoveNote { .. } => HistoryKind::NoteChange,
     }
 }
 
@@ -1249,6 +1253,26 @@ impl WasmDocument {
             tooltip: None,
         })
         .map_err(to_js)
+    }
+
+    /// Inserts a footnote at the caret (paragraph `node`, byte `offset`): creates
+    /// an empty, ready-to-type footnote body and splices its reference mark into
+    /// the paragraph as one undoable action. The reference's displayed number is
+    /// derived at render — this only creates the reference and the body. The
+    /// returned [`EditResult`]'s caret (`node`/`offset`) is the model position of
+    /// the new note body's first paragraph, so the host can focus it for typing.
+    #[wasm_bindgen(js_name = insertFootnote)]
+    pub fn insert_footnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        self.insert_note(NoteKind::Footnote, node, offset)
+    }
+
+    /// Inserts an endnote at the caret, the endnote counterpart of
+    /// [`Self::insert_footnote`]: the note is created in the endnotes collection
+    /// and its reference spliced at the caret. Same [`EditResult`] contract — the
+    /// caret lands in the new endnote body.
+    #[wasm_bindgen(js_name = insertEndnote)]
+    pub fn insert_endnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        self.insert_note(NoteKind::Endnote, node, offset)
     }
 
     /// Authored bookmark names, sorted for host navigation surfaces.
@@ -6727,6 +6751,40 @@ impl WasmDocument {
     fn apply(&mut self, op: Operation) -> Result<EditResult, String> {
         let kind = history_kind_for_ops(core::slice::from_ref(&op));
         self.apply_action_as(vec![op], kind)
+    }
+
+    /// Shared body of `insertFootnote`/`insertEndnote`: allocates the note id, the
+    /// reference id, and the empty body paragraph id, then applies an
+    /// [`Operation::InsertNote`] as one undoable `NoteChange` action whose caret
+    /// lands at the start of the new note body so the host can focus it.
+    fn insert_note(
+        &mut self,
+        kind: NoteKind,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(node)?;
+        let exhausted = || to_js("id space exhausted".to_string());
+        let note = NoteId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let reference_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let body_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: body_id,
+            properties: ParagraphProperties::default(),
+            inlines: Vec::new(),
+        })];
+        self.apply_action_caret_as(
+            vec![Operation::InsertNote {
+                kind,
+                note,
+                at: Pos::new(node, offset),
+                reference_id,
+                blocks,
+            }],
+            Pos::new(body_id, 0),
+            HistoryKind::NoteChange,
+        )
+        .map_err(to_js)
     }
 
     /// Applies a batch of forward ops as one undoable action. The caret rests at
@@ -13337,6 +13395,15 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             Operation::InsertField { at, .. } => *at,
             _ => Pos::new(doc_id, 0),
         },
+        // A note lives in `Definitions`, not the body flow: land the caret at the
+        // start of the note body's first paragraph so the user can type into the
+        // fresh note. Both note ops route through `apply_action_caret_as` with the
+        // caller's own caret anyway; this keeps the match exhaustive with the same
+        // intent.
+        Operation::InsertNote { blocks, .. } => blocks
+            .first()
+            .map_or_else(|| Pos::new(doc_id, 0), first_pos_of_block),
+        Operation::RemoveNote { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -14190,6 +14257,120 @@ mod tests {
 
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
     const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
+
+    /// Counts every note reference in a block tree (descending into tables, SDTs,
+    /// and inline wrappers), so a test can assert the delta an insert/undo makes.
+    fn count_note_references(blocks: &[BlockNode]) -> usize {
+        fn count_inlines(inlines: &[InlineNode]) -> usize {
+            inlines
+                .iter()
+                .map(|inline| match inline {
+                    InlineNode::NoteReference(_) => 1,
+                    InlineNode::Hyperlink(hyperlink) => count_inlines(&hyperlink.inlines),
+                    InlineNode::Revision(revision) => count_inlines(&revision.inlines),
+                    InlineNode::Sdt(sdt) => count_inlines(&sdt.inlines),
+                    _ => 0,
+                })
+                .sum()
+        }
+        blocks
+            .iter()
+            .map(|block| match block {
+                BlockNode::Paragraph(paragraph) => count_inlines(&paragraph.inlines),
+                BlockNode::Table(table) => table
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.cells)
+                    .map(|cell| count_note_references(&cell.blocks))
+                    .sum(),
+                BlockNode::Sdt(sdt) => count_note_references(&sdt.blocks),
+                BlockNode::AltChunk(_) => 0,
+            })
+            .sum()
+    }
+
+    /// insertFootnote → creates a footnote definition and splices its reference;
+    /// the reported caret lands in the new (empty) note body; undo removes both.
+    #[test]
+    fn insert_footnote_creates_a_note_and_undo_removes_it() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let notes_before = doc.document.definitions().footnotes.len();
+        let refs_before = count_note_references(doc.document.body());
+
+        let result = doc
+            .insert_footnote(&node.to_string(), 0)
+            .expect("insert footnote");
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            notes_before + 1,
+            "a footnote definition was created"
+        );
+        assert_eq!(
+            count_note_references(doc.document.body()),
+            refs_before + 1,
+            "the footnote reference was spliced into the body"
+        );
+        // The caret is the new note body's first paragraph, ready to type into.
+        let body_para = NodeId::from_str(&result.node()).expect("caret node id");
+        assert!(
+            doc.document
+                .definitions()
+                .footnotes
+                .iter()
+                .any(|(_, note)| matches!(
+                    note.blocks.first(),
+                    Some(BlockNode::Paragraph(p)) if p.id == body_para
+                )),
+            "the reported caret sits in the created footnote body"
+        );
+        assert_eq!(result.offset(), 0);
+        doc.document
+            .validate()
+            .expect("document valid after insert");
+
+        doc.undo().expect("undo footnote insertion");
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            notes_before,
+            "undo removed the footnote definition"
+        );
+        assert_eq!(
+            count_note_references(doc.document.body()),
+            refs_before,
+            "undo removed the footnote reference"
+        );
+    }
+
+    /// insertEndnote is the endnote counterpart: it grows the endnotes collection
+    /// (not footnotes) and undo restores it.
+    #[test]
+    fn insert_endnote_creates_a_note_and_undo_removes_it() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, len) = doc.ordered_paragraphs()[0];
+        let endnotes_before = doc.document.definitions().endnotes.len();
+        let footnotes_before = doc.document.definitions().footnotes.len();
+
+        doc.insert_endnote(&node.to_string(), len)
+            .expect("insert endnote at the paragraph end");
+        assert_eq!(
+            doc.document.definitions().endnotes.len(),
+            endnotes_before + 1,
+            "an endnote definition was created"
+        );
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            footnotes_before,
+            "the footnotes collection is untouched"
+        );
+
+        doc.undo().expect("undo endnote insertion");
+        assert_eq!(
+            doc.document.definitions().endnotes.len(),
+            endnotes_before,
+            "undo removed the endnote definition"
+        );
+    }
 
     #[test]
     fn document_metadata_exposes_core_app_and_custom_groups() {
