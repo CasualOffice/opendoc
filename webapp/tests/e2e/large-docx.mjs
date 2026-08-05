@@ -129,3 +129,113 @@ export function makeLargeDocx(pageCount = 49) {
     { name: "word/document.xml", data: enc.encode(documentXml(pageCount)) },
   ]);
 }
+
+// ---- Review (tracked changes + comments) fixture -----------------------------
+// A multi-page document that is *dense* in review markup: every page carries
+// several paragraphs, each with an inline insertion (`w:ins`) and deletion
+// (`w:del`), and a fraction of paragraphs also carry a comment range +
+// reference resolving into `word/comments.xml`. Opening it auto-enables the
+// "Show changes" markup view (a doc with tracked changes shows markup by
+// default), which is the scenario the memory-budget guard must cover. Like
+// makeLargeDocx it is deterministic (explicit page breaks, no font dependence).
+
+const REVIEW_CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
+</Types>`;
+
+const REVIEW_DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>
+</Relationships>`;
+
+const REVIEW_AUTHORS = ["Ada Lovelace", "Grace Hopper", "Alan Turing"];
+const REVIEW_DATE = "2026-07-25T10:00:00Z";
+
+function reviewDocumentXml(pageCount, paragraphsPerPage, commentEveryN) {
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const blocks = [];
+  let revId = 1;
+  let commentId = 1;
+  for (let p = 0; p < pageCount; p++) {
+    blocks.push(
+      `<w:p><w:r><w:t xml:space="preserve">Section ${p + 1} — review-heavy memory fixture.</w:t></w:r></w:p>`,
+    );
+    for (let k = 0; k < paragraphsPerPage; k++) {
+      const author = REVIEW_AUTHORS[(p + k) % REVIEW_AUTHORS.length];
+      const hasComment = commentEveryN > 0 && (p * paragraphsPerPage + k) % commentEveryN === 0;
+      const runs = [];
+      runs.push(`<w:r><w:t xml:space="preserve">Baseline sentence ${p + 1}.${k + 1} with </w:t></w:r>`);
+      if (hasComment) {
+        const cid = commentId++;
+        runs.push(`<w:commentRangeStart w:id="${cid}"/>`);
+        runs.push(`<w:r><w:t xml:space="preserve">a commented span</w:t></w:r>`);
+        runs.push(`<w:commentRangeEnd w:id="${cid}"/>`);
+        runs.push(`<w:r><w:commentReference w:id="${cid}"/></w:r>`);
+        runs.push(`<w:r><w:t xml:space="preserve"> and </w:t></w:r>`);
+      }
+      runs.push(
+        `<w:ins w:id="${revId++}" w:author="${author}" w:date="${REVIEW_DATE}">` +
+          `<w:r><w:t xml:space="preserve">an inserted revision phrase</w:t></w:r></w:ins>`,
+      );
+      runs.push(
+        `<w:del w:id="${revId++}" w:author="${author}" w:date="${REVIEW_DATE}">` +
+          `<w:r><w:delText xml:space="preserve"> a struck deletion phrase</w:delText></w:r></w:del>`,
+      );
+      runs.push(`<w:r><w:t xml:space="preserve"> trailing tail.</w:t></w:r>`);
+      blocks.push(`<w:p>${runs.join("")}</w:p>`);
+    }
+    if (p < pageCount - 1) {
+      blocks.push(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`);
+    }
+  }
+  const sectPr = `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W}"><w:body>${blocks.join("")}${sectPr}</w:body></w:document>`;
+}
+
+function reviewCommentsXml(pageCount, paragraphsPerPage, commentEveryN) {
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const comments = [];
+  let commentId = 1;
+  for (let i = 0; i < pageCount * paragraphsPerPage; i++) {
+    if (commentEveryN <= 0 || i % commentEveryN !== 0) continue;
+    const cid = commentId++;
+    const author = REVIEW_AUTHORS[cid % REVIEW_AUTHORS.length];
+    const initials = author
+      .split(" ")
+      .map((w) => w[0])
+      .join("");
+    comments.push(
+      `<w:comment w:id="${cid}" w:author="${author}" w:initials="${initials}" w:date="${REVIEW_DATE}">` +
+        `<w:p><w:r><w:t xml:space="preserve">Reviewer note ${cid}: please reconsider this phrasing and confirm intent.</w:t></w:r></w:p>` +
+        `</w:comment>`,
+    );
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="${W}">${comments.join("")}</w:comments>`;
+}
+
+/** Returns a Buffer/Uint8Array of a valid .docx that paginates to `pageCount`
+ *  pages and is dense in tracked changes (two revisions per body paragraph) plus
+ *  comments (one every `commentEveryN` body paragraphs). Opening it auto-enables
+ *  the Show-changes markup view — the review memory scenario. */
+export function makeReviewDocx(pageCount = 20, { paragraphsPerPage = 6, commentEveryN = 3 } = {}) {
+  const enc = new TextEncoder();
+  return storedZip([
+    { name: "[Content_Types].xml", data: enc.encode(REVIEW_CONTENT_TYPES) },
+    { name: "_rels/.rels", data: enc.encode(ROOT_RELS) },
+    { name: "word/_rels/document.xml.rels", data: enc.encode(REVIEW_DOC_RELS) },
+    {
+      name: "word/document.xml",
+      data: enc.encode(reviewDocumentXml(pageCount, paragraphsPerPage, commentEveryN)),
+    },
+    {
+      name: "word/comments.xml",
+      data: enc.encode(reviewCommentsXml(pageCount, paragraphsPerPage, commentEveryN)),
+    },
+  ]);
+}

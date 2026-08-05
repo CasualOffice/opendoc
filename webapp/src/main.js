@@ -1085,6 +1085,22 @@ function scheduleReviewMarginRender() {
   });
 }
 
+/** Whether `comment` is a threaded reply to `parent`. A reply carries a
+ *  non-null `parentParaId` that joins to the parent's `paraId` (the DOCX
+ *  `w15:paraIdParent` → `w14:paraId` link) or, as a fallback, to the parent's
+ *  comment id. A thread root has a null/absent `parentParaId` and is a reply to
+ *  nothing. The `parentParaId != null` guard is load-bearing: `listComments`
+ *  projects a comment with no join key as `paraId: null` / `parentParaId: null`
+ *  (e.g. imported comments with no `commentsExtended`/`w14:paraId`), and without
+ *  the guard `null === null` would count every top-level comment as a reply to
+ *  every other — an O(n²) reply-DOM (and signature-string) blowup that makes a
+ *  comment-heavy document consume gigabytes of memory. */
+function reviewCommentIsReplyTo(comment, parent) {
+  const parentKey = comment?.parentParaId;
+  if (parentKey == null) return false;
+  return parentKey === parent.paraId || parentKey === parent.id;
+}
+
 function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
@@ -1563,8 +1579,7 @@ function renderReviewMarginItems() {
       }
     }
     if (item.type === "comment") {
-      const replies = comments.filter((comment) =>
-        comment.parentParaId === item.data.paraId || comment.parentParaId === item.data.id);
+      const replies = comments.filter((comment) => reviewCommentIsReplyTo(comment, item.data));
       if (replies.length) {
         const thread = document.createElement("div");
         thread.className = "review-margin-replies";
@@ -1766,7 +1781,7 @@ function reviewCardSignature(item, comments) {
   const confirm = reviewDeleteConfirmId === d.id;
   const replies = item.type === "comment"
     ? comments
-      .filter((c) => c.parentParaId === d.paraId || c.parentParaId === d.id)
+      .filter((c) => reviewCommentIsReplyTo(c, d))
       .map((r) => `${r.id}${r.resolved ? 1 : 0}${r.text}${r.author}${r.date}`)
       .join("")
     : "";
