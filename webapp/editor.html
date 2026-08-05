@@ -631,6 +631,39 @@
         <footer class="dialog-foot"><span class="dialog-note">One undoable action.</span><div class="dialog-actions"><button id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
       </section>
     </div>
+    <div id="bookmarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="bookmarkTitle" aria-describedby="bookmarkDescription">
+      <section class="dialog-card bookmark-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">bookmark</span>
+            <div>
+              <h2 id="bookmarkTitle">Bookmarks</h2>
+              <p id="bookmarkDescription">Name a place in the document, then jump back to it anytime.</p>
+            </div>
+          </div>
+          <button id="bookmarkClose" type="button" class="dialog-close" title="Close" aria-label="Close bookmarks"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body bookmark-body">
+          <form id="bookmarkAddForm" class="bookmark-add">
+            <label for="bookmarkNameInput">Bookmark name</label>
+            <div class="bookmark-add-row">
+              <input id="bookmarkNameInput" type="text" maxlength="255" autocomplete="off" spellcheck="false" placeholder="e.g. Introduction" aria-describedby="bookmarkAddNote" />
+              <button id="bookmarkAddBtn" type="submit" class="dialog-button dialog-button-primary">Add</button>
+            </div>
+            <p id="bookmarkAddNote" class="dialog-field-note" role="status" aria-live="polite">Select text in the document, then add a bookmark for it.</p>
+          </form>
+          <div class="bookmark-list-head">
+            <span id="bookmarkListLabel">In this document</span>
+            <button id="bookmarkSortBtn" type="button" class="bookmark-sort" aria-label="Sort bookmarks">
+              <span class="ms" aria-hidden="true">sort_by_alpha</span><span id="bookmarkSortLabel">A–Z</span>
+            </button>
+          </div>
+          <ul id="bookmarkList" class="bookmark-list" aria-labelledby="bookmarkListLabel"></ul>
+          <p id="bookmarkEmpty" class="bookmark-empty" hidden>No bookmarks yet. Select text and add one above.</p>
+        </div>
+        <footer class="dialog-foot"><span class="dialog-note">Each change is one undoable action.</span><div class="dialog-actions"><button id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
+      </section>
+    </div>
 
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
