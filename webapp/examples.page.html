@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Examples — OpenDoc live capability gallery</title>
+    <meta
+      name="description"
+      content="A gallery of live OpenDoc capability demos — tables, tracked changes, comments, find & replace, formatting, and DOCX export — running on the real Rust and WebAssembly editor, not screenshots."
+    />
+    <meta name="author" content="CasualOffice" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="theme-color" content="#f4f5f7" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="canonical" href="https://opendoc.casualoffice.org/examples.html" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OpenDoc" />
+    <meta property="og:title" content="OpenDoc examples — a live capability gallery" />
+    <meta
+      property="og:description"
+      content="Live demos of tables, tracked changes, comments, find & replace, formatting, and DOCX export on the real OpenDoc WebAssembly editor."
+    />
+    <meta property="og:url" content="https://opendoc.casualoffice.org/examples.html" />
+    <meta property="og:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="OpenDoc examples — a live capability gallery" />
+    <meta name="twitter:description" content="Live demos on the real OpenDoc WebAssembly editor." />
+    <meta name="twitter:image" content="https://opendoc.casualoffice.org/assets/editor.jpg" />
+
+    <link rel="stylesheet" href="./src/marketing.css" />
+  </head>
+  <body>
+    <!-- @include site-header active=examples -->
+
+    <main>
+      <section class="page-hero">
+        <span class="section-kicker">Explore</span>
+        <h1>See the engine work — live, not in screenshots.</h1>
+        <p>
+          Every card below boots the same Rust and WebAssembly editor that ships in
+          production, pre-loaded to show one capability. Activate a card to run it; the
+          document stays entirely in your browser.
+        </p>
+        <p class="page-hero-note" role="note">
+          To keep the page fast and within the editor's memory budget, only one live
+          editor runs at a time. Activating a card tears down the previous one.
+        </p>
+      </section>
+
+      <section class="example-gallery" aria-label="Live capability demos">
+        <ul class="example-grid" id="exampleGrid">
+          <li class="example-card" data-demo="tables">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor showing a document with a table" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="tables" aria-label="Run the Tables demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">01 · Tables</span>
+              <h3>Edit real tables</h3>
+              <p>Click into cells, move the caret across rows and columns, and format inside a laid-out table.</p>
+            </div>
+          </li>
+
+          <li class="example-card" data-demo="changes">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor in Suggesting mode with tracked changes" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="changes" aria-label="Run the Tracked changes demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">02 · Tracked changes</span>
+              <h3>Suggest edits</h3>
+              <p>Boots in Suggesting mode — type or delete and every change is recorded as author-colored markup.</p>
+            </div>
+          </li>
+
+          <li class="example-card" data-demo="comments">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor with the comment review sidebar open" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="comments" aria-label="Run the Comments demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">03 · Comments</span>
+              <h3>Review &amp; comment</h3>
+              <p>Opens the review sidebar — select text, add a comment, and resolve threads in the margin.</p>
+            </div>
+          </li>
+
+          <li class="example-card" data-demo="find">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor with the find and replace panel open" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="find" aria-label="Run the Find and replace demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">04 · Find &amp; replace</span>
+              <h3>Search the document</h3>
+              <p>Opens Find &amp; replace — match across the model, step through hits, and replace one or all.</p>
+            </div>
+          </li>
+
+          <li class="example-card" data-demo="formatting">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor showing the formatting ribbon" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="formatting" aria-label="Run the Formatting demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">05 · Formatting</span>
+              <h3>Rich text formatting</h3>
+              <p>Bold, italic, color, styles, and paragraph controls from the ribbon — applied to a real selection.</p>
+            </div>
+          </li>
+
+          <li class="example-card" data-demo="export">
+            <div class="example-stage">
+              <div class="example-poster">
+                <img src="./assets/editor.jpg" width="1456" height="829" loading="lazy" alt="Preview of the OpenDoc editor ready to export a .docx file" />
+                <div class="example-poster-scrim" aria-hidden="true"></div>
+                <button type="button" class="example-run" data-demo="export" aria-label="Run the Export demo live">
+                  <span class="example-run-icon" aria-hidden="true">▶</span> Run live
+                </button>
+              </div>
+            </div>
+            <div class="example-body">
+              <span class="example-kicker">06 · Export</span>
+              <h3>Write .docx back out</h3>
+              <p>Edit, then Save to serialize the model to a real, semantic <code>.docx</code> — download it and reopen in Word.</p>
+            </div>
+          </li>
+        </ul>
+
+        <p class="example-fallback">
+          The demos run the WebAssembly editor.
+          <a href="./editor.html">Open the full editor</a> to load your own document, or
+          <a href="./fidelity.html">read the fidelity matrix</a> for exactly what each construct supports.
+        </p>
+      </section>
+    </main>
+
+    <!-- @include site-footer -->
+
+    <script type="module" src="./src/examples.js"></script>
+  </body>
+</html>

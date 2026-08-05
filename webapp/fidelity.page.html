@@ -17,20 +17,7 @@
     <link rel="stylesheet" href="./src/marketing.css" />
   </head>
   <body>
-    <header class="site-header">
-      <a class="brand" href="./" aria-label="OpenDoc home">
-        <img class="brand-mark" src="./opendoc-mark.svg" alt="" width="28" height="28" />
-        <span>OpenDoc</span>
-      </a>
-      <nav aria-label="Primary navigation">
-        <a href="./" data-nav="home">Home</a>
-        <a href="./docs.html" data-nav="docs">Docs</a>
-        <a href="./examples.html" data-nav="examples">Examples</a>
-        <a href="./blog.html" data-nav="blog">Blog</a>
-        <a href="https://github.com/CasualOffice/opendoc" data-nav="github">GitHub</a>
-      </nav>
-      <a class="header-cta" href="./editor.html">Open editor <span aria-hidden="true">↗</span></a>
-    </header>
+    <!-- @include site-header -->
 
     <main>
       <section class="fidelity-intro">
@@ -119,16 +106,7 @@
       </p>
     </main>
 
-    <footer>
-      <a class="brand" href="./"><img class="brand-mark" src="./opendoc-mark.svg" alt="" width="28" height="28" /><span>OpenDoc</span></a>
-      <p>Open-source document infrastructure by <a href="https://github.com/CasualOffice">CasualOffice</a>.</p>
-      <div>
-        <a href="./fidelity.html">Fidelity</a>
-        <a href="./llms.txt">llms.txt</a>
-        <a href="https://github.com/CasualOffice/opendoc/blob/main/LICENSE">Apache-2.0</a>
-        <a href="https://github.com/CasualOffice/opendoc">GitHub</a>
-      </div>
-    </footer>
+    <!-- @include site-footer -->
 
     <script src="./src/fidelity.js"></script>
   </body>

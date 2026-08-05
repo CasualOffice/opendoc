@@ -92,5 +92,13 @@ cp "$repo/fixtures/corpus/real-producer-rich.docx" "$here/demo.docx"
 cp "$repo/sample.docx" "$here/sample.docx"
 cp "$repo/docs/assets/editor.jpg" "$here/assets/editor.jpg"
 
-echo "Built webapp/pkg and staged the demo/site assets."
+# --- Static multi-page site -----------------------------------------------
+# Inline the shared header/footer partials into every *.page.html template and
+# write the flat *.html that GitHub Pages serves. `--check` then fails the build
+# if the committed HTML drifted from its template + partials, so the generated
+# files can never fall out of sync (the same guard CI runs).
+"$here/build-site.py"
+"$here/build-site.py" --check
+
+echo "Built webapp/pkg, staged the demo/site assets, and generated the static pages."
 echo "Run ./serve.py (no-cache), then open http://localhost:8099/."
