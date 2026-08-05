@@ -1231,15 +1231,25 @@ impl Writer {
     fn collect_revisions_in_inlines(&mut self, inlines: &[InlineNode]) {
         for inline in inlines {
             match inline {
-                InlineNode::Revision(revision) => {
-                    if matches!(
-                        revision.kind,
-                        RevisionKind::Insertion | RevisionKind::Deletion
-                    ) {
+                InlineNode::Revision(revision) => match revision.kind {
+                    RevisionKind::Insertion => {
                         self.assign_revision(revision);
+                        // An insertion's children ARE emitted in the body.
+                        self.collect_revisions_in_inlines(&revision.inlines);
                     }
-                    self.collect_revisions_in_inlines(&revision.inlines);
-                }
+                    RevisionKind::Deletion => {
+                        // A deletion's content is flattened into its region, not
+                        // emitted in the body — so assign a region only when there
+                        // is flattenable content (an empty flatten would emit an
+                        // unresolvable marker), and do NOT recurse (a nested
+                        // revision would orphan-declare its own region that no body
+                        // marker references).
+                        if !flatten_inline_text(&revision.inlines).is_empty() {
+                            self.assign_revision(revision);
+                        }
+                    }
+                    _ => self.collect_revisions_in_inlines(&revision.inlines),
+                },
                 InlineNode::Hyperlink(link) => self.collect_revisions_in_inlines(&link.inlines),
                 InlineNode::Sdt(sdt) => self.collect_revisions_in_inlines(&sdt.inlines),
                 // Only recurse into a field's projection inlines when the writer

@@ -17,7 +17,8 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{
-    BlockSdt, Revision, RevisionKind, SdtControlKind, SdtProperties, TextBox,
+    BlockSdt, FormFieldData, FormFieldKind, FormTextInput, Revision, RevisionKind, SdtControlKind,
+    SdtProperties, TextBox,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -35,6 +36,7 @@ const FO_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1
 const TABLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const DRAW_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const SVG_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+const FORM_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:form:1.0";
 const DC_NS: &[u8] = b"http://purl.org/dc/elements/1.1/";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
@@ -50,6 +52,7 @@ enum NamespaceKind {
     Draw,
     Svg,
     Dc,
+    Form,
     Foreign,
 }
 
@@ -379,6 +382,12 @@ enum InlineDraft {
     /// An inline `draw:text-box`; carries the flattened body text directly (built
     /// into a single-paragraph `TextBox`, no definition/id dependency).
     TextBox(String),
+    /// A `draw:control` resolving to a `form:text` control; carries the control's
+    /// name directly (built into a `FORMTEXT` field with a text-input form).
+    #[allow(dead_code)] // constructed once the draw:control import site is wired
+    FormField {
+        name: Option<String>,
+    },
     /// A tracked-change (revision) range wrapping the enclosed inline drafts,
     /// captured by splicing the paragraph inlines between `text:change-start` and
     /// `text:change-end`. Insertions only in this slice.
@@ -4233,12 +4242,14 @@ fn push_bounded_text(buffer: &mut String, value: &str, cap: usize) -> bool {
 /// Routes one captured text value into the annotation buffer selected by
 /// `kind`, charging it against the text-byte limit and bounding it to the
 /// buffer's model domain. Returns whether any character was dropped.
+#[allow(clippy::too_many_arguments)]
 fn append_captured_text(
     kind: CommentCapture,
     value: &str,
     author: &mut String,
     date: &mut String,
     body: &mut String,
+    body_cap: usize,
     text_bytes: &mut usize,
     limits: OdfImportLimits,
 ) -> Result<bool, OdfError> {
@@ -4249,7 +4260,7 @@ fn append_captured_text(
     Ok(match kind {
         CommentCapture::Author => push_bounded_text(author, value, 255),
         CommentCapture::Date => push_bounded_text(date, value, 64),
-        CommentCapture::Body => push_bounded_text(body, value, MAX_COMMENT_BODY_BYTES),
+        CommentCapture::Body => push_bounded_text(body, value, body_cap),
     })
 }
 
@@ -4442,6 +4453,7 @@ fn parse_annotation(
                     &mut author,
                     &mut date,
                     &mut body,
+                    MAX_COMMENT_BODY_BYTES,
                     text_bytes,
                     limits,
                 )?;
@@ -4462,6 +4474,7 @@ fn parse_annotation(
                     &mut author,
                     &mut date,
                     &mut body,
+                    MAX_COMMENT_BODY_BYTES,
                     text_bytes,
                     limits,
                 )?;
@@ -4484,6 +4497,7 @@ fn parse_annotation(
                     &mut author,
                     &mut date,
                     &mut body,
+                    MAX_COMMENT_BODY_BYTES,
                     text_bytes,
                     limits,
                 )?;
@@ -4620,7 +4634,7 @@ fn parse_tracked_changes(
                         // capture its text, separating flattened paragraphs with a
                         // line break (re-exported as text:line-break).
                         if !deleted.is_empty() {
-                            push_bounded_text(&mut deleted, "\n", MAX_COMMENT_BODY_BYTES);
+                            push_bounded_text(&mut deleted, "\n", limits.max_text_bytes);
                         }
                         capture = Some(CommentCapture::Body);
                         capture_depth = Some(sub_depth);
@@ -4663,7 +4677,7 @@ fn parse_tracked_changes(
                             }
                         }
                         enforce("odf_content_space_repeat", count, limits.max_space_repeat)?;
-                        push_bounded_text(&mut deleted, &" ".repeat(count), MAX_COMMENT_BODY_BYTES);
+                        push_bounded_text(&mut deleted, &" ".repeat(count), limits.max_text_bytes);
                     } else if is_name(&name, NamespaceKind::Text, b"tab")
                         || is_name(&name, NamespaceKind::Text, b"line-break")
                     {
@@ -4673,7 +4687,7 @@ fn parse_tracked_changes(
                         } else {
                             "\n"
                         };
-                        push_bounded_text(&mut deleted, whitespace, MAX_COMMENT_BODY_BYTES);
+                        push_bounded_text(&mut deleted, whitespace, limits.max_text_bytes);
                     } else {
                         count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                     }
@@ -4719,6 +4733,7 @@ fn parse_tracked_changes(
                     &mut author,
                     &mut date,
                     &mut deleted,
+                    limits.max_text_bytes,
                     text_bytes,
                     limits,
                 )?;
@@ -4732,6 +4747,7 @@ fn parse_tracked_changes(
                     &mut author,
                     &mut date,
                     &mut deleted,
+                    limits.max_text_bytes,
                     text_bytes,
                     limits,
                 )?;
@@ -4744,6 +4760,7 @@ fn parse_tracked_changes(
                     &mut author,
                     &mut date,
                     &mut deleted,
+                    limits.max_text_bytes,
                     text_bytes,
                     limits,
                 )?;
@@ -6883,7 +6900,8 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::NoteReference { .. }
             | InlineDraft::Drawing(_)
             | InlineDraft::Field(_)
-            | InlineDraft::CommentReference(_) => {}
+            | InlineDraft::CommentReference(_)
+            | InlineDraft::FormField { .. } => {}
         }
     }
     Ok(total)
@@ -7617,6 +7635,12 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"text-box");
             hash_bytes(hash, body.as_bytes());
         }
+        InlineDraft::FormField { name } => {
+            hash_bytes(hash, b"form-field");
+            if let Some(name) = name {
+                hash_bytes(hash, name.as_bytes());
+            }
+        }
         InlineDraft::Revision {
             kind,
             author,
@@ -7805,6 +7829,24 @@ fn build_inlines(
                     })],
                 })
             }
+            InlineDraft::FormField { name } => InlineNode::Field(Field {
+                id,
+                instruction: "FORMTEXT".to_owned(),
+                kind: FieldKind::Other {
+                    keyword: "FORMTEXT".to_owned(),
+                },
+                inlines: Vec::new(),
+                form: Some(FormFieldData {
+                    name: name.clone(),
+                    enabled: None,
+                    calc_on_exit: None,
+                    help_text: None,
+                    status_text: None,
+                    entry_macro: None,
+                    exit_macro: None,
+                    kind: FormFieldKind::TextInput(FormTextInput::default()),
+                }),
+            }),
             InlineDraft::Revision {
                 kind,
                 author,
@@ -8024,6 +8066,7 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == DRAW_NS => NamespaceKind::Draw,
         ResolveResult::Bound(Namespace(value)) if *value == SVG_NS => NamespaceKind::Svg,
         ResolveResult::Bound(Namespace(value)) if *value == DC_NS => NamespaceKind::Dc,
+        ResolveResult::Bound(Namespace(value)) if *value == FORM_NS => NamespaceKind::Form,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -8232,6 +8275,7 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Draw => "draw",
         NamespaceKind::Svg => "svg",
         NamespaceKind::Dc => "dc",
+        NamespaceKind::Form => "form",
         NamespaceKind::Foreign => "foreign",
     }
 }

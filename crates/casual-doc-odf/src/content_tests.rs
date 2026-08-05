@@ -1109,6 +1109,83 @@ fn tracked_deletion_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn deletion_wrapping_non_text_content_stays_idempotent() {
+    // Regression (review HIGH 1): a deletion whose content flattens to nothing
+    // (e.g. a deleted field, a DOCX-origin shape) must NOT emit an unresolvable
+    // marker/region. Construct it by replacing an imported deletion's run with a
+    // Field (reusing the freed run id), then assert export idempotency.
+    use casual_doc_model::v1::{Field, FieldKind};
+    let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="d1"><text:deletion><office:change-info><dc:creator>A</dc:creator></office:change-info><text:p>gone</text:p></text:deletion></text:changed-region></text:tracked-changes><text:p>x<text:change text:change-id="d1"/>y</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Paragraph(para) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    for inline in &mut para.inlines {
+        if let InlineNode::Revision(revision) = inline {
+            let inner_id = match revision.inlines.as_slice() {
+                [InlineNode::Run(run)] => run.id,
+                other => panic!("deletion run: {other:?}"),
+            };
+            revision.inlines = vec![InlineNode::Field(Field {
+                id: inner_id,
+                instruction: "PAGE".to_owned(),
+                kind: FieldKind::Page,
+                inlines: Vec::new(),
+                form: None,
+            })];
+        }
+    }
+    document.validate().unwrap();
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn long_tracked_deletion_is_not_truncated() {
+    // Regression (review HIGH 2): the deletion body cap was the 2 KB comment cap,
+    // so a deletion longer than that was truncated on re-import, breaking the
+    // fixed point. It must accept the full content the exporter can produce.
+    let long = "a".repeat(3000);
+    let body = format!(
+        r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="d1"><text:deletion><office:change-info><dc:creator>A</dc:creator></office:change-info><text:p>{long}</text:p></text:deletion></text:changed-region></text:tracked-changes><text:p>x<text:change text:change-id="d1"/>y</text:p>"#
+    );
+    let import = import_content_xml(
+        &content("1.4", &body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let deleted_len = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Revision(revision) => match revision.inlines.as_slice() {
+                [InlineNode::Run(run)] => Some(run.text.len()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("deletion run");
+    assert_eq!(deleted_len, 3000, "deletion must not be truncated");
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn insertion_of_only_an_unpaired_bookmark_degrades_not_aborts() {
     // Regression: an insertion wrapping only an unpaired bookmark-start captures a
     // non-empty draft (so the change-end empty-guard passes), but build_inlines
