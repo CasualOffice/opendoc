@@ -17,8 +17,8 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{
-    BlockSdt, FormCheckBox, FormFieldData, FormFieldKind, FormTextInput, Revision, RevisionKind,
-    SdtControlKind, SdtProperties, TextBox,
+    BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
+    RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -404,13 +404,25 @@ struct FormControlDraft {
     kind: FormControlKind,
 }
 
-/// The modeled form-control kinds in this slice.
+/// In-progress `form:listbox` capture (its `form:option` entries accumulate until
+/// the matching `End`).
+#[derive(Clone, Debug)]
+struct OpenListbox {
+    id: String,
+    name: Option<String>,
+    depth: usize,
+    entries: Vec<String>,
+}
+
+/// The modeled form-control kinds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum FormControlKind {
     /// `form:text` → a FORMTEXT text-input field.
     Text,
     /// `form:checkbox` → a FORMCHECKBOX field with the current checked state.
     CheckBox { checked: Option<bool> },
+    /// `form:listbox` → a FORMDROPDOWN field with its `form:option` entry labels.
+    DropDown { entries: Vec<String> },
 }
 
 /// Metadata for one `text:changed-region`, captured from the leading
@@ -4949,6 +4961,7 @@ fn parse_forms(
 ) -> Result<BTreeMap<String, FormControlDraft>, OdfError> {
     count_attributes_only(element, attributes, attribute_bytes, limits)?;
     let mut controls: BTreeMap<String, FormControlDraft> = BTreeMap::new();
+    let mut open_listbox: Option<OpenListbox> = None;
     let mut sub_depth = 0_usize;
     let mut buffer = Vec::new();
 
@@ -4966,6 +4979,18 @@ fn parse_forms(
             Event::End(_) => {
                 if sub_depth == 0 {
                     break;
+                }
+                if open_listbox
+                    .as_ref()
+                    .is_some_and(|lb| lb.depth == sub_depth)
+                {
+                    let lb = open_listbox.take().ok_or(OdfError::MalformedContent)?;
+                    controls.entry(lb.id).or_insert(FormControlDraft {
+                        name: lb.name,
+                        kind: FormControlKind::DropDown {
+                            entries: lb.entries,
+                        },
+                    });
                 }
                 sub_depth -= 1;
                 buffer.clear();
@@ -5014,6 +5039,48 @@ fn parse_forms(
                     cancellation,
                 )?;
                 sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+            }
+            buffer.clear();
+            continue;
+        }
+        // Inside an open listbox: collect its form:option entry labels.
+        if let Some(listbox) = &mut open_listbox {
+            if is_name(&name, NamespaceKind::Form, b"option") {
+                if let Some(label) =
+                    read_form_option_label(reader, element, attributes, attribute_bytes, limits)?
+                    && listbox.entries.len() < 512
+                {
+                    listbox.entries.push(label);
+                }
+            } else {
+                count_attributes_only(element, attributes, attribute_bytes, limits)?;
+            }
+            buffer.clear();
+            continue;
+        }
+        if is_name(&name, NamespaceKind::Form, b"listbox")
+            || is_name(&name, NamespaceKind::Form, b"combobox")
+        {
+            if let Some((id, form_name)) =
+                read_form_id_name(reader, element, attributes, attribute_bytes, limits)?
+            {
+                if is_start {
+                    // Entries accumulate until the matching End.
+                    open_listbox = Some(OpenListbox {
+                        id,
+                        name: form_name,
+                        depth: sub_depth,
+                        entries: Vec::new(),
+                    });
+                } else {
+                    // A self-closing (entry-less) listbox finalizes immediately.
+                    controls.entry(id).or_insert(FormControlDraft {
+                        name: form_name,
+                        kind: FormControlKind::DropDown {
+                            entries: Vec::new(),
+                        },
+                    });
+                }
             }
             buffer.clear();
             continue;
@@ -5084,10 +5151,59 @@ fn read_form_control(
     // The name is bounded to the model's form-string domain; over-long -> dropped.
     let name = name.filter(|name| name.len() <= 255 && name.chars().all(is_xml_text_char));
     let kind = match kind {
-        FormControlKind::Text => FormControlKind::Text,
         FormControlKind::CheckBox { .. } => FormControlKind::CheckBox { checked },
+        other => other,
     };
     Ok(id.map(|id| (id, FormControlDraft { name, kind })))
+}
+
+/// Reads a control's `form:id` (bounded) and `form:name` (bounded), for a
+/// container control (listbox) whose kind is determined separately.
+fn read_form_id_name(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<(String, Option<String>)>, OdfError> {
+    let mut id = None;
+    let mut name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Form {
+            match local.as_ref() {
+                b"id" => id = Some(decode_attribute(&attribute)?),
+                b"name" => name = Some(decode_attribute(&attribute)?),
+                _ => {}
+            }
+        }
+    }
+    let id = id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES);
+    let name = name.filter(|name| name.len() <= 255 && name.chars().all(is_xml_text_char));
+    Ok(id.map(|id| (id, name)))
+}
+
+/// Reads a `form:option`'s `form:label` (the entry text), bounded to the model's
+/// form-string domain. Returns `None` when absent or out of domain.
+fn read_form_option_label(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<String>, OdfError> {
+    let mut label = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Form && local.as_ref() == b"label" {
+            label = Some(decode_attribute(&attribute)?);
+        }
+    }
+    Ok(label.filter(|label| label.len() <= 255 && label.chars().all(is_xml_text_char)))
 }
 
 fn read_href(
@@ -7909,11 +8025,17 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             if let Some(name) = &control.name {
                 hash_bytes(hash, name.as_bytes());
             }
-            match control.kind {
+            match &control.kind {
                 FormControlKind::Text => hash_bytes(hash, b"text"),
                 FormControlKind::CheckBox { checked } => {
                     hash_bytes(hash, b"checkbox");
                     hash_bytes(hash, &[u8::from(checked.unwrap_or(false))]);
+                }
+                FormControlKind::DropDown { entries } => {
+                    hash_bytes(hash, b"dropdown");
+                    for entry in entries {
+                        hash_bytes(hash, entry.as_bytes());
+                    }
                 }
             }
         }
@@ -8106,7 +8228,7 @@ fn build_inlines(
                 })
             }
             InlineDraft::FormField(control) => {
-                let (instruction, kind) = match control.kind {
+                let (instruction, kind) = match &control.kind {
                     FormControlKind::Text => (
                         "FORMTEXT",
                         FormFieldKind::TextInput(FormTextInput::default()),
@@ -8116,7 +8238,14 @@ fn build_inlines(
                         FormFieldKind::CheckBox(FormCheckBox {
                             size: None,
                             default: None,
-                            checked,
+                            checked: *checked,
+                        }),
+                    ),
+                    FormControlKind::DropDown { entries } => (
+                        "FORMDROPDOWN",
+                        FormFieldKind::DropDown(FormDropDown {
+                            result: None,
+                            entries: entries.clone(),
                         }),
                     ),
                 };

@@ -1178,6 +1178,49 @@ fn form_text_field_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn form_dropdown_field_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::{FormDropDown, FormFieldKind};
+    let body = r#"<office:forms xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"><form:form form:name="Standard"><form:listbox form:id="ctrl1" form:name="Pick"><form:option form:label="Red"/><form:option form:label="Green"/></form:listbox></form:form></office:forms><text:p>Pick: <draw:control xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" text:anchor-type="as-char" draw:control="ctrl1"/></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let field = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Field(field) if field.form.is_some() => Some(field.clone()),
+            _ => None,
+        })
+        .expect("dropdown field");
+    assert_eq!(field.instruction, "FORMDROPDOWN");
+    let form = field.form.as_ref().unwrap();
+    match &form.kind {
+        FormFieldKind::DropDown(FormDropDown { entries, .. }) => {
+            assert_eq!(entries, &vec!["Red".to_owned(), "Green".to_owned()]);
+        }
+        other => panic!("expected dropdown: {other:?}"),
+    }
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<form:listbox form:id="ctrl1" form:name="Pick"><form:option form:label="Red"/><form:option form:label="Green"/></form:listbox>"#
+        ),
+        "listbox missing: {content_xml}"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn form_checkbox_field_round_trips_to_a_fixed_point() {
     use casual_doc_model::v1::{FormCheckBox, FormFieldKind};
     let body = r#"<office:forms xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"><form:form form:name="Standard"><form:checkbox form:id="ctrl1" form:name="Agree" form:current-state="checked"/></form:form></office:forms><text:p>Agree: <draw:control xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" text:anchor-type="as-char" draw:control="ctrl1"/></text:p>"#;

@@ -1272,12 +1272,9 @@ impl Writer {
                     // anchor (its inlines are never written), so mint its control
                     // and do NOT pre-walk its inlines — recursing would declare an
                     // orphan region for a nested revision the writer drops.
-                    let minted_form = field.form.as_ref().is_some_and(|form| {
-                        matches!(
-                            form.kind,
-                            FormFieldKind::TextInput(_) | FormFieldKind::CheckBox(_)
-                        )
-                    });
+                    // Every modeled form kind is emitted as ONLY a draw:control
+                    // anchor, so mint it and do not pre-walk its inlines.
+                    let minted_form = field.form.is_some();
                     if minted_form {
                         self.assign_form_field(field);
                     } else if field_projects_inlines(field) {
@@ -1381,7 +1378,7 @@ impl Writer {
         let out = match &form.kind {
             FormFieldKind::TextInput(_) => FormControlOut::Text,
             FormFieldKind::CheckBox(checkbox) => FormControlOut::CheckBox(checkbox.checked),
-            FormFieldKind::DropDown(_) => return,
+            FormFieldKind::DropDown(list) => FormControlOut::DropDown(list.entries.clone()),
         };
         if self.form_field_ids.contains_key(&field.id) {
             return;
@@ -1407,6 +1404,7 @@ impl Writer {
             self.push(match kind {
                 FormControlOut::Text => "<form:text form:id=\"",
                 FormControlOut::CheckBox(_) => "<form:checkbox form:id=\"",
+                FormControlOut::DropDown(_) => "<form:listbox form:id=\"",
             })?;
             push_escaped_attribute(&mut self.xml, form_id, self.limits.max_content_bytes)?;
             self.push("\"")?;
@@ -1417,14 +1415,33 @@ impl Writer {
                 push_escaped_attribute(&mut self.xml, name, self.limits.max_content_bytes)?;
                 self.push("\"")?;
             }
-            if let FormControlOut::CheckBox(checked) = kind
-                && let Some(checked) = checked
-            {
-                self.push(" form:current-state=\"")?;
-                self.push(if *checked { "checked" } else { "unchecked" })?;
-                self.push("\"")?;
+            match kind {
+                FormControlOut::Text => self.push("/>")?,
+                FormControlOut::CheckBox(checked) => {
+                    if let Some(checked) = checked {
+                        self.push(" form:current-state=\"")?;
+                        self.push(if *checked { "checked" } else { "unchecked" })?;
+                        self.push("\"")?;
+                    }
+                    self.push("/>")?;
+                }
+                FormControlOut::DropDown(entries) => {
+                    // A listbox wraps one form:option per entry label.
+                    self.push(">")?;
+                    for entry in entries {
+                        if is_representable(entry) {
+                            self.push("<form:option form:label=\"")?;
+                            push_escaped_attribute(
+                                &mut self.xml,
+                                entry,
+                                self.limits.max_content_bytes,
+                            )?;
+                            self.push("\"/>")?;
+                        }
+                    }
+                    self.push("</form:listbox>")?;
+                }
             }
-            self.push("/>")?;
         }
         self.form_controls = controls;
         self.push("</form:form></office:forms>")
@@ -3701,6 +3718,8 @@ enum FormControlOut {
     Text,
     /// `form:checkbox` (FORMCHECKBOX) with its current checked state.
     CheckBox(Option<bool>),
+    /// `form:listbox` (FORMDROPDOWN) with its option entry labels.
+    DropDown(Vec<String>),
 }
 
 /// a deletion (whose content lives in the region, not the body) and `None` for an
