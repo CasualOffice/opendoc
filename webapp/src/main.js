@@ -85,6 +85,7 @@ const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
 const highlightMenu = document.getElementById("highlightMenu");
 const clearFormattingBtn = document.getElementById("clearFormatting");
+const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
@@ -920,6 +921,7 @@ function setReviewMode(mode) {
   // Announce a genuine user mode change (not the load-time reset to Editing).
   if (reviewMode !== previous) {
     announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
+    disarmFormatPainter(); // a mode change disarms the painter (its apply path may differ)
   }
   // Entering Suggesting auto-enables the markup view so a reviewer immediately
   // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
@@ -1089,6 +1091,22 @@ function scheduleReviewMarginRender() {
     reviewMarginFrame = 0;
     renderReviewMarginItems();
   });
+}
+
+/** Whether `comment` is a threaded reply to `parent`. A reply carries a
+ *  non-null `parentParaId` that joins to the parent's `paraId` (the DOCX
+ *  `w15:paraIdParent` → `w14:paraId` link) or, as a fallback, to the parent's
+ *  comment id. A thread root has a null/absent `parentParaId` and is a reply to
+ *  nothing. The `parentParaId != null` guard is load-bearing: `listComments`
+ *  projects a comment with no join key as `paraId: null` / `parentParaId: null`
+ *  (e.g. imported comments with no `commentsExtended`/`w14:paraId`), and without
+ *  the guard `null === null` would count every top-level comment as a reply to
+ *  every other — an O(n²) reply-DOM (and signature-string) blowup that makes a
+ *  comment-heavy document consume gigabytes of memory. */
+function reviewCommentIsReplyTo(comment, parent) {
+  const parentKey = comment?.parentParaId;
+  if (parentKey == null) return false;
+  return parentKey === parent.paraId || parentKey === parent.id;
 }
 
 function renderReviewMarginItems() {
@@ -1569,8 +1587,7 @@ function renderReviewMarginItems() {
       }
     }
     if (item.type === "comment") {
-      const replies = comments.filter((comment) =>
-        comment.parentParaId === item.data.paraId || comment.parentParaId === item.data.id);
+      const replies = comments.filter((comment) => reviewCommentIsReplyTo(comment, item.data));
       if (replies.length) {
         const thread = document.createElement("div");
         thread.className = "review-margin-replies";
@@ -1718,39 +1735,58 @@ function renderReviewMarginItems() {
   }
   for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
 
-  // Stacked-chip surfacing (REVIEW-GAP-019): when several chips collide on one
-  // paragraph (same anchor Y), the active/clicked one claims true anchor
-  // alignment and the others stack below it — the Google Docs pattern. Reorder
-  // the active card to the front of its own collision cluster so the top-down
-  // position pass places it at its anchor top; cross-cluster document order and
-  // every other card's relative order are preserved.
-  if (activeReviewItemId) {
-    const activeIdx = built.findIndex((b) => b.itemId === activeReviewItemId);
-    if (activeIdx > 0) {
-      const activeTop = Math.round(built[activeIdx].item.rect.top);
-      let clusterStart = activeIdx;
-      for (let i = 0; i < activeIdx; i++) {
-        if (Math.round(built[i].item.rect.top) === activeTop) { clusterStart = i; break; }
-      }
-      if (clusterStart < activeIdx) {
-        const [active] = built.splice(activeIdx, 1);
-        built.splice(clusterStart, 0, active);
-      }
-    }
-  }
-
-  // Position pass: stack every card in document-scroll coordinates exactly as
-  // the non-virtualized layout did (anchor top, pushed down to clear the card
-  // above), using the measured heights.
-  let nextY = 8;
+  // Position pass. Each card's natural anchor is its item's on-canvas marker Y in
+  // document-scroll coordinates; cards are then destacked so they never overlap.
+  const GAP = 8;
   const seen = new Set();
   const layout = [];
-  for (const { itemId, item, entry } of built) {
-    seen.add(itemId);
-    const targetY = item.rect.top - viewportRect.top + viewportEl.scrollTop;
-    const y = Math.max(8, targetY, nextY);
-    nextY = y + entry.height + 8;
-    layout.push({ itemId, top: y, entry });
+  const anchorY = built.map(
+    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop,
+  );
+  const activeIdx = activeReviewItemId
+    ? built.findIndex((b) => b.itemId === activeReviewItemId)
+    : -1;
+
+  if (activeIdx >= 0) {
+    // Stacked-chip surfacing (REVIEW-GAP-019): when several review items cluster
+    // on the same/near anchor Y, the selected card claims true anchor alignment —
+    // it stays locked to ITS OWN marker — and the rest stack around it (the
+    // Google Docs pattern). A plain top-down pass could only ever push the
+    // selected card DOWN past its marker (a later item in a dense cluster ended
+    // up far below the change it points at, and manual scrolling never closed the
+    // gap because both move together). So we anchor the layout on the selected
+    // card and destack outward: the cards after it flow downward, the cards
+    // before it flow upward — each still pinned to its own anchor except where a
+    // neighbour would overlap. Document order (and thus mount order) is preserved.
+    const tops = new Array(built.length);
+    tops[activeIdx] = Math.max(GAP, anchorY[activeIdx]);
+    for (let i = activeIdx + 1; i < built.length; i++) {
+      tops[i] = Math.max(anchorY[i], tops[i - 1] + built[i - 1].entry.height + GAP);
+    }
+    for (let i = activeIdx - 1; i >= 0; i--) {
+      tops[i] = Math.min(anchorY[i], tops[i + 1] - built[i].entry.height - GAP);
+    }
+    // Only if the cards above are collectively too tall to fit above the selected
+    // card's anchor (a cluster crowding the document top) does the whole stack
+    // shift down — the selected card yields its exact anchor solely when the
+    // geometry leaves no alternative.
+    const overflow = GAP - tops[0];
+    if (overflow > 0) for (let i = 0; i < tops.length; i++) tops[i] += overflow;
+    for (let i = 0; i < built.length; i++) {
+      seen.add(built[i].itemId);
+      layout.push({ itemId: built[i].itemId, top: tops[i], entry: built[i].entry });
+    }
+  } else {
+    // No selection: stack every card top-down (anchor top, pushed down to clear
+    // the card above), exactly as the non-virtualized layout did.
+    let nextY = GAP;
+    for (let i = 0; i < built.length; i++) {
+      const { itemId, entry } = built[i];
+      seen.add(itemId);
+      const y = Math.max(GAP, anchorY[i], nextY);
+      nextY = y + entry.height + GAP;
+      layout.push({ itemId, top: y, entry });
+    }
   }
   // Drop cache entries (and their retained DOM) for items no longer present.
   for (const key of [...reviewCardCache.keys()]) {
@@ -1772,7 +1808,7 @@ function reviewCardSignature(item, comments) {
   const confirm = reviewDeleteConfirmId === d.id;
   const replies = item.type === "comment"
     ? comments
-      .filter((c) => c.parentParaId === d.paraId || c.parentParaId === d.id)
+      .filter((c) => reviewCommentIsReplyTo(c, d))
       .map((r) => `${r.id}${r.resolved ? 1 : 0}${r.text}${r.author}${r.date}`)
       .join("")
     : "";
@@ -1884,6 +1920,7 @@ const runControls = [
   shrinkFontBtn,
   changeCaseBtn,
   clearFormattingBtn,
+  formatPainterBtn,
 ];
 const paraControls = [
   ...Object.values(alignBtns),
@@ -3537,6 +3574,13 @@ function onPointerUp(event) {
   if (finishTableColumnResize(event)) return;
   const gesture = pointerGesture;
   resetPointerGesture();
+  // Format painter: this pointer gesture landed on the document, so consume it as
+  // the paint target (a drag's range, or the word under a bare click) instead of
+  // the normal caret/link-chip behavior.
+  if (formatPainter && gesture) {
+    void paintFormatFromGesture(gesture, event);
+    return;
+  }
   if (
     gesture &&
     !gesture.shift &&
@@ -5048,6 +5092,20 @@ function scrollCaretIntoView(block = "nearest") {
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .caret"), block);
 }
 
+/** Bring the current review selection's OWN on-canvas marker just into view when
+ *  focusing a comment/change from the sidebar or Next/Previous. A review target
+ *  is a range, so it paints a highlight (not a caret) — scrolling only `.caret`
+ *  did nothing, leaving an off-screen item unreachable. And a "center" scroll
+ *  overshot: for a clustered paragraph it recentred on the whole selection and
+ *  pushed the very item the reviewer picked out of the viewport. "nearest" fixes
+ *  both — an already-visible marker never moves (no overshoot), and an off-screen
+ *  one is revealed by the minimum scroll to its own rect, not the paragraph's. */
+function scrollReviewSelectionIntoView() {
+  const marker = pagesEl.querySelector(".overlay .highlight")
+    || pagesEl.querySelector(".overlay .caret");
+  scrollOverlayIntoView(marker, "nearest");
+}
+
 /** Find selects a real range, so paintSelection deliberately emits highlights
  * and no caret. Scroll its first rectangle into view; querying only `.caret`
  * made Previous/Next update the selection on an off-screen page without moving
@@ -5580,6 +5638,157 @@ onButton(clearFormattingBtn, () => {
   }
   runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
 });
+
+// ---- Format painter (Word/Docs "copy formatting → paint onto target") -------
+// Single click captures the caret/selection's formatting and arms a one-shot
+// paint; the next document click (expanded to the clicked word) or drag receives
+// it, then it disarms. Double-click the brush locks it (sticky) so successive
+// targets keep receiving the format until Esc or another brush click. Formatting
+// is applied through the very same engine ops the toolbar's own Bold/color/…
+// controls use, so painted formatting is indistinguishable from hand-applied.
+let formatPainter = null; // { fmt, sticky } while armed, else null
+
+/** Snapshots the current selection/caret's run + paragraph formatting into a
+ *  plain patch. Mixed run properties (and automatic/theme colors) are left out
+ *  so painting never forces a single value onto a genuinely mixed source. */
+function captureFormatForPainter() {
+  if (!doc || !selection) return null;
+  const range = hasRange();
+  const [sn, so, en, eo] = selEndpoints();
+  const f = range
+    ? doc.selectionFormat(sn, so, en, eo)
+    : doc.caretFormat(selection.focus.node, selection.focus.offset);
+  const fmt = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
+  f.free();
+  const rs = range
+    ? doc.selectionRunStyle(sn, so, en, eo)
+    : doc.caretRunStyle(selection.focus.node, selection.focus.offset);
+  if (!rs.sizeMixed && rs.sizePoints) fmt.sizePoints = rs.sizePoints;
+  if (!rs.fontMixed && rs.font) fmt.font = rs.font;
+  if (!rs.colorMixed && rs.color) fmt.color = rs.color; // skip automatic/theme (empty)
+  if (!rs.highlightMixed && rs.highlight) fmt.highlight = rs.highlight; // includes "none"
+  if (!rs.verticalAlignMixed && rs.verticalAlign) fmt.vertAlign = rs.verticalAlign;
+  rs.free();
+  // Paragraph formatting reachable through absolute getter/setter pairs. Indent
+  // and paragraph spacing lack absolute copy ops today (relative-only), so they
+  // are intentionally not painted (tracked as a follow-up).
+  const node = selection.focus.node;
+  fmt.align = doc.alignmentAt(node, selection.focus.offset);
+  const style = doc.paragraphStyleAt(node);
+  if (style) fmt.paraStyle = style;
+  const line = doc.lineSpacingAt(node);
+  if (line) fmt.lineSpacing = line;
+  return fmt;
+}
+
+/** Applies the captured format to the current range via the same edit ops the
+ *  toolbar uses. Returns whether anything was applied. */
+async function applyPaintedFormat() {
+  const fmt = formatPainter?.fmt;
+  if (!fmt || !doc || !hasRange()) return false;
+  if (blockMutationInViewing()) return false;
+  if (reviewMode === "suggesting") {
+    setStatus("Format painter isn't tracked yet; switch to Editing to paint formatting", "error");
+    return false;
+  }
+  // Paragraph style first, so painted direct formatting overrides the style.
+  if (fmt.paraStyle) await runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, fmt.paraStyle));
+  await runToolbarEdit((a, b, c, d) =>
+    doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
+  );
+  if (fmt.sizePoints != null) await runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, fmt.sizePoints));
+  if (fmt.font) await runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, fmt.font));
+  if (fmt.color) {
+    const [r, g, b] = hexToRgb(fmt.color);
+    await runToolbarEdit((a, x, c, d) => doc.setTextColor(a, x, c, d, r, g, b));
+  }
+  if (fmt.highlight) await runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, fmt.highlight));
+  if (fmt.vertAlign) await runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, fmt.vertAlign));
+  if (fmt.align) await runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, fmt.align));
+  if (fmt.lineSpacing) await runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, fmt.lineSpacing));
+  updateToolbar();
+  return true;
+}
+
+/** Reflects the painter's armed / sticky state on the toolbar button and body
+ *  (the body flag drives the paintbrush cursor affordance over the pages). */
+function reflectFormatPainter() {
+  const armed = !!formatPainter;
+  formatPainterBtn.setAttribute("aria-pressed", String(armed));
+  formatPainterBtn.classList.toggle("is-sticky", !!formatPainter?.sticky);
+  document.body.classList.toggle("is-format-painting", armed);
+}
+
+function armFormatPainter(sticky) {
+  if (!doc || !selection) {
+    setStatus("Place the caret in text to copy its formatting", "error");
+    return;
+  }
+  const fmt = captureFormatForPainter();
+  if (!fmt) {
+    setStatus("Place the caret in text to copy its formatting", "error");
+    return;
+  }
+  formatPainter = { fmt, sticky: !!sticky };
+  reflectFormatPainter();
+  setStatus(
+    sticky
+      ? "Format painter locked — paint successive selections; Esc or click the brush to stop"
+      : "Format painter — click a word or drag over text to paint the copied formatting",
+  );
+}
+
+function disarmFormatPainter(reason) {
+  if (!formatPainter) return;
+  formatPainter = null;
+  reflectFormatPainter();
+  if (reason) setStatus(reason);
+}
+
+/** Consumes a document pointer gesture as a paint target: a drag's range, or the
+ *  word under a bare click. Disarms afterward unless the painter is locked. */
+async function paintFormatFromGesture(gesture, event) {
+  if (!hasRange()) {
+    const page = gesture?.page || pageFromClientPoint(event.clientX, event.clientY);
+    if (page) selectWord(page, event);
+  }
+  const painted = hasRange() ? await applyPaintedFormat() : false;
+  if (!formatPainter?.sticky) disarmFormatPainter();
+  else if (painted) setStatus("Painted — keep painting or press Esc to stop");
+}
+
+// Preserve the model selection on mousedown (like every other toolbar control),
+// then arm/lock/cancel on click. `detail` distinguishes single vs double click:
+// double-click locks sticky mode, a single click on an armed brush cancels it.
+formatPainterBtn.addEventListener("mousedown", (e) => e.preventDefault());
+formatPainterBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (formatPainterBtn.disabled) return;
+  if (e.detail >= 2) {
+    armFormatPainter(true);
+    return;
+  }
+  if (formatPainter) {
+    disarmFormatPainter("Format painter off");
+    return;
+  }
+  armFormatPainter(false);
+});
+
+// Escape cancels the painter before any other Escape handler (menu/selection),
+// so a stray Escape always makes the brush the first thing it puts down.
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (formatPainter && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      disarmFormatPainter("Format painter off");
+    }
+  },
+  true,
+);
+
 function suggestRunFormat(patch) {
   return runToolbarEdit((sn, so, en, eo) => {
     if (sn !== en) throw new Error("Tracked formatting requires one paragraph");
@@ -6944,7 +7153,7 @@ function focusReviewComment(comment, expand = true) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   scheduleReviewMarginRender();
 }
 
@@ -7185,7 +7394,7 @@ function focusReviewTarget(target, index, total) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   syncActiveReviewCommentToCaret(selection.focus);
   const who = reviewAuthorDisplay(target.data) || "You";
   const label = target.type === "comment"
@@ -7322,7 +7531,7 @@ function navigateToReviewAnchor(anchor) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
 }
 
 /**
@@ -7374,7 +7583,7 @@ function focusReviewRevision(revision, expand = true) {
     };
     drawSelection();
     focusEditorSurface();
-    scrollCaretIntoView("center");
+    scrollReviewSelectionIntoView();
     scheduleReviewMarginRender();
     return;
   }
@@ -7386,7 +7595,7 @@ function focusReviewRevision(revision, expand = true) {
     };
     drawSelection();
     focusEditorSurface();
-    scrollCaretIntoView("center");
+    scrollReviewSelectionIntoView();
     scheduleReviewMarginRender();
     return;
   }
@@ -7400,7 +7609,7 @@ function focusReviewRevision(revision, expand = true) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   scheduleReviewMarginRender();
   match.free();
 }
@@ -7573,6 +7782,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
+    { id: "format.painter", label: "Format painter", group: "Format", kw: "copy formatting paint brush clone style match", shortcut: "⌘⇧C", enabled: !!selection, disabledReason: "Place the caret or select text to copy its formatting", run: () => armFormatPainter(false) },
     { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
     { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
     { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
@@ -7679,6 +7889,7 @@ const APP_MENU_SECTIONS = {
     ["edit.undo", "edit.redo"],
     ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
     ["edit.selectAll", "edit.find"],
+    ["format.painter"],
   ],
   view: [
     ["view.outline", "review.toggle", "view.showChanges"],
@@ -8976,6 +9187,15 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
 
+  // Word's "copy formatting" shortcut — arm the format painter from the caret /
+  // selection. Its paste twin (⌘/Ctrl+Shift+V) is taken by paste-plain, so a
+  // single armed brush + a click/drag is how the copied format is put down.
+  if (mod && e.shiftKey && lower === "c") {
+    e.preventDefault();
+    breakTypingSession();
+    armFormatPainter(false);
+    return;
+  }
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
     e.preventDefault();

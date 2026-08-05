@@ -204,7 +204,10 @@
                 <button id="undoBtn" type="button" class="fmt" title="Undo (⌘Z)" aria-label="Undo" disabled><span class="ms" aria-hidden="true">undo</span></button>
                 <button id="redoBtn" type="button" class="fmt" title="Redo (⌘⇧Z)" aria-label="Redo" disabled><span class="ms" aria-hidden="true">redo</span></button>
               </div>
-              <button id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
+              <div class="stackrows undo-stack">
+                <button id="clearFormatting" type="button" class="fmt" title="Clear direct formatting" aria-label="Clear direct formatting"><span class="ms" aria-hidden="true">format_clear</span></button>
+                <button id="formatPainter" type="button" class="fmt" title="Format painter — copy formatting, then paint it onto a selection (double-click to keep painting; Esc to stop)" aria-label="Format painter" aria-pressed="false"><span class="ms" aria-hidden="true">format_paint</span></button>
+              </div>
             </div>
             <span class="rgroup-label">Undo</span>
           </div>

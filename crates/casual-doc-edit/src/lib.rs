@@ -13,9 +13,9 @@
 //! byte offsets.
 //!
 //! The operation set is intentionally additive and bounded: text/paragraph/run,
-//! table structure/properties, and exact-range hyperlink edits are supported.
-//! Partial edits inside nested wrappers and broader object editing remain
-//! explicit follow-ups (doc 59 staging).
+//! table structure/properties, exact-range hyperlink edits, and bookmark
+//! create/rename/delete are supported. Partial edits inside nested wrappers and
+//! broader object editing remain explicit follow-ups (doc 59 staging).
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
@@ -25,6 +25,7 @@ use casual_doc_model::v1::{
     RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
+use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
@@ -389,6 +390,48 @@ pub enum Operation {
         /// The style to install (create/update), or `None` to remove `id`.
         style: Option<Box<Style>>,
     },
+    /// Create a bookmark: register `name` under the fresh `bookmark` id in
+    /// `Definitions::bookmarks` and insert its paired `BookmarkStart`/`BookmarkEnd`
+    /// markers (zero-width points) at `start`/`end`. The two positions may lie in
+    /// the same paragraph (a selection) or in two different paragraphs (a range the
+    /// inverse of a delete restores). Markers are placed at paragraph top level:
+    /// each position aligns to a run boundary first (splitting a run if it lands
+    /// inside one). Inverse: [`Operation::DeleteBookmark`] of the same id. `name`
+    /// must be non-empty and at most 255 bytes; the `bookmark` id and both marker
+    /// ids must be fresh and distinct.
+    CreateBookmark {
+        /// The fresh bookmark identity (the definition key, shared by both markers).
+        bookmark: BookmarkId,
+        /// The bookmark name (non-empty, at most 255 bytes).
+        name: String,
+        /// Where the start marker is inserted.
+        start: Pos,
+        /// The fresh identity of the start marker.
+        start_id: NodeId,
+        /// Where the end marker is inserted.
+        end: Pos,
+        /// The fresh identity of the end marker.
+        end_id: NodeId,
+    },
+    /// Delete a bookmark by id: remove its definition entry and both of its
+    /// `BookmarkStart`/`BookmarkEnd` markers, coalescing any equal-property runs the
+    /// removed markers had kept apart. Inverse: [`Operation::CreateBookmark`]
+    /// carrying the removed name, marker ids, and exact marker positions, so undo
+    /// re-inserts the pair where it was. The markers must resolve at paragraph top
+    /// level (as this crate inserts them); a bookmark whose markers were imported
+    /// nested inside an inline wrapper is out of this slice's scope.
+    DeleteBookmark {
+        /// The bookmark to remove.
+        bookmark: BookmarkId,
+    },
+    /// Rename a bookmark by id in `Definitions::bookmarks`. Its own inverse,
+    /// carrying the previous name. `name` must be non-empty and at most 255 bytes.
+    RenameBookmark {
+        /// The bookmark to rename.
+        bookmark: BookmarkId,
+        /// The new name (non-empty, at most 255 bytes).
+        name: String,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -412,6 +455,12 @@ pub enum EditError {
     IdExhausted,
     /// A field exceeds the model's bounded length (e.g. a metadata property).
     ValueTooLarge,
+    /// A bookmark name is empty or exceeds the model's 255-byte bound, or a
+    /// bookmark id / marker id collides with one already in use.
+    InvalidName,
+    /// A bookmark id does not resolve to a definition (or its markers cannot be
+    /// located at paragraph top level).
+    BookmarkNotFound,
 }
 
 /// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
@@ -995,6 +1044,170 @@ pub fn apply(
             Ok(Operation::SetStyleDefinition {
                 id: *id,
                 style: previous.map(Box::new),
+            })
+        }
+        Operation::CreateBookmark {
+            bookmark,
+            name,
+            start,
+            start_id,
+            end,
+            end_id,
+        } => {
+            if !valid_bookmark_name(name) {
+                return Err(EditError::InvalidName);
+            }
+            // The definition key and both marker ids must be fresh and distinct so
+            // every node id in the document stays unique (the model re-checks this).
+            let bookmark_node = bookmark.node_id();
+            if start_id == end_id
+                || bookmark_node == *start_id
+                || bookmark_node == *end_id
+                || doc.definitions().bookmarks.contains_key(bookmark)
+            {
+                return Err(EditError::InvalidName);
+            }
+            // A same-paragraph range must be well-formed (end at or after start);
+            // cross-paragraph ordering is the caller's responsibility (the inverse
+            // of a delete supplies document order).
+            if start.node == end.node && end.offset < start.offset {
+                return Err(EditError::EmptyEdit);
+            }
+            let start_marker = InlineNode::BookmarkStart(BookmarkStart {
+                id: *start_id,
+                bookmark: *bookmark,
+            });
+            let end_marker = InlineNode::BookmarkEnd(BookmarkEnd {
+                id: *end_id,
+                bookmark: *bookmark,
+            });
+            // Snapshot the affected paragraph(s) so any failure (a bad offset, a
+            // failed re-validation) rolls back to exactly the prior state.
+            let start_snapshot = find_paragraph(doc.body(), start.node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            let end_snapshot = if end.node != start.node {
+                Some(
+                    find_paragraph(doc.body(), end.node)
+                        .ok_or(EditError::NodeNotFound)?
+                        .inlines
+                        .clone(),
+                )
+            } else {
+                None
+            };
+
+            doc.definitions_mut()
+                .bookmarks
+                .insert(*bookmark, Bookmark { name: name.clone() });
+
+            let insertion =
+                insert_bookmark_pair(doc.body_mut(), *start, start_marker, *end, end_marker, ids);
+            let outcome =
+                insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidName));
+            if let Err(err) = outcome {
+                // Roll back both the markers and the definition; no partial mutation
+                // may survive an error.
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), start.node) {
+                    para.inlines = start_snapshot;
+                }
+                if let Some(end_snapshot) = end_snapshot
+                    && let Some(para) = find_paragraph_mut(doc.body_mut(), end.node)
+                {
+                    para.inlines = end_snapshot;
+                }
+                doc.definitions_mut().bookmarks.remove(bookmark);
+                return Err(err);
+            }
+            Ok(Operation::DeleteBookmark {
+                bookmark: *bookmark,
+            })
+        }
+        Operation::DeleteBookmark { bookmark } => {
+            let name = doc
+                .definitions()
+                .bookmarks
+                .get(bookmark)
+                .ok_or(EditError::BookmarkNotFound)?
+                .name
+                .clone();
+            let (start_site, end_site) = locate_bookmark_markers(doc.body(), *bookmark)
+                .ok_or(EditError::BookmarkNotFound)?;
+
+            let start_snapshot = find_paragraph(doc.body(), start_site.node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            let end_snapshot = if end_site.node != start_site.node {
+                Some(
+                    find_paragraph(doc.body(), end_site.node)
+                        .ok_or(EditError::NodeNotFound)?
+                        .inlines
+                        .clone(),
+                )
+            } else {
+                None
+            };
+
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+                remove_marker_by_id(&mut para.inlines, start_site.marker);
+            }
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node) {
+                remove_marker_by_id(&mut para.inlines, end_site.marker);
+            }
+            // Removing a marker can leave two equal-property runs it had kept apart
+            // adjacent, which the model forbids; coalesce each affected paragraph.
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+                coalesce_adjacent_runs(&mut para.inlines);
+            }
+            if end_site.node != start_site.node
+                && let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node)
+            {
+                coalesce_adjacent_runs(&mut para.inlines);
+            }
+            let removed = doc.definitions_mut().bookmarks.remove(bookmark);
+
+            if doc.validate().is_err() {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+                    para.inlines = start_snapshot;
+                }
+                if let Some(end_snapshot) = end_snapshot
+                    && let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node)
+                {
+                    para.inlines = end_snapshot;
+                }
+                if let Some(removed) = removed {
+                    doc.definitions_mut().bookmarks.insert(*bookmark, removed);
+                }
+                return Err(EditError::InvalidName);
+            }
+            Ok(Operation::CreateBookmark {
+                bookmark: *bookmark,
+                name,
+                start: Pos::new(start_site.node, start_site.offset),
+                start_id: start_site.marker,
+                end: Pos::new(end_site.node, end_site.offset),
+                end_id: end_site.marker,
+            })
+        }
+        Operation::RenameBookmark { bookmark, name } => {
+            if !valid_bookmark_name(name) {
+                return Err(EditError::InvalidName);
+            }
+            let previous = doc
+                .definitions()
+                .bookmarks
+                .get(bookmark)
+                .ok_or(EditError::BookmarkNotFound)?
+                .name
+                .clone();
+            doc.definitions_mut()
+                .bookmarks
+                .insert(*bookmark, Bookmark { name: name.clone() });
+            Ok(Operation::RenameBookmark {
+                bookmark: *bookmark,
+                name: previous,
             })
         }
     }
@@ -2562,6 +2775,168 @@ fn find_paragraph_mut(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut Parag
         }
     }
     None
+}
+
+/// Whether `name` is a valid bookmark name: non-empty and at most 255 bytes —
+/// the model's bookmark-name domain (`validate_bookmarks`).
+fn valid_bookmark_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 255
+}
+
+/// A located bookmark marker: its paragraph, its byte offset within that
+/// paragraph's projected text, and the marker node's own id.
+#[derive(Clone, Copy)]
+struct MarkerSite {
+    node: NodeId,
+    offset: u32,
+    marker: NodeId,
+}
+
+/// The paragraph-local index at which a zero-width marker sits at `offset`: the
+/// first inline whose cumulative preceding text length equals `offset`. `None`
+/// when `offset` falls *inside* an inline (e.g. mid-tab); the caller aligns run
+/// boundaries first, so a run boundary always yields an index.
+fn marker_insert_index(inlines: &[InlineNode], offset: u32) -> Option<usize> {
+    let mut cumulative = 0u32;
+    for (index, inline) in inlines.iter().enumerate() {
+        if cumulative == offset {
+            return Some(index);
+        }
+        cumulative = cumulative.saturating_add(inline_text_len(inline));
+    }
+    (cumulative == offset).then_some(inlines.len())
+}
+
+/// Inserts a single zero-width marker at `offset` in one paragraph's `inlines`,
+/// splitting the run the offset lands in (if any) so the marker sits on a run
+/// boundary. Returns the vec index it was inserted at.
+fn insert_marker_at(
+    inlines: &mut Vec<InlineNode>,
+    offset: u32,
+    marker: InlineNode,
+    ids: &mut dyn RunIds,
+) -> Result<usize, EditError> {
+    ensure_run_boundary(inlines, offset, ids)?;
+    let index = marker_insert_index(inlines, offset).ok_or(EditError::Unsupported)?;
+    inlines.insert(index, marker);
+    Ok(index)
+}
+
+/// Inserts a bookmark's start/end marker pair at `start`/`end`. Same-paragraph
+/// ranges align both boundaries first (end before start, so the start offset
+/// stays valid) then insert the end marker and the start marker so the pair
+/// wraps exactly `[start, end)`; cross-paragraph ranges insert each marker into
+/// its own paragraph independently.
+fn insert_bookmark_pair(
+    blocks: &mut [BlockNode],
+    start: Pos,
+    start_marker: InlineNode,
+    end: Pos,
+    end_marker: InlineNode,
+    ids: &mut dyn RunIds,
+) -> Result<(), EditError> {
+    if start.node == end.node {
+        let para = find_paragraph_mut(blocks, start.node).ok_or(EditError::NodeNotFound)?;
+        if end.offset > paragraph_text_len(para) {
+            return Err(EditError::OffsetOutOfRange);
+        }
+        // Align both boundaries first (end before start, so aligning the start does
+        // not invalidate the end offset), then place the end marker and the start
+        // marker. Inserting the start (at the lower-or-equal index) shifts the end
+        // marker after it, so the pair reads start-then-end.
+        ensure_run_boundary(&mut para.inlines, end.offset, ids)?;
+        ensure_run_boundary(&mut para.inlines, start.offset, ids)?;
+        let end_index =
+            marker_insert_index(&para.inlines, end.offset).ok_or(EditError::Unsupported)?;
+        para.inlines.insert(end_index, end_marker);
+        let start_index =
+            marker_insert_index(&para.inlines, start.offset).ok_or(EditError::Unsupported)?;
+        para.inlines.insert(start_index, start_marker);
+        return Ok(());
+    }
+    {
+        let para = find_paragraph_mut(blocks, start.node).ok_or(EditError::NodeNotFound)?;
+        if start.offset > paragraph_text_len(para) {
+            return Err(EditError::OffsetOutOfRange);
+        }
+        insert_marker_at(&mut para.inlines, start.offset, start_marker, ids)?;
+    }
+    {
+        let para = find_paragraph_mut(blocks, end.node).ok_or(EditError::NodeNotFound)?;
+        if end.offset > paragraph_text_len(para) {
+            return Err(EditError::OffsetOutOfRange);
+        }
+        insert_marker_at(&mut para.inlines, end.offset, end_marker, ids)?;
+    }
+    Ok(())
+}
+
+/// Removes the top-level bookmark marker whose own id is `marker` from `inlines`.
+fn remove_marker_by_id(inlines: &mut Vec<InlineNode>, marker: NodeId) {
+    inlines.retain(|inline| match inline {
+        InlineNode::BookmarkStart(m) => m.id != marker,
+        InlineNode::BookmarkEnd(m) => m.id != marker,
+        _ => true,
+    });
+}
+
+/// Locates a bookmark's start and end markers among the body's top-level
+/// paragraph inlines (descending into tables and block SDTs), returning each
+/// marker's site. `None` unless both markers resolve at paragraph top level.
+fn locate_bookmark_markers(
+    blocks: &[BlockNode],
+    bookmark: BookmarkId,
+) -> Option<(MarkerSite, MarkerSite)> {
+    let mut start = None;
+    let mut end = None;
+    scan_bookmark_markers(blocks, bookmark, &mut start, &mut end);
+    Some((start?, end?))
+}
+
+fn scan_bookmark_markers(
+    blocks: &[BlockNode],
+    bookmark: BookmarkId,
+    start: &mut Option<MarkerSite>,
+    end: &mut Option<MarkerSite>,
+) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0u32;
+                for inline in &paragraph.inlines {
+                    match inline {
+                        InlineNode::BookmarkStart(m) if m.bookmark == bookmark => {
+                            *start = Some(MarkerSite {
+                                node: paragraph.id,
+                                offset,
+                                marker: m.id,
+                            });
+                        }
+                        InlineNode::BookmarkEnd(m) if m.bookmark == bookmark => {
+                            *end = Some(MarkerSite {
+                                node: paragraph.id,
+                                offset,
+                                marker: m.id,
+                            });
+                        }
+                        _ => {}
+                    }
+                    offset = offset.saturating_add(inline_text_len(inline));
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        scan_bookmark_markers(&cell.blocks, bookmark, start, end);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                scan_bookmark_markers(&sdt.blocks, bookmark, start, end);
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4342,5 +4717,342 @@ mod tests {
         );
         assert!(matches!(&after[0], InlineNode::Run(r) if r.text == "A"));
         assert!(matches!(&after[2], InlineNode::Run(r) if r.text == "C"));
+    }
+
+    // ---- Bookmarks ---------------------------------------------------------
+
+    fn bkid(counter: u64) -> BookmarkId {
+        BookmarkId::new(n(counter))
+    }
+
+    fn bookmark_name(document: &Document, bookmark: BookmarkId) -> Option<String> {
+        document
+            .definitions()
+            .bookmarks
+            .get(&bookmark)
+            .map(|b| b.name.clone())
+    }
+
+    #[test]
+    fn create_bookmark_wraps_the_range_and_inverse_removes_it_verbatim() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(20);
+        let bookmark = bkid(50);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark,
+                name: "anchor".to_owned(),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            },
+        )
+        .expect("create bookmark over the whole run");
+
+        // Definition registered; markers wrap exactly the run.
+        assert_eq!(bookmark_name(&d, bookmark).as_deref(), Some("anchor"));
+        let after = inlines_of(&d, p);
+        assert!(matches!(&after[0], InlineNode::BookmarkStart(m) if m.bookmark == bookmark));
+        assert!(matches!(&after[1], InlineNode::Run(r) if r.text == "Hello"));
+        assert!(matches!(&after[2], InlineNode::BookmarkEnd(m) if m.bookmark == bookmark));
+        d.validate().expect("created bookmark validates");
+
+        // Inverse removes the pair and the definition, restoring the doc verbatim.
+        assert_eq!(
+            inverse,
+            Operation::DeleteBookmark { bookmark },
+            "create inverts to a delete of the same id"
+        );
+        apply(&mut d, &mut ids, &inverse).expect("inverse removes the bookmark");
+        assert_eq!(d, original, "create + inverse is a verbatim round-trip");
+    }
+
+    #[test]
+    fn create_bookmark_splits_an_interior_range_and_round_trips() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(20);
+        let bookmark = bkid(50);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark,
+                name: "mid".to_owned(),
+                start: Pos::new(p, 2),
+                start_id: n(51),
+                end: Pos::new(p, 4),
+                end_id: n(52),
+            },
+        )
+        .expect("create bookmark over an interior range");
+
+        // "He" | <start> | "ll" | <end> | "o".
+        let after = inlines_of(&d, p);
+        assert!(matches!(&after[0], InlineNode::Run(r) if r.text == "He"));
+        assert!(matches!(&after[1], InlineNode::BookmarkStart(_)));
+        assert!(matches!(&after[2], InlineNode::Run(r) if r.text == "ll"));
+        assert!(matches!(&after[3], InlineNode::BookmarkEnd(_)));
+        assert!(matches!(&after[4], InlineNode::Run(r) if r.text == "o"));
+        d.validate().expect("interior bookmark validates");
+
+        apply(&mut d, &mut ids, &inverse).expect("inverse removes and re-coalesces");
+        assert_eq!(
+            d, original,
+            "interior create + inverse restores the single run"
+        );
+    }
+
+    #[test]
+    fn delete_bookmark_inverse_reinserts_at_the_same_positions() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        let bookmark = bkid(50);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark,
+                name: "anchor".to_owned(),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            },
+        )
+        .expect("create bookmark");
+        let with_bookmark = d.clone();
+
+        let inverse = apply(&mut d, &mut ids, &Operation::DeleteBookmark { bookmark })
+            .expect("delete the bookmark");
+        assert!(bookmark_name(&d, bookmark).is_none(), "definition removed");
+        assert!(
+            !inlines_of(&d, p)
+                .iter()
+                .any(|i| matches!(i, InlineNode::BookmarkStart(_) | InlineNode::BookmarkEnd(_))),
+            "both markers removed"
+        );
+
+        // The inverse is a create carrying the exact positions, ids, and name.
+        assert_eq!(
+            inverse,
+            Operation::CreateBookmark {
+                bookmark,
+                name: "anchor".to_owned(),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("inverse re-inserts the bookmark");
+        assert_eq!(
+            d, with_bookmark,
+            "delete + inverse is a verbatim round-trip"
+        );
+    }
+
+    #[test]
+    fn delete_bookmark_spanning_two_paragraphs_round_trips() {
+        let a = n(2);
+        let b = n(4);
+        // Two paragraphs; the start marker sits after "Hi" in A, the end before
+        // "there" in B (distinct-property flanks are not needed — different
+        // paragraphs never coalesce across the boundary).
+        let bookmark = bkid(50);
+        let mut definitions = Definitions::default();
+        definitions.bookmarks.insert(
+            bookmark,
+            Bookmark {
+                name: "span".to_owned(),
+            },
+        );
+        let mut d = Document::new(
+            n(1000),
+            vec![
+                para(
+                    2,
+                    vec![
+                        run(3, "Hi"),
+                        InlineNode::BookmarkStart(BookmarkStart {
+                            id: n(60),
+                            bookmark,
+                        }),
+                    ],
+                ),
+                para(
+                    4,
+                    vec![
+                        InlineNode::BookmarkEnd(BookmarkEnd {
+                            id: n(61),
+                            bookmark,
+                        }),
+                        run(5, "there"),
+                    ],
+                ),
+            ],
+            definitions,
+        )
+        .expect("cross-paragraph bookmark validates");
+        let original = d.clone();
+        let mut ids = IdGenerator::new(80);
+
+        let inverse = apply(&mut d, &mut ids, &Operation::DeleteBookmark { bookmark })
+            .expect("delete the cross-paragraph bookmark");
+        assert!(bookmark_name(&d, bookmark).is_none());
+        assert_eq!(
+            inverse,
+            Operation::CreateBookmark {
+                bookmark,
+                name: "span".to_owned(),
+                start: Pos::new(a, 2),
+                start_id: n(60),
+                end: Pos::new(b, 0),
+                end_id: n(61),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("inverse re-inserts across paragraphs");
+        assert_eq!(d, original, "cross-paragraph delete + inverse round-trips");
+    }
+
+    #[test]
+    fn rename_bookmark_inverse_restores_the_previous_name() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        let bookmark = bkid(50);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark,
+                name: "before".to_owned(),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            },
+        )
+        .expect("create bookmark");
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::RenameBookmark {
+                bookmark,
+                name: "after".to_owned(),
+            },
+        )
+        .expect("rename the bookmark");
+        assert_eq!(bookmark_name(&d, bookmark).as_deref(), Some("after"));
+        assert_eq!(
+            inverse,
+            Operation::RenameBookmark {
+                bookmark,
+                name: "before".to_owned(),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("inverse restores the name");
+        assert_eq!(bookmark_name(&d, bookmark).as_deref(), Some("before"));
+    }
+
+    #[test]
+    fn create_bookmark_rejects_an_empty_or_oversized_name() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(20);
+
+        let empty = apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark: bkid(50),
+                name: String::new(),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            },
+        );
+        assert_eq!(empty, Err(EditError::InvalidName));
+
+        let oversized = apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark: bkid(50),
+                name: "x".repeat(256),
+                start: Pos::new(p, 0),
+                start_id: n(51),
+                end: Pos::new(p, 5),
+                end_id: n(52),
+            },
+        );
+        assert_eq!(oversized, Err(EditError::InvalidName));
+        assert_eq!(
+            d, original,
+            "a rejected create leaves the document untouched"
+        );
+    }
+
+    #[test]
+    fn rename_and_delete_reject_an_unknown_bookmark() {
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::DeleteBookmark { bookmark: bkid(99) }
+            ),
+            Err(EditError::BookmarkNotFound)
+        );
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::RenameBookmark {
+                    bookmark: bkid(99),
+                    name: "x".to_owned(),
+                }
+            ),
+            Err(EditError::BookmarkNotFound)
+        );
+    }
+
+    #[test]
+    fn created_bookmark_survives_a_json_write_reopen() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark: bkid(50),
+                name: "anchor".to_owned(),
+                start: Pos::new(p, 1),
+                start_id: n(51),
+                end: Pos::new(p, 4),
+                end_id: n(52),
+            },
+        )
+        .expect("create bookmark");
+
+        let json = d.to_json().expect("serialize");
+        let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
+            .expect("reopen");
+        assert_eq!(d, reopened, "the created bookmark survives write -> reopen");
     }
 }
