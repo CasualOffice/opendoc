@@ -282,6 +282,23 @@ fn table_cell_shading_and_valign_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn inheriting_table_row_style_keeps_its_own_height() {
+    // A child table-row style that inherits from a same-map parent must keep its
+    // own directly-set row-height (style-inheritance merge must carry it), not
+    // silently drop it.
+    use casual_doc_model::v1::HeightRule;
+    let xml = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="ro0" style:family="table-row"/><style:style style:name="ro1" style:family="table-row" style:parent-style-name="ro0"><style:table-row-properties style:row-height="1cm"/></style:style></office:automatic-styles><office:body><office:text><table:table><table:table-column/><table:table-row table:style-name="ro1"><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("table")
+    };
+    let height = &table.rows[0].properties.height;
+    assert_eq!(height.rule, Some(HeightRule::Exact));
+    assert_eq!(height.value_twips, Some(567)); // 1cm
+}
+
+#[test]
 fn table_row_height_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::{HeightRule, RowHeight};
     let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;

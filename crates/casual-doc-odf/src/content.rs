@@ -1039,6 +1039,24 @@ fn resolve_style(
                 &mut inherited.paragraph_properties,
                 &style.paragraph_properties,
             );
+            // Table-family direct-formatting fields also cascade child-over-parent
+            // (a child's set value wins), so an inheriting table-column/cell/row
+            // style keeps its own property instead of silently losing it.
+            if style.column_width_twips.is_some() {
+                inherited.column_width_twips = style.column_width_twips;
+            }
+            if style.cell_shading_fill.is_some() {
+                inherited.cell_shading_fill = style.cell_shading_fill;
+            }
+            if style.cell_vertical_alignment.is_some() {
+                inherited.cell_vertical_alignment = style.cell_vertical_alignment;
+            }
+            if style.cell_borders != TableBorders::default() {
+                inherited.cell_borders = style.cell_borders.clone();
+            }
+            if style.row_height != RowHeight::default() {
+                inherited.row_height = style.row_height;
+            }
             inherited.family = style.family;
             inherited.parent = None;
             style = inherited;
