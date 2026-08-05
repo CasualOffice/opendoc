@@ -124,6 +124,18 @@ p {
   border-radius: 3px;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Centered content column for the secondary pages (docs/blog/examples/
    fidelity). Home opts out via main.home and lays out its own full-bleed
    sections + inner .wrap. Header/footer are full-bleed with their own inner. */
@@ -1393,139 +1405,17 @@ main.home {
   line-height: 1.5;
 }
 
-/* Docs portal */
-.docs-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 48px;
-  padding-bottom: 96px;
-}
-
-.docs-rail {
-  position: sticky;
-  top: 84px;
-  align-self: start;
-}
-
-.docs-rail-title,
-.docs-rail-cta p {
-  margin: 0 0 10px;
-  color: var(--faint);
-  font: 600 10px/1 var(--font-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.docs-rail ul {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.docs-rail li a {
-  display: block;
-  padding: 7px 11px;
-  border-left: 2px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  text-decoration: none;
+.text-link {
+  color: var(--accent);
   font-size: 13px;
   font-weight: 500;
-}
-
-.docs-rail li a:hover {
-  color: var(--ink);
-  background: var(--bg-2);
-}
-
-.docs-rail li a[aria-current="true"] {
-  color: var(--accent);
-  border-left-color: var(--accent);
-}
-
-.docs-rail-cta {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-}
-
-.docs-group {
-  margin-bottom: 52px;
-}
-
-.docs-group:last-child {
-  margin-bottom: 0;
-}
-
-.docs-group > h2 {
-  margin-bottom: 8px;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--ink);
-}
-
-.docs-group > p {
-  margin-bottom: 20px;
-  color: var(--muted);
-}
-
-.docs-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-}
-
-.docs-card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 20px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
   text-decoration: none;
-  transition: border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 
-.docs-card:hover {
-  border-color: var(--accent-line);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-card);
+.text-link:hover {
+  color: var(--accent-2);
 }
 
-.docs-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.docs-card-kicker {
-  color: var(--accent);
-  font: 600 11px/1 var(--font-mono);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.docs-card h3 {
-  margin: 12px 0 8px;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-
-.docs-card p {
-  flex: 1;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.docs-card p code,
 .example-body code {
   padding: 1px 5px;
   border-radius: 4px;
@@ -1534,11 +1424,314 @@ main.home {
   font-size: 0.86em;
 }
 
-.docs-card-link {
-  margin-top: 14px;
-  color: var(--accent);
-  font-size: 13px;
+/* ============================================================================
+   Docs — three-column reference reader (rail · article · on-this-page)
+   ========================================================================= */
+.doc-reader {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 200px;
+  gap: 48px;
+  padding: 48px 0 96px;
+}
+
+.doc-rail-inner,
+.doc-toc-inner {
+  position: sticky;
+  top: 88px;
+  align-self: start;
+}
+
+.doc-rail-title,
+.doc-toc-title {
+  margin: 0 0 12px;
+  color: var(--faint);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.doc-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-rail-list:last-child {
+  margin-bottom: 0;
+}
+
+.doc-rail-list a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: var(--muted-2);
+  font-size: 13px;
+  text-decoration: none;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.doc-rail-list a:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.doc-rail-list a.is-active {
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--surface-2);
+}
+
+.doc-article {
+  min-width: 0;
+}
+
+.doc-eyebrow {
+  margin-bottom: 14px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.doc-article h1 {
+  margin: 0;
+  font-size: clamp(30px, 4.4vw, 40px);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.doc-lede {
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 17.5px;
+  line-height: 1.6;
+}
+
+.doc-langtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 28px 0 8px;
+}
+
+.doc-langtabs .tab {
+  padding: 5px 11px;
+  border-radius: 7px;
+  color: var(--muted-3);
+  font-size: 12px;
+}
+
+.doc-langtabs .tab.is-active {
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--surface-2);
+}
+
+.doc-h2 {
+  margin: 44px 0 0;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  scroll-margin-top: 80px;
+}
+
+.doc-body {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.doc-body code,
+.doc-lede code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--ink);
+  font-size: 0.86em;
+}
+
+/* Code panel (captioned code block shared by docs + fidelity contexts) */
+.code-panel {
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.code-panel-head {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+}
+
+.code-panel-head span {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.code-panel pre {
+  margin: 0;
+  padding: 20px 22px;
+  overflow-x: auto;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.85;
+}
+
+.code-panel .kw {
+  color: #8a5a16;
+}
+
+.code-panel .str {
+  color: #2e6b4f;
+}
+
+.code-panel .cmt {
+  color: var(--faint);
+}
+
+/* Dispositions table (CSS grid — the two-axis import taxonomy) */
+.disp-table {
+  margin-top: 20px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.disp-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 2fr;
+  border-bottom: 1px solid var(--line);
+}
+
+.disp-row:last-child {
+  border-bottom: none;
+}
+
+.disp-row.head {
+  background: var(--surface-3);
+}
+
+.disp-row.head > div {
+  padding: 11px 16px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.disp-row .disp-name {
+  padding: 13px 16px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.disp-row .disp-cell {
+  padding: 13px 16px;
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.doc-callout {
+  margin-top: 32px;
+  padding: 14px 18px;
+  border-left: 2px solid var(--accent);
+  background: var(--bg);
+  scroll-margin-top: 80px;
+}
+
+.doc-callout-label {
+  margin-bottom: 6px;
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.doc-callout p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.doc-pager {
+  display: flex;
+  gap: 16px;
+  margin-top: 44px;
+}
+
+.doc-pager a {
+  flex: 1;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+
+.doc-pager a:hover {
+  border-color: #c9c6bf;
+}
+
+.doc-pager a.next {
+  text-align: right;
+}
+
+.doc-pager-dir {
+  margin-bottom: 6px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.doc-pager-title {
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 500;
+}
+
+.doc-toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--line-2);
+  list-style: none;
+}
+
+.doc-toc-list a {
+  color: var(--faint);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.doc-toc-list a:hover {
+  color: var(--ink);
+}
+
+.doc-toc-list a[aria-current="true"] {
+  color: var(--ink);
+  font-weight: 500;
 }
 
 /* Blog / changelog */
@@ -1855,31 +2048,254 @@ main.home {
   color: var(--accent);
 }
 
-/* Fidelity support matrix (fidelity.html) */
-.fidelity-intro {
-  padding: 72px 0 40px;
-  max-width: 760px;
+/* ============================================================================
+   Fidelity — oracle report (hero · metrics · render/diff · corpus fixtures)
+   ========================================================================= */
+.fid-report {
+  padding: 48px 0 96px;
 }
-.fidelity-intro h1 {
-  margin: 14px 0 16px;
-  font-size: clamp(2rem, 4vw, 2.9rem);
+
+.fid-intro {
+  max-width: 700px;
+}
+
+.fid-kicker {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fid-intro h1 {
+  margin: 0;
+  font-size: clamp(32px, 5vw, 44px);
   line-height: 1.08;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.032em;
+  font-weight: 600;
+  text-wrap: balance;
 }
-.fidelity-intro p {
+
+.fid-intro p {
+  margin: 18px 0 0;
   color: var(--muted);
-  font-size: 1.08rem;
+  font-size: 17.5px;
   line-height: 1.6;
 }
-.fidelity-meta {
+
+.fid-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  margin: 44px 0;
+}
+
+.fid-stat {
+  padding: 20px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.fid-stat-num {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+
+.fid-stat-label {
+  margin-top: 6px;
+  color: var(--muted-3);
+  font-size: 12.5px;
+}
+
+.fid-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.fid-panel {
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.fid-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.fid-panel-head .title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fid-panel-head .spacer {
+  flex: 1;
+}
+
+.fid-panel-head .meta {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.fid-panel-head .meta.good {
+  color: #2e6b4f;
+}
+
+.fid-panel-figure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 320px;
+  background: repeating-linear-gradient(135deg, var(--paper) 0 10px, #efeee9 10px 20px);
+}
+
+.fid-panel-figure span {
+  padding: 6px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.fid-fixtures {
+  margin-top: 44px;
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.fid-fixtures-scroll {
+  overflow-x: auto;
+}
+
+.fid-frow {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1.4fr;
+  align-items: center;
+  min-width: 640px;
+  border-bottom: 1px solid var(--line);
+}
+
+.fid-frow:last-child {
+  border-bottom: none;
+}
+
+.fid-frow.head {
+  background: var(--surface-3);
+}
+
+.fid-frow.head > div {
+  padding: 12px 18px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fid-frow .fx-name {
+  padding: 14px 18px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.fid-frow .fx-cell {
+  padding: 14px 18px;
+  color: var(--muted-2);
+  font-size: 12.5px;
+}
+
+.fid-frow .fx-cell.mono {
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+}
+
+.fx-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.fx-chip.byte {
+  color: #2e6b4f;
+  background: rgba(46, 107, 79, 0.08);
+  border-color: rgba(46, 107, 79, 0.25);
+}
+
+.fx-chip.semantic {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.fx-chip.gap {
+  color: #8a5a16;
+  background: #fbf2e0;
+  border-color: rgba(138, 90, 22, 0.28);
+}
+
+.fid-foot {
+  margin: 24px 0 0;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+/* Secondary: per-construct support detail (the honest granular breakdown
+   behind the oracle numbers, rendered from src/fidelity.js). */
+.fid-matrix {
+  margin-top: 88px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-2);
+}
+
+.fid-matrix-intro {
+  max-width: 760px;
+  margin-bottom: 8px;
+}
+
+.fid-matrix-intro h2 {
+  margin: 24px 0 0;
+  font-size: clamp(26px, 3.4vw, 32px);
+  line-height: 1.12;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+
+.fid-matrix-intro p {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.fid-matrix-intro .fidelity-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 22px;
   margin-top: 22px;
-  font-size: 0.9rem;
   color: var(--muted);
+  font-size: 0.9rem;
 }
-.fidelity-meta a {
+
+.fid-matrix-intro .fidelity-meta a {
   color: var(--accent);
 }
 
@@ -2067,17 +2483,19 @@ main.home {
     gap: 28px;
   }
 
-  .docs-layout {
-    grid-template-columns: 1fr;
-    gap: 28px;
+  /* Docs reader: drop the right-hand "On this page" rail first, keep the
+     left section rail beside the article. */
+  .doc-reader {
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 32px;
   }
 
-  .docs-rail {
-    position: static;
+  .doc-toc {
+    display: none;
   }
 
-  .docs-cards {
-    grid-template-columns: 1fr;
+  .fid-stats {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .example-grid {
@@ -2101,6 +2519,20 @@ main.home {
 
   .home-roadmap-status {
     grid-column: 2;
+  }
+
+  /* Docs reader: stack the section rail above the article. */
+  .doc-reader {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .doc-rail-inner {
+    position: static;
+  }
+
+  .fid-panels {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2176,6 +2608,40 @@ main.home {
 
   .blog-entry {
     padding: 22px;
+  }
+
+  .fid-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .fid-report,
+  .doc-reader {
+    padding-top: 32px;
+    padding-bottom: 64px;
+  }
+
+  /* Dispositions: stack retention under the name, keep the meaning readable. */
+  .disp-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 6px 0;
+  }
+
+  .disp-row.head {
+    display: none;
+  }
+
+  .disp-row .disp-name {
+    padding-bottom: 2px;
+  }
+
+  .disp-row .disp-cell {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .doc-pager {
+    flex-direction: column;
   }
 }
 
