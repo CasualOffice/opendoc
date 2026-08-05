@@ -6623,13 +6623,30 @@ fn read_field_kind(
         }
     }
     match ref_name {
-        Some(bookmark) if !bookmark.is_empty() && bookmark.len() <= 255 => Ok(Some(if page {
-            FieldKind::PageRef { bookmark }
-        } else {
-            FieldKind::Ref { bookmark }
-        })),
+        // Reject an empty, over-long, or non-serializable target here so the field
+        // drops with a finding rather than disappearing at export time.
+        Some(bookmark)
+            if !bookmark.is_empty()
+                && bookmark.len() <= 255
+                && bookmark.chars().all(is_xml_text_char) =>
+        {
+            Ok(Some(if page {
+                FieldKind::PageRef { bookmark }
+            } else {
+                FieldKind::Ref { bookmark }
+            }))
+        }
         _ => Ok(None),
     }
+}
+
+/// Whether a character is a legal XML 1.0 `Char` (so it can be serialized into an
+/// attribute value). Mirrors the writer's `is_xml_character`.
+fn is_xml_text_char(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x09 | 0x0a | 0x0d | 0x20..=0xd7ff | 0xe000..=0xfffd | 0x10000..=0x10ffff
+    )
 }
 
 /// Consume the remaining subtree of an active-content element (e.g.

@@ -800,10 +800,10 @@ fn hyperlinks_and_bookmarks_survive_export_round_trip() {
 }
 
 #[test]
-fn bookmark_name_with_control_char_degrades_not_aborts_export() {
-    // A validated model may carry a bookmark name with a control char (a tab,
-    // here via `&#9;`, survives import). Emitting it must not abort the whole
-    // export; the marker is dropped with a finding instead.
+fn bookmark_name_with_control_char_round_trips_via_numeric_ref() {
+    // A bookmark name with a tab (a legal XML char) survives import; export emits
+    // it as a numeric character reference (`&#9;`) so it round-trips byte-exactly
+    // through XML attribute-value normalization, rather than being dropped.
     let body = r#"<text:p><text:bookmark text:name="a&#9;b"/>x</text:p>"#;
     let import = import_content_xml(
         &content("1.4", body),
@@ -812,15 +812,17 @@ fn bookmark_name_with_control_char_degrades_not_aborts_export() {
     )
     .unwrap();
     import.document.validate().unwrap();
-    let export = write_odt(&import.document, OdfExportLimits::default()).unwrap();
-    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
     let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
     assert!(
-        !content_xml.contains("text:bookmark"),
-        "unserializable bookmark must be dropped, not emitted: {content_xml}"
+        content_xml.contains(r#"text:name="a&#9;b""#),
+        "bookmark tab must be emitted as a numeric ref: {content_xml}"
     );
-    // The document still reopens.
-    package.import_document(OdfImportLimits::default()).unwrap();
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
 }
 
 #[test]

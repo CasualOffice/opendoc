@@ -2572,6 +2572,17 @@ fn push_escaped_attribute(
         return Err(OdfError::InvalidXmlCharacter);
     }
     let escaped = quick_xml::escape::escape(value);
+    // quick_xml escapes the five predefined entities but not the whitespace
+    // control chars, which XML attribute-value normalization would collapse to a
+    // space on re-parse. Emit them as numeric character references so an
+    // attribute value round-trips byte-exactly.
+    if escaped.contains(['\t', '\n', '\r']) {
+        let numeric = escaped
+            .replace('\t', "&#9;")
+            .replace('\n', "&#10;")
+            .replace('\r', "&#13;");
+        return push_bounded(output, &numeric, allowed);
+    }
     push_bounded(output, escaped.as_ref(), allowed)
 }
 
@@ -3143,7 +3154,11 @@ fn enforce(limit: &'static str, observed: usize, allowed: usize) -> Result<(), O
 }
 
 fn is_xml_character(character: char) -> bool {
-    matches!(character as u32, 0x20..=0xd7ff | 0xe000..=0xfffd | 0x10000..=0x10ffff)
+    // Tab, LF, and CR are legal XML 1.0 `Char`s alongside the printable ranges.
+    matches!(
+        character as u32,
+        0x09 | 0x0a | 0x0d | 0x20..=0xd7ff | 0xe000..=0xfffd | 0x10000..=0x10ffff
+    )
 }
 
 /// Whether every character of `value` can be serialized into ODF output. Used to
@@ -3594,7 +3609,7 @@ mod tests {
     }
 
     #[test]
-    fn font_family_with_control_char_degrades_not_aborts_export() {
+    fn font_family_with_control_char_round_trips_via_numeric_ref() {
         let mut document = core_document();
         let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
             panic!("paragraph")
@@ -3602,23 +3617,21 @@ mod tests {
         let InlineNode::Run(run) = &mut paragraph.inlines[0] else {
             panic!("run")
         };
-        // A tab is legal in the model (only length is validated) but not
-        // serializable; it must degrade, not abort the whole export.
+        // A tab is a legal XML char; the font family is emitted with the tab as a
+        // numeric character reference so it round-trips, rather than being dropped.
         run.properties.font_ref = Some(FontRef::Named(FontName {
             name: "Ar\tial".to_owned(),
         }));
-        let export = write_odt(&document, OdfExportLimits::default()).unwrap();
-        let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+        let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+        let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
         let content = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
-        assert!(!content.contains("fo:font-family"));
         assert!(
-            export
-                .report
-                .entries
-                .iter()
-                .any(|entry| entry.feature == "odt.export.run_properties")
+            content.contains(r#"fo:font-family="Ar&#9;ial""#),
+            "{content}"
         );
-        package.import_document(OdfImportLimits::default()).unwrap();
+        let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+        let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+        assert_eq!(first.bytes, second.bytes);
     }
 
     #[test]
