@@ -5,9 +5,9 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, DocumentDefaults, Extent, FontRef, GroupChild, HeaderFooterKind, HeightRule,
-    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
-    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    Document, DocumentDefaults, Extent, FieldKind, FontRef, GroupChild, HeaderFooterKind,
+    HeightRule, HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId,
+    Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
     ParagraphProperties, RevisionKind, RowHeight, RunProperties, Spacing, Table, TableCell,
     TableCellProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment,
     VerticalMerge, WidthType,
@@ -1751,11 +1751,20 @@ impl Writer {
                         self.push("</text:a>")?;
                     }
                 }
-                InlineNode::Field(field) => {
-                    self.reporter
-                        .record("odt.export.field", ModelOutcome::Degraded);
-                    self.write_inlines(&field.inlines, depth + 1)?;
-                }
+                InlineNode::Field(field) => match field.kind {
+                    // Modeled ODF field elements. The computed display is emitted
+                    // empty (a renderer recomputes it), which is exactly what the
+                    // importer reads back.
+                    FieldKind::Page => self.push("<text:page-number/>")?,
+                    FieldKind::NumPages => self.push("<text:page-count/>")?,
+                    // Other field kinds have no ODF element mapping yet: keep the
+                    // cached display text as a degraded projection.
+                    _ => {
+                        self.reporter
+                            .record("odt.export.field", ModelOutcome::Degraded);
+                        self.write_inlines(&field.inlines, depth + 1)?;
+                    }
+                },
                 InlineNode::Revision(revision) => {
                     self.reporter
                         .record("odt.export.revision", ModelOutcome::Degraded);

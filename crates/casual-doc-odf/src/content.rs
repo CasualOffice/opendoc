@@ -6,14 +6,14 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color,
-    Definitions, Document, DocumentDefaults, Drawing, Extent, ExternalTarget, FontName, FontRef,
-    GridColumn, HeightRule, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
-    LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId,
-    MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, RowHeight, Run, RunProperties, Shading, Spacing, Tab, Table,
-    TableBorders, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
-    TableWidth, VerticalAlignment, VerticalMerge, WidthType,
+    Definitions, Document, DocumentDefaults, Drawing, Extent, ExternalTarget, Field, FieldKind,
+    FontName, FontRef, GridColumn, HeightRule, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
+    InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH,
+    MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
+    Paragraph, ParagraphProperties, RgbColor, RowHeight, Run, RunProperties, Shading, Spacing, Tab,
+    Table, TableBorders, TableCell, TableCellProperties, TableProperties, TableRow,
+    TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -364,6 +364,8 @@ enum InlineDraft {
         kind: NoteKind,
     },
     Drawing(usize),
+    /// A typed field (e.g. page number); its cached display content is dropped.
+    Field(FieldKind),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2703,6 +2705,41 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             );
                         }
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
+                        && let Some(kind) = field_kind_for(&name)
+                    {
+                        // A field element (with cached display content): model the
+                        // typed field and drop its computed cache. skip_active_subtree
+                        // consumes the matching `End`, so undo the `Start` depth
+                        // increment below.
+                        count_attributes_only(
+                            &element,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            limits,
+                        )?;
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::Field(kind),
+                        );
+                        skip_active_subtree(
+                            &mut reader,
+                            limits,
+                            depth,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            cancellation,
+                        )?;
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else {
                         process_start(
                             &reader,
@@ -2759,6 +2796,24 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     || automatic_styles_depth.is_some()
                 {
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && let Some(kind) = field_kind_for(&name)
+                {
+                    // A self-closing field element (e.g. `<text:page-number/>`,
+                    // which is exactly what this writer emits).
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                    inline_nodes = checked_increment(inline_nodes)?;
+                    enforce(
+                        "odf_content_inline_nodes",
+                        inline_nodes,
+                        limits.max_inline_nodes,
+                    )?;
+                    push_inline_draft(
+                        current.as_mut().ok_or(OdfError::MalformedContent)?,
+                        &mut active_link,
+                        InlineDraft::Field(kind),
+                    );
                 } else if text_body_depth.is_some()
                     && current.is_some()
                     && is_name(&name, NamespaceKind::Text, b"note")
@@ -5540,7 +5595,8 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::BookmarkStart(_)
             | InlineDraft::BookmarkEnd(_)
             | InlineDraft::NoteReference { .. }
-            | InlineDraft::Drawing(_) => {}
+            | InlineDraft::Drawing(_)
+            | InlineDraft::Field(_) => {}
         }
     }
     Ok(total)
@@ -6160,6 +6216,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"drawing");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::Field(kind) => {
+            hash_bytes(hash, b"field");
+            hash_bytes(hash, field_instruction(kind).as_bytes());
+        }
     }
 }
 
@@ -6273,9 +6333,27 @@ fn build_inlines(
                     rotation: None,
                 })
             }
+            InlineDraft::Field(kind) => InlineNode::Field(Field {
+                id,
+                instruction: field_instruction(kind).to_owned(),
+                kind: kind.clone(),
+                inlines: Vec::new(),
+                form: None,
+            }),
         });
     }
     Ok(inlines)
+}
+
+/// The synthesized DOCX-style instruction for a modeled field kind (the model
+/// requires a non-empty, authoritative instruction; ODF fields are element-based
+/// so we mint a canonical one per kind).
+fn field_instruction(kind: &FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Page => "PAGE",
+        FieldKind::NumPages => "NUMPAGES",
+        _ => "FIELD",
+    }
 }
 
 fn hash_bytes(hash: &mut u64, bytes: &[u8]) {
@@ -6472,6 +6550,19 @@ fn is_active(name: &ResolvedName) -> bool {
 /// The stable finding reported when active content (macros, event listeners) is
 /// dropped rather than modeled or preserved.
 const ACTIVE_CONTENT_FINDING: &str = "odf.security.active-content-dropped";
+
+/// The typed field kind for a supported ODF inline field element, or `None` if
+/// the element is not a modeled field.
+fn field_kind_for(name: &ResolvedName) -> Option<FieldKind> {
+    if name.namespace != NamespaceKind::Text {
+        return None;
+    }
+    match name.local.as_slice() {
+        b"page-number" => Some(FieldKind::Page),
+        b"page-count" => Some(FieldKind::NumPages),
+        _ => None,
+    }
+}
 
 /// Consume the remaining subtree of an active-content element (e.g.
 /// `office:scripts` or a `script:event-listener`) that was just opened by the

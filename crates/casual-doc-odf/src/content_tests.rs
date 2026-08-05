@@ -607,6 +607,41 @@ fn table_column_widths_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn page_number_and_count_fields_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::FieldKind;
+    let body = r#"<text:p>Page <text:page-number>1</text:page-number> of <text:page-count>5</text:page-count></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let kinds: Vec<FieldKind> = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            InlineNode::Field(field) => Some(field.kind.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, vec![FieldKind::Page, FieldKind::NumPages]);
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains("<text:page-number/>") && content_xml.contains("<text:page-count/>"),
+        "field elements missing (cache must be dropped): {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn hyperlinks_and_bookmarks_survive_export_round_trip() {
     // Both are imported faithfully; a semantic export must re-emit the `text:a`
     // wrapper (external + internal targets) and the `text:bookmark-start`/`-end`
