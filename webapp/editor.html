@@ -223,15 +223,12 @@
             <div class="rgroup-ctl">
               <div class="fmt-rows">
                 <div class="fmt-row-line">
-                  <label class="ctl font-family-control" title="Font">
-                    <select id="fontFamily">
-                      <option value="">Font</option>
-                      <option>Arial</option><option>Calibri</option><option>Cambria</option>
-                      <option>Courier New</option><option>Georgia</option><option>Helvetica</option>
-                      <option>Noto Sans</option><option>Noto Serif</option><option>Roboto</option>
-                      <option>Times New Roman</option><option>Verdana</option>
-                    </select>
-                  </label>
+                  <div class="ctl font-family-control" title="Font">
+                    <button type="button" id="fontFamily" class="font-family-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="fontMenu" aria-label="Font">
+                      <span id="fontFamilyLabel" class="font-family-label">Font</span>
+                      <span class="ms font-family-caret" aria-hidden="true">arrow_drop_down</span>
+                    </button>
+                  </div>
                   <label class="ctl size" title="Font size (pt)">
                     <input id="fontSize" type="number" min="1" max="1638" step="0.5" inputmode="decimal" list="fontSizeSuggestions" placeholder="Size" aria-label="Font size in points" />
                     <datalist id="fontSizeSuggestions">
@@ -241,6 +238,9 @@
                       <option value="36"></option><option value="48"></option><option value="72"></option>
                     </datalist>
                   </label>
+                  <button id="shrinkFont" type="button" class="fmt grow-shrink" title="Decrease font size" aria-label="Decrease font size"><span class="grow-glyph" aria-hidden="true">A<span class="grow-sign">−</span></span></button>
+                  <button id="growFont" type="button" class="fmt grow-shrink" title="Increase font size" aria-label="Increase font size"><span class="grow-glyph grow-glyph-big" aria-hidden="true">A<span class="grow-sign">+</span></span></button>
+                  <button id="changeCaseBtn" type="button" class="fmt" title="Change case" aria-label="Change case" aria-haspopup="menu" aria-expanded="false"><span class="format-glyph case-glyph" aria-hidden="true">Aa</span></button>
                 </div>
                 <div class="fmt-row-line">
                   <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
@@ -250,17 +250,20 @@
                   <button id="subscript" type="button" class="fmt" title="Subscript" aria-label="Subscript"><span class="ms" aria-hidden="true">subscript</span></button>
                   <button id="superscript" type="button" class="fmt" title="Superscript" aria-label="Superscript"><span class="ms" aria-hidden="true">superscript</span></button>
                   <span class="rgroup-mini-divider" aria-hidden="true"></span>
-                  <label class="ctl swatch" title="Text color"><span>A</span><input id="textColor" type="color" value="#000000" /></label>
-                  <label class="ctl highlight-control" title="Highlight">
-                    <span class="ms" aria-hidden="true">ink_highlighter</span>
-                    <select id="highlight" aria-label="Highlight color">
-                      <option value="">Mixed</option>
-                      <option value="none">No highlight</option>
-                      <option value="yellow">Yellow</option><option value="green">Green</option>
-                      <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
-                      <option value="red">Red</option>
-                    </select>
-                  </label>
+                  <div class="ctl color-control" title="Text color">
+                    <button type="button" id="textColorApply" class="color-apply" aria-label="Apply text color">
+                      <span class="color-apply-glyph" aria-hidden="true">A</span>
+                      <span id="textColorBar" class="color-apply-bar" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" id="textColor" class="color-caret" aria-haspopup="dialog" aria-expanded="false" aria-controls="textColorMenu" aria-label="Text color"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </div>
+                  <div class="ctl color-control color-control-highlight" title="Highlight color">
+                    <button type="button" id="highlightApply" class="color-apply color-apply-highlight" aria-label="Apply highlight">
+                      <span class="ms color-apply-glyph" aria-hidden="true">ink_highlighter</span>
+                      <span id="highlightBar" class="color-apply-bar" aria-hidden="true"></span>
+                    </button>
+                    <button type="button" id="highlight" class="color-caret" aria-haspopup="dialog" aria-expanded="false" aria-controls="highlightMenu" aria-label="Highlight color"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -547,6 +550,44 @@
     </div>
     <div id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
 
+    <!-- Font family picker: searchable, each name in its own typeface, a
+         recently-used group above the full list (docs/63 §3 popover pattern). -->
+    <div id="fontMenu" class="context-menu font-menu" hidden role="dialog" aria-label="Font">
+      <div class="font-menu-search">
+        <span class="ms" aria-hidden="true">search</span>
+        <input id="fontMenuInput" type="text" placeholder="Search fonts" autocomplete="off" spellcheck="false" aria-label="Search fonts" aria-controls="fontMenuList" />
+      </div>
+      <div id="fontMenuList" class="font-menu-list" role="listbox" aria-label="Fonts"></div>
+      <div id="fontMenuEmpty" class="font-menu-empty" hidden>No matching fonts</div>
+    </div>
+
+    <!-- Text-color + highlight swatch pickers (standard row, recently-used,
+         Automatic/None, More colors → OS input as the custom fallback). -->
+    <div id="textColorMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Text color"></div>
+    <div id="highlightMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Highlight color"></div>
+    <input id="textColorCustom" type="color" value="#000000" class="visually-offscreen" tabindex="-1" aria-hidden="true" />
+
+    <div id="changeCaseMenu" class="context-menu change-case-menu" hidden role="menu" aria-label="Change case">
+      <button type="button" class="menu-item" data-case="upper" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">UPPERCASE</span></button>
+      <button type="button" class="menu-item" data-case="lower" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">lowercase</span></button>
+      <button type="button" class="menu-item" data-case="title" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">Capitalize Each Word</span></button>
+      <button type="button" class="menu-item" data-case="sentence" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">Sentence case</span></button>
+      <button type="button" class="menu-item" data-case="toggle" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">tOGGLE cASE</span></button>
+    </div>
+
+    <div id="zoomMenu" class="context-menu zoom-menu" hidden role="menu" aria-label="Zoom presets">
+      <button type="button" class="menu-item zoom-preset" data-zoom="0.5" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">50%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="0.75" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">75%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="0.9" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">90%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="1" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">100%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="1.25" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">125%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="1.5" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">150%</span></button>
+      <button type="button" class="menu-item zoom-preset" data-zoom="2" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">200%</span></button>
+      <div class="menu-divider"></div>
+      <button type="button" class="menu-item zoom-fit" data-zoom-mode="fit-width" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">Fit width</span></button>
+      <button type="button" class="menu-item zoom-fit" data-zoom-mode="fit-page" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span><span class="menu-item-label">Fit page</span></button>
+    </div>
+
     <div id="splitCellDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="splitCellTitle" aria-describedby="splitCellDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
@@ -567,6 +608,26 @@
           <p id="splitCellNote" class="dialog-field-note">Horizontal merged cells can be split into additional columns. Vertical or multi-row splits are not available yet.</p>
         </div>
         <footer class="dialog-foot"><span class="dialog-note">One undoable table edit.</span><div class="dialog-actions"><button id="splitCellCancel" type="button" class="dialog-button">Cancel</button><button id="splitCellConfirm" type="button" class="dialog-button dialog-button-primary">Split</button></div></footer>
+      </section>
+    </div>
+
+    <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">brush</span>
+            <div>
+              <h2 id="styleNameTitle">Create a style</h2>
+              <p id="styleNameDescription">Save the selection's formatting as a new paragraph style.</p>
+            </div>
+          </div>
+          <button id="styleNameClose" type="button" class="dialog-close" title="Close" aria-label="Close create style dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label class="dialog-field field-wide">Style name<input id="styleNameInput" type="text" maxlength="253" autocomplete="off" spellcheck="false" placeholder="e.g. Callout" /></label>
+          <p id="styleNameNote" class="dialog-field-note">The new style is based on the current paragraph style and applied to the selection.</p>
+        </div>
+        <footer class="dialog-foot"><span class="dialog-note">One undoable action.</span><div class="dialog-actions"><button id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
       </section>
     </div>
 
@@ -625,6 +686,12 @@
       </label>
       <span class="sel-divider"></span>
       <button id="selComment" type="button" class="fmt" title="Add comment" aria-label="Add comment"><span class="ms" aria-hidden="true">add_comment</span></button>
+    </div>
+
+    <div id="pasteOptions" class="paste-options" role="dialog" aria-label="Paste options" hidden>
+      <span class="ms paste-options-icon" aria-hidden="true">content_paste</span>
+      <button id="pasteOptionsTextOnly" type="button" class="paste-options-action" title="Keep text only (⌘⇧V)">Keep text only</button>
+      <button id="pasteOptionsClose" type="button" class="paste-options-close" title="Dismiss" aria-label="Dismiss paste options"><span class="ms" aria-hidden="true">close</span></button>
     </div>
 
     <div id="linkChip" class="link-chip" role="dialog" aria-label="Document link" hidden>
@@ -689,9 +756,9 @@
           <div id="reviewSidebarHeader" class="review-sidebar-header">
             <div class="review-sidebar-headrow">
               <span class="review-sidebar-title">Comments &amp; suggestions</span>
-              <div class="review-sidebar-nav" role="group" aria-label="Navigate changes">
-                <button id="reviewPrevious" type="button" class="review-nav-button" title="Previous change" aria-label="Previous change"><span class="ms" aria-hidden="true">expand_less</span></button>
-                <button id="reviewNext" type="button" class="review-nav-button" title="Next change" aria-label="Next change"><span class="ms" aria-hidden="true">expand_more</span></button>
+              <div class="review-sidebar-nav" role="group" aria-label="Navigate comments and changes">
+                <button id="reviewPrevious" type="button" class="review-nav-button" title="Previous comment or change" aria-label="Previous comment or change"><span class="ms" aria-hidden="true">expand_less</span></button>
+                <button id="reviewNext" type="button" class="review-nav-button" title="Next comment or change" aria-label="Next comment or change"><span class="ms" aria-hidden="true">expand_more</span></button>
                 <button id="reviewClose" type="button" class="review-nav-button review-sidebar-close" title="Close comments and suggestions" aria-label="Close comments and suggestions"><span class="ms" aria-hidden="true">close</span></button>
               </div>
             </div>
@@ -897,13 +964,10 @@
         <span id="statPages" class="stat-pages" hidden>Page 1 of 1</span>
         <span class="zoom">
           <button id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><span class="ms" aria-hidden="true">remove</span></button>
-          <select id="zoom" aria-label="Zoom level">
-            <option value="0.75">75%</option>
-            <option value="1" selected>100%</option>
-            <option value="1.25">125%</option>
-            <option value="1.5">150%</option>
-            <option value="2">200%</option>
-          </select>
+          <span class="zoom-value-control">
+            <input id="zoom" type="text" class="zoom-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="100%" aria-label="Zoom level (type a percentage)" title="Zoom level (type a percentage)" />
+            <button id="zoomMenuBtn" type="button" class="zoom-caret" title="Zoom presets" aria-label="Zoom presets" aria-haspopup="menu" aria-controls="zoomMenu" aria-expanded="false"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+          </span>
           <button id="zoomIn" type="button" class="zbtn" title="Zoom in" aria-label="Zoom in"><span class="ms" aria-hidden="true">add</span></button>
         </span>
       </span>

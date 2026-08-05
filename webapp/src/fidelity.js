@@ -46,7 +46,7 @@ const FIDELITY = [
   },
   {
     family: "Text boxes & shapes",
-    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering now paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders; text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Not editable.",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering now paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders (solid or dashed); text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Not editable.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
@@ -56,7 +56,7 @@ const FIDELITY = [
   },
   {
     family: "Footnotes & endnotes",
-    note: "Reference markers and page-bottom note bands render — with space reservation, per-column bands, cross-page continuation, and end-of-document endnote placement (covered by 14 layout tests). The note separator rule and the in-body auto-number glyph are not yet drawn. Not editable.",
+    note: "Reference markers, page-bottom note bands, the separator rule (short for a fresh note, full-width for a continuation), and the in-body auto-number glyph all render — with space reservation, per-column bands, cross-page continuation, and end-of-document endnote placement. Remaining gaps are pagination edge cases and full Word separator customization. Not editable.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
@@ -86,7 +86,7 @@ const FIDELITY = [
   },
   {
     family: "VML pictures & shapes",
-    note: "Legacy VML pictures render via the shared drawing path; CSS positioning, exact paths, and gradients are partial. Not editable.",
+    note: "Legacy VML pictures and shapes render via the shared drawing path, including linear/radial gradient fills; CSS positioning and exact custom paths remain partial. Not editable.",
     modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {

@@ -48,8 +48,16 @@ test("history labels and mixed run formatting reflect engine state", async ({
   await fontSize.press("Tab");
   await expect(fontSize).toHaveValue("13.5");
 
-  await page.locator("#highlight").selectOption("yellow");
-  await expect(page.locator("#highlight")).toHaveValue("yellow");
+  // Highlight is now a swatch-picker dropdown (Q1): open it and pick Yellow.
+  await page.locator("#highlight").click();
+  await expect(page.locator("#highlightMenu")).toBeVisible();
+  await page.locator('#highlightMenu [data-highlight="yellow"]').click();
+  await expect(page.locator("#highlightMenu")).toBeHidden();
+  await expect
+    .poll(() =>
+      page.locator("#highlightBar").evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .toBe("rgb(255, 255, 0)");
 
   await page.locator("#superscript").click();
   await expect(page.locator("#superscript")).toHaveAttribute(

@@ -84,6 +84,11 @@ impl<K: Ord, V> DefinitionMap<K, V> {
         self.0.insert(key, value)
     }
 
+    /// Removes an entry, returning its previous value if the key was present.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        self.0.remove(key)
+    }
+
     /// Returns the value for a key, if present.
     pub fn get(&self, key: &K) -> Option<&V> {
         self.0.get(key)

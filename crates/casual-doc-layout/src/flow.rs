@@ -35,6 +35,8 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line to minimize import-block merge conflicts.
 use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
+// Separate `use` line (anti-conflict): the note's in-body auto-number mark.
+use casual_doc_model::v1::NoteNumberMark;
 // Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
 use casual_doc_model::v1::FormFieldKind;
 
@@ -200,6 +202,11 @@ struct FlowCtx<'a> {
     /// Page-derived exclusions from body floats that intersect top-level body
     /// paragraphs. `None` on the initial pagination and in running content.
     paragraph_float_exclusions: Option<&'a ParagraphFloatExclusions>,
+    /// The 1-based ordinal of the note whose body is being flowed, so an in-body
+    /// auto-number mark (`w:footnoteRef`/`w:endnoteRef`) prints that note's number
+    /// (matching the reference marker). `None` outside a note body — the mark then
+    /// stays inert, exactly as before.
+    note_number: Option<usize>,
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -279,8 +286,9 @@ pub fn build_galley_with_report_view(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
-    let galley = flow_blocks(document.body(), shaper, content_width, &mut ctx);
+    let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
 }
 
@@ -307,6 +315,30 @@ pub fn build_galley_for_blocks(
         content_width,
         None,
         ReviewView::Editing,
+        None,
+    )
+}
+
+/// Flows a note's own body blocks (`build_galley_for_blocks`), threading the
+/// note's 1-based `note_number` so its in-body auto-number mark
+/// (`w:footnoteRef`/`w:endnoteRef`) prints that number — the superscript ordinal
+/// Word puts ahead of the note text, matching the body reference marker.
+#[must_use]
+pub(crate) fn build_galley_for_note_blocks(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    note_number: usize,
+) -> Vec<BlockFragment> {
+    build_galley_for_blocks_inner(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        None,
+        ReviewView::Editing,
+        Some(note_number),
     )
 }
 
@@ -317,6 +349,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     content_width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
+    note_number: Option<usize>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -342,8 +375,9 @@ pub(crate) fn build_galley_for_blocks_inner(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: exclusions,
+        note_number,
     };
-    flow_blocks(blocks, shaper, content_width, &mut ctx)
+    flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -404,8 +438,9 @@ fn flow_running_blocks(
         text_scale,
         line_spacing_reduction,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
-    flow_blocks(blocks, shaper, content_width, &mut ctx)
+    flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
 
 /// Builds the galley like [`build_galley`], but reuses the shaped lines of
@@ -469,6 +504,7 @@ pub fn build_galley_cached(
         text_scale: 100_000,
         line_spacing_reduction: 0,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -588,7 +624,7 @@ pub fn build_galley_cached(
                 // hit-testing and the editing bridge still resolve — reach the
                 // galley. The wrapper itself contributes no box. (These recursed
                 // children are not paragraph-cached, but block SDTs are rare.)
-                galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx));
+                galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx).0);
             }
             // TODO(altchunk): the embedded part's actual content (HTML/RTF/nested
             // WordprocessingML) is not parsed or modeled — only an opaque part
@@ -875,14 +911,24 @@ fn collapse_contextual_spacing(
     }
 }
 
+/// Flows a block sequence into a galley and reports the float floor: the maximum
+/// bottom extent (from the sequence's top, in twips) reached by any square-family
+/// wrap float anchored in the sequence. A `wrapSquare` float is out-of-flow, so it
+/// never stacks in-flow height, but its anchoring container (a table cell) must
+/// still grow to contain it. The body/textbox callers ignore the floor (page-level
+/// float geometry owns body floats); [`flow_table`] uses it as a cell minimum
+/// height so the row grows to hold the anchored object (issue #359).
 fn flow_blocks(
     blocks: &[BlockNode],
     shaper: &dyn LineShaper,
     width: Twip,
     ctx: &mut FlowCtx,
-) -> Vec<BlockFragment> {
+) -> (Vec<BlockFragment>, Twip) {
     let mut galley = Vec::new();
     let mut index = 0;
+    // Maximum bottom extent of any square-family wrap float anchored in this
+    // sequence (see the doc comment). `Twip::ZERO` when there is no such float.
+    let mut float_floor = Twip::ZERO;
     // Tracks the previous paragraph for `w:contextualSpacing` collapsing; any
     // non-paragraph block resets it (adjacency is broken across tables etc.).
     let mut prev_para: Option<ContextualNeighbor> = None;
@@ -934,6 +980,19 @@ fn flow_blocks(
                     .resolve_paragraph(&paragraph.properties)
                     .contextual_spacing;
                 let galley_index = galley.len();
+                // This paragraph's top edge, before it is pushed. A square-wrap
+                // float anchored here spans `[anchor_top, anchor_top + clearance)`.
+                let anchor_top = galley
+                    .iter()
+                    .map(BlockFragment::height)
+                    .fold(Twip::ZERO, |a, h| a + h);
+                if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
+                    .iter()
+                    .map(|carry| carry.height)
+                    .max()
+                {
+                    float_floor = float_floor.max(anchor_top + clearance);
+                }
                 galley.push(flow_paragraph_with_carries(
                     paragraph,
                     shaper,
@@ -963,7 +1022,13 @@ fn flow_blocks(
                 // contexts also flow. Nested SDTs recurse naturally. The nested
                 // flow does its own contextual collapsing; treat the wrapper as
                 // an adjacency break at this level.
-                galley.extend(flow_blocks(&sdt.blocks, shaper, width, ctx));
+                let sdt_top = galley
+                    .iter()
+                    .map(BlockFragment::height)
+                    .fold(Twip::ZERO, |a, h| a + h);
+                let (sub, sub_floor) = flow_blocks(&sdt.blocks, shaper, width, ctx);
+                float_floor = float_floor.max(sdt_top + sub_floor);
+                galley.extend(sub);
                 prev_para = None;
                 active_carries.clear();
             }
@@ -977,7 +1042,7 @@ fn flow_blocks(
         }
         index += 1;
     }
-    galley
+    (galley, float_floor)
 }
 
 /// Flows one paragraph while carrying square-family wrap-float exclusions across
@@ -1217,6 +1282,12 @@ fn flow_table(
             indent,
         );
         let mut cells = Vec::new();
+        // Parallel to `cells`: each cell's square-wrap float floor (the bottom
+        // extent of any out-of-flow wrapSquare object anchored in the cell). A
+        // wrapSquare float stacks no in-flow height, so the cell must be grown to
+        // contain it here — otherwise the row collapses to its (tiny) text height
+        // and the anchored object overflows into the next row (issue #359).
+        let mut cell_floors: Vec<Twip> = Vec::new();
         let mut col = 0usize;
         for (index, cell) in row.cells.iter().enumerate() {
             let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
@@ -1290,12 +1361,13 @@ fn flow_table(
                     .is_some()
                     .then(|| style_layer.clone()),
             );
-            let blocks = if matches!(merge_role, VerticalMergeRole::Continue) {
-                Vec::new()
+            let (blocks, cell_float_floor) = if matches!(merge_role, VerticalMergeRole::Continue) {
+                (Vec::new(), Twip::ZERO)
             } else {
                 flow_blocks(&cell.blocks, shaper, inner_width, ctx)
             };
             ctx.table_style = outer_table_style;
+            cell_floors.push(cell_float_floor);
             cells.push(CellFragment {
                 id: cell.id,
                 grid_span: span as u32,
@@ -1324,7 +1396,17 @@ fn flow_table(
                 VerticalMergeRole::Restart { end_row, .. } => end_row == row_index,
                 VerticalMergeRole::None => true,
             })
-            .map(|(_, cell)| cell.occupied_height())
+            .map(|(index, cell)| {
+                // Grow the cell to contain any wrapSquare float anchored in it: the
+                // float's clearance is measured from the cell's content top, so it
+                // demands the row be at least as tall as its non-content insets plus
+                // that clearance. Cells with no such float add nothing (floor 0).
+                let float_pad = cell_floors[index]
+                    .raw()
+                    .saturating_sub(cell.content_height().raw())
+                    .max(0);
+                Twip(cell.occupied_height().raw() + float_pad)
+            })
             .max()
             .unwrap_or(Twip::ZERO);
         let (height, clip) = resolve_row_height(&row.properties, content_h);
@@ -2064,6 +2146,7 @@ fn block_intrinsic(
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
         paragraph_float_exclusions: None,
+        note_number: None,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -2687,11 +2770,16 @@ fn collect_items_with_measure<'a>(
                 out.push(FlowItem::Run(note_reference_run(reference, ctx)));
             }
             // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
-            // inside a note body. Painting its number needs the enclosing note's
-            // ordinal, which is not threaded into local inline flow; the mark is
-            // preserved in the model and round-trips. Omitting it here does not
-            // regress (the mark was previously dropped at import).
-            InlineNode::NoteNumberMark(_) => {}
+            // inside a note body: it prints the enclosing note's number ahead of
+            // the note text (Word's default note style — a superscript ordinal
+            // matching the body reference marker). `ctx.note_number` carries that
+            // ordinal when a note body is being flowed; outside a note body it is
+            // `None` and the mark stays inert (the model still round-trips it).
+            InlineNode::NoteNumberMark(mark) => {
+                if let Some(number) = ctx.note_number {
+                    out.push(FlowItem::Run(note_number_run(mark, number, ctx)));
+                }
+            }
             // `w:commentReference` is a zero-width model marker. Its visible
             // affordance belongs to the host review UI; shaping placeholder
             // text here changes line wrapping and leaks a superscript
@@ -2853,6 +2941,19 @@ fn note_reference_properties() -> RunProperties {
         vertical_alignment: Some(VerticalAlignment::Superscript),
         ..RunProperties::default()
     }
+}
+
+/// Builds the in-body note auto-number run: the note's own `number` printed with
+/// the mark's authored run formatting, forced to superscript (Word's default note
+/// style) unless the mark already specifies a vertical alignment. This mirrors
+/// [`note_reference_run`] so the note body's leading number matches the body-side
+/// reference marker.
+fn note_number_run(mark: &NoteNumberMark, number: usize, ctx: &mut FlowCtx) -> StyledRun<'static> {
+    let mut properties = mark.properties.clone();
+    if properties.vertical_alignment.is_none() {
+        properties.vertical_alignment = Some(VerticalAlignment::Superscript);
+    }
+    styled_owned_run(number.to_string(), &properties, ctx)
 }
 
 /// Converts a paragraph-local anchored object into its non-painting flow marker.
@@ -3204,7 +3305,7 @@ fn flow_text_box_with_ctx(
     ctx.text_scale = ((u64::from(previous_scale) * u64::from(local_scale)) / 100_000)
         .min(u64::from(u32::MAX)) as u32;
     ctx.line_spacing_reduction = combine_percentage_reductions(previous_reduction, local_reduction);
-    let flowed = flow_blocks(blocks, shaper, inner_width, ctx);
+    let (flowed, _float_floor) = flow_blocks(blocks, shaper, inner_width, ctx);
     ctx.text_scale = previous_scale;
     ctx.line_spacing_reduction = previous_reduction;
     ctx.para_style = previous_para_style;
@@ -3727,6 +3828,20 @@ fn shape_complex_inline_with_objects(
     let mut out = Vec::new();
     let mut cursor_y = Twip::ZERO;
     let mut start = 0usize;
+    // The right edge of any left square-family wrap exclusion seen so far. A
+    // wrapSquare float is out-of-flow — it excludes text HORIZONTALLY over its
+    // vertical span and must never reserve in-flow vertical height. This tab/field
+    // compatibility path cannot narrow a line mid-assembly, so the exclusion is not
+    // turned into a vertical barrier (which pushed the following text below the
+    // float — issue #359). Instead it starts the following chunk's pen past the
+    // float, exactly as Word advances a tab that lands inside a float to the
+    // float's right edge; the float's own height is reserved as its cell's minimum
+    // height in [`flow_table`] so the row still grows to contain the object.
+    let mut left_floor = Twip::ZERO;
+    let chunk_constraints = |left_floor: Twip| LineConstraints {
+        first_line_indent: Twip(constraints.first_line_indent.raw() + left_floor.raw()),
+        ..constraints
+    };
     for (index, item) in items.iter().enumerate() {
         if !matches!(
             item,
@@ -3740,7 +3855,7 @@ fn shape_complex_inline_with_objects(
                 &items[start..index],
                 tab_stops,
                 default_tab,
-                constraints,
+                chunk_constraints(left_floor),
                 range,
             );
             stack_lines(&mut out, chunk.lines, &mut cursor_y);
@@ -3750,7 +3865,15 @@ fn shape_complex_inline_with_objects(
             FlowItem::Math { size, runs, rules } => {
                 math_line(*size, runs.clone(), rules.clone(), range)
             }
-            FlowItem::FloatExclusion { height, .. } => float_barrier_line(*height, range),
+            FlowItem::FloatExclusion { side, width, .. } => {
+                // Only a left exclusion moves the following text's start edge; a
+                // right-side float leaves the leading pen at the margin.
+                if matches!(side, InlineFloatSide::Left) {
+                    left_floor = left_floor.max(*width);
+                }
+                start = index + 1;
+                continue;
+            }
             _ => unreachable!(),
         };
         stack_lines(&mut out, vec![object_line], &mut cursor_y);
@@ -3762,7 +3885,7 @@ fn shape_complex_inline_with_objects(
             &items[start..],
             tab_stops,
             default_tab,
-            constraints,
+            chunk_constraints(left_floor),
             range,
         );
         stack_lines(&mut out, chunk.lines, &mut cursor_y);
@@ -4708,6 +4831,7 @@ pub(crate) fn shape_field_run(
     FieldRunShape {
         run: GlyphRun {
             is_marker: false,
+            is_leader: false,
             font: style.font,
             size: style.size,
             character_scale_percent: style.character_scale_percent,
@@ -4752,6 +4876,11 @@ struct FieldedSegment {
     width: Twip,
     ascent: Twip,
     descent: Twip,
+    /// The node byte offset just past this segment's text runs. Fields, tabs, and
+    /// breaks are zero-width for offset purposes (they contribute no model text), so
+    /// only run text advances it — matching the paragraph text being the
+    /// concatenation of its runs. Threads the caret offset space through the line.
+    end_byte: u32,
 }
 
 /// A field within a [`FieldedSegment`]: which of the segment's runs holds it, plus
@@ -4779,7 +4908,6 @@ fn shape_fielded_paragraph(
     let ctx = FieldedCtx {
         shaper,
         node: range.start.node,
-        base: range.start.offset,
         tab_stops,
         default_tab,
         constraints,
@@ -4806,13 +4934,18 @@ fn shape_fielded_paragraph(
     let mut out: Vec<Line> = Vec::new();
     let mut cursor_y = Twip::ZERO;
     let last = blocks.len().saturating_sub(1);
+    // The running caret byte offset across hard-break blocks (each a line). A hard
+    // break is zero-width for offset purposes, so a block starts where the previous
+    // one ended.
+    let mut base = range.start.offset;
     for (bi, (block_items, trailing)) in blocks.iter().enumerate() {
         let first_line_indent = if bi == 0 {
             constraints.first_line_indent
         } else {
             Twip::ZERO
         };
-        let mut line = layout_fielded_line(&ctx, block_items, first_line_indent);
+        let mut line = layout_fielded_line(&ctx, block_items, first_line_indent, base);
+        base = line.range.end.offset;
         for run in &mut line.runs {
             run.origin.y = run.origin.y + cursor_y;
         }
@@ -4840,7 +4973,6 @@ fn shape_fielded_paragraph(
 struct FieldedCtx<'a> {
     shaper: &'a dyn LineShaper,
     node: NodeId,
-    base: u32,
     tab_stops: &'a [TabStop],
     default_tab: Twip,
     constraints: LineConstraints,
@@ -4855,10 +4987,10 @@ fn layout_fielded_line(
     ctx: &FieldedCtx<'_>,
     items: &[&FlowItem<'_>],
     first_line_indent: Twip,
+    base: u32,
 ) -> Line {
     let shaper = ctx.shaper;
     let node = ctx.node;
-    let base = ctx.base;
     let tab_stops = ctx.tab_stops;
     let default_tab = ctx.default_tab;
     let constraints = ctx.constraints;
@@ -4887,10 +5019,19 @@ fn layout_fielded_line(
         }
     }
     let has_tab = segments.len() > 1;
+    // Thread the caret byte offset through the segments in visual/logical order so
+    // each shaped run's clusters and the line's range address the paragraph's real
+    // model text. Tabs between segments are zero-width for offset purposes.
+    let mut byte = base;
     let measured: Vec<FieldedSegment> = segments
         .iter()
-        .map(|seg| measure_fielded_segment(shaper, node, seg))
+        .map(|seg| {
+            let m = measure_fielded_segment(shaper, node, seg, byte);
+            byte = m.end_byte;
+            m
+        })
         .collect();
+    let end_byte = byte;
 
     let ascent = measured
         .iter()
@@ -4964,7 +5105,9 @@ fn layout_fielded_line(
         descent,
         height,
         clip: constraints.line_exact.is_some(),
-        range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, base)),
+        // Span the block's real model text so a caret can address the line's label
+        // text and land past a trailing form field, not collapse to `[base, base)`.
+        range: ModelRange::new(ModelPos::new(node, base), ModelPos::new(node, end_byte)),
         line_break: LineBreak::ParagraphEnd,
         page_break_after: false,
         bars: Vec::new(),
@@ -5011,13 +5154,16 @@ fn measure_fielded_segment(
     shaper: &dyn LineShaper,
     node: NodeId,
     seg: &[&FlowItem<'_>],
+    base: u32,
 ) -> FieldedSegment {
     let mut runs: Vec<GlyphRun> = Vec::new();
     let mut fields: Vec<FieldPiece> = Vec::new();
     let mut pen = 0i32;
     let mut ascent = Twip::ZERO;
     let mut descent = Twip::ZERO;
-    let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    // The running caret byte offset. A field's value is not model text, so a field
+    // does not advance it; only shaped run text does.
+    let mut byte = base;
 
     let mut i = 0;
     while i < seg.len() {
@@ -5050,6 +5196,11 @@ fn measure_fielded_segment(
                         _ => None,
                     })
                     .collect();
+                let group_len: u32 = styled.iter().map(|r| r.text.len() as u32).sum();
+                // Anchor the group's clusters at the running byte offset so a caret
+                // maps back to the paragraph's real model text (the shaper adds
+                // `range.start.offset` to every cluster it emits).
+                let range = ModelRange::new(ModelPos::new(node, byte), ModelPos::new(node, byte));
                 let layout = shaper.shape_paragraph(&styled, tabs::unwrapped_constraints(), range);
                 if let Some(line) = layout.lines.first() {
                     ascent = ascent.max(line.ascent);
@@ -5064,6 +5215,7 @@ fn measure_fielded_segment(
                     }
                     pen += group_w;
                 }
+                byte = byte.saturating_add(group_len);
             }
             // Images/tabs/breaks do not reach here (tabs split the segment; images
             // and breaks are handled by their own paths).
@@ -5077,6 +5229,7 @@ fn measure_fielded_segment(
         width: Twip(pen),
         ascent,
         descent,
+        end_byte: byte,
     }
 }
 
@@ -6468,6 +6621,7 @@ mod tests {
             text_scale: 100_000,
             line_spacing_reduction: 0,
             paragraph_float_exclusions: None,
+            note_number: None,
         };
         let mut items = Vec::new();
         collect_items(
@@ -6521,6 +6675,7 @@ mod tests {
             text_scale: 100_000,
             line_spacing_reduction: 0,
             paragraph_float_exclusions: None,
+            note_number: None,
         };
         let mut out = Vec::new();
         push_styled_runs(text, &properties, &mut ctx, &mut out);
@@ -6665,6 +6820,7 @@ mod tests {
         let line = |baseline| Line {
             runs: vec![GlyphRun {
                 is_marker: false,
+                is_leader: false,
                 font: FontId(0),
                 size: Twip(100),
                 character_scale_percent: 100,
@@ -7060,6 +7216,145 @@ mod tests {
              (expected >= ~{}, got {})",
             logo_width.raw(),
             with.raw()
+        );
+    }
+
+    #[test]
+    fn a_wrap_square_float_leaves_its_tagline_beside_it_not_below() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, Definitions, DrawingAnchor, Extent,
+            GridColumn, HorizontalAnchor, HorizontalPosition, MediaId, MediaReference, Tab, Table,
+            TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+            VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+        };
+
+        // The loan.docx partner-logo layout: a table cell whose first paragraph
+        // carries a left-margin `wrapSquare` logo, followed by a tagline paragraph
+        // that positions its text with a leading TAB. The wrapSquare float is
+        // out-of-flow: it must NOT reserve in-flow vertical height, so the tagline
+        // stays on its own first line BESIDE the logo (issue #359, which had turned
+        // the carried exclusion into a full-height barrier that dropped the text
+        // below the float). The cell must still grow to CONTAIN the logo.
+        let logo_height = Twip(1400);
+        let logo_width = Twip(2000);
+        let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
+        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: NodeId::from_parts(70, 1).unwrap(),
+            media,
+            extent: Extent {
+                width_emu: i64::from(logo_width.raw()) * 635,
+                height_emu: i64::from(logo_height.raw()) * 635,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Margin,
+                    position: HorizontalPosition::Offset(-7),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Paragraph,
+                    position: VerticalPosition::Offset(0),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        let tagline = paragraph(
+            63,
+            vec![
+                InlineNode::Tab(Tab {
+                    id: NodeId::from_parts(64, 1).unwrap(),
+                }),
+                run_node(65, "tagline", RunProperties::default()),
+            ],
+        );
+        let cell = TableCell {
+            id: NodeId::from_parts(60, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(61, vec![float]), tagline],
+        };
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid: vec![GridColumn {
+                width_twips: Some(6000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell],
+            }],
+        });
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rIdLogo".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/logo.png".to_owned(),
+            },
+        );
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(
+            &document_with_definitions(vec![table], definitions),
+            &shaper,
+            Twip::from_points(400),
+        );
+
+        let BlockFragment::TableRow { cells, height, .. } = &galley[0] else {
+            panic!("expected a table row");
+        };
+        let BlockFragment::Paragraph { lines, .. } = &cells[0].blocks[1] else {
+            panic!("expected the tagline paragraph fragment");
+        };
+
+        // The tagline is a single line at the paragraph's top — NOT preceded by a
+        // float-height barrier. Its height is one text line, far under the float's
+        // clearance, and its glyphs sit near y=0 within the paragraph.
+        let tagline_height = cells[0].blocks[1].height();
+        assert!(
+            tagline_height.raw() < logo_height.raw() / 2,
+            "the wrapSquare float must not reserve in-flow height in the tagline \
+             paragraph (height {} should be one line, well under the float {})",
+            tagline_height.raw(),
+            logo_height.raw(),
+        );
+        let first = &lines.lines[0];
+        assert!(
+            !first.runs.is_empty() && !first.runs[0].glyphs.is_empty(),
+            "the tagline text shaped onto the paragraph's first line"
+        );
+        assert!(
+            first.runs[0].origin.y.raw() < 400,
+            "the tagline glyphs sit at the paragraph top beside the logo, not \
+             dropped below a barrier (got y={})",
+            first.runs[0].origin.y.raw(),
+        );
+
+        // The text still clears the logo horizontally (its leading tab advances
+        // past the float's right edge, as Word does).
+        assert!(
+            first.runs[0].origin.x.raw() >= logo_width.raw() - 50,
+            "the tagline starts to the right of the logo (got x={})",
+            first.runs[0].origin.x.raw(),
+        );
+
+        // The out-of-flow float still grows the cell so the row contains the logo,
+        // even though it reserves no in-flow height.
+        assert!(
+            height.raw() >= logo_height.raw() - 50,
+            "the row grows to contain the anchored logo (row height {} >= float {})",
+            height.raw(),
+            logo_height.raw(),
         );
     }
 
@@ -9615,6 +9910,7 @@ mod tests {
                 text_scale: 100_000,
                 line_spacing_reduction: 0,
                 paragraph_float_exclusions: None,
+                note_number: None,
             };
             block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
         }
@@ -12597,5 +12893,78 @@ mod tests {
                 a: 255,
             },
         }
+    }
+
+    #[test]
+    fn a_form_field_paragraph_spans_its_label_text_range() {
+        // A form-field row ("Name: " + a FORMTEXT field, as on the loan form) must
+        // lay out with a caret range covering its real label text, not collapse to
+        // `[base, base)`. Otherwise the label is unaddressable and a click on the
+        // field's blank snaps to the paragraph start (`crate::hittest`). The field's
+        // value run is recorded in `line.fields`; its glyph clusters are zeroed, so
+        // it never anchors a caret.
+        use crate::text::{FieldKind, FieldStyle};
+
+        let node = NodeId::from_parts(7, 1).unwrap();
+        let label = StyledRun {
+            text: "Name: ".into(),
+            requested_family: None,
+            font: FontId(0),
+            size: Twip::from_points(11),
+            character_scale_percent: 100,
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            color: [0, 0, 0, 255],
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            baseline_shift: Twip::ZERO,
+        };
+        let field_style = FieldStyle {
+            font: FontId(0),
+            size: Twip::from_points(11),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            decoration: Decoration::default(),
+        };
+        let items = vec![
+            FlowItem::Run(label),
+            FlowItem::Field {
+                kind: FieldKind::Passthrough,
+                value: "     ".to_owned(),
+                style: field_style,
+            },
+        ];
+        let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+        let shaper = ParleyShaper::new();
+        let layout = shape_fielded_paragraph(
+            &shaper,
+            &items,
+            &[],
+            Twip(720),
+            LineConstraints::default(),
+            range,
+        );
+        assert_eq!(layout.lines.len(), 1);
+        let line = &layout.lines[0];
+        // "Name: " is 6 bytes → the line covers offsets [0, 6), not [0, 0).
+        assert_eq!(line.range.start.offset, 0);
+        assert_eq!(line.range.end.offset, 6, "line spans the real label text");
+        // The field value run is recorded as a marker (excluded from caret slots).
+        assert_eq!(line.fields.len(), 1);
+        let field_run = line.fields[0].run as usize;
+        // The label run's glyph clusters are the real byte offsets 0..=5.
+        let label_clusters: Vec<u32> = line
+            .runs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != field_run)
+            .flat_map(|(_, r)| r.glyphs.iter().map(|g| g.cluster))
+            .collect();
+        assert_eq!(label_clusters, vec![0, 1, 2, 3, 4, 5]);
     }
 }

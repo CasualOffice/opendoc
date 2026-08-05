@@ -36,8 +36,8 @@ test("header controls are labeled real buttons and keyboard-activatable (REVIEW-
 
   // Every header control is a real <button> with an accessible name.
   for (const [id, name] of [
-    ["#reviewPrevious", "Previous change"],
-    ["#reviewNext", "Next change"],
+    ["#reviewPrevious", "Previous comment or change"],
+    ["#reviewNext", "Next comment or change"],
     ["#reviewClose", "Close comments and suggestions"],
   ]) {
     const btn = page.locator(id);

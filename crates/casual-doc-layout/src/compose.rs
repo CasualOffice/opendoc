@@ -25,6 +25,15 @@ const BAR_TAB_WIDTH: Twip = Twip(10);
 /// hairline, the same weight as a bar-tab rule.
 const COLUMN_SEPARATOR_WIDTH: Twip = Twip(10);
 
+/// Stroke width (twips) of the footnote separator rule — Word's ~0.5pt hairline
+/// between the body and the footnote band, the same weight as a column rule.
+const FOOTNOTE_SEPARATOR_WIDTH: Twip = Twip(10);
+
+/// Length (twips) of a *fresh* footnote separator: Word draws a short 2-inch
+/// left-aligned hairline above a note first placed on this page. A note continued
+/// from the previous page instead gets a full-band-width continuation rule.
+pub(crate) const FOOTNOTE_SEPARATOR_LENGTH: Twip = Twip(2_880);
+
 /// Stroke width (device px) of an inline text box's border (a hairline).
 /// Builds a display list for one paragraph's shaped lines, placed with the
 /// paragraph's top-left at `origin` (in twips). The shaper positions each glyph
@@ -250,6 +259,11 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.placed {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
+    // The footnote separator rule: Word draws a short hairline between the body
+    // and the footnote band (a full-band-width rule when the band continues a note
+    // from the previous page). Painted before the note bodies as non-text
+    // furniture — it never enters the caret/selection model.
+    compose_footnote_separators(&mut list, page);
     for placed in &page.footnotes {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
@@ -265,6 +279,51 @@ pub fn compose_page(page: &Page) -> DisplayList {
         compose_anchor(&mut list, anchor);
     }
     list
+}
+
+/// Paints the footnote separator rule(s) at the top of a page's footnote band(s).
+///
+/// Word separates the body from the footnotes with a short (~2 inch) left-aligned
+/// hairline for a note first placed on the page, and a full-band-width rule when
+/// the band continues a note carried over from the previous page. Each physical
+/// band (one per column, keyed by its left edge) gets one rule at its top edge —
+/// the y where its first note fragment sits. The rule is layout furniture: it is
+/// emitted only into the display list, never into the caret/selection model.
+fn compose_footnote_separators(list: &mut DisplayList, page: &Page) {
+    if page.footnotes.is_empty() {
+        return;
+    }
+    // A page whose band originates no reference of its own is showing only notes
+    // continued from an earlier page, so its separator spans the full band width.
+    let continuation = !crate::notes::page_originates_footnote(page);
+
+    // Group the placed note fragments into physical bands by their left edge, and
+    // for each band take its top y and widest fragment as the band geometry.
+    let mut bands: std::collections::BTreeMap<Twip, (Twip, Twip)> =
+        std::collections::BTreeMap::new();
+    for placed in &page.footnotes {
+        let entry = bands
+            .entry(placed.rect.origin.x)
+            .or_insert((placed.rect.origin.y, placed.rect.size.width));
+        entry.0 = entry.0.min(placed.rect.origin.y);
+        entry.1 = entry.1.max(placed.rect.size.width);
+    }
+
+    for (x, (top, width)) in bands {
+        let length = if continuation {
+            width
+        } else {
+            FOOTNOTE_SEPARATOR_LENGTH.min(width)
+        };
+        list.push(PaintItem::Line {
+            from: Point::new(x, top),
+            to: Point::new(x + length, top),
+            stroke: Stroke {
+                color: Color::BLACK,
+                width: stroke_px(FOOTNOTE_SEPARATOR_WIDTH),
+            },
+        });
+    }
 }
 
 /// Paints a resolved page-border frame: each present edge as a filled band along
@@ -330,15 +389,18 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
                 transform: anchor.transform,
             });
             // A framed picture's `pic:spPr/a:ln` paints as a stroked rectangle over
-            // the picture box (pictures are rectangular).
+            // the picture box (pictures are rectangular). It rides the same
+            // [`PaintItem::Shape`] outline path as shape borders so its color,
+            // width, and preset dash (`a:prstDash`) all paint — a dashed frame
+            // dashes, a solid frame stays solid.
             if let Some(border) = border {
-                list.push(PaintItem::Rect {
-                    rect: anchor.rect,
+                list.push(PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: anchor.rect },
                     fill: None,
-                    stroke: Some(Stroke {
-                        color: rgba(border.color),
-                        width: stroke_px(border.width),
-                    }),
+                    stroke: Some(shape_outline(border)),
+                    head_end: None,
+                    tail_end: None,
+                    transform: anchor.transform,
                 });
             }
         }
@@ -1220,6 +1282,7 @@ mod tests {
     fn one_run_line(advance: Twip, highlight: Option<[u8; 4]>) -> LineLayout {
         let run = GlyphRun {
             is_marker: false,
+            is_leader: false,
             font: FontId(0),
             size: Twip(200),
             character_scale_percent: 100,
@@ -1798,10 +1861,60 @@ mod tests {
         assert!(
             matches!(
                 &list.items[1],
-                PaintItem::Rect { rect: r, fill: None, stroke: Some(s) }
-                    if *r == rect && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
+                PaintItem::Shape {
+                    geometry: ShapeGeometry::Rect { rect: r },
+                    fill: None,
+                    stroke: Some(s),
+                    ..
+                }
+                    if *r == rect
+                        && s.color == Color { r: 10, g: 20, b: 30, a: 255 }
+                        && matches!(s.dash, DashStyle::Solid)
             ),
-            "the frame paints as a stroked rect over the picture box"
+            "the frame paints as a stroked rect shape over the picture box"
+        );
+    }
+
+    #[test]
+    fn a_dashed_picture_frame_carries_its_dash_onto_the_stroked_shape() {
+        // The border stroke's `a:prstDash` must ride onto the composed frame so a
+        // dashed picture frame paints dashed (a solid control stays solid).
+        let rect = Rect::new(
+            Point::new(Twip(100), Twip(200)),
+            Size::new(Twip(500), Twip(400)),
+        );
+        let frame = |dash| {
+            let anchor = anchor_at(
+                AnchorContent::Image {
+                    media: "word/media/image1.png".to_owned(),
+                    crop: None,
+                    border: Some(AnchorStroke {
+                        color: [10, 20, 30, 255],
+                        width: Twip(20),
+                        dash,
+                    }),
+                },
+                rect,
+            );
+            let mut list = DisplayList::new();
+            compose_anchor(&mut list, &anchor);
+            let PaintItem::Shape {
+                stroke: Some(outline),
+                ..
+            } = &list.items[1]
+            else {
+                panic!("the frame paints as a stroked shape");
+            };
+            outline.dash
+        };
+
+        assert!(
+            matches!(frame(DashStyle::Dash), DashStyle::Dash),
+            "a dashed frame carries its dash onto the stroke"
+        );
+        assert!(
+            matches!(frame(DashStyle::Solid), DashStyle::Solid),
+            "a solid frame stays solid"
         );
     }
 

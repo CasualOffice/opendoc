@@ -46,6 +46,13 @@ const statusEl = document.getElementById("status");
 const reviewLiveRegion = document.getElementById("reviewLiveRegion");
 const fileEl = document.getElementById("file");
 const zoomEl = document.getElementById("zoom");
+// Zoom (Q4): an editable % plus Fit width / Fit page. `zoomFactor` is the live
+// scale the renderer/ruler read; `zoomMode` is "custom" for a fixed % or a fit
+// mode that recomputes from the viewport on every render/resize.
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5;
+let zoomFactor = 1;
+let zoomMode = "custom";
 const pagesEl = document.getElementById("pages");
 const dropEl = document.getElementById("drop");
 const viewportEl = document.getElementById("viewport");
@@ -64,8 +71,19 @@ const alignBtns = {
 const superBtn = document.getElementById("superscript");
 const subBtn = document.getElementById("subscript");
 const fontSizeSel = document.getElementById("fontSize");
-const textColorInput = document.getElementById("textColor");
-const highlightSel = document.getElementById("highlight");
+// Text-color and highlight swatch pickers (Q1): a split control — an "apply"
+// half that reapplies the last-used swatch, and a caret half that opens the
+// swatch menu. `textColorInput` is the hidden OS <input type=color> used only as
+// the "More colors…" custom fallback, never the primary control.
+const textColorCaret = document.getElementById("textColor");
+const textColorApplyBtn = document.getElementById("textColorApply");
+const textColorBar = document.getElementById("textColorBar");
+const textColorInput = document.getElementById("textColorCustom");
+const textColorMenu = document.getElementById("textColorMenu");
+const highlightCaret = document.getElementById("highlight");
+const highlightApplyBtn = document.getElementById("highlightApply");
+const highlightBar = document.getElementById("highlightBar");
+const highlightMenu = document.getElementById("highlightMenu");
 const clearFormattingBtn = document.getElementById("clearFormatting");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
@@ -256,6 +274,37 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 // the same `setParagraphStyle` path.
 const stylesGallery = document.getElementById("stylesGallery");
 
+/** Draws a gallery card's label IN the style it represents, from the engine's
+ *  resolved preview (font family/size/weight/slant/underline/color) — Word's
+ *  Styles gallery. Degrades to the plain slug look if the preview is
+ *  unavailable. The preview font size is clamped so a 28pt Title still fits the
+ *  dense 30px card while keeping the visible hierarchy. */
+function applyStyleCardPreview(label, name) {
+  if (!doc || typeof doc.stylePreview !== "function") return;
+  let preview;
+  try {
+    preview = doc.stylePreview(name);
+  } catch {
+    return; // unknown style — keep the plain label (graceful degrade)
+  }
+  if (!preview) return;
+  const family = preview.fontFamily;
+  if (family) label.style.fontFamily = `"${family.replace(/"/g, "")}", sans-serif`;
+  const size = preview.sizePoints;
+  if (size > 0) {
+    // Map the point size into the card's bounded px range, preserving hierarchy.
+    label.style.fontSize = `${Math.max(11, Math.min(17, Math.round(size * 0.9)))}px`;
+  }
+  label.style.fontWeight = preview.bold ? "700" : "450";
+  label.style.fontStyle = preview.italic ? "italic" : "normal";
+  label.style.textDecoration = preview.underline ? "underline" : "none";
+  // Explicit RGB colors preview as authored; automatic/theme colors resolve to
+  // an empty string and inherit the card's theme-aware ink (light/dark safe).
+  label.style.color = preview.color || "";
+  const align = preview.alignment;
+  label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
+}
+
 /** Rebuilds the Styles gallery cards from the document's style names. */
 function buildStylesGallery(styles) {
   if (!stylesGallery) return;
@@ -279,6 +328,7 @@ function buildStylesGallery(styles) {
     const label = document.createElement("span");
     label.className = "style-card-name";
     label.textContent = name;
+    applyStyleCardPreview(label, name);
     card.appendChild(label);
     card.addEventListener("click", () => {
       if (card.disabled) return;
@@ -295,6 +345,95 @@ function syncStylesGalleryActive() {
   for (const card of stylesGallery.children) {
     card.setAttribute("aria-selected", String(card.dataset.style === active));
   }
+}
+
+// --- Named-style edits: update-from-selection and create-from-selection ------
+// Word's two core Styles verbs, both routed through the same engine op
+// (`SetStyleDefinition`): "Update <Style> to match selection" mutates the style
+// definition so every paragraph using it reflows; "Create a style" adds a new
+// paragraph style (based on the current one) and applies it. Both rebuild the
+// gallery previews and dropdowns from the (now changed) style registry.
+const styleNameDialog = document.getElementById("styleNameDialog");
+const styleNameInput = document.getElementById("styleNameInput");
+const styleNameConfirm = document.getElementById("styleNameConfirm");
+const styleNameCancel = document.getElementById("styleNameCancel");
+const styleNameClose = document.getElementById("styleNameClose");
+let styleNameResolve = null;
+
+/** Opens the create-style dialog and resolves to the entered name, or null if
+ *  cancelled. A single in-flight prompt at a time. */
+function promptStyleName() {
+  if (!styleNameDialog) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    styleNameResolve = resolve;
+    styleNameInput.value = "";
+    styleNameDialog.hidden = false;
+    styleNameInput.focus();
+  });
+}
+
+function closeStyleNameDialog(result) {
+  if (!styleNameDialog || styleNameDialog.hidden) return;
+  styleNameDialog.hidden = true;
+  const resolve = styleNameResolve;
+  styleNameResolve = null;
+  if (resolve) resolve(result);
+}
+
+if (styleNameDialog) {
+  styleNameConfirm.addEventListener("click", () => closeStyleNameDialog(styleNameInput.value.trim()));
+  styleNameCancel.addEventListener("click", () => closeStyleNameDialog(null));
+  styleNameClose.addEventListener("click", () => closeStyleNameDialog(null));
+  styleNameDialog.addEventListener("click", (event) => {
+    if (event.target === styleNameDialog) closeStyleNameDialog(null);
+  });
+  styleNameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      closeStyleNameDialog(styleNameInput.value.trim());
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeStyleNameDialog(null);
+    }
+  });
+}
+
+/** The paragraph style applied at the caret, or "" when none — the target of
+ *  "Update to match selection" and the base for a new style. */
+function currentParagraphStyleName() {
+  if (!doc || !selection) return "";
+  try {
+    return doc.paragraphStyleAt(selection.focus.node) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Redefines paragraph style `name` to match the selection (Word's "Update
+ *  <Style> to Match Selection"). Every paragraph using it reflows. */
+async function updateStyleFromSelection(name) {
+  if (!doc || !name) return;
+  await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
+  populateStyles();
+  updateToolbar();
+  setStatus(`Updated “${name}” to match the selection`);
+}
+
+/** Creates a new paragraph style from the selection and applies it (Word's
+ *  "Create a Style"). Prompts for the name; refuses duplicates via the engine. */
+async function createStyleFromSelection() {
+  if (!doc || !selection) return;
+  const name = await promptStyleName();
+  if (!name) return;
+  const exists = doc.listStyles().some((s) => s.toLowerCase() === name.toLowerCase());
+  if (exists) {
+    setStatus(`A style named “${name}” already exists`, "error");
+    return;
+  }
+  await runToolbarEdit((a, b, c, d) => doc.createStyleFromSelection(a, b, c, d, name));
+  populateStyles();
+  updateToolbar();
+  setStatus(`Created style “${name}”`);
 }
 
 // --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
@@ -547,18 +686,53 @@ const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 let reviewMode = "editing";
-let reviewRevisionCursor = -1;
 let activeReviewCommentId = null;
 
-// The read-only "Show changes" markup preview (docs/93): renders struck
-// deletions + author-colored insertions + highlighted comments from the engine's
-// markup layout. A view toggle only — it never changes the model or the caret.
-// Driven from the View menu (`view.showChanges`), not the width-limited ribbon.
+// The "Show changes" markup preview (docs/93): renders struck deletions +
+// author-colored insertions + highlighted comments from the engine's markup
+// layout. A view toggle — it never changes the model or the caret. Reachable
+// from the View menu / palette (`view.showChanges`), and bound to the review
+// mode: Suggesting turns it on automatically, and a document that arrives with
+// tracked changes shows markup by default (review UX v2 Q1). The manual toggle
+// stays available in every mode.
 let showingChanges = false;
+
+/** Mirrors `showingChanges` onto the document element (a `.showing-changes`
+ *  body class + the View menu / palette pressed state) so the redline's on/off
+ *  status is visible and discoverable, not a silent internal flag. */
+function reflectShowingChangesState() {
+  document.body.classList.toggle("showing-changes", showingChanges);
+}
+
+/** The single entry point for turning the markup preview on or off. Re-renders
+ *  through the engine's markup vs. editing layout (`renderAll` → `setShowChanges`)
+ *  only when the state actually changes, so callers can request a state
+ *  idempotently (e.g. entering Suggesting when it is already on). */
+async function setShowingChanges(on) {
+  const next = !!on;
+  if (next === showingChanges) {
+    reflectShowingChangesState();
+    return;
+  }
+  showingChanges = next;
+  reflectShowingChangesState();
+  if (doc) await renderAll();
+}
+
 async function toggleShowChanges() {
   if (!doc) return;
-  showingChanges = !showingChanges;
-  await renderAll();
+  await setShowingChanges(!showingChanges);
+}
+
+/** Whether the open document currently carries any tracked revision, used to
+ *  decide whether markup should be shown by default on open (Q1). */
+function documentHasTrackedChanges() {
+  if (!doc) return false;
+  try {
+    return (JSON.parse(doc.listRevisions()) ?? []).length > 0;
+  } catch {
+    return false;
+  }
 }
 let activeReviewItemId = null;
 let reviewPopover = null;
@@ -747,6 +921,14 @@ function setReviewMode(mode) {
   if (reviewMode !== previous) {
     announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
   }
+  // Entering Suggesting auto-enables the markup view so a reviewer immediately
+  // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
+  // Leaving Suggesting keeps whatever the reader last chose — the toggle stays
+  // manual in Editing/Viewing. `setShowingChanges` is idempotent and re-renders
+  // only on a real change, so this is a no-op when markup is already shown.
+  if (reviewMode === "suggesting" && !showingChanges) {
+    void setShowingChanges(true);
+  }
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -764,8 +946,7 @@ function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
   const [pageNumber, x, y, width, height] = rects;
   const page = pages[pageNumber - 1];
   if (!page) return null;
-  const canvasRect = page.canvas.getBoundingClientRect();
-  const { sx, sy } = scaleOf(page);
+  const { rect: canvasRect, sx, sy } = scaleOf(page);
   return {
     pageNumber,
     left: canvasRect.left + x * sx,
@@ -868,6 +1049,38 @@ function reviewIconButton(icon, label, action) {
     await action();
   });
   return button;
+}
+
+/** Makes a textarea grow with its content (modern Docs/Word composer): height
+ *  tracks the scroll height from a min of one row up to a cap, after which it
+ *  scrolls. Returns a `resize()` the caller can invoke after programmatic value
+ *  changes. */
+function autoGrowTextarea(textarea, { min = 34, max = 180 } = {}) {
+  const resize = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(max, Math.max(min, textarea.scrollHeight))}px`;
+  };
+  textarea.addEventListener("input", resize);
+  requestAnimationFrame(resize);
+  return resize;
+}
+
+/** Shared "modern comment" composer key handling: Enter submits, Shift+Enter
+ *  inserts a newline, Escape cancels. Kept identical across the top-level comment
+ *  box and every reply composer so the interaction never differs by surface (Q5).
+ *  Always stops propagation so a keystroke in the composer never reaches the
+ *  canvas editor or the card's expand/collapse handler. */
+function attachComposerKeys(textarea, { onSubmit, onCancel }) {
+  textarea.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      onSubmit?.();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel?.();
+    }
+  });
 }
 
 function scheduleReviewMarginRender() {
@@ -1106,16 +1319,13 @@ function renderReviewMarginItems() {
         drawSelection();
       }, false, "Add comment");
       submit.dataset.testid = "review-comment-submit";
-      textarea.addEventListener("keydown", (event) => {
-        event.stopPropagation();
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closeReviewPopover();
-        } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          event.preventDefault();
-          submit.click();
-        }
+      // Enter submits, Shift+Enter is a newline, Esc cancels — the modern
+      // Docs/Word comment interaction, identical to the reply composer (Q5).
+      attachComposerKeys(textarea, {
+        onSubmit: () => submit.click(),
+        onCancel: () => closeReviewPopover(),
       });
+      autoGrowTextarea(textarea);
       actions.append(cancel, submit);
       composer.append(textarea, actions);
       entry = { el: composer, sig, height: 0, measured: false, focusTextarea: textarea, needsFocus: true };
@@ -1436,14 +1646,27 @@ function renderReviewMarginItems() {
         card.appendChild(thread);
       }
       if (expanded && !item.data.resolved) {
+        // Always-ready multi-line reply composer (Q5): a textarea the user can
+        // type into immediately — no click-to-arm step — matching modern Docs/
+        // Word comment threads. It auto-grows; Enter submits, Shift+Enter is a
+        // newline, Esc clears. The action row surfaces only once the composer
+        // is focused or has text, so a collapsed thread stays dense.
         const replyComposer = document.createElement("div");
         replyComposer.className = "review-reply-composer";
-        const textarea = document.createElement("input");
-        textarea.type = "text";
+        const textarea = document.createElement("textarea");
+        textarea.rows = 1;
         textarea.maxLength = 4096;
-        textarea.readOnly = true;
         textarea.placeholder = "Reply…";
+        textarea.dataset.testid = "review-reply-composer";
         textarea.setAttribute("aria-label", "Reply to this comment");
+        const replyActions = document.createElement("div");
+        replyActions.className = "review-composer-actions";
+        const resize = autoGrowTextarea(textarea);
+        const clear = () => {
+          textarea.value = "";
+          resize();
+          syncActions();
+        };
         const submit = reviewCardButton("Reply", async () => {
           const text = textarea.value.trim();
           if (!text) return;
@@ -1453,29 +1676,22 @@ function renderReviewMarginItems() {
           drawSelection();
         }, false, "Send reply");
         const cancel = reviewCardButton("Cancel", () => {
-          textarea.value = "";
-          textarea.readOnly = true;
-          replyActions.hidden = true;
+          clear();
+          textarea.blur();
         });
-        const replyActions = document.createElement("div");
-        replyActions.className = "review-composer-actions";
-        replyActions.hidden = true;
         replyActions.append(cancel, submit);
-        textarea.addEventListener("click", (event) => {
-          event.stopPropagation();
-          textarea.readOnly = false;
-          replyActions.hidden = false;
-          textarea.focus({ preventScroll: true });
-        });
-        textarea.addEventListener("keydown", (event) => {
-          event.stopPropagation();
-          if (event.key === "Enter") {
-            event.preventDefault();
-            submit.click();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            cancel.click();
-          }
+        const syncActions = () => {
+          const active = document.activeElement === textarea || textarea.value.trim().length > 0;
+          replyActions.hidden = !active;
+        };
+        syncActions();
+        textarea.addEventListener("pointerdown", (event) => event.stopPropagation());
+        textarea.addEventListener("input", syncActions);
+        textarea.addEventListener("focus", syncActions);
+        textarea.addEventListener("blur", () => requestAnimationFrame(syncActions));
+        attachComposerKeys(textarea, {
+          onSubmit: () => submit.click(),
+          onCancel: () => cancel.click(),
         });
         replyComposer.append(textarea, replyActions);
         card.appendChild(replyComposer);
@@ -1644,9 +1860,31 @@ const numberedListBtn = document.getElementById("numberedList");
 const checkListBtn = document.getElementById("checkList");
 const restartListBtn = document.getElementById("restartList");
 const continueListBtn = document.getElementById("continueList");
-const fontFamilySel = document.getElementById("fontFamily");
+const fontFamilyBtn = document.getElementById("fontFamily");
+const fontFamilyLabel = document.getElementById("fontFamilyLabel");
+const fontMenu = document.getElementById("fontMenu");
+const fontMenuInput = document.getElementById("fontMenuInput");
+const fontMenuList = document.getElementById("fontMenuList");
+const fontMenuEmpty = document.getElementById("fontMenuEmpty");
+const growFontBtn = document.getElementById("growFont");
+const shrinkFontBtn = document.getElementById("shrinkFont");
+const changeCaseBtn = document.getElementById("changeCaseBtn");
+const changeCaseMenu = document.getElementById("changeCaseMenu");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
-const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel, clearFormattingBtn];
+const runControls = [
+  superBtn,
+  subBtn,
+  fontSizeSel,
+  textColorCaret,
+  textColorApplyBtn,
+  highlightCaret,
+  highlightApplyBtn,
+  fontFamilyBtn,
+  growFontBtn,
+  shrinkFontBtn,
+  changeCaseBtn,
+  clearFormattingBtn,
+];
 const paraControls = [
   ...Object.values(alignBtns),
   spacingBtn,
@@ -1674,15 +1912,33 @@ const statParas = document.getElementById("statParas");
 const statPages = document.getElementById("statPages");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
-// (device_px = twip / 1440 * dpi). We render at 96·zoom·devicePixelRatio for a
-// crisp result on HiDPI screens, then down-scale via CSS to logical pixels.
+// (device_px = twip / 1440 * dpi). We render at 96·zoom·backingDpr() for a crisp
+// result on HiDPI screens (the DPR factor is capped — see MAX_BACKING_DPR), then
+// present at the logical page size (the wrap's CSS box) via the canvas element.
 const BASE_DPI = 96;
+
+/** Cap on the devicePixelRatio factor used for the raster *backing store*.
+ * Text stays crisp at 1.5× while the RGBA pixel buffers shrink ~×0.56 relative
+ * to a Retina dpr of 2 (memory reduction: pixel count scales with dpr²). The
+ * CSS/logical page size is always the true logical size — independent of dpr —
+ * so scroll height and hit-test geometry never depend on the display density. */
+const MAX_BACKING_DPR = 1.5;
+
+/** The clamped devicePixelRatio used only for the raster backing store. */
+function backingDpr() {
+  return Math.min(window.devicePixelRatio || 1, MAX_BACKING_DPR);
+}
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
 /** Monotonic token so a slow render from a previous file/zoom is discarded. */
 let renderToken = 0;
-/** Per-page DOM: { pageNumber (1-based), canvas, overlay, twipPerPx }. */
+/** Per-page DOM records: { pageNumber (1-based), wrap, overlay, canvas, wTwip,
+ * hTwip, visible }. `wrap` (the sheet box) and `overlay` (caret/selection layer)
+ * always exist and are sized from the page geometry; `canvas` is the live raster
+ * that is mounted only for pages in/near the viewport (virtualized — see
+ * `observePages`) and is `null` for off-screen pages. `visible` mirrors the
+ * IntersectionObserver so repaints know whether a live canvas exists. */
 let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
@@ -1970,6 +2226,12 @@ async function openBytes(bytes, name) {
     populateTableStyles();
     dropEl.hidden = true;
     document.body.classList.add("doc-loaded");
+    // Redline visible by default (Q1): a document that arrives already carrying
+    // tracked changes shows markup on open, so struck deletions are never
+    // invisible behind a buried toggle. A clean document opens with markup off.
+    // Set before the first `renderAll` so it renders the correct layout once.
+    showingChanges = documentHasTrackedChanges();
+    reflectShowingChangesState();
     const fontWarnings = await provisionFonts(name);
     await renderAll();
     if (fontWarnings.length > 0) {
@@ -2037,6 +2299,10 @@ async function provisionFonts(name) {
     const packed = packFontBytes(namedBytes);
     doc.registerFonts(packed.bytes, packed.lengths);
   }
+  // The WASM shaper now holds the authoritative copy of these faces, so release
+  // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
+  // A subsequent document re-fetches + re-registers from the CDN as usual.
+  for (const face of NAMED_WEB_FONT_FACES) fontCache.delete(face.url);
   for (const [index, result] of named.entries()) {
     if (result.status === "rejected") {
       const face = NAMED_WEB_FONT_FACES[index];
@@ -2071,6 +2337,9 @@ async function provisionMissingFallbacks(label) {
       const bytes = await fetchFontBytes(url, fontCache);
       doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
       provisionedFallbackKeys.add(key);
+      // WASM holds the authoritative copy now; drop the JS cache entry so the
+      // fallback bytes are not double-held for the session (see registerFonts).
+      fontCache.delete(url);
     } catch (err) {
       console.warn(`font ${key} (${url}) failed:`, err);
       setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
@@ -2090,6 +2359,100 @@ async function ensureGlyphCoverage(label) {
   }
 }
 
+// ---- Page virtualization -----------------------------------------------------
+// A document keeps ONE lightweight `.page-wrap` (sized from the page box) per
+// page, but a live raster `<canvas>` only for pages in or near the viewport.
+// Off-screen pages are blank sheet placeholders, so tab memory is bounded by the
+// viewport, not the page count. An IntersectionObserver mounts a page's canvas
+// as it scrolls in and releases it (freeing the RGBA buffer) as it scrolls out.
+
+/** Keep a live canvas for pages within ~one viewport-height of the visible band
+ *  above and below, so a normal scroll never reveals an unpainted page. */
+const PAGE_VIRTUALIZATION_ROOT_MARGIN = "100% 0px";
+let pageObserver = null;
+
+function ensurePageObserver() {
+  if (pageObserver) return pageObserver;
+  pageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const idx = pageIndexOfWrap(entry.target);
+        if (idx < 0) continue;
+        const page = pages[idx];
+        page.visible = entry.isIntersecting;
+        if (entry.isIntersecting) paintPageCanvas(page, idx);
+        else releasePageCanvas(page);
+      }
+    },
+    { root: viewportEl, rootMargin: PAGE_VIRTUALIZATION_ROOT_MARGIN },
+  );
+  return pageObserver;
+}
+
+/** Rewire the observer to the current page set (called after every rebuild). */
+function observePages() {
+  const obs = ensurePageObserver();
+  obs.disconnect();
+  for (const page of pages) {
+    page.wrap.__pageIndex = page.pageNumber - 1;
+    obs.observe(page.wrap);
+  }
+}
+
+/** Resolve an observed wrap back to its (still-current) page index, or -1. */
+function pageIndexOfWrap(wrap) {
+  const idx = wrap.__pageIndex;
+  return Number.isInteger(idx) && pages[idx]?.wrap === wrap ? idx : -1;
+}
+
+/** Mount and paint a page's raster canvas if it has none. The RGBA buffer is
+ *  freed back to WASM immediately after the blit so it never accumulates. */
+function paintPageCanvas(page, index) {
+  if (!doc || page.canvas) return;
+  let bmp;
+  try {
+    bmp = doc.renderPage(index, currentDpi());
+  } catch (err) {
+    console.error(`render page ${index}`, err);
+    return;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.className = "page";
+  canvas.width = bmp.widthPx;
+  canvas.height = bmp.heightPx;
+  // The surface is fully opaque, so tiny-skia's premultiplied RGBA equals the
+  // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
+  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+  bmp.free(); // return the ~13 MB RGBA Vec to WASM deterministically, not at GC.
+  // The canvas sits under the transparent caret/selection overlay.
+  page.wrap.insertBefore(canvas, page.overlay);
+  page.canvas = canvas;
+}
+
+/** Drop a page's raster canvas (releases its GPU/CPU pixels). The sheet-sized
+ *  wrap remains, so layout and scroll height are unchanged. */
+function releasePageCanvas(page) {
+  if (!page.canvas) return;
+  page.canvas.remove();
+  page.canvas = null;
+}
+
+/** Synchronously paint the pages currently on screen (plus one screenful of
+ *  margin), so the viewport is never briefly blank before the async observer
+ *  fires. Matches the observer's rootMargin. */
+function paintPagesInView() {
+  if (!pages.length) return;
+  const vr = viewportEl.getBoundingClientRect();
+  const margin = vr.height;
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const r = page.wrap.getBoundingClientRect();
+    const onscreen = r.bottom >= vr.top - margin && r.top <= vr.bottom + margin;
+    page.visible = onscreen;
+    if (onscreen) paintPageCanvas(page, i);
+  }
+}
+
 async function renderAll() {
   if (!doc) return;
   // Keep the engine's render layout in sync with the "Show changes" toggle: a
@@ -2098,15 +2461,18 @@ async function renderAll() {
   doc.setShowChanges(showingChanges);
   clearFindParagraphCache();
   const token = ++renderToken;
-  const zoom = Number(zoomEl.value);
-  const dpr = window.devicePixelRatio || 1;
-  const dpi = BASE_DPI * zoom * dpr;
+  if (zoomMode !== "custom") zoomFactor = computeFitZoom(zoomMode);
+  const zoom = zoomFactor;
+  updateZoomDisplay();
   const count = doc.pageCount;
+  // Logical CSS px per twip at this zoom — independent of devicePixelRatio, so
+  // the page box geometry (hence scroll height and hit-test scale) is stable.
+  const cssPerTwip = (BASE_DPI * zoom) / TWIPS_PER_INCH;
 
-  // Build the replacement page set off-DOM and publish it atomically. Keeping
-  // the previous canvases and interaction overlays live until the new render is
-  // complete prevents transiently losing controls (for example a checklist
-  // marker) while an asynchronous font-coverage render is in flight.
+  // Build the replacement page set off-DOM and publish it atomically. Only the
+  // sheet-sized wraps + overlays are created here; the raster canvases are
+  // mounted lazily by the viewport observer, so a large document never rasters
+  // every page up front.
   const nextPages = [];
   const fragment = document.createDocumentFragment();
   const renderingStatus =
@@ -2114,51 +2480,38 @@ async function renderAll() {
   setStatus(renderingStatus);
 
   for (let i = 0; i < count; i++) {
-    // Yield so a burst of pages does not freeze the tab; abort if superseded.
-    if (i > 0 && i % 4 === 0) await new Promise((r) => requestAnimationFrame(r));
     if (token !== renderToken) return;
 
-    const bmp = doc.renderPage(i, dpi);
+    // The page box in twips — the domain of hit-testing and selection geometry,
+    // and the source of the wrap's fixed CSS size so it holds space whether or
+    // not a live canvas is currently mounted.
+    const size = doc.pageSize(i);
+    const wTwip = size.widthTwip;
+    const hTwip = size.heightTwip;
+    size.free();
+
     const wrap = document.createElement("div");
     wrap.className = "page-wrap";
-
-    const canvas = document.createElement("canvas");
-    canvas.className = "page";
-    canvas.width = bmp.widthPx;
-    canvas.height = bmp.heightPx;
-    // Logical CSS size = device pixels / dpr, so the page appears at `zoom` scale.
-    canvas.style.width = `${bmp.widthPx / dpr}px`;
-    canvas.style.height = `${bmp.heightPx / dpr}px`;
-
-    const ctx = canvas.getContext("2d");
-    // The surface is fully opaque, so tiny-skia's premultiplied RGBA equals the
-    // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
-    const image = new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx);
-    ctx.putImageData(image, 0, 0);
+    wrap.style.width = `${wTwip * cssPerTwip}px`;
+    wrap.style.height = `${hTwip * cssPerTwip}px`;
 
     // A transparent overlay above the canvas holds the caret/selection we draw
     // ourselves from engine geometry — so the highlight matches the raster
     // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
     const overlay = document.createElement("div");
     overlay.className = "overlay";
+    wrap.appendChild(overlay);
 
-    // The page box in twips — the domain of hit-testing and selection geometry.
-    // Scale to CSS px is derived from the canvas's *actual* on-screen rect
-    // (below), so alignment holds under any zoom, DPR, or CSS max-width scaling.
-    const size = doc.pageSize(i);
-    const wTwip = size.widthTwip;
-    const hTwip = size.heightTwip;
-    size.free();
-
-    wrap.append(canvas, overlay);
     fragment.appendChild(wrap);
-    nextPages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
+    nextPages.push({ pageNumber: i + 1, wrap, overlay, canvas: null, wTwip, hTwip, visible: false });
   }
 
   if (token !== renderToken) return;
   pages = nextPages;
   pagesEl.replaceChildren(ruler, fragment); // ruler sits above the pages, same width
   buildRuler();
+  observePages(); // wire the viewport observer to the new wraps
+  paintPagesInView(); // paint what is on screen now; the observer handles scroll
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
     // A command may have reported a more important status while this async
@@ -2170,10 +2523,12 @@ async function renderAll() {
 
 // ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
 
-/** twip → CSS px scale for a page, from the canvas's live on-screen size, so it
+/** twip → CSS px scale for a page, from the wrap's live on-screen size, so it
  *  tracks the render under any zoom / DPR / CSS scaling. */
 function scaleOf(page) {
-  const rect = page.canvas.getBoundingClientRect();
+  // Measured from the sheet-sized wrap (always present), so hit-test/selection
+  // geometry holds even when the page's raster canvas is virtualized away.
+  const rect = page.wrap.getBoundingClientRect();
   return { rect, sx: rect.width / page.wTwip, sy: rect.height / page.hTwip };
 }
 
@@ -2312,6 +2667,17 @@ function paintReviewMarkers() {
       if (el) {
         el.style.setProperty("--review-author-color", color);
         el.title = tooltip;
+        // Inline accept/reject affordance (Q2): hovering a tracked-change marker
+        // previews a compact card; pressing on it pins the card open. The
+        // pointerdown is NOT swallowed, so it still bubbles to the page's
+        // hit-testing and caret placement is unaffected (REVIEW-GAP-005). Opening
+        // on pointerdown (before the caret repaint detaches this marker) keeps the
+        // pinned card reliable; the card itself lives on document.body and
+        // survives the repaint.
+        el.dataset.reviewRevisionId = String(revision.id ?? "");
+        el.addEventListener("mouseenter", () => showReviewInlineCard(revision, el, false));
+        el.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
+        el.addEventListener("pointerdown", () => showReviewInlineCard(revision, el, true));
       }
     }
   }
@@ -2864,7 +3230,7 @@ function clearLinkHover() {
   pendingLinkHover = null;
   if (linkHoverFrame) cancelAnimationFrame(linkHoverFrame);
   linkHoverFrame = 0;
-  for (const page of pages) page.canvas.classList.remove("link-hover");
+  for (const page of pages) page.canvas?.classList.remove("link-hover");
 }
 
 /** Throttles the model query used to make canvas-painted links visibly hoverable. */
@@ -2878,7 +3244,7 @@ function scheduleLinkHover(page, event) {
     if (!pending || dragging || !pages.includes(pending.page)) return;
     const hit = linkAt(pending.page, pending);
     for (const candidate of pages) {
-      candidate.canvas.classList.toggle("link-hover", candidate === pending.page && !!hit);
+      candidate.canvas?.classList.toggle("link-hover", candidate === pending.page && !!hit);
     }
   });
 }
@@ -3281,7 +3647,7 @@ function pageFromClientPoint(clientX, clientY) {
   let best = null;
   let bestDistance = Infinity;
   for (const page of pages) {
-    const rect = page.canvas.getBoundingClientRect();
+    const rect = page.wrap.getBoundingClientRect();
     const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
     const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
     const dist = dx * dx + dy * dy;
@@ -3413,7 +3779,17 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideLinkChip();
     closeReviewPopover();
+    closeReviewInlineCard();
   }
+});
+// Dismiss the inline accept/reject card on any pointerdown outside it and its
+// originating marker (the card's own buttons stopPropagation, so they are not
+// treated as "outside").
+document.addEventListener("pointerdown", (event) => {
+  if (!reviewInlineCard) return;
+  if (reviewInlineCard.contains(event.target)) return;
+  if (event.target.closest?.("[data-review-revision-id]")) return;
+  closeReviewInlineCard();
 });
 document.addEventListener("keydown", (event) => {
   if (!doc || event.defaultPrevented) return;
@@ -3428,6 +3804,21 @@ document.addEventListener("keydown", (event) => {
     const next =
       reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing";
     setReviewMode(next);
+  } else if (mod && event.altKey && event.key === "Enter" && !isInteractiveChromeTarget(event.target)) {
+    // Word's Accept ▸ Next (⌘/Ctrl+Alt+Enter): decide the change at the caret and
+    // advance to the next one (Q3). `stopImmediatePropagation` keeps the canvas
+    // editor's own Enter handling from also firing.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void decideReviewAndAdvance(true);
+  } else if (
+    mod && event.altKey && (event.key === "Backspace" || event.key === "Delete")
+    && !isInteractiveChromeTarget(event.target)
+  ) {
+    // Reject ▸ Next (⌘/Ctrl+Alt+Backspace).
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void decideReviewAndAdvance(false);
   }
 });
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
@@ -4386,7 +4777,7 @@ function buildRuler() {
     marginStart: g.marginStartTwip,
     marginEnd: g.marginEndTwip,
   };
-  const pageWidthPx = pages[0].canvas.getBoundingClientRect().width;
+  const pageWidthPx = pages[0].wrap.getBoundingClientRect().width;
   rulerScale = pageWidthPx / rulerGeom.width;
   ruler.style.width = `${pageWidthPx}px`;
   const px = (t) => t * rulerScale;
@@ -4604,10 +4995,9 @@ function startMarkerDrag(key, ev) {
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
-/** Device DPI the pages are rastered at (HiDPI-crisp). */
+/** Device DPI the pages are rastered at (HiDPI-crisp, DPR-capped for memory). */
 function currentDpi() {
-  const dpr = window.devicePixelRatio || 1;
-  return BASE_DPI * Number(zoomEl.value) * dpr;
+  return BASE_DPI * zoomFactor * backingDpr();
 }
 
 /** Whether the selection currently spans any text (a real range vs a caret). */
@@ -4618,19 +5008,15 @@ function hasRange() {
   );
 }
 
-/** Re-raster a single page in place, reusing its canvas — the incremental repaint
- *  that keeps editing latency to one page, not the whole document. */
+/** Re-raster a single page after an edit — the incremental repaint that keeps
+ *  editing latency to one page, not the whole document. If the page is on screen
+ *  it is re-rendered in place; if it is virtualized off-screen, its stale canvas
+ *  is dropped so it re-renders fresh (from current model state) when scrolled in. */
 function repaintPage(i) {
   const page = pages[i];
   if (!page) return;
-  const dpr = window.devicePixelRatio || 1;
-  const bmp = doc.renderPage(i, currentDpi());
-  const canvas = page.canvas;
-  canvas.width = bmp.widthPx;
-  canvas.height = bmp.heightPx;
-  canvas.style.width = `${bmp.widthPx / dpr}px`;
-  canvas.style.height = `${bmp.heightPx / dpr}px`;
-  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+  releasePageCanvas(page);
+  if (page.visible) paintPageCanvas(page, i);
 }
 
 /** Scroll one engine-derived overlay marker in the editor viewport (not an
@@ -4871,17 +5257,13 @@ function caretFormatState() {
  * the toolbar's starter list. The temporary option is presentation-only: the
  * renderer's physical substitution/fallback family is never written back as the
  * document's requested font. */
+let currentFontFamily = "";
 function reflectFontFamily(family) {
-  const previous = fontFamilySel.querySelector("option[data-reflected-font]");
-  if (previous && previous.value !== family) previous.remove();
-  if (family && ![...fontFamilySel.options].some((option) => option.value === family)) {
-    const option = document.createElement("option");
-    option.value = family;
-    option.textContent = family;
-    option.dataset.reflectedFont = "";
-    fontFamilySel.insertBefore(option, fontFamilySel.options[1] ?? null);
-  }
-  fontFamilySel.value = family;
+  currentFontFamily = family || "";
+  fontFamilyLabel.textContent = family || "Font";
+  fontFamilyLabel.style.fontFamily = family ? `"${family}", system-ui, sans-serif` : "";
+  fontFamilyBtn.classList.toggle("is-placeholder", !family);
+  fontFamilyBtn.title = family ? `Font: ${family}` : "Font";
 }
 
 /** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
@@ -5005,10 +5387,11 @@ function updateToolbar() {
   fontSizeSel.placeholder = sizeMixed ? "Mixed" : "Size";
   fontSizeSel.closest(".ctl")?.classList.toggle("is-mixed", sizeMixed);
   reflectFontFamily(fontMixed ? "" : font);
-  fontFamilySel.closest(".ctl")?.classList.toggle("is-mixed", fontMixed);
-  textColorInput.closest(".ctl")?.classList.toggle("is-mixed", colorMixed);
-  highlightSel.value = highlightMixed ? "" : highlight;
-  highlightSel.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
+  fontFamilyBtn.closest(".ctl")?.classList.toggle("is-mixed", fontMixed);
+  textColorCaret.closest(".ctl")?.classList.toggle("is-mixed", colorMixed);
+  reflectTextColorSwatch(colorMixed ? null : (textColorInput.value || null));
+  highlightCaret.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
+  reflectHighlightSwatch(highlightMixed ? null : highlight);
   superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
   subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
@@ -5354,6 +5737,394 @@ document.addEventListener("mousedown", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") for (const p of popovers) if (!p.menu.hidden) closePopover(p);
+});
+
+// -- Font family menu, color/highlight pickers, grow/shrink, change case -------
+// (Q1/Q2/Q5) Real dropdown swatch pickers replace the raw OS color input and
+// the native highlight <select>; a searchable font menu replaces the native
+// font <select>; A⁺/A⁻ step the standard sizes; a Change case menu transforms
+// the selection through the existing rich-run copy/paste ops (no new engine op).
+
+// Standard-colors palette (Google-Docs-style: a grayscale row + a hue row). The
+// document theme palette is not exposed to the webapp, so the theme-colors row
+// is omitted gracefully rather than faked.
+const TEXT_STANDARD_COLORS = [
+  "#000000", "#434343", "#666666", "#999999", "#b7b7b7", "#cccccc", "#d9d9d9", "#efefef", "#f3f3f3", "#ffffff",
+  "#980000", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#00ffff", "#4a86e8", "#0000ff", "#9900ff", "#ff00ff",
+];
+// The complete set of OOXML `w:highlight` named colors the engine accepts, with
+// their display swatch and a human label. `setHighlight` takes the name, not a hex.
+const HIGHLIGHT_COLORS = [
+  { name: "yellow", hex: "#ffff00", label: "Yellow" },
+  { name: "green", hex: "#00ff00", label: "Bright green" },
+  { name: "cyan", hex: "#00ffff", label: "Turquoise" },
+  { name: "magenta", hex: "#ff00ff", label: "Pink" },
+  { name: "blue", hex: "#0000ff", label: "Blue" },
+  { name: "red", hex: "#ff0000", label: "Red" },
+  { name: "darkYellow", hex: "#808000", label: "Dark yellow" },
+  { name: "darkGreen", hex: "#008000", label: "Green" },
+  { name: "darkCyan", hex: "#008080", label: "Teal" },
+  { name: "darkMagenta", hex: "#800080", label: "Violet" },
+  { name: "darkRed", hex: "#800000", label: "Dark red" },
+  { name: "darkBlue", hex: "#000080", label: "Dark blue" },
+  { name: "darkGray", hex: "#808080", label: "Gray 50%" },
+  { name: "lightGray", hex: "#c0c0c0", label: "Gray 25%" },
+  { name: "black", hex: "#000000", label: "Black" },
+  { name: "white", hex: "#ffffff", label: "White" },
+];
+const HIGHLIGHT_HEX = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.hex]));
+const HIGHLIGHT_LABEL = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.label]));
+function highlightHex(name) {
+  return name && name !== "none" ? HIGHLIGHT_HEX.get(name) ?? null : null;
+}
+
+// Session-remembered recently-used swatches (most-recent first, deduped, capped).
+const recentTextColors = [];
+const recentHighlights = [];
+function recordRecent(list, value) {
+  const i = list.indexOf(value);
+  if (i !== -1) list.splice(i, 1);
+  list.unshift(value);
+  if (list.length > 10) list.length = 10;
+}
+
+let lastTextColor = "#000000";
+let lastHighlight = "yellow";
+
+/** Reflect the current text color onto the "A" underline bar (and remember it as
+ *  the color the split-button's apply half reapplies). */
+function reflectTextColorSwatch(hex) {
+  if (hex) lastTextColor = hex;
+  textColorBar.style.background = lastTextColor;
+}
+/** Reflect the current highlight onto the highlighter bar (transparent for none). */
+function reflectHighlightSwatch(name) {
+  if (name && name !== "none") lastHighlight = name;
+  const hex = name === "none" ? null : highlightHex(name || lastHighlight);
+  highlightBar.style.background = hex || "transparent";
+  highlightBar.classList.toggle("is-none", !hex);
+}
+
+/** Builds one swatch cell button. `value` is what gets applied (a hex for text,
+ *  a named color for highlight); `color` is the display hex; `active` lights it. */
+function makeSwatchCell(kind, value, color, label, active) {
+  const cell = document.createElement("button");
+  cell.type = "button";
+  cell.className = "swatch-cell";
+  cell.style.setProperty("--sw", color);
+  cell.title = label;
+  cell.setAttribute("aria-label", label);
+  cell.dataset[kind === "text" ? "color" : "highlight"] = value;
+  if (active) cell.classList.add("is-active");
+  if (color.toLowerCase() === "#ffffff") cell.classList.add("is-light");
+  return cell;
+}
+function makeSwatchGrid(cells) {
+  const grid = document.createElement("div");
+  grid.className = "swatch-grid";
+  grid.setAttribute("role", "group");
+  for (const cell of cells) grid.appendChild(cell);
+  return grid;
+}
+function makeMenuHeading(text) {
+  const h = document.createElement("div");
+  h.className = "menu-heading";
+  h.textContent = text;
+  return h;
+}
+
+/** (Re)renders a color picker menu, marking the active swatch and refreshing the
+ *  recently-used row. Called on each open via the popover's reflect hook. */
+function renderColorMenu(kind) {
+  const menu = kind === "text" ? textColorMenu : highlightMenu;
+  const activeValue = kind === "text" ? lastTextColor.toLowerCase() : lastHighlight;
+  menu.replaceChildren();
+
+  // Automatic (text) / No color (highlight) — the reset entry.
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "color-row-action";
+  if (kind === "text") {
+    reset.dataset.auto = "1";
+    reset.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic</span>';
+  } else {
+    reset.dataset.highlight = "none";
+    reset.innerHTML = '<span class="color-chip color-chip-none"></span><span>No color</span>';
+  }
+  menu.appendChild(reset);
+
+  menu.appendChild(makeMenuHeading(kind === "text" ? "Standard colors" : "Highlight colors"));
+  if (kind === "text") {
+    menu.appendChild(makeSwatchGrid(
+      TEXT_STANDARD_COLORS.map((hex) =>
+        makeSwatchCell("text", hex, hex, hex.toUpperCase(), hex.toLowerCase() === activeValue)),
+    ));
+  } else {
+    menu.appendChild(makeSwatchGrid(
+      HIGHLIGHT_COLORS.map((c) =>
+        makeSwatchCell("highlight", c.name, c.hex, c.label, c.name === activeValue)),
+    ));
+  }
+
+  const recents = kind === "text" ? recentTextColors : recentHighlights;
+  if (recents.length) {
+    menu.appendChild(makeMenuHeading("Recent"));
+    menu.appendChild(makeSwatchGrid(
+      recents.map((value) => {
+        const color = kind === "text" ? value : highlightHex(value) ?? "#000000";
+        const label = kind === "text" ? value.toUpperCase() : (HIGHLIGHT_LABEL.get(value) ?? value);
+        return makeSwatchCell(kind, value, color, label,
+          kind === "text" ? value.toLowerCase() === activeValue : value === activeValue);
+      }),
+    ));
+  }
+
+  if (kind === "text") {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "color-row-action color-more";
+    more.dataset.more = "1";
+    more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
+    menu.appendChild(more);
+  }
+}
+
+const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
+const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
+
+// Text-color menu clicks (mousedown is preventDefault'd by the popover manager,
+// so the document selection survives the pointer press).
+textColorMenu.addEventListener("click", (e) => {
+  if (e.target.closest("[data-more]")) {
+    textColorInput.value = lastTextColor;
+    textColorInput.click(); // opens the OS color input as the custom fallback
+    return;
+  }
+  const cell = e.target.closest("[data-color], [data-auto]");
+  if (!cell) return;
+  const hex = cell.dataset.auto ? "#000000" : cell.dataset.color;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
+  closePopover(textColorPopover);
+  focusEditorSurface();
+});
+// "More colors…" custom fallback commits when the OS picker closes.
+textColorInput.addEventListener("change", () => {
+  const hex = textColorInput.value;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
+});
+
+highlightMenu.addEventListener("click", (e) => {
+  const cell = e.target.closest("[data-highlight]");
+  if (!cell) return;
+  const name = cell.dataset.highlight;
+  applyHighlight(name);
+  if (name !== "none") {
+    lastHighlight = name;
+    recordRecent(recentHighlights, name);
+  }
+  reflectHighlightSwatch(name);
+  closePopover(highlightPopover);
+  focusEditorSurface();
+});
+
+// Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
+onButton(textColorApplyBtn, () => {
+  applyTextColor(lastTextColor);
+  recordRecent(recentTextColors, lastTextColor);
+});
+onButton(highlightApplyBtn, () => {
+  applyHighlight(lastHighlight);
+  recordRecent(recentHighlights, lastHighlight);
+});
+reflectTextColorSwatch(lastTextColor);
+reflectHighlightSwatch(lastHighlight);
+
+// ---- Font family menu (Q2): searchable, own-typeface, recently-used group ----
+// No font-enumeration API is exposed to the webapp, so this is a curated common
+// list (the registry seam populates faces for rendering; this list is the menu
+// inventory). The caret's actual family is always included so an imported font
+// stays selectable/visible even when it is not in the list.
+const COMMON_FONTS = [
+  "Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New",
+  "Georgia", "Helvetica", "Lato", "Montserrat", "Noto Sans", "Noto Serif",
+  "Open Sans", "Roboto", "Segoe UI", "Tahoma", "Times New Roman",
+  "Trebuchet MS", "Verdana",
+];
+const recentFonts = [];
+let fontMenuActiveIndex = -1;
+
+function fontInventory() {
+  const all = new Set(COMMON_FONTS);
+  if (currentFontFamily) all.add(currentFontFamily);
+  return [...all].sort((a, b) => a.localeCompare(b));
+}
+
+/** (Re)renders the font list filtered by the search box; recently-used first,
+ *  then the alphabetical inventory, each name shown in its own typeface. */
+function renderFontMenu() {
+  const query = fontMenuInput.value.trim().toLowerCase();
+  const match = (name) => name.toLowerCase().includes(query);
+  const recent = recentFonts.filter(match);
+  const inventory = fontInventory().filter((name) => match(name) && !recent.includes(name));
+  fontMenuList.replaceChildren();
+
+  const addRow = (name, group) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "font-menu-item";
+    row.setAttribute("role", "option");
+    row.dataset.font = name;
+    row.style.fontFamily = `"${name}", system-ui, sans-serif`;
+    row.setAttribute("aria-selected", String(name === currentFontFamily));
+    if (name === currentFontFamily) row.classList.add("is-current");
+    row.innerHTML = `<span class="font-menu-check ms" aria-hidden="true">check</span><span class="font-menu-name">${escapeHtml(name)}</span>`;
+    fontMenuList.appendChild(row);
+    if (group) row.dataset.group = group;
+  };
+
+  if (recent.length) {
+    const h = makeMenuHeading("Recently used");
+    fontMenuList.appendChild(h);
+    for (const name of recent) addRow(name, "recent");
+    fontMenuList.appendChild(makeMenuHeading("All fonts"));
+  }
+  for (const name of inventory) addRow(name);
+
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  fontMenuEmpty.hidden = rows.length > 0;
+  // Default the active row to the current font (or the first row).
+  fontMenuActiveIndex = [...rows].findIndex((r) => r.dataset.font === currentFontFamily);
+  if (fontMenuActiveIndex < 0 && rows.length) fontMenuActiveIndex = 0;
+  paintFontActive();
+}
+function paintFontActive() {
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  rows.forEach((row, i) => row.classList.toggle("is-active", i === fontMenuActiveIndex));
+  rows[fontMenuActiveIndex]?.scrollIntoView({ block: "nearest" });
+}
+function chooseFont(name) {
+  applyFontFamily(name);
+  reflectFontFamily(name);
+  recordRecent(recentFonts, name);
+  closePopover(fontPopover);
+  focusEditorSurface();
+}
+
+const fontPopover = registerPopover(fontFamilyBtn, fontMenu, () => {
+  fontMenuInput.value = "";
+  renderFontMenu();
+  requestAnimationFrame(() => fontMenuInput.focus());
+});
+fontMenuInput.addEventListener("input", renderFontMenu);
+fontMenuInput.addEventListener("keydown", (e) => {
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    fontMenuActiveIndex = Math.min(rows.length - 1, fontMenuActiveIndex + 1);
+    paintFontActive();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    fontMenuActiveIndex = Math.max(0, fontMenuActiveIndex - 1);
+    paintFontActive();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const row = rows[fontMenuActiveIndex];
+    if (row) chooseFont(row.dataset.font);
+  }
+});
+fontMenuList.addEventListener("click", (e) => {
+  const row = e.target.closest(".font-menu-item");
+  if (row) chooseFont(row.dataset.font);
+});
+
+// ---- Grow / shrink font (Q5) -------------------------------------------------
+const FONT_STEP_SIZES = [
+  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96,
+];
+function currentFontPt() {
+  const v = Number(fontSizeSel.value);
+  if (Number.isFinite(v) && v >= 1) return v;
+  if (pendingFormat?.sizeHalfPoints != null) return pendingFormat.sizeHalfPoints / 2;
+  return 11;
+}
+function stepFontSize(dir) {
+  const cur = currentFontPt();
+  let next;
+  if (dir > 0) {
+    next = FONT_STEP_SIZES.find((s) => s > cur + 1e-6) ?? Math.min(1638, Math.round((cur + 2) * 2) / 2);
+  } else {
+    const smaller = FONT_STEP_SIZES.filter((s) => s < cur - 1e-6);
+    next = smaller.length ? smaller[smaller.length - 1] : Math.max(1, Math.round((cur - 1) * 2) / 2);
+  }
+  armOrApplyRun({ sizeHalfPoints: Math.round(next * 2) }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, next)),
+  );
+}
+onButton(growFontBtn, () => stepFontSize(1));
+onButton(shrinkFontBtn, () => stepFontSize(-1));
+
+// ---- Change case (Q5): transform selected text, preserving per-run format ----
+function transformCase(text, mode) {
+  switch (mode) {
+    case "upper":
+      return text.toLocaleUpperCase();
+    case "lower":
+      return text.toLocaleLowerCase();
+    case "title":
+      return text.replace(/\p{L}[\p{L}'’]*/gu, (w) => w[0].toLocaleUpperCase() + w.slice(1).toLocaleLowerCase());
+    case "sentence": {
+      const lowered = text.toLocaleLowerCase();
+      return lowered.replace(/(^\s*\p{L})|([.!?]["')\]]?\s+\p{L})/gu, (m) => m.toLocaleUpperCase());
+    }
+    case "toggle":
+      return [...text].map((ch) => {
+        const up = ch.toLocaleUpperCase();
+        const lo = ch.toLocaleLowerCase();
+        return ch === lo && ch !== up ? up : lo;
+      }).join("");
+    default:
+      return text;
+  }
+}
+async function applyChangeCase(mode) {
+  if (!doc || !hasRange()) return;
+  const { anchor, focus } = selection;
+  let runs;
+  try {
+    runs = JSON.parse(doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(runs) || !runs.length) return;
+  const full = runs.map((r) => (r.paragraphBreak ? "\n" : String(r.text ?? ""))).join("");
+  const transformed = transformCase(full, mode);
+  const out = runs.map((r) => ({ ...r }));
+  if (transformed.length === full.length) {
+    // Length-preserving: re-slice so cross-run sentence/title casing is correct.
+    let i = 0;
+    for (const r of out) {
+      const len = r.paragraphBreak ? 1 : String(r.text ?? "").length;
+      if (!r.paragraphBreak && r.text != null) r.text = transformed.slice(i, i + len);
+      i += len;
+    }
+  } else {
+    // Rare Unicode length change (e.g. ß→SS): fall back to per-run transform.
+    for (const r of out) if (!r.paragraphBreak && r.text != null) r.text = transformCase(String(r.text), mode);
+  }
+  await pasteRichRunsJson(JSON.stringify(out));
+}
+const changeCasePopover = registerPopover(changeCaseBtn, changeCaseMenu, () => {});
+changeCaseMenu.addEventListener("click", (e) => {
+  const item = e.target.closest("[data-case]");
+  if (!item) return;
+  closePopover(changeCasePopover);
+  void applyChangeCase(item.dataset.case);
 });
 
 // -- Line & paragraph spacing --------------------------------------------------
@@ -6185,103 +6956,350 @@ function closeReviewPopover() {
   scheduleReviewMarginRender();
 }
 
-function showReviewPopover(item) {
-  closeReviewPopover();
-  if (!item) return;
-  const popover = document.createElement("div");
-  popover.className = "review-popover";
-  popover.setAttribute("role", "dialog");
-  const head = document.createElement("div");
-  head.className = "review-popover-head";
-  const author = document.createElement("strong");
-  author.textContent = item.author || item.initials || (item.kind ? item.kind.replaceAll("_", " ") : "Comment");
-  const meta = document.createElement("span");
-  meta.className = "review-popover-meta";
-  meta.textContent = item.date || (item.resolved ? "Resolved" : "Open");
-  head.append(author, meta);
-  const body = document.createElement("div");
-  body.className = "review-popover-body";
-  body.textContent = String(item.text || "");
-  const actions = document.createElement("div");
-  actions.className = "review-popover-actions";
-  const addAction = (label, handler) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "review-card-action";
-    button.textContent = label;
-    button.addEventListener("click", async (event) => { event.stopPropagation(); await handler(); });
-    actions.appendChild(button);
-  };
-  if (item.kind) {
-    addAction("Accept", async () => { await runEdit(() => doc.decideRevision(item.id, true)); closeReviewPopover(); });
-    addAction("Reject", async () => { await runEdit(() => doc.decideRevision(item.id, false)); closeReviewPopover(); });
-  } else {
-    addAction(item.resolved ? "Reopen" : "Resolve", async () => { await runEdit(() => doc.setCommentResolved(item.id, !item.resolved)); closeReviewPopover(); });
-    addAction("Reply", async () => { closeReviewPopover(); openReviewComposer(item.id); });
-    addAction("Delete", async () => { await runEdit(() => doc.deleteComment(item.id)); closeReviewPopover(); });
+// --- Inline accept/reject card (Q2) ------------------------------------------
+// Hovering (or clicking) a tracked-change marker on the canvas surfaces a
+// compact card — author, one-line change summary, ✔ Accept / ✗ Reject — the
+// Google-Docs suggestion affordance. A pinned card (opened by click) stays until
+// an outside pointerdown or Escape; a hover card follows the pointer and hides
+// shortly after it leaves both the marker and the card. Accept/Reject reuse the
+// same grouped/move-aware decision path as the sidebar and context menu.
+let reviewInlineCard = null;
+let reviewInlineCardRevisionId = null;
+let reviewInlineCardPinned = false;
+let reviewInlineHideTimer = 0;
+
+/** One-line summary of a tracked change for the inline card and screen-reader
+ *  announcements. */
+function reviewRevisionSummary(revision) {
+  const text = String(revision?.text || "");
+  const quoted = text ? `“${text}”` : "";
+  switch (revision?.kind) {
+    case "deletion": return `Deleted ${quoted}`.trim();
+    case "insertion": return `Added ${quoted}`.trim();
+    case "formatting": return `Formatting change ${quoted}`.trim();
+    case "move_from": case "move_to": case "move": return `Moved ${quoted}`.trim();
+    case "replacement": return `Replaced ${quoted}`.trim();
+    default: return `Changed ${quoted}`.trim();
   }
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "panel-close";
-  close.setAttribute("aria-label", "Close review item");
-  close.textContent = "×";
-  close.addEventListener("click", closeReviewPopover);
-  head.appendChild(close);
-  popover.append(head, body, actions);
-  document.body.appendChild(popover);
-  reviewPopover = popover;
-  const rect = selection && doc ? doc.caretRect(selection.focus.node, selection.focus.offset) : [];
-  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
-  const scale = page ? scaleOf(page) : { sx: 1, sy: 1 };
-  const pageRect = page?.canvas.getBoundingClientRect();
-  const left = pageRect && rect.length >= 5 ? pageRect.left + rect[1] * scale.sx : window.innerWidth / 2;
-  const top = pageRect && rect.length >= 5 ? pageRect.top + rect[2] * scale.sy : window.innerHeight / 2;
-  popover.style.left = `${Math.max(12, Math.min(window.innerWidth - popover.offsetWidth - 12, left))}px`;
-  popover.style.top = `${Math.max(12, Math.min(window.innerHeight - popover.offsetHeight - 12, top + 18))}px`;
 }
 
-/** Move the caret to the next/previous tracked text change.  Revision anchors
- * are intentionally resolved through the engine's text index rather than DOM
- * ranges, so this also works for changes inside tables and content controls. */
-function navigateReviewRevision(direction) {
-  if (!doc) return;
-  const revisions = JSON.parse(doc.listRevisions()) ?? [];
-  const usable = revisions.filter((revision) => String(revision.text || "").length);
-  if (!usable.length) return;
-  reviewRevisionCursor = (reviewRevisionCursor + (direction > 0 ? 1 : -1) + usable.length) % usable.length;
-  const revision = usable[reviewRevisionCursor];
-  // Announce which change the caret moved to, for a screen reader following
-  // Next/Previous without watching the canvas (REVIEW-GAP-023).
-  const changeKind = (reviewChangeTypeLabel(revision.kind) || "change").toLowerCase();
-  announceReview(`Change ${reviewRevisionCursor + 1} of ${usable.length}: ${changeKind} by ${reviewAuthorDisplay(revision) || "You"}`);
-  const range = revisionRange(revision);
-  if (range) {
-    selection = {
-      anchor: { node: range.startNode, offset: range.startOffset },
-      focus: { node: range.endNode, offset: range.endOffset },
+function closeReviewInlineCard() {
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = 0;
+  reviewInlineCard?.remove();
+  reviewInlineCard = null;
+  reviewInlineCardRevisionId = null;
+  reviewInlineCardPinned = false;
+}
+
+/** Hide a hover-opened card after a short grace period, so moving the pointer
+ *  from the marker onto the card itself does not dismiss it. A pinned (clicked)
+ *  card ignores this. */
+function scheduleReviewInlineCardHide() {
+  if (reviewInlineCardPinned) return;
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = window.setTimeout(() => {
+    if (!reviewInlineCardPinned) closeReviewInlineCard();
+  }, 220);
+}
+
+function showReviewInlineCard(revision, anchorEl, pinned) {
+  if (!revision || !anchorEl) return;
+  const revisionId = String(revision.id ?? "");
+  clearTimeout(reviewInlineHideTimer);
+  reviewInlineHideTimer = 0;
+  // Re-hovering / re-clicking the marker already showing keeps the one card;
+  // a click on an already-open hover card just pins it.
+  if (reviewInlineCard && reviewInlineCardRevisionId === revisionId) {
+    if (pinned) reviewInlineCardPinned = true;
+    return;
+  }
+  closeReviewInlineCard();
+  reviewInlineCardRevisionId = revisionId;
+  reviewInlineCardPinned = !!pinned;
+
+  const card = document.createElement("div");
+  card.className = "review-inline-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", "Tracked change");
+  card.tabIndex = -1;
+
+  const head = document.createElement("div");
+  head.className = "review-inline-head";
+  const dot = document.createElement("span");
+  dot.className = "review-inline-dot";
+  dot.style.background = reviewAuthorColor(reviewAuthorKey(revision));
+  const who = document.createElement("div");
+  who.className = "review-inline-who";
+  const author = document.createElement("strong");
+  author.textContent = reviewAuthorDisplay(revision);
+  const meta = document.createElement("small");
+  meta.textContent = [reviewChangeTypeLabel(revision.kind), formatReviewDate(revision.date)]
+    .filter(Boolean).join(" · ");
+  who.append(author, meta);
+  head.append(dot, who);
+
+  const body = document.createElement("p");
+  body.className = "review-inline-body";
+  body.textContent = reviewRevisionSummary(revision);
+  card.append(head, body);
+
+  // Accept/Reject are edits; hide them in read-only Viewing mode, leaving the
+  // card as a summary the reader can still see.
+  if (reviewMode !== "viewing") {
+    const bar = document.createElement("div");
+    bar.className = "review-inline-bar";
+    const makeBtn = (icon, label, danger, handler) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      if (danger) button.className = "danger";
+      const glyph = document.createElement("span");
+      glyph.className = "ms";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = icon;
+      button.append(glyph, document.createTextNode(label));
+      button.setAttribute("aria-label", `${label} this ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+      button.title = button.getAttribute("aria-label");
+      button.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await handler();
+      });
+      return button;
     };
-    drawSelection();
-    focusEditorSurface();
-    scrollCaretIntoView("center");
-    syncActiveReviewCommentToCaret(selection.focus);
-    return;
+    const decide = async (accept) => {
+      await decideContextRevision(revision, accept);
+      announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+      closeReviewInlineCard();
+      focusEditorSurface();
+    };
+    bar.append(
+      makeBtn("check", "Accept", false, () => decide(true)),
+      makeBtn("close", "Reject", true, () => decide(false)),
+    );
+    card.appendChild(bar);
   }
-  const start = selection?.focus || doc.firstPosition();
-  const match = doc.findText(String(revision.text), start.node, start.offset, direction > 0, false);
-  if (start.free) start.free();
-  if (!match.found) {
-    match.free();
-    return;
+
+  // The card is interactive: entering it cancels the hover-hide timer, leaving
+  // it reschedules the hide (unless pinned).
+  card.addEventListener("mouseenter", () => clearTimeout(reviewInlineHideTimer));
+  card.addEventListener("mouseleave", () => scheduleReviewInlineCardHide());
+
+  document.body.appendChild(card);
+  reviewInlineCard = card;
+
+  // Position just below the marker, clamped to the viewport.
+  const markerRect = anchorEl.getBoundingClientRect();
+  const left = Math.max(12, Math.min(window.innerWidth - card.offsetWidth - 12, markerRect.left));
+  const below = markerRect.bottom + 6;
+  const top = below + card.offsetHeight + 12 > window.innerHeight
+    ? Math.max(12, markerRect.top - card.offsetHeight - 6)
+    : below;
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
+
+  // A pinned card takes focus so it is keyboard-dismissable and its buttons are
+  // immediately reachable by Tab; a hover card must not steal the caret.
+  if (pinned) card.focus({ preventScroll: true });
+}
+
+// --- Unified Next/Previous over comments AND changes (Q4) --------------------
+// Word's Review "Previous / Next" walks every comment and tracked change in one
+// document-ordered loop. `reviewNavTargets` builds that merged list (honoring
+// the active Open/Resolved/All filter the same way the sidebar does) and orders
+// it by on-screen position — the same page/top/left ordering the comment column
+// uses — so Next/Previous visit exactly what the reader sees, in reading order.
+
+/** Whether rect `a` sits strictly after `ref` in document (reading) order. */
+function reviewRectIsAfter(a, ref) {
+  if (!a || !ref) return false;
+  if (a.pageNumber !== ref.pageNumber) return a.pageNumber > ref.pageNumber;
+  if (Math.abs(a.top - ref.top) > 2) return a.top > ref.top;
+  return a.left > ref.left + 2;
+}
+
+/** The current selection's leading/trailing on-screen positions, so navigation
+ *  can skip the item the caret is already on regardless of selection direction. */
+function reviewSelectionRects() {
+  if (!selection) return null;
+  const a = selection.anchor;
+  const f = selection.focus;
+  const ra = reviewRangeClientRect(a.node, a.offset, a.node, a.offset);
+  const rf = reviewRangeClientRect(f.node, f.offset, f.node, f.offset);
+  if (!ra && !rf) return null;
+  if (!ra) return { start: rf, end: rf };
+  if (!rf) return { start: ra, end: ra };
+  return reviewRectIsAfter(rf, ra) ? { start: ra, end: rf } : { start: rf, end: ra };
+}
+
+/** The merged, document-ordered list of navigable review items — root comments
+ *  (per filter) plus tracked changes — each with its model range and on-screen
+ *  rect. Replies are represented by their root; changes are individual (their
+ *  grouped sidebar card is still surfaced via the caret→card anchor index). */
+function reviewNavTargets() {
+  if (!doc) return [];
+  const { comments, revisions } = readReviewData(doc);
+  const targets = [];
+  for (const comment of comments ?? []) {
+    if (!comment.anchor?.node || comment.parentParaId) continue;
+    if (reviewFilter !== "all") {
+      const resolved = !!comment.resolved;
+      if (reviewFilter === "resolved" ? !resolved : resolved) continue;
+    }
+    const startOffset = Number(comment.anchor.start) || 0;
+    const endOffset = Number(comment.anchor.end) || startOffset;
+    const rect = reviewRangeClientRect(comment.anchor.node, startOffset, comment.anchor.node, endOffset);
+    if (rect) {
+      targets.push({
+        type: "comment",
+        data: comment,
+        range: { startNode: comment.anchor.node, startOffset, endNode: comment.anchor.node, endOffset },
+        rect,
+      });
+    }
   }
+  // Tracked changes are not comment-"resolved": show them under Open and All,
+  // hide them only under the comment-only Resolved filter (mirrors the sidebar).
+  if (reviewFilter !== "resolved") {
+    for (const revision of revisions ?? []) {
+      if (!String(revision.text || "").length && revision.kind !== "formatting") continue;
+      const range = revisionRange(revision);
+      if (!range) continue;
+      const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);
+      if (rect) targets.push({ type: "revision", data: revision, range, rect });
+    }
+  }
+  targets.sort((a, b) =>
+    a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  return targets;
+}
+
+/** Moves the caret/selection to a navigation target, scrolls it into view, and
+ *  surfaces its sidebar card (via the caret→card anchor index, which handles the
+ *  grouped/move cards correctly). Announces its position + kind for AT. */
+function focusReviewTarget(target, index, total) {
+  reviewSidebarPreference = true;
+  const { range } = target;
   selection = {
-    anchor: { node: match.startNode, offset: match.startOffset },
-    focus: { node: match.endNode, offset: match.endOffset },
+    anchor: { node: range.startNode, offset: range.startOffset },
+    focus: { node: range.endNode, offset: range.endOffset },
   };
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView("center");
-  match.free();
   syncActiveReviewCommentToCaret(selection.focus);
+  const who = reviewAuthorDisplay(target.data) || "You";
+  const label = target.type === "comment"
+    ? `Comment by ${who}`
+    : `${reviewChangeTypeLabel(target.data.kind)} by ${who}`;
+  announceReview(`${index + 1} of ${total}: ${label}`);
+}
+
+/** The index of the target the caret is currently on: an exact match to a just-
+ *  navigated selection, else the item whose range contains the caret. `-1` when
+ *  the caret is not on any item (a fresh navigation from arbitrary text). This
+ *  is what lets Next/Previous step by list position, so two items that share a
+ *  boundary (a change starting exactly where a comment ends) still advance. */
+function reviewCurrentTargetIndex(targets) {
+  const focus = selection?.focus;
+  const anchor = selection?.anchor;
+  if (!focus) return -1;
+  for (let i = 0; i < targets.length; i++) {
+    const r = targets[i].range;
+    if (anchor && r.startNode === anchor.node && r.endNode === focus.node) {
+      const forward = r.startOffset === anchor.offset && r.endOffset === focus.offset;
+      const backward = r.startOffset === focus.offset && r.endOffset === anchor.offset;
+      if (forward || backward) return i;
+    }
+  }
+  const collapsed = !anchor
+    || (anchor.node === focus.node && anchor.offset === focus.offset);
+  for (let i = 0; i < targets.length; i++) {
+    const r = targets[i].range;
+    if (r.startNode === focus.node && r.endNode === focus.node
+      && focus.offset >= r.startOffset && focus.offset <= r.endOffset) {
+      // A collapsed caret resting exactly on a non-empty item's START boundary
+      // is at the threshold *before* the item, not inside it — the reviewer has
+      // not visited it yet. Report "not on any item" so Next steps onto the item
+      // (not past it) and Previous walks to the one before it. A caret at the END
+      // boundary, or strictly inside, is genuinely on the item, so Next advances
+      // past it — which also preserves stepping between two items that share a
+      // boundary (a change starting exactly where a comment ends). Without this,
+      // a fresh caret at document start (offset 0, the leading edge of a comment
+      // anchored there) was treated as already-on the comment, so the first Next
+      // skipped straight to the next item.
+      if (collapsed && focus.offset === r.startOffset && r.startOffset !== r.endOffset) {
+        continue;
+      }
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Next (`+1`) / Previous (`-1`) across the unified comment+change list, wrapping
+ *  at the ends. When the caret already sits on an item, it steps by list index
+ *  (robust to boundary-adjacent items); otherwise it lands on the nearest item
+ *  after/before the caret in reading order. */
+function navigateReview(direction) {
+  if (!doc) return;
+  const targets = reviewNavTargets();
+  if (!targets.length) return;
+  const current = reviewCurrentTargetIndex(targets);
+  let index;
+  if (current >= 0) {
+    index = (current + (direction > 0 ? 1 : -1) + targets.length) % targets.length;
+  } else {
+    const caret = reviewSelectionRects();
+    if (!caret) {
+      index = direction > 0 ? 0 : targets.length - 1;
+    } else if (direction > 0) {
+      // First item at or after the caret, so a caret sitting exactly on an
+      // item's start (e.g. document start === a comment's leading edge) lands on
+      // that item rather than skipping it. "At or after" == not strictly before.
+      const found = targets.findIndex((t) => !reviewRectIsAfter(caret.end, t.rect));
+      index = found === -1 ? 0 : found;
+    } else {
+      let found = -1;
+      for (let i = 0; i < targets.length; i++) {
+        if (reviewRectIsAfter(caret.start, targets[i].rect)) found = i;
+      }
+      index = found === -1 ? targets.length - 1 : found;
+    }
+  }
+  focusReviewTarget(targets[index], index, targets.length);
+}
+
+// --- Single-change decisions at the caret + Accept/Reject ▸ Next (Q3) --------
+
+/** The tracked change under the caret (its focus, else its anchor), or null. */
+function reviewRevisionAtCaret() {
+  return reviewContextAt(selection?.focus).revision
+    || reviewContextAt(selection?.anchor).revision;
+}
+
+/** Accepts (or rejects) the tracked change at the caret, using the same
+ *  grouped/move-aware decision path as the sidebar and context menu. Returns
+ *  whether a change was found and decided. */
+async function decideReviewAtCaret(accept) {
+  const revision = reviewRevisionAtCaret();
+  if (!revision) {
+    setStatus("Place the caret inside a tracked change to accept or reject it", "error");
+    return false;
+  }
+  await decideContextRevision(revision, accept);
+  announceReview(`${accept ? "Accepted" : "Rejected"} ${(reviewChangeTypeLabel(revision.kind) || "change").toLowerCase()}`);
+  drawSelection();
+  focusEditorSurface();
+  return true;
+}
+
+/** Word's core review loop: accept/reject the change at the caret, then advance
+ *  the caret to the next change/comment. Advances even when the caret was not on
+ *  a change, so the shortcut always makes progress through the document. */
+async function decideReviewAndAdvance(accept) {
+  const decided = await decideReviewAtCaret(accept);
+  navigateReview(1);
+  return decided;
 }
 
 /**
@@ -6405,8 +7423,8 @@ railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
 reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); announceReview("All changes accepted"); scheduleReviewMarginRender(); } });
 reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); announceReview("All changes rejected"); scheduleReviewMarginRender(); } });
-reviewPrevious.addEventListener("click", () => navigateReviewRevision(-1));
-reviewNext.addEventListener("click", () => navigateReviewRevision(1));
+reviewPrevious.addEventListener("click", () => navigateReview(-1));
+reviewNext.addEventListener("click", () => navigateReview(1));
 // The visible mode control (`#reviewModeControl`) is a three-button segmented
 // group; each button carries `data-review-mode` and is wired below.
 suggestingBannerEdit.addEventListener("click", () => setReviewMode("editing"));
@@ -6527,6 +7545,17 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => paste(),
     },
     {
+      id: "edit.pasteText",
+      label: "Paste without formatting",
+      group: "Clipboard",
+      kw: "plain text unformatted keep text only",
+      shortcut: "⌘⇧V",
+      contextMenu: true,
+      enabled: !!doc && !!selection,
+      disabledReason: "Place the caret before pasting",
+      run: () => pasteAsText(),
+    },
+    {
       id: "edit.selectAll",
       label: "Select all",
       group: "Clipboard",
@@ -6544,6 +7573,15 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
+    { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
+    { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
+    { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
+    { id: "format.highlight", label: "Highlight color…", group: "Format", kw: "marker colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => highlightCaret.click() },
+    { id: "format.case.upper", label: "Change case: UPPERCASE", group: "Format", kw: "capitals uppercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("upper") },
+    { id: "format.case.lower", label: "Change case: lowercase", group: "Format", kw: "lowercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("lower") },
+    { id: "format.case.title", label: "Change case: Capitalize Each Word", group: "Format", kw: "title case capitalize", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("title") },
+    { id: "format.case.sentence", label: "Change case: Sentence case", group: "Format", kw: "sentence capitalize", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("sentence") },
+    { id: "format.case.toggle", label: "Change case: tOGGLE cASE", group: "Format", kw: "toggle invert case", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("toggle") },
     { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("start") },
     { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("center") },
     { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("end") },
@@ -6579,11 +7617,36 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
     { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
     { id: "review.mode.viewing", label: "Viewing mode (read-only)", group: "Review", kw: "review mode view read only", run: () => setReviewMode("viewing") },
-    { id: "review.next", label: "Next change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(1) },
-    { id: "review.previous", label: "Previous change", group: "Review", kw: "revision suggestion navigate", run: () => navigateReviewRevision(-1) },
+    { id: "review.next", label: "Next comment or change", group: "Review", kw: "revision suggestion comment navigate forward", run: () => navigateReview(1) },
+    { id: "review.previous", label: "Previous comment or change", group: "Review", kw: "revision suggestion comment navigate back", run: () => navigateReview(-1) },
+    { id: "review.acceptAtCaret", label: "Accept change at cursor", group: "Review", kw: "revision suggestion approve current", run: () => decideReviewAtCaret(true) },
+    { id: "review.rejectAtCaret", label: "Reject change at cursor", group: "Review", kw: "revision suggestion discard current", run: () => decideReviewAtCaret(false) },
+    { id: "review.acceptNext", label: "Accept change and move to next", group: "Review", kw: "revision suggestion approve next advance", shortcut: "⌘⌥⏎", run: () => decideReviewAndAdvance(true) },
+    { id: "review.rejectNext", label: "Reject change and move to next", group: "Review", kw: "revision suggestion discard next advance", shortcut: "⌘⌥⌫", run: () => decideReviewAndAdvance(false) },
     { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => reviewAcceptAll.click() },
     { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => reviewRejectAll.click() },
   ];
+  const styleTarget = currentParagraphStyleName();
+  cmds.push(
+    {
+      id: "style.updateFromSelection",
+      label: styleTarget ? `Update “${styleTarget}” to match selection` : "Update style to match selection",
+      group: "Style",
+      kw: "redefine modify match formatting paragraph style",
+      enabled: !!styleTarget,
+      disabledReason: "Place the caret in a paragraph that uses a named style",
+      run: () => updateStyleFromSelection(styleTarget),
+    },
+    {
+      id: "style.createFromSelection",
+      label: "Create style from selection…",
+      group: "Style",
+      kw: "new define save formatting paragraph style",
+      enabled: !!selection,
+      disabledReason: "Place the caret in a paragraph first",
+      run: () => createStyleFromSelection(),
+    },
+  );
   if (doc) {
     for (const name of doc.listStyles()) {
       cmds.push({
@@ -6614,7 +7677,7 @@ const APP_MENU_SECTIONS = {
   file: [["file.open", "file.save"], ["file.properties"]],
   edit: [
     ["edit.undo", "edit.redo"],
-    ["edit.cut", "edit.copy", "edit.paste"],
+    ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
     ["edit.selectAll", "edit.find"],
   ],
   view: [
@@ -6625,10 +7688,13 @@ const APP_MENU_SECTIONS = {
   insert: [["insert.table", "insert.link", "insert.bookmark"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
+    ["format.grow", "format.shrink", "format.color", "format.highlight"],
+    ["format.case.upper", "format.case.lower", "format.case.title", "format.case.sentence", "format.case.toggle"],
     ["format.superscript", "format.subscript", "format.clear"],
     ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
     ["paragraph.list.bullet", "paragraph.list.numbered"],
     ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
+    ["style.updateFromSelection", "style.createFromSelection"],
   ],
   tools: [["layout.pageSetup", "layout.paragraph"], ["file.properties", "view.settings"]],
   help: [["help.commands"]],
@@ -7275,20 +8341,19 @@ for (const [box, setter] of [
     runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
   );
 }
-highlightSel.addEventListener("change", () => {
-  const name = highlightSel.value;
-  if (!name) return;
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-});
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
+/** Apply a text color (hex `#rrggbb`) to the range or arm it at the caret. */
+function applyTextColor(hex) {
   const [r, g, b] = hexToRgb(hex);
   armOrApplyRun({ color: hex }, () =>
     runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
   );
-});
+}
+/** Apply a named OOXML highlight (or "none") to the range or arm it at the caret. */
+function applyHighlight(name) {
+  armOrApplyRun({ highlight: name }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
+  );
+}
 
 // ---- Floating selection toolbar (appears above a text selection) ------------
 const selToolbar = document.getElementById("selToolbar");
@@ -7360,12 +8425,13 @@ selToolbar.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
 });
 viewportEl.addEventListener("scroll", () => (selToolbar.hidden = true), { passive: true });
-fontFamilySel.addEventListener("change", () => {
-  const family = fontFamilySel.value;
-  if (family) {
-    armOrApplyRun({ font: family }, () => runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)));
-  }
-});
+/** Apply a font family to the range or arm it at the caret. */
+function applyFontFamily(family) {
+  if (!family) return;
+  armOrApplyRun({ font: family }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)),
+  );
+}
 paragraphStyleSel.addEventListener("change", () => {
   const name = paragraphStyleSel.value;
   runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
@@ -7699,26 +8765,117 @@ async function paste(event = null) {
   if (event?.clipboardData) {
     event.preventDefault();
     const html = event.clipboardData.getData("text/html");
-    if (await pasteHtml(html)) return;
-    await pasteText(event.clipboardData.getData("text/plain"));
+    const plain = event.clipboardData.getData("text/plain");
+    if (await pasteHtml(html)) {
+      offerPasteOptions(plain);
+      return;
+    }
+    await pasteText(plain);
     return;
   }
   try {
+    let plain = "";
+    try { plain = await navigator.clipboard.readText(); } catch { /* html-only clipboard */ }
     if (navigator.clipboard.read) {
       const items = await navigator.clipboard.read();
       for (const item of items) {
         if (!item.types.includes("text/html")) continue;
         const html = await (await item.getType("text/html")).text();
-        if (await pasteHtml(html)) return;
+        if (await pasteHtml(html)) {
+          offerPasteOptions(plain);
+          return;
+        }
       }
     }
-    const text = await navigator.clipboard.readText();
-    await pasteText(text);
+    await pasteText(plain);
   } catch (err) {
     console.warn("paste failed:", err);
     setStatus("Clipboard paste was blocked by the browser", "err");
   }
 }
+
+/** Paste as plain text (⌘/Ctrl+Shift+V): drops all formatting, keeping only the
+ *  clipboard's text through the existing `pasteText` path. */
+async function pasteAsText() {
+  if (!doc || !selection) return;
+  if (reviewMode === "viewing") {
+    blockMutationInViewing();
+    return;
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) await pasteText(text);
+  } catch (err) {
+    console.warn("paste text failed:", err);
+    setStatus("Clipboard paste was blocked by the browser", "err");
+  }
+}
+
+// ---- Paste options affordance (Q3) ------------------------------------------
+// After a rich paste, a small chip near the caret lets the user switch that
+// paste to text-only (undo the rich insertion, re-paste as plain text).
+const pasteOptionsEl = document.getElementById("pasteOptions");
+const pasteOptionsTextOnlyBtn = document.getElementById("pasteOptionsTextOnly");
+const pasteOptionsCloseBtn = document.getElementById("pasteOptionsClose");
+let pasteOptionsPlain = null;
+
+function hidePasteOptions() {
+  pasteOptionsEl.hidden = true;
+  pasteOptionsPlain = null;
+}
+/** Shows the chip only when the plain text differs from what a rich paste
+ *  produced would matter — i.e. there is text to fall back to. */
+function offerPasteOptions(plain) {
+  if (!plain) return hidePasteOptions();
+  pasteOptionsPlain = plain;
+  pasteOptionsEl.hidden = false;
+  requestAnimationFrame(positionPasteOptions);
+}
+function positionPasteOptions() {
+  if (pasteOptionsEl.hidden) return;
+  const caret = pagesEl.querySelector(".overlay .caret");
+  const w = pasteOptionsEl.offsetWidth;
+  const h = pasteOptionsEl.offsetHeight;
+  const vp = viewportEl.getBoundingClientRect();
+  let x;
+  let y;
+  if (caret) {
+    const r = caret.getBoundingClientRect();
+    x = r.left;
+    y = r.bottom + 6;
+  } else {
+    x = vp.left + 16;
+    y = vp.bottom - h - 16;
+  }
+  x = Math.max(vp.left + 8, Math.min(x, vp.right - w - 8));
+  y = Math.max(vp.top + 8, Math.min(y, vp.bottom - h - 8));
+  pasteOptionsEl.style.left = `${Math.round(x)}px`;
+  pasteOptionsEl.style.top = `${Math.round(y)}px`;
+}
+async function switchPasteToTextOnly() {
+  const text = pasteOptionsPlain;
+  hidePasteOptions();
+  if (!text || !doc) return;
+  if (doc.canUndo) await runEdit(() => doc.undo());
+  await pasteText(text);
+  focusEditorSurface();
+}
+onButton(pasteOptionsTextOnlyBtn, () => void switchPasteToTextOnly());
+onButton(pasteOptionsCloseBtn, hidePasteOptions);
+pasteOptionsEl.addEventListener("mousedown", (e) => {
+  if (e.target.tagName !== "BUTTON") e.preventDefault();
+});
+viewportEl.addEventListener("scroll", hidePasteOptions, { passive: true });
+document.addEventListener("pointerdown", (e) => {
+  if (!pasteOptionsEl.hidden && !pasteOptionsEl.contains(e.target)) hidePasteOptions();
+});
+document.addEventListener("keydown", (e) => {
+  if (pasteOptionsEl.hidden) return;
+  if (e.key === "Escape") return hidePasteOptions();
+  const editingKey = e.key.length === 1
+    || ["Backspace", "Delete", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key);
+  if (editingKey && !e.metaKey && !e.ctrlKey && !e.altKey) hidePasteOptions();
+}, true);
 
 document.addEventListener("copy", (e) => {
   if (editorClipboardEvent(e) && hasRange()) copySelection(e);
@@ -7833,7 +8990,8 @@ document.addEventListener("keydown", async (e) => {
   }
   if (mod && lower === "v") {
     e.preventDefault();
-    await paste();
+    if (e.shiftKey) await pasteAsText(); // ⌘/Ctrl+Shift+V — keep text only
+    else await paste();
     return;
   }
   if (mod && lower === "a") {
@@ -8118,16 +9276,119 @@ async function handleFile(file) {
 }
 
 fileEl.addEventListener("change", (e) => handleFile(e.target.files[0]));
-zoomEl.addEventListener("change", () => renderAll());
-function stepZoom(dir) {
-  const i = zoomEl.selectedIndex + dir;
-  if (i >= 0 && i < zoomEl.options.length) {
-    zoomEl.selectedIndex = i;
-    renderAll();
+// ---- Zoom (Q4): editable %, Fit width / Fit page, Ctrl+scroll ---------------
+const zoomMenu = document.getElementById("zoomMenu");
+const zoomMenuBtn = document.getElementById("zoomMenuBtn");
+const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+/** Fit-to-viewport factor: constrain the first page's width (fit-width) or both
+ *  width and height (fit-page) to the viewport, minus comfortable gutters. */
+function computeFitZoom(mode) {
+  if (!doc) return zoomFactor;
+  const size = doc.pageSize(0);
+  const wIn = size.widthTwip / TWIPS_PER_INCH;
+  const hIn = size.heightTwip / TWIPS_PER_INCH;
+  size.free();
+  const rect = viewportEl.getBoundingClientRect();
+  const availW = Math.max(120, rect.width - 64);
+  const availH = Math.max(120, rect.height - 48);
+  const fitW = availW / (wIn * BASE_DPI);
+  const factor = mode === "fit-page" ? Math.min(fitW, availH / (hIn * BASE_DPI)) : fitW;
+  return clampZoom(factor);
+}
+
+/** Repaints the zoom input (unless the user is mid-edit) and the preset checks. */
+function updateZoomDisplay() {
+  if (document.activeElement !== zoomEl) {
+    zoomEl.value =
+      zoomMode === "fit-width" ? "Fit width"
+        : zoomMode === "fit-page" ? "Fit page"
+          : `${Math.round(zoomFactor * 100)}%`;
+  }
+  for (const b of zoomMenu.querySelectorAll(".zoom-preset")) {
+    b.setAttribute("aria-checked", String(zoomMode === "custom" && Math.abs(Number(b.dataset.zoom) - zoomFactor) < 1e-6));
+  }
+  for (const b of zoomMenu.querySelectorAll(".zoom-fit")) {
+    b.setAttribute("aria-checked", String(zoomMode === b.dataset.zoomMode));
   }
 }
+
+/** Sets a fixed zoom factor (exits any fit mode) and re-renders. */
+function setZoom(factor) {
+  zoomMode = "custom";
+  zoomFactor = clampZoom(factor);
+  renderAll();
+}
+/** Enters a fit mode; the factor is computed at render time. */
+function setZoomMode(mode) {
+  zoomMode = mode;
+  renderAll();
+}
+function stepZoom(dir) {
+  const steps = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
+  const cur = zoomFactor;
+  const next = dir > 0
+    ? steps.find((s) => s > cur + 1e-6) ?? clampZoom(cur + 0.1)
+    : [...steps].reverse().find((s) => s < cur - 1e-6) ?? clampZoom(cur - 0.1);
+  setZoom(next);
+}
+
+/** Commit the typed zoom value: a number (with optional %) sets a fixed zoom;
+ *  "fit width"/"fit page" enter the matching fit mode; anything else reverts. */
+function commitZoomInput() {
+  const raw = zoomEl.value.trim().toLowerCase();
+  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width");
+  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page");
+  const pct = parseFloat(raw.replace("%", ""));
+  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100);
+  else updateZoomDisplay(); // reject: restore the last valid display
+}
+zoomEl.addEventListener("change", commitZoomInput);
+zoomEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    commitZoomInput();
+    zoomEl.blur();
+  } else if (e.key === "Escape") {
+    updateZoomDisplay();
+    zoomEl.blur();
+  }
+});
+zoomEl.addEventListener("focus", () => zoomEl.select());
+
+const zoomPopover = registerPopover(zoomMenuBtn, zoomMenu, updateZoomDisplay);
+zoomMenu.addEventListener("click", (e) => {
+  const preset = e.target.closest(".zoom-preset");
+  const fit = e.target.closest(".zoom-fit");
+  if (preset) setZoom(Number(preset.dataset.zoom));
+  else if (fit) setZoomMode(fit.dataset.zoomMode);
+  else return;
+  closePopover(zoomPopover);
+});
 zoomInBtn.addEventListener("click", () => stepZoom(1));
 zoomOutBtn.addEventListener("click", () => stepZoom(-1));
+
+// Ctrl/⌘+scroll over the document zooms (a fixed % centered on the pointer's
+// intent), the desktop-editor convention. Passive:false so we can preventDefault
+// the page zoom the browser would otherwise do.
+viewportEl.addEventListener(
+  "wheel",
+  (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !doc) return;
+    e.preventDefault();
+    const base = zoomMode === "custom" ? zoomFactor : computeFitZoom(zoomMode);
+    setZoom(clampZoom(base * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+  },
+  { passive: false },
+);
+
+// Re-fit on viewport resize while a fit mode is active.
+let fitResizeRaf = 0;
+window.addEventListener("resize", () => {
+  if (zoomMode === "custom") return;
+  cancelAnimationFrame(fitResizeRaf);
+  fitResizeRaf = requestAnimationFrame(() => renderAll());
+});
 
 // Drag-and-drop anywhere over the viewport.
 for (const type of ["dragover", "drop"]) {

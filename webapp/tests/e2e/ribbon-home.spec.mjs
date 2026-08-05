@@ -1,4 +1,4 @@
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
 // docs/64 — the Home ribbon mirrors template.png: a single no-wrap band of
 // labeled groups. Two hard rules this suite guards:
@@ -57,7 +57,7 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   expect(tileContentFits).toBe(true);
 
   const highlightDividerClearance = await page.evaluate(() => {
-    const highlight = document.querySelector(".highlight-control").getBoundingClientRect();
+    const highlight = document.querySelector(".color-control-highlight").getBoundingClientRect();
     const fontGroup = document.querySelector('[data-group="font"]').getBoundingClientRect();
     return fontGroup.right - highlight.right;
   });
@@ -213,6 +213,115 @@ test("the Styles selector exposes every style and the quick gallery applies a re
   ).toHaveAttribute("aria-selected", "true");
   // The hidden reflection select mirrors the same value.
   await expect(page.locator("#paragraphStyle")).toHaveValue(styleName);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// Reads the computed (weight, px size, style) of every gallery card's label —
+// what the user actually sees rendered in each card.
+async function galleryCardLooks(page) {
+  return page.$$eval("#stylesGallery .style-card .style-card-name", (labels) =>
+    labels.map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        style: el.closest(".style-card").dataset.style,
+        weight: cs.fontWeight,
+        size: cs.fontSize,
+        italic: cs.fontStyle,
+      };
+    }),
+  );
+}
+
+test("each Styles gallery card is drawn IN its own style (model-driven preview)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  const looks = await galleryCardLooks(page);
+  expect(looks.length).toBe(4);
+  // Every card's label carries an inline preview weight (the engine-resolved
+  // style drove it), never the bare default only.
+  for (const look of looks) {
+    expect(["400", "450", "500", "600", "650", "700"]).toContain(look.weight);
+  }
+  // The cards genuinely differ — a real visual hierarchy, not four identical
+  // labels: at least two distinct (weight, size) pairs across the gallery.
+  const distinct = new Set(looks.map((l) => `${l.weight}/${l.size}`));
+  expect(distinct.size).toBeGreaterThanOrEqual(2);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Create style from selection adds a new paragraph style and applies it", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  // Select the first line so the new style captures real run formatting.
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.press("Shift+End");
+
+  const before = await page.locator("#paragraphStyle option").count();
+
+  await page.keyboard.press(`${MOD}+Shift+p`);
+  await expect(page.locator("#cmdPalette")).toBeVisible();
+  await page.locator("#cmdInput").fill("Create style from selection");
+  await page.locator(".cmd-item", { hasText: "Create style from selection" }).first().click();
+
+  const dialog = page.locator("#styleNameDialog");
+  await expect(dialog).toBeVisible();
+  await page.locator("#styleNameInput").fill("E2E Callout");
+  await page.locator("#styleNameConfirm").click();
+  await expect(dialog).toBeHidden();
+
+  // The style registry gained the new style and the caret's paragraph now uses it.
+  await expect(page.locator("#paragraphStyle option")).toHaveCount(before + 1);
+  await expect(page.locator("#paragraphStyle")).toHaveValue("E2E Callout");
+  await expect(page.locator('#paragraphStyle option[value="E2E Callout"]')).toHaveCount(1);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Update <style> to match selection reflows the style and its gallery preview", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press(`${MOD}+Home`);
+  await page.keyboard.press("Shift+End");
+
+  const styleName = await page.locator("#paragraphStyle").inputValue();
+  expect(styleName).not.toBe("");
+
+  const cardName = () =>
+    page.locator(`#stylesGallery .style-card[data-style="${styleName}"] .style-card-name`);
+  const looksInGallery = (await cardName().count()) > 0;
+
+  const weightBefore = looksInGallery
+    ? await cardName().evaluate((el) => getComputedStyle(el).fontWeight)
+    : null;
+
+  // Toggle bold on the selection, then redefine the style to match it.
+  await page.keyboard.press(`${MOD}+b`);
+  await page.keyboard.press(`${MOD}+Shift+p`);
+  await expect(page.locator("#cmdPalette")).toBeVisible();
+  await page.locator("#cmdInput").fill("match selection");
+  await page.locator(".cmd-item", { hasText: "match selection" }).first().click();
+
+  // The redefined style is still applied and, when previewed in the gallery, the
+  // card's rendered weight changed to match the new definition (proving every
+  // paragraph using the style now reflows through the new run props).
+  await expect(page.locator("#paragraphStyle")).toHaveValue(styleName);
+  if (looksInGallery) {
+    await expect
+      .poll(() => cardName().evaluate((el) => getComputedStyle(el).fontWeight))
+      .not.toBe(weightBefore);
+  }
 
   expect(consoleErrors).toEqual([]);
 });

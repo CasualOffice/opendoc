@@ -22,8 +22,8 @@ use casual_doc_model::v1::{
     BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, DrawingAnchor,
     Extent, FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
     PageMargins, PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection,
-    RgbColor, Run, RunProperties, SectionColumns, SectionId, Table, TableCell, TableCellProperties,
-    TableProperties, TableRow, VerticalAlignment,
+    RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
+    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -375,6 +375,19 @@ pub enum Operation {
         orientation: Option<PageOrientation>,
         /// The column layout to install.
         columns: SectionColumns,
+    },
+    /// Install, replace, or remove a style definition in the document's style
+    /// registry (`word/styles.xml`). `Some(style)` inserts (create) or replaces
+    /// (update) the definition at `id`; `None` removes it. Document-global, not
+    /// node-scoped. Its own inverse, carrying the previous value at `id` (`None`
+    /// when the id was absent), so undo restores the registry exactly — updating a
+    /// style reflows every paragraph that references it, and undo reverses the
+    /// reflow. Boxed to keep the enum small.
+    SetStyleDefinition {
+        /// The style id to install, replace, or remove.
+        id: StyleId,
+        /// The style to install (create/update), or `None` to remove `id`.
+        style: Option<Box<Style>>,
     },
 }
 
@@ -956,6 +969,32 @@ pub fn apply(
                 page_margins: previous.1,
                 orientation: previous.2,
                 columns: previous.3,
+            })
+        }
+        Operation::SetStyleDefinition { id, style } => {
+            let styles = &mut doc.definitions_mut().styles;
+            let previous = match style {
+                Some(style) => styles.insert(*id, (**style).clone()),
+                None => styles.remove(id),
+            };
+            if doc.validate().is_err() {
+                // Roll the registry back to exactly its prior state and refuse the
+                // edit — an invalid style (e.g. a based-on cycle or a bad
+                // reference) must never land, and no partial mutation may persist.
+                let styles = &mut doc.definitions_mut().styles;
+                match &previous {
+                    Some(prev) => {
+                        styles.insert(*id, prev.clone());
+                    }
+                    None => {
+                        styles.remove(id);
+                    }
+                }
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetStyleDefinition {
+                id: *id,
+                style: previous.map(Box::new),
             })
         }
     }
@@ -2532,6 +2571,7 @@ mod tests {
     use casual_doc_model::v1::{
         Definitions, DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering,
         PaperSource, ParagraphProperties, Revision, RevisionKind, SectionBoundary, SectionColumns,
+        StyleKind,
     };
 
     fn n(counter: u64) -> NodeId {
@@ -3766,6 +3806,128 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, EditError::NodeNotFound);
+    }
+
+    /// A minimal paragraph style carrying `run` overrides, for the style-op tests.
+    fn paragraph_style(name: &str, run: Option<RunProperties>) -> Style {
+        Style {
+            kind: StyleKind::Paragraph,
+            is_default: false,
+            name: Some(name.to_owned()),
+            aliases: None,
+            based_on: None,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: false,
+            locked: false,
+            paragraph: None,
+            run,
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn set_style_definition_updates_and_inverse_restores() {
+        let mut definitions = Definitions::default();
+        let sid = StyleId::new(n(700));
+        definitions.styles.insert(
+            sid,
+            paragraph_style(
+                "Body",
+                Some(RunProperties {
+                    size_half_points: Some(24),
+                    ..RunProperties::default()
+                }),
+            ),
+        );
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "text")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        // Redefine the style's run to bold 16pt (Word's "update to match selection").
+        let updated = paragraph_style(
+            "Body",
+            Some(RunProperties {
+                bold: Some(true),
+                size_half_points: Some(32),
+                ..RunProperties::default()
+            }),
+        );
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetStyleDefinition {
+                id: sid,
+                style: Some(Box::new(updated)),
+            },
+        )
+        .expect("update style");
+
+        let now = d.definitions().styles.get(&sid).expect("style present");
+        assert_eq!(now.run.as_ref().unwrap().bold, Some(true));
+        assert_eq!(now.run.as_ref().unwrap().size_half_points, Some(32));
+
+        // The inverse restores the prior definition exactly.
+        assert_eq!(
+            inverse,
+            Operation::SetStyleDefinition {
+                id: sid,
+                style: Some(Box::new(paragraph_style(
+                    "Body",
+                    Some(RunProperties {
+                        size_half_points: Some(24),
+                        ..RunProperties::default()
+                    }),
+                ))),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("undo restores style");
+        let restored = d.definitions().styles.get(&sid).expect("style present");
+        assert_eq!(restored.run.as_ref().unwrap().bold, None);
+        assert_eq!(restored.run.as_ref().unwrap().size_half_points, Some(24));
+    }
+
+    #[test]
+    fn set_style_definition_creates_and_inverse_removes() {
+        let mut d = doc(vec![para(2, vec![run(3, "text")])]);
+        let mut ids = IdGenerator::new(9);
+        let sid = StyleId::new(n(800));
+        assert!(!d.definitions().styles.contains_key(&sid));
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetStyleDefinition {
+                id: sid,
+                style: Some(Box::new(paragraph_style(
+                    "Callout",
+                    Some(RunProperties {
+                        italic: Some(true),
+                        ..RunProperties::default()
+                    }),
+                ))),
+            },
+        )
+        .expect("create style");
+
+        assert!(d.definitions().styles.contains_key(&sid));
+        // Creating a fresh id inverts to removal (the id was absent before).
+        assert_eq!(
+            inverse,
+            Operation::SetStyleDefinition {
+                id: sid,
+                style: None,
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("undo removes the created style");
+        assert!(!d.definitions().styles.contains_key(&sid));
     }
 
     /// REVIEW-GAP-030: the toolbar-reflection queries must descend into a
