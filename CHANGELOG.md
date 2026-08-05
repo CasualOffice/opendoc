@@ -89,6 +89,10 @@ a general ODT support claim.
   multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
   (`office:name`, reply structure) is dropped. Active content inside an
   annotation is dropped like anywhere else.
+- **Inline text-box size (fidelity parity, T6-4b)**: an inline text box's extent
+  (`svg:width`/`svg:height`) now round-trips to the model's `TextBox.extent` (EMU)
+  and back, a byte-exact fixed point (reusing the geometry EMU↔cm codec). Fill,
+  border, and floating anchors still degrade.
 - **Inline text boxes (fidelity parity, T6-4)**: an inline
   `draw:frame`>`draw:text-box` now round-trips to the model's `TextBox` inline and
   back, a byte-exact fixed point. The box body is captured as a flattened
