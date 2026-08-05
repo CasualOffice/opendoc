@@ -40,6 +40,13 @@ const statusEl = document.getElementById("status");
 const reviewLiveRegion = document.getElementById("reviewLiveRegion");
 const fileEl = document.getElementById("file");
 const zoomEl = document.getElementById("zoom");
+// Zoom (Q4): an editable % plus Fit width / Fit page. `zoomFactor` is the live
+// scale the renderer/ruler read; `zoomMode` is "custom" for a fixed % or a fit
+// mode that recomputes from the viewport on every render/resize.
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5;
+let zoomFactor = 1;
+let zoomMode = "custom";
 const pagesEl = document.getElementById("pages");
 const dropEl = document.getElementById("drop");
 const viewportEl = document.getElementById("viewport");
@@ -58,8 +65,19 @@ const alignBtns = {
 const superBtn = document.getElementById("superscript");
 const subBtn = document.getElementById("subscript");
 const fontSizeSel = document.getElementById("fontSize");
-const textColorInput = document.getElementById("textColor");
-const highlightSel = document.getElementById("highlight");
+// Text-color and highlight swatch pickers (Q1): a split control — an "apply"
+// half that reapplies the last-used swatch, and a caret half that opens the
+// swatch menu. `textColorInput` is the hidden OS <input type=color> used only as
+// the "More colors…" custom fallback, never the primary control.
+const textColorCaret = document.getElementById("textColor");
+const textColorApplyBtn = document.getElementById("textColorApply");
+const textColorBar = document.getElementById("textColorBar");
+const textColorInput = document.getElementById("textColorCustom");
+const textColorMenu = document.getElementById("textColorMenu");
+const highlightCaret = document.getElementById("highlight");
+const highlightApplyBtn = document.getElementById("highlightApply");
+const highlightBar = document.getElementById("highlightBar");
+const highlightMenu = document.getElementById("highlightMenu");
 const clearFormattingBtn = document.getElementById("clearFormatting");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
@@ -1716,9 +1734,31 @@ const numberedListBtn = document.getElementById("numberedList");
 const checkListBtn = document.getElementById("checkList");
 const restartListBtn = document.getElementById("restartList");
 const continueListBtn = document.getElementById("continueList");
-const fontFamilySel = document.getElementById("fontFamily");
+const fontFamilyBtn = document.getElementById("fontFamily");
+const fontFamilyLabel = document.getElementById("fontFamilyLabel");
+const fontMenu = document.getElementById("fontMenu");
+const fontMenuInput = document.getElementById("fontMenuInput");
+const fontMenuList = document.getElementById("fontMenuList");
+const fontMenuEmpty = document.getElementById("fontMenuEmpty");
+const growFontBtn = document.getElementById("growFont");
+const shrinkFontBtn = document.getElementById("shrinkFont");
+const changeCaseBtn = document.getElementById("changeCaseBtn");
+const changeCaseMenu = document.getElementById("changeCaseMenu");
 const paragraphStyleSel = document.getElementById("paragraphStyle");
-const runControls = [superBtn, subBtn, fontSizeSel, textColorInput, highlightSel, fontFamilySel, clearFormattingBtn];
+const runControls = [
+  superBtn,
+  subBtn,
+  fontSizeSel,
+  textColorCaret,
+  textColorApplyBtn,
+  highlightCaret,
+  highlightApplyBtn,
+  fontFamilyBtn,
+  growFontBtn,
+  shrinkFontBtn,
+  changeCaseBtn,
+  clearFormattingBtn,
+];
 const paraControls = [
   ...Object.values(alignBtns),
   spacingBtn,
@@ -2139,7 +2179,9 @@ async function renderAll() {
   doc.setShowChanges(showingChanges);
   clearFindParagraphCache();
   const token = ++renderToken;
-  const zoom = Number(zoomEl.value);
+  if (zoomMode !== "custom") zoomFactor = computeFitZoom(zoomMode);
+  const zoom = zoomFactor;
+  updateZoomDisplay();
   const dpr = window.devicePixelRatio || 1;
   const dpi = BASE_DPI * zoom * dpr;
   const count = doc.pageCount;
@@ -4684,7 +4726,7 @@ function startMarkerDrag(key, ev) {
 /** Device DPI the pages are rastered at (HiDPI-crisp). */
 function currentDpi() {
   const dpr = window.devicePixelRatio || 1;
-  return BASE_DPI * Number(zoomEl.value) * dpr;
+  return BASE_DPI * zoomFactor * dpr;
 }
 
 /** Whether the selection currently spans any text (a real range vs a caret). */
@@ -4948,17 +4990,13 @@ function caretFormatState() {
  * the toolbar's starter list. The temporary option is presentation-only: the
  * renderer's physical substitution/fallback family is never written back as the
  * document's requested font. */
+let currentFontFamily = "";
 function reflectFontFamily(family) {
-  const previous = fontFamilySel.querySelector("option[data-reflected-font]");
-  if (previous && previous.value !== family) previous.remove();
-  if (family && ![...fontFamilySel.options].some((option) => option.value === family)) {
-    const option = document.createElement("option");
-    option.value = family;
-    option.textContent = family;
-    option.dataset.reflectedFont = "";
-    fontFamilySel.insertBefore(option, fontFamilySel.options[1] ?? null);
-  }
-  fontFamilySel.value = family;
+  currentFontFamily = family || "";
+  fontFamilyLabel.textContent = family || "Font";
+  fontFamilyLabel.style.fontFamily = family ? `"${family}", system-ui, sans-serif` : "";
+  fontFamilyBtn.classList.toggle("is-placeholder", !family);
+  fontFamilyBtn.title = family ? `Font: ${family}` : "Font";
 }
 
 /** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
@@ -5082,10 +5120,11 @@ function updateToolbar() {
   fontSizeSel.placeholder = sizeMixed ? "Mixed" : "Size";
   fontSizeSel.closest(".ctl")?.classList.toggle("is-mixed", sizeMixed);
   reflectFontFamily(fontMixed ? "" : font);
-  fontFamilySel.closest(".ctl")?.classList.toggle("is-mixed", fontMixed);
-  textColorInput.closest(".ctl")?.classList.toggle("is-mixed", colorMixed);
-  highlightSel.value = highlightMixed ? "" : highlight;
-  highlightSel.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
+  fontFamilyBtn.closest(".ctl")?.classList.toggle("is-mixed", fontMixed);
+  textColorCaret.closest(".ctl")?.classList.toggle("is-mixed", colorMixed);
+  reflectTextColorSwatch(colorMixed ? null : (textColorInput.value || null));
+  highlightCaret.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
+  reflectHighlightSwatch(highlightMixed ? null : highlight);
   superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
   subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
@@ -5431,6 +5470,394 @@ document.addEventListener("mousedown", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") for (const p of popovers) if (!p.menu.hidden) closePopover(p);
+});
+
+// -- Font family menu, color/highlight pickers, grow/shrink, change case -------
+// (Q1/Q2/Q5) Real dropdown swatch pickers replace the raw OS color input and
+// the native highlight <select>; a searchable font menu replaces the native
+// font <select>; A⁺/A⁻ step the standard sizes; a Change case menu transforms
+// the selection through the existing rich-run copy/paste ops (no new engine op).
+
+// Standard-colors palette (Google-Docs-style: a grayscale row + a hue row). The
+// document theme palette is not exposed to the webapp, so the theme-colors row
+// is omitted gracefully rather than faked.
+const TEXT_STANDARD_COLORS = [
+  "#000000", "#434343", "#666666", "#999999", "#b7b7b7", "#cccccc", "#d9d9d9", "#efefef", "#f3f3f3", "#ffffff",
+  "#980000", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#00ffff", "#4a86e8", "#0000ff", "#9900ff", "#ff00ff",
+];
+// The complete set of OOXML `w:highlight` named colors the engine accepts, with
+// their display swatch and a human label. `setHighlight` takes the name, not a hex.
+const HIGHLIGHT_COLORS = [
+  { name: "yellow", hex: "#ffff00", label: "Yellow" },
+  { name: "green", hex: "#00ff00", label: "Bright green" },
+  { name: "cyan", hex: "#00ffff", label: "Turquoise" },
+  { name: "magenta", hex: "#ff00ff", label: "Pink" },
+  { name: "blue", hex: "#0000ff", label: "Blue" },
+  { name: "red", hex: "#ff0000", label: "Red" },
+  { name: "darkYellow", hex: "#808000", label: "Dark yellow" },
+  { name: "darkGreen", hex: "#008000", label: "Green" },
+  { name: "darkCyan", hex: "#008080", label: "Teal" },
+  { name: "darkMagenta", hex: "#800080", label: "Violet" },
+  { name: "darkRed", hex: "#800000", label: "Dark red" },
+  { name: "darkBlue", hex: "#000080", label: "Dark blue" },
+  { name: "darkGray", hex: "#808080", label: "Gray 50%" },
+  { name: "lightGray", hex: "#c0c0c0", label: "Gray 25%" },
+  { name: "black", hex: "#000000", label: "Black" },
+  { name: "white", hex: "#ffffff", label: "White" },
+];
+const HIGHLIGHT_HEX = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.hex]));
+const HIGHLIGHT_LABEL = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.label]));
+function highlightHex(name) {
+  return name && name !== "none" ? HIGHLIGHT_HEX.get(name) ?? null : null;
+}
+
+// Session-remembered recently-used swatches (most-recent first, deduped, capped).
+const recentTextColors = [];
+const recentHighlights = [];
+function recordRecent(list, value) {
+  const i = list.indexOf(value);
+  if (i !== -1) list.splice(i, 1);
+  list.unshift(value);
+  if (list.length > 10) list.length = 10;
+}
+
+let lastTextColor = "#000000";
+let lastHighlight = "yellow";
+
+/** Reflect the current text color onto the "A" underline bar (and remember it as
+ *  the color the split-button's apply half reapplies). */
+function reflectTextColorSwatch(hex) {
+  if (hex) lastTextColor = hex;
+  textColorBar.style.background = lastTextColor;
+}
+/** Reflect the current highlight onto the highlighter bar (transparent for none). */
+function reflectHighlightSwatch(name) {
+  if (name && name !== "none") lastHighlight = name;
+  const hex = name === "none" ? null : highlightHex(name || lastHighlight);
+  highlightBar.style.background = hex || "transparent";
+  highlightBar.classList.toggle("is-none", !hex);
+}
+
+/** Builds one swatch cell button. `value` is what gets applied (a hex for text,
+ *  a named color for highlight); `color` is the display hex; `active` lights it. */
+function makeSwatchCell(kind, value, color, label, active) {
+  const cell = document.createElement("button");
+  cell.type = "button";
+  cell.className = "swatch-cell";
+  cell.style.setProperty("--sw", color);
+  cell.title = label;
+  cell.setAttribute("aria-label", label);
+  cell.dataset[kind === "text" ? "color" : "highlight"] = value;
+  if (active) cell.classList.add("is-active");
+  if (color.toLowerCase() === "#ffffff") cell.classList.add("is-light");
+  return cell;
+}
+function makeSwatchGrid(cells) {
+  const grid = document.createElement("div");
+  grid.className = "swatch-grid";
+  grid.setAttribute("role", "group");
+  for (const cell of cells) grid.appendChild(cell);
+  return grid;
+}
+function makeMenuHeading(text) {
+  const h = document.createElement("div");
+  h.className = "menu-heading";
+  h.textContent = text;
+  return h;
+}
+
+/** (Re)renders a color picker menu, marking the active swatch and refreshing the
+ *  recently-used row. Called on each open via the popover's reflect hook. */
+function renderColorMenu(kind) {
+  const menu = kind === "text" ? textColorMenu : highlightMenu;
+  const activeValue = kind === "text" ? lastTextColor.toLowerCase() : lastHighlight;
+  menu.replaceChildren();
+
+  // Automatic (text) / No color (highlight) — the reset entry.
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "color-row-action";
+  if (kind === "text") {
+    reset.dataset.auto = "1";
+    reset.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic</span>';
+  } else {
+    reset.dataset.highlight = "none";
+    reset.innerHTML = '<span class="color-chip color-chip-none"></span><span>No color</span>';
+  }
+  menu.appendChild(reset);
+
+  menu.appendChild(makeMenuHeading(kind === "text" ? "Standard colors" : "Highlight colors"));
+  if (kind === "text") {
+    menu.appendChild(makeSwatchGrid(
+      TEXT_STANDARD_COLORS.map((hex) =>
+        makeSwatchCell("text", hex, hex, hex.toUpperCase(), hex.toLowerCase() === activeValue)),
+    ));
+  } else {
+    menu.appendChild(makeSwatchGrid(
+      HIGHLIGHT_COLORS.map((c) =>
+        makeSwatchCell("highlight", c.name, c.hex, c.label, c.name === activeValue)),
+    ));
+  }
+
+  const recents = kind === "text" ? recentTextColors : recentHighlights;
+  if (recents.length) {
+    menu.appendChild(makeMenuHeading("Recent"));
+    menu.appendChild(makeSwatchGrid(
+      recents.map((value) => {
+        const color = kind === "text" ? value : highlightHex(value) ?? "#000000";
+        const label = kind === "text" ? value.toUpperCase() : (HIGHLIGHT_LABEL.get(value) ?? value);
+        return makeSwatchCell(kind, value, color, label,
+          kind === "text" ? value.toLowerCase() === activeValue : value === activeValue);
+      }),
+    ));
+  }
+
+  if (kind === "text") {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "color-row-action color-more";
+    more.dataset.more = "1";
+    more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
+    menu.appendChild(more);
+  }
+}
+
+const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
+const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
+
+// Text-color menu clicks (mousedown is preventDefault'd by the popover manager,
+// so the document selection survives the pointer press).
+textColorMenu.addEventListener("click", (e) => {
+  if (e.target.closest("[data-more]")) {
+    textColorInput.value = lastTextColor;
+    textColorInput.click(); // opens the OS color input as the custom fallback
+    return;
+  }
+  const cell = e.target.closest("[data-color], [data-auto]");
+  if (!cell) return;
+  const hex = cell.dataset.auto ? "#000000" : cell.dataset.color;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
+  closePopover(textColorPopover);
+  focusEditorSurface();
+});
+// "More colors…" custom fallback commits when the OS picker closes.
+textColorInput.addEventListener("change", () => {
+  const hex = textColorInput.value;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
+});
+
+highlightMenu.addEventListener("click", (e) => {
+  const cell = e.target.closest("[data-highlight]");
+  if (!cell) return;
+  const name = cell.dataset.highlight;
+  applyHighlight(name);
+  if (name !== "none") {
+    lastHighlight = name;
+    recordRecent(recentHighlights, name);
+  }
+  reflectHighlightSwatch(name);
+  closePopover(highlightPopover);
+  focusEditorSurface();
+});
+
+// Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
+onButton(textColorApplyBtn, () => {
+  applyTextColor(lastTextColor);
+  recordRecent(recentTextColors, lastTextColor);
+});
+onButton(highlightApplyBtn, () => {
+  applyHighlight(lastHighlight);
+  recordRecent(recentHighlights, lastHighlight);
+});
+reflectTextColorSwatch(lastTextColor);
+reflectHighlightSwatch(lastHighlight);
+
+// ---- Font family menu (Q2): searchable, own-typeface, recently-used group ----
+// No font-enumeration API is exposed to the webapp, so this is a curated common
+// list (the registry seam populates faces for rendering; this list is the menu
+// inventory). The caret's actual family is always included so an imported font
+// stays selectable/visible even when it is not in the list.
+const COMMON_FONTS = [
+  "Arial", "Calibri", "Cambria", "Comic Sans MS", "Consolas", "Courier New",
+  "Georgia", "Helvetica", "Lato", "Montserrat", "Noto Sans", "Noto Serif",
+  "Open Sans", "Roboto", "Segoe UI", "Tahoma", "Times New Roman",
+  "Trebuchet MS", "Verdana",
+];
+const recentFonts = [];
+let fontMenuActiveIndex = -1;
+
+function fontInventory() {
+  const all = new Set(COMMON_FONTS);
+  if (currentFontFamily) all.add(currentFontFamily);
+  return [...all].sort((a, b) => a.localeCompare(b));
+}
+
+/** (Re)renders the font list filtered by the search box; recently-used first,
+ *  then the alphabetical inventory, each name shown in its own typeface. */
+function renderFontMenu() {
+  const query = fontMenuInput.value.trim().toLowerCase();
+  const match = (name) => name.toLowerCase().includes(query);
+  const recent = recentFonts.filter(match);
+  const inventory = fontInventory().filter((name) => match(name) && !recent.includes(name));
+  fontMenuList.replaceChildren();
+
+  const addRow = (name, group) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "font-menu-item";
+    row.setAttribute("role", "option");
+    row.dataset.font = name;
+    row.style.fontFamily = `"${name}", system-ui, sans-serif`;
+    row.setAttribute("aria-selected", String(name === currentFontFamily));
+    if (name === currentFontFamily) row.classList.add("is-current");
+    row.innerHTML = `<span class="font-menu-check ms" aria-hidden="true">check</span><span class="font-menu-name">${escapeHtml(name)}</span>`;
+    fontMenuList.appendChild(row);
+    if (group) row.dataset.group = group;
+  };
+
+  if (recent.length) {
+    const h = makeMenuHeading("Recently used");
+    fontMenuList.appendChild(h);
+    for (const name of recent) addRow(name, "recent");
+    fontMenuList.appendChild(makeMenuHeading("All fonts"));
+  }
+  for (const name of inventory) addRow(name);
+
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  fontMenuEmpty.hidden = rows.length > 0;
+  // Default the active row to the current font (or the first row).
+  fontMenuActiveIndex = [...rows].findIndex((r) => r.dataset.font === currentFontFamily);
+  if (fontMenuActiveIndex < 0 && rows.length) fontMenuActiveIndex = 0;
+  paintFontActive();
+}
+function paintFontActive() {
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  rows.forEach((row, i) => row.classList.toggle("is-active", i === fontMenuActiveIndex));
+  rows[fontMenuActiveIndex]?.scrollIntoView({ block: "nearest" });
+}
+function chooseFont(name) {
+  applyFontFamily(name);
+  reflectFontFamily(name);
+  recordRecent(recentFonts, name);
+  closePopover(fontPopover);
+  focusEditorSurface();
+}
+
+const fontPopover = registerPopover(fontFamilyBtn, fontMenu, () => {
+  fontMenuInput.value = "";
+  renderFontMenu();
+  requestAnimationFrame(() => fontMenuInput.focus());
+});
+fontMenuInput.addEventListener("input", renderFontMenu);
+fontMenuInput.addEventListener("keydown", (e) => {
+  const rows = fontMenuList.querySelectorAll(".font-menu-item");
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    fontMenuActiveIndex = Math.min(rows.length - 1, fontMenuActiveIndex + 1);
+    paintFontActive();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    fontMenuActiveIndex = Math.max(0, fontMenuActiveIndex - 1);
+    paintFontActive();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const row = rows[fontMenuActiveIndex];
+    if (row) chooseFont(row.dataset.font);
+  }
+});
+fontMenuList.addEventListener("click", (e) => {
+  const row = e.target.closest(".font-menu-item");
+  if (row) chooseFont(row.dataset.font);
+});
+
+// ---- Grow / shrink font (Q5) -------------------------------------------------
+const FONT_STEP_SIZES = [
+  8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96,
+];
+function currentFontPt() {
+  const v = Number(fontSizeSel.value);
+  if (Number.isFinite(v) && v >= 1) return v;
+  if (pendingFormat?.sizeHalfPoints != null) return pendingFormat.sizeHalfPoints / 2;
+  return 11;
+}
+function stepFontSize(dir) {
+  const cur = currentFontPt();
+  let next;
+  if (dir > 0) {
+    next = FONT_STEP_SIZES.find((s) => s > cur + 1e-6) ?? Math.min(1638, Math.round((cur + 2) * 2) / 2);
+  } else {
+    const smaller = FONT_STEP_SIZES.filter((s) => s < cur - 1e-6);
+    next = smaller.length ? smaller[smaller.length - 1] : Math.max(1, Math.round((cur - 1) * 2) / 2);
+  }
+  armOrApplyRun({ sizeHalfPoints: Math.round(next * 2) }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, next)),
+  );
+}
+onButton(growFontBtn, () => stepFontSize(1));
+onButton(shrinkFontBtn, () => stepFontSize(-1));
+
+// ---- Change case (Q5): transform selected text, preserving per-run format ----
+function transformCase(text, mode) {
+  switch (mode) {
+    case "upper":
+      return text.toLocaleUpperCase();
+    case "lower":
+      return text.toLocaleLowerCase();
+    case "title":
+      return text.replace(/\p{L}[\p{L}'’]*/gu, (w) => w[0].toLocaleUpperCase() + w.slice(1).toLocaleLowerCase());
+    case "sentence": {
+      const lowered = text.toLocaleLowerCase();
+      return lowered.replace(/(^\s*\p{L})|([.!?]["')\]]?\s+\p{L})/gu, (m) => m.toLocaleUpperCase());
+    }
+    case "toggle":
+      return [...text].map((ch) => {
+        const up = ch.toLocaleUpperCase();
+        const lo = ch.toLocaleLowerCase();
+        return ch === lo && ch !== up ? up : lo;
+      }).join("");
+    default:
+      return text;
+  }
+}
+async function applyChangeCase(mode) {
+  if (!doc || !hasRange()) return;
+  const { anchor, focus } = selection;
+  let runs;
+  try {
+    runs = JSON.parse(doc.copyRichRuns(anchor.node, anchor.offset, focus.node, focus.offset));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(runs) || !runs.length) return;
+  const full = runs.map((r) => (r.paragraphBreak ? "\n" : String(r.text ?? ""))).join("");
+  const transformed = transformCase(full, mode);
+  const out = runs.map((r) => ({ ...r }));
+  if (transformed.length === full.length) {
+    // Length-preserving: re-slice so cross-run sentence/title casing is correct.
+    let i = 0;
+    for (const r of out) {
+      const len = r.paragraphBreak ? 1 : String(r.text ?? "").length;
+      if (!r.paragraphBreak && r.text != null) r.text = transformed.slice(i, i + len);
+      i += len;
+    }
+  } else {
+    // Rare Unicode length change (e.g. ß→SS): fall back to per-run transform.
+    for (const r of out) if (!r.paragraphBreak && r.text != null) r.text = transformCase(String(r.text), mode);
+  }
+  await pasteRichRunsJson(JSON.stringify(out));
+}
+const changeCasePopover = registerPopover(changeCaseBtn, changeCaseMenu, () => {});
+changeCaseMenu.addEventListener("click", (e) => {
+  const item = e.target.closest("[data-case]");
+  if (!item) return;
+  closePopover(changeCasePopover);
+  void applyChangeCase(item.dataset.case);
 });
 
 // -- Line & paragraph spacing --------------------------------------------------
@@ -6851,6 +7278,17 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => paste(),
     },
     {
+      id: "edit.pasteText",
+      label: "Paste without formatting",
+      group: "Clipboard",
+      kw: "plain text unformatted keep text only",
+      shortcut: "⌘⇧V",
+      contextMenu: true,
+      enabled: !!doc && !!selection,
+      disabledReason: "Place the caret before pasting",
+      run: () => pasteAsText(),
+    },
+    {
       id: "edit.selectAll",
       label: "Select all",
       group: "Clipboard",
@@ -6868,6 +7306,15 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
+    { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
+    { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
+    { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
+    { id: "format.highlight", label: "Highlight color…", group: "Format", kw: "marker colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => highlightCaret.click() },
+    { id: "format.case.upper", label: "Change case: UPPERCASE", group: "Format", kw: "capitals uppercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("upper") },
+    { id: "format.case.lower", label: "Change case: lowercase", group: "Format", kw: "lowercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("lower") },
+    { id: "format.case.title", label: "Change case: Capitalize Each Word", group: "Format", kw: "title case capitalize", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("title") },
+    { id: "format.case.sentence", label: "Change case: Sentence case", group: "Format", kw: "sentence capitalize", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("sentence") },
+    { id: "format.case.toggle", label: "Change case: tOGGLE cASE", group: "Format", kw: "toggle invert case", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("toggle") },
     { id: "paragraph.align.start", label: "Align left", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("start") },
     { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("center") },
     { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("end") },
@@ -6942,7 +7389,7 @@ const APP_MENU_SECTIONS = {
   file: [["file.open", "file.save"], ["file.properties"]],
   edit: [
     ["edit.undo", "edit.redo"],
-    ["edit.cut", "edit.copy", "edit.paste"],
+    ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
     ["edit.selectAll", "edit.find"],
   ],
   view: [
@@ -6953,6 +7400,8 @@ const APP_MENU_SECTIONS = {
   insert: [["insert.table", "insert.link", "insert.bookmark"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
+    ["format.grow", "format.shrink", "format.color", "format.highlight"],
+    ["format.case.upper", "format.case.lower", "format.case.title", "format.case.sentence", "format.case.toggle"],
     ["format.superscript", "format.subscript", "format.clear"],
     ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
     ["paragraph.list.bullet", "paragraph.list.numbered"],
@@ -7603,20 +8052,19 @@ for (const [box, setter] of [
     runToolbarEdit((a, b, c, d) => setter(a, b, c, d, box.checked)),
   );
 }
-highlightSel.addEventListener("change", () => {
-  const name = highlightSel.value;
-  if (!name) return;
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-});
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
+/** Apply a text color (hex `#rrggbb`) to the range or arm it at the caret. */
+function applyTextColor(hex) {
   const [r, g, b] = hexToRgb(hex);
   armOrApplyRun({ color: hex }, () =>
     runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
   );
-});
+}
+/** Apply a named OOXML highlight (or "none") to the range or arm it at the caret. */
+function applyHighlight(name) {
+  armOrApplyRun({ highlight: name }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
+  );
+}
 
 // ---- Floating selection toolbar (appears above a text selection) ------------
 const selToolbar = document.getElementById("selToolbar");
@@ -7688,12 +8136,13 @@ selToolbar.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
 });
 viewportEl.addEventListener("scroll", () => (selToolbar.hidden = true), { passive: true });
-fontFamilySel.addEventListener("change", () => {
-  const family = fontFamilySel.value;
-  if (family) {
-    armOrApplyRun({ font: family }, () => runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)));
-  }
-});
+/** Apply a font family to the range or arm it at the caret. */
+function applyFontFamily(family) {
+  if (!family) return;
+  armOrApplyRun({ font: family }, () =>
+    runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)),
+  );
+}
 paragraphStyleSel.addEventListener("change", () => {
   const name = paragraphStyleSel.value;
   runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
@@ -8001,26 +8450,117 @@ async function paste(event = null) {
   if (event?.clipboardData) {
     event.preventDefault();
     const html = event.clipboardData.getData("text/html");
-    if (await pasteHtml(html)) return;
-    await pasteText(event.clipboardData.getData("text/plain"));
+    const plain = event.clipboardData.getData("text/plain");
+    if (await pasteHtml(html)) {
+      offerPasteOptions(plain);
+      return;
+    }
+    await pasteText(plain);
     return;
   }
   try {
+    let plain = "";
+    try { plain = await navigator.clipboard.readText(); } catch { /* html-only clipboard */ }
     if (navigator.clipboard.read) {
       const items = await navigator.clipboard.read();
       for (const item of items) {
         if (!item.types.includes("text/html")) continue;
         const html = await (await item.getType("text/html")).text();
-        if (await pasteHtml(html)) return;
+        if (await pasteHtml(html)) {
+          offerPasteOptions(plain);
+          return;
+        }
       }
     }
-    const text = await navigator.clipboard.readText();
-    await pasteText(text);
+    await pasteText(plain);
   } catch (err) {
     console.warn("paste failed:", err);
     setStatus("Clipboard paste was blocked by the browser", "err");
   }
 }
+
+/** Paste as plain text (⌘/Ctrl+Shift+V): drops all formatting, keeping only the
+ *  clipboard's text through the existing `pasteText` path. */
+async function pasteAsText() {
+  if (!doc || !selection) return;
+  if (reviewMode === "viewing") {
+    blockMutationInViewing();
+    return;
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) await pasteText(text);
+  } catch (err) {
+    console.warn("paste text failed:", err);
+    setStatus("Clipboard paste was blocked by the browser", "err");
+  }
+}
+
+// ---- Paste options affordance (Q3) ------------------------------------------
+// After a rich paste, a small chip near the caret lets the user switch that
+// paste to text-only (undo the rich insertion, re-paste as plain text).
+const pasteOptionsEl = document.getElementById("pasteOptions");
+const pasteOptionsTextOnlyBtn = document.getElementById("pasteOptionsTextOnly");
+const pasteOptionsCloseBtn = document.getElementById("pasteOptionsClose");
+let pasteOptionsPlain = null;
+
+function hidePasteOptions() {
+  pasteOptionsEl.hidden = true;
+  pasteOptionsPlain = null;
+}
+/** Shows the chip only when the plain text differs from what a rich paste
+ *  produced would matter — i.e. there is text to fall back to. */
+function offerPasteOptions(plain) {
+  if (!plain) return hidePasteOptions();
+  pasteOptionsPlain = plain;
+  pasteOptionsEl.hidden = false;
+  requestAnimationFrame(positionPasteOptions);
+}
+function positionPasteOptions() {
+  if (pasteOptionsEl.hidden) return;
+  const caret = pagesEl.querySelector(".overlay .caret");
+  const w = pasteOptionsEl.offsetWidth;
+  const h = pasteOptionsEl.offsetHeight;
+  const vp = viewportEl.getBoundingClientRect();
+  let x;
+  let y;
+  if (caret) {
+    const r = caret.getBoundingClientRect();
+    x = r.left;
+    y = r.bottom + 6;
+  } else {
+    x = vp.left + 16;
+    y = vp.bottom - h - 16;
+  }
+  x = Math.max(vp.left + 8, Math.min(x, vp.right - w - 8));
+  y = Math.max(vp.top + 8, Math.min(y, vp.bottom - h - 8));
+  pasteOptionsEl.style.left = `${Math.round(x)}px`;
+  pasteOptionsEl.style.top = `${Math.round(y)}px`;
+}
+async function switchPasteToTextOnly() {
+  const text = pasteOptionsPlain;
+  hidePasteOptions();
+  if (!text || !doc) return;
+  if (doc.canUndo) await runEdit(() => doc.undo());
+  await pasteText(text);
+  focusEditorSurface();
+}
+onButton(pasteOptionsTextOnlyBtn, () => void switchPasteToTextOnly());
+onButton(pasteOptionsCloseBtn, hidePasteOptions);
+pasteOptionsEl.addEventListener("mousedown", (e) => {
+  if (e.target.tagName !== "BUTTON") e.preventDefault();
+});
+viewportEl.addEventListener("scroll", hidePasteOptions, { passive: true });
+document.addEventListener("pointerdown", (e) => {
+  if (!pasteOptionsEl.hidden && !pasteOptionsEl.contains(e.target)) hidePasteOptions();
+});
+document.addEventListener("keydown", (e) => {
+  if (pasteOptionsEl.hidden) return;
+  if (e.key === "Escape") return hidePasteOptions();
+  const editingKey = e.key.length === 1
+    || ["Backspace", "Delete", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key);
+  if (editingKey && !e.metaKey && !e.ctrlKey && !e.altKey) hidePasteOptions();
+}, true);
 
 document.addEventListener("copy", (e) => {
   if (editorClipboardEvent(e) && hasRange()) copySelection(e);
@@ -8135,7 +8675,8 @@ document.addEventListener("keydown", async (e) => {
   }
   if (mod && lower === "v") {
     e.preventDefault();
-    await paste();
+    if (e.shiftKey) await pasteAsText(); // ⌘/Ctrl+Shift+V — keep text only
+    else await paste();
     return;
   }
   if (mod && lower === "a") {
@@ -8424,16 +8965,119 @@ async function handleFile(file) {
 }
 
 fileEl.addEventListener("change", (e) => handleFile(e.target.files[0]));
-zoomEl.addEventListener("change", () => renderAll());
-function stepZoom(dir) {
-  const i = zoomEl.selectedIndex + dir;
-  if (i >= 0 && i < zoomEl.options.length) {
-    zoomEl.selectedIndex = i;
-    renderAll();
+// ---- Zoom (Q4): editable %, Fit width / Fit page, Ctrl+scroll ---------------
+const zoomMenu = document.getElementById("zoomMenu");
+const zoomMenuBtn = document.getElementById("zoomMenuBtn");
+const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+/** Fit-to-viewport factor: constrain the first page's width (fit-width) or both
+ *  width and height (fit-page) to the viewport, minus comfortable gutters. */
+function computeFitZoom(mode) {
+  if (!doc) return zoomFactor;
+  const size = doc.pageSize(0);
+  const wIn = size.widthTwip / TWIPS_PER_INCH;
+  const hIn = size.heightTwip / TWIPS_PER_INCH;
+  size.free();
+  const rect = viewportEl.getBoundingClientRect();
+  const availW = Math.max(120, rect.width - 64);
+  const availH = Math.max(120, rect.height - 48);
+  const fitW = availW / (wIn * BASE_DPI);
+  const factor = mode === "fit-page" ? Math.min(fitW, availH / (hIn * BASE_DPI)) : fitW;
+  return clampZoom(factor);
+}
+
+/** Repaints the zoom input (unless the user is mid-edit) and the preset checks. */
+function updateZoomDisplay() {
+  if (document.activeElement !== zoomEl) {
+    zoomEl.value =
+      zoomMode === "fit-width" ? "Fit width"
+        : zoomMode === "fit-page" ? "Fit page"
+          : `${Math.round(zoomFactor * 100)}%`;
+  }
+  for (const b of zoomMenu.querySelectorAll(".zoom-preset")) {
+    b.setAttribute("aria-checked", String(zoomMode === "custom" && Math.abs(Number(b.dataset.zoom) - zoomFactor) < 1e-6));
+  }
+  for (const b of zoomMenu.querySelectorAll(".zoom-fit")) {
+    b.setAttribute("aria-checked", String(zoomMode === b.dataset.zoomMode));
   }
 }
+
+/** Sets a fixed zoom factor (exits any fit mode) and re-renders. */
+function setZoom(factor) {
+  zoomMode = "custom";
+  zoomFactor = clampZoom(factor);
+  renderAll();
+}
+/** Enters a fit mode; the factor is computed at render time. */
+function setZoomMode(mode) {
+  zoomMode = mode;
+  renderAll();
+}
+function stepZoom(dir) {
+  const steps = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
+  const cur = zoomFactor;
+  const next = dir > 0
+    ? steps.find((s) => s > cur + 1e-6) ?? clampZoom(cur + 0.1)
+    : [...steps].reverse().find((s) => s < cur - 1e-6) ?? clampZoom(cur - 0.1);
+  setZoom(next);
+}
+
+/** Commit the typed zoom value: a number (with optional %) sets a fixed zoom;
+ *  "fit width"/"fit page" enter the matching fit mode; anything else reverts. */
+function commitZoomInput() {
+  const raw = zoomEl.value.trim().toLowerCase();
+  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width");
+  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page");
+  const pct = parseFloat(raw.replace("%", ""));
+  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100);
+  else updateZoomDisplay(); // reject: restore the last valid display
+}
+zoomEl.addEventListener("change", commitZoomInput);
+zoomEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    commitZoomInput();
+    zoomEl.blur();
+  } else if (e.key === "Escape") {
+    updateZoomDisplay();
+    zoomEl.blur();
+  }
+});
+zoomEl.addEventListener("focus", () => zoomEl.select());
+
+const zoomPopover = registerPopover(zoomMenuBtn, zoomMenu, updateZoomDisplay);
+zoomMenu.addEventListener("click", (e) => {
+  const preset = e.target.closest(".zoom-preset");
+  const fit = e.target.closest(".zoom-fit");
+  if (preset) setZoom(Number(preset.dataset.zoom));
+  else if (fit) setZoomMode(fit.dataset.zoomMode);
+  else return;
+  closePopover(zoomPopover);
+});
 zoomInBtn.addEventListener("click", () => stepZoom(1));
 zoomOutBtn.addEventListener("click", () => stepZoom(-1));
+
+// Ctrl/⌘+scroll over the document zooms (a fixed % centered on the pointer's
+// intent), the desktop-editor convention. Passive:false so we can preventDefault
+// the page zoom the browser would otherwise do.
+viewportEl.addEventListener(
+  "wheel",
+  (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !doc) return;
+    e.preventDefault();
+    const base = zoomMode === "custom" ? zoomFactor : computeFitZoom(zoomMode);
+    setZoom(clampZoom(base * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+  },
+  { passive: false },
+);
+
+// Re-fit on viewport resize while a fit mode is active.
+let fitResizeRaf = 0;
+window.addEventListener("resize", () => {
+  if (zoomMode === "custom") return;
+  cancelAnimationFrame(fitResizeRaf);
+  fitResizeRaf = requestAnimationFrame(() => renderAll());
+});
 
 // Drag-and-drop anywhere over the viewport.
 for (const type of ["dragover", "drop"]) {
