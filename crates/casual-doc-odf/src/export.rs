@@ -1040,8 +1040,8 @@ struct Writer {
     revision_mint: usize,
     /// Form-field node id → its emitted `form:id`, from the pre-walk.
     form_field_ids: BTreeMap<NodeId, String>,
-    /// Ordered form-text controls to declare in `office:forms` (id + name).
-    form_controls: Vec<(String, Option<String>)>,
+    /// Ordered form controls to declare in `office:forms` (id + name + kind).
+    form_controls: Vec<(String, Option<String>, FormControlOut)>,
     /// Monotonic counter for minting `ctrlN` form ids.
     form_mint: usize,
     emitted_footnotes: BTreeSet<NoteId>,
@@ -1272,10 +1272,12 @@ impl Writer {
                     // anchor (its inlines are never written), so mint its control
                     // and do NOT pre-walk its inlines — recursing would declare an
                     // orphan region for a nested revision the writer drops.
-                    let minted_form = field
-                        .form
-                        .as_ref()
-                        .is_some_and(|form| matches!(form.kind, FormFieldKind::TextInput(_)));
+                    let minted_form = field.form.as_ref().is_some_and(|form| {
+                        matches!(
+                            form.kind,
+                            FormFieldKind::TextInput(_) | FormFieldKind::CheckBox(_)
+                        )
+                    });
                     if minted_form {
                         self.assign_form_field(field);
                     } else if field_projects_inlines(field) {
@@ -1369,22 +1371,25 @@ impl Writer {
         self.push("</text:tracked-changes>")
     }
 
-    /// Records a text-input form field, minting its `form:id`. Non-text form kinds
-    /// are not emitted as `form:text` in this slice (they degrade in write_inlines).
+    /// Records a text-input or checkbox form field, minting its `form:id`. Other
+    /// form kinds (drop-down) are not emitted in this slice (they degrade in
+    /// write_inlines).
     fn assign_form_field(&mut self, field: &Field) {
         let Some(form) = &field.form else {
             return;
         };
-        if !matches!(form.kind, FormFieldKind::TextInput(_)) {
-            return;
-        }
+        let out = match &form.kind {
+            FormFieldKind::TextInput(_) => FormControlOut::Text,
+            FormFieldKind::CheckBox(checkbox) => FormControlOut::CheckBox(checkbox.checked),
+            FormFieldKind::DropDown(_) => return,
+        };
         if self.form_field_ids.contains_key(&field.id) {
             return;
         }
         self.form_mint += 1;
         let form_id = format!("ctrl{}", self.form_mint);
         self.form_field_ids.insert(field.id, form_id.clone());
-        self.form_controls.push((form_id, form.name.clone()));
+        self.form_controls.push((form_id, form.name.clone(), out));
     }
 
     /// Emits the `office:forms` control registry (a single `form:form` holding one
@@ -1398,8 +1403,11 @@ impl Writer {
             "<office:forms xmlns:form=\"urn:oasis:names:tc:opendocument:xmlns:form:1.0\"><form:form form:name=\"Standard\">",
         )?;
         let controls = std::mem::take(&mut self.form_controls);
-        for (form_id, name) in &controls {
-            self.push("<form:text form:id=\"")?;
+        for (form_id, name, kind) in &controls {
+            self.push(match kind {
+                FormControlOut::Text => "<form:text form:id=\"",
+                FormControlOut::CheckBox(_) => "<form:checkbox form:id=\"",
+            })?;
             push_escaped_attribute(&mut self.xml, form_id, self.limits.max_content_bytes)?;
             self.push("\"")?;
             if let Some(name) = name
@@ -1407,6 +1415,13 @@ impl Writer {
             {
                 self.push(" form:name=\"")?;
                 push_escaped_attribute(&mut self.xml, name, self.limits.max_content_bytes)?;
+                self.push("\"")?;
+            }
+            if let FormControlOut::CheckBox(checked) = kind
+                && let Some(checked) = checked
+            {
+                self.push(" form:current-state=\"")?;
+                self.push(if *checked { "checked" } else { "unchecked" })?;
                 self.push("\"")?;
             }
             self.push("/>")?;
@@ -3679,6 +3694,15 @@ fn field_projects_inlines(field: &Field) -> bool {
 }
 
 /// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
+/// A form control to declare in `office:forms`.
+#[derive(Clone, Debug)]
+enum FormControlOut {
+    /// `form:text` (FORMTEXT).
+    Text,
+    /// `form:checkbox` (FORMCHECKBOX) with its current checked state.
+    CheckBox(Option<bool>),
+}
+
 /// a deletion (whose content lives in the region, not the body) and `None` for an
 /// insertion.
 #[derive(Clone, Debug)]

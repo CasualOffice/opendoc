@@ -17,8 +17,8 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{
-    BlockSdt, FormFieldData, FormFieldKind, FormTextInput, Revision, RevisionKind, SdtControlKind,
-    SdtProperties, TextBox,
+    BlockSdt, FormCheckBox, FormFieldData, FormFieldKind, FormTextInput, Revision, RevisionKind,
+    SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -382,11 +382,9 @@ enum InlineDraft {
     /// An inline `draw:text-box`; carries the flattened body text directly (built
     /// into a single-paragraph `TextBox`, no definition/id dependency).
     TextBox(String),
-    /// A `draw:control` resolving to a `form:text` control; carries the control's
-    /// name directly (built into a `FORMTEXT` field with a text-input form).
-    FormField {
-        name: Option<String>,
-    },
+    /// A `draw:control` resolving to a form control; carries the control directly
+    /// (built into the matching form field).
+    FormField(FormControlDraft),
     /// A tracked-change (revision) range wrapping the enclosed inline drafts,
     /// captured by splicing the paragraph inlines between `text:change-start` and
     /// `text:change-end`. Insertions only in this slice.
@@ -397,6 +395,22 @@ enum InlineDraft {
         revision_id: Option<String>,
         inlines: Vec<InlineDraft>,
     },
+}
+
+/// A captured form control (from `office:forms`), keyed by its `form:id`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FormControlDraft {
+    name: Option<String>,
+    kind: FormControlKind,
+}
+
+/// The modeled form-control kinds in this slice.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FormControlKind {
+    /// `form:text` → a FORMTEXT text-input field.
+    Text,
+    /// `form:checkbox` → a FORMCHECKBOX field with the current checked state.
+    CheckBox { checked: Option<bool> },
 }
 
 /// Metadata for one `text:changed-region`, captured from the leading
@@ -2720,7 +2734,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut open_toc: Option<OpenToc> = None;
     let mut revision_meta: BTreeMap<String, RevisionMeta> = BTreeMap::new();
     let mut open_revision: Option<OpenRevision> = None;
-    let mut form_controls: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut form_controls: BTreeMap<String, FormControlDraft> = BTreeMap::new();
 
     loop {
         check_cancelled(cancellation)?;
@@ -3354,7 +3368,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     let control = control_id
                         .as_ref()
                         .and_then(|id| form_controls.get(id).cloned());
-                    if let Some(name) = control
+                    if let Some(control) = control
                         && active_link.is_none()
                     {
                         inline_nodes = checked_increment(inline_nodes)?;
@@ -3366,7 +3380,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         push_inline_draft(
                             current.as_mut().ok_or(OdfError::MalformedContent)?,
                             &mut active_link,
-                            InlineDraft::FormField { name },
+                            InlineDraft::FormField(control),
                         );
                     } else {
                         reporter.report(
@@ -4918,9 +4932,9 @@ fn read_draw_control_id(
 }
 
 /// Sub-parses an `office:forms` block off the main state machine, returning a map
-/// from each `form:text` control's `form:id` to its `form:name`. Only text-input
-/// controls are modeled in this slice; other control kinds are ignored. The
-/// matching `End` is consumed, so the caller undoes its `Start` depth increment.
+/// from each control's `form:id` to its captured metadata. `form:text` and
+/// `form:checkbox` are modeled; other control kinds are ignored. The matching
+/// `End` is consumed, so the caller undoes its `Start` depth increment.
 #[allow(clippy::too_many_arguments)]
 fn parse_forms(
     reader: &mut NsReader<&[u8]>,
@@ -4932,9 +4946,9 @@ fn parse_forms(
     attribute_bytes: &mut usize,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
-) -> Result<BTreeMap<String, Option<String>>, OdfError> {
+) -> Result<BTreeMap<String, FormControlDraft>, OdfError> {
     count_attributes_only(element, attributes, attribute_bytes, limits)?;
-    let mut controls: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut controls: BTreeMap<String, FormControlDraft> = BTreeMap::new();
     let mut sub_depth = 0_usize;
     let mut buffer = Vec::new();
 
@@ -5004,11 +5018,18 @@ fn parse_forms(
             buffer.clear();
             continue;
         }
-        if is_name(&name, NamespaceKind::Form, b"text") {
-            if let Some((id, form_name)) =
-                read_form_text(reader, element, attributes, attribute_bytes, limits)?
+        let control_kind = if is_name(&name, NamespaceKind::Form, b"text") {
+            Some(FormControlKind::Text)
+        } else if is_name(&name, NamespaceKind::Form, b"checkbox") {
+            Some(FormControlKind::CheckBox { checked: None })
+        } else {
+            None
+        };
+        if let Some(kind) = control_kind {
+            if let Some((id, control)) =
+                read_form_control(reader, element, kind, attributes, attribute_bytes, limits)?
             {
-                controls.entry(id).or_insert(form_name);
+                controls.entry(id).or_insert(control);
             }
         } else {
             count_attributes_only(element, attributes, attribute_bytes, limits)?;
@@ -5026,17 +5047,20 @@ fn parse_forms(
     Ok(controls)
 }
 
-/// Reads a `form:text` control's `form:id` (correlation key, bounded) and
-/// `form:name`. Returns `None` when the id is absent/empty/over-long.
-fn read_form_text(
+/// Reads a form control's `form:id` (correlation key, bounded), `form:name`, and
+/// (for a checkbox) its `form:current-state`. Returns `None` when the id is
+/// absent/empty/over-long.
+fn read_form_control(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
+    kind: FormControlKind,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     limits: OdfImportLimits,
-) -> Result<Option<(String, Option<String>)>, OdfError> {
+) -> Result<Option<(String, FormControlDraft)>, OdfError> {
     let mut id = None;
     let mut name = None;
+    let mut checked = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -5045,6 +5069,13 @@ fn read_form_text(
             match local.as_ref() {
                 b"id" => id = Some(decode_attribute(&attribute)?),
                 b"name" => name = Some(decode_attribute(&attribute)?),
+                b"current-state" => {
+                    checked = match decode_attribute(&attribute)?.trim() {
+                        "checked" => Some(true),
+                        "unchecked" => Some(false),
+                        _ => None,
+                    }
+                }
                 _ => {}
             }
         }
@@ -5052,7 +5083,11 @@ fn read_form_text(
     let id = id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES);
     // The name is bounded to the model's form-string domain; over-long -> dropped.
     let name = name.filter(|name| name.len() <= 255 && name.chars().all(is_xml_text_char));
-    Ok(id.map(|id| (id, name)))
+    let kind = match kind {
+        FormControlKind::Text => FormControlKind::Text,
+        FormControlKind::CheckBox { .. } => FormControlKind::CheckBox { checked },
+    };
+    Ok(id.map(|id| (id, FormControlDraft { name, kind })))
 }
 
 fn read_href(
@@ -7135,7 +7170,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::Drawing(_)
             | InlineDraft::Field(_)
             | InlineDraft::CommentReference(_)
-            | InlineDraft::FormField { .. } => {}
+            | InlineDraft::FormField(_) => {}
         }
     }
     Ok(total)
@@ -7869,10 +7904,17 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"text-box");
             hash_bytes(hash, body.as_bytes());
         }
-        InlineDraft::FormField { name } => {
+        InlineDraft::FormField(control) => {
             hash_bytes(hash, b"form-field");
-            if let Some(name) = name {
+            if let Some(name) = &control.name {
                 hash_bytes(hash, name.as_bytes());
+            }
+            match control.kind {
+                FormControlKind::Text => hash_bytes(hash, b"text"),
+                FormControlKind::CheckBox { checked } => {
+                    hash_bytes(hash, b"checkbox");
+                    hash_bytes(hash, &[u8::from(checked.unwrap_or(false))]);
+                }
             }
         }
         InlineDraft::Revision {
@@ -8063,24 +8105,40 @@ fn build_inlines(
                     })],
                 })
             }
-            InlineDraft::FormField { name } => InlineNode::Field(Field {
-                id,
-                instruction: "FORMTEXT".to_owned(),
-                kind: FieldKind::Other {
-                    keyword: "FORMTEXT".to_owned(),
-                },
-                inlines: Vec::new(),
-                form: Some(FormFieldData {
-                    name: name.clone(),
-                    enabled: None,
-                    calc_on_exit: None,
-                    help_text: None,
-                    status_text: None,
-                    entry_macro: None,
-                    exit_macro: None,
-                    kind: FormFieldKind::TextInput(FormTextInput::default()),
-                }),
-            }),
+            InlineDraft::FormField(control) => {
+                let (instruction, kind) = match control.kind {
+                    FormControlKind::Text => (
+                        "FORMTEXT",
+                        FormFieldKind::TextInput(FormTextInput::default()),
+                    ),
+                    FormControlKind::CheckBox { checked } => (
+                        "FORMCHECKBOX",
+                        FormFieldKind::CheckBox(FormCheckBox {
+                            size: None,
+                            default: None,
+                            checked,
+                        }),
+                    ),
+                };
+                InlineNode::Field(Field {
+                    id,
+                    instruction: instruction.to_owned(),
+                    kind: FieldKind::Other {
+                        keyword: instruction.to_owned(),
+                    },
+                    inlines: Vec::new(),
+                    form: Some(FormFieldData {
+                        name: control.name.clone(),
+                        enabled: None,
+                        calc_on_exit: None,
+                        help_text: None,
+                        status_text: None,
+                        entry_macro: None,
+                        exit_macro: None,
+                        kind,
+                    }),
+                })
+            }
             InlineDraft::Revision {
                 kind,
                 author,
