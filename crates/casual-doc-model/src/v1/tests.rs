@@ -589,6 +589,42 @@ fn drawing_extent_out_of_domain_is_rejected() {
 }
 
 #[test]
+fn drawing_empty_descr_is_rejected() {
+    // An inline drawing's alt text, when present, must be non-empty and within
+    // MAX_DESCR_BYTES — the same domain the anchored-drawing branch enforces.
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","descr":""}}]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "drawing.descr"
+        }
+    ));
+}
+
+#[test]
+fn drawing_crop_out_of_domain_is_rejected() {
+    // A crop edge outside CROP_MIN..=CROP_MAX (import clamps into this range) is a
+    // source rectangle the model does not represent, so validate() rejects it.
+    let json = format!(
+        r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",
+            "body":[{{"type":"paragraph","id":"00000000000000030000000000000002","properties":{{}},
+              "inlines":[{{"type":"drawing","id":"00000000000000030000000000000003","media":"0000000000000000000000000000000d","crop":{{"left":0,"top":0,"right":900000,"bottom":0}}}}]}}],
+            {MEDIA_DEFS}}}"#
+    );
+    assert!(matches!(
+        expect_invalid(json.as_bytes()),
+        ModelError::PropertyValueOutOfDomain {
+            property: "drawing.crop"
+        }
+    ));
+}
+
+#[test]
 fn drawing_between_equal_runs_is_accepted() {
     let json = format!(
         r#"{{"schemaVersion":1,"documentId":"00000000000000030000000000000001",

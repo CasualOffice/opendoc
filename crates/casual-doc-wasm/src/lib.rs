@@ -14,9 +14,10 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::{
-    FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState, apply as apply_edit,
-    caret_run_properties, cell_properties, find_paragraph, find_table, locate_cell,
-    locate_table_cell, locate_table_row, paragraph_properties, run_properties_in_range,
+    CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
+    apply as apply_edit, caret_run_properties, cell_properties, find_paragraph, find_table,
+    locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
+    run_properties_in_range,
 };
 use casual_doc_export::write_document;
 #[cfg(test)]
@@ -58,6 +59,8 @@ use casual_doc_model::v1::{
     TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
     VerticalMerge, VerticalPosition, WrapMode,
 };
+use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
 use casual_doc_ooxml::DocxPackage;
@@ -267,10 +270,15 @@ enum HistoryKind {
     TableStructure,
     ObjectResize,
     ObjectMove,
+    ObjectCrop,
+    ObjectAltText,
+    ObjectDelete,
     DocumentProperties,
     PageSetup,
     StyleChange,
     BookmarkChange,
+    FieldChange,
+    NoteChange,
     Review,
     ReviewTyping,
 }
@@ -293,10 +301,15 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
             Self::ObjectMove => "Object move",
+            Self::ObjectCrop => "Crop",
+            Self::ObjectAltText => "Alt text",
+            Self::ObjectDelete => "Delete object",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
             Self::BookmarkChange => "Bookmark change",
+            Self::FieldChange => "Field change",
+            Self::NoteChange => "Note change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
         }
@@ -340,6 +353,11 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
         Operation::SetExtent { .. } => HistoryKind::ObjectResize,
         Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
+        Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
+        Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
+        Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
+            HistoryKind::ObjectDelete
+        }
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
@@ -347,9 +365,11 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
+        Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
+        Operation::InsertNote { .. } | Operation::RemoveNote { .. } => HistoryKind::NoteChange,
     }
 }
 
@@ -845,6 +865,68 @@ impl WasmDocument {
         self.commit_anchor(object, anchor)
     }
 
+    /// Sets or clears the source-rectangle crop (`a:srcRect`) of the picture `node`
+    /// as one undoable action (`SetImageCrop`). `insets` is `[left, top, right,
+    /// bottom]`, each the fraction (0..=1) of that source edge to hide; `None` (or
+    /// an all-zero inset set) clears the crop so the whole source fills the box.
+    /// Out-of-range edges are clamped. Errors if `node` is not a croppable picture
+    /// (an inline or floating drawing) or `insets` is not exactly four values.
+    #[wasm_bindgen(js_name = setImageCrop)]
+    pub fn set_image_crop(
+        &mut self,
+        node: &str,
+        insets: Option<Vec<f64>>,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let crop = match insets {
+            None => None,
+            Some(insets) if insets.len() == 4 => Some(CropRect {
+                left: fraction_to_crop(insets[0]),
+                top: fraction_to_crop(insets[1]),
+                right: fraction_to_crop(insets[2]),
+                bottom: fraction_to_crop(insets[3]),
+            }),
+            Some(_) => return Err(to_js("crop needs four inset fractions".into())),
+        };
+        self.apply_action_caret_as(
+            vec![Operation::SetImageCrop { object, crop }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectCrop,
+        )
+        .map_err(to_js)
+    }
+
+    /// Sets or clears an object's alt text (`wp:docPr@descr`) as one undoable action
+    /// (`SetObjectDescr`). `descr` is the new text, or `None` to clear it. Errors if
+    /// `node` is not an alt-text-bearing object (an inline or floating drawing), or
+    /// the text is empty / longer than the model's byte bound.
+    #[wasm_bindgen(js_name = setObjectDescr)]
+    pub fn set_object_descr(
+        &mut self,
+        node: &str,
+        descr: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        self.apply_action_caret_as(
+            vec![Operation::SetObjectDescr { object, descr }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectAltText,
+        )
+        .map_err(to_js)
+    }
+
+    /// Removes the object `node` (an inline or floating drawing, text box, or group)
+    /// as one undoable action (`DeleteObject`); undo restores it verbatim at its
+    /// original position. Errors if `node` is not a removable object or removing it
+    /// would leave the model invalid (it is a wrapper's sole child, or would leave
+    /// two mergeable runs adjacent — the host handles those before deleting).
+    #[wasm_bindgen(js_name = deleteObject)]
+    pub fn delete_object(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        self.apply_action(vec![Operation::DeleteObject { object }])
+            .map_err(to_js)
+    }
+
     /// The current wrap mode of a floating object as one of the
     /// [`set_object_wrap`](Self::set_object_wrap) tokens, or `""` if `node` is not
     /// a floating object — drives the context bar's active-wrap reflection.
@@ -1325,6 +1407,26 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// Inserts a footnote at the caret (paragraph `node`, byte `offset`): creates
+    /// an empty, ready-to-type footnote body and splices its reference mark into
+    /// the paragraph as one undoable action. The reference's displayed number is
+    /// derived at render — this only creates the reference and the body. The
+    /// returned [`EditResult`]'s caret (`node`/`offset`) is the model position of
+    /// the new note body's first paragraph, so the host can focus it for typing.
+    #[wasm_bindgen(js_name = insertFootnote)]
+    pub fn insert_footnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        self.insert_note(NoteKind::Footnote, node, offset)
+    }
+
+    /// Inserts an endnote at the caret, the endnote counterpart of
+    /// [`Self::insert_footnote`]: the note is created in the endnotes collection
+    /// and its reference spliced at the caret. Same [`EditResult`] contract — the
+    /// caret lands in the new endnote body.
+    #[wasm_bindgen(js_name = insertEndnote)]
+    pub fn insert_endnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        self.insert_note(NoteKind::Endnote, node, offset)
+    }
+
     /// Authored bookmark names, sorted for host navigation surfaces.
     #[wasm_bindgen(js_name = listBookmarks)]
     #[must_use]
@@ -1431,6 +1533,39 @@ impl WasmDocument {
             Pos::new(self.document.id(), 0),
             HistoryKind::BookmarkChange,
         )
+        .map_err(to_js)
+    }
+
+    /// Inserts a common field at the caret (`node`, `offset`). `kind` is one of
+    /// `"page"`, `"numpages"`, `"date"`, `"time"`, `"filename"`, `"author"`
+    /// (case-insensitive). `PAGE`/`NUMPAGES` recompute at pagination and ignore
+    /// `result_text`; the clock/context kinds cache `result_text` as their display
+    /// value (this engine reads no clock or filesystem, so the caller supplies the
+    /// already-formatted string). One undoable action. Rejects an unknown kind or a
+    /// caret that does not resolve to an editable paragraph position.
+    #[wasm_bindgen(js_name = insertField)]
+    pub fn insert_field(
+        &mut self,
+        node: &str,
+        offset: u32,
+        kind: &str,
+        result_text: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let common = parse_common_field(kind, result_text.unwrap_or_default()).map_err(to_js)?;
+        let field_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let result_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let field = common.build(field_id, result_id);
+        self.apply(Operation::InsertField {
+            at: Pos::new(nid, offset),
+            field: Box::new(field),
+        })
         .map_err(to_js)
     }
 
@@ -6852,6 +6987,40 @@ impl WasmDocument {
         self.apply_action_as(vec![op], kind)
     }
 
+    /// Shared body of `insertFootnote`/`insertEndnote`: allocates the note id, the
+    /// reference id, and the empty body paragraph id, then applies an
+    /// [`Operation::InsertNote`] as one undoable `NoteChange` action whose caret
+    /// lands at the start of the new note body so the host can focus it.
+    fn insert_note(
+        &mut self,
+        kind: NoteKind,
+        node: &str,
+        offset: u32,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(node)?;
+        let exhausted = || to_js("id space exhausted".to_string());
+        let note = NoteId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let reference_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let body_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let blocks = vec![BlockNode::Paragraph(Paragraph {
+            id: body_id,
+            properties: ParagraphProperties::default(),
+            inlines: Vec::new(),
+        })];
+        self.apply_action_caret_as(
+            vec![Operation::InsertNote {
+                kind,
+                note,
+                at: Pos::new(node, offset),
+                reference_id,
+                blocks,
+            }],
+            Pos::new(body_id, 0),
+            HistoryKind::NoteChange,
+        )
+        .map_err(to_js)
+    }
+
     /// Applies a batch of forward ops as one undoable action. The caret rests at
     /// the last op's natural place. A multi-op batch is atomic: if any op fails the
     /// document is rolled back, so a partially-applied cross-paragraph edit never
@@ -11453,6 +11622,27 @@ fn parse_pos(node: &str, offset: u32) -> Option<ModelPos> {
     Some(ModelPos::new(NodeId::from_str(node).ok()?, offset))
 }
 
+/// Maps a `kind` string from [`WasmDocument::insert_field`] to a [`CommonField`],
+/// threading `result` as the cached display value for the clock/context kinds
+/// (`page`/`numpages` ignore it and recompute). Rejects an unrecognized kind.
+fn parse_common_field(kind: &str, result: String) -> Result<CommonField, String> {
+    match kind.to_ascii_lowercase().as_str() {
+        "page" => Ok(CommonField::Page),
+        "numpages" => Ok(CommonField::NumPages),
+        "date" => Ok(CommonField::Date {
+            format: None,
+            result,
+        }),
+        "time" => Ok(CommonField::Time {
+            format: None,
+            result,
+        }),
+        "filename" => Ok(CommonField::FileName { result }),
+        "author" => Ok(CommonField::Author { result }),
+        other => Err(format!("unknown field kind: {other}")),
+    }
+}
+
 /// A [`ModelRange`] from two string-encoded anchors, or `None` if either id is
 /// malformed.
 fn parse_range(
@@ -12819,6 +13009,13 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
     NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
 }
 
+/// Converts a crop inset fraction (0..=1 of a source edge) to the model's
+/// `a:srcRect` unit (thousandths of a percent, [`CROP_FULL`] = 100%). The edit op
+/// clamps the result into the model's valid crop range.
+fn fraction_to_crop(fraction: f64) -> i32 {
+    (fraction * f64::from(CROP_FULL)).round() as i32
+}
+
 /// Where the caret lands after `op` is applied: end of an insertion, start of a
 /// deletion, start of the new paragraph after a split, and the join seam after a
 /// join (recovered from the inverse split's boundary).
@@ -13458,11 +13655,17 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             .map(first_pos_of_block)
             .unwrap_or_else(|| Pos::new(doc_id, 0)),
         Operation::DeleteBlocks { container, .. } => Pos::new(container.unwrap_or(doc_id), 0),
-        // Object resize keeps the object selected (the frontend re-draws the
-        // object chrome, not a text caret); this arm keeps the match exhaustive.
-        Operation::SetExtent { object, .. } | Operation::SetAnchor { object, .. } => {
-            Pos::new(*object, 0)
-        }
+        // Object resize / crop / alt-text keep the object selected (the frontend
+        // re-draws the object chrome, not a text caret); this arm keeps the match
+        // exhaustive.
+        Operation::SetExtent { object, .. }
+        | Operation::SetAnchor { object, .. }
+        | Operation::SetImageCrop { object, .. }
+        | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
+        // Deleting an object removes it, so its own id is a neutral placeholder (the
+        // host re-selects after the delete); its inverse re-inserts into `owner`.
+        Operation::DeleteObject { object } => Pos::new(*object, 0),
+        Operation::InsertObjectNode { owner, .. } => Pos::new(*owner, 0),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -13490,6 +13693,24 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // position is a neutral placeholder.
         Operation::CreateBookmark { start, .. } => *start,
         Operation::DeleteBookmark { .. } | Operation::RenameBookmark { .. } => Pos::new(doc_id, 0),
+        // A field is zero-width in the edit anchor space; the caret rests at the
+        // insertion point (immediately before the new field).
+        Operation::InsertField { at, .. } => *at,
+        // `RemoveField` only ever runs as an `InsertField` inverse (undo); rest the
+        // caret where the removed field was — its inverse carries that position.
+        Operation::RemoveField { .. } => match inverse {
+            Operation::InsertField { at, .. } => *at,
+            _ => Pos::new(doc_id, 0),
+        },
+        // A note lives in `Definitions`, not the body flow: land the caret at the
+        // start of the note body's first paragraph so the user can type into the
+        // fresh note. Both note ops route through `apply_action_caret_as` with the
+        // caller's own caret anyway; this keeps the match exhaustive with the same
+        // intent.
+        Operation::InsertNote { blocks, .. } => blocks
+            .first()
+            .map_or_else(|| Pos::new(doc_id, 0), first_pos_of_block),
+        Operation::RemoveNote { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -14344,6 +14565,120 @@ mod tests {
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
     const SAMPLE_DOCX: &[u8] = include_bytes!("../../../sample.docx");
 
+    /// Counts every note reference in a block tree (descending into tables, SDTs,
+    /// and inline wrappers), so a test can assert the delta an insert/undo makes.
+    fn count_note_references(blocks: &[BlockNode]) -> usize {
+        fn count_inlines(inlines: &[InlineNode]) -> usize {
+            inlines
+                .iter()
+                .map(|inline| match inline {
+                    InlineNode::NoteReference(_) => 1,
+                    InlineNode::Hyperlink(hyperlink) => count_inlines(&hyperlink.inlines),
+                    InlineNode::Revision(revision) => count_inlines(&revision.inlines),
+                    InlineNode::Sdt(sdt) => count_inlines(&sdt.inlines),
+                    _ => 0,
+                })
+                .sum()
+        }
+        blocks
+            .iter()
+            .map(|block| match block {
+                BlockNode::Paragraph(paragraph) => count_inlines(&paragraph.inlines),
+                BlockNode::Table(table) => table
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.cells)
+                    .map(|cell| count_note_references(&cell.blocks))
+                    .sum(),
+                BlockNode::Sdt(sdt) => count_note_references(&sdt.blocks),
+                BlockNode::AltChunk(_) => 0,
+            })
+            .sum()
+    }
+
+    /// insertFootnote → creates a footnote definition and splices its reference;
+    /// the reported caret lands in the new (empty) note body; undo removes both.
+    #[test]
+    fn insert_footnote_creates_a_note_and_undo_removes_it() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let notes_before = doc.document.definitions().footnotes.len();
+        let refs_before = count_note_references(doc.document.body());
+
+        let result = doc
+            .insert_footnote(&node.to_string(), 0)
+            .expect("insert footnote");
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            notes_before + 1,
+            "a footnote definition was created"
+        );
+        assert_eq!(
+            count_note_references(doc.document.body()),
+            refs_before + 1,
+            "the footnote reference was spliced into the body"
+        );
+        // The caret is the new note body's first paragraph, ready to type into.
+        let body_para = NodeId::from_str(&result.node()).expect("caret node id");
+        assert!(
+            doc.document
+                .definitions()
+                .footnotes
+                .iter()
+                .any(|(_, note)| matches!(
+                    note.blocks.first(),
+                    Some(BlockNode::Paragraph(p)) if p.id == body_para
+                )),
+            "the reported caret sits in the created footnote body"
+        );
+        assert_eq!(result.offset(), 0);
+        doc.document
+            .validate()
+            .expect("document valid after insert");
+
+        doc.undo().expect("undo footnote insertion");
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            notes_before,
+            "undo removed the footnote definition"
+        );
+        assert_eq!(
+            count_note_references(doc.document.body()),
+            refs_before,
+            "undo removed the footnote reference"
+        );
+    }
+
+    /// insertEndnote is the endnote counterpart: it grows the endnotes collection
+    /// (not footnotes) and undo restores it.
+    #[test]
+    fn insert_endnote_creates_a_note_and_undo_removes_it() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, len) = doc.ordered_paragraphs()[0];
+        let endnotes_before = doc.document.definitions().endnotes.len();
+        let footnotes_before = doc.document.definitions().footnotes.len();
+
+        doc.insert_endnote(&node.to_string(), len)
+            .expect("insert endnote at the paragraph end");
+        assert_eq!(
+            doc.document.definitions().endnotes.len(),
+            endnotes_before + 1,
+            "an endnote definition was created"
+        );
+        assert_eq!(
+            doc.document.definitions().footnotes.len(),
+            footnotes_before,
+            "the footnotes collection is untouched"
+        );
+
+        doc.undo().expect("undo endnote insertion");
+        assert_eq!(
+            doc.document.definitions().endnotes.len(),
+            endnotes_before,
+            "undo removed the endnote definition"
+        );
+    }
+
     #[test]
     fn format_neutral_host_opens_text_and_round_trips_through_odt() {
         let doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
@@ -14751,6 +15086,191 @@ mod tests {
         );
     }
 
+    /// The id of the first inline/floating drawing in `blocks` (recursing wrappers,
+    /// text boxes, table cells, and block SDTs), for the object-editing test.
+    fn first_object(blocks: &[BlockNode]) -> Option<NodeId> {
+        fn in_inlines(inlines: &[InlineNode]) -> Option<NodeId> {
+            for inline in inlines {
+                match inline {
+                    InlineNode::Drawing(drawing) => return Some(drawing.id),
+                    InlineNode::AnchoredDrawing(drawing) => return Some(drawing.id),
+                    InlineNode::Hyperlink(hyperlink) => {
+                        if let Some(id) = in_inlines(&hyperlink.inlines) {
+                            return Some(id);
+                        }
+                    }
+                    InlineNode::Revision(revision) => {
+                        if let Some(id) = in_inlines(&revision.inlines) {
+                            return Some(id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    if let Some(id) = in_inlines(&paragraph.inlines) {
+                        return Some(id);
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(id) = first_object(&cell.blocks) {
+                                return Some(id);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(id) = first_object(&sdt.blocks) {
+                        return Some(id);
+                    }
+                }
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+
+    /// The `(crop, descr)` of the drawing `id`, searched like [`first_object`].
+    fn object_crop_descr(
+        blocks: &[BlockNode],
+        id: NodeId,
+    ) -> Option<(Option<CropRect>, Option<String>)> {
+        fn in_inlines(
+            inlines: &[InlineNode],
+            id: NodeId,
+        ) -> Option<(Option<CropRect>, Option<String>)> {
+            for inline in inlines {
+                match inline {
+                    InlineNode::Drawing(drawing) if drawing.id == id => {
+                        return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
+                        return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::Hyperlink(hyperlink) => {
+                        if let Some(found) = in_inlines(&hyperlink.inlines, id) {
+                            return Some(found);
+                        }
+                    }
+                    InlineNode::Revision(revision) => {
+                        if let Some(found) = in_inlines(&revision.inlines, id) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    if let Some(found) = in_inlines(&paragraph.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(found) = object_crop_descr(&cell.blocks, id) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = object_crop_descr(&sdt.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn object_crop_and_alt_text_wire_through_wasm_and_survive_reopen() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let object = first_object(d.document.body()).expect("a drawing in the corpus");
+        let node = object.to_string();
+        let expected_crop = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        };
+
+        // Crop then alt-text the image through the wasm bindings; each is its own
+        // labeled undo step and lands on the model.
+        d.set_image_crop(&node, Some(vec![0.1, 0.2, 0.05, 0.15]))
+            .expect("crop the image");
+        assert_eq!(d.undo_label(), "Crop");
+        d.set_object_descr(&node, Some("Quarterly chart".to_owned()))
+            .expect("set the alt text");
+        assert_eq!(d.undo_label(), "Alt text");
+        d.document.validate().expect("crop + alt text remain valid");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+
+        // Undo peels off the alt text, then the crop; redo replays both.
+        d.undo().expect("undo alt text");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), None))
+        );
+        d.undo().expect("undo crop");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((None, None))
+        );
+        d.redo().expect("redo crop");
+        d.redo().expect("redo alt text");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+
+        // Write (export) then reopen: the crop + alt text round-trip through the
+        // real docx pipeline.
+        let bytes = d
+            .export_docx()
+            .expect("export cropped + alt-texted document");
+        let reopened = open_document(&bytes).expect("reopen the exported document");
+        let object = first_object(reopened.document.body()).expect("the drawing survived reopen");
+        assert_eq!(
+            object_crop_descr(reopened.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+    }
+
+    #[test]
+    fn delete_object_wires_through_wasm_and_undo_restores_it() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let object = first_object(d.document.body()).expect("a drawing in the corpus");
+        let node = object.to_string();
+        assert!(first_object(d.document.body()).is_some());
+
+        d.delete_object(&node).expect("delete the image");
+        assert_eq!(d.undo_label(), "Delete object");
+        // The deleted drawing is gone from the model.
+        assert!(object_crop_descr(d.document.body(), object).is_none());
+
+        // Undo restores it verbatim; redo removes it again.
+        d.undo().expect("undo the delete");
+        assert!(object_crop_descr(d.document.body(), object).is_some());
+        d.redo().expect("redo the delete");
+        assert!(object_crop_descr(d.document.body(), object).is_none());
+    }
+
     #[test]
     fn internal_link_resolves_named_bookmark_marker() {
         use casual_doc_model::v1::{
@@ -14864,6 +15384,92 @@ mod tests {
         let restored = d.bookmark_entries();
         assert_eq!(restored.len(), 1, "bookmark restored by undo");
         assert!(restored[0].ends_with("\tanchor"));
+    }
+
+    #[test]
+    fn parse_common_field_maps_kinds_and_rejects_unknown() {
+        assert!(matches!(
+            parse_common_field("page", String::new()),
+            Ok(CommonField::Page)
+        ));
+        assert!(matches!(
+            parse_common_field("NUMPAGES", String::new()),
+            Ok(CommonField::NumPages)
+        ));
+        assert!(matches!(
+            parse_common_field("Date", "x".to_owned()),
+            Ok(CommonField::Date { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("time", "x".to_owned()),
+            Ok(CommonField::Time { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("filename", "x".to_owned()),
+            Ok(CommonField::FileName { .. })
+        ));
+        assert!(matches!(
+            parse_common_field("author", "x".to_owned()),
+            Ok(CommonField::Author { .. })
+        ));
+        assert!(parse_common_field("bogus", String::new()).is_err());
+    }
+
+    #[test]
+    fn insert_field_then_undo_round_trips_through_wasm() {
+        let paragraph_id = NodeId::from_parts(71, 2).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(71, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(71, 3).unwrap(),
+                    properties: RunProperties::default(),
+                    text: "Page ".to_owned(),
+                })],
+            })],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("valid document");
+        let mut d = wasm_document(document);
+        let node = paragraph_id.to_string();
+
+        // Count the top-level fields in the single paragraph.
+        let field_count = |doc: &WasmDocument| -> usize {
+            doc.document
+                .body()
+                .iter()
+                .filter_map(|block| match block {
+                    BlockNode::Paragraph(p) => Some(p),
+                    _ => None,
+                })
+                .flat_map(|p| &p.inlines)
+                .filter(|inline| matches!(inline, InlineNode::Field(_)))
+                .count()
+        };
+
+        // Insert a PAGE field at the end of the run; `result_text` is ignored.
+        let result = d
+            .insert_field(&node, 5, "page", None)
+            .expect("insert page field");
+        assert_eq!(result.revision(), 1);
+        assert_eq!(field_count(&d), 1, "one field inserted");
+        assert_eq!(d.undo_label(), "Field change");
+
+        // A clock field caches the caller-supplied display text.
+        d.insert_field(&node, 5, "date", Some("8/6/2026".to_owned()))
+            .expect("insert date field");
+        assert_eq!(field_count(&d), 2, "second field inserted");
+
+        // Undo removes each field in turn.
+        d.undo().expect("undo date field");
+        assert_eq!(field_count(&d), 1, "date field removed by undo");
+        d.undo().expect("undo page field");
+        assert_eq!(field_count(&d), 0, "page field removed by undo");
+        // Redo re-inserts.
+        d.redo().expect("redo page field");
+        assert_eq!(field_count(&d), 1, "page field restored by redo");
     }
 
     /// Type a character, confirm the model text changed, then undo and confirm it

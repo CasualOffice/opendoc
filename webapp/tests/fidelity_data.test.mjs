@@ -115,11 +115,14 @@ test("every row is well-formed with a note and valid stage values", () => {
 
 test("load-bearing honesty invariants hold (do not overstate public support)", () => {
   const by = Object.fromEntries(FIDELITY.map((row) => [row.family, row]));
-  // Images cannot be inserted or edited yet.
-  assert.equal(by["Images & inline drawings"].editable, "none");
-  // Headers/footers, text boxes, footnotes render but are not editing surfaces.
+  // Images: select/resize/move/wrap/z-order editing ships (inline + body floats);
+  // crop/alt-text/insert-image are follow-ups — so partial, not none (never full).
+  assert.equal(by["Images & inline drawings"].editable, "partial");
+  // Headers/footers are not an editing surface yet.
   assert.equal(by["Headers & footers"].editable, "none");
-  assert.equal(by["Text boxes & shapes"].editable, "none");
+  // Text boxes/shapes: select/resize/move/wrap/z-order ships; box content + shape
+  // authoring are follow-ups — partial, not none.
+  assert.equal(by["Text boxes & shapes"].editable, "partial");
   // Common shape model (fill/gradient, outline/dash/arrows, rotation/flip, wrap
   // contour, preset geometry) is fully typed as of Layer 1; custGeom stays
   // retained-not-typed, so semantic-mode round-trip remains partial.

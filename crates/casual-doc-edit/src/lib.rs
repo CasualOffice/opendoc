@@ -25,7 +25,11 @@ use casual_doc_model::v1::{
     RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
+// A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
+use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
+use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
@@ -125,6 +129,108 @@ pub struct ReviewParagraphState {
     pub node: NodeId,
     /// Complete replacement inline tree.
     pub inlines: Vec<InlineNode>,
+}
+
+/// A common Word field a caller can insert without a field evaluator. This crate
+/// has no wall-clock or filesystem access, so a clock/context-based kind carries
+/// its already-formatted display text as `result`; `Page`/`NumPages` recompute at
+/// pagination and seed only a `"1"` placeholder.
+///
+/// [`CommonField::build`] turns a value of this enum into the [`Field`] node an
+/// [`Operation::InsertField`] inserts — it constructs the field instruction
+/// string, the [`FieldKind`] projection, and the cached-result leaf run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommonField {
+    /// `PAGE` — the current page number (recomputed at pagination).
+    Page,
+    /// `NUMPAGES` — the total page count (recomputed at pagination).
+    NumPages,
+    /// `DATE` — the current date. `result` is the caller-formatted display value.
+    Date {
+        /// The `\@` picture switch to embed in the instruction, if any.
+        format: Option<String>,
+        /// The already-formatted date to cache as the display value.
+        result: String,
+    },
+    /// `TIME` — the current time. `result` is the caller-formatted display value.
+    Time {
+        /// The `\@` picture switch to embed in the instruction, if any.
+        format: Option<String>,
+        /// The already-formatted time to cache as the display value.
+        result: String,
+    },
+    /// `FILENAME` — the document file name. `result` is the caller-supplied value.
+    FileName {
+        /// The file name to cache as the display value.
+        result: String,
+    },
+    /// `AUTHOR` — the document author. `result` is the caller-supplied value.
+    Author {
+        /// The author to cache as the display value.
+        result: String,
+    },
+}
+
+impl CommonField {
+    /// The field instruction string (`w:instrText`) for this kind, e.g.
+    /// `PAGE \* MERGEFORMAT` or `DATE \@ "M/d/yyyy"`.
+    #[must_use]
+    pub fn instruction(&self) -> String {
+        // A keyword-with-switch pattern shared by the picture-carrying kinds.
+        let with_picture = |keyword: &str, format: &Option<String>| match format {
+            Some(picture) => format!("{keyword} \\@ \"{picture}\""),
+            None => keyword.to_owned(),
+        };
+        match self {
+            CommonField::Page => "PAGE \\* MERGEFORMAT".to_owned(),
+            CommonField::NumPages => "NUMPAGES \\* MERGEFORMAT".to_owned(),
+            CommonField::Date { format, .. } => with_picture("DATE", format),
+            CommonField::Time { format, .. } => with_picture("TIME", format),
+            CommonField::FileName { .. } => "FILENAME \\* MERGEFORMAT".to_owned(),
+            CommonField::Author { .. } => "AUTHOR \\* MERGEFORMAT".to_owned(),
+        }
+    }
+
+    /// The cached display text to seed the field's leaf run with. `Page`/
+    /// `NumPages` seed a `"1"` placeholder the pagination field pass overwrites;
+    /// the other kinds seed the caller-supplied `result`.
+    fn result_text(&self) -> &str {
+        match self {
+            CommonField::Page | CommonField::NumPages => "1",
+            CommonField::Date { result, .. }
+            | CommonField::Time { result, .. }
+            | CommonField::FileName { result }
+            | CommonField::Author { result } => result,
+        }
+    }
+
+    /// Builds the [`Field`] node to insert: `id` is the field's identity and
+    /// `result_id` the identity of its cached-result run. An empty display value
+    /// yields an empty cached result (`result_id` unused); otherwise a single
+    /// default-styled leaf run carries the text. The [`FieldKind`] projection is
+    /// derived from the built instruction, so it always agrees with it.
+    #[must_use]
+    pub fn build(&self, id: NodeId, result_id: NodeId) -> Field {
+        let instruction = self.instruction();
+        let kind = FieldKind::parse(&instruction);
+        let text = self.result_text();
+        let inlines = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![InlineNode::Run(Run {
+                id: result_id,
+                properties: RunProperties::default(),
+                text: text.to_owned(),
+            })]
+        };
+        Field {
+            id,
+            instruction,
+            kind,
+            inlines,
+            form: None,
+        }
+    }
 }
 
 /// The closed editing op set (I2). Slice 1 carries the two text ops; structural
@@ -315,6 +421,57 @@ pub enum Operation {
         /// The new anchor (position + wrap + z-order).
         anchor: Box<DrawingAnchor>,
     },
+    /// Set or clear a picture's source-rectangle crop (`a:srcRect`) on the resolved
+    /// inline drawing or floating anchored drawing — the model side (`CropRect`)
+    /// shipped by P1G-OBJ-MODEL. Self-inverse carrying the previous crop (the
+    /// retained-value pattern, like [`Operation::SetExtent`]); `None` clears the
+    /// crop (the whole source fills the box). An identity (all-zero) crop is
+    /// normalized to `None`, and every edge is clamped into the model's crop range.
+    /// Rejected (doc left unchanged) if `object` is not a croppable picture.
+    SetImageCrop {
+        /// The picture (inline or floating drawing) to crop.
+        object: NodeId,
+        /// The new crop, or `None` to clear it.
+        crop: Option<CropRect>,
+    },
+    /// Set or clear an object's alt text (`wp:docPr@descr`) on the resolved inline
+    /// drawing or floating anchored drawing. Self-inverse carrying the previous
+    /// descr (retained-value pattern); `None` clears it. Rejected (doc left
+    /// unchanged) if `object` is not an alt-text-bearing object, or the text is
+    /// empty / longer than the model's byte bound.
+    SetObjectDescr {
+        /// The object whose alt text is replaced.
+        object: NodeId,
+        /// The new alt text, or `None` to clear it.
+        descr: Option<String>,
+    },
+    /// Remove the resolved object node (an inline drawing, floating anchored
+    /// drawing, text box, or group) from its inline container. Inverse:
+    /// [`Operation::InsertObjectNode`], carrying the removed node + its position, so
+    /// undo restores it verbatim (the retained-content pattern, like
+    /// [`Operation::DeleteTable`]). This is a pure structural removal (surrounding
+    /// runs are not coalesced, so the retained inverse restores verbatim). Rejected
+    /// (doc left unchanged) when removing the object would leave the model invalid:
+    /// it is the sole child of a container that must stay non-empty (a hyperlink,
+    /// revision, or inline content control), or removing it would leave two
+    /// mergeable equal-property runs adjacent — the host merges/reformats those
+    /// siblings (or uses a range delete) before removing such an object.
+    DeleteObject {
+        /// The object to remove.
+        object: NodeId,
+    },
+    /// Re-insert a previously removed object node at 0-based `index` within the
+    /// inline container `owner` (the paragraph, hyperlink, or revision whose inline
+    /// list held it). The inverse vehicle for [`Operation::DeleteObject`]; its own
+    /// inverse is a [`Operation::DeleteObject`] of the re-inserted node.
+    InsertObjectNode {
+        /// The inline container to insert into (a paragraph / hyperlink / revision).
+        owner: NodeId,
+        /// The 0-based inline position within the container.
+        index: u32,
+        /// The object node to insert (its id must be the removed object's).
+        node: Box<InlineNode>,
+    },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
     /// Boxed to keep the enum small.
@@ -432,6 +589,69 @@ pub enum Operation {
         /// The new name (non-empty, at most 255 bytes).
         name: String,
     },
+    /// Insert a pre-built inline [`Field`] node at the caret `at`. The field is
+    /// placed at paragraph top level (a field never nests inside an inline
+    /// wrapper), aligned to a run boundary — a run the offset lands inside is
+    /// split first. Build a common field with [`CommonField::build`]; this crate
+    /// evaluates nothing, so a clock/context field (`DATE`/`TIME`/…) carries its
+    /// caller-formatted cached display text, and `PAGE`/`NUMPAGES` carry a `"1"`
+    /// placeholder the pagination field pass recomputes. Inverse:
+    /// [`Operation::RemoveField`] of the field's id. Rejected (doc left unchanged)
+    /// if the caret does not resolve, the offset is out of range, or the resulting
+    /// document does not validate (e.g. a duplicate node id or a nested field).
+    /// Boxed to keep the enum small.
+    InsertField {
+        /// Where the field is inserted.
+        at: Pos,
+        /// The field node to insert; its id and any cached-run id must be fresh.
+        field: Box<Field>,
+    },
+    /// Remove the inline [`Field`] node with id `field` from its paragraph,
+    /// coalescing any equal-property runs the field kept apart. Inverse:
+    /// [`Operation::InsertField`] carrying the removed field and its exact
+    /// position, so undo re-inserts it verbatim. The field must sit at paragraph
+    /// top level (as this crate inserts it); an id that does not resolve to a
+    /// top-level field is rejected.
+    RemoveField {
+        /// The field to remove.
+        field: NodeId,
+    },
+    /// Insert a footnote or endnote at the caret `at`: install its definition
+    /// entry (keyed by `note`, in `Definitions::footnotes`/`endnotes` per `kind`)
+    /// holding `blocks`, and splice an [`InlineNode::NoteReference`] with identity
+    /// `reference_id` into the paragraph at `at`. The reference's displayed
+    /// auto-number is derived at render — this op only creates the reference and
+    /// the (typically single-empty-paragraph, ready-to-type) body. Refuses a
+    /// `note` id already defined for `kind`, an out-of-range caret, or a caret
+    /// interior to a non-run wrapper (the reference is always a top-level inline).
+    /// Inverse: [`Operation::RemoveNote`], which drops both the reference and the
+    /// definition; undo therefore restores the document verbatim.
+    InsertNote {
+        /// Whether this is a footnote or an endnote.
+        kind: NoteKind,
+        /// The new note's id (must not already be defined for `kind`).
+        note: NoteId,
+        /// The caret where the reference is spliced.
+        at: Pos,
+        /// The fresh identity of the new [`InlineNode::NoteReference`] inline.
+        reference_id: NodeId,
+        /// The note's block content, carried verbatim so the inverse restores it.
+        blocks: Vec<BlockNode>,
+    },
+    /// Remove the footnote/endnote `note` and its body-side reference (the
+    /// [`InlineNode::NoteReference`] inline with identity `reference_id`). The
+    /// inverse vehicle for [`Operation::InsertNote`]: it recovers the reference's
+    /// paragraph and offset and the removed body, so undo replays an exact
+    /// [`Operation::InsertNote`]. Refuses when the reference or the definition is
+    /// absent (the document is left unchanged).
+    RemoveNote {
+        /// Whether `note` is a footnote or an endnote.
+        kind: NoteKind,
+        /// The note definition to remove.
+        note: NoteId,
+        /// The body-side reference inline to remove.
+        reference_id: NodeId,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -461,6 +681,12 @@ pub enum EditError {
     /// A bookmark id does not resolve to a definition (or its markers cannot be
     /// located at paragraph top level).
     BookmarkNotFound,
+    /// An inserted field is rejected by the model (a duplicate node id, a nested
+    /// field, or invalid cached inlines), or a field removal would leave the
+    /// document invalid.
+    InvalidField,
+    /// A field id does not resolve to a field at paragraph top level.
+    FieldNotFound,
 }
 
 /// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
@@ -895,6 +1121,60 @@ pub fn apply(
                 anchor: Box::new(previous),
             })
         }
+        Operation::SetImageCrop { object, crop } => {
+            // Normalize an identity crop to "no crop" and clamp every edge into the
+            // model's round-trippable range before it is stored.
+            let crop = crop.map(CropRect::clamped).filter(|c| !c.is_identity());
+            let previous =
+                set_object_crop(doc.body_mut(), *object, crop).ok_or(EditError::NodeNotFound)?;
+            Ok(Operation::SetImageCrop {
+                object: *object,
+                crop: previous,
+            })
+        }
+        Operation::SetObjectDescr { object, descr } => {
+            // The model bounds alt text to non-empty and at most `MAX_DESCR_BYTES`;
+            // enforce it before mutating because an inline drawing's `descr` is not
+            // length-checked by `Document::validate`.
+            if let Some(text) = descr
+                && (text.is_empty() || text.len() > MAX_DESCR_BYTES)
+            {
+                return Err(EditError::ValueTooLarge);
+            }
+            let previous =
+                set_object_descr(doc.body_mut(), *object, descr).ok_or(EditError::NodeNotFound)?;
+            if let Err(_err) = doc.validate() {
+                // Roll back: any residual model rule (e.g. the anchored path's own
+                // bound) must not leave a partial mutation behind.
+                set_object_descr(doc.body_mut(), *object, &previous);
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetObjectDescr {
+                object: *object,
+                descr: previous,
+            })
+        }
+        Operation::DeleteObject { object } => {
+            let (owner, index, node) =
+                remove_object(doc.body_mut(), *object).ok_or(EditError::NodeNotFound)?;
+            if let Err(_err) = doc.validate() {
+                // Roll back: removing the object emptied a container that must stay
+                // non-empty (a hyperlink / revision / inline SDT's sole child).
+                let _ = try_insert_object(doc.body_mut(), owner, index, &node);
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::InsertObjectNode {
+                owner,
+                index,
+                node: Box::new(node),
+            })
+        }
+        Operation::InsertObjectNode { owner, index, node } => {
+            if !try_insert_object(doc.body_mut(), *owner, *index, node)? {
+                return Err(EditError::NodeNotFound);
+            }
+            Ok(Operation::DeleteObject { object: node.id() })
+        }
         Operation::SetTableCellProperties { cell, properties } => {
             let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut c.properties, (**properties).clone());
@@ -1210,7 +1490,254 @@ pub fn apply(
                 name: previous,
             })
         }
+        Operation::InsertField { at, field } => {
+            // Snapshot the target paragraph so any failure (a bad offset, a field
+            // the model rejects) rolls back to exactly the prior state; a field is
+            // always inserted at paragraph top level, aligned to a run boundary.
+            let snapshot = find_paragraph(doc.body(), at.node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            let insertion = insert_field_at(doc.body_mut(), *at, (**field).clone(), ids);
+            let outcome =
+                insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidField));
+            if let Err(err) = outcome {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), at.node) {
+                    para.inlines = snapshot;
+                }
+                return Err(err);
+            }
+            Ok(Operation::RemoveField { field: field.id })
+        }
+        Operation::RemoveField { field } => {
+            let (node, offset, removed) =
+                locate_field(doc.body(), *field).ok_or(EditError::FieldNotFound)?;
+            let snapshot = find_paragraph(doc.body(), node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                remove_field_by_id(&mut para.inlines, *field);
+                // Removing the field can leave two equal-property runs it kept
+                // apart adjacent, which the model forbids; coalesce them back.
+                coalesce_adjacent_runs(&mut para.inlines);
+            }
+            if doc.validate().is_err() {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                    para.inlines = snapshot;
+                }
+                return Err(EditError::InvalidField);
+            }
+            Ok(Operation::InsertField {
+                at: Pos::new(node, offset),
+                field: Box::new(removed),
+            })
+        }
+        Operation::InsertNote {
+            kind,
+            note,
+            at,
+            reference_id,
+            blocks,
+        } => {
+            // A fresh note id must not already be defined for its kind — inserting
+            // over an existing note would silently orphan the old body.
+            let already_defined = match kind {
+                NoteKind::Footnote => doc.definitions().footnotes.contains_key(note),
+                NoteKind::Endnote => doc.definitions().endnotes.contains_key(note),
+            };
+            if already_defined {
+                return Err(EditError::Unsupported);
+            }
+            let para =
+                find_paragraph_mut(doc.body_mut(), at.node).ok_or(EditError::NodeNotFound)?;
+            if at.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // Snapshot the paragraph's inlines so an invalid result rolls back
+            // exactly (no partial mutation ever persists).
+            let old_inlines = para.inlines.clone();
+            ensure_run_boundary(&mut para.inlines, at.offset, ids)?;
+            let Some(index) = top_level_insert_index(&para.inlines, at.offset) else {
+                // The caret fell interior to a non-run wrapper (hyperlink/SDT); the
+                // reference is only ever a top-level inline (slice-1 limitation).
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            };
+            para.inlines.insert(
+                index,
+                InlineNode::NoteReference(NoteReference {
+                    id: *reference_id,
+                    kind: *kind,
+                    note: *note,
+                }),
+            );
+            match kind {
+                NoteKind::Footnote => {
+                    doc.definitions_mut().footnotes.insert(
+                        *note,
+                        Note {
+                            blocks: blocks.clone(),
+                        },
+                    );
+                }
+                NoteKind::Endnote => {
+                    doc.definitions_mut().endnotes.insert(
+                        *note,
+                        Note {
+                            blocks: blocks.clone(),
+                        },
+                    );
+                }
+            }
+            if doc.validate().is_err() {
+                // Roll back both sides: the definition entry and the reference —
+                // an invalid note (a colliding id, a malformed body) must not land.
+                match kind {
+                    NoteKind::Footnote => {
+                        doc.definitions_mut().footnotes.remove(note);
+                    }
+                    NoteKind::Endnote => {
+                        doc.definitions_mut().endnotes.remove(note);
+                    }
+                }
+                let para = find_paragraph_mut(doc.body_mut(), at.node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::RemoveNote {
+                kind: *kind,
+                note: *note,
+                reference_id: *reference_id,
+            })
+        }
+        Operation::RemoveNote {
+            kind,
+            note,
+            reference_id,
+        } => {
+            // Locate and remove the body-side reference, recovering its paragraph
+            // and offset for the inverse's caret.
+            let Some((para_node, offset, old_inlines)) =
+                remove_note_reference(doc.body_mut(), *reference_id)
+            else {
+                return Err(EditError::NodeNotFound);
+            };
+            let removed = match kind {
+                NoteKind::Footnote => doc.definitions_mut().footnotes.remove(note),
+                NoteKind::Endnote => doc.definitions_mut().endnotes.remove(note),
+            };
+            let Some(removed) = removed else {
+                // The reference existed but the definition did not: restore the
+                // reference and refuse (no partial mutation).
+                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::NodeNotFound);
+            };
+            if doc.validate().is_err() {
+                match kind {
+                    NoteKind::Footnote => {
+                        doc.definitions_mut().footnotes.insert(*note, removed);
+                    }
+                    NoteKind::Endnote => {
+                        doc.definitions_mut().endnotes.insert(*note, removed);
+                    }
+                }
+                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::InsertNote {
+                kind: *kind,
+                note: *note,
+                at: Pos::new(para_node, offset),
+                reference_id: *reference_id,
+                blocks: removed.blocks,
+            })
+        }
     }
+}
+
+/// The top-level insertion index in `inlines` for a caret at byte `offset`, or
+/// `None` when the offset falls strictly inside a non-run wrapper (a hyperlink /
+/// SDT), where no top-level boundary exists. Callers align run boundaries with
+/// [`ensure_run_boundary`] first, so a run straddling the offset has already been
+/// split; the index then lands exactly between the two halves.
+fn top_level_insert_index(inlines: &[InlineNode], offset: u32) -> Option<usize> {
+    let mut cum = 0u32;
+    for (idx, inline) in inlines.iter().enumerate() {
+        if cum == offset {
+            return Some(idx);
+        }
+        cum += inline_text_len(inline);
+    }
+    (cum == offset).then_some(inlines.len())
+}
+
+/// Removes the top-level [`InlineNode::NoteReference`] with identity
+/// `reference_id` from `blocks` or any nested cell / SDT, returning its
+/// paragraph's id, the reference's byte offset within that paragraph, and a
+/// snapshot of the paragraph's inlines *before* removal (for an exact rollback).
+/// After removal the paragraph's runs are coalesced, so the two runs a
+/// zero-width reference separated merge back — undoing an [`Operation::InsertNote`]
+/// that split a run restores the original run verbatim.
+fn remove_note_reference(
+    blocks: &mut [BlockNode],
+    reference_id: NodeId,
+) -> Option<(NodeId, u32, Vec<InlineNode>)> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(para) => {
+                if let Some(found) = take_note_reference(para, reference_id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(found) = remove_note_reference(&mut cell.blocks, reference_id) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = remove_note_reference(&mut sdt.blocks, reference_id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Removes the top-level note reference `reference_id` from `para` if present,
+/// returning `(paragraph id, reference offset, pre-removal inlines)`.
+fn take_note_reference(
+    para: &mut Paragraph,
+    reference_id: NodeId,
+) -> Option<(NodeId, u32, Vec<InlineNode>)> {
+    let mut cum = 0u32;
+    let mut target = None;
+    for (idx, inline) in para.inlines.iter().enumerate() {
+        if matches!(inline, InlineNode::NoteReference(reference) if reference.id == reference_id) {
+            target = Some((idx, cum));
+            break;
+        }
+        cum += inline_text_len(inline);
+    }
+    let (idx, offset) = target?;
+    let snapshot = para.inlines.clone();
+    para.inlines.remove(idx);
+    // The reference sat between two runs the split created; with it gone they may
+    // be adjacent and equal-propertied, which the model forbids — coalesce so the
+    // original run is restored exactly.
+    coalesce_adjacent_runs(&mut para.inlines);
+    Some((para.id, offset, snapshot))
 }
 
 /// Removes the table `table_id` from `blocks` or any nested cell/SDT, returning its
@@ -1430,6 +1957,340 @@ fn set_object_anchor_in_inlines(
         }
     }
     None
+}
+
+/// Sets or clears the source-rectangle crop of the picture `object` (an inline
+/// `Drawing` or floating `AnchoredDrawing`), searched the same way as
+/// [`set_object_extent`] (hyperlink/revision wrappers, text-box bodies, table
+/// cells, block SDTs). Returns the **previous** crop; `None` if `object` is not a
+/// croppable picture (a text box / group has no `a:srcRect`).
+/// [`Operation::SetImageCrop`]'s target.
+fn set_object_crop(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    crop: Option<CropRect>,
+) -> Option<Option<CropRect>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut paragraph.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_object_crop(&mut cell.blocks, object, crop) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_object_crop(&mut sdt.blocks, object, crop) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_object_crop_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    crop: Option<CropRect>,
+) -> Option<Option<CropRect>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.crop, crop));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.crop, crop));
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(prev) = set_object_crop(&mut text_box.blocks, object, crop) {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut hyperlink.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut revision.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Sets or clears the alt text of the object `object` (an inline `Drawing` or
+/// floating `AnchoredDrawing`), searched the same way as [`set_object_extent`].
+/// Returns the **previous** alt text; `None` if `object` is not an
+/// alt-text-bearing object. [`Operation::SetObjectDescr`]'s target.
+fn set_object_descr(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    descr: &Option<String>,
+) -> Option<Option<String>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut paragraph.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_object_descr(&mut cell.blocks, object, descr) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_object_descr(&mut sdt.blocks, object, descr) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_object_descr_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    descr: &Option<String>,
+) -> Option<Option<String>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.descr, descr.clone()));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.descr, descr.clone()));
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(prev) = set_object_descr(&mut text_box.blocks, object, descr) {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut hyperlink.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut revision.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `node` is a removable object (the target set of
+/// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
+/// text box, or a DrawingML group.
+fn is_object_node(node: &InlineNode) -> bool {
+    matches!(
+        node,
+        InlineNode::Drawing(_)
+            | InlineNode::AnchoredDrawing(_)
+            | InlineNode::TextBox(_)
+            | InlineNode::Group(_)
+    )
+}
+
+/// Removes the object `object` from its inline container, searched the same way as
+/// [`set_object_extent`]. Returns `(owner, index, node)` — the id of the inline
+/// container the object was removed from (a paragraph, hyperlink, or revision), the
+/// 0-based inline position it occupied, and the removed node — so
+/// [`Operation::DeleteObject`] can build an exact-restore inverse. `None` if
+/// `object` is not a removable object.
+fn remove_object(blocks: &mut [BlockNode], object: NodeId) -> Option<(NodeId, u32, InlineNode)> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) =
+                    remove_object_from_inlines(paragraph.id, &mut paragraph.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(found) = remove_object(&mut cell.blocks, object) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = remove_object(&mut sdt.blocks, object) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn remove_object_from_inlines(
+    owner: NodeId,
+    inlines: &mut Vec<InlineNode>,
+    object: NodeId,
+) -> Option<(NodeId, u32, InlineNode)> {
+    // A direct child of this inline list: remove it and record its position.
+    if let Some(index) = inlines
+        .iter()
+        .position(|node| node.id() == object && is_object_node(node))
+    {
+        let node = inlines.remove(index);
+        return Some((owner, index as u32, node));
+    }
+    // Otherwise descend into wrappers (which own their own inline lists) and
+    // text-box bodies, exactly as the resize/anchor resolvers do.
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(found) =
+                    remove_object_from_inlines(hyperlink.id, &mut hyperlink.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(found) =
+                    remove_object_from_inlines(revision.id, &mut revision.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(found) = remove_object(&mut text_box.blocks, object) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Inserts `node` at 0-based inline `index` within the container `owner` (a
+/// paragraph, hyperlink, or revision), searched the same way as [`remove_object`].
+/// The re-insertion target for [`Operation::InsertObjectNode`]. Returns `Ok(true)`
+/// when inserted, `Ok(false)` when `owner` is not found, and `Err` when `owner` is
+/// found but `index` is past the end of its inline list.
+fn try_insert_object(
+    blocks: &mut [BlockNode],
+    owner: NodeId,
+    index: u32,
+    node: &InlineNode,
+) -> Result<bool, EditError> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if paragraph.id == owner {
+                    insert_object_at(&mut paragraph.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut paragraph.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if try_insert_object(&mut cell.blocks, owner, index, node)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if try_insert_object(&mut sdt.blocks, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    Ok(false)
+}
+
+fn try_insert_object_in_inlines(
+    inlines: &mut [InlineNode],
+    owner: NodeId,
+    index: u32,
+    node: &InlineNode,
+) -> Result<bool, EditError> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Hyperlink(hyperlink) => {
+                if hyperlink.id == owner {
+                    insert_object_at(&mut hyperlink.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut hyperlink.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if revision.id == owner {
+                    insert_object_at(&mut revision.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut revision.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if try_insert_object(&mut text_box.blocks, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+fn insert_object_at(
+    inlines: &mut Vec<InlineNode>,
+    index: u32,
+    node: &InlineNode,
+) -> Result<(), EditError> {
+    let idx = index as usize;
+    if idx > inlines.len() {
+        return Err(EditError::OffsetOutOfRange);
+    }
+    inlines.insert(idx, node.clone());
+    Ok(())
 }
 
 /// The mutable block list of the cell or SDT with id `id`, searched recursively —
@@ -2871,6 +3732,68 @@ fn insert_bookmark_pair(
     Ok(())
 }
 
+/// Inserts a pre-built [`Field`] node at `at`, aligning the caret to a run
+/// boundary first (splitting the run the offset lands in) so the field sits at
+/// paragraph top level. [`Operation::InsertField`]'s mutation.
+fn insert_field_at(
+    blocks: &mut [BlockNode],
+    at: Pos,
+    field: Field,
+    ids: &mut dyn RunIds,
+) -> Result<(), EditError> {
+    let para = find_paragraph_mut(blocks, at.node).ok_or(EditError::NodeNotFound)?;
+    if at.offset > paragraph_text_len(para) {
+        return Err(EditError::OffsetOutOfRange);
+    }
+    insert_marker_at(&mut para.inlines, at.offset, InlineNode::Field(field), ids)?;
+    Ok(())
+}
+
+/// Locates the top-level [`InlineNode::Field`] with id `field` among the body's
+/// paragraph inlines (descending into tables and block SDTs), returning its
+/// paragraph, its byte offset in that paragraph, and a clone of the field (for
+/// [`Operation::RemoveField`]'s inverse). `None` unless it resolves at paragraph
+/// top level.
+fn locate_field(blocks: &[BlockNode], field: NodeId) -> Option<(NodeId, u32, Field)> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0u32;
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Field(found) = inline
+                        && found.id == field
+                    {
+                        return Some((paragraph.id, offset, found.clone()));
+                    }
+                    offset = offset.saturating_add(inline_text_len(inline));
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(found) = locate_field(&cell.blocks, field) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = locate_field(&sdt.blocks, field) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Removes the top-level [`InlineNode::Field`] whose own id is `field` from
+/// `inlines`.
+fn remove_field_by_id(inlines: &mut Vec<InlineNode>, field: NodeId) {
+    inlines.retain(|inline| !matches!(inline, InlineNode::Field(f) if f.id == field));
+}
+
 /// Removes the top-level bookmark marker whose own id is `marker` from `inlines`.
 fn remove_marker_by_id(inlines: &mut Vec<InlineNode>, marker: NodeId) {
     inlines.retain(|inline| match inline {
@@ -3231,6 +4154,488 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         ));
+    }
+
+    /// Registers one PNG media part and returns the definitions holding it.
+    fn media_defs(media: casual_doc_model::v1::MediaId) -> Definitions {
+        use casual_doc_model::v1::MediaReference;
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        definitions
+    }
+
+    /// An inline drawing referencing `media`, with the given optional crop/descr.
+    fn drawing(
+        id: u64,
+        media: casual_doc_model::v1::MediaId,
+        descr: Option<String>,
+        crop: Option<CropRect>,
+    ) -> InlineNode {
+        use casual_doc_model::v1::{Drawing, Extent};
+        InlineNode::Drawing(Drawing {
+            id: n(id),
+            media,
+            extent: Some(Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            }),
+            descr,
+            crop,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        })
+    }
+
+    #[test]
+    fn set_image_crop_sets_clears_clamps_and_round_trips() {
+        use casual_doc_model::v1::{CROP_MAX, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 900).unwrap());
+        let drawing_id = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![run(3, "before"), drawing(50, media, None, None)],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+
+        // An out-of-range edge is clamped into the model's crop range.
+        let requested = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 999_999,
+        };
+        let stored = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: CROP_MAX,
+        };
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(requested),
+            },
+        )
+        .expect("crop the drawing");
+        // A freshly cropped image had no prior crop.
+        assert_eq!(
+            inverse,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            }
+        );
+        let crop_of = |doc: &Document| {
+            let BlockNode::Paragraph(p) = &doc.body()[0] else {
+                unreachable!()
+            };
+            let InlineNode::Drawing(dr) = &p.inlines[1] else {
+                panic!("the drawing is intact");
+            };
+            dr.crop
+        };
+        assert_eq!(crop_of(&d), Some(stored));
+
+        // Undo restores the un-cropped state, and redo re-applies the clamped crop.
+        apply(&mut d, &mut ids, &inverse).expect("undo the crop");
+        assert_eq!(crop_of(&d), None);
+        let clear = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(requested),
+            },
+        )
+        .expect("redo the crop");
+        assert_eq!(crop_of(&d), Some(stored));
+
+        // Clearing carries the previous crop, so its own inverse restores it.
+        assert_eq!(
+            clear,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            }
+        );
+        let restore = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            },
+        )
+        .expect("clear the crop");
+        assert_eq!(crop_of(&d), None);
+        assert_eq!(
+            restore,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(stored),
+            }
+        );
+
+        // An identity (all-zero) crop is normalized to "no crop".
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(CropRect::default()),
+            },
+        )
+        .expect("identity crop is a no-op clear");
+        assert_eq!(crop_of(&d), None);
+
+        // A text box has no `a:srcRect`; an unknown object is rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetImageCrop {
+                    object: n(999),
+                    crop: Some(stored),
+                },
+            ),
+            Err(EditError::NodeNotFound)
+        ));
+    }
+
+    #[test]
+    fn set_object_descr_sets_clears_round_trips_and_bounds_length() {
+        use casual_doc_model::v1::{MAX_DESCR_BYTES, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 901).unwrap());
+        let drawing_id = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![drawing(50, media, None, None)])],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+
+        let descr_of = |doc: &Document| {
+            let BlockNode::Paragraph(p) = &doc.body()[0] else {
+                unreachable!()
+            };
+            let InlineNode::Drawing(dr) = &p.inlines[0] else {
+                panic!("the drawing is intact");
+            };
+            dr.descr.clone()
+        };
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: Some("Company logo".to_owned()),
+            },
+        )
+        .expect("set the alt text");
+        assert_eq!(
+            inverse,
+            Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: None,
+            }
+        );
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // Undo clears it again; redo restores it.
+        apply(&mut d, &mut ids, &inverse).expect("undo the alt text");
+        assert_eq!(descr_of(&d), None);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: Some("Company logo".to_owned()),
+            },
+        )
+        .expect("redo the alt text");
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // An empty alt text is rejected and the prior value survives.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetObjectDescr {
+                    object: drawing_id,
+                    descr: Some(String::new()),
+                },
+            ),
+            Err(EditError::ValueTooLarge)
+        ));
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // An over-long alt text is rejected the same way.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetObjectDescr {
+                    object: drawing_id,
+                    descr: Some("x".repeat(MAX_DESCR_BYTES + 1)),
+                },
+            ),
+            Err(EditError::ValueTooLarge)
+        ));
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+    }
+
+    #[test]
+    fn delete_object_removes_an_inline_drawing_and_inverse_restores_it() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 902).unwrap());
+        let drawing_id = n(50);
+        let original = drawing(50, media, Some("Alt".to_owned()), None);
+        // The surrounding runs carry different properties so removing the object
+        // between them does not leave two mergeable equal-property runs adjacent.
+        let bold_before = InlineNode::Run(Run {
+            id: n(3),
+            properties: RunProperties {
+                bold: Some(true),
+                ..RunProperties::default()
+            },
+            text: "before".to_owned(),
+        });
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![bold_before, original.clone(), run(4, "after")],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with an inline drawing");
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteObject { object: drawing_id },
+        )
+        .expect("delete the drawing");
+        // The inverse re-inserts the exact node at its original inline position.
+        assert_eq!(
+            inverse,
+            Operation::InsertObjectNode {
+                owner: n(2),
+                index: 1,
+                node: Box::new(original.clone()),
+            }
+        );
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 2);
+        assert!(!p.inlines.iter().any(|node| node.id() == drawing_id));
+
+        // Undo restores the drawing verbatim at index 1.
+        let redo = apply(&mut d, &mut ids, &inverse).expect("undo the delete");
+        assert_eq!(redo, Operation::DeleteObject { object: drawing_id });
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 3);
+        assert_eq!(p.inlines[1], original);
+
+        // Redo removes it again.
+        apply(&mut d, &mut ids, &redo).expect("redo the delete");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 2);
+
+        // An unknown object is rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::DeleteObject { object: n(999) }
+            ),
+            Err(EditError::NodeNotFound)
+        ));
+
+        // Removing an object wedged between two equal-property runs would leave them
+        // mergeable-adjacent (model-invalid); the op is refused and rolls back.
+        let wedged_id = n(80);
+        let mut wedged = Document::new(
+            n(1001),
+            vec![para(
+                5,
+                vec![
+                    run(6, "left"),
+                    drawing(80, media, None, None),
+                    run(7, "right"),
+                ],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a wedged drawing");
+        assert!(matches!(
+            apply(
+                &mut wedged,
+                &mut ids,
+                &Operation::DeleteObject { object: wedged_id },
+            ),
+            Err(EditError::Unsupported)
+        ));
+        let BlockNode::Paragraph(p) = &wedged.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 3);
+        assert_eq!(p.inlines[1].id(), wedged_id);
+    }
+
+    #[test]
+    fn delete_object_removes_an_anchored_float_and_rejects_emptying_a_wrapper() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent,
+            HorizontalAnchor, HorizontalPosition, MediaId, VerticalAnchor, VerticalPosition,
+            WrapDistances, WrapMode,
+        };
+        let media = MediaId::new(NodeId::from_parts(7, 903).unwrap());
+        let float_id = n(60);
+        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: float_id,
+            media,
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Page,
+                    position: HorizontalPosition::Offset(100_000),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Page,
+                    position: VerticalPosition::Offset(50_000),
+                },
+                wrap: WrapMode::None,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: true,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        // A clickable image: a hyperlink whose only child is a drawing. Removing it
+        // would empty the hyperlink, which the model forbids.
+        let linked_id = n(70);
+        let linked_drawing = drawing(70, media, None, None);
+        let hyperlink = InlineNode::Hyperlink(Hyperlink {
+            id: n(71),
+            target: external("https://example.com"),
+            tooltip: None,
+            inlines: vec![linked_drawing],
+        });
+        let mut d = Document::new(
+            n(1000),
+            vec![
+                para(2, vec![run(3, "anchor"), float.clone()]),
+                para(4, vec![hyperlink]),
+            ],
+            media_defs(media),
+        )
+        .expect("valid document with a floating drawing");
+        let mut ids = IdGenerator::new(9);
+
+        // The float round-trips through delete + undo verbatim.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteObject { object: float_id },
+        )
+        .expect("delete the float");
+        assert_eq!(
+            inverse,
+            Operation::InsertObjectNode {
+                owner: n(2),
+                index: 1,
+                node: Box::new(float.clone()),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("undo the float delete");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines[1], float);
+
+        // Deleting the sole child of a hyperlink is refused, and the document is
+        // left unchanged (the drawing is restored on rollback).
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::DeleteObject { object: linked_id }
+            ),
+            Err(EditError::Unsupported)
+        ));
+        let BlockNode::Paragraph(p) = &d.body()[1] else {
+            unreachable!()
+        };
+        let InlineNode::Hyperlink(link) = &p.inlines[0] else {
+            panic!("the hyperlink is intact");
+        };
+        assert_eq!(link.inlines.len(), 1);
+        assert_eq!(link.inlines[0].id(), linked_id);
+    }
+
+    #[test]
+    fn cropped_and_alt_texted_image_survives_a_model_write_reopen() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 904).unwrap());
+        let crop = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        };
+        let m1 = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![drawing(
+                    50,
+                    media,
+                    Some("Quarterly chart".to_owned()),
+                    Some(crop),
+                )],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a cropped, alt-texted image");
+        // Write (serialize) then reopen (deserialize) the model: the crop + alt text
+        // round-trip verbatim.
+        let json = serde_json::to_string(&m1).expect("serialize the model");
+        let m2: Document = serde_json::from_str(&json).expect("reopen the model");
+        assert_eq!(m1, m2);
     }
 
     #[test]
@@ -5054,5 +6459,456 @@ mod tests {
         let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
             .expect("reopen");
         assert_eq!(d, reopened, "the created bookmark survives write -> reopen");
+    }
+
+    // ---- Fields ------------------------------------------------------------
+
+    /// The single top-level field in paragraph `id`, if any.
+    fn field_of(document: &Document, id: NodeId) -> Option<Field> {
+        inlines_of(document, id).into_iter().find_map(|inline| {
+            if let InlineNode::Field(field) = inline {
+                Some(field)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Applies `InsertField` for `common` at `at`, asserts the field lands with the
+    /// expected instruction/kind, then asserts the returned inverse restores the
+    /// paragraph verbatim and that re-applying the forward op is idempotent.
+    fn round_trip_field(common: CommonField, instruction: &str) {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(20);
+        let field = common.build(n(50), n(51));
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 2),
+                field: Box::new(field.clone()),
+            },
+        )
+        .expect("insert field");
+
+        let inserted = field_of(&d, p).expect("field present after insert");
+        assert_eq!(inserted.instruction, instruction, "instruction string");
+        assert_eq!(
+            inserted.kind,
+            FieldKind::parse(instruction),
+            "kind projection agrees with the instruction"
+        );
+        assert_eq!(inverse, Operation::RemoveField { field: n(50) });
+        // The caret text is unchanged: a field is zero-width in the anchor space.
+        assert_eq!(text_of(&d, p), "Hello");
+
+        // The inverse removes the field and restores the paragraph exactly.
+        let redo = apply(&mut d, &mut ids, &inverse).expect("remove field");
+        assert!(field_of(&d, p).is_none(), "field gone after inverse");
+        assert_eq!(d, original, "inverse restores the document verbatim");
+
+        // The inverse-of-the-inverse re-inserts an equal field.
+        apply(&mut d, &mut ids, &redo).expect("re-insert field");
+        assert_eq!(
+            field_of(&d, p).expect("field back after redo").instruction,
+            instruction,
+        );
+    }
+
+    #[test]
+    fn insert_field_round_trips_for_each_common_kind() {
+        round_trip_field(CommonField::Page, "PAGE \\* MERGEFORMAT");
+        round_trip_field(CommonField::NumPages, "NUMPAGES \\* MERGEFORMAT");
+        round_trip_field(
+            CommonField::Date {
+                format: None,
+                result: "1/2/2026".to_owned(),
+            },
+            "DATE",
+        );
+        round_trip_field(
+            CommonField::Date {
+                format: Some("M/d/yyyy".to_owned()),
+                result: "1/2/2026".to_owned(),
+            },
+            "DATE \\@ \"M/d/yyyy\"",
+        );
+        round_trip_field(
+            CommonField::Time {
+                format: None,
+                result: "3:04 PM".to_owned(),
+            },
+            "TIME",
+        );
+        round_trip_field(
+            CommonField::FileName {
+                result: "report.docx".to_owned(),
+            },
+            "FILENAME \\* MERGEFORMAT",
+        );
+        round_trip_field(
+            CommonField::Author {
+                result: "Ada".to_owned(),
+            },
+            "AUTHOR \\* MERGEFORMAT",
+        );
+    }
+
+    #[test]
+    fn page_and_numpages_seed_a_recomputable_placeholder() {
+        // The pagination field pass overwrites these, but the seeded cached value
+        // renders before that pass — a `"1"` placeholder, not empty.
+        let page = CommonField::Page.build(n(50), n(51));
+        assert!(
+            matches!(page.inlines.as_slice(), [InlineNode::Run(r)] if r.text == "1"),
+            "PAGE seeds a \"1\" placeholder run",
+        );
+        assert_eq!(page.kind, FieldKind::Page);
+        let total = CommonField::NumPages.build(n(52), n(53));
+        assert_eq!(total.kind, FieldKind::NumPages);
+    }
+
+    #[test]
+    fn date_field_caches_the_caller_supplied_display_text() {
+        // The engine reads no clock: the formatted value arrives as a parameter and
+        // is cached verbatim as the field's leaf run.
+        let field = CommonField::Date {
+            format: Some("M/d/yyyy".to_owned()),
+            result: "8/6/2026".to_owned(),
+        }
+        .build(n(50), n(51));
+        assert!(matches!(field.inlines.as_slice(), [InlineNode::Run(r)] if r.text == "8/6/2026"),);
+    }
+
+    #[test]
+    fn insert_field_into_an_empty_paragraph_leaves_only_the_field() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![])]);
+        let mut ids = IdGenerator::new(20);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 0),
+                field: Box::new(CommonField::Page.build(n(50), n(51))),
+            },
+        )
+        .expect("insert into empty paragraph");
+        assert!(matches!(
+            inlines_of(&d, p).as_slice(),
+            [InlineNode::Field(_)]
+        ));
+    }
+
+    #[test]
+    fn insert_field_rejects_a_missing_node_and_out_of_range_offset() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(20);
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertField {
+                    at: Pos::new(n(999), 0),
+                    field: Box::new(CommonField::Page.build(n(50), n(51))),
+                },
+            ),
+            Err(EditError::NodeNotFound),
+        );
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertField {
+                    at: Pos::new(p, 99),
+                    field: Box::new(CommonField::Page.build(n(50), n(51))),
+                },
+            ),
+            Err(EditError::OffsetOutOfRange),
+        );
+    }
+
+    #[test]
+    fn remove_field_rejects_an_unknown_id() {
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(20);
+        assert_eq!(
+            apply(&mut d, &mut ids, &Operation::RemoveField { field: n(777) }),
+            Err(EditError::FieldNotFound),
+        );
+    }
+
+    #[test]
+    fn inserted_field_survives_write_reopen() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 2),
+                field: Box::new(
+                    CommonField::Date {
+                        format: Some("M/d/yyyy".to_owned()),
+                        result: "8/6/2026".to_owned(),
+                    }
+                    .build(n(50), n(51)),
+                ),
+            },
+        )
+        .expect("insert field");
+
+        let json = d.to_json().expect("serialize");
+        let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
+            .expect("reopen");
+        assert_eq!(d, reopened, "the inserted field survives write -> reopen");
+    }
+
+    // ---- Footnotes / endnotes ----------------------------------------------
+
+    /// A single empty paragraph — the ready-to-type body of a freshly inserted
+    /// note. `id` comes from the edit id source so it stays globally unique.
+    fn empty_note_body(id: NodeId) -> Vec<BlockNode> {
+        vec![BlockNode::Paragraph(Paragraph {
+            id,
+            properties: ParagraphProperties::default(),
+            inlines: Vec::new(),
+        })]
+    }
+
+    fn note_references_in(document: &Document, id: NodeId) -> usize {
+        inlines_of(document, id)
+            .into_iter()
+            .filter(|inline| matches!(inline, InlineNode::NoteReference(_)))
+            .count()
+    }
+
+    #[test]
+    fn insert_footnote_creates_reference_and_definition_and_inverse_removes_both() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 2), // mid-run: "He|llo"
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert footnote");
+
+        // The definition is created (in the footnotes map, not endnotes) with an
+        // empty, ready-to-type body; the reference is spliced without changing the
+        // paragraph's shaped text (a note reference is zero-width).
+        assert_eq!(d.definitions().footnotes.len(), 1);
+        assert!(d.definitions().footnotes.contains_key(&note));
+        assert!(d.definitions().endnotes.is_empty());
+        assert_eq!(note_references_in(&d, p), 1);
+        assert_eq!(text_of(&d, p), "Hello");
+        d.validate()
+            .expect("document is valid after inserting a footnote");
+
+        // The inverse removes both the reference and the definition, restoring the
+        // document verbatim (the split run coalesces back to the original).
+        assert!(matches!(
+            inverse,
+            Operation::RemoveNote {
+                kind: NoteKind::Footnote,
+                note: inverse_note,
+                reference_id: inverse_ref,
+            } if inverse_note == note && inverse_ref == reference_id
+        ));
+        apply(&mut d, &mut ids, &inverse).expect("remove footnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the original document");
+    }
+
+    #[test]
+    fn insert_endnote_creates_reference_and_definition_and_inverse_removes_both() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Endnote,
+                note,
+                at: Pos::new(p, 5), // paragraph end
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert endnote");
+
+        assert_eq!(d.definitions().endnotes.len(), 1);
+        assert!(d.definitions().endnotes.contains_key(&note));
+        assert!(d.definitions().footnotes.is_empty());
+        assert_eq!(note_references_in(&d, p), 1);
+        d.validate()
+            .expect("document is valid after inserting an endnote");
+
+        assert!(matches!(
+            inverse,
+            Operation::RemoveNote {
+                kind: NoteKind::Endnote,
+                ..
+            }
+        ));
+        apply(&mut d, &mut ids, &inverse).expect("remove endnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the original document");
+    }
+
+    #[test]
+    fn insert_note_into_an_empty_paragraph_and_inverse_round_trips() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, Vec::new())]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 0),
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert footnote into an empty paragraph");
+        assert_eq!(note_references_in(&d, p), 1);
+
+        apply(&mut d, &mut ids, &inverse).expect("remove footnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the empty paragraph");
+    }
+
+    #[test]
+    fn insert_note_rejects_an_out_of_range_caret() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let before = d.clone();
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 99),
+                reference_id,
+                blocks: body,
+            },
+        );
+        assert_eq!(result, Err(EditError::OffsetOutOfRange));
+        assert_eq!(d, before, "a rejected insert leaves the document unchanged");
+    }
+
+    #[test]
+    fn insert_note_rejects_a_duplicate_note_id() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let first_ref = ids.next_id().unwrap();
+        let first_body = empty_note_body(ids.next_id().unwrap());
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 0),
+                reference_id: first_ref,
+                blocks: first_body,
+            },
+        )
+        .expect("first footnote inserted");
+        let after_first = d.clone();
+
+        let second_ref = ids.next_id().unwrap();
+        let second_body = empty_note_body(ids.next_id().unwrap());
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note, // same id — must be refused
+                at: Pos::new(p, 2),
+                reference_id: second_ref,
+                blocks: second_body,
+            },
+        );
+        assert_eq!(result, Err(EditError::Unsupported));
+        assert_eq!(
+            d, after_first,
+            "a rejected duplicate-id insert leaves the document unchanged"
+        );
+    }
+
+    #[test]
+    fn inserted_footnote_survives_a_write_reopen_round_trip() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Body")])]);
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body_para = ids.next_id().unwrap();
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 4),
+                reference_id,
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: body_para,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![run(700, "footnote text")],
+                })],
+            },
+        )
+        .expect("insert footnote");
+
+        let bytes = d.to_json().expect("serialize the document");
+        let reopened = Document::from_json(&bytes, casual_doc_model::SnapshotLimits::default())
+            .expect("reopen the document");
+        assert_eq!(d, reopened, "m1 == m2 after a write -> reopen round trip");
+        assert!(
+            reopened.definitions().footnotes.contains_key(&note),
+            "the created footnote survived the round trip"
+        );
     }
 }

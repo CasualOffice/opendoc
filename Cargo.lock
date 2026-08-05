@@ -81,6 +81,7 @@ name = "casual-doc-edit"
 version = "0.0.1"
 dependencies = [
  "casual-doc-model",
+ "serde_json",
 ]
 
 [[package]]
