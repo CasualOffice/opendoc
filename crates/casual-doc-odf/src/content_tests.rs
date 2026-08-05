@@ -2016,15 +2016,35 @@ fn named_style_cycles_and_missing_parents_degrade_without_losing_direct_properti
     )
     .unwrap();
     let paragraph = paragraph(&imported, 0);
+    // Named styles are preserved as `Style` identities referenced by the run, not
+    // flattened onto it. The inheritance-resolved properties (cycle broken, missing
+    // parent skipped) live on the referenced `Style`, so nothing is lost.
+    let styles = imported.document.definitions().styles.clone();
     let InlineNode::Run(cycle) = &paragraph.inlines[0] else {
         panic!("cycle run")
     };
-    assert_eq!(cycle.properties.bold, Some(true));
-    assert_eq!(cycle.properties.italic, Some(true));
+    assert_eq!(cycle.properties.bold, None);
+    let cycle_style = styles
+        .get(&cycle.properties.style_ref.expect("cycle run style ref"))
+        .expect("cycle style def");
+    let cycle_run = cycle_style.run.as_ref().expect("cycle run props");
+    assert_eq!(cycle_run.bold, Some(true));
+    assert_eq!(cycle_run.italic, Some(true));
     let InlineNode::Run(missing) = &paragraph.inlines[1] else {
         panic!("missing-parent run")
     };
-    assert_eq!(missing.properties.underline, Some(true));
+    assert_eq!(missing.properties.underline, None);
+    let missing_style = styles
+        .get(&missing.properties.style_ref.expect("missing run style ref"))
+        .expect("missing style def");
+    assert_eq!(
+        missing_style
+            .run
+            .as_ref()
+            .expect("missing run props")
+            .underline,
+        Some(true)
+    );
     for feature in ["odf.style.inheritance-cycle", "odf.style.unresolved-parent"] {
         assert!(
             imported

@@ -47,7 +47,13 @@ The work lands as reviewable commits:
 - Checkpoint 6 admits optional `styles.xml` under an independent byte bound,
   resolves named paragraph/text styles and same-family parent chains for that
   subset, and reports shadowing, missing parents, and inheritance cycles without
-  losing safe direct properties.
+  losing safe direct properties. A named *character* (`style:family="text"`) style
+  is preserved as a referenced schema-v1 `Style` identity: the run carries a
+  `RunProperties.style_ref` to a `StyleKind::Character` definition (whose name is
+  the original `style:name` and whose run properties are the inheritance-resolved
+  subset) instead of the style being flattened onto each run. Named *paragraph*
+  styles still flatten onto the paragraph. The doc 96 writer re-emits the named
+  character style once in styles.xml and references it by name, a byte fixed point.
 - Checkpoint 7 maps bounded bullet/decimal list styles, the first paragraph of
   each list item, and nested list levels into deterministic normalized numbering
   definitions. Implementation-dependent defaults, missing/conflicting levels,

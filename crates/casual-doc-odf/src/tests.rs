@@ -1,6 +1,6 @@
 use std::io::{Cursor, Write};
 
-use casual_doc_model::v1::{Alignment, BlockNode, Color, InlineNode, RgbColor};
+use casual_doc_model::v1::{Alignment, BlockNode, Color, InlineNode, RgbColor, StyleKind};
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
 use zip::write::{FullFileOptions, ZipWriter};
@@ -100,6 +100,165 @@ fn odf_1_2_through_1_4_are_admitted_deterministically() {
 }
 
 #[test]
+fn named_character_style_round_trips_as_referenced_identity() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p><text:span text:style-name="Emphasis">styled</text:span></text:p></office:text></office:body></office:document-content>"#;
+    let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="Emphasis" style:family="text"><style:text-properties fo:font-weight="bold" fo:color="#112233"/></style:style></office:styles></office:document-styles>"##;
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let entries = vec![
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: STYLES_PART,
+            bytes: styles.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ];
+    let bytes = package(&entries);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    assert!(imported.report.entries.is_empty());
+
+    // The named style is preserved as a Character identity referenced by the run.
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("run")
+    };
+    let style_ref = run.properties.style_ref.expect("run style ref");
+    assert_eq!(run.properties.bold, None);
+    let style = imported
+        .document
+        .definitions()
+        .styles
+        .get(&style_ref)
+        .expect("style def");
+    assert_eq!(style.kind, StyleKind::Character);
+    assert_eq!(style.name.as_deref(), Some("Emphasis"));
+
+    // Export re-emits the named style in styles.xml and references it by name in
+    // content.xml — no automatic `T_` run style is minted for a purely named run.
+    let export = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(
+        r##"<style:style style:family="text" style:name="Emphasis"><style:text-properties fo:font-weight="bold" fo:color="#112233"/></style:style>"##
+    ));
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<text:span text:style-name="Emphasis">styled</text:span>"#));
+    assert!(!content_out.contains(r#"text:style-name="T_"#));
+
+    // Semantic round trip + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, export.bytes);
+}
+
+/// A named character style whose retained name lands in the `T_…` namespace that
+/// automatic run styles are minted into must not be re-emitted under that name, or
+/// it would collide with an automatic bold run's `T_b1_in_un_sn_cn_zn` style and
+/// collapse two distinct styles on re-import (an invalid duplicate `style:name`,
+/// and a broken fixed point). The named style is re-minted to a `Char{n}` name.
+#[test]
+fn named_style_name_in_run_style_namespace_does_not_collide() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="AutoBold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style></office:automatic-styles><office:body><office:text><text:p><text:span text:style-name="T_b1_in_un_sn_cn_zn">named</text:span><text:span text:style-name="AutoBold">bold</text:span></text:p></office:text></office:body></office:document-content>"#;
+    let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="T_b1_in_un_sn_cn_zn" style:family="text"><style:text-properties fo:font-style="italic"/></style:style></office:styles></office:document-styles>"##;
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let entries = vec![
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: STYLES_PART,
+            bytes: styles.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ];
+    let bytes = package(&entries);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    // The two spans start as distinct styles: a referenced italic Character style
+    // and a direct bold run.
+    let assert_distinct = |document: &casual_doc_model::v1::Document| {
+        let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Run(named) = &paragraph.inlines[0] else {
+            panic!("named run")
+        };
+        let style = document
+            .definitions()
+            .styles
+            .get(&named.properties.style_ref.expect("named run style ref"))
+            .expect("named style def");
+        assert_eq!(style.run.as_ref().and_then(|run| run.italic), Some(true));
+        assert_eq!(named.properties.bold, None);
+        let InlineNode::Run(bold) = &paragraph.inlines[1] else {
+            panic!("bold run")
+        };
+        assert_eq!(bold.properties.bold, Some(true));
+        assert_eq!(bold.properties.style_ref, None);
+    };
+    assert_distinct(&imported.document);
+
+    // Export must not name the Character style `T_b1_in_un_sn_cn_zn`; that name is
+    // reserved for the automatic bold run style also present in this document.
+    let export = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(!styles_out.contains(r#"style:name="T_b1_in_un_sn_cn_zn""#));
+
+    // Re-import keeps both identities distinct, and re-export is a byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_distinct(&reopened.document);
+    let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, export.bytes);
+}
+
+#[test]
 fn named_styles_part_and_parent_chain_apply_to_content() {
     let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p text:style-name="PChild"><text:span text:style-name="TChild">named</text:span></text:p></office:text></office:body></office:document-content>"#;
     let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="PBase" style:family="paragraph"><style:paragraph-properties fo:text-align="end"/></style:style><style:style style:name="PChild" style:family="paragraph" style:parent-style-name="PBase"/><style:style style:name="TBase" style:family="text"><style:text-properties fo:font-weight="bold" fo:color="#123456"/></style:style><style:style style:name="TMid" style:family="text" style:parent-style-name="TBase"><style:text-properties fo:font-style="italic"/></style:style><style:style style:name="TChild" style:family="text" style:parent-style-name="TMid"><style:text-properties style:text-underline-style="none"/></style:style></office:styles></office:document-styles>"##;
@@ -144,11 +303,25 @@ fn named_styles_part_and_parent_chain_apply_to_content() {
     let InlineNode::Run(run) = &paragraph.inlines[0] else {
         panic!("run")
     };
-    assert_eq!(run.properties.bold, Some(true));
-    assert_eq!(run.properties.italic, Some(true));
-    assert_eq!(run.properties.underline, Some(false));
+    // The named character style is preserved as a `Style` identity referenced by
+    // the run; its inheritance-resolved properties live on that definition rather
+    // than being flattened onto the run.
+    assert_eq!(run.properties.bold, None);
+    assert_eq!(run.properties.italic, None);
+    assert_eq!(run.properties.underline, None);
+    assert_eq!(run.properties.color, None);
+    let style = imported
+        .document
+        .definitions()
+        .styles
+        .get(&run.properties.style_ref.expect("run style ref"))
+        .expect("style def");
+    let style_run = style.run.as_ref().expect("style run props");
+    assert_eq!(style_run.bold, Some(true));
+    assert_eq!(style_run.italic, Some(true));
+    assert_eq!(style_run.underline, Some(false));
     assert_eq!(
-        run.properties.color,
+        style_run.color,
         Some(Color::Rgb(RgbColor {
             r: 0x12,
             g: 0x34,

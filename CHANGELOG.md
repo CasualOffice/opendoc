@@ -15,6 +15,24 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Named character styles (fidelity parity, T4)**: a common `office:styles`
+  `style:style style:family="text"` now round-trips as a *referenced* schema-v1
+  `Style` identity (`StyleKind::Character`) rather than being flattened onto every
+  run. A run that used the style now carries a `RunProperties.style_ref` to the
+  `Style` definition, whose inheritance-resolved run properties are emitted once as
+  a named `style:style` in styles.xml, and each run re-emits `text:style-name="X"`
+  — a byte + semantic fixed point (no automatic `T_` run style is minted for a
+  purely named run). The style's retained ODF `style:name` is reused verbatim when
+  it is a valid NCName; a non-NCName name (e.g. a DOCX-sourced "Intense Emphasis")
+  is deterministically re-minted as `Char{n}`, and that minted name persists
+  stably across the round trip. Inheritance cycles and missing parents still
+  degrade (reported) with the resolvable properties preserved on the definition. A
+  run carrying *both* a named style and direct run properties keeps the named
+  style and reports the direct subset as a degrade (only reachable from a
+  DOCX-shaped run); a style ref that does not resolve to a Character definition is
+  reported rather than emitted as a broken run. Non-run style detail
+  (inheritance/UI flags, paragraph/table property slots) that a named character
+  style cannot represent is reported. Named *paragraph* styles still flatten.
 - **Master-page header/footer**: `style:header`/`style:footer` (and the `-left`
   even-page variants) map to schema-v1 `HeaderFooter` definitions and section
   references and are re-emitted, as a byte + semantic fixed point.

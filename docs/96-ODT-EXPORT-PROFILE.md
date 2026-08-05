@@ -141,6 +141,20 @@ reusing the automatic-style property serializer. Defaults are emitted even when
 no section exists, and unsupported default detail is reported. Supported defaults
 form a semantic and byte fixed point.
 
+Named `StyleKind::Character` definitions are emitted into that same
+`office:styles` block as `style:style style:family="text"` entries (in `StyleId`
+order, with a `style:text-properties` child carrying the supported run subset),
+and a run bearing a `RunProperties.style_ref` re-emits `text:style-name="X"`
+naming that style instead of minting an automatic `T_` run style. The emitted
+`style:name` reuses the definition's retained name when it is a valid NCName and
+otherwise mints a stable `Char{n}`; the styles.xml block (and its manifest entry)
+is now emitted whenever named character styles exist, even without defaults or a
+section. A run carrying both a style ref and direct run properties keeps the
+named style and reports the direct subset; a ref that does not resolve to a
+Character definition, and any non-run style detail the projection cannot carry,
+are reported. Supported named character styles form a semantic and byte fixed
+point.
+
 When schema-v1 sections are present, the writer emits a deterministic
 `styles.xml` page-layout definition and manifest entry for page geometry.
 Section column count, gap, and separator settings are emitted when present.

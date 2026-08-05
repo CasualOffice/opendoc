@@ -20,6 +20,7 @@ use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
+use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -359,6 +360,10 @@ enum InlineDraft {
     Text {
         text: String,
         properties: Box<RunProperties>,
+        /// The name of the referenced named character style, if the run is inside
+        /// a `text:span` whose style is a named (common) text style. Resolved to a
+        /// `StyleId` (and a `Style` definition) at build time.
+        style_ref: Option<String>,
     },
     Tab,
     LineBreak,
@@ -529,6 +534,9 @@ struct ParagraphDraft {
     /// last one. Set at `text:change-start` so inserted text does not merge into
     /// the preceding (unchanged) run, which would defeat the revision splice.
     merge_barrier: bool,
+    /// The active named character-style reference (the innermost open named
+    /// `text:span`'s style name); attached to text pushed while it is set.
+    style_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -695,33 +703,43 @@ impl ParagraphDraft {
         if value.is_empty() {
             return;
         }
+        let style_ref = self.style_ref.clone();
         if self.merge_barrier {
             self.merge_barrier = false;
             self.inlines.push(InlineDraft::Text {
                 text: value.to_owned(),
                 properties: Box::new(properties.clone()),
+                style_ref,
             });
             return;
         }
-        push_text_draft(&mut self.inlines, value, properties);
+        push_text_draft(&mut self.inlines, value, properties, style_ref.as_deref());
     }
 }
 
-fn push_text_draft(inlines: &mut Vec<InlineDraft>, value: &str, properties: &RunProperties) {
+fn push_text_draft(
+    inlines: &mut Vec<InlineDraft>,
+    value: &str,
+    properties: &RunProperties,
+    style_ref: Option<&str>,
+) {
     if value.is_empty() {
         return;
     }
     if let Some(InlineDraft::Text {
         text: previous,
         properties: previous_properties,
+        style_ref: previous_ref,
     }) = inlines.last_mut()
         && previous_properties.as_ref() == properties
+        && previous_ref.as_deref() == style_ref
     {
         previous.push_str(value);
     } else {
         inlines.push(InlineDraft::Text {
             text: value.to_owned(),
             properties: Box::new(properties.clone()),
+            style_ref: style_ref.map(str::to_owned),
         });
     }
 }
@@ -799,6 +817,7 @@ struct OpenListStyle {
 struct OpenSpan {
     depth: usize,
     previous_properties: RunProperties,
+    previous_style_ref: Option<String>,
 }
 
 #[derive(Debug)]
@@ -3368,6 +3387,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                                 inlines: vec![InlineDraft::Text {
                                     text: deleted,
                                     properties: Box::new(RunProperties::default()),
+                                    style_ref: None,
                                 }],
                             });
                     } else {
@@ -3503,6 +3523,9 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 {
                     let span = open_spans.pop().ok_or(OdfError::MalformedContent)?;
                     active_run_properties = span.previous_properties;
+                    if let Some(paragraph) = current.as_mut() {
+                        paragraph.style_ref = span.previous_style_ref;
+                    }
                 }
                 if current
                     .as_ref()
@@ -3794,6 +3817,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 numbering: None,
                 inlines: Vec::new(),
                 merge_barrier: false,
+                style_ref: None,
             },
             limits,
         )?;
@@ -3811,6 +3835,14 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         normalize_inline_drafts(&mut paragraph.inlines, &bookmarks, &mut reporter);
     }
     enforce_expanded_block_limits(&blocks, &notes, &paragraphs, limits)?;
+    // The named text styles referenceable by a run's `style_ref` token, resolved
+    // to their (flattened) run properties for building `Style` definitions.
+    let named_styles: BTreeMap<String, RunProperties> = style_catalog
+        .automatic
+        .iter()
+        .filter(|((family, _), style)| *family == StyleFamily::Text && style.named)
+        .map(|((_, name), style)| (name.clone(), style.run_properties.clone()))
+        .collect();
     let document = build_document(
         expected_version,
         &paragraphs,
@@ -3821,6 +3853,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &list_overrides,
         &drawings,
         &comments,
+        &named_styles,
         &style_catalog.defaults,
         &mut reporter,
     )?;
@@ -6533,6 +6566,9 @@ fn process_empty(
                 return Err(OdfError::MalformedContent);
             }
             *active_run_properties = span.previous_properties;
+            if let Some(paragraph) = current.as_mut() {
+                paragraph.style_ref = span.previous_style_ref;
+            }
         }
     } else {
         count_and_report_attributes(
@@ -6621,6 +6657,7 @@ fn start_paragraph(
         numbering,
         inlines: Vec::new(),
         merge_barrier: false,
+        style_ref: None,
     });
     Ok(())
 }
@@ -6736,7 +6773,7 @@ fn process_inline(
             reporter,
         )?;
     } else if is_name(name, NamespaceKind::Text, b"span") {
-        let properties = read_span_properties(
+        let (properties, named_ref) = read_span_properties(
             reader,
             element,
             attributes,
@@ -6747,9 +6784,16 @@ fn process_inline(
         )?;
         let previous_properties = active_run_properties.clone();
         merge_run_properties(active_run_properties, &properties);
+        // A span references a single style: a named one sets the active style ref
+        // (its runs carry no flattened props), an automatic one clears it (its
+        // props flatten into `active_run_properties`).
+        let paragraph = current.as_mut().ok_or(OdfError::MalformedContent)?;
+        let previous_style_ref = paragraph.style_ref.take();
+        paragraph.style_ref = named_ref;
         open_spans.push(OpenSpan {
             depth,
             previous_properties,
+            previous_style_ref,
         });
     } else {
         count_and_report_attributes(
@@ -6774,7 +6818,7 @@ fn read_span_properties(
     limits: OdfImportLimits,
     automatic_styles: &AutomaticStyles,
     reporter: &mut Reporter,
-) -> Result<RunProperties, OdfError> {
+) -> Result<(RunProperties, Option<String>), OdfError> {
     let mut properties = RunProperties::default();
     let mut style_name = None;
     for attribute in element.attributes() {
@@ -6793,14 +6837,21 @@ fn read_span_properties(
             );
         }
     }
+    let mut named_ref = None;
     if let Some(style_name) = style_name {
-        if let Some(style) = automatic_styles.get(&(StyleFamily::Text, style_name)) {
-            properties = style.run_properties.clone();
+        if let Some(style) = automatic_styles.get(&(StyleFamily::Text, style_name.clone())) {
+            if style.named {
+                // Preserve a named text style as a `Style` identity: reference it
+                // by name instead of flattening its run properties into the run.
+                named_ref = Some(style_name);
+            } else {
+                properties = style.run_properties.clone();
+            }
         } else {
             reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
         }
     }
-    Ok(properties)
+    Ok((properties, named_ref))
 }
 
 fn merge_run_properties(target: &mut RunProperties, overlay: &RunProperties) {
@@ -6899,7 +6950,9 @@ fn append_text(
         })?;
     enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
     if let Some(link) = active_link {
-        push_text_draft(&mut link.inlines, value, properties);
+        // Named character-style references on link-internal runs are not modeled
+        // in this slice (a link wraps leaf inlines); its runs carry no style ref.
+        push_text_draft(&mut link.inlines, value, properties, None);
     } else {
         paragraph.push_text(value, properties);
     }
@@ -6938,7 +6991,9 @@ fn finish_link(
         }
         for inline in link.inlines {
             match inline {
-                InlineDraft::Text { text, properties } => {
+                InlineDraft::Text {
+                    text, properties, ..
+                } => {
                     paragraph.push_text(&text, properties.as_ref());
                 }
                 inline => paragraph.inlines.push(inline),
@@ -7348,8 +7403,18 @@ fn normalize_inline_drafts(
         {
             continue;
         }
-        if let InlineDraft::Text { text, properties } = inline {
-            push_text_draft(&mut normalized, &text, properties.as_ref());
+        if let InlineDraft::Text {
+            text,
+            properties,
+            style_ref,
+        } = inline
+        {
+            push_text_draft(
+                &mut normalized,
+                &text,
+                properties.as_ref(),
+                style_ref.as_deref(),
+            );
         } else {
             normalized.push(inline);
         }
@@ -7389,6 +7454,26 @@ fn push_paragraph_block(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Collects the distinct named character-style references used by `Text` drafts,
+/// recursing into inline wrappers (hyperlink/revision) that carry runs.
+fn collect_style_refs(inlines: &[InlineDraft], out: &mut BTreeSet<String>) {
+    for inline in inlines {
+        match inline {
+            InlineDraft::Text {
+                style_ref: Some(name),
+                ..
+            } => {
+                out.insert(name.clone());
+            }
+            InlineDraft::Hyperlink { inlines, .. } | InlineDraft::Revision { inlines, .. } => {
+                collect_style_refs(inlines, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_document(
     version: OdfVersion,
     paragraphs: &[ParagraphDraft],
@@ -7399,6 +7484,7 @@ fn build_document(
     list_overrides: &BTreeMap<(usize, u8), u16>,
     drawings: &[DrawingDraft],
     comments: &[CommentDraft],
+    named_styles: &BTreeMap<String, RunProperties>,
     defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
@@ -7622,6 +7708,45 @@ fn build_document(
         );
         comment_ids.push(comment_id);
     }
+    // Character-style identities: for each referenced named text style, mint a
+    // `StyleId` and a Character `Style` definition, so a run references it by id
+    // instead of carrying the style's flattened properties.
+    let mut referenced_styles = BTreeSet::new();
+    for paragraph in paragraphs {
+        collect_style_refs(&paragraph.inlines, &mut referenced_styles);
+    }
+    let mut style_ids: BTreeMap<String, StyleId> = BTreeMap::new();
+    for name in &referenced_styles {
+        let Some(run_props) = named_styles.get(name) else {
+            continue;
+        };
+        let style_id = StyleId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        definitions.styles.insert(
+            style_id,
+            ModelStyle {
+                kind: StyleKind::Character,
+                is_default: false,
+                name: Some(name.clone()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: false,
+                locked: false,
+                paragraph: None,
+                run: Some(run_props.clone()),
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+            },
+        );
+        style_ids.insert(name.clone(), style_id);
+    }
     for (index, note) in notes.iter().enumerate() {
         let blocks = build_blocks(
             &note.blocks,
@@ -7631,6 +7756,7 @@ fn build_document(
             &numbering_ids,
             &note_ids,
             &comment_ids,
+            &style_ids,
             &media_ids,
             drawings,
         )?;
@@ -7655,6 +7781,7 @@ fn build_document(
         &numbering_ids,
         &note_ids,
         &comment_ids,
+        &style_ids,
         &media_ids,
         drawings,
     )?;
@@ -7737,6 +7864,7 @@ fn build_blocks(
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
+    style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
@@ -7750,6 +7878,7 @@ fn build_blocks(
                 numbering_ids,
                 note_ids,
                 comment_ids,
+                style_ids,
                 media_ids,
                 drawings,
             )?),
@@ -7761,6 +7890,7 @@ fn build_blocks(
                 numbering_ids,
                 note_ids,
                 comment_ids,
+                style_ids,
                 media_ids,
                 drawings,
             )?),
@@ -7774,6 +7904,7 @@ fn build_blocks(
                     numbering_ids,
                     note_ids,
                     comment_ids,
+                    style_ids,
                     media_ids,
                     drawings,
                 )?;
@@ -7804,6 +7935,7 @@ fn build_paragraph(
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
+    style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Paragraph, OdfError> {
@@ -7828,6 +7960,7 @@ fn build_paragraph(
             bookmark_ids,
             note_ids,
             comment_ids,
+            style_ids,
             media_ids,
             drawings,
         )?,
@@ -7851,6 +7984,7 @@ fn build_table(
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
+    style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Table, OdfError> {
@@ -7871,6 +8005,7 @@ fn build_table(
                         numbering_ids,
                         note_ids,
                         comment_ids,
+                        style_ids,
                         media_ids,
                         drawings,
                     )?;
@@ -7972,10 +8107,17 @@ fn table_owners(table: &TableDraft) -> Result<TableOwners, OdfError> {
 
 fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[BookmarkDraft]) {
     match inline {
-        InlineDraft::Text { text, properties } => {
+        InlineDraft::Text {
+            text,
+            properties,
+            style_ref,
+        } => {
             hash_bytes(hash, b"t");
             hash_bytes(hash, text.as_bytes());
             hash_run_properties(hash, properties.as_ref());
+            if let Some(style_ref) = style_ref {
+                hash_bytes(hash, style_ref.as_bytes());
+            }
         }
         InlineDraft::Tab => hash_bytes(hash, b"tab"),
         InlineDraft::LineBreak => hash_bytes(hash, b"br"),
@@ -8117,12 +8259,14 @@ fn hash_run_properties(hash: &mut u64, properties: &RunProperties) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_inlines(
     drafts: &[InlineDraft],
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
+    style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
@@ -8143,11 +8287,21 @@ fn build_inlines(
         }
         let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
         inlines.push(match draft {
-            InlineDraft::Text { text, properties } => InlineNode::Run(Run {
-                id,
-                properties: properties.as_ref().clone(),
-                text: text.clone(),
-            }),
+            InlineDraft::Text {
+                text,
+                properties,
+                style_ref,
+            } => {
+                let mut properties = properties.as_ref().clone();
+                if let Some(name) = style_ref {
+                    properties.style_ref = style_ids.get(name).copied();
+                }
+                InlineNode::Run(Run {
+                    id,
+                    properties,
+                    text: text.clone(),
+                })
+            }
             InlineDraft::Tab => InlineNode::Tab(Tab { id }),
             InlineDraft::LineBreak => InlineNode::Break(Break {
                 id,
@@ -8166,6 +8320,7 @@ fn build_inlines(
                     bookmark_ids,
                     note_ids,
                     comment_ids,
+                    style_ids,
                     media_ids,
                     drawings,
                 )?,
@@ -8312,6 +8467,7 @@ fn build_inlines(
                     bookmark_ids,
                     note_ids,
                     comment_ids,
+                    style_ids,
                     media_ids,
                     drawings,
                 )?,

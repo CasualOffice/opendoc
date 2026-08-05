@@ -6,13 +6,13 @@ use std::io::{Cursor, Write};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
-    Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
-    Field, FieldKind, FontRef, FormFieldKind, GroupChild, HeaderFooterKind, HeightRule,
-    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
-    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing,
-    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
-    VerticalAlignment, VerticalMerge, WidthType,
+    Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions, Document,
+    DocumentDefaults, Extent, Field, FieldKind, FontRef, FormFieldKind, GroupChild,
+    HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation, InlineNode, LevelJustification,
+    LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId,
+    Paragraph, ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties,
+    SdtControlKind, Spacing, Style, StyleId, StyleKind, Table, TableCell, TableCellProperties,
+    TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -794,6 +794,12 @@ fn twips_to_pt(twips: i32) -> String {
     }
 }
 
+/// Reserved `style:name` prefix for the automatic run styles minted by
+/// [`OdtRunStyle::name`]. Named character styles must not reuse it (see
+/// [`Writer::register_named_styles`]) because both share the text family's
+/// document-wide name space.
+const RUN_STYLE_PREFIX: &str = "T_";
+
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 struct OdtRunStyle {
     bold: Option<bool>,
@@ -859,7 +865,7 @@ impl OdtRunStyle {
         // when set, so a style using only the original subset keeps its exact
         // historical name and byte output.
         let mut name = format!(
-            "T_b{}_i{}_u{}_s{}_c{}_z{}",
+            "{RUN_STYLE_PREFIX}b{}_i{}_u{}_s{}_c{}_z{}",
             tri_state(self.bold),
             tri_state(self.italic),
             tri_state(self.underline),
@@ -947,6 +953,10 @@ fn split_run_properties(properties: &RunProperties) -> (OdtRunStyle, RunProperti
     }
     style.all_caps = remainder.all_caps.take();
     style.small_caps = remainder.small_caps.take();
+    // A `style_ref` is projected to a named `text:style-name` by the caller, not to
+    // this automatic-style subset, so drop it here to keep the remainder check (any
+    // leftover field is a reported loss) from treating a styled run as lossy.
+    remainder.style_ref = None;
     (style, remainder)
 }
 
@@ -1065,6 +1075,10 @@ struct Writer {
     /// Bookmark id → name, so `BookmarkStart`/`BookmarkEnd` markers can re-emit
     /// their `text:bookmark-start`/`-end` elements.
     bookmarks: BTreeMap<BookmarkId, String>,
+    /// Named character-style id → the `style:name` (an NCName) emitted for it in
+    /// styles.xml and referenced by a run's `text:style-name`. Populated from the
+    /// document's `Character` style definitions; empty on documents without any.
+    named_styles: BTreeMap<StyleId, String>,
     reporter: Reporter,
 }
 
@@ -1107,6 +1121,7 @@ impl Writer {
             paragraphs_written: 0,
             available_media: BTreeMap::new(),
             bookmarks: BTreeMap::new(),
+            named_styles: BTreeMap::new(),
             reporter: Reporter::new(limits.max_report_features),
         };
         writer.push(BODY_PREFIX)?;
@@ -1120,6 +1135,45 @@ impl Writer {
                 .iter()
                 .map(|(id, bookmark)| (*id, bookmark.name.clone())),
         );
+    }
+
+    /// Assigns each `Character` style definition the `style:name` it will carry in
+    /// styles.xml and be referenced by via `text:style-name`. The model's retained
+    /// name is reused verbatim when it is a valid NCName (the ODT round-trip case,
+    /// where the name is the original `style:name`); otherwise a deterministic
+    /// `Char{n}` name is minted (e.g. a DOCX-sourced style named "Intense Emphasis"),
+    /// keeping every emitted name a unique NCName. Order is by `StyleId`, so both
+    /// the styles.xml emission and the run references stay deterministic.
+    ///
+    /// A retained name is also rejected when it falls in the `T_` namespace that
+    /// [`OdtRunStyle::name`] mints automatic run styles into: named text styles and
+    /// automatic run styles share one document-wide `style:name` space in the text
+    /// family, so reusing a `T_…`-shaped name could collide with a minted run style
+    /// and collapse two distinct styles on re-import (breaking the fixed point). The
+    /// mint (`Char{n}`) is disjoint from `T_` by construction.
+    fn register_named_styles(&mut self, definitions: &Definitions) {
+        let mut used = BTreeSet::new();
+        let mut minted = 0usize;
+        for (id, style) in definitions.styles.iter() {
+            if style.kind != StyleKind::Character {
+                continue;
+            }
+            let candidate = style.name.as_deref().filter(|name| {
+                is_ncname(name) && !name.starts_with(RUN_STYLE_PREFIX) && !used.contains(*name)
+            });
+            let name = match candidate {
+                Some(name) => name.to_owned(),
+                None => loop {
+                    minted += 1;
+                    let name = format!("Char{minted}");
+                    if !used.contains(&name) {
+                        break name;
+                    }
+                },
+            };
+            used.insert(name.clone());
+            self.named_styles.insert(*id, name);
+        }
     }
 
     fn register_numbering(&mut self, definitions: &Definitions) {
@@ -2041,21 +2095,51 @@ impl Writer {
             self.visit_inline()?;
             match inline {
                 InlineNode::Run(run) => {
+                    // A run referencing a named character style emits that style's
+                    // `text:style-name` directly (the ODT round-trip form). Any
+                    // remaining direct properties belong to an automatic style.
+                    let named = run
+                        .properties
+                        .style_ref
+                        .and_then(|id| self.named_styles.get(&id).cloned());
+                    if run.properties.style_ref.is_some() && named.is_none() {
+                        // A dangling style ref is rejected by model validation, so
+                        // this only guards a Character definition that was dropped;
+                        // report rather than silently emit an unstyled run.
+                        self.reporter
+                            .record("odt.export.run_style_ref", ModelOutcome::Omitted);
+                    }
                     let (style, remainder) = split_run_properties(&run.properties);
                     if remainder != RunProperties::default() {
                         self.reporter
                             .record("odt.export.run_properties", ModelOutcome::Omitted);
                     }
-                    let styled = !style.is_empty();
-                    if styled {
+                    // A named style and direct run properties cannot both be carried
+                    // by a single `text:style-name`; the named style wins and the
+                    // direct subset is reported as a degrade (only reachable from a
+                    // DOCX-shaped run carrying both `rStyle` and `rPr`).
+                    if named.is_some() && !style.is_empty() {
+                        self.reporter.record(
+                            "odt.export.run_style_ref_with_direct",
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                    let style_name = if let Some(name) = named {
+                        Some(name)
+                    } else if style.is_empty() {
+                        None
+                    } else {
                         let name = style.name();
                         self.run_styles.insert(style);
+                        Some(name)
+                    };
+                    if let Some(name) = &style_name {
                         self.push("<text:span text:style-name=\"")?;
-                        self.push(&name)?;
+                        self.push(name)?;
                         self.push("\">")?;
                     }
                     self.write_text(&run.text)?;
-                    if styled {
+                    if style_name.is_some() {
                         self.push("</text:span>")?;
                     }
                 }
@@ -3032,13 +3116,30 @@ fn push_run_text_properties(
 /// nothing supported is present; unsupported default detail is reported.
 fn default_styles_xml(
     defaults: Option<&DocumentDefaults>,
+    styles: &DefinitionMap<StyleId, Style>,
+    named_styles: &BTreeMap<StyleId, String>,
     reporter: &mut Reporter,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
-    let Some(defaults) = defaults else {
-        return Ok(String::new());
-    };
     let mut body = String::new();
+    if let Some(defaults) = defaults {
+        default_style_defaults(defaults, &mut body, reporter, max_content_bytes)?;
+    }
+    named_character_styles(styles, named_styles, &mut body, reporter, max_content_bytes)?;
+    if body.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!("<office:styles>{body}</office:styles>"))
+}
+
+/// Serializes the supported `<style:default-style>` subset (paragraph alignment
+/// and the direct run subset) into `body`; unsupported default detail is reported.
+fn default_style_defaults(
+    defaults: &DocumentDefaults,
+    body: &mut String,
+    reporter: &mut Reporter,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
     if let Some(paragraph) = &defaults.paragraph {
         let mut remainder = paragraph.clone();
         let alignment = remainder.alignment.take().map(OdtParagraphAlignment::from);
@@ -3050,12 +3151,12 @@ fn default_styles_xml(
         }
         if let Some(alignment) = alignment {
             push_bounded(
-                &mut body,
+                body,
                 "<style:default-style style:family=\"paragraph\"><style:paragraph-properties fo:text-align=\"",
                 max_content_bytes,
             )?;
-            push_bounded(&mut body, alignment.value(), max_content_bytes)?;
-            push_bounded(&mut body, "\"/></style:default-style>", max_content_bytes)?;
+            push_bounded(body, alignment.value(), max_content_bytes)?;
+            push_bounded(body, "\"/></style:default-style>", max_content_bytes)?;
         }
     }
     if let Some(run) = &defaults.run {
@@ -3065,18 +3166,81 @@ fn default_styles_xml(
         }
         if !style.is_empty() {
             push_bounded(
-                &mut body,
+                body,
                 "<style:default-style style:family=\"text\"><style:text-properties",
                 max_content_bytes,
             )?;
-            push_run_text_properties(&mut body, &style, max_content_bytes)?;
-            push_bounded(&mut body, "/></style:default-style>", max_content_bytes)?;
+            push_run_text_properties(body, &style, max_content_bytes)?;
+            push_bounded(body, "/></style:default-style>", max_content_bytes)?;
         }
     }
-    if body.is_empty() {
-        return Ok(String::new());
+    Ok(())
+}
+
+/// Serializes each `Character` style as a named `<style:style style:family="text">`
+/// with its run subset, in `StyleId` order so both the emission and every run's
+/// `text:style-name` reference stay deterministic. A style whose run properties fall
+/// outside the direct subset, or that carries non-run detail (paragraph/table
+/// properties, inheritance, flags), is reported so nothing is silently lost.
+fn named_character_styles(
+    styles: &DefinitionMap<StyleId, Style>,
+    named_styles: &BTreeMap<StyleId, String>,
+    body: &mut String,
+    reporter: &mut Reporter,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    for (id, name) in named_styles.iter() {
+        let Some(style) = styles.get(id) else {
+            continue;
+        };
+        if style_has_unsupported_detail(style) {
+            reporter.record("odt.export.character_style", ModelOutcome::Degraded);
+        }
+        let (run_style, remainder) = style
+            .run
+            .as_ref()
+            .map(split_run_properties)
+            .unwrap_or_default();
+        if remainder != RunProperties::default() {
+            reporter.record("odt.export.character_style.run", ModelOutcome::Omitted);
+        }
+        push_bounded(
+            body,
+            "<style:style style:family=\"text\" style:name=\"",
+            max_content_bytes,
+        )?;
+        push_escaped_attribute(body, name, max_content_bytes)?;
+        push_bounded(body, "\">", max_content_bytes)?;
+        if !run_style.is_empty() {
+            push_bounded(body, "<style:text-properties", max_content_bytes)?;
+            push_run_text_properties(body, &run_style, max_content_bytes)?;
+            push_bounded(body, "/>", max_content_bytes)?;
+        }
+        push_bounded(body, "</style:style>", max_content_bytes)?;
     }
-    Ok(format!("<office:styles>{body}</office:styles>"))
+    Ok(())
+}
+
+/// Reports whether a Character style carries any detail beyond its run properties
+/// (inheritance, flags, or the paragraph/table property slots), none of which the
+/// named-character-style projection represents.
+fn style_has_unsupported_detail(style: &Style) -> bool {
+    style.is_default
+        || style.aliases.is_some()
+        || style.based_on.is_some()
+        || style.next.is_some()
+        || style.link.is_some()
+        || style.hidden
+        || style.ui_priority.is_some()
+        || style.semi_hidden
+        || style.unhide_when_used
+        || style.q_format
+        || style.locked
+        || style.paragraph.is_some()
+        || style.table.is_some()
+        || style.table_row.is_some()
+        || style.table_cell.is_some()
+        || !style.conditional.is_empty()
 }
 
 fn push_escaped_attribute(
@@ -3196,6 +3360,7 @@ fn write_odt_impl(
     writer.register_numbering(document.definitions());
     writer.register_notes(document.definitions());
     writer.register_bookmarks(document.definitions());
+    writer.register_named_styles(document.definitions());
     writer.register_revisions(document);
     let mut definition_remainder = document.definitions().clone();
     definition_remainder.abstract_numbering = Default::default();
@@ -3204,6 +3369,10 @@ fn write_odt_impl(
     definition_remainder.endnotes = Default::default();
     // Document defaults are emitted into styles.xml, so they are not a loss.
     definition_remainder.document_defaults = Default::default();
+    // Character styles are emitted as named `style:style` elements in styles.xml
+    // (any style whose non-run detail cannot be represented is reported there), so
+    // clear them here rather than counting them as a definitions loss.
+    definition_remainder.styles = Default::default();
     if definition_remainder != Definitions::default() {
         writer
             .reporter
@@ -3261,6 +3430,8 @@ fn write_odt_impl(
     let master_page = writer.render_master_page(document)?;
     let default_styles = default_styles_xml(
         document.definitions().document_defaults.as_ref(),
+        &document.definitions().styles,
+        &writer.named_styles,
         &mut writer.reporter,
         limits.max_content_bytes,
     )?;
