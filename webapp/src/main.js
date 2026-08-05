@@ -1293,6 +1293,8 @@ function renderReviewMarginItems() {
     if (item.type !== "composer" && anchor?.node) {
       reviewAnchorIndex.push({
         itemId,
+        type: item.type,
+        dataId: item.data.id,
         node: anchor.node,
         start: Number(anchor.start) || 0,
         end: Number(anchor.end) || Number(anchor.start) || 0,
@@ -2649,7 +2651,40 @@ function reviewCommentAtAnchor(anchor) {
  *  of truth for where the caret lands; card expansion is derived from the
  *  resulting caret, never the other way around, and never blocks or delays
  *  caret placement. */
+/** The review item (comment or revision) whose anchor range EXACTLY equals the
+ *  current non-collapsed selection, or null. A review target is focused by
+ *  selecting its exact range, so an exact match uniquely identifies the item the
+ *  reviewer picked — even where a suggestion shares a boundary with (or nests
+ *  inside) a comment, which the point-based `reviewCommentAtAnchor` /
+ *  smallest-containing scans would otherwise resolve to the wrong item. */
+function reviewItemForExactSelection() {
+  const a = selection?.anchor;
+  const f = selection?.focus;
+  if (!a || !f || a.node !== f.node) return null;
+  const lo = Math.min(a.offset, f.offset);
+  const hi = Math.max(a.offset, f.offset);
+  if (lo === hi) return null; // a collapsed caret has no range to match exactly
+  for (const entry of reviewAnchorIndex) {
+    if (entry.node === a.node && entry.start === lo && entry.end === hi) return entry;
+  }
+  return null;
+}
+
 function syncActiveReviewCommentToCaret(anchor) {
+  // A freshly focused review target selects its own exact range: activate THAT
+  // item so the clustered sidebar layout (REVIEW-GAP-019) anchors the selected
+  // card to its own marker. Without this, selecting a suggestion that shares a
+  // boundary with a comment activated the comment instead, and the suggestion's
+  // card drifted from its marker (they moved together on scroll, never closing
+  // the gap).
+  const exact = reviewItemForExactSelection();
+  if (exact) {
+    activeReviewItemId = exact.itemId;
+    activeReviewCommentId = exact.type === "comment" ? exact.dataId : null;
+    reviewSidebarPreference = true;
+    scheduleReviewMarginRender();
+    return;
+  }
   const comment = reviewCommentAtAnchor(anchor);
   if (comment) {
     activeReviewCommentId = comment.id;
@@ -2712,7 +2747,18 @@ function paintReviewMarkers() {
     const moveItemId = revision.movePair?.fromStart && revision.movePair?.toStart
       ? `revision:move:${revision.movePair.fromStart}:${revision.movePair.toStart}`
       : null;
-    const active = moveItemId && activeReviewItemId === moveItemId
+    // Highlight the marker whenever ITS sidebar item is active. A revision can be
+    // surfaced under any of three ids depending on how the sidebar groups it — a
+    // move pair, a typing/replacement/formatting group (keyed by groupId), or an
+    // ungrouped revision (keyed by its own id) — so match against all three. This
+    // makes a selected inline suggestion show the active state (and lets
+    // `scrollReviewSelectionIntoView` target its marker), not only moves.
+    const activeIds = [
+      moveItemId,
+      revision.groupId ? `revision:${revision.groupId}` : null,
+      `revision:${revision.id}`,
+    ];
+    const active = activeIds.includes(activeReviewItemId)
       ? " review-revision-marker-active"
       : "";
     const kind = `${deletionLike
@@ -5122,7 +5168,15 @@ function scrollCaretIntoView(block = "nearest") {
  *  both — an already-visible marker never moves (no overshoot), and an off-screen
  *  one is revealed by the minimum scroll to its own rect, not the paragraph's. */
 function scrollReviewSelectionIntoView() {
-  const marker = pagesEl.querySelector(".overlay .highlight")
+  // Prefer the ACTIVE review item's own marker: in a clustered paragraph several
+  // items paint highlights, and `.highlight` in DOM order can belong to an
+  // earlier item — scrolling to it lands on the paragraph top, not the item the
+  // reviewer selected. The active marker (painted from the item resolved in
+  // `syncActiveReviewCommentToCaret`) is unambiguous; fall back to the selection
+  // highlight, then the caret.
+  const marker =
+    pagesEl.querySelector(".overlay .review-comment-marker-active, .overlay .review-revision-marker-active")
+    || pagesEl.querySelector(".overlay .highlight")
     || pagesEl.querySelector(".overlay .caret");
   scrollOverlayIntoView(marker, "nearest");
 }
@@ -7413,10 +7467,13 @@ function focusReviewTarget(target, index, total) {
     anchor: { node: range.startNode, offset: range.startOffset },
     focus: { node: range.endNode, offset: range.endOffset },
   };
+  // Resolve the active item FIRST (from the exact selected range), so the markers
+  // paint with the correct item active and the scroll targets that item's own
+  // marker — not the first highlight or a boundary-sharing neighbour.
+  syncActiveReviewCommentToCaret(selection.focus);
   drawSelection();
   focusEditorSurface();
   scrollReviewSelectionIntoView();
-  syncActiveReviewCommentToCaret(selection.focus);
   const who = reviewAuthorDisplay(target.data) || "You";
   const label = target.type === "comment"
     ? `Comment by ${who}`
