@@ -96,6 +96,12 @@ a general ODT support claim.
   fill, border, and floating anchors are dropped with a finding. The embedded-image
   path (and its href security validation) is unchanged — an image still wins when
   a frame carries both.
+- **Form fields — text input (fidelity parity, T6-5)**: an ODF `form:text`
+  control anchored by a `draw:control` now round-trips to the model's FORMTEXT
+  `Field` (with a text-input form payload and its name) and back, a byte-exact
+  fixed point. The `office:forms` registry is re-emitted with a minted control id
+  correlated to the body anchor. Checkbox/drop-down controls and richer control
+  attributes degrade for now.
 - **Tracked changes — deletions (fidelity parity, T6-3b)**: an ODF tracked
   deletion now round-trips to the model's inline `Revision` (deletion). The
   deleted content — which ODF stores in the change region, not the body — is

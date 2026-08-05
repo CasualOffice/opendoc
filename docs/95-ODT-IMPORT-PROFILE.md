@@ -171,6 +171,7 @@ The initial mapping is intentionally layered:
 | `text:table-of-content`                     | block content control (`BlockSdt`, TOC gallery)     | Mapped: index-body entries become the control's blocks, `text:name`→tag; level-template source dropped; empty TOC dropped |
 | `text:tracked-changes` + `text:change-start`/`-end` | inline `Revision` (insertion)               | Mapped for same-paragraph insertions (author/date from `office:change-info`); deletions/moves/format-changes/block-spanning ranges degrade |
 | `draw:frame` > `draw:text-box`              | inline `TextBox`                                    | Mapped for inline boxes (body flattened to one plain-text paragraph); size/fill/border/floating anchor dropped |
+| `office:forms` + `draw:control`             | FORMTEXT `Field` (text-input form)                  | Mapped for `form:text` (name); checkbox/dropdown and rich control attributes degrade |
 | `meta.xml` core metadata                    | `DocumentProperties.core`                          | Title, subject, creator, description, language, dates, keywords mapped; duplicate/unsupported fields reported |
 | `meta:generator`                             | `DocumentProperties.app.application`              | Mapped; remaining ODT statistics/user-defined metadata reported                                               |
 | `meta:document-statistic`                    | `DocumentProperties.app`                           | Page, word, character, and paragraph counts map when numeric; unknown/malformed counters reported             |
