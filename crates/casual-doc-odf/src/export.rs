@@ -4,13 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, DocumentDefaults, Extent, FieldKind, FontRef, GroupChild, HeaderFooterKind,
-    HeightRule, HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId,
-    Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, RevisionKind, RowHeight, RunProperties, Spacing, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment,
-    VerticalMerge, WidthType,
+    Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Comment, CommentId,
+    CommentReference, Definitions, Document, DocumentDefaults, Extent, FieldKind, FontRef,
+    GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation, InlineNode,
+    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RowHeight, RunProperties,
+    Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth,
+    VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -957,6 +957,7 @@ struct Writer {
     emitted_lists: BTreeSet<NumberingInstanceId>,
     footnotes: BTreeMap<NoteId, Note>,
     endnotes: BTreeMap<NoteId, Note>,
+    comments: BTreeMap<CommentId, Comment>,
     emitted_footnotes: BTreeSet<NoteId>,
     emitted_endnotes: BTreeSet<NoteId>,
     footnote_occurrences: BTreeMap<NoteId, usize>,
@@ -995,6 +996,7 @@ impl Writer {
             emitted_lists: BTreeSet::new(),
             footnotes: BTreeMap::new(),
             endnotes: BTreeMap::new(),
+            comments: BTreeMap::new(),
             emitted_footnotes: BTreeSet::new(),
             emitted_endnotes: BTreeSet::new(),
             footnote_occurrences: BTreeMap::new(),
@@ -1094,6 +1096,12 @@ impl Writer {
                 .endnotes
                 .iter()
                 .map(|(id, note)| (*id, note.clone())),
+        );
+        self.comments.extend(
+            definitions
+                .comments
+                .iter()
+                .map(|(id, comment)| (*id, comment.clone())),
         );
     }
 
@@ -1862,11 +1870,12 @@ impl Writer {
                     }
                 }
                 InlineNode::NoteReference(note) => self.write_note(note, depth + 1)?,
-                InlineNode::CommentReference(_)
-                | InlineNode::CommentRangeStart(_)
-                | InlineNode::CommentRangeEnd(_) => self
+                InlineNode::CommentReference(reference) => {
+                    self.write_comment(reference, depth + 1)?
+                }
+                InlineNode::CommentRangeStart(_) | InlineNode::CommentRangeEnd(_) => self
                     .reporter
-                    .record("odt.export.comment", ModelOutcome::Omitted),
+                    .record("odt.export.comment_range", ModelOutcome::Omitted),
                 InlineNode::BookmarkStart(start) => {
                     self.write_bookmark_marker("bookmark-start", start.bookmark)?
                 }
@@ -1937,6 +1946,46 @@ impl Writer {
         self.note_depth -= 1;
         result?;
         self.push("</text:note-body></text:note>")
+    }
+
+    /// Emits an `office:annotation` (a point comment) for a `CommentReference`.
+    /// The `dc` namespace is declared inline on the element so the shared content
+    /// header stays unchanged for comment-free documents. The paired range is not
+    /// modeled, so no `office:annotation-end` is written.
+    fn write_comment(
+        &mut self,
+        reference: &CommentReference,
+        depth: usize,
+    ) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        let definition = self
+            .comments
+            .get(&reference.comment)
+            .cloned()
+            .ok_or(OdfError::InvalidModel)?;
+        self.push("<office:annotation xmlns:dc=\"http://purl.org/dc/elements/1.1/\">")?;
+        if let Some(author) = &definition.author {
+            if is_representable(author) {
+                self.push("<dc:creator>")?;
+                self.write_pcdata(author)?;
+                self.push("</dc:creator>")?;
+            } else {
+                self.reporter
+                    .record("odt.export.comment_author", ModelOutcome::Omitted);
+            }
+        }
+        if let Some(date) = &definition.date {
+            if is_representable(date) {
+                self.push("<dc:date>")?;
+                self.write_pcdata(date)?;
+                self.push("</dc:date>")?;
+            } else {
+                self.reporter
+                    .record("odt.export.comment_date", ModelOutcome::Omitted);
+            }
+        }
+        self.write_blocks(&definition.blocks, depth + 1)?;
+        self.push("</office:annotation>")
     }
 
     fn report_unreferenced_notes(&mut self) {
@@ -2099,6 +2148,25 @@ impl Writer {
         }
         let escaped = quick_xml::escape::escape(plain.as_str()).into_owned();
         plain.clear();
+        self.push(&escaped)
+    }
+
+    /// Emits `text` as escaped element `#PCDATA` — `&`/`<`/`>` escaped, whitespace
+    /// left literal. Unlike `write_text`, it does NOT re-encode spaces/tabs/breaks
+    /// as `text:s`/`text:tab`/`text:line-break`: those ODF whitespace elements are
+    /// not valid children of a Dublin Core `#PCDATA` element (`dc:creator`,
+    /// `dc:date`), and the annotation importer only decodes them inside a body
+    /// paragraph, so running them over author/date would emit schema-invalid
+    /// output and drop every whitespace character on re-import (a fixed-point
+    /// break). Callers must pre-check `is_representable`.
+    fn write_pcdata(&mut self, text: &str) -> Result<(), OdfError> {
+        self.text_bytes = checked_add(
+            self.text_bytes,
+            text.len(),
+            "odt_export_text_bytes",
+            self.limits.max_text_bytes,
+        )?;
+        let escaped = quick_xml::escape::escape(text).into_owned();
         self.push(&escaped)
     }
 }

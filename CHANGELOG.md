@@ -70,8 +70,25 @@ a general ODT support claim.
   (and, for date/time, the ODF number/data style with no DOCX format-picture
   equivalent) is dropped; a renderer recomputes the value. A field inside a
   hyperlink is not modeled (the model forbids a field nested in an inline
-  wrapper) and stays a degraded text projection. Remaining field kinds
-  (references, sequence, TOC) keep the degraded projection.
+  wrapper) and stays a degraded text projection.
+- **Fields — references & sequence (fidelity parity, T3-1c/T3-1d)**: a
+  `text:bookmark-ref` (text/page reference format) and a `text:sequence` now
+  import to typed `Field` nodes (`FieldKind::Ref`/`PageRef`/`Seq`) and export
+  back, round-tripping to a byte-exact fixed point. The sequence's own
+  formula/format and the reference's cached display are dropped. Control
+  characters in a target/name round-trip as XML numeric references. Remaining
+  field kinds (TOC) keep the degraded projection.
+- **Comments — `office:annotation` (fidelity parity, T6-1)**: an inline
+  `office:annotation` now imports to a schema-v1 `CommentReference` plus a
+  `Comment` definition — author (`dc:creator`), date (`dc:date`), and body text
+  (`text:p`/`text:h`, flattened to a single plain-text paragraph) — and exports
+  back to `office:annotation` (with the `dc` namespace declared inline on the
+  element, so comment-free documents are byte-unchanged), round-tripping to a
+  byte-exact fixed point. The paired `office:annotation-end` range marker is not
+  modeled, so a commented span collapses to a point comment at the anchor;
+  multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
+  (`office:name`, reply structure) is dropped. Active content inside an
+  annotation is dropped like anywhere else.
 - **Table-level width & alignment (fidelity parity, T2c-5)**: a table's alignment
   (`table:align`) and width (`style:width` absolute / `style:rel-width` relative)
   now round-trip via a new `table` style family, completing table-level geometry.

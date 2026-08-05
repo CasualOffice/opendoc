@@ -689,6 +689,70 @@ fn sequence_field_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn comment_annotation_round_trips_to_a_fixed_point() {
+    // A two-word author with an ampersand exercises PCDATA escaping and the
+    // whitespace path that a naive `write_text` (which encodes spaces as
+    // `<text:s/>`) would corrupt.
+    let body = r#"<text:p>Before <office:annotation xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Ada &amp; Grace</dc:creator><dc:date>2024-01-02T03:04:05</dc:date><text:p>Please revise this.</text:p></office:annotation>after</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    // The annotation lands as a single point `CommentReference`, flanked by the
+    // surrounding text runs.
+    let comment_id = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::CommentReference(reference) => Some(reference.comment),
+            _ => None,
+        })
+        .expect("comment reference");
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .get(&comment_id)
+        .expect("comment definition");
+    assert_eq!(comment.author.as_deref(), Some("Ada & Grace"));
+    assert_eq!(comment.date.as_deref(), Some("2024-01-02T03:04:05"));
+    let body_text = match comment.blocks.as_slice() {
+        [BlockNode::Paragraph(paragraph)] => match paragraph.inlines.as_slice() {
+            [InlineNode::Run(run)] => run.text.clone(),
+            other => panic!("unexpected comment body inlines: {other:?}"),
+        },
+        other => panic!("unexpected comment body blocks: {other:?}"),
+    };
+    assert_eq!(body_text, "Please revise this.");
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    for expected in [
+        r#"<office:annotation xmlns:dc="http://purl.org/dc/elements/1.1/">"#,
+        // The space is preserved as literal PCDATA (not re-encoded as <text:s/>)
+        // and the ampersand is escaped.
+        r#"<dc:creator>Ada &amp; Grace</dc:creator>"#,
+        r#"<dc:date>2024-01-02T03:04:05</dc:date>"#,
+        r#"</office:annotation>"#,
+    ] {
+        assert!(
+            content_xml.contains(expected),
+            "annotation missing {expected}: {content_xml}"
+        );
+    }
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn reference_fields_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::FieldKind;
     let body = r#"<text:p><text:bookmark-ref text:reference-format="text" text:ref-name="mark">X</text:bookmark-ref> <text:bookmark-ref text:reference-format="page" text:ref-name="mark">3</text:bookmark-ref></text:p>"#;

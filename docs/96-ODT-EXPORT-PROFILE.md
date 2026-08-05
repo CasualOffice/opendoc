@@ -79,6 +79,15 @@ with any fragment, or `#anchor` for an internal target; the screen-tip becomes
 `text:bookmark-start`/`text:bookmark-end` with the registered bookmark name — the
 exact forms the importer reads back, giving a byte-exact fixed point.
 
+Comments round-trip as point annotations: a `CommentReference` is written as an
+`office:annotation` with the `dc` namespace declared inline on the element (so
+comment-free documents keep the unchanged content header), carrying the author as
+`dc:creator`, the date as `dc:date`, and the comment's block content as the
+annotation body. The paired `CommentRangeStart`/`CommentRangeEnd` markers are
+omitted (the model comment resolves through its reference), so a range comment is
+written as a point at its anchor. A non-representable author/date is dropped with
+a finding; the annotation and its body are still emitted.
+
 Until their dedicated import/export mappings land, wrappers and complex blocks
 may emit a bounded visible-text projection only when that projection is safe.
 Every such case is reported as degraded; content with no safe projection is

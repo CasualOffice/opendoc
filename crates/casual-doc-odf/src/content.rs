@@ -5,15 +5,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
-    BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color,
-    Definitions, Document, DocumentDefaults, Drawing, Extent, ExternalTarget, Field, FieldKind,
-    FontName, FontRef, GridColumn, HeightRule, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
-    InternalTarget, LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH,
-    MediaId, MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
-    Paragraph, ParagraphProperties, RgbColor, RowHeight, Run, RunProperties, Shading, Spacing, Tab,
-    Table, TableBorders, TableCell, TableCellProperties, TableProperties, TableRow,
-    TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
+    BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color, Comment,
+    CommentId, CommentReference, Definitions, Document, DocumentDefaults, Drawing, Extent,
+    ExternalTarget, Field, FieldKind, FontName, FontRef, GridColumn, HeightRule, Hyperlink,
+    HyperlinkTarget, Indentation, InlineNode, InternalTarget, LevelJustification, LevelSuffix,
+    MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId, MediaReference, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel,
+    NumberingOverride, NumberingRef, Paragraph, ParagraphProperties, RgbColor, RowHeight, Run,
+    RunProperties, Shading, Spacing, Tab, Table, TableBorders, TableCell, TableCellProperties,
+    TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
+    WidthType,
 };
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -31,6 +32,7 @@ const FO_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1
 const TABLE_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const DRAW_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const SVG_NS: &[u8] = b"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+const DC_NS: &[u8] = b"http://purl.org/dc/elements/1.1/";
 const MAX_NAMESPACE_DECLARATIONS_PER_ELEMENT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +46,7 @@ enum NamespaceKind {
     Table,
     Draw,
     Svg,
+    Dc,
     Foreign,
 }
 
@@ -366,6 +369,10 @@ enum InlineDraft {
     Drawing(usize),
     /// A typed field (e.g. page number); its cached display content is dropped.
     Field(FieldKind),
+    /// A comment anchor (`office:annotation`); the index selects the captured
+    /// [`CommentDraft`]. The paired `office:annotation-end` range is not modeled
+    /// (the comment collapses to a point at the anchor).
+    CommentReference(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -395,6 +402,24 @@ struct DrawingDraft {
     /// `svg:title`/`svg:desc` alt text, if present.
     descr: Option<String>,
 }
+
+/// A bounded `office:annotation` capture: the comment metadata plus its body as
+/// flattened plain text (a single paragraph). The `office:annotation-end` range
+/// is dropped, so the comment is anchored as a point at the annotation position.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CommentDraft {
+    /// `dc:creator` text, bounded to the model's 255-byte author domain.
+    author: Option<String>,
+    /// `dc:date` text, bounded to the model's 64-byte date domain.
+    date: Option<String>,
+    /// The body paragraphs flattened to plain text (bounded); empty when the
+    /// annotation carried no body text.
+    body: String,
+}
+
+/// Upper bound on captured comment-body text (bytes). Mirrors the descr cap so a
+/// hostile annotation cannot grow the model unboundedly; excess is dropped.
+const MAX_COMMENT_BODY_BYTES: usize = MAX_DESCR_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParagraphDraft {
@@ -2503,6 +2528,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut list_instances = 0_usize;
     let mut list_overrides: BTreeMap<(usize, u8), u16> = BTreeMap::new();
     let mut drawings: Vec<DrawingDraft> = Vec::new();
+    let mut comments: Vec<CommentDraft> = Vec::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
     let mut table_cell_count = 0_usize;
@@ -2704,6 +2730,42 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                                 InlineDraft::Drawing(index),
                             );
                         }
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
+                        && is_name(&name, NamespaceKind::Office, b"annotation")
+                    {
+                        // Sub-parse the annotation subtree off the main state
+                        // machine into a comment anchor. parse_annotation consumes
+                        // the matching `End`, so undo this `Start`'s depth increment
+                        // below. A `CommentReference` is a leaf inline (the model
+                        // permits it inside a hyperlink wrapper, unlike a field), so
+                        // this branch does not gate on `active_link`.
+                        let draft = parse_annotation(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut text_bytes,
+                            cancellation,
+                            &mut reporter,
+                        )?;
+                        let index = comments.len();
+                        comments.push(draft);
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::CommentReference(index),
+                        );
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else if text_body_depth.is_some()
                         && current.is_some()
@@ -3203,6 +3265,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &style_catalog.lists,
         &list_overrides,
         &drawings,
+        &comments,
         &style_catalog.defaults,
         &mut reporter,
     )?;
@@ -3569,6 +3632,319 @@ fn parse_draw_frame(
         height_emu,
         descr,
     }))
+}
+
+/// Which annotation child's text the sub-parser is currently accumulating.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CommentCapture {
+    Author,
+    Date,
+    Body,
+}
+
+/// Appends only well-formed XML text characters of `value` to `buffer`, stopping
+/// at `cap` bytes. Returns whether any character was dropped (invalid or over
+/// cap) so the caller can report a degrade.
+fn push_bounded_text(buffer: &mut String, value: &str, cap: usize) -> bool {
+    let mut dropped = false;
+    for ch in value.chars() {
+        if !is_xml_text_char(ch) {
+            dropped = true;
+            continue;
+        }
+        if buffer
+            .len()
+            .checked_add(ch.len_utf8())
+            .is_none_or(|len| len > cap)
+        {
+            dropped = true;
+            break;
+        }
+        buffer.push(ch);
+    }
+    dropped
+}
+
+/// Routes one captured text value into the annotation buffer selected by
+/// `kind`, charging it against the text-byte limit and bounding it to the
+/// buffer's model domain. Returns whether any character was dropped.
+fn append_captured_text(
+    kind: CommentCapture,
+    value: &str,
+    author: &mut String,
+    date: &mut String,
+    body: &mut String,
+    text_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<bool, OdfError> {
+    *text_bytes = text_bytes
+        .checked_add(value.len())
+        .ok_or(OdfError::MalformedContent)?;
+    enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
+    Ok(match kind {
+        CommentCapture::Author => push_bounded_text(author, value, 255),
+        CommentCapture::Date => push_bounded_text(date, value, 64),
+        CommentCapture::Body => push_bounded_text(body, value, MAX_COMMENT_BODY_BYTES),
+    })
+}
+
+/// Sub-parses an `office:annotation` subtree off the main state machine,
+/// capturing the comment author (`dc:creator`), date (`dc:date`), and body
+/// (`text:p`/`text:h` text, flattened to a single plain-text paragraph). Active
+/// content is dropped wholesale. The matching `End` is consumed, so the caller
+/// undoes its `Start` depth increment. The `office:annotation-end` range marker
+/// is handled separately (dropped), so the comment anchors as a point.
+#[allow(clippy::too_many_arguments)]
+fn parse_annotation(
+    reader: &mut NsReader<&[u8]>,
+    annotation: &BytesStart<'_>,
+    annotation_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    text_bytes: &mut usize,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<CommentDraft, OdfError> {
+    // The annotation's own attributes (`office:name`, an inline `xmlns:dc`) carry
+    // no modeled semantics (the range is dropped), but they are charged against
+    // the attribute limits like any other element's.
+    count_attributes_only(annotation, attributes, attribute_bytes, limits)?;
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut body = String::new();
+    let mut capture: Option<CommentCapture> = None;
+    let mut capture_depth: Option<usize> = None;
+    let mut reported_body_drop = false;
+    let mut reported_unsupported = false;
+    let mut sub_depth = 0_usize;
+    let mut buffer = Vec::new();
+
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof => return Err(OdfError::MalformedContent),
+            Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce(
+                    "odf_content_xml_depth",
+                    annotation_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    limits.max_xml_depth,
+                )?;
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                if is_active(&name) {
+                    // Drop macros / event listeners in the comment body wholesale,
+                    // exactly like the body pass, so no active content is captured
+                    // into the comment text or re-emitted on export.
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    skip_active_subtree(
+                        reader,
+                        limits,
+                        annotation_depth
+                            .checked_add(sub_depth)
+                            .ok_or(OdfError::MalformedContent)?,
+                        elements,
+                        attributes,
+                        attribute_bytes,
+                        cancellation,
+                    )?;
+                    sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    buffer.clear();
+                    continue;
+                }
+                if capture.is_none() {
+                    if is_name(&name, NamespaceKind::Dc, b"creator") {
+                        capture = Some(CommentCapture::Author);
+                        capture_depth = Some(sub_depth);
+                    } else if is_name(&name, NamespaceKind::Dc, b"date") {
+                        capture = Some(CommentCapture::Date);
+                        capture_depth = Some(sub_depth);
+                    } else if name.namespace == NamespaceKind::Text
+                        && matches!(name.local.as_slice(), b"p" | b"h")
+                    {
+                        // Separate flattened body paragraphs with a single space so
+                        // multi-paragraph comments do not run together.
+                        if !body.is_empty()
+                            && !push_bounded_text(&mut body, " ", MAX_COMMENT_BODY_BYTES)
+                        {
+                            reported_body_drop = true;
+                        }
+                        capture = Some(CommentCapture::Body);
+                        capture_depth = Some(sub_depth);
+                    } else if !reported_unsupported {
+                        // e.g. meta:date-string, an unknown wrapper: its text is not
+                        // captured, but note the dropped detail once.
+                        reported_unsupported = true;
+                        reporter.report(
+                            "odf.annotation.unsupported-content".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                }
+            }
+            Event::Empty(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                if is_active(&name) {
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                }
+                // Inside a body paragraph, decode the same whitespace elements the
+                // exporter emits (`text:s`/`text:tab`/`text:line-break`) back into
+                // the flattened body text, or the round-trip would silently drop
+                // every space/tab/break on re-import.
+                if capture == Some(CommentCapture::Body)
+                    && is_name(&name, NamespaceKind::Text, b"s")
+                {
+                    let mut count = 1_usize;
+                    for attribute in element.attributes() {
+                        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+                        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                        if namespace_kind(&namespace) == NamespaceKind::Text
+                            && local.as_ref() == b"c"
+                        {
+                            count = decode_attribute(&attribute)?
+                                .parse()
+                                .map_err(|_| OdfError::MalformedContent)?;
+                            if count == 0 {
+                                return Err(OdfError::MalformedContent);
+                            }
+                        }
+                    }
+                    enforce("odf_content_space_repeat", count, limits.max_space_repeat)?;
+                    if push_bounded_text(&mut body, &" ".repeat(count), MAX_COMMENT_BODY_BYTES) {
+                        reported_body_drop = true;
+                    }
+                } else if capture == Some(CommentCapture::Body)
+                    && (is_name(&name, NamespaceKind::Text, b"tab")
+                        || is_name(&name, NamespaceKind::Text, b"line-break"))
+                {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    let whitespace = if name.local.as_slice() == b"tab" {
+                        "\t"
+                    } else {
+                        "\n"
+                    };
+                    if push_bounded_text(&mut body, whitespace, MAX_COMMENT_BODY_BYTES) {
+                        reported_body_drop = true;
+                    }
+                } else {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                }
+            }
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                if capture_depth == Some(sub_depth) {
+                    capture = None;
+                    capture_depth = None;
+                }
+                sub_depth -= 1;
+            }
+            Event::Text(text) => {
+                let Some(kind) = capture else {
+                    buffer.clear();
+                    continue;
+                };
+                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| OdfError::MalformedContent)?;
+                let dropped = append_captured_text(
+                    kind,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut body,
+                    text_bytes,
+                    limits,
+                )?;
+                if dropped && matches!(kind, CommentCapture::Body) {
+                    reported_body_drop = true;
+                }
+            }
+            // A `<![CDATA[…]]>` block inside a captured child (verbatim text).
+            Event::CData(text) => {
+                let Some(kind) = capture else {
+                    buffer.clear();
+                    continue;
+                };
+                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let dropped = append_captured_text(
+                    kind,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut body,
+                    text_bytes,
+                    limits,
+                )?;
+                if dropped && matches!(kind, CommentCapture::Body) {
+                    reported_body_drop = true;
+                }
+            }
+            // An entity reference (`&amp;`, `&#38;`, …); quick-xml surfaces these
+            // separately from `Text`, so without this arm every escaped `&`/`<`/`>`
+            // in a comment author/date/body would silently vanish on import.
+            Event::GeneralRef(reference) => {
+                let Some(kind) = capture else {
+                    buffer.clear();
+                    continue;
+                };
+                let value = decode_reference(&reference)?;
+                let dropped = append_captured_text(
+                    kind,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut body,
+                    text_bytes,
+                    limits,
+                )?;
+                if dropped && matches!(kind, CommentCapture::Body) {
+                    reported_body_drop = true;
+                }
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+
+    if reported_body_drop {
+        reporter.report(
+            "odf.annotation.body-truncated".to_owned(),
+            ModelOutcome::Degraded,
+        );
+    }
+    // The author/date must be non-empty to be modeled (an empty `dc:creator` is
+    // no author). Bounds were enforced during capture, so this only filters the
+    // empty case.
+    Ok(CommentDraft {
+        author: (!author.is_empty()).then_some(author),
+        date: (!date.is_empty()).then_some(date),
+        body,
+    })
 }
 
 fn read_href(
@@ -5611,7 +5987,8 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::BookmarkEnd(_)
             | InlineDraft::NoteReference { .. }
             | InlineDraft::Drawing(_)
-            | InlineDraft::Field(_) => {}
+            | InlineDraft::Field(_)
+            | InlineDraft::CommentReference(_) => {}
         }
     }
     Ok(total)
@@ -5691,6 +6068,7 @@ fn build_document(
     list_styles: &ListStyles,
     list_overrides: &BTreeMap<(usize, u8), u16>,
     drawings: &[DrawingDraft],
+    comments: &[CommentDraft],
     defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
@@ -5735,6 +6113,16 @@ fn build_document(
             },
         );
         hash_block_drafts(&mut namespace, &note.blocks);
+    }
+    for comment in comments {
+        hash_bytes(&mut namespace, b"comment");
+        if let Some(author) = &comment.author {
+            hash_bytes(&mut namespace, author.as_bytes());
+        }
+        if let Some(date) = &comment.date {
+            hash_bytes(&mut namespace, date.as_bytes());
+        }
+        hash_bytes(&mut namespace, comment.body.as_bytes());
     }
     if namespace == 0 {
         namespace = 1;
@@ -5872,6 +6260,38 @@ fn build_document(
         );
         media_ids.push(media_id);
     }
+    // One comment definition per annotation. The body is a single flattened
+    // plain-text paragraph (empty body -> no blocks); the paired range is not
+    // modeled, so each anchor is a point `CommentReference`.
+    let mut comment_ids = Vec::with_capacity(comments.len());
+    for comment in comments {
+        let comment_id = CommentId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        let blocks = if comment.body.is_empty() {
+            Vec::new()
+        } else {
+            let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+            let run_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: run_id,
+                    properties: RunProperties::default(),
+                    text: comment.body.clone(),
+                })],
+            })]
+        };
+        definitions.comments.insert(
+            comment_id,
+            Comment {
+                blocks,
+                author: comment.author.clone(),
+                date: comment.date.clone(),
+                ..Comment::default()
+            },
+        );
+        comment_ids.push(comment_id);
+    }
     for (index, note) in notes.iter().enumerate() {
         let blocks = build_blocks(
             &note.blocks,
@@ -5880,6 +6300,7 @@ fn build_document(
             &bookmark_ids,
             &numbering_ids,
             &note_ids,
+            &comment_ids,
             &media_ids,
             drawings,
         )?;
@@ -5903,6 +6324,7 @@ fn build_document(
         &bookmark_ids,
         &numbering_ids,
         &note_ids,
+        &comment_ids,
         &media_ids,
         drawings,
     )?;
@@ -5977,6 +6399,7 @@ fn build_blocks(
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    comment_ids: &[CommentId],
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
@@ -5989,6 +6412,7 @@ fn build_blocks(
                 bookmark_ids,
                 numbering_ids,
                 note_ids,
+                comment_ids,
                 media_ids,
                 drawings,
             )?),
@@ -5999,6 +6423,7 @@ fn build_blocks(
                 bookmark_ids,
                 numbering_ids,
                 note_ids,
+                comment_ids,
                 media_ids,
                 drawings,
             )?),
@@ -6007,12 +6432,14 @@ fn build_blocks(
     Ok(blocks)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_paragraph(
     draft: &ParagraphDraft,
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    comment_ids: &[CommentId],
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Paragraph, OdfError> {
@@ -6036,6 +6463,7 @@ fn build_paragraph(
             ids,
             bookmark_ids,
             note_ids,
+            comment_ids,
             media_ids,
             drawings,
         )?,
@@ -6058,6 +6486,7 @@ fn build_table(
     bookmark_ids: &[Option<BookmarkId>],
     numbering_ids: &BTreeMap<usize, NumberingInstanceId>,
     note_ids: &[NoteId],
+    comment_ids: &[CommentId],
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Table, OdfError> {
@@ -6077,6 +6506,7 @@ fn build_table(
                         bookmark_ids,
                         numbering_ids,
                         note_ids,
+                        comment_ids,
                         media_ids,
                         drawings,
                     )?;
@@ -6235,6 +6665,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"field");
             hash_bytes(hash, field_instruction(kind).as_bytes());
         }
+        InlineDraft::CommentReference(index) => {
+            hash_bytes(hash, b"comment-reference");
+            hash_bytes(hash, &index.to_le_bytes());
+        }
     }
 }
 
@@ -6272,6 +6706,7 @@ fn build_inlines(
     ids: &mut IdGenerator,
     bookmark_ids: &[Option<BookmarkId>],
     note_ids: &[NoteId],
+    comment_ids: &[CommentId],
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
@@ -6309,7 +6744,15 @@ fn build_inlines(
                 id,
                 target: target.clone(),
                 tooltip: None,
-                inlines: build_inlines(children, ids, bookmark_ids, note_ids, media_ids, drawings)?,
+                inlines: build_inlines(
+                    children,
+                    ids,
+                    bookmark_ids,
+                    note_ids,
+                    comment_ids,
+                    media_ids,
+                    drawings,
+                )?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,
@@ -6355,6 +6798,12 @@ fn build_inlines(
                 inlines: Vec::new(),
                 form: None,
             }),
+            InlineDraft::CommentReference(index) => {
+                InlineNode::CommentReference(CommentReference {
+                    id,
+                    comment: *comment_ids.get(*index).ok_or(OdfError::InvalidModel)?,
+                })
+            }
         });
     }
     Ok(inlines)
@@ -6550,6 +6999,7 @@ fn namespace_kind(namespace: &ResolveResult<'_>) -> NamespaceKind {
         ResolveResult::Bound(Namespace(value)) if *value == TABLE_NS => NamespaceKind::Table,
         ResolveResult::Bound(Namespace(value)) if *value == DRAW_NS => NamespaceKind::Draw,
         ResolveResult::Bound(Namespace(value)) if *value == SVG_NS => NamespaceKind::Svg,
+        ResolveResult::Bound(Namespace(value)) if *value == DC_NS => NamespaceKind::Dc,
         _ => NamespaceKind::Foreign,
     }
 }
@@ -6757,6 +7207,7 @@ const fn namespace_label(namespace: NamespaceKind) -> &'static str {
         NamespaceKind::Table => "table",
         NamespaceKind::Draw => "draw",
         NamespaceKind::Svg => "svg",
+        NamespaceKind::Dc => "dc",
         NamespaceKind::Foreign => "foreign",
     }
 }
