@@ -664,6 +664,31 @@
         <footer class="dialog-foot"><span class="dialog-note">Each change is one undoable action.</span><div class="dialog-actions"><button id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
       </section>
     </div>
+    <div id="fieldDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="fieldTitle" aria-describedby="fieldDescription">
+      <section class="dialog-card field-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">data_object</span>
+            <div>
+              <h2 id="fieldTitle">Insert field</h2>
+              <p id="fieldDescription">Insert an auto-updating field at the cursor.</p>
+            </div>
+          </div>
+          <button id="fieldClose" type="button" class="dialog-close" title="Close" aria-label="Close insert field"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body field-body">
+          <ul id="fieldList" class="field-list" aria-label="Field types">
+            <li><button type="button" class="field-choice" data-field-kind="page"><span class="ms field-choice-icon" aria-hidden="true">tag</span><span class="field-choice-text"><span class="field-choice-label">Page number</span><span class="field-choice-note">Current page number, updates as pages reflow</span></span></button></li>
+            <li><button type="button" class="field-choice" data-field-kind="numpages"><span class="ms field-choice-icon" aria-hidden="true">tag</span><span class="field-choice-text"><span class="field-choice-label">Number of pages</span><span class="field-choice-note">Total page count, updates as pages reflow</span></span></button></li>
+            <li><button type="button" class="field-choice" data-field-kind="date"><span class="ms field-choice-icon" aria-hidden="true">calendar_today</span><span class="field-choice-text"><span class="field-choice-label">Date</span><span class="field-choice-note">Today’s date</span></span></button></li>
+            <li><button type="button" class="field-choice" data-field-kind="time"><span class="ms field-choice-icon" aria-hidden="true">schedule</span><span class="field-choice-text"><span class="field-choice-label">Time</span><span class="field-choice-note">Current time</span></span></button></li>
+            <li><button type="button" class="field-choice" data-field-kind="filename"><span class="ms field-choice-icon" aria-hidden="true">description</span><span class="field-choice-text"><span class="field-choice-label">File name</span><span class="field-choice-note">This document’s file name</span></span></button></li>
+            <li><button type="button" class="field-choice" data-field-kind="author"><span class="ms field-choice-icon" aria-hidden="true">person</span><span class="field-choice-text"><span class="field-choice-label">Author</span><span class="field-choice-note">The active author</span></span></button></li>
+          </ul>
+        </div>
+        <footer class="dialog-foot"><span class="dialog-note">One undoable action.</span><div class="dialog-actions"><button id="fieldCancel" type="button" class="dialog-button">Cancel</button></div></footer>
+      </section>
+    </div>
 
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">

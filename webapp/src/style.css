@@ -1070,6 +1070,77 @@ body.modal-open {
   gap: var(--space-4);
 }
 
+/* Insert-field picker: a compact list of field kinds, styled to match the
+   bookmark manager's rows and the graphite dialog chrome. */
+.field-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.field-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.field-choice:hover {
+  background: var(--bg-2);
+}
+
+.field-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field-choice-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 19px;
+}
+
+.field-choice:hover .field-choice-icon {
+  color: var(--accent);
+}
+
+.field-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.field-choice-label {
+  font-size: var(--fs-body);
+  font-weight: 550;
+}
+
+.field-choice-note {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 450;
+}
+
 .bookmark-add {
   display: flex;
   flex-direction: column;

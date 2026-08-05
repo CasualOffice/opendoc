@@ -7826,6 +7826,16 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: !!selection, disabledReason: "Place the caret before inserting a table", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: context.hasRange ?? hasRange(), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", run: () => openBookmarkManager() },
+    { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: !!selection, disabledReason: "Place the caret before inserting a field", run: () => openFieldDialog() },
+    ...FIELD_KINDS.map((f) => ({
+      id: `insert.field.${f.kind}`,
+      label: `Insert field: ${f.label}`,
+      group: "Insert",
+      kw: `field ${f.kw}`,
+      enabled: !!selection,
+      disabledReason: "Place the caret before inserting a field",
+      run: () => insertFieldAtCaret(f.kind),
+    })),
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
@@ -7917,7 +7927,7 @@ const APP_MENU_SECTIONS = {
     ["view.zoomIn", "view.zoomOut"],
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
   ],
-  insert: [["insert.table", "insert.link", "insert.bookmark"], ["review.comment"]],
+  insert: [["insert.table", "insert.link", "insert.bookmark", "insert.field"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
@@ -8399,6 +8409,143 @@ if (bookmarkDialog) {
       closeBookmarkDialog();
     } else if (event.key === "Tab") {
       trapModalFocus(event, bookmarkDialog);
+    }
+  });
+}
+
+// ---- Insert field ----------------------------------------------------------
+// A Word/Docs-style field inserter over the engine's insertField op (one
+// undoable "Field change"). PAGE/NUMPAGES recompute at pagination and carry no
+// cached text; the clock/context kinds (date/time/filename/author) cache an
+// already-formatted string the HOST computes here, because the engine reads no
+// clock or filesystem (see the insertField binding, crates/casual-doc-wasm).
+// The insert mirrors the bookmark/table structural inserts: blocked in Viewing
+// (read-only) and Suggesting (no tracked-revision representation yet).
+const FIELD_KINDS = [
+  { kind: "page", label: "Page number", icon: "tag", kw: "page number current", note: "Current page number" },
+  { kind: "numpages", label: "Number of pages", icon: "tag", kw: "number of pages count total", note: "Total page count" },
+  { kind: "date", label: "Date", icon: "calendar_today", kw: "date today", note: "Today’s date" },
+  { kind: "time", label: "Time", icon: "schedule", kw: "time clock now", note: "Current time" },
+  { kind: "filename", label: "File name", icon: "description", kw: "file name filename document", note: "This document’s file name" },
+  { kind: "author", label: "Author", icon: "person", kw: "author name creator", note: "The active author" },
+];
+const FIELD_LABELS = new Map(FIELD_KINDS.map((f) => [f.kind, f.label]));
+
+/** The already-formatted display text a cached field kind shows. PAGE/NUMPAGES
+ *  recompute at pagination and take no cached text (undefined → the binding's
+ *  `None`). The engine reads no clock or filesystem, so date/time are formatted
+ *  with the locale-default medium `Intl.DateTimeFormat`, filename is the editor's
+ *  current document name, and author is the active review author. */
+function fieldResultText(kind) {
+  switch (kind) {
+    case "date":
+      return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date());
+    case "time":
+      return new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(new Date());
+    case "filename":
+      return currentName;
+    case "author":
+      return settings.authorName.trim() || "You";
+    default:
+      return undefined; // page / numpages: engine recomputes, no cached text
+  }
+}
+
+/** Inserts a common field at the caret as a single undoable "Field change".
+ *  Fails closed exactly like the bookmark/table inserts (`blockMutationInViewing`
+ *  + `blockUntrackedInSuggesting`), then applies the EditResult through the shared
+ *  caret-position path so the field renders inline, the caret lands after it, and
+ *  Undo/Redo treats it as one action. */
+async function insertFieldAtCaret(kind) {
+  if (!doc || !selection) {
+    setStatus("Place the caret before inserting a field", "error");
+    focusEditorSurface();
+    return;
+  }
+  if (blockMutationInViewing()) return;
+  breakTypingSession();
+  if (blockUntrackedInSuggesting()) return;
+  const { node, offset } = selection.focus;
+  let res;
+  try {
+    res = doc.insertField(node, offset, kind, fieldResultText(kind));
+  } catch (err) {
+    console.warn("insertField ignored:", err?.message ?? err);
+    setStatus("A field can’t be inserted at this position", "error");
+    focusEditorSurface();
+    return;
+  }
+  await applyEditResult(res);
+  setDocumentState("edited");
+  setStatus(`Inserted ${FIELD_LABELS.get(kind) ?? "field"}`);
+  focusEditorSurface();
+}
+
+const fieldDialog = document.getElementById("fieldDialog");
+const fieldList = document.getElementById("fieldList");
+const fieldClose = document.getElementById("fieldClose");
+const fieldCancel = document.getElementById("fieldCancel");
+let fieldReturnFocus = null;
+
+function fieldChoiceButtons() {
+  return fieldList ? [...fieldList.querySelectorAll(".field-choice")] : [];
+}
+
+/** Opens the field picker with the caret's position captured; the first choice
+ *  is focused for keyboard use. Requires a live caret (matches insert.table). */
+function openFieldDialog() {
+  if (!doc || !fieldDialog) return;
+  if (!selection) {
+    setStatus("Place the caret before inserting a field", "error");
+    focusEditorSurface();
+    return;
+  }
+  fieldReturnFocus = document.activeElement;
+  fieldDialog.hidden = false;
+  queueMicrotask(() => fieldChoiceButtons()[0]?.focus());
+}
+
+function closeFieldDialog() {
+  if (!fieldDialog || fieldDialog.hidden) return;
+  fieldDialog.hidden = true;
+  const returnTo = fieldReturnFocus;
+  fieldReturnFocus = null;
+  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
+    returnTo.focus({ preventScroll: true });
+  } else {
+    focusEditorSurface();
+  }
+}
+
+/** Closes the picker, then inserts — insertFieldAtCaret ends by focusing the
+ *  editor surface so the caret (now after the field) is ready for typing. */
+function chooseFieldFromDialog(kind) {
+  closeFieldDialog();
+  insertFieldAtCaret(kind);
+}
+
+if (fieldDialog) {
+  for (const button of fieldChoiceButtons()) {
+    button.addEventListener("click", () => chooseFieldFromDialog(button.dataset.fieldKind));
+  }
+  fieldClose.addEventListener("click", () => closeFieldDialog());
+  fieldCancel.addEventListener("click", () => closeFieldDialog());
+  fieldDialog.addEventListener("click", (event) => {
+    if (event.target === fieldDialog) closeFieldDialog();
+  });
+  fieldDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeFieldDialog();
+    } else if (event.key === "Tab") {
+      trapModalFocus(event, fieldDialog);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const items = fieldChoiceButtons();
+      const index = items.indexOf(document.activeElement);
+      const dir = event.key === "ArrowDown" ? 1 : -1;
+      items[(index + dir + items.length) % items.length]?.focus();
     }
   });
 }
