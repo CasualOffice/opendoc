@@ -299,6 +299,27 @@ fn inheriting_table_row_style_keeps_its_own_height() {
 }
 
 #[test]
+fn table_align_margins_degrades_not_aborts() {
+    // `table:align="margins"` has no model carrier (the model forbids Justify on
+    // tables); it must be dropped with a finding, never abort the whole import.
+    let xml = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="T1" style:family="table"><style:table-properties table:align="margins"/></style:style></office:automatic-styles><office:body><office:text><table:table table:style-name="T1"><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>"#;
+    let import = import_content_xml(xml, OdfVersion::V1_4, OdfImportLimits::default()).unwrap();
+    import.document.validate().unwrap();
+    let BlockNode::Table(table) = &import.document.body()[0] else {
+        panic!("table")
+    };
+    assert_eq!(table.properties.alignment, None);
+    assert!(
+        import
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.attribute.table.align"),
+        "unrepresentable table align must be reported"
+    );
+}
+
+#[test]
 fn table_level_alignment_and_width_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::{TableWidth, WidthType};
     let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;

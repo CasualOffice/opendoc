@@ -624,7 +624,6 @@ enum OdtTableAlign {
     Left,
     Center,
     Right,
-    Margins,
 }
 
 impl OdtTableAlign {
@@ -633,7 +632,6 @@ impl OdtTableAlign {
             Self::Left => "left",
             Self::Center => "center",
             Self::Right => "right",
-            Self::Margins => "margins",
         }
     }
 
@@ -642,16 +640,18 @@ impl OdtTableAlign {
             Self::Left => "l",
             Self::Center => "c",
             Self::Right => "r",
-            Self::Margins => "m",
         }
     }
 
-    fn from_alignment(alignment: Alignment) -> Self {
+    /// Maps a model alignment to a table alignment. `Justify` has no table
+    /// carrier (the model forbids it on tables), so it is unrepresentable and
+    /// returns `None`.
+    fn from_alignment(alignment: Alignment) -> Option<Self> {
         match alignment {
-            Alignment::Start => Self::Left,
-            Alignment::Center => Self::Center,
-            Alignment::End => Self::Right,
-            Alignment::Justify => Self::Margins,
+            Alignment::Start => Some(Self::Left),
+            Alignment::Center => Some(Self::Center),
+            Alignment::End => Some(Self::Right),
+            Alignment::Justify => None,
         }
     }
 }
@@ -695,7 +695,8 @@ fn push_table_properties(
     }
     if let Some(pct50) = style.rel_width_pct50 {
         push_bounded(xml, " style:rel-width=\"", max_content_bytes)?;
-        push_bounded(xml, &(pct50 / 50).to_string(), max_content_bytes)?;
+        // Round fiftieths-of-a-percent to the nearest whole percent.
+        push_bounded(xml, &((pct50 + 25) / 50).to_string(), max_content_bytes)?;
         push_bounded(xml, "%\"", max_content_bytes)?;
     }
     Ok(())
@@ -1219,8 +1220,14 @@ impl Writer {
         // `table` style; the residue is the reported remainder.
         let mut table_remainder = table.properties.clone();
         let mut table_style = OdtTableStyle::default();
-        if let Some(alignment) = table_remainder.alignment.take() {
-            table_style.align = Some(OdtTableAlign::from_alignment(alignment));
+        // `Justify` has no table:align carrier; leave it in the remainder to be
+        // reported rather than emitting an unrepresentable value.
+        if let Some(align) = table_remainder
+            .alignment
+            .and_then(OdtTableAlign::from_alignment)
+        {
+            table_style.align = Some(align);
+            table_remainder.alignment = None;
         }
         match table_remainder.width.take() {
             Some(TableWidth {
@@ -1230,7 +1237,15 @@ impl Writer {
             Some(TableWidth {
                 value,
                 width_type: WidthType::Pct,
-            }) => table_style.rel_width_pct50 = Some(value),
+            }) => {
+                table_style.rel_width_pct50 = Some(value);
+                // The percent is emitted rounded to a whole percent; a value not
+                // on a 1% boundary loses sub-percent precision, so report it.
+                if value % 50 != 0 {
+                    self.reporter
+                        .record("odt.export.table_properties", ModelOutcome::Omitted);
+                }
+            }
             // Auto/Nil carry no representable width; put it back to be reported.
             other => table_remainder.width = other,
         }

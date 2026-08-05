@@ -1862,14 +1862,17 @@ fn read_table_style_properties(
                     style.style.table_alignment = Some(Alignment::End);
                     true
                 }
-                "margins" => {
-                    style.style.table_alignment = Some(Alignment::Justify);
-                    true
-                }
+                // `margins` has no model carrier (the model forbids Justify on a
+                // table, so mapping it there would fail validation and abort the
+                // whole import). Report and drop it instead.
                 _ => false,
             },
             (NamespaceKind::Style, b"width") => match parse_length_to_twips(&value) {
-                Some(twips) if (0..=31_680).contains(&twips) => {
+                // Only one width survives in the model; a second (e.g. rel-width
+                // already set) is reported rather than silently overwriting.
+                Some(twips)
+                    if (0..=31_680).contains(&twips) && style.style.table_width.is_none() =>
+                {
                     style.style.table_width = Some(TableWidth {
                         value: twips,
                         width_type: WidthType::Dxa,
@@ -1881,7 +1884,9 @@ fn read_table_style_properties(
             (NamespaceKind::Style, b"rel-width") => match value.trim().strip_suffix('%') {
                 // ODF percent; the model stores fiftieths of a percent (Pct).
                 Some(percent) => match percent.trim().parse::<i32>() {
-                    Ok(percent) if (0..=100).contains(&percent) => {
+                    Ok(percent)
+                        if (0..=100).contains(&percent) && style.style.table_width.is_none() =>
+                    {
                         style.style.table_width = Some(TableWidth {
                             value: percent * 50,
                             width_type: WidthType::Pct,
