@@ -398,6 +398,10 @@ struct RevisionMeta {
     kind: RevisionKind,
     author: Option<String>,
     date: Option<String>,
+    /// For a `text:deletion`, its deleted content flattened to plain text (the
+    /// body markers only carry a point, so the content lives here). `None` for an
+    /// insertion or an empty deletion.
+    deleted: Option<String>,
 }
 
 /// In-progress `text:change-start`..`text:change-end` insertion range on the
@@ -3237,13 +3241,54 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     && current.is_some()
                     && is_name(&name, NamespaceKind::Text, b"change")
                 {
-                    // A point change marker (deletion): deletions are not modeled
-                    // in this slice, so the marker degrades.
-                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
-                    reporter.report(
-                        "odf.tracked-change.deletion".to_owned(),
-                        ModelOutcome::Degraded,
-                    );
+                    // A point deletion marker: emit a deletion Revision carrying the
+                    // deleted content captured from the changed-region. Only a
+                    // resolved deletion with content, at paragraph top level (no open
+                    // link), is modeled; anything else degrades.
+                    let change_id = read_change_id(
+                        &reader,
+                        &element,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        limits,
+                    )?;
+                    let meta = change_id
+                        .as_ref()
+                        .and_then(|id| revision_meta.get(id))
+                        .filter(|meta| meta.kind == RevisionKind::Deletion)
+                        .cloned();
+                    if let (Some(change_id), Some(meta)) = (change_id, meta)
+                        && let Some(deleted) = meta.deleted
+                        && active_link.is_none()
+                    {
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        let revision_id =
+                            Some(change_id).filter(|id| id.len() <= 64 && !id.is_empty());
+                        current
+                            .as_mut()
+                            .ok_or(OdfError::MalformedContent)?
+                            .inlines
+                            .push(InlineDraft::Revision {
+                                kind: RevisionKind::Deletion,
+                                author: meta.author,
+                                date: meta.date,
+                                revision_id,
+                                inlines: vec![InlineDraft::Text {
+                                    text: deleted,
+                                    properties: Box::new(RunProperties::default()),
+                                }],
+                            });
+                    } else {
+                        reporter.report(
+                            "odf.tracked-change.deletion".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
                 } else if text_body_depth.is_some()
                     && current.is_some()
                     && is_name(&name, NamespaceKind::Text, b"note")
@@ -4491,6 +4536,7 @@ fn parse_tracked_changes(
     let mut current_kind: Option<RevisionKind> = None;
     let mut author = String::new();
     let mut date = String::new();
+    let mut deleted = String::new();
     let mut region_depth: Option<usize> = None;
     let mut capture: Option<CommentCapture> = None;
     let mut capture_depth: Option<usize> = None;
@@ -4553,6 +4599,7 @@ fn parse_tracked_changes(
                     current_kind = None;
                     author.clear();
                     date.clear();
+                    deleted.clear();
                 } else if region_depth.is_some() && capture.is_none() {
                     count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                     if is_name(&name, NamespaceKind::Text, b"insertion") {
@@ -4564,6 +4611,18 @@ fn parse_tracked_changes(
                         capture_depth = Some(sub_depth);
                     } else if is_name(&name, NamespaceKind::Dc, b"date") {
                         capture = Some(CommentCapture::Date);
+                        capture_depth = Some(sub_depth);
+                    } else if current_kind == Some(RevisionKind::Deletion)
+                        && name.namespace == NamespaceKind::Text
+                        && matches!(name.local.as_slice(), b"p" | b"h")
+                    {
+                        // A deleted body paragraph (sibling of office:change-info):
+                        // capture its text, separating flattened paragraphs with a
+                        // line break (re-exported as text:line-break).
+                        if !deleted.is_empty() {
+                            push_bounded_text(&mut deleted, "\n", MAX_COMMENT_BODY_BYTES);
+                        }
+                        capture = Some(CommentCapture::Body);
                         capture_depth = Some(sub_depth);
                     }
                 } else {
@@ -4579,9 +4638,47 @@ fn parse_tracked_changes(
                 )?;
                 validate_name(&element, limits)?;
                 let name = resolved_name(reader, &element);
-                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                 if is_active(&name) {
                     reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                }
+                // Decode whitespace elements inside a captured deleted paragraph
+                // (the exporter emits text:s/tab/line-break), else spaces vanish.
+                if capture == Some(CommentCapture::Body) {
+                    if is_name(&name, NamespaceKind::Text, b"s") {
+                        let mut count = 1_usize;
+                        for attribute in element.attributes() {
+                            let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                            count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+                            let (namespace, local) =
+                                reader.resolver().resolve_attribute(attribute.key);
+                            if namespace_kind(&namespace) == NamespaceKind::Text
+                                && local.as_ref() == b"c"
+                            {
+                                count = decode_attribute(&attribute)?
+                                    .parse()
+                                    .map_err(|_| OdfError::MalformedContent)?;
+                                if count == 0 {
+                                    return Err(OdfError::MalformedContent);
+                                }
+                            }
+                        }
+                        enforce("odf_content_space_repeat", count, limits.max_space_repeat)?;
+                        push_bounded_text(&mut deleted, &" ".repeat(count), MAX_COMMENT_BODY_BYTES);
+                    } else if is_name(&name, NamespaceKind::Text, b"tab")
+                        || is_name(&name, NamespaceKind::Text, b"line-break")
+                    {
+                        count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                        let whitespace = if name.local.as_slice() == b"tab" {
+                            "\t"
+                        } else {
+                            "\n"
+                        };
+                        push_bounded_text(&mut deleted, whitespace, MAX_COMMENT_BODY_BYTES);
+                    } else {
+                        count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    }
+                } else {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                 }
             }
             Event::End(_) => {
@@ -4600,6 +4697,7 @@ fn parse_tracked_changes(
                                 kind,
                                 author: (!author.is_empty()).then(|| author.clone()),
                                 date: (!date.is_empty()).then(|| date.clone()),
+                                deleted: (!deleted.is_empty()).then(|| deleted.clone()),
                             },
                         );
                     }
@@ -4615,13 +4713,37 @@ fn parse_tracked_changes(
                 let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
                 let value = quick_xml::escape::unescape(&decoded)
                     .map_err(|_| OdfError::MalformedContent)?;
-                let mut unused = String::new();
                 append_captured_text(
                     kind,
                     &value,
                     &mut author,
                     &mut date,
-                    &mut unused,
+                    &mut deleted,
+                    text_bytes,
+                    limits,
+                )?;
+            }
+            // Entity / CDATA inside a captured deleted paragraph.
+            Event::GeneralRef(reference) if capture == Some(CommentCapture::Body) => {
+                let value = decode_reference(&reference)?;
+                append_captured_text(
+                    CommentCapture::Body,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut deleted,
+                    text_bytes,
+                    limits,
+                )?;
+            }
+            Event::CData(text) if capture == Some(CommentCapture::Body) => {
+                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                append_captured_text(
+                    CommentCapture::Body,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut deleted,
                     text_bytes,
                     limits,
                 )?;

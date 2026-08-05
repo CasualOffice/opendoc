@@ -1060,6 +1060,55 @@ fn tracked_insertion_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn tracked_deletion_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::{Revision, RevisionKind};
+    let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="d1"><text:deletion><office:change-info><dc:creator>Ada</dc:creator><dc:date>2024-01-02T03:04:05</dc:date></office:change-info><text:p>deleted text</text:p></text:deletion></text:changed-region></text:tracked-changes><text:p>keep <text:change text:change-id="d1"/>more</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    let revision = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Revision(revision) => Some(revision.clone()),
+            _ => None,
+        })
+        .expect("deletion revision");
+    assert_eq!(revision.kind, RevisionKind::Deletion);
+    assert_eq!(revision.author.as_deref(), Some("Ada"));
+    assert_eq!(revision.revision_id.as_deref(), Some("d1"));
+    let Revision { inlines, .. } = &revision;
+    assert!(
+        matches!(inlines.as_slice(), [InlineNode::Run(run)] if run.text == "deleted text"),
+        "deletion must carry the deleted content: {inlines:?}"
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    for expected in [
+        r#"<text:deletion><office:change-info><dc:creator>Ada</dc:creator>"#,
+        r#"<text:p>deleted<text:s/>text</text:p></text:deletion>"#,
+        r#"<text:change text:change-id="d1"/>"#,
+    ] {
+        assert!(
+            content_xml.contains(expected),
+            "missing {expected}: {content_xml}"
+        );
+    }
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn insertion_of_only_an_unpaired_bookmark_degrades_not_aborts() {
     // Regression: an insertion wrapping only an unpaired bookmark-start captures a
     // non-empty draft (so the change-end empty-guard passes), but build_inlines

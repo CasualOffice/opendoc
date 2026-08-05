@@ -1232,7 +1232,10 @@ impl Writer {
         for inline in inlines {
             match inline {
                 InlineNode::Revision(revision) => {
-                    if revision.kind == RevisionKind::Insertion {
+                    if matches!(
+                        revision.kind,
+                        RevisionKind::Insertion | RevisionKind::Deletion
+                    ) {
                         self.assign_revision(revision);
                     }
                     self.collect_revisions_in_inlines(&revision.inlines);
@@ -1268,10 +1271,15 @@ impl Writer {
         self.used_change_ids.insert(change_id.clone());
         self.revision_change_ids
             .insert(revision.id, change_id.clone());
+        // A deletion declares its content in the region (the body carries only a
+        // point marker); an insertion's content stays in the body.
+        let deleted_text = (revision.kind == RevisionKind::Deletion)
+            .then(|| flatten_inline_text(&revision.inlines));
         self.revision_regions.push(RevisionRegion {
             change_id,
             author: revision.author.clone(),
             date: revision.date.clone(),
+            deleted_text,
         });
     }
 
@@ -1291,7 +1299,12 @@ impl Writer {
                 &region.change_id,
                 self.limits.max_content_bytes,
             )?;
-            self.push("\"><text:insertion><office:change-info>")?;
+            let deletion = region.deleted_text.is_some();
+            self.push(if deletion {
+                "\"><text:deletion><office:change-info>"
+            } else {
+                "\"><text:insertion><office:change-info>"
+            })?;
             if let Some(author) = &region.author
                 && is_representable(author)
             {
@@ -1306,7 +1319,16 @@ impl Writer {
                 self.write_pcdata(date)?;
                 self.push("</dc:date>")?;
             }
-            self.push("</office:change-info></text:insertion></text:changed-region>")?;
+            self.push("</office:change-info>")?;
+            if let Some(deleted) = &region.deleted_text {
+                // The deleted content as one paragraph (line breaks become
+                // text:line-break) — re-read by the importer's deletion capture.
+                self.push("<text:p>")?;
+                self.write_text(deleted)?;
+                self.push("</text:p></text:deletion></text:changed-region>")?;
+            } else {
+                self.push("</text:insertion></text:changed-region>")?;
+            }
         }
         self.revision_regions = regions;
         self.push("</text:tracked-changes>")
@@ -2021,21 +2043,33 @@ impl Writer {
                     // modeled in ODF here: their content degrades to plain inlines
                     // (insertion-like) or is dropped.
                     if let Some(change_id) = self.revision_change_ids.get(&revision.id).cloned() {
-                        self.push("<text:change-start text:change-id=\"")?;
-                        push_escaped_attribute(
-                            &mut self.xml,
-                            &change_id,
-                            self.limits.max_content_bytes,
-                        )?;
-                        self.push("\"/>")?;
-                        self.write_inlines(&revision.inlines, depth + 1)?;
-                        self.push("<text:change-end text:change-id=\"")?;
-                        push_escaped_attribute(
-                            &mut self.xml,
-                            &change_id,
-                            self.limits.max_content_bytes,
-                        )?;
-                        self.push("\"/>")?;
+                        if revision.kind == RevisionKind::Deletion {
+                            // A point marker; the deleted content lives in the
+                            // region, so the body carries nothing but the marker.
+                            self.push("<text:change text:change-id=\"")?;
+                            push_escaped_attribute(
+                                &mut self.xml,
+                                &change_id,
+                                self.limits.max_content_bytes,
+                            )?;
+                            self.push("\"/>")?;
+                        } else {
+                            self.push("<text:change-start text:change-id=\"")?;
+                            push_escaped_attribute(
+                                &mut self.xml,
+                                &change_id,
+                                self.limits.max_content_bytes,
+                            )?;
+                            self.push("\"/>")?;
+                            self.write_inlines(&revision.inlines, depth + 1)?;
+                            self.push("<text:change-end text:change-id=\"")?;
+                            push_escaped_attribute(
+                                &mut self.xml,
+                                &change_id,
+                                self.limits.max_content_bytes,
+                            )?;
+                            self.push("\"/>")?;
+                        }
                     } else {
                         self.reporter
                             .record("odt.export.revision", ModelOutcome::Degraded);
@@ -3552,12 +3586,36 @@ fn field_projects_inlines(field: &Field) -> bool {
     }
 }
 
-/// One insertion region to declare in `text:tracked-changes`.
+/// One region to declare in `text:tracked-changes`. `deleted_text` is `Some` for
+/// a deletion (whose content lives in the region, not the body) and `None` for an
+/// insertion.
 #[derive(Clone, Debug)]
 struct RevisionRegion {
     change_id: String,
     author: Option<String>,
     date: Option<String>,
+    deleted_text: Option<String>,
+}
+
+/// Flattens a revision's inline content to plain text (concatenating run text and
+/// recursing into wrappers) — the deleted content projection written into a
+/// `text:deletion` region.
+fn flatten_inline_text(inlines: &[InlineNode]) -> String {
+    let mut text = String::new();
+    for inline in inlines {
+        match inline {
+            InlineNode::Run(run) => text.push_str(&run.text),
+            InlineNode::Tab(_) => text.push('\t'),
+            InlineNode::Break(_) => text.push('\n'),
+            InlineNode::Hyperlink(link) => text.push_str(&flatten_inline_text(&link.inlines)),
+            InlineNode::Revision(revision) => {
+                text.push_str(&flatten_inline_text(&revision.inlines))
+            }
+            InlineNode::Sdt(sdt) => text.push_str(&flatten_inline_text(&sdt.inlines)),
+            _ => {}
+        }
+    }
+    text
 }
 
 /// Whether `value` is a valid XML NCName (a usable `text:change-id`): non-empty,
