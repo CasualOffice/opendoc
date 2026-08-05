@@ -28,6 +28,7 @@ use casual_doc_model::v1::{
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
@@ -562,6 +563,42 @@ pub enum Operation {
     RemoveField {
         /// The field to remove.
         field: NodeId,
+    },
+    /// Insert a footnote or endnote at the caret `at`: install its definition
+    /// entry (keyed by `note`, in `Definitions::footnotes`/`endnotes` per `kind`)
+    /// holding `blocks`, and splice an [`InlineNode::NoteReference`] with identity
+    /// `reference_id` into the paragraph at `at`. The reference's displayed
+    /// auto-number is derived at render — this op only creates the reference and
+    /// the (typically single-empty-paragraph, ready-to-type) body. Refuses a
+    /// `note` id already defined for `kind`, an out-of-range caret, or a caret
+    /// interior to a non-run wrapper (the reference is always a top-level inline).
+    /// Inverse: [`Operation::RemoveNote`], which drops both the reference and the
+    /// definition; undo therefore restores the document verbatim.
+    InsertNote {
+        /// Whether this is a footnote or an endnote.
+        kind: NoteKind,
+        /// The new note's id (must not already be defined for `kind`).
+        note: NoteId,
+        /// The caret where the reference is spliced.
+        at: Pos,
+        /// The fresh identity of the new [`InlineNode::NoteReference`] inline.
+        reference_id: NodeId,
+        /// The note's block content, carried verbatim so the inverse restores it.
+        blocks: Vec<BlockNode>,
+    },
+    /// Remove the footnote/endnote `note` and its body-side reference (the
+    /// [`InlineNode::NoteReference`] inline with identity `reference_id`). The
+    /// inverse vehicle for [`Operation::InsertNote`]: it recovers the reference's
+    /// paragraph and offset and the removed body, so undo replays an exact
+    /// [`Operation::InsertNote`]. Refuses when the reference or the definition is
+    /// absent (the document is left unchanged).
+    RemoveNote {
+        /// Whether `note` is a footnote or an endnote.
+        kind: NoteKind,
+        /// The note definition to remove.
+        note: NoteId,
+        /// The body-side reference inline to remove.
+        reference_id: NodeId,
     },
 }
 
@@ -1390,7 +1427,211 @@ pub fn apply(
                 field: Box::new(removed),
             })
         }
+        Operation::InsertNote {
+            kind,
+            note,
+            at,
+            reference_id,
+            blocks,
+        } => {
+            // A fresh note id must not already be defined for its kind — inserting
+            // over an existing note would silently orphan the old body.
+            let already_defined = match kind {
+                NoteKind::Footnote => doc.definitions().footnotes.contains_key(note),
+                NoteKind::Endnote => doc.definitions().endnotes.contains_key(note),
+            };
+            if already_defined {
+                return Err(EditError::Unsupported);
+            }
+            let para =
+                find_paragraph_mut(doc.body_mut(), at.node).ok_or(EditError::NodeNotFound)?;
+            if at.offset > paragraph_text_len(para) {
+                return Err(EditError::OffsetOutOfRange);
+            }
+            // Snapshot the paragraph's inlines so an invalid result rolls back
+            // exactly (no partial mutation ever persists).
+            let old_inlines = para.inlines.clone();
+            ensure_run_boundary(&mut para.inlines, at.offset, ids)?;
+            let Some(index) = top_level_insert_index(&para.inlines, at.offset) else {
+                // The caret fell interior to a non-run wrapper (hyperlink/SDT); the
+                // reference is only ever a top-level inline (slice-1 limitation).
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            };
+            para.inlines.insert(
+                index,
+                InlineNode::NoteReference(NoteReference {
+                    id: *reference_id,
+                    kind: *kind,
+                    note: *note,
+                }),
+            );
+            match kind {
+                NoteKind::Footnote => {
+                    doc.definitions_mut().footnotes.insert(
+                        *note,
+                        Note {
+                            blocks: blocks.clone(),
+                        },
+                    );
+                }
+                NoteKind::Endnote => {
+                    doc.definitions_mut().endnotes.insert(
+                        *note,
+                        Note {
+                            blocks: blocks.clone(),
+                        },
+                    );
+                }
+            }
+            if doc.validate().is_err() {
+                // Roll back both sides: the definition entry and the reference —
+                // an invalid note (a colliding id, a malformed body) must not land.
+                match kind {
+                    NoteKind::Footnote => {
+                        doc.definitions_mut().footnotes.remove(note);
+                    }
+                    NoteKind::Endnote => {
+                        doc.definitions_mut().endnotes.remove(note);
+                    }
+                }
+                let para = find_paragraph_mut(doc.body_mut(), at.node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::RemoveNote {
+                kind: *kind,
+                note: *note,
+                reference_id: *reference_id,
+            })
+        }
+        Operation::RemoveNote {
+            kind,
+            note,
+            reference_id,
+        } => {
+            // Locate and remove the body-side reference, recovering its paragraph
+            // and offset for the inverse's caret.
+            let Some((para_node, offset, old_inlines)) =
+                remove_note_reference(doc.body_mut(), *reference_id)
+            else {
+                return Err(EditError::NodeNotFound);
+            };
+            let removed = match kind {
+                NoteKind::Footnote => doc.definitions_mut().footnotes.remove(note),
+                NoteKind::Endnote => doc.definitions_mut().endnotes.remove(note),
+            };
+            let Some(removed) = removed else {
+                // The reference existed but the definition did not: restore the
+                // reference and refuse (no partial mutation).
+                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::NodeNotFound);
+            };
+            if doc.validate().is_err() {
+                match kind {
+                    NoteKind::Footnote => {
+                        doc.definitions_mut().footnotes.insert(*note, removed);
+                    }
+                    NoteKind::Endnote => {
+                        doc.definitions_mut().endnotes.insert(*note, removed);
+                    }
+                }
+                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                    .expect("the paragraph we just edited still exists");
+                para.inlines = old_inlines;
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::InsertNote {
+                kind: *kind,
+                note: *note,
+                at: Pos::new(para_node, offset),
+                reference_id: *reference_id,
+                blocks: removed.blocks,
+            })
+        }
     }
+}
+
+/// The top-level insertion index in `inlines` for a caret at byte `offset`, or
+/// `None` when the offset falls strictly inside a non-run wrapper (a hyperlink /
+/// SDT), where no top-level boundary exists. Callers align run boundaries with
+/// [`ensure_run_boundary`] first, so a run straddling the offset has already been
+/// split; the index then lands exactly between the two halves.
+fn top_level_insert_index(inlines: &[InlineNode], offset: u32) -> Option<usize> {
+    let mut cum = 0u32;
+    for (idx, inline) in inlines.iter().enumerate() {
+        if cum == offset {
+            return Some(idx);
+        }
+        cum += inline_text_len(inline);
+    }
+    (cum == offset).then_some(inlines.len())
+}
+
+/// Removes the top-level [`InlineNode::NoteReference`] with identity
+/// `reference_id` from `blocks` or any nested cell / SDT, returning its
+/// paragraph's id, the reference's byte offset within that paragraph, and a
+/// snapshot of the paragraph's inlines *before* removal (for an exact rollback).
+/// After removal the paragraph's runs are coalesced, so the two runs a
+/// zero-width reference separated merge back — undoing an [`Operation::InsertNote`]
+/// that split a run restores the original run verbatim.
+fn remove_note_reference(
+    blocks: &mut [BlockNode],
+    reference_id: NodeId,
+) -> Option<(NodeId, u32, Vec<InlineNode>)> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(para) => {
+                if let Some(found) = take_note_reference(para, reference_id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(found) = remove_note_reference(&mut cell.blocks, reference_id) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = remove_note_reference(&mut sdt.blocks, reference_id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Removes the top-level note reference `reference_id` from `para` if present,
+/// returning `(paragraph id, reference offset, pre-removal inlines)`.
+fn take_note_reference(
+    para: &mut Paragraph,
+    reference_id: NodeId,
+) -> Option<(NodeId, u32, Vec<InlineNode>)> {
+    let mut cum = 0u32;
+    let mut target = None;
+    for (idx, inline) in para.inlines.iter().enumerate() {
+        if matches!(inline, InlineNode::NoteReference(reference) if reference.id == reference_id) {
+            target = Some((idx, cum));
+            break;
+        }
+        cum += inline_text_len(inline);
+    }
+    let (idx, offset) = target?;
+    let snapshot = para.inlines.clone();
+    para.inlines.remove(idx);
+    // The reference sat between two runs the split created; with it gone they may
+    // be adjacent and equal-propertied, which the model forbids — coalesce so the
+    // original run is restored exactly.
+    coalesce_adjacent_runs(&mut para.inlines);
+    Some((para.id, offset, snapshot))
 }
 
 /// Removes the table `table_id` from `blocks` or any nested cell/SDT, returning its
@@ -5504,5 +5745,248 @@ mod tests {
         let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
             .expect("reopen");
         assert_eq!(d, reopened, "the inserted field survives write -> reopen");
+    }
+
+    // ---- Footnotes / endnotes ----------------------------------------------
+
+    /// A single empty paragraph — the ready-to-type body of a freshly inserted
+    /// note. `id` comes from the edit id source so it stays globally unique.
+    fn empty_note_body(id: NodeId) -> Vec<BlockNode> {
+        vec![BlockNode::Paragraph(Paragraph {
+            id,
+            properties: ParagraphProperties::default(),
+            inlines: Vec::new(),
+        })]
+    }
+
+    fn note_references_in(document: &Document, id: NodeId) -> usize {
+        inlines_of(document, id)
+            .into_iter()
+            .filter(|inline| matches!(inline, InlineNode::NoteReference(_)))
+            .count()
+    }
+
+    #[test]
+    fn insert_footnote_creates_reference_and_definition_and_inverse_removes_both() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 2), // mid-run: "He|llo"
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert footnote");
+
+        // The definition is created (in the footnotes map, not endnotes) with an
+        // empty, ready-to-type body; the reference is spliced without changing the
+        // paragraph's shaped text (a note reference is zero-width).
+        assert_eq!(d.definitions().footnotes.len(), 1);
+        assert!(d.definitions().footnotes.contains_key(&note));
+        assert!(d.definitions().endnotes.is_empty());
+        assert_eq!(note_references_in(&d, p), 1);
+        assert_eq!(text_of(&d, p), "Hello");
+        d.validate()
+            .expect("document is valid after inserting a footnote");
+
+        // The inverse removes both the reference and the definition, restoring the
+        // document verbatim (the split run coalesces back to the original).
+        assert!(matches!(
+            inverse,
+            Operation::RemoveNote {
+                kind: NoteKind::Footnote,
+                note: inverse_note,
+                reference_id: inverse_ref,
+            } if inverse_note == note && inverse_ref == reference_id
+        ));
+        apply(&mut d, &mut ids, &inverse).expect("remove footnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the original document");
+    }
+
+    #[test]
+    fn insert_endnote_creates_reference_and_definition_and_inverse_removes_both() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Endnote,
+                note,
+                at: Pos::new(p, 5), // paragraph end
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert endnote");
+
+        assert_eq!(d.definitions().endnotes.len(), 1);
+        assert!(d.definitions().endnotes.contains_key(&note));
+        assert!(d.definitions().footnotes.is_empty());
+        assert_eq!(note_references_in(&d, p), 1);
+        d.validate()
+            .expect("document is valid after inserting an endnote");
+
+        assert!(matches!(
+            inverse,
+            Operation::RemoveNote {
+                kind: NoteKind::Endnote,
+                ..
+            }
+        ));
+        apply(&mut d, &mut ids, &inverse).expect("remove endnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the original document");
+    }
+
+    #[test]
+    fn insert_note_into_an_empty_paragraph_and_inverse_round_trips() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, Vec::new())]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(9);
+
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 0),
+                reference_id,
+                blocks: body,
+            },
+        )
+        .expect("insert footnote into an empty paragraph");
+        assert_eq!(note_references_in(&d, p), 1);
+
+        apply(&mut d, &mut ids, &inverse).expect("remove footnote (inverse)");
+        assert_eq!(d, original, "the inverse restored the empty paragraph");
+    }
+
+    #[test]
+    fn insert_note_rejects_an_out_of_range_caret() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let before = d.clone();
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body = empty_note_body(ids.next_id().unwrap());
+
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 99),
+                reference_id,
+                blocks: body,
+            },
+        );
+        assert_eq!(result, Err(EditError::OffsetOutOfRange));
+        assert_eq!(d, before, "a rejected insert leaves the document unchanged");
+    }
+
+    #[test]
+    fn insert_note_rejects_a_duplicate_note_id() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let first_ref = ids.next_id().unwrap();
+        let first_body = empty_note_body(ids.next_id().unwrap());
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 0),
+                reference_id: first_ref,
+                blocks: first_body,
+            },
+        )
+        .expect("first footnote inserted");
+        let after_first = d.clone();
+
+        let second_ref = ids.next_id().unwrap();
+        let second_body = empty_note_body(ids.next_id().unwrap());
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note, // same id — must be refused
+                at: Pos::new(p, 2),
+                reference_id: second_ref,
+                blocks: second_body,
+            },
+        );
+        assert_eq!(result, Err(EditError::Unsupported));
+        assert_eq!(
+            d, after_first,
+            "a rejected duplicate-id insert leaves the document unchanged"
+        );
+    }
+
+    #[test]
+    fn inserted_footnote_survives_a_write_reopen_round_trip() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Body")])]);
+        let mut ids = IdGenerator::new(9);
+        let note = NoteId::new(ids.next_id().unwrap());
+        let reference_id = ids.next_id().unwrap();
+        let body_para = ids.next_id().unwrap();
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertNote {
+                kind: NoteKind::Footnote,
+                note,
+                at: Pos::new(p, 4),
+                reference_id,
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: body_para,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![run(700, "footnote text")],
+                })],
+            },
+        )
+        .expect("insert footnote");
+
+        let bytes = d.to_json().expect("serialize the document");
+        let reopened = Document::from_json(&bytes, casual_doc_model::SnapshotLimits::default())
+            .expect("reopen the document");
+        assert_eq!(d, reopened, "m1 == m2 after a write -> reopen round trip");
+        assert!(
+            reopened.definitions().footnotes.contains_key(&note),
+            "the created footnote survived the round trip"
+        );
     }
 }
