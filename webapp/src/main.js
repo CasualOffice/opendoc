@@ -2186,7 +2186,7 @@ const DEMO_PRESETS = {
   changes: { src: "./demo.docx", name: "opendoc-demo.docx", review: "suggesting" },
   comments: { src: "./demo.docx", name: "opendoc-demo.docx", sidebar: true },
   find: { src: "./sample.docx", name: "sample.docx", find: true },
-  formatting: { src: "./sample.docx", name: "sample.docx", tab: "home" },
+  formatting: { src: "./sample.docx", name: "sample.docx", tab: "home", selectAll: true },
   export: { src: "./sample.docx", name: "sample.docx", tab: "view" },
 };
 
@@ -2195,34 +2195,51 @@ const DEMO_PRESETS = {
 // surfaces — never fabricate one. Failures are non-fatal: the plain editor is
 // already usable, so a preset action that can't run just leaves it as-is.
 async function applyDemoPreset(preset) {
-  await loadStartupDocument(preset.src, preset.name);
-  if (!doc) return; // document load failed; the bare editor state already shows
-  try {
-    if (preset.tab) selectRibbonTab(preset.tab);
-    if (preset.review) setReviewMode(preset.review);
-    if (preset.sidebar) {
-      reviewSidebarPreference = true;
-      scheduleReviewMarginRender();
-    }
-    if (preset.find) openFind();
-  } catch (err) {
-    console.error("demo preset action failed", err);
-  }
+  // Apply the preset's UI state through the opened-document hook, so it lands the
+  // moment the document opens — before the (network) font fetch — instead of
+  // leaving the demo on the plain editor until fonts arrive. Every action reuses
+  // an existing editor function, so a preset can only reach real, working
+  // surfaces. Failures are non-fatal: the plain editor is already usable.
+  await loadStartupDocument(
+    preset.src,
+    preset.name,
+    () => {
+      try {
+        if (preset.tab) selectRibbonTab(preset.tab);
+        if (preset.review) setReviewMode(preset.review);
+        if (preset.sidebar) {
+          reviewSidebarPreference = true;
+          scheduleReviewMarginRender();
+        }
+        if (preset.find) openFind();
+      } catch (err) {
+        console.error("demo preset action failed", err);
+      }
+    },
+    () => {
+      // Post-render actions that need laid-out geometry.
+      try {
+        if (preset.selectAll) selectAll();
+      } catch (err) {
+        console.error("demo preset render action failed", err);
+      }
+    },
+  );
 }
 
-async function loadStartupDocument(url, name) {
+async function loadStartupDocument(url, name, onOpened, onRendered) {
   try {
     setStatus("Loading the sample document…");
     const response = await fetch(url);
     if (!response.ok) throw new Error(`sample request returned ${response.status}`);
-    await openBytes(new Uint8Array(await response.arrayBuffer()), name);
+    await openBytes(new Uint8Array(await response.arrayBuffer()), name, onOpened, onRendered);
   } catch (err) {
     console.error(err);
     setStatus("The sample could not be loaded — you can still open a local DOCX", "error");
   }
 }
 
-async function openBytes(bytes, name) {
+async function openBytes(bytes, name, onOpened, onRendered) {
   try {
     setStatus(`Opening ${name}…`);
     hideLinkChip();
@@ -2264,6 +2281,12 @@ async function openBytes(bytes, name) {
     // Set before the first `renderAll` so it renders the correct layout once.
     showingChanges = documentHasTrackedChanges();
     reflectShowingChangesState();
+    // Apply any caller-supplied opened-document state (e.g. a gallery demo
+    // preset) now — after the review/mode reset above and before the first
+    // render, so it renders once in the requested state — rather than making the
+    // caller await the network font fetch below (which would leave a demo sitting
+    // on the plain editor for seconds).
+    if (typeof onOpened === "function") onOpened();
     const fontWarnings = await provisionFonts(name);
     await renderAll();
     if (fontWarnings.length > 0) {
@@ -2275,6 +2298,9 @@ async function openBytes(bytes, name) {
     buildOutline();
     buildAccessibilityTree();
     drawSelection();
+    // Post-render demo hook (e.g. a gallery preset that needs laid-out geometry,
+    // like selecting text). Runs once the page is composed.
+    if (typeof onRendered === "function") onRendered();
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
