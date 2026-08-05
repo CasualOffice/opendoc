@@ -1781,6 +1781,11 @@ impl Writer {
                         )?;
                         self.push("\"/>")?;
                     }
+                    FieldKind::Seq { ref name } if is_representable(name) => {
+                        self.push("<text:sequence text:name=\"")?;
+                        push_escaped_attribute(&mut self.xml, name, self.limits.max_content_bytes)?;
+                        self.push("\"/>")?;
+                    }
                     // Other field kinds (and an unserializable ref target) have no
                     // ODF element mapping yet: keep the cached display text as a
                     // degraded projection.

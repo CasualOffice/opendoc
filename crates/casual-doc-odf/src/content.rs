@@ -6371,6 +6371,7 @@ fn field_instruction(kind: &FieldKind) -> String {
         FieldKind::Time { .. } => "TIME".to_owned(),
         FieldKind::Ref { bookmark } => format!("REF {bookmark}"),
         FieldKind::PageRef { bookmark } => format!("PAGEREF {bookmark}"),
+        FieldKind::Seq { name } => format!("SEQ {name}"),
         _ => "FIELD".to_owned(),
     }
 }
@@ -6591,7 +6592,8 @@ fn field_kind_for(name: &ResolvedName) -> Option<FieldKind> {
 /// `text:bookmark-ref`, whose kind depends on its attributes).
 fn is_field_name(name: &ResolvedName) -> bool {
     field_kind_for(name).is_some()
-        || (name.namespace == NamespaceKind::Text && name.local.as_slice() == b"bookmark-ref")
+        || (name.namespace == NamespaceKind::Text
+            && matches!(name.local.as_slice(), b"bookmark-ref" | b"sequence"))
 }
 
 /// Resolves the field kind for a field element, reading attributes where the kind
@@ -6606,7 +6608,29 @@ fn read_field_kind(
     if let Some(kind) = field_kind_for(name) {
         return Ok(Some(kind));
     }
-    if name.namespace != NamespaceKind::Text || name.local.as_slice() != b"bookmark-ref" {
+    if name.namespace != NamespaceKind::Text {
+        return Ok(None);
+    }
+    // text:sequence -> Seq { name = text:name }.
+    if name.local.as_slice() == b"sequence" {
+        let mut seq_name = None;
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+            let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+            if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+                seq_name = Some(decode_attribute(&attribute)?);
+            }
+        }
+        return Ok(match seq_name {
+            Some(name)
+                if !name.is_empty() && name.len() <= 255 && name.chars().all(is_xml_text_char) =>
+            {
+                Some(FieldKind::Seq { name })
+            }
+            _ => None,
+        });
+    }
+    if name.local.as_slice() != b"bookmark-ref" {
         return Ok(None);
     }
     let mut ref_name = None;

@@ -649,6 +649,46 @@ fn date_and_time_fields_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn sequence_field_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::FieldKind;
+    let body = r#"<text:p>Figure <text:sequence text:name="Figure">1</text:sequence></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let kinds: Vec<FieldKind> = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            InlineNode::Field(field) => Some(field.kind.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![FieldKind::Seq {
+            name: "Figure".to_owned()
+        }]
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"<text:sequence text:name="Figure"/>"#),
+        "sequence field missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn reference_fields_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::FieldKind;
     let body = r#"<text:p><text:bookmark-ref text:reference-format="text" text:ref-name="mark">X</text:bookmark-ref> <text:bookmark-ref text:reference-format="page" text:ref-name="mark">3</text:bookmark-ref></text:p>"#;
