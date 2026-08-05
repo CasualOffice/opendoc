@@ -89,6 +89,13 @@ a general ODT support claim.
   multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
   (`office:name`, reply structure) is dropped. Active content inside an
   annotation is dropped like anywhere else.
+- **Inline text boxes (fidelity parity, T6-4)**: an inline
+  `draw:frame`>`draw:text-box` now round-trips to the model's `TextBox` inline and
+  back, a byte-exact fixed point. The box body is captured as a flattened
+  plain-text paragraph (multi-paragraph bodies join with a line break); size,
+  fill, border, and floating anchors are dropped with a finding. The embedded-image
+  path (and its href security validation) is unchanged — an image still wins when
+  a frame carries both.
 - **Tracked changes — insertions (fidelity parity, T6-3)**: an ODF tracked
   insertion now round-trips to the model's inline `Revision` and back, a
   byte-exact fixed point. The leading `text:tracked-changes` registry is
