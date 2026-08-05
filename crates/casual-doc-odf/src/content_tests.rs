@@ -761,6 +761,124 @@ fn uniform_cell_padding_collapses_to_the_shorthand() {
 }
 
 #[test]
+fn table_of_content_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::SdtControlKind;
+    let body = r#"<text:p>Intro</text:p><text:table-of-content text:name="_Toc1"><text:table-of-content-source text:outline-level="10"/><text:index-body><text:p>Chapter One</text:p><text:p>Chapter Two</text:p></text:index-body></text:table-of-content><text:p>Body</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    // The TOC is captured as a block content control between the surrounding body
+    // paragraphs; its index-body entries are NOT leaked into the body.
+    let blocks = import.document.body();
+    assert!(
+        matches!(&blocks[0], BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Run(r) if r.text == "Intro"))),
+        "intro paragraph missing"
+    );
+    assert!(
+        matches!(&blocks[2], BlockNode::Paragraph(p) if p.inlines.iter().any(|i| matches!(i, InlineNode::Run(r) if r.text == "Body"))),
+        "trailing body paragraph missing"
+    );
+    let BlockNode::Sdt(sdt) = &blocks[1] else {
+        panic!(
+            "expected a TOC content control at body[1], got {:?}",
+            blocks[1]
+        );
+    };
+    assert_eq!(
+        sdt.properties.control_kind,
+        Some(SdtControlKind::BuildingBlockGallery)
+    );
+    assert_eq!(sdt.properties.gallery.as_deref(), Some("Table of Contents"));
+    assert_eq!(sdt.properties.tag.as_deref(), Some("_Toc1"));
+    assert_eq!(sdt.blocks.len(), 2, "two captured TOC entries");
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<text:table-of-content text:name="_Toc1"><text:table-of-content-source text:outline-level="10"/><text:index-body>"#
+        ),
+        "TOC wrapper missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn table_of_content_captures_a_nested_table_without_leaking() {
+    // The trickiest splice case: a table inside index-body. During table parse
+    // the block-router targets cells; the finished table lands in the body draft
+    // list and must be spliced into the TOC (not left in the body, not lost).
+    let body = r#"<text:table-of-content text:name="T1"><text:index-body><text:p>Before</text:p><table:table><table:table-column/><table:table-row><table:table-cell><text:p>cell</text:p></table:table-cell></table:table-row></table:table><text:p>After</text:p></text:index-body></text:table-of-content>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let blocks = import.document.body();
+    assert_eq!(
+        blocks.len(),
+        1,
+        "TOC is the only body block; entries must not leak"
+    );
+    let BlockNode::Sdt(sdt) = &blocks[0] else {
+        panic!("expected a TOC content control")
+    };
+    assert_eq!(
+        sdt.blocks.len(),
+        3,
+        "before-para + table + after-para captured"
+    );
+    assert!(
+        matches!(sdt.blocks[1], BlockNode::Table(_)),
+        "nested table captured inside the TOC"
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn unnamed_table_of_content_mints_a_stable_name() {
+    // A TOC with no text:name still round-trips: export mints a document-unique
+    // name, re-import captures it, and the second export is a byte-exact fixed
+    // point.
+    let body = r#"<text:table-of-content><text:table-of-content-source text:outline-level="10"/><text:index-body><text:p>Entry</text:p></text:index-body></text:table-of-content>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"text:name="Table of Contents1""#),
+        "minted TOC name missing: {content_xml}"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn comment_annotation_round_trips_to_a_fixed_point() {
     // A two-word author with an ampersand exercises PCDATA escaping and the
     // whitespace path that a naive `write_text` (which encodes spaces as

@@ -16,6 +16,7 @@ use casual_doc_model::v1::{
     TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
     WidthType,
 };
+use casual_doc_model::v1::{BlockSdt, SdtControlKind, SdtProperties};
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -435,6 +436,28 @@ struct ParagraphDraft {
 enum BlockDraft {
     Paragraph(usize),
     Table(TableDraft),
+    /// A `text:table-of-content` captured as a block content control; `blocks`
+    /// are the flattened `text:index-body` entries (spliced from the body draft
+    /// list at the TOC's close), `name` is the clamped `text:name`.
+    Toc(TocDraft),
+}
+
+/// A captured `text:table-of-content`. Its level templates and recipe are
+/// dropped; only the generated `text:index-body` blocks and the name survive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TocDraft {
+    name: Option<String>,
+    blocks: Vec<BlockDraft>,
+}
+
+/// In-progress `text:table-of-content` state on the main loop. `start_index`
+/// records the body draft length at the open so the index-body blocks can be
+/// spliced out at the matching `End`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenToc {
+    depth: usize,
+    name: Option<String>,
+    start_index: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2601,6 +2624,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut notes = Vec::new();
     let mut note_source_ids = BTreeSet::new();
     let mut open_note = None;
+    let mut open_toc: Option<OpenToc> = None;
 
     loop {
         check_cancelled(cancellation)?;
@@ -2875,6 +2899,65 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             cancellation,
                         )?;
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_none()
+                        && open_tables.is_empty()
+                        && open_note.is_none()
+                        && open_toc.is_none()
+                        && is_name(&name, NamespaceKind::Text, b"table-of-content")
+                    {
+                        // Open a block-level table-of-content. Its `text:index-body`
+                        // paragraphs/tables parse normally into `blocks`; at the
+                        // matching `End` those are spliced out (from `start_index`)
+                        // into a `TocDraft`. Restricted to body level so the splice
+                        // target is always the body draft list.
+                        let toc_name = read_toc_name(
+                            &reader,
+                            &element,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            limits,
+                            &mut reporter,
+                        )?;
+                        open_toc = Some(OpenToc {
+                            depth,
+                            name: toc_name,
+                            start_index: blocks.len(),
+                        });
+                    } else if open_toc.is_some()
+                        && is_name(&name, NamespaceKind::Text, b"table-of-content-source")
+                    {
+                        // The level templates / recipe are not modeled: drop the
+                        // whole subtree so its template text cannot leak into the
+                        // captured entries.
+                        reporter.report("odf.toc.source".to_owned(), ModelOutcome::Degraded);
+                        count_attributes_only(
+                            &element,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            limits,
+                        )?;
+                        skip_active_subtree(
+                            &mut reader,
+                            limits,
+                            depth,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            cancellation,
+                        )?;
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if open_toc.is_some()
+                        && is_name(&name, NamespaceKind::Text, b"index-body")
+                    {
+                        // Transparent wrapper: its paragraph/table children parse
+                        // into `blocks` and are captured at the TOC's close.
+                        count_attributes_only(
+                            &element,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            limits,
+                        )?;
                     } else {
                         process_start(
                             &reader,
@@ -3145,6 +3228,25 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut reporter,
                     )?;
                 }
+                if open_toc
+                    .as_ref()
+                    .is_some_and(|toc: &OpenToc| toc.depth == depth)
+                {
+                    // Close the TOC: splice the index-body blocks accumulated since
+                    // the open out of the body list into a `TocDraft`. A TOC with no
+                    // captured entries would build an empty `BlockSdt` (which the
+                    // model rejects), so it is dropped with a finding.
+                    let toc = open_toc.take().ok_or(OdfError::MalformedContent)?;
+                    let captured = blocks.split_off(toc.start_index);
+                    if captured.is_empty() {
+                        reporter.report("odf.toc.empty".to_owned(), ModelOutcome::Omitted);
+                    } else {
+                        blocks.push(BlockDraft::Toc(TocDraft {
+                            name: toc.name,
+                            blocks: captured,
+                        }));
+                    }
+                }
                 if automatic_styles_depth == Some(depth) {
                     automatic_styles_depth = None;
                 }
@@ -3286,6 +3388,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         || !open_list_items.is_empty()
         || !open_tables.is_empty()
         || open_note.is_some()
+        || open_toc.is_some()
     {
         return Err(OdfError::MalformedContent);
     }
@@ -5815,6 +5918,36 @@ pub(crate) fn has_blocked_link_scheme(href: &str) -> bool {
     )
 }
 
+/// Reads and clamps a `text:table-of-content` `text:name` to the model's SDT
+/// `tag` domain (non-empty, `<= 255` bytes, well-formed XML text). Returns `None`
+/// (the name is simply not carried) when absent or out of domain — never an
+/// error, so a TOC still round-trips without a usable name.
+fn read_toc_name(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+    reporter: &mut Reporter,
+) -> Result<Option<String>, OdfError> {
+    let mut name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"name" {
+            name = Some(decode_attribute(&attribute)?);
+        } else if !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(name
+        .filter(|name| !name.is_empty() && name.len() <= 255 && name.chars().all(is_xml_text_char)))
+}
+
 fn is_bookmark_element(name: &ResolvedName) -> bool {
     name.namespace == NamespaceKind::Text
         && matches!(
@@ -5995,6 +6128,9 @@ fn count_expanded_blocks(
                         }
                     }
                 }
+            }
+            BlockDraft::Toc(toc) => {
+                count_expanded_blocks(&toc.blocks, paragraphs, limits, counts)?;
             }
         }
     }
@@ -6457,6 +6593,13 @@ fn hash_block_drafts(hash: &mut u64, blocks: &[BlockDraft]) {
                     }
                 }
             }
+            BlockDraft::Toc(toc) => {
+                hash_bytes(hash, b"block-toc");
+                if let Some(name) = &toc.name {
+                    hash_bytes(hash, name.as_bytes());
+                }
+                hash_block_drafts(hash, &toc.blocks);
+            }
         }
     }
 }
@@ -6497,6 +6640,33 @@ fn build_blocks(
                 media_ids,
                 drawings,
             )?),
+            BlockDraft::Toc(toc) => {
+                let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                let inner = build_blocks(
+                    &toc.blocks,
+                    paragraphs,
+                    ids,
+                    bookmark_ids,
+                    numbering_ids,
+                    note_ids,
+                    comment_ids,
+                    media_ids,
+                    drawings,
+                )?;
+                // A TOC with no captured entries is dropped at import (the model
+                // rejects an empty content control), so `inner` is non-empty here.
+                BlockNode::Sdt(BlockSdt {
+                    id,
+                    properties: SdtProperties {
+                        control_kind: Some(SdtControlKind::BuildingBlockGallery),
+                        gallery: Some("Table of Contents".to_owned()),
+                        category: Some("General".to_owned()),
+                        tag: toc.name.clone(),
+                        ..SdtProperties::default()
+                    },
+                    blocks: inner,
+                })
+            }
         });
     }
     Ok(blocks)

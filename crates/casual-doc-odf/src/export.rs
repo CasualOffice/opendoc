@@ -4,13 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment, Color,
-    Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
+    Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
+    Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
     FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation,
     InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
     NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RowHeight,
-    RunProperties, Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
-    TableWidth, VerticalAlignment, VerticalMerge, WidthType,
+    RunProperties, SdtControlKind, Spacing, Table, TableCell, TableCellProperties, TableRow,
+    TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1021,6 +1021,9 @@ struct Writer {
     footnotes: BTreeMap<NoteId, Note>,
     endnotes: BTreeMap<NoteId, Note>,
     comments: BTreeMap<CommentId, Comment>,
+    /// Count of emitted table-of-contents, for minting a document-unique
+    /// `text:name` when the model carries no tag.
+    toc_count: usize,
     emitted_footnotes: BTreeSet<NoteId>,
     emitted_endnotes: BTreeSet<NoteId>,
     footnote_occurrences: BTreeMap<NoteId, usize>,
@@ -1060,6 +1063,7 @@ impl Writer {
             footnotes: BTreeMap::new(),
             endnotes: BTreeMap::new(),
             comments: BTreeMap::new(),
+            toc_count: 0,
             emitted_footnotes: BTreeSet::new(),
             emitted_endnotes: BTreeSet::new(),
             footnote_occurrences: BTreeMap::new(),
@@ -1242,6 +1246,7 @@ impl Writer {
                 BlockNode::Paragraph(paragraph) => {
                     self.write_paragraph(paragraph, depth + 1, false)?
                 }
+                BlockNode::Sdt(sdt) if is_toc_sdt(sdt) => self.write_toc(sdt, depth + 1)?,
                 BlockNode::Sdt(sdt) => {
                     self.reporter
                         .record("odt.export.block_content_control", ModelOutcome::Degraded);
@@ -2052,6 +2057,26 @@ impl Writer {
         }
         self.write_blocks(&definition.blocks, depth + 1)?;
         self.push("</office:annotation>")
+    }
+
+    /// Emits a TOC-shaped block content control as `text:table-of-content`. The
+    /// index-body carries the model's cached entry blocks; the level-template
+    /// source is minimal (a single outline level). `text:name` comes from the
+    /// model tag when representable, else a document-unique minted ordinal.
+    fn write_toc(&mut self, sdt: &BlockSdt, depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        let name = match &sdt.properties.tag {
+            Some(tag) if is_representable(tag) => tag.clone(),
+            _ => {
+                self.toc_count += 1;
+                format!("Table of Contents{}", self.toc_count)
+            }
+        };
+        self.push("<text:table-of-content text:name=\"")?;
+        push_escaped_attribute(&mut self.xml, &name, self.limits.max_content_bytes)?;
+        self.push("\"><text:table-of-content-source text:outline-level=\"10\"/><text:index-body>")?;
+        self.write_blocks(&sdt.blocks, depth + 1)?;
+        self.push("</text:index-body></text:table-of-content>")
     }
 
     fn report_unreferenced_notes(&mut self) {
@@ -3306,6 +3331,14 @@ fn is_xml_character(character: char) -> bool {
 /// export.
 fn is_representable(value: &str) -> bool {
     value.chars().all(is_xml_character)
+}
+
+/// Whether a block content control is a table-of-contents (a building-block
+/// gallery named "Table of Contents") — the shape the ODT importer mints and the
+/// only `BlockSdt` re-emitted as `text:table-of-content`.
+fn is_toc_sdt(sdt: &BlockSdt) -> bool {
+    sdt.properties.control_kind == Some(SdtControlKind::BuildingBlockGallery)
+        && sdt.properties.gallery.as_deref() == Some("Table of Contents")
 }
 
 #[cfg(test)]

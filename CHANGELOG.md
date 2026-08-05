@@ -89,6 +89,13 @@ a general ODT support claim.
   multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
   (`office:name`, reply structure) is dropped. Active content inside an
   annotation is dropped like anywhere else.
+- **Table of contents (fidelity parity, T6-2)**: a block-level
+  `text:table-of-content` now round-trips to the model's block content control
+  (`BlockNode::Sdt`, a "Table of Contents" building-block gallery) — the
+  `text:index-body` entries become the control's block content and `text:name`
+  its tag — and exports back to `text:table-of-content`, a byte-exact fixed
+  point. The level-template source is dropped (a renderer regenerates it); an
+  empty TOC is dropped; an unnamed TOC is given a document-unique name on export.
 - **Table cell margins (fidelity parity, T2c-6)**: a cell's content padding
   (`fo:padding` shorthand and per-edge `fo:padding-top`/`-bottom`/`-left`/`-right`)
   now round-trips via the `table-cell` style family to the model's `CellMargins`
