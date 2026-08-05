@@ -1727,39 +1727,58 @@ function renderReviewMarginItems() {
   }
   for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
 
-  // Stacked-chip surfacing (REVIEW-GAP-019): when several chips collide on one
-  // paragraph (same anchor Y), the active/clicked one claims true anchor
-  // alignment and the others stack below it — the Google Docs pattern. Reorder
-  // the active card to the front of its own collision cluster so the top-down
-  // position pass places it at its anchor top; cross-cluster document order and
-  // every other card's relative order are preserved.
-  if (activeReviewItemId) {
-    const activeIdx = built.findIndex((b) => b.itemId === activeReviewItemId);
-    if (activeIdx > 0) {
-      const activeTop = Math.round(built[activeIdx].item.rect.top);
-      let clusterStart = activeIdx;
-      for (let i = 0; i < activeIdx; i++) {
-        if (Math.round(built[i].item.rect.top) === activeTop) { clusterStart = i; break; }
-      }
-      if (clusterStart < activeIdx) {
-        const [active] = built.splice(activeIdx, 1);
-        built.splice(clusterStart, 0, active);
-      }
-    }
-  }
-
-  // Position pass: stack every card in document-scroll coordinates exactly as
-  // the non-virtualized layout did (anchor top, pushed down to clear the card
-  // above), using the measured heights.
-  let nextY = 8;
+  // Position pass. Each card's natural anchor is its item's on-canvas marker Y in
+  // document-scroll coordinates; cards are then destacked so they never overlap.
+  const GAP = 8;
   const seen = new Set();
   const layout = [];
-  for (const { itemId, item, entry } of built) {
-    seen.add(itemId);
-    const targetY = item.rect.top - viewportRect.top + viewportEl.scrollTop;
-    const y = Math.max(8, targetY, nextY);
-    nextY = y + entry.height + 8;
-    layout.push({ itemId, top: y, entry });
+  const anchorY = built.map(
+    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop,
+  );
+  const activeIdx = activeReviewItemId
+    ? built.findIndex((b) => b.itemId === activeReviewItemId)
+    : -1;
+
+  if (activeIdx >= 0) {
+    // Stacked-chip surfacing (REVIEW-GAP-019): when several review items cluster
+    // on the same/near anchor Y, the selected card claims true anchor alignment —
+    // it stays locked to ITS OWN marker — and the rest stack around it (the
+    // Google Docs pattern). A plain top-down pass could only ever push the
+    // selected card DOWN past its marker (a later item in a dense cluster ended
+    // up far below the change it points at, and manual scrolling never closed the
+    // gap because both move together). So we anchor the layout on the selected
+    // card and destack outward: the cards after it flow downward, the cards
+    // before it flow upward — each still pinned to its own anchor except where a
+    // neighbour would overlap. Document order (and thus mount order) is preserved.
+    const tops = new Array(built.length);
+    tops[activeIdx] = Math.max(GAP, anchorY[activeIdx]);
+    for (let i = activeIdx + 1; i < built.length; i++) {
+      tops[i] = Math.max(anchorY[i], tops[i - 1] + built[i - 1].entry.height + GAP);
+    }
+    for (let i = activeIdx - 1; i >= 0; i--) {
+      tops[i] = Math.min(anchorY[i], tops[i + 1] - built[i].entry.height - GAP);
+    }
+    // Only if the cards above are collectively too tall to fit above the selected
+    // card's anchor (a cluster crowding the document top) does the whole stack
+    // shift down — the selected card yields its exact anchor solely when the
+    // geometry leaves no alternative.
+    const overflow = GAP - tops[0];
+    if (overflow > 0) for (let i = 0; i < tops.length; i++) tops[i] += overflow;
+    for (let i = 0; i < built.length; i++) {
+      seen.add(built[i].itemId);
+      layout.push({ itemId: built[i].itemId, top: tops[i], entry: built[i].entry });
+    }
+  } else {
+    // No selection: stack every card top-down (anchor top, pushed down to clear
+    // the card above), exactly as the non-virtualized layout did.
+    let nextY = GAP;
+    for (let i = 0; i < built.length; i++) {
+      const { itemId, entry } = built[i];
+      seen.add(itemId);
+      const y = Math.max(GAP, anchorY[i], nextY);
+      nextY = y + entry.height + GAP;
+      layout.push({ itemId, top: y, entry });
+    }
   }
   // Drop cache entries (and their retained DOM) for items no longer present.
   for (const key of [...reviewCardCache.keys()]) {
@@ -5020,6 +5039,20 @@ function scrollCaretIntoView(block = "nearest") {
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .caret"), block);
 }
 
+/** Bring the current review selection's OWN on-canvas marker just into view when
+ *  focusing a comment/change from the sidebar or Next/Previous. A review target
+ *  is a range, so it paints a highlight (not a caret) — scrolling only `.caret`
+ *  did nothing, leaving an off-screen item unreachable. And a "center" scroll
+ *  overshot: for a clustered paragraph it recentred on the whole selection and
+ *  pushed the very item the reviewer picked out of the viewport. "nearest" fixes
+ *  both — an already-visible marker never moves (no overshoot), and an off-screen
+ *  one is revealed by the minimum scroll to its own rect, not the paragraph's. */
+function scrollReviewSelectionIntoView() {
+  const marker = pagesEl.querySelector(".overlay .highlight")
+    || pagesEl.querySelector(".overlay .caret");
+  scrollOverlayIntoView(marker, "nearest");
+}
+
 /** Find selects a real range, so paintSelection deliberately emits highlights
  * and no caret. Scroll its first rectangle into view; querying only `.caret`
  * made Previous/Next update the selection on an off-screen page without moving
@@ -6916,7 +6949,7 @@ function focusReviewComment(comment, expand = true) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   scheduleReviewMarginRender();
 }
 
@@ -7157,7 +7190,7 @@ function focusReviewTarget(target, index, total) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   syncActiveReviewCommentToCaret(selection.focus);
   const who = reviewAuthorDisplay(target.data) || "You";
   const label = target.type === "comment"
@@ -7294,7 +7327,7 @@ function navigateToReviewAnchor(anchor) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
 }
 
 /**
@@ -7346,7 +7379,7 @@ function focusReviewRevision(revision, expand = true) {
     };
     drawSelection();
     focusEditorSurface();
-    scrollCaretIntoView("center");
+    scrollReviewSelectionIntoView();
     scheduleReviewMarginRender();
     return;
   }
@@ -7358,7 +7391,7 @@ function focusReviewRevision(revision, expand = true) {
     };
     drawSelection();
     focusEditorSurface();
-    scrollCaretIntoView("center");
+    scrollReviewSelectionIntoView();
     scheduleReviewMarginRender();
     return;
   }
@@ -7372,7 +7405,7 @@ function focusReviewRevision(revision, expand = true) {
   };
   drawSelection();
   focusEditorSurface();
-  scrollCaretIntoView("center");
+  scrollReviewSelectionIntoView();
   scheduleReviewMarginRender();
   match.free();
 }
