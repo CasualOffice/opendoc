@@ -3,28 +3,28 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDoc — Rust DOCX engine and WebAssembly editor</title>
+    <title>OpenDoc — Rust DOCX engine and embeddable WebAssembly editor</title>
     <meta
       name="description"
-      content="An open-source Rust DOCX engine and embeddable WebAssembly editor with deterministic layout, loss-aware OOXML round trips, and no required server."
+      content="OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework."
     />
     <meta
       name="keywords"
-      content="Rust DOCX engine, WebAssembly document editor, DOCX SDK, OOXML parser, embeddable document editor, headless DOCX renderer"
+      content="Rust DOCX engine, WebAssembly document editor, DOCX SDK, OOXML parser, embeddable document editor, headless DOCX renderer, deterministic layout"
     />
     <meta name="author" content="CasualOffice" />
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
-    <meta name="theme-color" content="#f4f5f7" />
+    <meta name="theme-color" content="#fbfaf8" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/" />
     <link rel="stylesheet" href="./src/fonts.css" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="OpenDoc" />
-    <meta property="og:title" content="OpenDoc — a Rust DOCX engine you can embed" />
+    <meta property="og:title" content="OpenDoc — the document engine, not the dependency" />
     <meta
       property="og:description"
-      content="Deterministic DOCX import, editing, layout, rendering, and export for native, WebAssembly, and headless hosts."
+      content="A deterministic Word-document runtime in Rust: import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — no required server, DOM, or UI framework."
     />
     <meta property="og:url" content="https://opendoc.casualoffice.org/" />
     <meta
@@ -34,10 +34,10 @@
     <meta property="og:image:alt" content="The OpenDoc browser editor rendering a DOCX document" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="OpenDoc — Rust DOCX engine and WebAssembly editor" />
+    <meta name="twitter:title" content="OpenDoc — the document engine, not the dependency" />
     <meta
       name="twitter:description"
-      content="An open-source, deterministic, loss-aware DOCX runtime for developers."
+      content="An open-source, deterministic, loss-aware DOCX runtime for developers — Rust core, WebAssembly editor, no required server."
     />
     <meta
       name="twitter:image"
@@ -84,236 +84,355 @@
     </script>
   </head>
   <body>
-    <!-- @include site-header active=home -->
+    <!-- @include site-header active=overview -->
 
-    <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <a class="dev-badge" href="https://github.com/CasualOffice/opendoc" aria-label="Star OpenDoc on GitHub">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 .25a8 8 0 00-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.49c-2.23.48-2.7-1.08-2.7-1.08-.36-.93-.89-1.17-.89-1.17-.72-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.67.07-.52.28-.87.5-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82a7.6 7.6 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.14.46.55.38A8 8 0 008 .25z"/></svg>
-            Star on GitHub
-          </a>
-          <div class="eyebrow"><span></span> Open-source DOCX infrastructure</div>
-          <h1>Own the document engine, not the dependency.</h1>
-          <p class="hero-lede">
-            OpenDoc is a deterministic, embeddable Word-document runtime written in Rust.
-            Import, edit, lay out, render, and write <code>.docx</code> across native,
-            WebAssembly, and headless hosts—without a required server or UI framework.
-          </p>
-          <div class="hero-actions">
-            <a class="button button-primary" href="./editor.html?demo=1">
-              Try the live demo <span aria-hidden="true">→</span>
+    <main class="home">
+      <!-- Hero + live-editor embed -->
+      <section class="home-hero">
+        <div class="wrap">
+          <div class="home-hero-copy">
+            <p class="home-eyebrow">Open-source DOCX infrastructure · Apache-2.0</p>
+            <h1>The document engine,<br />not the dependency.</h1>
+            <p class="home-lede">
+              A deterministic Word-document runtime written in Rust. Import, edit, lay
+              out, render, and write <code>.docx</code> on native, WebAssembly, and
+              headless hosts — with no required server, DOM, or UI framework.
+            </p>
+            <div class="home-cta-row">
+              <a class="btn btn--ink" href="./editor.html?demo=1">
+                Try the live editor <span aria-hidden="true">→</span>
+              </a>
+              <a class="btn btn--outline" href="https://github.com/CasualOffice/opendoc">
+                Read the source
+              </a>
+            </div>
+            <p class="home-privacy">
+              Your document never leaves the browser. The demo below runs the same Rust
+              engine, compiled to WebAssembly.
+            </p>
+          </div>
+
+          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc live editor preview">
+            <div class="home-embed-chrome">
+              <span class="home-embed-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+              <span class="home-embed-url"><span>opendoc.casualoffice.org/editor.html?demo=1</span></span>
+              <a class="home-embed-full" href="./editor.html?demo=1">Full editor <span aria-hidden="true">↗</span></a>
+            </div>
+
+            <div class="home-embed-toolbar" aria-hidden="true">
+              <span class="tb-btn" style="font-weight: 700">B</span>
+              <span class="tb-btn italic">I</span>
+              <span class="tb-sep"></span>
+              <span class="tb-chip">Body text <span class="caret">▾</span></span>
+              <span class="tb-chip">11 <span class="caret">▾</span></span>
+              <span class="tb-sep"></span>
+              <span class="tb-align">Align: Left</span>
+              <span class="tb-spacer"></span>
+              <span class="tb-meta">wasm · 68 words</span>
+            </div>
+
+            <div class="home-embed-stage">
+              <div class="home-embed-poster">
+                <div class="home-embed-page">
+                  <div class="home-embed-title">Quarterly Fidelity Report</div>
+                  <div class="home-embed-eyebrow">CasualOffice · Engine Working Group</div>
+                  <div class="home-embed-body">
+                    Layout is measured against LibreOffice as the oracle: three of five
+                    corpus documents match page counts exactly, and the remaining two land
+                    within a single page. Click into this paragraph and type — the caret,
+                    selection, and glyph positions are drawn from the engine's own
+                    geometry, not the browser's.<span class="home-caret" aria-hidden="true"></span>
+                  </div>
+                  <div class="home-embed-mock-table">
+                    <div class="row head">
+                      <div class="c doc">Corpus document</div>
+                      <div class="c num">Pages</div>
+                      <div class="c num">Δ oracle</div>
+                    </div>
+                    <div class="row">
+                      <div class="c doc">tables-nested.docx</div>
+                      <div class="c num">14</div>
+                      <div class="c num">0</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="home-embed-scrim" aria-hidden="true"></div>
+              <button type="button" class="home-embed-run" aria-pressed="false">
+                <span class="tri" aria-hidden="true">▶</span> Run the live editor
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Metrics quad -->
+      <section class="home-metrics">
+        <div class="wrap">
+          <div class="home-metrics-grid">
+            <div>
+              <div class="home-metric-title">Rust → WASM</div>
+              <div class="home-metric-sub">One engine across every host</div>
+            </div>
+            <div>
+              <div class="home-metric-title">Byte-identical</div>
+              <div class="home-metric-sub">Unedited packages reconstruct exactly</div>
+            </div>
+            <div>
+              <div class="home-metric-title">No server</div>
+              <div class="home-metric-sub">Host owns storage, network, policy</div>
+            </div>
+            <div>
+              <div class="home-metric-title">Loss-aware</div>
+              <div class="home-metric-sub">Preserved or reported — never dropped</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Capabilities -->
+      <section class="home-cap">
+        <div class="wrap">
+          <div class="home-section-intro">
+            <span class="home-kicker">Built for document systems</span>
+            <h2>A runtime beneath your product — not another iframe around someone else's.</h2>
+            <p>
+              The normalized model and deterministic layout engine stay authoritative.
+              The canvas is a rendering surface, never the source of truth.
+            </p>
+          </div>
+          <div class="home-cap-grid">
+            <article class="cap-card">
+              <div class="cap-card-num">01</div>
+              <h3>Loss-aware DOCX</h3>
+              <p>
+                OOXML parses into a typed editable model. Unsupported package data is
+                retained verbatim or surfaced explicitly — it does not vanish on save.
+              </p>
+              <ul class="cap-card-list">
+                <li>Semantic import and export</li>
+                <li>Byte-identical reconstruction</li>
+                <li>Compatibility dispositions</li>
+              </ul>
+            </article>
+            <article class="cap-card">
+              <div class="cap-card-num">02</div>
+              <h3>Deterministic layout</h3>
+              <p>
+                Shape, paginate, compose, and rasterize through one Rust pipeline with
+                pinned inputs and regression gates on geometry and page output.
+              </p>
+              <ul class="cap-card-list">
+                <li>Paragraphs, tables, sections, floats</li>
+                <li>Backend-neutral display list</li>
+                <li>CPU fidelity oracle</li>
+              </ul>
+            </article>
+            <article class="cap-card">
+              <div class="cap-card-num">03</div>
+              <h3>Embeddable editing</h3>
+              <p>
+                Every mutation routes through a closed command set with inverses,
+                selection anchors, and undo/redo. Network, storage, and auth stay yours.
+              </p>
+              <ul class="cap-card-list">
+                <li>Native, web, and headless targets</li>
+                <li>No mandatory React or provider</li>
+                <li>Sub-10 ms incremental repaint</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- Architecture — hard host boundary (dark, full-bleed) -->
+      <section class="home-arch">
+        <div class="wrap">
+          <div class="home-arch-copy">
+            <span class="home-kicker">A hard host boundary</span>
+            <h2>Document semantics in Rust. Product policy in your hands.</h2>
+            <p>
+              The engine owns document state, transactions, selection, pagination, hit
+              testing, and serialization. Your host owns files, fonts, network access,
+              telemetry, permissions, and product UI.
+            </p>
+            <a
+              class="home-arch-link"
+              href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md"
+            >
+              Read the architecture <span aria-hidden="true">→</span>
             </a>
-            <a class="button button-secondary" href="./editor.html">Open your DOCX</a>
           </div>
-          <p class="privacy-note">
-            <span aria-hidden="true">●</span>
-            Your document stays in the browser. The demo runs on the same Rust engine.
-          </p>
-        </div>
-
-        <div class="product-stage" aria-label="OpenDoc editor preview">
-          <div class="stage-ruler" aria-hidden="true"></div>
-          <div class="stage-bar">
-            <span class="stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span>opendoc.casualoffice.org/editor.html</span>
-            <a href="./editor.html?demo=1">Launch demo</a>
-          </div>
-          <a href="./editor.html?demo=1" aria-label="Open the live OpenDoc editor demo">
-            <img
-              src="./assets/editor.jpg"
-              width="1456"
-              height="829"
-              alt="OpenDoc browser editor with a DOCX page, formatting ribbon, navigation rail, and status bar"
-            />
-          </a>
-        </div>
-      </section>
-
-      <section class="proof-strip" aria-label="Project facts">
-        <div><strong>Rust → WASM</strong><span>One engine across hosts</span></div>
-        <div><strong>Apache-2.0</strong><span>Open source and embeddable</span></div>
-        <div><strong>No required server</strong><span>Host-owned storage and policy</span></div>
-        <div><strong>Loss-aware</strong><span>Preserve or report unsupported data</span></div>
-      </section>
-
-      <section id="capabilities" class="section">
-        <div class="section-intro">
-          <span class="section-kicker">Built for document systems</span>
-          <h2>A runtime beneath your product—not another iframe around someone else’s.</h2>
-          <p>
-            OpenDoc keeps the normalized model and deterministic layout engine authoritative.
-            The browser canvas is a rendering surface, never the document source of truth.
-          </p>
-        </div>
-        <div class="capability-grid">
-          <article>
-            <div class="card-ruler" aria-hidden="true"></div>
-            <span class="card-number">01</span>
-            <h3>Loss-aware DOCX</h3>
-            <p>
-              Parse OOXML into a typed editable model. Safe unsupported package data is
-              retained or surfaced explicitly instead of disappearing during save.
-            </p>
-            <ul>
-              <li>Semantic import and export</li>
-              <li>Byte-identical unedited reconstruction</li>
-              <li>Compatibility dispositions</li>
-            </ul>
-          </article>
-          <article>
-            <div class="card-ruler" aria-hidden="true"></div>
-            <span class="card-number">02</span>
-            <h3>Deterministic layout</h3>
-            <p>
-              Shape, paginate, compose, and rasterize from one Rust pipeline with pinned
-              inputs and regression gates for geometry, collisions, and page output.
-            </p>
-            <ul>
-              <li>Paragraphs, tables, sections, floats</li>
-              <li>Backend-neutral display list</li>
-              <li>CPU fidelity oracle</li>
-            </ul>
-          </article>
-          <article>
-            <div class="card-ruler" aria-hidden="true"></div>
-            <span class="card-number">03</span>
-            <h3>Embeddable editing</h3>
-            <p>
-              Route public mutation through a closed command set with inverses, selection
-              anchors, undo/redo, and host-owned network, storage, and authentication policy.
-            </p>
-            <ul>
-              <li>Native, web, and headless targets</li>
-              <li>No mandatory React or provider</li>
-              <li>Incremental browser repaint</li>
-            </ul>
-          </article>
-        </div>
-      </section>
-
-      <section id="architecture" class="architecture">
-        <div class="architecture-copy">
-          <span class="section-kicker">A hard host boundary</span>
-          <h2>Document semantics in Rust. Product policy in your hands.</h2>
-          <p>
-            The engine owns document state, transactions, selection, pagination, hit testing,
-            and serialization. Your host owns files, fonts, network access, telemetry,
-            permissions, and product UI.
-          </p>
-          <a class="text-link" href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md">
-            Read the architecture <span aria-hidden="true">→</span>
-          </a>
-        </div>
-        <div class="pipeline" role="img" aria-label="DOCX flows through import, model, layout, and export or rendering">
-          <div class="pipeline-label">OpenDoc core</div>
-          <div class="pipeline-row">
-            <span>DOCX</span><i>→</i><span>Model</span><i>→</i><span>Layout</span><i>→</i><span>Pixels</span>
-          </div>
-          <div class="pipeline-branch">
-            <span>Commands + transactions</span>
-            <span>Semantic DOCX export</span>
-          </div>
-          <div class="host-row">
-            <span>WebAssembly</span><span>Native</span><span>Headless</span>
+          <div class="home-arch-panel" role="img" aria-label="OpenDoc core: DOCX flows through Model and Layout to Pixels, with commands, transactions, and semantic DOCX export, targeting WebAssembly, native, and headless hosts.">
+            <div class="home-arch-panel-label">OpenDoc core</div>
+            <div class="home-arch-flow">
+              <span class="node">DOCX</span>
+              <span class="arrow" aria-hidden="true">→</span>
+              <span class="node">Model</span>
+              <span class="arrow" aria-hidden="true">→</span>
+              <span class="node">Layout</span>
+              <span class="arrow" aria-hidden="true">→</span>
+              <span class="node accent">Pixels</span>
+            </div>
+            <div class="home-arch-branch">
+              <span>Commands + transactions</span>
+              <span>Semantic DOCX export</span>
+            </div>
+            <div class="home-arch-hosts">
+              <span>WEBASSEMBLY</span>
+              <span>NATIVE</span>
+              <span>HEADLESS</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="section developer-start">
-        <div class="section-intro compact">
-          <span class="section-kicker">Inspect the real thing</span>
-          <h2>Clone it, run the gates, open a document.</h2>
-          <p>No account, opaque cloud service, or hosted document backend is required.</p>
-        </div>
-        <div class="terminal" aria-label="OpenDoc quickstart commands">
-          <div class="terminal-head"><span></span><span></span><span></span><b>quickstart</b></div>
-          <pre><code><em>$</em> git clone https://github.com/CasualOffice/opendoc.git
-<em>$</em> cd opendoc
-<em>$</em> cargo test --workspace --all-features --locked
+      <!-- Quickstart -->
+      <section class="home-quickstart">
+        <div class="wrap">
+          <div class="home-quickstart-copy">
+            <span class="home-kicker">Inspect the real thing</span>
+            <h2>Clone it, run the gates, open a document.</h2>
+            <p>
+              No account, no hosted backend, no opaque cloud service. Every pull request
+              runs build, test, lint, docs, and WASM gates on the pinned toolchain.
+            </p>
+          </div>
+          <div class="home-terminal">
+            <div class="home-terminal-head"><span>quickstart</span></div>
+            <pre><code><span class="prompt">$</span> git clone https://github.com/CasualOffice/opendoc.git
+<span class="prompt">$</span> cd opendoc
+<span class="prompt">$</span> cargo test --workspace --all-features --locked
 
-<span># Run the same browser editor locally</span>
-<em>$</em> ./webapp/build.sh
-<em>$</em> ./webapp/serve.py</code></pre>
-        </div>
-      </section>
-
-      <section id="status" class="status-section">
-        <div>
-          <span class="status-pill">Pre-release</span>
-          <h2>Serious architecture. Honest support claims.</h2>
-        </div>
-        <div>
-          <p>
-            OpenDoc already imports, edits, lays out, renders, and writes real DOCX files,
-            but it is not yet a stable SDK or a pixel-perfect replacement for Word.
-            Fidelity is tracked with generated fixtures, LibreOffice comparisons, and CI
-            gates rather than feature checkboxes.
-          </p>
-          <div class="status-links">
-            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix</a>
-            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md">Roadmap</a>
-            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">Execution tracker</a>
+<span class="comment"># run the same browser editor locally</span>
+<span class="prompt">$</span> ./webapp/build.sh
+<span class="prompt">$</span> ./webapp/serve.py</code></pre>
           </div>
         </div>
       </section>
 
-      <section class="section horizon">
-        <div class="section-intro">
-          <span class="section-kicker">Where the project is going</span>
-          <h2>DOCX fidelity first. A broader document platform next.</h2>
-          <p>
-            The current priority is trustworthy DOCX compatibility. These are
-            planned directions, not claims about today’s release.
-          </p>
-        </div>
-        <div class="horizon-grid">
-          <article class="current">
-            <span>Current focus</span>
-            <h3>Deep DOCX fidelity</h3>
-            <p>
-              Close layout, pagination, round-trip, and interaction gaps against
-              generated corpus evidence and established desktop renderers.
-            </p>
-          </article>
-          <article>
-            <span>Future goal</span>
-            <h3>Stable SDK release</h3>
-            <p>
-              Versioned Rust and WebAssembly APIs, self-hostable packages, and
-              durable embedding contracts for production applications.
-            </p>
-          </article>
-          <article>
-            <span>Future goal</span>
-            <h3>More document formats</h3>
-            <p>
-              Extend the normalized runtime beyond DOCX to ODT, plain text, and
-              additional document formats without forking the editing engine.
-            </p>
-          </article>
-          <article>
-            <span>Future goal</span>
-            <h3>Native PDF export</h3>
-            <p>
-              Produce PDF from the engine’s own deterministic layout and display
-              list rather than routing documents through a browser print path.
-            </p>
-          </article>
+      <!-- Status / honest support claims -->
+      <section class="home-status">
+        <div class="wrap">
+          <div class="home-status-card">
+            <div class="home-status-top">
+              <div>
+                <span class="home-status-badge">Pre-release</span>
+                <h2>Serious architecture. Honest support claims.</h2>
+              </div>
+              <div>
+                <p class="home-status-lede">
+                  OpenDoc already imports, edits, lays out, renders, and writes real DOCX
+                  files. It is not yet a stable SDK or a pixel-perfect replacement for
+                  Word — fidelity is tracked with generated fixtures, LibreOffice
+                  comparisons, and CI gates rather than feature checkboxes.
+                </p>
+                <div class="home-status-cols">
+                  <div class="home-status-col works">
+                    <h3>Works today</h3>
+                    <p>
+                      Semantic import → model → write-back · Layout, tables,
+                      headers/footers, floats · Browser editor with hit-testing, caret,
+                      undo/redo, save
+                    </p>
+                  </div>
+                  <div class="home-status-col next">
+                    <h3>Not yet</h3>
+                    <p>
+                      Text wrap around floats · Inline math (OMML) · Multi-column layout ·
+                      GPU backend, desktop shell, stable public SDK
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="home-status-foot">
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix <span aria-hidden="true">→</span></a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md">Roadmap <span aria-hidden="true">→</span></a>
+              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">Execution tracker <span aria-hidden="true">→</span></a>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="final-cta">
-        <span class="section-kicker">See the engine, not a mockup</span>
-        <h2>Open the live editor with a real DOCX.</h2>
-        <p>Explore rendering, selection, formatting, tables, links, undo/redo, and save—all client-side.</p>
-        <div class="hero-actions">
-          <a class="button button-primary" href="./editor.html?demo=1">Load the sample <span aria-hidden="true">→</span></a>
-          <a class="button button-secondary" href="https://github.com/CasualOffice/opendoc">View source on GitHub</a>
+      <!-- Roadmap -->
+      <section class="home-roadmap">
+        <div class="wrap">
+          <div class="home-section-intro">
+            <span class="home-kicker">Capability-gated delivery</span>
+            <h2>DOCX fidelity first. A broader document platform next.</h2>
+          </div>
+          <div class="home-roadmap-list">
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P0</div>
+              <div>
+                <div class="home-roadmap-title">Loss-aware DOCX round-trip</div>
+                <div class="home-roadmap-detail">Semantic import and export with byte-identical reconstruction of unedited packages</div>
+              </div>
+              <div class="home-roadmap-status">Shipped</div>
+            </div>
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P1</div>
+              <div>
+                <div class="home-roadmap-title">Deterministic layout and pagination</div>
+                <div class="home-roadmap-detail">Paragraphs, tables, sections, and floats measured against a LibreOffice oracle</div>
+              </div>
+              <div class="home-roadmap-status">Shipped</div>
+            </div>
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P2</div>
+              <div>
+                <div class="home-roadmap-title">Embeddable browser editor</div>
+                <div class="home-roadmap-detail">Hit-testing, caret, selection, formatting, undo/redo, and DOCX save — all client-side</div>
+              </div>
+              <div class="home-roadmap-status">Shipped</div>
+            </div>
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P3</div>
+              <div>
+                <div class="home-roadmap-title">Review and collaboration surface</div>
+                <div class="home-roadmap-detail">Comments, tracked changes, and suggestions over the same closed command set</div>
+              </div>
+              <div class="home-roadmap-status">In progress</div>
+            </div>
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P4</div>
+              <div>
+                <div class="home-roadmap-title">Fidelity hardening</div>
+                <div class="home-roadmap-detail">Text wrap around floats, inline math (OMML), and multi-column layout</div>
+              </div>
+              <div class="home-roadmap-status">Next</div>
+            </div>
+            <div class="home-roadmap-row">
+              <div class="home-roadmap-phase">P5</div>
+              <div>
+                <div class="home-roadmap-title">Stable SDK and platform</div>
+                <div class="home-roadmap-detail">Versioned Rust and WASM APIs, GPU backend, desktop shell, and more document formats</div>
+              </div>
+              <div class="home-roadmap-status">Planned</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Final CTA -->
+      <section class="home-final">
+        <div class="wrap">
+          <div class="home-final-panel">
+            <span class="home-kicker">See the engine, not a mockup</span>
+            <h2>Open the live editor with a real DOCX.</h2>
+            <p>Rendering, selection, formatting, tables, links, undo/redo, and save — all client-side.</p>
+            <div class="home-final-actions">
+              <a class="btn btn--light" href="./editor.html?demo=1">Load the sample <span aria-hidden="true">→</span></a>
+              <a class="btn btn--outline-dark" href="https://github.com/CasualOffice/opendoc">View source on GitHub</a>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
     <!-- @include site-footer -->
+
+    <script type="module" src="./src/home-embed.js"></script>
   </body>
 </html>
