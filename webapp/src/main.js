@@ -6517,10 +6517,25 @@ function reviewCurrentTargetIndex(targets) {
       if (forward || backward) return i;
     }
   }
+  const collapsed = !anchor
+    || (anchor.node === focus.node && anchor.offset === focus.offset);
   for (let i = 0; i < targets.length; i++) {
     const r = targets[i].range;
     if (r.startNode === focus.node && r.endNode === focus.node
       && focus.offset >= r.startOffset && focus.offset <= r.endOffset) {
+      // A collapsed caret resting exactly on a non-empty item's START boundary
+      // is at the threshold *before* the item, not inside it — the reviewer has
+      // not visited it yet. Report "not on any item" so Next steps onto the item
+      // (not past it) and Previous walks to the one before it. A caret at the END
+      // boundary, or strictly inside, is genuinely on the item, so Next advances
+      // past it — which also preserves stepping between two items that share a
+      // boundary (a change starting exactly where a comment ends). Without this,
+      // a fresh caret at document start (offset 0, the leading edge of a comment
+      // anchored there) was treated as already-on the comment, so the first Next
+      // skipped straight to the next item.
+      if (collapsed && focus.offset === r.startOffset && r.startOffset !== r.endOffset) {
+        continue;
+      }
       return i;
     }
   }
@@ -6544,7 +6559,10 @@ function navigateReview(direction) {
     if (!caret) {
       index = direction > 0 ? 0 : targets.length - 1;
     } else if (direction > 0) {
-      const found = targets.findIndex((t) => reviewRectIsAfter(t.rect, caret.end));
+      // First item at or after the caret, so a caret sitting exactly on an
+      // item's start (e.g. document start === a comment's leading edge) lands on
+      // that item rather than skipping it. "At or after" == not strictly before.
+      const found = targets.findIndex((t) => !reviewRectIsAfter(caret.end, t.rect));
       index = found === -1 ? 0 : found;
     } else {
       let found = -1;
