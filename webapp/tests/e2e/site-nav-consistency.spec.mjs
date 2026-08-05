@@ -5,7 +5,7 @@ import { test, expect } from "./fixtures.mjs";
 // link and the "Open the editor" CTA. This proves the build-time partial
 // inlining kept the nav consistent site-wide — the whole point of authoring
 // pages from _partials/.
-const PAGES = ["/", "/docs.html", "/examples.html", "/blog.html", "/fidelity.html"];
+const PAGES = ["/", "/docs.html", "/fidelity.html"];
 const NAV_LINKS = ["Overview", "Editor", "Docs", "Fidelity"];
 
 for (const path of PAGES) {

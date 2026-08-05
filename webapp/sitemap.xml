@@ -13,22 +13,10 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://opendoc.casualoffice.org/examples.html</loc>
-    <lastmod>2026-08-06</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
     <loc>https://opendoc.casualoffice.org/editor.html</loc>
     <lastmod>2026-08-06</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://opendoc.casualoffice.org/blog.html</loc>
-    <lastmod>2026-08-06</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.5</priority>
   </url>
   <url>
     <loc>https://opendoc.casualoffice.org/fidelity.html</loc>

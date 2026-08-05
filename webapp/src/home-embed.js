@@ -4,9 +4,9 @@
 // tab uses ~100 MB, and the tab-memory budget is guarded end-to-end in
 // tests/e2e/memory-budget.spec.mjs. So the hero ships a STATIC styled poster
 // and boots exactly ONE live <iframe src="editor.html?demo=1"> only when the
-// visitor clicks Run — the same single-instance, click-to-activate pattern the
-// examples gallery uses (src/examples.js). Closing it blanks and removes the
-// iframe, releasing the WASM instance, canvases, and JS heap it held.
+// visitor clicks Run — a single-instance, click-to-activate pattern. Closing it
+// blanks and removes the iframe, releasing the WASM instance, canvases, and JS
+// heap it held.
 
 const embed = document.getElementById("homeEmbed");
 
