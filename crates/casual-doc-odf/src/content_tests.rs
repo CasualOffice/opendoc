@@ -607,6 +607,34 @@ fn table_column_widths_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn field_inside_hyperlink_degrades_not_aborts() {
+    // The model forbids a Field nested in an inline wrapper, so a page-number
+    // inside a hyperlink must fall through to the degrade path (imported as the
+    // link's text), never abort the whole document.
+    let body = r##"<text:p>See <text:a xlink:type="simple" xlink:href="http://example.com/">link <text:page-number>1</text:page-number></text:a> end</text:p>"##;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let inlines = &paragraph(&import, 0).inlines;
+    assert!(
+        !inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::Field(_))),
+        "a field in a hyperlink must not be modeled"
+    );
+    assert!(
+        inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::Hyperlink(_))),
+        "the hyperlink itself must survive"
+    );
+}
+
+#[test]
 fn page_number_and_count_fields_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::FieldKind;
     let body = r#"<text:p>Page <text:page-number>1</text:page-number> of <text:page-count>5</text:page-count></text:p>"#;

@@ -2707,10 +2707,14 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else if text_body_depth.is_some()
                         && current.is_some()
+                        && active_link.is_none()
                         && let Some(kind) = field_kind_for(&name)
                     {
                         // A field element (with cached display content): model the
-                        // typed field and drop its computed cache. skip_active_subtree
+                        // typed field and drop its computed cache. A field inside a
+                        // hyperlink is not modeled (the model forbids a field nested
+                        // in an inline wrapper), so those fall through to the
+                        // degrade path below. skip_active_subtree
                         // consumes the matching `End`, so undo the `Start` depth
                         // increment below.
                         count_attributes_only(
@@ -2798,10 +2802,13 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                 } else if text_body_depth.is_some()
                     && current.is_some()
+                    && active_link.is_none()
                     && let Some(kind) = field_kind_for(&name)
                 {
                     // A self-closing field element (e.g. `<text:page-number/>`,
-                    // which is exactly what this writer emits).
+                    // which is exactly what this writer emits). A field inside a
+                    // hyperlink is not modeled and falls through to the degrade
+                    // path (the model forbids a field nested in an inline wrapper).
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
                     inline_nodes = checked_increment(inline_nodes)?;
                     enforce(
