@@ -2177,11 +2177,10 @@ async function boot() {
   }
 }
 
-// Curated presets for the Examples gallery (examples.html). Each boots the REAL
-// editor on a shipped sample document and opens the surface most relevant to the
-// capability being showcased, so a card lands directly in a meaningful state.
-// `?demo=1` — the homepage "live demo" link — is the plain sample with no panel
-// and is kept working for backward compatibility.
+// Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
+// hero live embed — is the plain sample with no panel; the named kinds boot the
+// REAL editor on a shipped sample document and open the surface most relevant to
+// the capability, so a deep link lands directly in a meaningful state.
 const DEMO_PRESETS = {
   "1": { src: "./sample.docx", name: "sample.docx" },
   tables: { src: "./sample.docx", name: "sample.docx", tab: "insert" },
