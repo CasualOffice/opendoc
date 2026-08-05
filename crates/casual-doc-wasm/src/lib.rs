@@ -241,6 +241,7 @@ enum HistoryKind {
     DocumentProperties,
     PageSetup,
     StyleChange,
+    BookmarkChange,
     Review,
     ReviewTyping,
 }
@@ -266,6 +267,7 @@ impl HistoryKind {
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
+            Self::BookmarkChange => "Bookmark change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
         }
@@ -316,6 +318,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
+        Operation::CreateBookmark { .. }
+        | Operation::DeleteBookmark { .. }
+        | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
     }
 }
 
@@ -1265,6 +1270,90 @@ impl WasmDocument {
         resolve_bookmark(&self.document, name)
             .map(|position| format!("{}\t{}", position.node, position.offset))
             .unwrap_or_default()
+    }
+
+    /// Every bookmark as `id\tname`, in ascending id order — the id-bearing
+    /// accessor a manager surface needs to target [`renameBookmark`](Self::rename_bookmark)
+    /// and [`deleteBookmark`](Self::delete_bookmark) unambiguously (names are not
+    /// unique). The id is the 32-hex bookmark id; a fresh [`createBookmark`](Self::create_bookmark)
+    /// appears here on the next read.
+    #[wasm_bindgen(js_name = bookmarkEntries)]
+    #[must_use]
+    pub fn bookmark_entries(&self) -> Vec<String> {
+        self.document
+            .definitions()
+            .bookmarks
+            .iter()
+            .map(|(id, bookmark)| format!("{}\t{}", id.node_id(), bookmark.name))
+            .collect()
+    }
+
+    /// Creates a bookmark named `name` over the current selection (which may span
+    /// two paragraphs), inserting its start/end markers and registering the name
+    /// under a fresh id. One undoable action. The new id is discoverable via
+    /// [`bookmarkEntries`](Self::bookmark_entries). Rejects an empty or oversized
+    /// (> 255-byte) name, or a selection whose endpoints do not resolve.
+    #[wasm_bindgen(js_name = createBookmark)]
+    pub fn create_bookmark(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        name: String,
+    ) -> Result<EditResult, JsValue> {
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let bookmark = BookmarkId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".into()))?,
+        );
+        let start_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        let end_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply(Operation::CreateBookmark {
+            bookmark,
+            name,
+            start,
+            start_id,
+            end,
+            end_id,
+        })
+        .map_err(to_js)
+    }
+
+    /// Renames the bookmark with the 32-hex `id` to `name`. One undoable action.
+    /// Rejects an unknown id or an empty/oversized name.
+    #[wasm_bindgen(js_name = renameBookmark)]
+    pub fn rename_bookmark(&mut self, id: &str, name: String) -> Result<EditResult, JsValue> {
+        let bookmark = BookmarkId::new(node_id(id)?);
+        self.apply_action_caret_as(
+            vec![Operation::RenameBookmark { bookmark, name }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::BookmarkChange,
+        )
+        .map_err(to_js)
+    }
+
+    /// Deletes the bookmark with the 32-hex `id`, removing its definition and both
+    /// markers. One undoable action. Rejects an unknown id or a bookmark whose
+    /// markers do not resolve at paragraph top level.
+    #[wasm_bindgen(js_name = deleteBookmark)]
+    pub fn delete_bookmark(&mut self, id: &str) -> Result<EditResult, JsValue> {
+        let bookmark = BookmarkId::new(node_id(id)?);
+        self.apply_action_caret_as(
+            vec![Operation::DeleteBookmark { bookmark }],
+            Pos::new(self.document.id(), 0),
+            HistoryKind::BookmarkChange,
+        )
+        .map_err(to_js)
     }
 
     /// Splits the paragraph at the caret into two (Enter). The caret lands at the
@@ -13175,6 +13264,12 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
         Operation::SetStyleDefinition { .. } => Pos::new(doc_id, 0),
+        // Creating a bookmark rests the caret at the range start (the wrapped
+        // selection's anchor); delete/rename are definition edits routed through
+        // `apply_action_caret` with the caller's own caret, so their natural
+        // position is a neutral placeholder.
+        Operation::CreateBookmark { start, .. } => *start,
+        Operation::DeleteBookmark { .. } | Operation::RenameBookmark { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -14416,6 +14511,51 @@ mod tests {
             Some(ModelPos::new(target_id, 7))
         );
         assert_eq!(resolve_bookmark(&document, "missing"), None);
+    }
+
+    #[test]
+    fn create_rename_delete_bookmark_round_trips_through_wasm() {
+        let paragraph_id = NodeId::from_parts(70, 2).unwrap();
+        let document = Document::new(
+            NodeId::from_parts(70, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: NodeId::from_parts(70, 3).unwrap(),
+                    properties: RunProperties::default(),
+                    text: "Hello world".to_owned(),
+                })],
+            })],
+            casual_doc_model::v1::Definitions::default(),
+        )
+        .expect("valid document");
+        let mut d = wasm_document(document);
+        let node = paragraph_id.to_string();
+
+        // Create a bookmark over "Hello".
+        d.create_bookmark(&node, 0, &node, 5, "anchor".to_owned())
+            .expect("create bookmark");
+        let entries = d.bookmark_entries();
+        assert_eq!(entries.len(), 1, "one bookmark registered");
+        let (id, name) = entries[0].split_once('\t').expect("id\\tname");
+        assert_eq!(name, "anchor");
+        let id = id.to_owned();
+
+        // Rename, then undo the rename.
+        d.rename_bookmark(&id, "renamed".to_owned())
+            .expect("rename bookmark");
+        assert!(d.bookmark_entries()[0].ends_with("\trenamed"));
+        d.undo().expect("undo rename");
+        assert!(d.bookmark_entries()[0].ends_with("\tanchor"));
+
+        // Delete, then undo the delete (re-inserts the bookmark).
+        d.delete_bookmark(&id).expect("delete bookmark");
+        assert!(d.bookmark_entries().is_empty(), "bookmark removed");
+        d.undo().expect("undo delete");
+        let restored = d.bookmark_entries();
+        assert_eq!(restored.len(), 1, "bookmark restored by undo");
+        assert!(restored[0].ends_with("\tanchor"));
     }
 
     /// Type a character, confirm the model text changed, then undo and confirm it
