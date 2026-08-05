@@ -25,7 +25,9 @@ use casual_doc_model::v1::{
     RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
+// A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
+use casual_doc_model::v1::{Field, FieldKind};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
@@ -125,6 +127,108 @@ pub struct ReviewParagraphState {
     pub node: NodeId,
     /// Complete replacement inline tree.
     pub inlines: Vec<InlineNode>,
+}
+
+/// A common Word field a caller can insert without a field evaluator. This crate
+/// has no wall-clock or filesystem access, so a clock/context-based kind carries
+/// its already-formatted display text as `result`; `Page`/`NumPages` recompute at
+/// pagination and seed only a `"1"` placeholder.
+///
+/// [`CommonField::build`] turns a value of this enum into the [`Field`] node an
+/// [`Operation::InsertField`] inserts — it constructs the field instruction
+/// string, the [`FieldKind`] projection, and the cached-result leaf run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommonField {
+    /// `PAGE` — the current page number (recomputed at pagination).
+    Page,
+    /// `NUMPAGES` — the total page count (recomputed at pagination).
+    NumPages,
+    /// `DATE` — the current date. `result` is the caller-formatted display value.
+    Date {
+        /// The `\@` picture switch to embed in the instruction, if any.
+        format: Option<String>,
+        /// The already-formatted date to cache as the display value.
+        result: String,
+    },
+    /// `TIME` — the current time. `result` is the caller-formatted display value.
+    Time {
+        /// The `\@` picture switch to embed in the instruction, if any.
+        format: Option<String>,
+        /// The already-formatted time to cache as the display value.
+        result: String,
+    },
+    /// `FILENAME` — the document file name. `result` is the caller-supplied value.
+    FileName {
+        /// The file name to cache as the display value.
+        result: String,
+    },
+    /// `AUTHOR` — the document author. `result` is the caller-supplied value.
+    Author {
+        /// The author to cache as the display value.
+        result: String,
+    },
+}
+
+impl CommonField {
+    /// The field instruction string (`w:instrText`) for this kind, e.g.
+    /// `PAGE \* MERGEFORMAT` or `DATE \@ "M/d/yyyy"`.
+    #[must_use]
+    pub fn instruction(&self) -> String {
+        // A keyword-with-switch pattern shared by the picture-carrying kinds.
+        let with_picture = |keyword: &str, format: &Option<String>| match format {
+            Some(picture) => format!("{keyword} \\@ \"{picture}\""),
+            None => keyword.to_owned(),
+        };
+        match self {
+            CommonField::Page => "PAGE \\* MERGEFORMAT".to_owned(),
+            CommonField::NumPages => "NUMPAGES \\* MERGEFORMAT".to_owned(),
+            CommonField::Date { format, .. } => with_picture("DATE", format),
+            CommonField::Time { format, .. } => with_picture("TIME", format),
+            CommonField::FileName { .. } => "FILENAME \\* MERGEFORMAT".to_owned(),
+            CommonField::Author { .. } => "AUTHOR \\* MERGEFORMAT".to_owned(),
+        }
+    }
+
+    /// The cached display text to seed the field's leaf run with. `Page`/
+    /// `NumPages` seed a `"1"` placeholder the pagination field pass overwrites;
+    /// the other kinds seed the caller-supplied `result`.
+    fn result_text(&self) -> &str {
+        match self {
+            CommonField::Page | CommonField::NumPages => "1",
+            CommonField::Date { result, .. }
+            | CommonField::Time { result, .. }
+            | CommonField::FileName { result }
+            | CommonField::Author { result } => result,
+        }
+    }
+
+    /// Builds the [`Field`] node to insert: `id` is the field's identity and
+    /// `result_id` the identity of its cached-result run. An empty display value
+    /// yields an empty cached result (`result_id` unused); otherwise a single
+    /// default-styled leaf run carries the text. The [`FieldKind`] projection is
+    /// derived from the built instruction, so it always agrees with it.
+    #[must_use]
+    pub fn build(&self, id: NodeId, result_id: NodeId) -> Field {
+        let instruction = self.instruction();
+        let kind = FieldKind::parse(&instruction);
+        let text = self.result_text();
+        let inlines = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![InlineNode::Run(Run {
+                id: result_id,
+                properties: RunProperties::default(),
+                text: text.to_owned(),
+            })]
+        };
+        Field {
+            id,
+            instruction,
+            kind,
+            inlines,
+            form: None,
+        }
+    }
 }
 
 /// The closed editing op set (I2). Slice 1 carries the two text ops; structural
@@ -432,6 +536,33 @@ pub enum Operation {
         /// The new name (non-empty, at most 255 bytes).
         name: String,
     },
+    /// Insert a pre-built inline [`Field`] node at the caret `at`. The field is
+    /// placed at paragraph top level (a field never nests inside an inline
+    /// wrapper), aligned to a run boundary — a run the offset lands inside is
+    /// split first. Build a common field with [`CommonField::build`]; this crate
+    /// evaluates nothing, so a clock/context field (`DATE`/`TIME`/…) carries its
+    /// caller-formatted cached display text, and `PAGE`/`NUMPAGES` carry a `"1"`
+    /// placeholder the pagination field pass recomputes. Inverse:
+    /// [`Operation::RemoveField`] of the field's id. Rejected (doc left unchanged)
+    /// if the caret does not resolve, the offset is out of range, or the resulting
+    /// document does not validate (e.g. a duplicate node id or a nested field).
+    /// Boxed to keep the enum small.
+    InsertField {
+        /// Where the field is inserted.
+        at: Pos,
+        /// The field node to insert; its id and any cached-run id must be fresh.
+        field: Box<Field>,
+    },
+    /// Remove the inline [`Field`] node with id `field` from its paragraph,
+    /// coalescing any equal-property runs the field kept apart. Inverse:
+    /// [`Operation::InsertField`] carrying the removed field and its exact
+    /// position, so undo re-inserts it verbatim. The field must sit at paragraph
+    /// top level (as this crate inserts it); an id that does not resolve to a
+    /// top-level field is rejected.
+    RemoveField {
+        /// The field to remove.
+        field: NodeId,
+    },
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -461,6 +592,12 @@ pub enum EditError {
     /// A bookmark id does not resolve to a definition (or its markers cannot be
     /// located at paragraph top level).
     BookmarkNotFound,
+    /// An inserted field is rejected by the model (a duplicate node id, a nested
+    /// field, or invalid cached inlines), or a field removal would leave the
+    /// document invalid.
+    InvalidField,
+    /// A field id does not resolve to a field at paragraph top level.
+    FieldNotFound,
 }
 
 /// Applies `op` to `doc`, returning the inverse operation (for undo). `ids` mints
@@ -1208,6 +1345,49 @@ pub fn apply(
             Ok(Operation::RenameBookmark {
                 bookmark: *bookmark,
                 name: previous,
+            })
+        }
+        Operation::InsertField { at, field } => {
+            // Snapshot the target paragraph so any failure (a bad offset, a field
+            // the model rejects) rolls back to exactly the prior state; a field is
+            // always inserted at paragraph top level, aligned to a run boundary.
+            let snapshot = find_paragraph(doc.body(), at.node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            let insertion = insert_field_at(doc.body_mut(), *at, (**field).clone(), ids);
+            let outcome =
+                insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidField));
+            if let Err(err) = outcome {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), at.node) {
+                    para.inlines = snapshot;
+                }
+                return Err(err);
+            }
+            Ok(Operation::RemoveField { field: field.id })
+        }
+        Operation::RemoveField { field } => {
+            let (node, offset, removed) =
+                locate_field(doc.body(), *field).ok_or(EditError::FieldNotFound)?;
+            let snapshot = find_paragraph(doc.body(), node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                remove_field_by_id(&mut para.inlines, *field);
+                // Removing the field can leave two equal-property runs it kept
+                // apart adjacent, which the model forbids; coalesce them back.
+                coalesce_adjacent_runs(&mut para.inlines);
+            }
+            if doc.validate().is_err() {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                    para.inlines = snapshot;
+                }
+                return Err(EditError::InvalidField);
+            }
+            Ok(Operation::InsertField {
+                at: Pos::new(node, offset),
+                field: Box::new(removed),
             })
         }
     }
@@ -2869,6 +3049,68 @@ fn insert_bookmark_pair(
         insert_marker_at(&mut para.inlines, end.offset, end_marker, ids)?;
     }
     Ok(())
+}
+
+/// Inserts a pre-built [`Field`] node at `at`, aligning the caret to a run
+/// boundary first (splitting the run the offset lands in) so the field sits at
+/// paragraph top level. [`Operation::InsertField`]'s mutation.
+fn insert_field_at(
+    blocks: &mut [BlockNode],
+    at: Pos,
+    field: Field,
+    ids: &mut dyn RunIds,
+) -> Result<(), EditError> {
+    let para = find_paragraph_mut(blocks, at.node).ok_or(EditError::NodeNotFound)?;
+    if at.offset > paragraph_text_len(para) {
+        return Err(EditError::OffsetOutOfRange);
+    }
+    insert_marker_at(&mut para.inlines, at.offset, InlineNode::Field(field), ids)?;
+    Ok(())
+}
+
+/// Locates the top-level [`InlineNode::Field`] with id `field` among the body's
+/// paragraph inlines (descending into tables and block SDTs), returning its
+/// paragraph, its byte offset in that paragraph, and a clone of the field (for
+/// [`Operation::RemoveField`]'s inverse). `None` unless it resolves at paragraph
+/// top level.
+fn locate_field(blocks: &[BlockNode], field: NodeId) -> Option<(NodeId, u32, Field)> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0u32;
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Field(found) = inline
+                        && found.id == field
+                    {
+                        return Some((paragraph.id, offset, found.clone()));
+                    }
+                    offset = offset.saturating_add(inline_text_len(inline));
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(found) = locate_field(&cell.blocks, field) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = locate_field(&sdt.blocks, field) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Removes the top-level [`InlineNode::Field`] whose own id is `field` from
+/// `inlines`.
+fn remove_field_by_id(inlines: &mut Vec<InlineNode>, field: NodeId) {
+    inlines.retain(|inline| !matches!(inline, InlineNode::Field(f) if f.id == field));
 }
 
 /// Removes the top-level bookmark marker whose own id is `marker` from `inlines`.
@@ -5054,5 +5296,213 @@ mod tests {
         let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
             .expect("reopen");
         assert_eq!(d, reopened, "the created bookmark survives write -> reopen");
+    }
+
+    // ---- Fields ------------------------------------------------------------
+
+    /// The single top-level field in paragraph `id`, if any.
+    fn field_of(document: &Document, id: NodeId) -> Option<Field> {
+        inlines_of(document, id).into_iter().find_map(|inline| {
+            if let InlineNode::Field(field) = inline {
+                Some(field)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Applies `InsertField` for `common` at `at`, asserts the field lands with the
+    /// expected instruction/kind, then asserts the returned inverse restores the
+    /// paragraph verbatim and that re-applying the forward op is idempotent.
+    fn round_trip_field(common: CommonField, instruction: &str) {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let original = d.clone();
+        let mut ids = IdGenerator::new(20);
+        let field = common.build(n(50), n(51));
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 2),
+                field: Box::new(field.clone()),
+            },
+        )
+        .expect("insert field");
+
+        let inserted = field_of(&d, p).expect("field present after insert");
+        assert_eq!(inserted.instruction, instruction, "instruction string");
+        assert_eq!(
+            inserted.kind,
+            FieldKind::parse(instruction),
+            "kind projection agrees with the instruction"
+        );
+        assert_eq!(inverse, Operation::RemoveField { field: n(50) });
+        // The caret text is unchanged: a field is zero-width in the anchor space.
+        assert_eq!(text_of(&d, p), "Hello");
+
+        // The inverse removes the field and restores the paragraph exactly.
+        let redo = apply(&mut d, &mut ids, &inverse).expect("remove field");
+        assert!(field_of(&d, p).is_none(), "field gone after inverse");
+        assert_eq!(d, original, "inverse restores the document verbatim");
+
+        // The inverse-of-the-inverse re-inserts an equal field.
+        apply(&mut d, &mut ids, &redo).expect("re-insert field");
+        assert_eq!(
+            field_of(&d, p).expect("field back after redo").instruction,
+            instruction,
+        );
+    }
+
+    #[test]
+    fn insert_field_round_trips_for_each_common_kind() {
+        round_trip_field(CommonField::Page, "PAGE \\* MERGEFORMAT");
+        round_trip_field(CommonField::NumPages, "NUMPAGES \\* MERGEFORMAT");
+        round_trip_field(
+            CommonField::Date {
+                format: None,
+                result: "1/2/2026".to_owned(),
+            },
+            "DATE",
+        );
+        round_trip_field(
+            CommonField::Date {
+                format: Some("M/d/yyyy".to_owned()),
+                result: "1/2/2026".to_owned(),
+            },
+            "DATE \\@ \"M/d/yyyy\"",
+        );
+        round_trip_field(
+            CommonField::Time {
+                format: None,
+                result: "3:04 PM".to_owned(),
+            },
+            "TIME",
+        );
+        round_trip_field(
+            CommonField::FileName {
+                result: "report.docx".to_owned(),
+            },
+            "FILENAME \\* MERGEFORMAT",
+        );
+        round_trip_field(
+            CommonField::Author {
+                result: "Ada".to_owned(),
+            },
+            "AUTHOR \\* MERGEFORMAT",
+        );
+    }
+
+    #[test]
+    fn page_and_numpages_seed_a_recomputable_placeholder() {
+        // The pagination field pass overwrites these, but the seeded cached value
+        // renders before that pass — a `"1"` placeholder, not empty.
+        let page = CommonField::Page.build(n(50), n(51));
+        assert!(
+            matches!(page.inlines.as_slice(), [InlineNode::Run(r)] if r.text == "1"),
+            "PAGE seeds a \"1\" placeholder run",
+        );
+        assert_eq!(page.kind, FieldKind::Page);
+        let total = CommonField::NumPages.build(n(52), n(53));
+        assert_eq!(total.kind, FieldKind::NumPages);
+    }
+
+    #[test]
+    fn date_field_caches_the_caller_supplied_display_text() {
+        // The engine reads no clock: the formatted value arrives as a parameter and
+        // is cached verbatim as the field's leaf run.
+        let field = CommonField::Date {
+            format: Some("M/d/yyyy".to_owned()),
+            result: "8/6/2026".to_owned(),
+        }
+        .build(n(50), n(51));
+        assert!(matches!(field.inlines.as_slice(), [InlineNode::Run(r)] if r.text == "8/6/2026"),);
+    }
+
+    #[test]
+    fn insert_field_into_an_empty_paragraph_leaves_only_the_field() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![])]);
+        let mut ids = IdGenerator::new(20);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 0),
+                field: Box::new(CommonField::Page.build(n(50), n(51))),
+            },
+        )
+        .expect("insert into empty paragraph");
+        assert!(matches!(
+            inlines_of(&d, p).as_slice(),
+            [InlineNode::Field(_)]
+        ));
+    }
+
+    #[test]
+    fn insert_field_rejects_a_missing_node_and_out_of_range_offset() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(20);
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertField {
+                    at: Pos::new(n(999), 0),
+                    field: Box::new(CommonField::Page.build(n(50), n(51))),
+                },
+            ),
+            Err(EditError::NodeNotFound),
+        );
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::InsertField {
+                    at: Pos::new(p, 99),
+                    field: Box::new(CommonField::Page.build(n(50), n(51))),
+                },
+            ),
+            Err(EditError::OffsetOutOfRange),
+        );
+    }
+
+    #[test]
+    fn remove_field_rejects_an_unknown_id() {
+        let mut d = doc(vec![para(2, vec![run(3, "Hi")])]);
+        let mut ids = IdGenerator::new(20);
+        assert_eq!(
+            apply(&mut d, &mut ids, &Operation::RemoveField { field: n(777) }),
+            Err(EditError::FieldNotFound),
+        );
+    }
+
+    #[test]
+    fn inserted_field_survives_write_reopen() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(20);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertField {
+                at: Pos::new(p, 2),
+                field: Box::new(
+                    CommonField::Date {
+                        format: Some("M/d/yyyy".to_owned()),
+                        result: "8/6/2026".to_owned(),
+                    }
+                    .build(n(50), n(51)),
+                ),
+            },
+        )
+        .expect("insert field");
+
+        let json = d.to_json().expect("serialize");
+        let reopened = Document::from_json(&json, casual_doc_model::SnapshotLimits::default())
+            .expect("reopen");
+        assert_eq!(d, reopened, "the inserted field survives write -> reopen");
     }
 }
