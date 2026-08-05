@@ -6620,6 +6620,20 @@ fn normalize_inline_drafts(
                 continue;
             }
         }
+        // A revision wraps captured inlines; normalize them first (dropping e.g. an
+        // unpaired bookmark). If nothing survives, drop the whole revision — the
+        // model rejects an empty revision, so leaving it would abort the entire
+        // import at validation rather than degrading gracefully.
+        if let InlineDraft::Revision {
+            inlines: children, ..
+        } = &mut inline
+        {
+            normalize_inline_drafts(children, bookmarks, reporter);
+            if children.is_empty() {
+                reporter.report("odf.tracked-change.empty".to_owned(), ModelOutcome::Omitted);
+                continue;
+            }
+        }
         if let InlineDraft::BookmarkStart(index) | InlineDraft::BookmarkEnd(index) = &inline
             && !bookmarks
                 .get(*index)

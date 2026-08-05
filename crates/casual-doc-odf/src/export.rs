@@ -7,11 +7,12 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
     Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
-    FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation,
-    InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision, RevisionKind,
-    RowHeight, RunProperties, SdtControlKind, Spacing, Table, TableCell, TableCellProperties,
-    TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
+    Field, FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget,
+    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision,
+    RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing, Table, TableCell,
+    TableCellProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment,
+    VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1238,7 +1239,13 @@ impl Writer {
                 }
                 InlineNode::Hyperlink(link) => self.collect_revisions_in_inlines(&link.inlines),
                 InlineNode::Sdt(sdt) => self.collect_revisions_in_inlines(&sdt.inlines),
-                InlineNode::Field(field) => self.collect_revisions_in_inlines(&field.inlines),
+                // Only recurse into a field's projection inlines when the writer
+                // will actually emit them (the degraded `_` path); a mapped field
+                // emits just its element and never walks the inlines, so declaring
+                // a region for a revision there would orphan it.
+                InlineNode::Field(field) if field_projects_inlines(field) => {
+                    self.collect_revisions_in_inlines(&field.inlines)
+                }
                 _ => {}
             }
         }
@@ -3507,6 +3514,23 @@ fn is_representable(value: &str) -> bool {
 fn is_toc_sdt(sdt: &BlockSdt) -> bool {
     sdt.properties.control_kind == Some(SdtControlKind::BuildingBlockGallery)
         && sdt.properties.gallery.as_deref() == Some("Table of Contents")
+}
+
+/// Whether the writer projects a field's inner inlines (the degraded path) rather
+/// than emitting a mapped ODF field element. Must stay in lockstep with the
+/// `write_inlines` `InlineNode::Field` arm, so the revision pre-walk visits
+/// exactly the inlines that will be emitted.
+fn field_projects_inlines(field: &Field) -> bool {
+    match &field.kind {
+        FieldKind::Page | FieldKind::NumPages | FieldKind::Date { .. } | FieldKind::Time { .. } => {
+            false
+        }
+        FieldKind::Ref { bookmark } | FieldKind::PageRef { bookmark } => {
+            !is_representable(bookmark)
+        }
+        FieldKind::Seq { name } => !is_representable(name),
+        _ => true,
+    }
 }
 
 /// One insertion region to declare in `text:tracked-changes`.

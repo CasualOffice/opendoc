@@ -965,6 +965,32 @@ fn tracked_insertion_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn insertion_of_only_an_unpaired_bookmark_degrades_not_aborts() {
+    // Regression: an insertion wrapping only an unpaired bookmark-start captures a
+    // non-empty draft (so the change-end empty-guard passes), but build_inlines
+    // later drops the unpaired bookmark, leaving an empty Revision — which the
+    // model rejects (EmptyRevision), aborting the WHOLE import. normalize must
+    // drop the emptied revision first so it degrades gracefully.
+    let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="c1"><text:insertion><office:change-info><dc:creator>A</dc:creator></office:change-info></text:insertion></text:changed-region></text:tracked-changes><text:p>keep<text:change-start text:change-id="c1"/><text:bookmark-start text:name="bm"/><text:change-end text:change-id="c1"/> end</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .expect("must degrade, not error");
+    import
+        .document
+        .validate()
+        .expect("must build a valid model");
+    // No revision survives (it normalized empty), but the surrounding text does.
+    let has_revision = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .any(|inline| matches!(inline, InlineNode::Revision(_)));
+    assert!(!has_revision, "the emptied revision must be dropped");
+}
+
+#[test]
 fn comment_annotation_round_trips_to_a_fixed_point() {
     // A two-word author with an ampersand exercises PCDATA escaping and the
     // whitespace path that a naive `write_text` (which encodes spaces as
