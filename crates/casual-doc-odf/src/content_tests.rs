@@ -1060,6 +1060,80 @@ fn tracked_insertion_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn form_field_wrapping_a_revision_does_not_orphan_a_region() {
+    // Regression (forms review Finding 1): a FORMTEXT field emits only its
+    // draw:control anchor and never writes its inlines, so the pre-walk must NOT
+    // recurse into them — else a revision nested in the field declares an orphan
+    // text:changed-region (data loss + dangling id). Construct the DOCX-reachable
+    // shape directly and assert no changed-region is emitted.
+    use casual_doc_model::IdGenerator;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, Document, Field, FieldKind, FormFieldData, FormFieldKind,
+        FormTextInput, InlineNode, Paragraph, ParagraphProperties, Revision, RevisionKind, Run,
+        RunProperties,
+    };
+    let mut ids = IdGenerator::new(0x5eed);
+    let doc_id = ids.next_id().unwrap();
+    let para_id = ids.next_id().unwrap();
+    let field_id = ids.next_id().unwrap();
+    let rev_id = ids.next_id().unwrap();
+    let run_id = ids.next_id().unwrap();
+    let field = Field {
+        id: field_id,
+        instruction: "FORMTEXT".to_owned(),
+        kind: FieldKind::Other {
+            keyword: "FORMTEXT".to_owned(),
+        },
+        inlines: vec![InlineNode::Revision(Revision {
+            id: rev_id,
+            kind: RevisionKind::Insertion,
+            author: None,
+            date: None,
+            revision_id: None,
+            editor_group: None,
+            inlines: vec![InlineNode::Run(Run {
+                id: run_id,
+                properties: RunProperties::default(),
+                text: "x".to_owned(),
+            })],
+        })],
+        form: Some(FormFieldData {
+            name: None,
+            enabled: None,
+            calc_on_exit: None,
+            help_text: None,
+            status_text: None,
+            entry_macro: None,
+            exit_macro: None,
+            kind: FormFieldKind::TextInput(FormTextInput::default()),
+        }),
+    };
+    let paragraph = Paragraph {
+        id: para_id,
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::Field(field)],
+    };
+    let document = Document::new(
+        doc_id,
+        vec![BlockNode::Paragraph(paragraph)],
+        Definitions::default(),
+    )
+    .unwrap();
+    document.validate().unwrap();
+    let export = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        !content_xml.contains("changed-region"),
+        "the field's inner revision must not orphan a changed-region: {content_xml}"
+    );
+    assert!(
+        content_xml.contains("draw:control"),
+        "form control must emit"
+    );
+}
+
+#[test]
 fn form_text_field_round_trips_to_a_fixed_point() {
     use casual_doc_model::v1::FormFieldKind;
     let body = r#"<office:forms xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"><form:form form:name="Standard"><form:text form:id="ctrl1" form:name="FieldA"/></form:form></office:forms><text:p>Name: <draw:control xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" text:anchor-type="as-char" draw:control="ctrl1"/></text:p>"#;

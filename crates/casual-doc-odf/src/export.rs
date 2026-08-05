@@ -1261,16 +1261,26 @@ impl Writer {
                 },
                 InlineNode::Hyperlink(link) => self.collect_revisions_in_inlines(&link.inlines),
                 InlineNode::Sdt(sdt) => self.collect_revisions_in_inlines(&sdt.inlines),
+                InlineNode::TextBox(text_box) => {
+                    // A text box's blocks are written (write_text_box), so pre-walk
+                    // them too — else a revision/form field inside a box would be
+                    // emitted without a declared region/control entry.
+                    self.collect_revisions_in_blocks(&text_box.blocks);
+                }
                 InlineNode::Field(field) => {
-                    // A form field is anchored via draw:control + an office:forms
-                    // entry, both minted here in document order.
-                    if field.form.is_some() {
+                    // A text-input form field is emitted as ONLY a draw:control
+                    // anchor (its inlines are never written), so mint its control
+                    // and do NOT pre-walk its inlines — recursing would declare an
+                    // orphan region for a nested revision the writer drops.
+                    let minted_form = field
+                        .form
+                        .as_ref()
+                        .is_some_and(|form| matches!(form.kind, FormFieldKind::TextInput(_)));
+                    if minted_form {
                         self.assign_form_field(field);
-                    }
-                    // Only recurse into a field's projection inlines when the writer
-                    // will actually emit them (the degraded `_` path); a mapped
-                    // field emits just its element and never walks the inlines.
-                    if field_projects_inlines(field) {
+                    } else if field_projects_inlines(field) {
+                        // Only recurse into a field's projection inlines when the
+                        // writer will actually emit them (the degraded `_` path).
                         self.collect_revisions_in_inlines(&field.inlines);
                     }
                 }
