@@ -96,6 +96,12 @@ a general ODT support claim.
   fill, border, and floating anchors are dropped with a finding. The embedded-image
   path (and its href security validation) is unchanged — an image still wins when
   a frame carries both.
+- **Tracked changes — deletions (fidelity parity, T6-3b)**: an ODF tracked
+  deletion now round-trips to the model's inline `Revision` (deletion). The
+  deleted content — which ODF stores in the change region, not the body — is
+  captured and re-declared in a `text:deletion` region, and the body carries the
+  `text:change` point marker. Completes the tracked-changes family (insertions +
+  deletions); moves/format-changes still degrade.
 - **Tracked changes — insertions (fidelity parity, T6-3)**: an ODF tracked
   insertion now round-trips to the model's inline `Revision` and back, a
   byte-exact fixed point. The leading `text:tracked-changes` registry is
