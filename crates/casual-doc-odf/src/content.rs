@@ -2708,32 +2708,35 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     } else if text_body_depth.is_some()
                         && current.is_some()
                         && active_link.is_none()
-                        && let Some(kind) = field_kind_for(&name)
+                        && is_field_name(&name)
                     {
                         // A field element (with cached display content): model the
                         // typed field and drop its computed cache. A field inside a
                         // hyperlink is not modeled (the model forbids a field nested
                         // in an inline wrapper), so those fall through to the
-                        // degrade path below. skip_active_subtree
-                        // consumes the matching `End`, so undo the `Start` depth
-                        // increment below.
+                        // degrade path below. skip_active_subtree consumes the
+                        // matching `End`, so undo the `Start` depth increment below.
                         count_attributes_only(
                             &element,
                             &mut attributes,
                             &mut attribute_bytes,
                             limits,
                         )?;
-                        inline_nodes = checked_increment(inline_nodes)?;
-                        enforce(
-                            "odf_content_inline_nodes",
-                            inline_nodes,
-                            limits.max_inline_nodes,
-                        )?;
-                        push_inline_draft(
-                            current.as_mut().ok_or(OdfError::MalformedContent)?,
-                            &mut active_link,
-                            InlineDraft::Field(kind),
-                        );
+                        if let Some(kind) = read_field_kind(&reader, &element, &name)? {
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            push_inline_draft(
+                                current.as_mut().ok_or(OdfError::MalformedContent)?,
+                                &mut active_link,
+                                InlineDraft::Field(kind),
+                            );
+                        } else {
+                            reporter.report(feature("element", &name), ModelOutcome::Degraded);
+                        }
                         skip_active_subtree(
                             &mut reader,
                             limits,
@@ -2803,24 +2806,29 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 } else if text_body_depth.is_some()
                     && current.is_some()
                     && active_link.is_none()
-                    && let Some(kind) = field_kind_for(&name)
+                    && is_field_name(&name)
                 {
-                    // A self-closing field element (e.g. `<text:page-number/>`,
-                    // which is exactly what this writer emits). A field inside a
-                    // hyperlink is not modeled and falls through to the degrade
-                    // path (the model forbids a field nested in an inline wrapper).
+                    // A self-closing field element (e.g. `<text:page-number/>` or
+                    // `<text:bookmark-ref .../>`, which is exactly what this writer
+                    // emits). A field inside a hyperlink is not modeled and falls
+                    // through to the degrade path (the model forbids a field nested
+                    // in an inline wrapper).
                     count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
-                    inline_nodes = checked_increment(inline_nodes)?;
-                    enforce(
-                        "odf_content_inline_nodes",
-                        inline_nodes,
-                        limits.max_inline_nodes,
-                    )?;
-                    push_inline_draft(
-                        current.as_mut().ok_or(OdfError::MalformedContent)?,
-                        &mut active_link,
-                        InlineDraft::Field(kind),
-                    );
+                    if let Some(kind) = read_field_kind(&reader, &element, &name)? {
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::Field(kind),
+                        );
+                    } else {
+                        reporter.report(feature("element", &name), ModelOutcome::Degraded);
+                    }
                 } else if text_body_depth.is_some()
                     && current.is_some()
                     && is_name(&name, NamespaceKind::Text, b"note")
@@ -6342,7 +6350,7 @@ fn build_inlines(
             }
             InlineDraft::Field(kind) => InlineNode::Field(Field {
                 id,
-                instruction: field_instruction(kind).to_owned(),
+                instruction: field_instruction(kind),
                 kind: kind.clone(),
                 inlines: Vec::new(),
                 form: None,
@@ -6355,13 +6363,15 @@ fn build_inlines(
 /// The synthesized DOCX-style instruction for a modeled field kind (the model
 /// requires a non-empty, authoritative instruction; ODF fields are element-based
 /// so we mint a canonical one per kind).
-fn field_instruction(kind: &FieldKind) -> &'static str {
+fn field_instruction(kind: &FieldKind) -> String {
     match kind {
-        FieldKind::Page => "PAGE",
-        FieldKind::NumPages => "NUMPAGES",
-        FieldKind::Date { .. } => "DATE",
-        FieldKind::Time { .. } => "TIME",
-        _ => "FIELD",
+        FieldKind::Page => "PAGE".to_owned(),
+        FieldKind::NumPages => "NUMPAGES".to_owned(),
+        FieldKind::Date { .. } => "DATE".to_owned(),
+        FieldKind::Time { .. } => "TIME".to_owned(),
+        FieldKind::Ref { bookmark } => format!("REF {bookmark}"),
+        FieldKind::PageRef { bookmark } => format!("PAGEREF {bookmark}"),
+        _ => "FIELD".to_owned(),
     }
 }
 
@@ -6560,8 +6570,8 @@ fn is_active(name: &ResolvedName) -> bool {
 /// dropped rather than modeled or preserved.
 const ACTIVE_CONTENT_FINDING: &str = "odf.security.active-content-dropped";
 
-/// The typed field kind for a supported ODF inline field element, or `None` if
-/// the element is not a modeled field.
+/// The typed field kind for an attribute-free ODF inline field element, or
+/// `None` if the element is not one of those.
 fn field_kind_for(name: &ResolvedName) -> Option<FieldKind> {
     if name.namespace != NamespaceKind::Text {
         return None;
@@ -6574,6 +6584,51 @@ fn field_kind_for(name: &ResolvedName) -> Option<FieldKind> {
         b"date" => Some(FieldKind::Date { format: None }),
         b"time" => Some(FieldKind::Time { format: None }),
         _ => None,
+    }
+}
+
+/// Whether an element name is a supported inline field (attribute-free kinds plus
+/// `text:bookmark-ref`, whose kind depends on its attributes).
+fn is_field_name(name: &ResolvedName) -> bool {
+    field_kind_for(name).is_some()
+        || (name.namespace == NamespaceKind::Text && name.local.as_slice() == b"bookmark-ref")
+}
+
+/// Resolves the field kind for a field element, reading attributes where the kind
+/// depends on them (`text:bookmark-ref` → Ref/PageRef by `text:ref-name` and
+/// `text:reference-format`). Returns `None` for a malformed field (e.g. a
+/// bookmark-ref with no/over-long ref-name) so the caller can drop it.
+fn read_field_kind(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    name: &ResolvedName,
+) -> Result<Option<FieldKind>, OdfError> {
+    if let Some(kind) = field_kind_for(name) {
+        return Ok(Some(kind));
+    }
+    if name.namespace != NamespaceKind::Text || name.local.as_slice() != b"bookmark-ref" {
+        return Ok(None);
+    }
+    let mut ref_name = None;
+    let mut page = false;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text {
+            match local.as_ref() {
+                b"ref-name" => ref_name = Some(decode_attribute(&attribute)?),
+                b"reference-format" => page = decode_attribute(&attribute)? == "page",
+                _ => {}
+            }
+        }
+    }
+    match ref_name {
+        Some(bookmark) if !bookmark.is_empty() && bookmark.len() <= 255 => Ok(Some(if page {
+            FieldKind::PageRef { bookmark }
+        } else {
+            FieldKind::Ref { bookmark }
+        })),
+        _ => Ok(None),
     }
 }
 
