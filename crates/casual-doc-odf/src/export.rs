@@ -11,7 +11,7 @@ use casual_doc_model::v1::{
     Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
     NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision,
     RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment,
+    TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment,
     VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
@@ -2088,9 +2088,7 @@ impl Writer {
                 InlineNode::EmbeddedObject(_) => self
                     .reporter
                     .record("odt.export.embedded_object", ModelOutcome::Omitted),
-                InlineNode::TextBox(_) => self
-                    .reporter
-                    .record("odt.export.text_box", ModelOutcome::Omitted),
+                InlineNode::TextBox(text_box) => self.write_text_box(text_box, depth + 1)?,
                 InlineNode::Group(group) => {
                     self.reporter
                         .record("odt.export.group", ModelOutcome::Omitted);
@@ -2247,6 +2245,27 @@ impl Writer {
         self.push("\"><text:table-of-content-source text:outline-level=\"10\"/><text:index-body>")?;
         self.write_blocks(&sdt.blocks, depth + 1)?;
         self.push("</text:index-body></text:table-of-content>")
+    }
+
+    /// Emits an inline `draw:frame`>`draw:text-box` carrying the box's block body.
+    /// `xmlns:draw` is declared inline so text-box-free documents keep the
+    /// unchanged content header. Floating/geometry/fill/border are not emitted;
+    /// their presence is reported.
+    fn write_text_box(&mut self, text_box: &TextBox, depth: usize) -> Result<(), OdfError> {
+        self.check_depth(depth)?;
+        if text_box.anchor.is_some()
+            || text_box.extent.is_some()
+            || text_box.fill.is_some()
+            || text_box.border.is_some()
+        {
+            self.reporter
+                .record("odt.export.text_box_properties", ModelOutcome::Degraded);
+        }
+        self.push(
+            "<draw:frame xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\"><draw:text-box>",
+        )?;
+        self.write_blocks(&text_box.blocks, depth + 1)?;
+        self.push("</draw:text-box></draw:frame>")
     }
 
     fn report_unreferenced_notes(&mut self) {

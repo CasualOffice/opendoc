@@ -16,7 +16,9 @@ use casual_doc_model::v1::{
     TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
     WidthType,
 };
-use casual_doc_model::v1::{BlockSdt, Revision, RevisionKind, SdtControlKind, SdtProperties};
+use casual_doc_model::v1::{
+    BlockSdt, Revision, RevisionKind, SdtControlKind, SdtProperties, TextBox,
+};
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -374,6 +376,9 @@ enum InlineDraft {
     /// [`CommentDraft`]. The paired `office:annotation-end` range is not modeled
     /// (the comment collapses to a point at the anchor).
     CommentReference(usize),
+    /// An inline `draw:text-box`; carries the flattened body text directly (built
+    /// into a single-paragraph `TextBox`, no definition/id dependency).
+    TextBox(String),
     /// A tracked-change (revision) range wrapping the enclosed inline drafts,
     /// captured by splicing the paragraph inlines between `text:change-start` and
     /// `text:change-end`. Insertions only in this slice.
@@ -431,6 +436,22 @@ struct DrawingDraft {
     height_emu: Option<i64>,
     /// `svg:title`/`svg:desc` alt text, if present.
     descr: Option<String>,
+}
+
+/// A `draw:frame`'s modeled content: either an embedded image or an inline text
+/// box. A frame with neither (or an unsafe/linked image) yields `None`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FrameContent {
+    Image(DrawingDraft),
+    TextBox(TextBoxDraft),
+}
+
+/// A bounded inline `draw:text-box` capture: its body flattened to plain text (a
+/// single paragraph), mirroring the comment/TOC body capture. Size, fill, border,
+/// and floating anchor are dropped for this slice.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TextBoxDraft {
+    body: String,
 }
 
 /// A bounded `office:annotation` capture: the comment metadata plus its body as
@@ -2840,7 +2861,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         // Sub-parse the frame subtree off the main state machine.
                         // parse_draw_frame consumes the matching `End`, so the
                         // depth increment made for this `Start` is undone below.
-                        if let Some(draft) = parse_draw_frame(
+                        if let Some(content) = parse_draw_frame(
                             &mut reader,
                             &element,
                             depth,
@@ -2852,8 +2873,16 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             cancellation,
                             &mut reporter,
                         )? {
-                            let index = drawings.len();
-                            drawings.push(draft);
+                            let draft = match content {
+                                FrameContent::Image(image) => {
+                                    let index = drawings.len();
+                                    drawings.push(image);
+                                    InlineDraft::Drawing(index)
+                                }
+                                FrameContent::TextBox(text_box) => {
+                                    InlineDraft::TextBox(text_box.body)
+                                }
+                            };
                             inline_nodes = checked_increment(inline_nodes)?;
                             enforce(
                                 "odf_content_inline_nodes",
@@ -2863,7 +2892,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             push_inline_draft(
                                 current.as_mut().ok_or(OdfError::MalformedContent)?,
                                 &mut active_link,
-                                InlineDraft::Drawing(index),
+                                draft,
                             );
                         }
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
@@ -3829,7 +3858,7 @@ fn parse_draw_frame(
     text_bytes: &mut usize,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
-) -> Result<Option<DrawingDraft>, OdfError> {
+) -> Result<Option<FrameContent>, OdfError> {
     let mut width_emu = None;
     let mut height_emu = None;
     for attribute in frame.attributes() {
@@ -3850,6 +3879,13 @@ fn parse_draw_frame(
     let mut capture_depth: Option<usize> = None;
     let mut descr_text = String::new();
     let mut reported_unsupported = false;
+    // A `draw:text-box` child (mutually exclusive with an image in practice; an
+    // image, if also present, wins). `text_box` holds the flattened body; a `None`
+    // means no text box was seen. `box_depth` is the box element's sub-depth so we
+    // know when text events belong to its body.
+    let mut text_box: Option<String> = None;
+    let mut box_depth: Option<usize> = None;
+    let mut box_dropped = false;
     let mut sub_depth = 0_usize;
     let mut buffer = Vec::new();
 
@@ -3907,6 +3943,26 @@ fn parse_draw_frame(
                     } else {
                         count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                     }
+                } else if is_name(&name, NamespaceKind::Draw, b"text-box") && text_box.is_none() {
+                    // Start capturing an inline text box's body (flattened plain
+                    // text). Its own attributes carry no modeled semantics here.
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    text_box = Some(String::new());
+                    box_depth = Some(sub_depth);
+                } else if box_depth.is_some_and(|depth| sub_depth > depth)
+                    && name.namespace == NamespaceKind::Text
+                    && matches!(name.local.as_slice(), b"p" | b"h")
+                {
+                    // A body paragraph inside the box: separate flattened
+                    // paragraphs with a line break (which re-exports as
+                    // text:line-break and re-imports to the same character).
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    if let Some(body) = &mut text_box
+                        && !body.is_empty()
+                        && push_bounded_text(body, "\n", MAX_COMMENT_BODY_BYTES)
+                    {
+                        box_dropped = true;
+                    }
                 } else if capture_depth.is_none() && is_svg_title_or_desc(&name) {
                     count_attributes_only(&element, attributes, attribute_bytes, limits)?;
                     capture_depth = Some(sub_depth);
@@ -3931,7 +3987,51 @@ fn parse_draw_frame(
                 if is_active(&name) {
                     reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
                 }
-                if is_name(&name, NamespaceKind::Draw, b"image") && href.is_none() {
+                if let Some(body) = text_box
+                    .as_mut()
+                    .filter(|_| box_depth.is_some_and(|depth| sub_depth > depth))
+                {
+                    // Whitespace elements inside the text-box body decode back to
+                    // their characters (the exporter emits text:s/tab/line-break),
+                    // else spaces would vanish on re-import.
+                    if is_name(&name, NamespaceKind::Text, b"s") {
+                        let mut count = 1_usize;
+                        for attribute in element.attributes() {
+                            let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                            count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+                            let (namespace, local) =
+                                reader.resolver().resolve_attribute(attribute.key);
+                            if namespace_kind(&namespace) == NamespaceKind::Text
+                                && local.as_ref() == b"c"
+                            {
+                                count = decode_attribute(&attribute)?
+                                    .parse()
+                                    .map_err(|_| OdfError::MalformedContent)?;
+                                if count == 0 {
+                                    return Err(OdfError::MalformedContent);
+                                }
+                            }
+                        }
+                        enforce("odf_content_space_repeat", count, limits.max_space_repeat)?;
+                        if push_bounded_text(body, &" ".repeat(count), MAX_COMMENT_BODY_BYTES) {
+                            box_dropped = true;
+                        }
+                    } else if is_name(&name, NamespaceKind::Text, b"tab")
+                        || is_name(&name, NamespaceKind::Text, b"line-break")
+                    {
+                        count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                        let whitespace = if name.local.as_slice() == b"tab" {
+                            "\t"
+                        } else {
+                            "\n"
+                        };
+                        if push_bounded_text(body, whitespace, MAX_COMMENT_BODY_BYTES) {
+                            box_dropped = true;
+                        }
+                    } else {
+                        count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    }
+                } else if is_name(&name, NamespaceKind::Draw, b"image") && href.is_none() {
                     href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
                 } else {
                     count_attributes_only(&element, attributes, attribute_bytes, limits)?;
@@ -3949,6 +4049,11 @@ fn parse_draw_frame(
                     }
                     descr_text.clear();
                 }
+                if box_depth == Some(sub_depth) {
+                    // Exited the text-box; stop capturing (its body stays in
+                    // `text_box`). A later stray element is not part of the box.
+                    box_depth = None;
+                }
                 sub_depth -= 1;
             }
             Event::Text(text) if capture_depth.is_some() => {
@@ -3963,31 +4068,84 @@ fn parse_draw_frame(
                     descr_text.push_str(&value);
                 }
             }
+            Event::Text(text) if box_depth.is_some_and(|depth| sub_depth > depth) => {
+                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| OdfError::MalformedContent)?;
+                *text_bytes = text_bytes
+                    .checked_add(value.len())
+                    .ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
+                if let Some(body) = &mut text_box
+                    && push_bounded_text(body, &value, MAX_COMMENT_BODY_BYTES)
+                {
+                    box_dropped = true;
+                }
+            }
+            // A `<![CDATA[…]]>` block inside the box body (verbatim text).
+            Event::CData(text) if box_depth.is_some_and(|depth| sub_depth > depth) => {
+                let value = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                *text_bytes = text_bytes
+                    .checked_add(value.len())
+                    .ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
+                if let Some(body) = &mut text_box
+                    && push_bounded_text(body, &value, MAX_COMMENT_BODY_BYTES)
+                {
+                    box_dropped = true;
+                }
+            }
+            // An entity reference (`&amp;`, `&#38;`, …) inside the box body;
+            // quick-xml surfaces these separately from `Text`, so without this arm
+            // every escaped `&`/`<`/`>` in a text box would silently vanish.
+            Event::GeneralRef(reference) if box_depth.is_some_and(|depth| sub_depth > depth) => {
+                let value = decode_reference(&reference)?;
+                *text_bytes = text_bytes
+                    .checked_add(value.len())
+                    .ok_or(OdfError::MalformedContent)?;
+                enforce("odf_content_text_bytes", *text_bytes, limits.max_text_bytes)?;
+                if let Some(body) = &mut text_box
+                    && push_bounded_text(body, &value, MAX_COMMENT_BODY_BYTES)
+                {
+                    box_dropped = true;
+                }
+            }
             _ => {}
         }
         buffer.clear();
     }
 
-    let Some(href) = href else {
-        reporter.report("odf.draw.image-missing".to_owned(), ModelOutcome::Omitted);
-        return Ok(None);
-    };
-    if !is_safe_media_href(&href) {
-        reporter.report_with_retention(
-            "odf.draw.linked-image".to_owned(),
-            ModelOutcome::Omitted,
-            RetentionOutcome::Blocked,
-        );
-        return Ok(None);
+    if let Some(href) = href {
+        // An image wins when a frame carries both (rare/malformed); the text box,
+        // if any, is dropped with the frame-content finding already reported.
+        if !is_safe_media_href(&href) {
+            reporter.report_with_retention(
+                "odf.draw.linked-image".to_owned(),
+                ModelOutcome::Omitted,
+                RetentionOutcome::Blocked,
+            );
+            return Ok(None);
+        }
+        let descr = descr.filter(|value| !value.is_empty() && value.len() <= MAX_DESCR_BYTES);
+        return Ok(Some(FrameContent::Image(DrawingDraft {
+            media_type: media_type_from_href(&href),
+            part_name: href,
+            width_emu,
+            height_emu,
+            descr,
+        })));
     }
-    let descr = descr.filter(|value| !value.is_empty() && value.len() <= MAX_DESCR_BYTES);
-    Ok(Some(DrawingDraft {
-        media_type: media_type_from_href(&href),
-        part_name: href,
-        width_emu,
-        height_emu,
-        descr,
-    }))
+    if let Some(body) = text_box {
+        if box_dropped {
+            reporter.report(
+                "odf.draw.text-box-truncated".to_owned(),
+                ModelOutcome::Degraded,
+            );
+        }
+        return Ok(Some(FrameContent::TextBox(TextBoxDraft { body })));
+    }
+    reporter.report("odf.draw.image-missing".to_owned(), ModelOutcome::Omitted);
+    Ok(None)
 }
 
 /// Which annotation child's text the sub-parser is currently accumulating.
@@ -6580,7 +6738,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
     let mut total = 0_usize;
     for inline in inlines {
         match inline {
-            InlineDraft::Text { text, .. } => {
+            InlineDraft::Text { text, .. } | InlineDraft::TextBox(text) => {
                 total = total
                     .checked_add(text.len())
                     .ok_or(OdfError::MalformedContent)?;
@@ -7327,6 +7485,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"comment-reference");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::TextBox(body) => {
+            hash_bytes(hash, b"text-box");
+            hash_bytes(hash, body.as_bytes());
+        }
         InlineDraft::Revision {
             kind,
             author,
@@ -7484,6 +7646,35 @@ fn build_inlines(
                 InlineNode::CommentReference(CommentReference {
                     id,
                     comment: *comment_ids.get(*index).ok_or(OdfError::InvalidModel)?,
+                })
+            }
+            InlineDraft::TextBox(body) => {
+                // A single flattened paragraph; an empty body still needs a
+                // non-empty blocks vec (the model rejects an empty text box).
+                let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                let inlines = if body.is_empty() {
+                    Vec::new()
+                } else {
+                    let run_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                    vec![InlineNode::Run(Run {
+                        id: run_id,
+                        properties: RunProperties::default(),
+                        text: body.clone(),
+                    })]
+                };
+                InlineNode::TextBox(TextBox {
+                    id,
+                    anchor: None,
+                    relative_height: None,
+                    extent: None,
+                    fill: None,
+                    border: None,
+                    body_properties: Default::default(),
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: paragraph_id,
+                        properties: ParagraphProperties::default(),
+                        inlines,
+                    })],
                 })
             }
             InlineDraft::Revision {

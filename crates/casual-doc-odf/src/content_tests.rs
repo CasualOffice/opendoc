@@ -913,6 +913,72 @@ fn colliding_toc_names_are_made_unique_on_export() {
 }
 
 #[test]
+fn inline_text_box_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::BlockNode;
+    // The `&amp;` exercises entity (GeneralRef) capture in the box body.
+    let body = r#"<text:p>Before <draw:frame xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><draw:text-box><text:p>box &amp; text</text:p></draw:text-box></draw:frame> after</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    let text_box = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::TextBox(text_box) => Some(text_box.clone()),
+            _ => None,
+        })
+        .expect("inline text box");
+    let box_text = match text_box.blocks.as_slice() {
+        [BlockNode::Paragraph(paragraph)] => match paragraph.inlines.as_slice() {
+            [InlineNode::Run(run)] => run.text.clone(),
+            other => panic!("unexpected text-box body inlines: {other:?}"),
+        },
+        other => panic!("unexpected text-box blocks: {other:?}"),
+    };
+    assert_eq!(box_text, "box & text");
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<draw:frame xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><draw:text-box>"#
+        ) && content_xml.contains("</draw:text-box></draw:frame>"),
+        "text box not round-tripped: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
+fn multi_paragraph_text_box_flattens_and_round_trips() {
+    // Two body paragraphs flatten to one paragraph with a line break between
+    // them, which re-exports as text:line-break and re-imports to the same char.
+    let body = r#"<text:p><draw:frame xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><draw:text-box><text:p>one</text:p><text:p>two</text:p></draw:text-box></draw:frame></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn tracked_insertion_round_trips_to_a_fixed_point() {
     use casual_doc_model::v1::{Revision, RevisionKind};
     let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="ct1"><text:insertion><office:change-info><dc:creator>Ada</dc:creator><dc:date>2024-01-02T03:04:05</dc:date></office:change-info></text:insertion></text:changed-region></text:tracked-changes><text:p>Before <text:change-start text:change-id="ct1"/>inserted<text:change-end text:change-id="ct1"/> after</text:p>"#;
