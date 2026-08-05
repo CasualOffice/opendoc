@@ -988,6 +988,46 @@ fn start_form_image_nested_in_text_box_does_not_hijack_the_frame() {
 }
 
 #[test]
+fn inline_text_box_extent_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::Extent;
+    let body = r#"<text:p><draw:frame xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" svg:width="4cm" svg:height="2cm"><draw:text-box><text:p>sized</text:p></draw:text-box></draw:frame></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let text_box = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::TextBox(text_box) => Some(text_box.clone()),
+            _ => None,
+        })
+        .expect("text box");
+    assert_eq!(
+        text_box.extent,
+        Some(Extent {
+            width_emu: 1_440_000, // 4cm
+            height_emu: 720_000,  // 2cm
+        })
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"svg:width="4.0000cm" svg:height="2.0000cm""#),
+        "text-box extent missing: {content_xml}"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn multi_paragraph_text_box_flattens_and_round_trips() {
     // Two body paragraphs flatten to one paragraph with a line break between
     // them, which re-exports as text:line-break and re-imports to the same char.

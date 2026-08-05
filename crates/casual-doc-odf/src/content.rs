@@ -379,9 +379,13 @@ enum InlineDraft {
     /// [`CommentDraft`]. The paired `office:annotation-end` range is not modeled
     /// (the comment collapses to a point at the anchor).
     CommentReference(usize),
-    /// An inline `draw:text-box`; carries the flattened body text directly (built
-    /// into a single-paragraph `TextBox`, no definition/id dependency).
-    TextBox(String),
+    /// An inline `draw:text-box`; carries the flattened body text and the box
+    /// extent (built into a single-paragraph `TextBox`, no definition/id
+    /// dependency).
+    TextBox {
+        body: String,
+        extent: Option<(i64, i64)>,
+    },
     /// A `draw:control` resolving to a form control; carries the control directly
     /// (built into the matching form field).
     FormField(FormControlDraft),
@@ -485,11 +489,14 @@ enum FrameContent {
 }
 
 /// A bounded inline `draw:text-box` capture: its body flattened to plain text (a
-/// single paragraph), mirroring the comment/TOC body capture. Size, fill, border,
-/// and floating anchor are dropped for this slice.
+/// single paragraph), mirroring the comment/TOC body capture, plus the frame's
+/// natural size. Fill, border, and floating anchor are dropped for this slice.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TextBoxDraft {
     body: String,
+    /// `svg:width`/`svg:height` in EMU (the box extent), when both parse.
+    width_emu: Option<i64>,
+    height_emu: Option<i64>,
 }
 
 /// A bounded `office:annotation` capture: the comment metadata plus its body as
@@ -2935,7 +2942,14 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                                     InlineDraft::Drawing(index)
                                 }
                                 FrameContent::TextBox(text_box) => {
-                                    InlineDraft::TextBox(text_box.body)
+                                    let extent = match (text_box.width_emu, text_box.height_emu) {
+                                        (Some(width), Some(height)) => Some((width, height)),
+                                        _ => None,
+                                    };
+                                    InlineDraft::TextBox {
+                                        body: text_box.body,
+                                        extent,
+                                    }
                                 }
                             };
                             inline_nodes = checked_increment(inline_nodes)?;
@@ -4304,7 +4318,11 @@ fn parse_draw_frame(
                 ModelOutcome::Degraded,
             );
         }
-        return Ok(Some(FrameContent::TextBox(TextBoxDraft { body })));
+        return Ok(Some(FrameContent::TextBox(TextBoxDraft {
+            body,
+            width_emu,
+            height_emu,
+        })));
     }
     reporter.report("odf.draw.image-missing".to_owned(), ModelOutcome::Omitted);
     Ok(None)
@@ -7268,7 +7286,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
     let mut total = 0_usize;
     for inline in inlines {
         match inline {
-            InlineDraft::Text { text, .. } | InlineDraft::TextBox(text) => {
+            InlineDraft::Text { text, .. } | InlineDraft::TextBox { body: text, .. } => {
                 total = total
                     .checked_add(text.len())
                     .ok_or(OdfError::MalformedContent)?;
@@ -8016,9 +8034,13 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"comment-reference");
             hash_bytes(hash, &index.to_le_bytes());
         }
-        InlineDraft::TextBox(body) => {
+        InlineDraft::TextBox { body, extent } => {
             hash_bytes(hash, b"text-box");
             hash_bytes(hash, body.as_bytes());
+            if let Some((width, height)) = extent {
+                hash_bytes(hash, &width.to_le_bytes());
+                hash_bytes(hash, &height.to_le_bytes());
+            }
         }
         InlineDraft::FormField(control) => {
             hash_bytes(hash, b"form-field");
@@ -8198,7 +8220,7 @@ fn build_inlines(
                     comment: *comment_ids.get(*index).ok_or(OdfError::InvalidModel)?,
                 })
             }
-            InlineDraft::TextBox(body) => {
+            InlineDraft::TextBox { body, extent } => {
                 // A single flattened paragraph; an empty body still needs a
                 // non-empty blocks vec (the model rejects an empty text box).
                 let paragraph_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -8216,7 +8238,10 @@ fn build_inlines(
                     id,
                     anchor: None,
                     relative_height: None,
-                    extent: None,
+                    extent: extent.map(|(width_emu, height_emu)| Extent {
+                        width_emu,
+                        height_emu,
+                    }),
                     fill: None,
                     border: None,
                     body_properties: Default::default(),

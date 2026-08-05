@@ -2408,17 +2408,25 @@ impl Writer {
     /// their presence is reported.
     fn write_text_box(&mut self, text_box: &TextBox, depth: usize) -> Result<(), OdfError> {
         self.check_depth(depth)?;
-        if text_box.anchor.is_some()
-            || text_box.extent.is_some()
-            || text_box.fill.is_some()
-            || text_box.border.is_some()
-        {
+        if text_box.anchor.is_some() || text_box.fill.is_some() || text_box.border.is_some() {
             self.reporter
                 .record("odt.export.text_box_properties", ModelOutcome::Degraded);
         }
-        self.push(
-            "<draw:frame xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\"><draw:text-box>",
-        )?;
+        // `xmlns:svg` is declared inline alongside `xmlns:draw` only when the box
+        // carries an extent, so extent-free boxes keep identical bytes.
+        if let Some(extent) = &text_box.extent {
+            self.push(
+                "<draw:frame xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" xmlns:svg=\"urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0\" svg:width=\"",
+            )?;
+            self.push(&emu_to_cm(extent.width_emu))?;
+            self.push("\" svg:height=\"")?;
+            self.push(&emu_to_cm(extent.height_emu))?;
+            self.push("\"><draw:text-box>")?;
+        } else {
+            self.push(
+                "<draw:frame xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\"><draw:text-box>",
+            )?;
+        }
         self.write_blocks(&text_box.blocks, depth + 1)?;
         self.push("</draw:text-box></draw:frame>")
     }
