@@ -2080,7 +2080,7 @@ function setDocumentState(state) {
 }
 
 function clearObjectStatus() {
-  if (/^(Image selected|Object deletion)/.test(statusEl.textContent)) setStatus("");
+  if (/^Image selected/.test(statusEl.textContent)) setStatus("");
 }
 
 // Concise polite announcements for review events (comment added, change
@@ -3042,6 +3042,20 @@ function updateObjectContextBar() {
     hint.textContent = "Drag handles to resize";
     objectContextBarEl.appendChild(hint);
   }
+  // Object-editing actions (alt text / crop / delete). Each keeps the selection
+  // on pointerdown (like the wrap buttons) and opens its dialog / runs its op.
+  const divider = document.createElement("span");
+  divider.className = "object-bar-divider";
+  objectContextBarEl.appendChild(divider);
+  const actions = document.createElement("div");
+  actions.className = "object-bar-actions";
+  actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
+  if (objectSelection.kind !== "textbox") {
+    // Crop is a picture-only operation; a text box has no source rectangle.
+    actions.appendChild(objectBarButton("crop", "Crop", "Crop image", openCropDialog));
+  }
+  actions.appendChild(objectBarButton("delete", "Delete", "Delete object", deleteSelectedObject, true));
+  objectContextBarEl.appendChild(actions);
   objectContextBarEl.hidden = false;
   // Position just above the object's top-left, clamped into the viewport.
   const left = pageRect.left + rect[1] * sx;
@@ -3077,6 +3091,251 @@ const WRAP_MODES = [
 function setObjectWrap(mode) {
   if (!objectSelection || !objectSelection.anchored) return;
   runEdit(() => doc.setObjectWrap(objectSelection.node, mode), { gate: true });
+}
+
+/** Builds one object-context-bar action button (icon + label). Mirrors the wrap
+ *  buttons: `pointerdown` is prevented so clicking it never deselects the object
+ *  (the canvas pointerdown deselect is what the wrap buttons dodge too). */
+function objectBarButton(icon, label, title, onClick, danger = false) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `object-bar-btn${danger ? " danger" : ""}`;
+  btn.title = title;
+  btn.setAttribute("aria-label", title);
+  btn.innerHTML = `<span class="ms" aria-hidden="true">${icon}</span><span>${label}</span>`;
+  btn.addEventListener("pointerdown", (event) => event.preventDefault()); // keep selection
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+/** Deletes the selected object as one undoable action (docs/85 §4). Mirrors the
+ *  wrap op's apply path: `runEdit(..., { gate:true })` is the single fail-closed
+ *  gate (read-only in Viewing, untracked-blocked in Suggesting). The object
+ *  selection is dropped inside the thunk — which `runEdit` only runs once the gate
+ *  passes — so `applyEditResult` repaints with the plain text caret the
+ *  `EditResult` points at (the object's former surrounding-text anchor). */
+function deleteSelectedObject() {
+  if (!objectSelection || objectSelection.mode !== "selected") return;
+  const node = objectSelection.node;
+  runEdit(
+    () => {
+      const res = doc.deleteObject(node);
+      objectSelection = null;
+      clearObjectStatus();
+      return res;
+    },
+    { gate: true },
+  );
+}
+
+// ---- Object alt text + crop dialogs -----------------------------------------
+// Reuse the shared `.dialog-overlay`/`.dialog-card` system (as the bookmark
+// manager does). The node is captured on open so the dialog stays bound to one
+// object even though `objectSelection` remains live behind the modal overlay.
+const altTextDialog = document.getElementById("altTextDialog");
+const altTextInput = document.getElementById("altTextInput");
+const altTextForm = document.getElementById("altTextForm");
+const altTextNote = document.getElementById("altTextNote");
+const altTextClose = document.getElementById("altTextClose");
+const altTextCancel = document.getElementById("altTextCancel");
+const ALT_TEXT_HINT = "Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.";
+const cropDialog = document.getElementById("cropDialog");
+const cropForm = document.getElementById("cropForm");
+const cropNote = document.getElementById("cropNote");
+const cropClose = document.getElementById("cropClose");
+const cropCancel = document.getElementById("cropCancel");
+const cropRemove = document.getElementById("cropRemove");
+const cropInputs = ["cropLeft", "cropTop", "cropRight", "cropBottom"].map((id) => document.getElementById(id));
+const CROP_HINT = "Left + right (and top + bottom) must together stay under 100%.";
+/** The object a currently-open object dialog is editing, and the chrome to
+ *  restore focus to when it closes. */
+let objectDialogNode = null;
+let objectDialogReturnFocus = null;
+
+/** True (after surfacing the standard read-only/untracked message) if an object
+ *  edit must not apply in the current review mode. Object edits are fail-closed
+ *  in Suggesting (untracked) and read-only in Viewing — the same gate `runEdit`
+ *  applies for delete/wrap; the dialogs pre-check it so they can close cleanly. */
+function objectEditBlocked() {
+  return blockMutationInViewing() || blockUntrackedInSuggesting();
+}
+
+function setAltTextNote(message, isError) {
+  altTextNote.textContent = message || ALT_TEXT_HINT;
+  altTextNote.classList.toggle("error", !!isError && !!message);
+}
+
+function openAltTextDialog() {
+  if (!doc || !objectSelection || !altTextDialog) return;
+  objectDialogNode = objectSelection.node;
+  objectDialogReturnFocus = document.activeElement;
+  // No engine getter exists for the current descr (only the `setObjectDescr`
+  // setter is bound), so the field starts empty; typing replaces the alt text.
+  altTextInput.value = "";
+  setAltTextNote("", false);
+  altTextDialog.hidden = false;
+  queueMicrotask(() => altTextInput.focus());
+}
+
+function closeAltTextDialog() {
+  if (!altTextDialog || altTextDialog.hidden) return;
+  altTextDialog.hidden = true;
+  objectDialogNode = null;
+  restoreObjectDialogFocus();
+}
+
+/** Applies the alt text as one undoable action. The engine rejects an
+ *  over-length description; that is shown inline (its raw error name is internal
+ *  vocabulary) rather than as the toolbar's generic status. Empty input sends
+ *  `null`, which clears the alt text. */
+function applyAltText() {
+  if (!doc || !objectDialogNode) return;
+  const text = altTextInput.value.trim();
+  if (objectEditBlocked()) {
+    closeAltTextDialog();
+    return;
+  }
+  let res;
+  try {
+    res = doc.setObjectDescr(objectDialogNode, text || null);
+  } catch (err) {
+    console.warn("setObjectDescr ignored:", err?.message ?? err);
+    setAltTextNote("That description is too long. Try a shorter one.", true);
+    altTextInput.focus();
+    return;
+  }
+  applyEditResult(res).then(() => {
+    setDocumentState("edited");
+    closeAltTextDialog();
+    setStatus(text ? "Alt text updated" : "Alt text removed");
+  });
+}
+
+function setCropNote(message, isError) {
+  cropNote.textContent = message || CROP_HINT;
+  cropNote.classList.toggle("error", !!isError && !!message);
+}
+
+function openCropDialog() {
+  if (!doc || !objectSelection || !cropDialog) return;
+  if (objectSelection.kind === "textbox") return; // crop is picture-only
+  objectDialogNode = objectSelection.node;
+  objectDialogReturnFocus = document.activeElement;
+  // No engine getter exists for the current crop (only the `setImageCrop`
+  // setter is bound), so the inputs start at 0; applying replaces the crop.
+  for (const input of cropInputs) input.value = "0";
+  setCropNote("", false);
+  cropDialog.hidden = false;
+  queueMicrotask(() => cropInputs[0].focus());
+}
+
+function closeCropDialog() {
+  if (!cropDialog || cropDialog.hidden) return;
+  cropDialog.hidden = true;
+  objectDialogNode = null;
+  restoreObjectDialogFocus();
+}
+
+/** Reads a crop input as a 0..1 fraction, clamped to [0,1]; blank/NaN → 0. */
+function cropFraction(input) {
+  const pct = Number(input.value);
+  if (!Number.isFinite(pct)) return 0;
+  return Math.min(1, Math.max(0, pct / 100));
+}
+
+/** Applies the four-edge crop as one undoable action (mirrors the wrap op's
+ *  `runEdit(..., { gate:true })` apply path). Opposite edges may not sum to ≥ 1
+ *  (that would hide the whole image), which is caught inline before the op. */
+function applyCrop() {
+  if (!doc || !objectDialogNode) return;
+  const [l, t, r, b] = cropInputs.map(cropFraction);
+  if (l + r >= 1 || t + b >= 1) {
+    setCropNote("Opposite edges can't remove the whole image.", true);
+    return;
+  }
+  const node = objectDialogNode;
+  runEdit(() => doc.setImageCrop(node, [l, t, r, b]), { gate: true }).then(() => {
+    closeCropDialog();
+  });
+}
+
+/** Clears any crop from the image (`setImageCrop(node, null)`), one undoable op. */
+function removeCrop() {
+  if (!doc || !objectDialogNode) return;
+  const node = objectDialogNode;
+  runEdit(() => doc.setImageCrop(node, null), { gate: true }).then(() => {
+    closeCropDialog();
+  });
+}
+
+/** Returns focus to the chrome that opened an object dialog, or the canvas if it
+ *  is gone (the context bar is rebuilt on every repaint, so its buttons detach). */
+function restoreObjectDialogFocus() {
+  const returnTo = objectDialogReturnFocus;
+  objectDialogReturnFocus = null;
+  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
+    returnTo.focus({ preventScroll: true });
+  } else {
+    focusEditorSurface();
+  }
+}
+
+if (altTextDialog) {
+  altTextForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyAltText();
+  });
+  altTextInput.addEventListener("input", () => {
+    if (altTextNote.classList.contains("error")) setAltTextNote("", false);
+  });
+  altTextInput.addEventListener("keydown", (event) => {
+    // Enter applies; Shift+Enter inserts a newline (multi-line descriptions).
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      applyAltText();
+    }
+  });
+  altTextClose.addEventListener("click", () => closeAltTextDialog());
+  altTextCancel.addEventListener("click", () => closeAltTextDialog());
+  altTextDialog.addEventListener("click", (event) => {
+    if (event.target === altTextDialog) closeAltTextDialog();
+  });
+  altTextDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAltTextDialog();
+    } else if (event.key === "Tab") {
+      trapModalFocus(event, altTextDialog);
+    }
+  });
+}
+
+if (cropDialog) {
+  cropForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyCrop();
+  });
+  for (const input of cropInputs) {
+    input.addEventListener("input", () => {
+      if (cropNote.classList.contains("error")) setCropNote("", false);
+    });
+  }
+  cropRemove.addEventListener("click", () => removeCrop());
+  cropClose.addEventListener("click", () => closeCropDialog());
+  cropCancel.addEventListener("click", () => closeCropDialog());
+  cropDialog.addEventListener("click", (event) => {
+    if (event.target === cropDialog) closeCropDialog();
+  });
+  cropDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeCropDialog();
+    } else if (event.key === "Tab") {
+      trapModalFocus(event, cropDialog);
+    }
+  });
 }
 
 // Threshold (twips) beyond which a float body drag counts as a move, not a click.
@@ -9516,7 +9775,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        setStatus("Object deletion is not supported in this build", "error", { timeout: 3500 });
+        deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
