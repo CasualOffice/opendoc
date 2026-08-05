@@ -20,9 +20,15 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   await expect(rowHeaders.filter({ hasText: "Math (OMML)" })).toHaveCount(1);
   await expect(rowHeaders.filter({ hasText: "Charts" })).toHaveCount(1);
 
-  // The Images row's Editable cell must read "Not yet" (no insert/edit).
+  // The Images row's Editable cell reads "Partial" (selection/resize/anchor
+  // land, but insert-image does not yet) — the page reflects the data file.
   const imagesRow = table.locator("tbody tr", { has: page.getByRole("rowheader", { name: /Images & inline drawings/ }) });
-  await expect(imagesRow.locator("td.cell").nth(2)).toContainText("Not yet");
+  await expect(imagesRow.locator("td.cell").nth(2)).toContainText("Partial");
+
+  // The honesty floor still renders: Math (OMML) stays a read-only "Not yet"
+  // editable cell, so the ○ / Not-yet state is exercised on a real row.
+  const mathRow = table.locator("tbody tr", { has: page.getByRole("rowheader", { name: /Math \(OMML\)/ }) });
+  await expect(mathRow.locator("td.cell").nth(2)).toContainText("Not yet");
 
   await expect(consoleErrors).toEqual([]);
 });

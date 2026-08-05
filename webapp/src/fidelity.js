@@ -41,13 +41,13 @@ const FIDELITY = [
   },
   {
     family: "Images & inline drawings",
-    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. No insert-image or image-edit surface.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. A placed image can be selected, resized, moved, wrapped, and reordered (engine-drawn handles) for inline and body-floating images; crop, alt-text, insert-image, and replace-image are follow-ups.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Text boxes & shapes",
-    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering now paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders (solid or dashed); text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Not editable.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "partial",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering now paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders (solid or dashed); text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Anchored shapes/text-boxes can be selected, resized, moved, wrapped, and reordered (engine-drawn handles); box content editing and shape authoring are follow-ups.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "partial",
   },
   {
     family: "Headers & footers",
