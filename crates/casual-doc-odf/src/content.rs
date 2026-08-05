@@ -384,7 +384,6 @@ enum InlineDraft {
     TextBox(String),
     /// A `draw:control` resolving to a `form:text` control; carries the control's
     /// name directly (built into a `FORMTEXT` field with a text-input form).
-    #[allow(dead_code)] // constructed once the draw:control import site is wired
     FormField {
         name: Option<String>,
     },
@@ -2705,6 +2704,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut open_toc: Option<OpenToc> = None;
     let mut revision_meta: BTreeMap<String, RevisionMeta> = BTreeMap::new();
     let mut open_revision: Option<OpenRevision> = None;
+    let mut form_controls: BTreeMap<String, Option<String>> = BTreeMap::new();
 
     loop {
         check_cancelled(cancellation)?;
@@ -3016,6 +3016,28 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         && open_tables.is_empty()
                         && open_note.is_none()
                         && open_toc.is_none()
+                        && is_name(&name, NamespaceKind::Office, b"forms")
+                    {
+                        // The form-control registry: pre-parse it into a map keyed
+                        // by form:id; body draw:control elements resolve against it.
+                        // Consumes the matching `End`.
+                        form_controls = parse_forms(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            cancellation,
+                            &mut reporter,
+                        )?;
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_none()
+                        && open_tables.is_empty()
+                        && open_note.is_none()
+                        && open_toc.is_none()
                         && is_name(&name, NamespaceKind::Text, b"table-of-content")
                     {
                         // Open a block-level table-of-content. Its `text:index-body`
@@ -3295,6 +3317,44 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     } else {
                         reporter.report(
                             "odf.tracked-change.deletion".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Draw, b"control")
+                {
+                    // A form-control anchor: resolve its draw:control id against the
+                    // form registry and model a FORMTEXT field. A form field is not
+                    // allowed inside an inline wrapper (like a field), so a control
+                    // inside a hyperlink degrades.
+                    let control_id = read_draw_control_id(
+                        &reader,
+                        &element,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        limits,
+                    )?;
+                    let control = control_id
+                        .as_ref()
+                        .and_then(|id| form_controls.get(id).cloned());
+                    if let Some(name) = control
+                        && active_link.is_none()
+                    {
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::FormField { name },
+                        );
+                    } else {
+                        reporter.report(
+                            "odf.form.control-unresolved".to_owned(),
                             ModelOutcome::Degraded,
                         );
                     }
@@ -4819,6 +4879,164 @@ fn read_change_id(
         }
     }
     Ok(id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES))
+}
+
+/// Reads a `draw:control`'s `draw:control` attribute (the referenced `form:id`).
+fn read_draw_control_id(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<String>, OdfError> {
+    let mut id = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Draw && local.as_ref() == b"control" {
+            id = Some(decode_attribute(&attribute)?);
+        }
+    }
+    Ok(id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES))
+}
+
+/// Sub-parses an `office:forms` block off the main state machine, returning a map
+/// from each `form:text` control's `form:id` to its `form:name`. Only text-input
+/// controls are modeled in this slice; other control kinds are ignored. The
+/// matching `End` is consumed, so the caller undoes its `Start` depth increment.
+#[allow(clippy::too_many_arguments)]
+fn parse_forms(
+    reader: &mut NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    base_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<BTreeMap<String, Option<String>>, OdfError> {
+    count_attributes_only(element, attributes, attribute_bytes, limits)?;
+    let mut controls: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut sub_depth = 0_usize;
+    let mut buffer = Vec::new();
+
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        // A control may be a Start (with children) or Empty element; capture from
+        // both, then drop any subtree of a Start control.
+        let (element, is_start) = match &event {
+            Event::Eof | Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => (Some(element), true),
+            Event::Empty(element) => (Some(element), false),
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                sub_depth -= 1;
+                buffer.clear();
+                continue;
+            }
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        let Some(element) = element else {
+            buffer.clear();
+            continue;
+        };
+        if is_start {
+            sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+            enforce(
+                "odf_content_xml_depth",
+                base_depth
+                    .checked_add(sub_depth)
+                    .ok_or(OdfError::MalformedContent)?,
+                limits.max_xml_depth,
+            )?;
+        }
+        *elements = checked_increment(*elements)?;
+        enforce(
+            "odf_content_xml_elements",
+            *elements,
+            limits.max_xml_elements,
+        )?;
+        validate_name(element, limits)?;
+        let name = resolved_name(reader, element);
+        if is_active(&name) {
+            reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+            count_attributes_only(element, attributes, attribute_bytes, limits)?;
+            if is_start {
+                skip_active_subtree(
+                    reader,
+                    limits,
+                    base_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    elements,
+                    attributes,
+                    attribute_bytes,
+                    cancellation,
+                )?;
+                sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+            }
+            buffer.clear();
+            continue;
+        }
+        if is_name(&name, NamespaceKind::Form, b"text") {
+            if let Some((id, form_name)) =
+                read_form_text(reader, element, attributes, attribute_bytes, limits)?
+            {
+                controls.entry(id).or_insert(form_name);
+            }
+        } else {
+            count_attributes_only(element, attributes, attribute_bytes, limits)?;
+            if name.namespace == NamespaceKind::Form
+                && !is_name(&name, NamespaceKind::Form, b"form")
+            {
+                reporter.report(
+                    "odf.form.unsupported-control".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+            }
+        }
+        buffer.clear();
+    }
+    Ok(controls)
+}
+
+/// Reads a `form:text` control's `form:id` (correlation key, bounded) and
+/// `form:name`. Returns `None` when the id is absent/empty/over-long.
+fn read_form_text(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<(String, Option<String>)>, OdfError> {
+    let mut id = None;
+    let mut name = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Form {
+            match local.as_ref() {
+                b"id" => id = Some(decode_attribute(&attribute)?),
+                b"name" => name = Some(decode_attribute(&attribute)?),
+                _ => {}
+            }
+        }
+    }
+    let id = id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES);
+    // The name is bounded to the model's form-string domain; over-long -> dropped.
+    let name = name.filter(|name| name.len() <= 255 && name.chars().all(is_xml_text_char));
+    Ok(id.map(|id| (id, name)))
 }
 
 fn read_href(

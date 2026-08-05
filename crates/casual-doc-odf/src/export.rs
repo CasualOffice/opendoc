@@ -7,12 +7,12 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
     Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
-    Field, FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget,
-    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
-    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision,
-    RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment,
-    VerticalMerge, WidthType,
+    Field, FieldKind, FontRef, FormFieldKind, GroupChild, HeaderFooterKind, HeightRule,
+    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
+    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing,
+    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
+    VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1038,6 +1038,12 @@ struct Writer {
     used_change_ids: BTreeSet<String>,
     /// Monotonic counter for minting `ctN` change-ids.
     revision_mint: usize,
+    /// Form-field node id → its emitted `form:id`, from the pre-walk.
+    form_field_ids: BTreeMap<NodeId, String>,
+    /// Ordered form-text controls to declare in `office:forms` (id + name).
+    form_controls: Vec<(String, Option<String>)>,
+    /// Monotonic counter for minting `ctrlN` form ids.
+    form_mint: usize,
     emitted_footnotes: BTreeSet<NoteId>,
     emitted_endnotes: BTreeSet<NoteId>,
     footnote_occurrences: BTreeMap<NoteId, usize>,
@@ -1083,6 +1089,9 @@ impl Writer {
             revision_regions: Vec::new(),
             used_change_ids: BTreeSet::new(),
             revision_mint: 0,
+            form_field_ids: BTreeMap::new(),
+            form_controls: Vec::new(),
+            form_mint: 0,
             emitted_footnotes: BTreeSet::new(),
             emitted_endnotes: BTreeSet::new(),
             footnote_occurrences: BTreeMap::new(),
@@ -1252,12 +1261,18 @@ impl Writer {
                 },
                 InlineNode::Hyperlink(link) => self.collect_revisions_in_inlines(&link.inlines),
                 InlineNode::Sdt(sdt) => self.collect_revisions_in_inlines(&sdt.inlines),
-                // Only recurse into a field's projection inlines when the writer
-                // will actually emit them (the degraded `_` path); a mapped field
-                // emits just its element and never walks the inlines, so declaring
-                // a region for a revision there would orphan it.
-                InlineNode::Field(field) if field_projects_inlines(field) => {
-                    self.collect_revisions_in_inlines(&field.inlines)
+                InlineNode::Field(field) => {
+                    // A form field is anchored via draw:control + an office:forms
+                    // entry, both minted here in document order.
+                    if field.form.is_some() {
+                        self.assign_form_field(field);
+                    }
+                    // Only recurse into a field's projection inlines when the writer
+                    // will actually emit them (the degraded `_` path); a mapped
+                    // field emits just its element and never walks the inlines.
+                    if field_projects_inlines(field) {
+                        self.collect_revisions_in_inlines(&field.inlines);
+                    }
                 }
                 _ => {}
             }
@@ -1342,6 +1357,52 @@ impl Writer {
         }
         self.revision_regions = regions;
         self.push("</text:tracked-changes>")
+    }
+
+    /// Records a text-input form field, minting its `form:id`. Non-text form kinds
+    /// are not emitted as `form:text` in this slice (they degrade in write_inlines).
+    fn assign_form_field(&mut self, field: &Field) {
+        let Some(form) = &field.form else {
+            return;
+        };
+        if !matches!(form.kind, FormFieldKind::TextInput(_)) {
+            return;
+        }
+        if self.form_field_ids.contains_key(&field.id) {
+            return;
+        }
+        self.form_mint += 1;
+        let form_id = format!("ctrl{}", self.form_mint);
+        self.form_field_ids.insert(field.id, form_id.clone());
+        self.form_controls.push((form_id, form.name.clone()));
+    }
+
+    /// Emits the `office:forms` control registry (a single `form:form` holding one
+    /// `form:text` per collected text-input field). Emitted only when non-empty,
+    /// with `xmlns:form` declared inline so form-free documents stay byte-identical.
+    fn write_forms(&mut self) -> Result<(), OdfError> {
+        if self.form_controls.is_empty() {
+            return Ok(());
+        }
+        self.push(
+            "<office:forms xmlns:form=\"urn:oasis:names:tc:opendocument:xmlns:form:1.0\"><form:form form:name=\"Standard\">",
+        )?;
+        let controls = std::mem::take(&mut self.form_controls);
+        for (form_id, name) in &controls {
+            self.push("<form:text form:id=\"")?;
+            push_escaped_attribute(&mut self.xml, form_id, self.limits.max_content_bytes)?;
+            self.push("\"")?;
+            if let Some(name) = name
+                && is_representable(name)
+            {
+                self.push(" form:name=\"")?;
+                push_escaped_attribute(&mut self.xml, name, self.limits.max_content_bytes)?;
+                self.push("\"")?;
+            }
+            self.push("/>")?;
+        }
+        self.form_controls = controls;
+        self.push("</form:form></office:forms>")
     }
 
     fn push(&mut self, value: &str) -> Result<(), OdfError> {
@@ -2001,6 +2062,16 @@ impl Writer {
                         self.write_inlines(&link.inlines, depth + 1)?;
                         self.push("</text:a>")?;
                     }
+                }
+                InlineNode::Field(field) if self.form_field_ids.contains_key(&field.id) => {
+                    // A text-input form field: anchor it with draw:control (its
+                    // office:forms entry was declared up front). xmlns:draw inline.
+                    let form_id = self.form_field_ids[&field.id].clone();
+                    self.push(
+                        "<draw:control xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\" text:anchor-type=\"as-char\" draw:control=\"",
+                    )?;
+                    push_escaped_attribute(&mut self.xml, &form_id, self.limits.max_content_bytes)?;
+                    self.push("\"/>")?;
                 }
                 InlineNode::Field(field) => match field.kind {
                     // Modeled ODF field elements. The computed display is emitted
@@ -3129,6 +3200,7 @@ fn write_odt_impl(
     // between BODY_PREFIX and here), so the change-regions are declared before the
     // body's change-start/-end markers reference them.
     writer.write_tracked_changes()?;
+    writer.write_forms()?;
     writer.write_blocks(document.body(), 0)?;
     writer.report_unreferenced_notes();
     if writer.paragraphs_written == 0 {

@@ -1060,6 +1060,50 @@ fn tracked_insertion_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn form_text_field_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::FormFieldKind;
+    let body = r#"<office:forms xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"><form:form form:name="Standard"><form:text form:id="ctrl1" form:name="FieldA"/></form:form></office:forms><text:p>Name: <draw:control xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" text:anchor-type="as-char" draw:control="ctrl1"/></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    let field = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Field(field) if field.form.is_some() => Some(field.clone()),
+            _ => None,
+        })
+        .expect("form field");
+    assert_eq!(field.instruction, "FORMTEXT");
+    let form = field.form.as_ref().unwrap();
+    assert_eq!(form.name.as_deref(), Some("FieldA"));
+    assert!(matches!(form.kind, FormFieldKind::TextInput(_)));
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    for expected in [
+        r#"<office:forms xmlns:form="urn:oasis:names:tc:opendocument:xmlns:form:1.0"><form:form form:name="Standard"><form:text form:id="ctrl1" form:name="FieldA"/></form:form></office:forms>"#,
+        r#"draw:control="ctrl1""#,
+    ] {
+        assert!(
+            content_xml.contains(expected),
+            "missing {expected}: {content_xml}"
+        );
+    }
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn tracked_deletion_round_trips_to_a_fixed_point() {
     use casual_doc_model::v1::{Revision, RevisionKind};
     let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="d1"><text:deletion><office:change-info><dc:creator>Ada</dc:creator><dc:date>2024-01-02T03:04:05</dc:date></office:change-info><text:p>deleted text</text:p></text:deletion></text:changed-region></text:tracked-changes><text:p>keep <text:change text:change-id="d1"/>more</text:p>"#;
