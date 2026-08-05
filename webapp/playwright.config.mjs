@@ -44,6 +44,11 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
+    // `--enable-precise-memory-info` makes `performance.memory.usedJSHeapSize`
+    // return real (not quantized) bytes; `--expose-gc`/`--js-flags=--expose-gc`
+    // lets the memory-budget spec force a deterministic collection before
+    // measuring. Harmless to the other specs.
+    launchOptions: { args: ["--enable-precise-memory-info", "--js-flags=--expose-gc"] },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

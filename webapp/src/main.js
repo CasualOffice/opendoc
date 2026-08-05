@@ -819,8 +819,7 @@ function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
   const [pageNumber, x, y, width, height] = rects;
   const page = pages[pageNumber - 1];
   if (!page) return null;
-  const canvasRect = page.canvas.getBoundingClientRect();
-  const { sx, sy } = scaleOf(page);
+  const { rect: canvasRect, sx, sy } = scaleOf(page);
   return {
     pageNumber,
     left: canvasRect.left + x * sx,
@@ -1784,15 +1783,33 @@ const statParas = document.getElementById("statParas");
 const statPages = document.getElementById("statPages");
 
 // The engine `render_page(i, dpi)` rasterizes at `dpi` device px per inch
-// (device_px = twip / 1440 * dpi). We render at 96·zoom·devicePixelRatio for a
-// crisp result on HiDPI screens, then down-scale via CSS to logical pixels.
+// (device_px = twip / 1440 * dpi). We render at 96·zoom·backingDpr() for a crisp
+// result on HiDPI screens (the DPR factor is capped — see MAX_BACKING_DPR), then
+// present at the logical page size (the wrap's CSS box) via the canvas element.
 const BASE_DPI = 96;
+
+/** Cap on the devicePixelRatio factor used for the raster *backing store*.
+ * Text stays crisp at 1.5× while the RGBA pixel buffers shrink ~×0.56 relative
+ * to a Retina dpr of 2 (memory reduction: pixel count scales with dpr²). The
+ * CSS/logical page size is always the true logical size — independent of dpr —
+ * so scroll height and hit-test geometry never depend on the display density. */
+const MAX_BACKING_DPR = 1.5;
+
+/** The clamped devicePixelRatio used only for the raster backing store. */
+function backingDpr() {
+  return Math.min(window.devicePixelRatio || 1, MAX_BACKING_DPR);
+}
 
 /** The currently open document handle (or null). Kept so a zoom change re-renders. */
 let doc = null;
 /** Monotonic token so a slow render from a previous file/zoom is discarded. */
 let renderToken = 0;
-/** Per-page DOM: { pageNumber (1-based), canvas, overlay, twipPerPx }. */
+/** Per-page DOM records: { pageNumber (1-based), wrap, overlay, canvas, wTwip,
+ * hTwip, visible }. `wrap` (the sheet box) and `overlay` (caret/selection layer)
+ * always exist and are sized from the page geometry; `canvas` is the live raster
+ * that is mounted only for pages in/near the viewport (virtualized — see
+ * `observePages`) and is `null` for off-screen pages. `visible` mirrors the
+ * IntersectionObserver so repaints know whether a live canvas exists. */
 let pages = [];
 /** Current selection as model anchors, or null. `focus` trails the pointer. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
@@ -2118,6 +2135,10 @@ async function provisionFonts(name) {
     const packed = packFontBytes(namedBytes);
     doc.registerFonts(packed.bytes, packed.lengths);
   }
+  // The WASM shaper now holds the authoritative copy of these faces, so release
+  // the JS byte cache (~9 MB) rather than double-holding it for the tab's life.
+  // A subsequent document re-fetches + re-registers from the CDN as usual.
+  for (const face of NAMED_WEB_FONT_FACES) fontCache.delete(face.url);
   for (const [index, result] of named.entries()) {
     if (result.status === "rejected") {
       const face = NAMED_WEB_FONT_FACES[index];
@@ -2152,6 +2173,9 @@ async function provisionMissingFallbacks(label) {
       const bytes = await fetchFontBytes(url, fontCache);
       doc.registerFallbackFont(bytes, scripts); // registers + re-paginates
       provisionedFallbackKeys.add(key);
+      // WASM holds the authoritative copy now; drop the JS cache entry so the
+      // fallback bytes are not double-held for the session (see registerFonts).
+      fontCache.delete(url);
     } catch (err) {
       console.warn(`font ${key} (${url}) failed:`, err);
       setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
@@ -2171,6 +2195,100 @@ async function ensureGlyphCoverage(label) {
   }
 }
 
+// ---- Page virtualization -----------------------------------------------------
+// A document keeps ONE lightweight `.page-wrap` (sized from the page box) per
+// page, but a live raster `<canvas>` only for pages in or near the viewport.
+// Off-screen pages are blank sheet placeholders, so tab memory is bounded by the
+// viewport, not the page count. An IntersectionObserver mounts a page's canvas
+// as it scrolls in and releases it (freeing the RGBA buffer) as it scrolls out.
+
+/** Keep a live canvas for pages within ~one viewport-height of the visible band
+ *  above and below, so a normal scroll never reveals an unpainted page. */
+const PAGE_VIRTUALIZATION_ROOT_MARGIN = "100% 0px";
+let pageObserver = null;
+
+function ensurePageObserver() {
+  if (pageObserver) return pageObserver;
+  pageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const idx = pageIndexOfWrap(entry.target);
+        if (idx < 0) continue;
+        const page = pages[idx];
+        page.visible = entry.isIntersecting;
+        if (entry.isIntersecting) paintPageCanvas(page, idx);
+        else releasePageCanvas(page);
+      }
+    },
+    { root: viewportEl, rootMargin: PAGE_VIRTUALIZATION_ROOT_MARGIN },
+  );
+  return pageObserver;
+}
+
+/** Rewire the observer to the current page set (called after every rebuild). */
+function observePages() {
+  const obs = ensurePageObserver();
+  obs.disconnect();
+  for (const page of pages) {
+    page.wrap.__pageIndex = page.pageNumber - 1;
+    obs.observe(page.wrap);
+  }
+}
+
+/** Resolve an observed wrap back to its (still-current) page index, or -1. */
+function pageIndexOfWrap(wrap) {
+  const idx = wrap.__pageIndex;
+  return Number.isInteger(idx) && pages[idx]?.wrap === wrap ? idx : -1;
+}
+
+/** Mount and paint a page's raster canvas if it has none. The RGBA buffer is
+ *  freed back to WASM immediately after the blit so it never accumulates. */
+function paintPageCanvas(page, index) {
+  if (!doc || page.canvas) return;
+  let bmp;
+  try {
+    bmp = doc.renderPage(index, currentDpi());
+  } catch (err) {
+    console.error(`render page ${index}`, err);
+    return;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.className = "page";
+  canvas.width = bmp.widthPx;
+  canvas.height = bmp.heightPx;
+  // The surface is fully opaque, so tiny-skia's premultiplied RGBA equals the
+  // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
+  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+  bmp.free(); // return the ~13 MB RGBA Vec to WASM deterministically, not at GC.
+  // The canvas sits under the transparent caret/selection overlay.
+  page.wrap.insertBefore(canvas, page.overlay);
+  page.canvas = canvas;
+}
+
+/** Drop a page's raster canvas (releases its GPU/CPU pixels). The sheet-sized
+ *  wrap remains, so layout and scroll height are unchanged. */
+function releasePageCanvas(page) {
+  if (!page.canvas) return;
+  page.canvas.remove();
+  page.canvas = null;
+}
+
+/** Synchronously paint the pages currently on screen (plus one screenful of
+ *  margin), so the viewport is never briefly blank before the async observer
+ *  fires. Matches the observer's rootMargin. */
+function paintPagesInView() {
+  if (!pages.length) return;
+  const vr = viewportEl.getBoundingClientRect();
+  const margin = vr.height;
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const r = page.wrap.getBoundingClientRect();
+    const onscreen = r.bottom >= vr.top - margin && r.top <= vr.bottom + margin;
+    page.visible = onscreen;
+    if (onscreen) paintPageCanvas(page, i);
+  }
+}
+
 async function renderAll() {
   if (!doc) return;
   // Keep the engine's render layout in sync with the "Show changes" toggle: a
@@ -2182,14 +2300,15 @@ async function renderAll() {
   if (zoomMode !== "custom") zoomFactor = computeFitZoom(zoomMode);
   const zoom = zoomFactor;
   updateZoomDisplay();
-  const dpr = window.devicePixelRatio || 1;
-  const dpi = BASE_DPI * zoom * dpr;
   const count = doc.pageCount;
+  // Logical CSS px per twip at this zoom — independent of devicePixelRatio, so
+  // the page box geometry (hence scroll height and hit-test scale) is stable.
+  const cssPerTwip = (BASE_DPI * zoom) / TWIPS_PER_INCH;
 
-  // Build the replacement page set off-DOM and publish it atomically. Keeping
-  // the previous canvases and interaction overlays live until the new render is
-  // complete prevents transiently losing controls (for example a checklist
-  // marker) while an asynchronous font-coverage render is in flight.
+  // Build the replacement page set off-DOM and publish it atomically. Only the
+  // sheet-sized wraps + overlays are created here; the raster canvases are
+  // mounted lazily by the viewport observer, so a large document never rasters
+  // every page up front.
   const nextPages = [];
   const fragment = document.createDocumentFragment();
   const renderingStatus =
@@ -2197,51 +2316,38 @@ async function renderAll() {
   setStatus(renderingStatus);
 
   for (let i = 0; i < count; i++) {
-    // Yield so a burst of pages does not freeze the tab; abort if superseded.
-    if (i > 0 && i % 4 === 0) await new Promise((r) => requestAnimationFrame(r));
     if (token !== renderToken) return;
 
-    const bmp = doc.renderPage(i, dpi);
+    // The page box in twips — the domain of hit-testing and selection geometry,
+    // and the source of the wrap's fixed CSS size so it holds space whether or
+    // not a live canvas is currently mounted.
+    const size = doc.pageSize(i);
+    const wTwip = size.widthTwip;
+    const hTwip = size.heightTwip;
+    size.free();
+
     const wrap = document.createElement("div");
     wrap.className = "page-wrap";
-
-    const canvas = document.createElement("canvas");
-    canvas.className = "page";
-    canvas.width = bmp.widthPx;
-    canvas.height = bmp.heightPx;
-    // Logical CSS size = device pixels / dpr, so the page appears at `zoom` scale.
-    canvas.style.width = `${bmp.widthPx / dpr}px`;
-    canvas.style.height = `${bmp.heightPx / dpr}px`;
-
-    const ctx = canvas.getContext("2d");
-    // The surface is fully opaque, so tiny-skia's premultiplied RGBA equals the
-    // straight-alpha RGBA `ImageData` expects — a direct blit is correct.
-    const image = new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx);
-    ctx.putImageData(image, 0, 0);
+    wrap.style.width = `${wTwip * cssPerTwip}px`;
+    wrap.style.height = `${hTwip * cssPerTwip}px`;
 
     // A transparent overlay above the canvas holds the caret/selection we draw
     // ourselves from engine geometry — so the highlight matches the raster
     // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
     const overlay = document.createElement("div");
     overlay.className = "overlay";
+    wrap.appendChild(overlay);
 
-    // The page box in twips — the domain of hit-testing and selection geometry.
-    // Scale to CSS px is derived from the canvas's *actual* on-screen rect
-    // (below), so alignment holds under any zoom, DPR, or CSS max-width scaling.
-    const size = doc.pageSize(i);
-    const wTwip = size.widthTwip;
-    const hTwip = size.heightTwip;
-    size.free();
-
-    wrap.append(canvas, overlay);
     fragment.appendChild(wrap);
-    nextPages.push({ pageNumber: i + 1, canvas, overlay, wTwip, hTwip });
+    nextPages.push({ pageNumber: i + 1, wrap, overlay, canvas: null, wTwip, hTwip, visible: false });
   }
 
   if (token !== renderToken) return;
   pages = nextPages;
   pagesEl.replaceChildren(ruler, fragment); // ruler sits above the pages, same width
   buildRuler();
+  observePages(); // wire the viewport observer to the new wraps
+  paintPagesInView(); // paint what is on screen now; the observer handles scroll
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
     // A command may have reported a more important status while this async
@@ -2253,10 +2359,12 @@ async function renderAll() {
 
 // ---- Selection & copy (doc 58 pipeline: hit-test → selection → draw → copy) ---
 
-/** twip → CSS px scale for a page, from the canvas's live on-screen size, so it
+/** twip → CSS px scale for a page, from the wrap's live on-screen size, so it
  *  tracks the render under any zoom / DPR / CSS scaling. */
 function scaleOf(page) {
-  const rect = page.canvas.getBoundingClientRect();
+  // Measured from the sheet-sized wrap (always present), so hit-test/selection
+  // geometry holds even when the page's raster canvas is virtualized away.
+  const rect = page.wrap.getBoundingClientRect();
   return { rect, sx: rect.width / page.wTwip, sy: rect.height / page.hTwip };
 }
 
@@ -2958,7 +3066,7 @@ function clearLinkHover() {
   pendingLinkHover = null;
   if (linkHoverFrame) cancelAnimationFrame(linkHoverFrame);
   linkHoverFrame = 0;
-  for (const page of pages) page.canvas.classList.remove("link-hover");
+  for (const page of pages) page.canvas?.classList.remove("link-hover");
 }
 
 /** Throttles the model query used to make canvas-painted links visibly hoverable. */
@@ -2972,7 +3080,7 @@ function scheduleLinkHover(page, event) {
     if (!pending || dragging || !pages.includes(pending.page)) return;
     const hit = linkAt(pending.page, pending);
     for (const candidate of pages) {
-      candidate.canvas.classList.toggle("link-hover", candidate === pending.page && !!hit);
+      candidate.canvas?.classList.toggle("link-hover", candidate === pending.page && !!hit);
     }
   });
 }
@@ -3375,7 +3483,7 @@ function pageFromClientPoint(clientX, clientY) {
   let best = null;
   let bestDistance = Infinity;
   for (const page of pages) {
-    const rect = page.canvas.getBoundingClientRect();
+    const rect = page.wrap.getBoundingClientRect();
     const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
     const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
     const dist = dx * dx + dy * dy;
@@ -4505,7 +4613,7 @@ function buildRuler() {
     marginStart: g.marginStartTwip,
     marginEnd: g.marginEndTwip,
   };
-  const pageWidthPx = pages[0].canvas.getBoundingClientRect().width;
+  const pageWidthPx = pages[0].wrap.getBoundingClientRect().width;
   rulerScale = pageWidthPx / rulerGeom.width;
   ruler.style.width = `${pageWidthPx}px`;
   const px = (t) => t * rulerScale;
@@ -4723,10 +4831,9 @@ function startMarkerDrag(key, ev) {
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
-/** Device DPI the pages are rastered at (HiDPI-crisp). */
+/** Device DPI the pages are rastered at (HiDPI-crisp, DPR-capped for memory). */
 function currentDpi() {
-  const dpr = window.devicePixelRatio || 1;
-  return BASE_DPI * zoomFactor * dpr;
+  return BASE_DPI * zoomFactor * backingDpr();
 }
 
 /** Whether the selection currently spans any text (a real range vs a caret). */
@@ -4737,19 +4844,15 @@ function hasRange() {
   );
 }
 
-/** Re-raster a single page in place, reusing its canvas — the incremental repaint
- *  that keeps editing latency to one page, not the whole document. */
+/** Re-raster a single page after an edit — the incremental repaint that keeps
+ *  editing latency to one page, not the whole document. If the page is on screen
+ *  it is re-rendered in place; if it is virtualized off-screen, its stale canvas
+ *  is dropped so it re-renders fresh (from current model state) when scrolled in. */
 function repaintPage(i) {
   const page = pages[i];
   if (!page) return;
-  const dpr = window.devicePixelRatio || 1;
-  const bmp = doc.renderPage(i, currentDpi());
-  const canvas = page.canvas;
-  canvas.width = bmp.widthPx;
-  canvas.height = bmp.heightPx;
-  canvas.style.width = `${bmp.widthPx / dpr}px`;
-  canvas.style.height = `${bmp.heightPx / dpr}px`;
-  canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+  releasePageCanvas(page);
+  if (page.visible) paintPageCanvas(page, i);
 }
 
 /** Scroll one engine-derived overlay marker in the editor viewport (not an
