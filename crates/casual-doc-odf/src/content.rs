@@ -3937,7 +3937,13 @@ fn parse_draw_frame(
                     sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     buffer.clear();
                     continue;
-                } else if is_name(&name, NamespaceKind::Draw, b"image") {
+                } else if is_name(&name, NamespaceKind::Draw, b"image")
+                    && box_depth.is_none_or(|depth| sub_depth <= depth)
+                {
+                    // A frame-level image (NOT one nested inside a text box's body,
+                    // which must be treated as box content — flattened away — so a
+                    // Start-form nested image cannot hijack the frame into an image
+                    // and discard the box, unlike the Empty form).
                     if href.is_none() {
                         href = read_href(reader, &element, attributes, attribute_bytes, limits)?;
                     } else {

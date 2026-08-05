@@ -959,6 +959,35 @@ fn inline_text_box_round_trips_to_a_fixed_point() {
 }
 
 #[test]
+fn start_form_image_nested_in_text_box_does_not_hijack_the_frame() {
+    // Regression (review Finding A): a Start-form draw:image inside a text box's
+    // body must be treated as box content (flattened away), NOT captured as the
+    // frame's image — otherwise the frame imports as an image and the box is lost,
+    // inconsistently with the self-closing image form.
+    let body = r#"<text:p><draw:frame xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><draw:text-box><text:p>caption<draw:image xlink:href="Pictures/x.png"><svg:title/></draw:image></text:p></draw:text-box></draw:frame></text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let is_text_box = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .any(|inline| matches!(inline, InlineNode::TextBox(_)));
+    let is_drawing = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .any(|inline| matches!(inline, InlineNode::Drawing(_)));
+    assert!(
+        is_text_box,
+        "frame with a boxed image must import as a text box"
+    );
+    assert!(!is_drawing, "the nested image must not hijack the frame");
+}
+
+#[test]
 fn multi_paragraph_text_box_flattens_and_round_trips() {
     // Two body paragraphs flatten to one paragraph with a line break between
     // them, which re-exports as text:line-break and re-imports to the same char.
