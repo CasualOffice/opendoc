@@ -913,6 +913,58 @@ fn colliding_toc_names_are_made_unique_on_export() {
 }
 
 #[test]
+fn tracked_insertion_round_trips_to_a_fixed_point() {
+    use casual_doc_model::v1::{Revision, RevisionKind};
+    let body = r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="ct1"><text:insertion><office:change-info><dc:creator>Ada</dc:creator><dc:date>2024-01-02T03:04:05</dc:date></office:change-info></text:insertion></text:changed-region></text:tracked-changes><text:p>Before <text:change-start text:change-id="ct1"/>inserted<text:change-end text:change-id="ct1"/> after</text:p>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+
+    // The inserted span becomes a Revision wrapping its run, flanked by the
+    // surrounding text.
+    let revision = paragraph(&import, 0)
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Revision(revision) => Some(revision.clone()),
+            _ => None,
+        })
+        .expect("insertion revision");
+    assert_eq!(revision.kind, RevisionKind::Insertion);
+    assert_eq!(revision.author.as_deref(), Some("Ada"));
+    assert_eq!(revision.date.as_deref(), Some("2024-01-02T03:04:05"));
+    assert_eq!(revision.revision_id.as_deref(), Some("ct1"));
+    let Revision { inlines, .. } = &revision;
+    assert!(
+        matches!(inlines.as_slice(), [InlineNode::Run(run)] if run.text == "inserted"),
+        "revision must wrap the inserted run: {inlines:?}"
+    );
+
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    for expected in [
+        r#"<text:tracked-changes xmlns:dc="http://purl.org/dc/elements/1.1/"><text:changed-region text:id="ct1"><text:insertion><office:change-info><dc:creator>Ada</dc:creator><dc:date>2024-01-02T03:04:05</dc:date></office:change-info></text:insertion></text:changed-region></text:tracked-changes>"#,
+        r#"<text:change-start text:change-id="ct1"/>"#,
+        r#"<text:change-end text:change-id="ct1"/>"#,
+    ] {
+        assert!(
+            content_xml.contains(expected),
+            "missing {expected}: {content_xml}"
+        );
+    }
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn comment_annotation_round_trips_to_a_fixed_point() {
     // A two-word author with an ampersand exercises PCDATA escaping and the
     // whitespace path that a naive `write_text` (which encodes spaces as

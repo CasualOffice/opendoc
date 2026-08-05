@@ -3,14 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
+use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins, CellVerticalAlignment,
     Color, Comment, CommentId, CommentReference, Definitions, Document, DocumentDefaults, Extent,
     FieldKind, FontRef, GroupChild, HeaderFooterKind, HeightRule, HyperlinkTarget, Indentation,
     InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind, RowHeight,
-    RunProperties, SdtControlKind, Spacing, Table, TableCell, TableCellProperties, TableRow,
-    TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
+    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision, RevisionKind,
+    RowHeight, RunProperties, SdtControlKind, Spacing, Table, TableCell, TableCellProperties,
+    TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge, WidthType,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1027,6 +1028,15 @@ struct Writer {
     /// Every `text:name` already emitted for a TOC, so a minted or model-carried
     /// name is never duplicated across indexes (ODF requires unique index names).
     emitted_toc_names: BTreeSet<String>,
+    /// Revision node id → its emitted `text:change-id`, from the pre-walk.
+    revision_change_ids: BTreeMap<NodeId, String>,
+    /// Ordered insertion regions to declare in the leading `text:tracked-changes`
+    /// block (change-id + author/date).
+    revision_regions: Vec<RevisionRegion>,
+    /// Claimed change-ids (model-carried NCNames + minted) for uniqueness.
+    used_change_ids: BTreeSet<String>,
+    /// Monotonic counter for minting `ctN` change-ids.
+    revision_mint: usize,
     emitted_footnotes: BTreeSet<NoteId>,
     emitted_endnotes: BTreeSet<NoteId>,
     footnote_occurrences: BTreeMap<NoteId, usize>,
@@ -1068,6 +1078,10 @@ impl Writer {
             comments: BTreeMap::new(),
             toc_count: 0,
             emitted_toc_names: BTreeSet::new(),
+            revision_change_ids: BTreeMap::new(),
+            revision_regions: Vec::new(),
+            used_change_ids: BTreeSet::new(),
+            revision_mint: 0,
             emitted_footnotes: BTreeSet::new(),
             emitted_endnotes: BTreeSet::new(),
             footnote_occurrences: BTreeMap::new(),
@@ -1174,6 +1188,121 @@ impl Writer {
                 .iter()
                 .map(|(id, comment)| (*id, comment.clone())),
         );
+    }
+
+    /// Pre-walks every reachable inline (body + footnote/endnote/comment bodies)
+    /// assigning a `text:change-id` to each insertion revision, so the leading
+    /// `text:tracked-changes` block can declare them before the body references
+    /// them via `text:change-start`/`-end`.
+    fn register_revisions(&mut self, document: &Document) {
+        self.collect_revisions_in_blocks(document.body());
+        let definitions = document.definitions();
+        for (_, note) in definitions.footnotes.iter() {
+            self.collect_revisions_in_blocks(&note.blocks);
+        }
+        for (_, note) in definitions.endnotes.iter() {
+            self.collect_revisions_in_blocks(&note.blocks);
+        }
+        for (_, comment) in definitions.comments.iter() {
+            self.collect_revisions_in_blocks(&comment.blocks);
+        }
+    }
+
+    fn collect_revisions_in_blocks(&mut self, blocks: &[BlockNode]) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    self.collect_revisions_in_inlines(&paragraph.inlines);
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            self.collect_revisions_in_blocks(&cell.blocks);
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => self.collect_revisions_in_blocks(&sdt.blocks),
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+
+    fn collect_revisions_in_inlines(&mut self, inlines: &[InlineNode]) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Revision(revision) => {
+                    if revision.kind == RevisionKind::Insertion {
+                        self.assign_revision(revision);
+                    }
+                    self.collect_revisions_in_inlines(&revision.inlines);
+                }
+                InlineNode::Hyperlink(link) => self.collect_revisions_in_inlines(&link.inlines),
+                InlineNode::Sdt(sdt) => self.collect_revisions_in_inlines(&sdt.inlines),
+                InlineNode::Field(field) => self.collect_revisions_in_inlines(&field.inlines),
+                _ => {}
+            }
+        }
+    }
+
+    fn assign_revision(&mut self, revision: &Revision) {
+        if self.revision_change_ids.contains_key(&revision.id) {
+            return;
+        }
+        let change_id = match &revision.revision_id {
+            Some(id) if is_ncname(id) && !self.used_change_ids.contains(id) => id.clone(),
+            _ => loop {
+                self.revision_mint += 1;
+                let candidate = format!("ct{}", self.revision_mint);
+                if !self.used_change_ids.contains(&candidate) {
+                    break candidate;
+                }
+            },
+        };
+        self.used_change_ids.insert(change_id.clone());
+        self.revision_change_ids
+            .insert(revision.id, change_id.clone());
+        self.revision_regions.push(RevisionRegion {
+            change_id,
+            author: revision.author.clone(),
+            date: revision.date.clone(),
+        });
+    }
+
+    /// Emits the leading `text:tracked-changes` block declaring every collected
+    /// insertion region. Emitted only when there is at least one, so a
+    /// revision-free document keeps identical bytes. `dc` is declared inline.
+    fn write_tracked_changes(&mut self) -> Result<(), OdfError> {
+        if self.revision_regions.is_empty() {
+            return Ok(());
+        }
+        self.push("<text:tracked-changes xmlns:dc=\"http://purl.org/dc/elements/1.1/\">")?;
+        let regions = std::mem::take(&mut self.revision_regions);
+        for region in &regions {
+            self.push("<text:changed-region text:id=\"")?;
+            push_escaped_attribute(
+                &mut self.xml,
+                &region.change_id,
+                self.limits.max_content_bytes,
+            )?;
+            self.push("\"><text:insertion><office:change-info>")?;
+            if let Some(author) = &region.author
+                && is_representable(author)
+            {
+                self.push("<dc:creator>")?;
+                self.write_pcdata(author)?;
+                self.push("</dc:creator>")?;
+            }
+            if let Some(date) = &region.date
+                && is_representable(date)
+            {
+                self.push("<dc:date>")?;
+                self.write_pcdata(date)?;
+                self.push("</dc:date>")?;
+            }
+            self.push("</office:change-info></text:insertion></text:changed-region>")?;
+        }
+        self.revision_regions = regions;
+        self.push("</text:tracked-changes>")
     }
 
     fn push(&mut self, value: &str) -> Result<(), OdfError> {
@@ -1879,13 +2008,36 @@ impl Writer {
                     }
                 },
                 InlineNode::Revision(revision) => {
-                    self.reporter
-                        .record("odt.export.revision", ModelOutcome::Degraded);
-                    if matches!(
-                        revision.kind,
-                        RevisionKind::Insertion | RevisionKind::MoveTo
-                    ) {
+                    // An insertion assigned a change-id in the pre-walk is wrapped
+                    // in text:change-start/-end markers referencing the leading
+                    // changed-region. Other kinds (deletions, moves) are not
+                    // modeled in ODF here: their content degrades to plain inlines
+                    // (insertion-like) or is dropped.
+                    if let Some(change_id) = self.revision_change_ids.get(&revision.id).cloned() {
+                        self.push("<text:change-start text:change-id=\"")?;
+                        push_escaped_attribute(
+                            &mut self.xml,
+                            &change_id,
+                            self.limits.max_content_bytes,
+                        )?;
+                        self.push("\"/>")?;
                         self.write_inlines(&revision.inlines, depth + 1)?;
+                        self.push("<text:change-end text:change-id=\"")?;
+                        push_escaped_attribute(
+                            &mut self.xml,
+                            &change_id,
+                            self.limits.max_content_bytes,
+                        )?;
+                        self.push("\"/>")?;
+                    } else {
+                        self.reporter
+                            .record("odt.export.revision", ModelOutcome::Degraded);
+                        if matches!(
+                            revision.kind,
+                            RevisionKind::Insertion | RevisionKind::MoveTo
+                        ) {
+                            self.write_inlines(&revision.inlines, depth + 1)?;
+                        }
                     }
                 }
                 InlineNode::Sdt(sdt) => {
@@ -2855,6 +3007,7 @@ fn write_odt_impl(
     writer.register_numbering(document.definitions());
     writer.register_notes(document.definitions());
     writer.register_bookmarks(document.definitions());
+    writer.register_revisions(document);
     let mut definition_remainder = document.definitions().clone();
     definition_remainder.abstract_numbering = Default::default();
     definition_remainder.numbering = Default::default();
@@ -2902,6 +3055,10 @@ fn write_odt_impl(
             );
         }
     }
+    // Emitted first inside office:text (nothing else is pushed to the body buffer
+    // between BODY_PREFIX and here), so the change-regions are declared before the
+    // body's change-start/-end markers reference them.
+    writer.write_tracked_changes()?;
     writer.write_blocks(document.body(), 0)?;
     writer.report_unreferenced_notes();
     if writer.paragraphs_written == 0 {
@@ -3350,6 +3507,29 @@ fn is_representable(value: &str) -> bool {
 fn is_toc_sdt(sdt: &BlockSdt) -> bool {
     sdt.properties.control_kind == Some(SdtControlKind::BuildingBlockGallery)
         && sdt.properties.gallery.as_deref() == Some("Table of Contents")
+}
+
+/// One insertion region to declare in `text:tracked-changes`.
+#[derive(Clone, Debug)]
+struct RevisionRegion {
+    change_id: String,
+    author: Option<String>,
+    date: Option<String>,
+}
+
+/// Whether `value` is a valid XML NCName (a usable `text:change-id`): non-empty,
+/// no colon, first char a letter or `_`, the rest letters/digits/`_`/`-`/`.`. A
+/// model `revision_id` that fails this (e.g. a DOCX `w:id` of `"5"`) is replaced
+/// by a minted id rather than emitted as an invalid attribute.
+fn is_ncname(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 #[cfg(test)]

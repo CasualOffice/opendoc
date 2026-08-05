@@ -16,7 +16,7 @@ use casual_doc_model::v1::{
     TableProperties, TableRow, TableRowProperties, TableWidth, VerticalAlignment, VerticalMerge,
     WidthType,
 };
-use casual_doc_model::v1::{BlockSdt, SdtControlKind, SdtProperties};
+use casual_doc_model::v1::{BlockSdt, Revision, RevisionKind, SdtControlKind, SdtProperties};
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
@@ -374,6 +374,35 @@ enum InlineDraft {
     /// [`CommentDraft`]. The paired `office:annotation-end` range is not modeled
     /// (the comment collapses to a point at the anchor).
     CommentReference(usize),
+    /// A tracked-change (revision) range wrapping the enclosed inline drafts,
+    /// captured by splicing the paragraph inlines between `text:change-start` and
+    /// `text:change-end`. Insertions only in this slice.
+    Revision {
+        kind: RevisionKind,
+        author: Option<String>,
+        date: Option<String>,
+        revision_id: Option<String>,
+        inlines: Vec<InlineDraft>,
+    },
+}
+
+/// Metadata for one `text:changed-region`, captured from the leading
+/// `text:tracked-changes` block and keyed by the region's `text:id`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RevisionMeta {
+    kind: RevisionKind,
+    author: Option<String>,
+    date: Option<String>,
+}
+
+/// In-progress `text:change-start`..`text:change-end` insertion range on the
+/// current paragraph. `start_index` is the paragraph inline count at the open, so
+/// the range's inlines can be spliced out at the close.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OpenRevision {
+    change_id: String,
+    meta: RevisionMeta,
+    start_index: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -430,6 +459,10 @@ struct ParagraphDraft {
     paragraph_properties: ParagraphProperties,
     numbering: Option<ListParagraphDraft>,
     inlines: Vec<InlineDraft>,
+    /// When set, the next text push starts a NEW run instead of merging into the
+    /// last one. Set at `text:change-start` so inserted text does not merge into
+    /// the preceding (unchanged) run, which would defeat the revision splice.
+    merge_barrier: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -593,6 +626,17 @@ struct OpenListItem {
 
 impl ParagraphDraft {
     fn push_text(&mut self, value: &str, properties: &RunProperties) {
+        if value.is_empty() {
+            return;
+        }
+        if self.merge_barrier {
+            self.merge_barrier = false;
+            self.inlines.push(InlineDraft::Text {
+                text: value.to_owned(),
+                properties: Box::new(properties.clone()),
+            });
+            return;
+        }
         push_text_draft(&mut self.inlines, value, properties);
     }
 }
@@ -2625,6 +2669,8 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut note_source_ids = BTreeSet::new();
     let mut open_note = None;
     let mut open_toc: Option<OpenToc> = None;
+    let mut revision_meta: BTreeMap<String, RevisionMeta> = BTreeMap::new();
+    let mut open_revision: Option<OpenRevision> = None;
 
     loop {
         check_cancelled(cancellation)?;
@@ -2904,6 +2950,30 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         && open_tables.is_empty()
                         && open_note.is_none()
                         && open_toc.is_none()
+                        && is_name(&name, NamespaceKind::Text, b"tracked-changes")
+                    {
+                        // The leading revision registry: pre-parse its
+                        // changed-region metadata (keyed by id) off the main loop.
+                        // The body's `text:change-start`/`-end` markers resolve
+                        // against this map. Consumes the matching `End`.
+                        revision_meta = parse_tracked_changes(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &mut text_bytes,
+                            cancellation,
+                            &mut reporter,
+                        )?;
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_none()
+                        && open_tables.is_empty()
+                        && open_note.is_none()
+                        && open_toc.is_none()
                         && is_name(&name, NamespaceKind::Text, b"table-of-content")
                     {
                         // Open a block-level table-of-content. Its `text:index-body`
@@ -3042,6 +3112,111 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     }
                 } else if text_body_depth.is_some()
                     && current.is_some()
+                    && is_name(&name, NamespaceKind::Text, b"change-start")
+                {
+                    // Open an insertion range: record the paragraph inline count so
+                    // the range can be spliced at `change-end`. Only a resolved
+                    // insertion at paragraph top level (no open link/revision) is
+                    // modeled; anything else degrades to unwrapped content.
+                    let change_id = read_change_id(
+                        &reader,
+                        &element,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        limits,
+                    )?;
+                    let meta = change_id
+                        .as_ref()
+                        .and_then(|id| revision_meta.get(id))
+                        .filter(|meta| meta.kind == RevisionKind::Insertion)
+                        .cloned();
+                    if let (Some(change_id), Some(meta)) = (change_id, meta)
+                        && active_link.is_none()
+                        && open_revision.is_none()
+                    {
+                        let paragraph = current.as_mut().ok_or(OdfError::MalformedContent)?;
+                        // Prevent the first inserted text from merging into the
+                        // preceding run, so the range has its own inline(s) to
+                        // splice at change-end.
+                        paragraph.merge_barrier = true;
+                        open_revision = Some(OpenRevision {
+                            change_id,
+                            meta,
+                            start_index: paragraph.inlines.len(),
+                        });
+                    } else {
+                        reporter.report(
+                            "odf.tracked-change.unsupported".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Text, b"change-end")
+                {
+                    let change_id = read_change_id(
+                        &reader,
+                        &element,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        limits,
+                    )?;
+                    let matches = open_revision
+                        .as_ref()
+                        .is_some_and(|open| change_id.as_deref() == Some(open.change_id.as_str()));
+                    if matches && active_link.is_none() {
+                        let open = open_revision.take().ok_or(OdfError::MalformedContent)?;
+                        let paragraph = current.as_mut().ok_or(OdfError::MalformedContent)?;
+                        // `start_index <= len` always holds (inlines only grow while
+                        // the range is open), but guard rather than risk a panic.
+                        let captured = if open.start_index <= paragraph.inlines.len() {
+                            paragraph.inlines.split_off(open.start_index)
+                        } else {
+                            Vec::new()
+                        };
+                        if captured.is_empty() {
+                            // The model rejects an empty revision; an insertion of
+                            // nothing is dropped rather than aborting the import.
+                            reporter.report(
+                                "odf.tracked-change.empty".to_owned(),
+                                ModelOutcome::Omitted,
+                            );
+                        } else {
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            let revision_id =
+                                Some(open.change_id).filter(|id| id.len() <= 64 && !id.is_empty());
+                            paragraph.inlines.push(InlineDraft::Revision {
+                                kind: open.meta.kind,
+                                author: open.meta.author,
+                                date: open.meta.date,
+                                revision_id,
+                                inlines: captured,
+                            });
+                        }
+                    } else {
+                        reporter.report(
+                            "odf.tracked-change.unmatched".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Text, b"change")
+                {
+                    // A point change marker (deletion): deletions are not modeled
+                    // in this slice, so the marker degrades.
+                    count_attributes_only(&element, &mut attributes, &mut attribute_bytes, limits)?;
+                    reporter.report(
+                        "odf.tracked-change.deletion".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                } else if text_body_depth.is_some()
+                    && current.is_some()
                     && is_name(&name, NamespaceKind::Text, b"note")
                 {
                     return Err(OdfError::MalformedContent);
@@ -3134,6 +3309,17 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     .as_ref()
                     .is_some_and(|paragraph: &ParagraphDraft| paragraph.depth == depth)
                 {
+                    // A `change-start` with no matching `change-end` in the same
+                    // paragraph is a block-spanning insertion, which the inline
+                    // `Revision` cannot represent: drop the range (content stays
+                    // unwrapped) with a finding instead of splicing across a
+                    // paragraph boundary.
+                    if open_revision.take().is_some() {
+                        reporter.report(
+                            "odf.tracked-change.block-spanning".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
                     let paragraph = current.take().ok_or(OdfError::MalformedContent)?;
                     push_paragraph_block(
                         &mut paragraphs,
@@ -3408,6 +3594,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 paragraph_properties: ParagraphProperties::default(),
                 numbering: None,
                 inlines: Vec::new(),
+                merge_barrier: false,
             },
             limits,
         )?;
@@ -4114,6 +4301,221 @@ fn parse_annotation(
         date: (!date.is_empty()).then_some(date),
         body,
     })
+}
+
+/// Sub-parses a leading `text:tracked-changes` block off the main state machine,
+/// returning a map from each `text:changed-region`'s `text:id` to its revision
+/// metadata (kind + author/date from `office:change-info`). Deleted content
+/// inside a `text:deletion` region is walked (for limits) but not captured. The
+/// matching `End` is consumed, so the caller undoes its `Start` depth increment.
+#[allow(clippy::too_many_arguments)]
+fn parse_tracked_changes(
+    reader: &mut NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    base_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    text_bytes: &mut usize,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<BTreeMap<String, RevisionMeta>, OdfError> {
+    count_attributes_only(element, attributes, attribute_bytes, limits)?;
+    let mut regions: BTreeMap<String, RevisionMeta> = BTreeMap::new();
+    let mut current_id: Option<String> = None;
+    let mut current_kind: Option<RevisionKind> = None;
+    let mut author = String::new();
+    let mut date = String::new();
+    let mut region_depth: Option<usize> = None;
+    let mut capture: Option<CommentCapture> = None;
+    let mut capture_depth: Option<usize> = None;
+    let mut sub_depth = 0_usize;
+    let mut buffer = Vec::new();
+
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof => return Err(OdfError::MalformedContent),
+            Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce(
+                    "odf_content_xml_depth",
+                    base_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    limits.max_xml_depth,
+                )?;
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                if is_active(&name) {
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    skip_active_subtree(
+                        reader,
+                        limits,
+                        base_depth
+                            .checked_add(sub_depth)
+                            .ok_or(OdfError::MalformedContent)?,
+                        elements,
+                        attributes,
+                        attribute_bytes,
+                        cancellation,
+                    )?;
+                    sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    buffer.clear();
+                    continue;
+                }
+                if region_depth.is_none() && is_name(&name, NamespaceKind::Text, b"changed-region")
+                {
+                    region_depth = Some(sub_depth);
+                    current_id = read_changed_region_id(
+                        reader,
+                        &element,
+                        attributes,
+                        attribute_bytes,
+                        limits,
+                    )?;
+                    current_kind = None;
+                    author.clear();
+                    date.clear();
+                } else if region_depth.is_some() && capture.is_none() {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                    if is_name(&name, NamespaceKind::Text, b"insertion") {
+                        current_kind = Some(RevisionKind::Insertion);
+                    } else if is_name(&name, NamespaceKind::Text, b"deletion") {
+                        current_kind = Some(RevisionKind::Deletion);
+                    } else if is_name(&name, NamespaceKind::Dc, b"creator") {
+                        capture = Some(CommentCapture::Author);
+                        capture_depth = Some(sub_depth);
+                    } else if is_name(&name, NamespaceKind::Dc, b"date") {
+                        capture = Some(CommentCapture::Date);
+                        capture_depth = Some(sub_depth);
+                    }
+                } else {
+                    count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                }
+            }
+            Event::Empty(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                if is_active(&name) {
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                }
+            }
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                if capture_depth == Some(sub_depth) {
+                    capture = None;
+                    capture_depth = None;
+                }
+                if region_depth == Some(sub_depth) {
+                    if let (Some(id), Some(kind)) = (current_id.take(), current_kind.take()) {
+                        regions.insert(
+                            id,
+                            RevisionMeta {
+                                kind,
+                                author: (!author.is_empty()).then(|| author.clone()),
+                                date: (!date.is_empty()).then(|| date.clone()),
+                            },
+                        );
+                    }
+                    region_depth = None;
+                }
+                sub_depth -= 1;
+            }
+            Event::Text(text) => {
+                let Some(kind) = capture else {
+                    buffer.clear();
+                    continue;
+                };
+                let decoded = text.decode().map_err(|_| OdfError::MalformedContent)?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| OdfError::MalformedContent)?;
+                let mut unused = String::new();
+                append_captured_text(
+                    kind,
+                    &value,
+                    &mut author,
+                    &mut date,
+                    &mut unused,
+                    text_bytes,
+                    limits,
+                )?;
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(regions)
+}
+
+/// The correlation-key length ceiling for a `text:changed-region` id / a marker
+/// `text:change-id`. Kept well above any real id (LibreOffice writes `ct1`, …)
+/// as a DoS guard; the value copied into the model `revision_id` is separately
+/// clamped to 64 bytes. Correlation uses the full (unclamped-to-64) id so a
+/// long-but-matching pair still pairs up.
+const MAX_CHANGE_ID_BYTES: usize = 4096;
+
+/// Reads a `text:changed-region`'s `text:id` (its correlation key). Returns
+/// `None` when absent, empty, or beyond the DoS ceiling.
+fn read_changed_region_id(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<String>, OdfError> {
+    let mut id = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"id" {
+            id = Some(decode_attribute(&attribute)?);
+        }
+    }
+    Ok(id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES))
+}
+
+/// Reads a change marker's `text:change-id` (the correlation key into the
+/// `text:changed-region` map). All the marker's attributes are counted.
+fn read_change_id(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    limits: OdfImportLimits,
+) -> Result<Option<String>, OdfError> {
+    let mut id = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Text && local.as_ref() == b"change-id" {
+            id = Some(decode_attribute(&attribute)?);
+        }
+    }
+    Ok(id.filter(|id| !id.is_empty() && id.len() <= MAX_CHANGE_ID_BYTES))
 }
 
 fn read_href(
@@ -5512,6 +5914,7 @@ fn start_paragraph(
         paragraph_properties,
         numbering,
         inlines: Vec::new(),
+        merge_barrier: false,
     });
     Ok(())
 }
@@ -6182,7 +6585,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
                     .checked_add(text.len())
                     .ok_or(OdfError::MalformedContent)?;
             }
-            InlineDraft::Hyperlink { inlines, .. } => {
+            InlineDraft::Hyperlink { inlines, .. } | InlineDraft::Revision { inlines, .. } => {
                 total = total
                     .checked_add(inline_draft_text_bytes(inlines)?)
                     .ok_or(OdfError::MalformedContent)?;
@@ -6910,6 +7313,30 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"comment-reference");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::Revision {
+            kind,
+            author,
+            date,
+            revision_id,
+            inlines,
+        } => {
+            hash_bytes(hash, b"revision");
+            hash_bytes(
+                hash,
+                match kind {
+                    RevisionKind::Insertion => b"ins".as_slice(),
+                    RevisionKind::Deletion => b"del".as_slice(),
+                    RevisionKind::MoveFrom => b"mvf".as_slice(),
+                    RevisionKind::MoveTo => b"mvt".as_slice(),
+                },
+            );
+            for value in [author, date, revision_id].into_iter().flatten() {
+                hash_bytes(hash, value.as_bytes());
+            }
+            for inline in inlines {
+                hash_inline_draft(hash, inline, bookmarks);
+            }
+        }
     }
 }
 
@@ -7045,6 +7472,29 @@ fn build_inlines(
                     comment: *comment_ids.get(*index).ok_or(OdfError::InvalidModel)?,
                 })
             }
+            InlineDraft::Revision {
+                kind,
+                author,
+                date,
+                revision_id,
+                inlines: children,
+            } => InlineNode::Revision(Revision {
+                id,
+                kind: *kind,
+                author: author.clone(),
+                date: date.clone(),
+                revision_id: revision_id.clone(),
+                editor_group: None,
+                inlines: build_inlines(
+                    children,
+                    ids,
+                    bookmark_ids,
+                    note_ids,
+                    comment_ids,
+                    media_ids,
+                    drawings,
+                )?,
+            }),
         });
     }
     Ok(inlines)
