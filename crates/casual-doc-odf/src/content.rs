@@ -707,6 +707,14 @@ enum StyleFamily {
 struct OdfStyle {
     family: Option<StyleFamily>,
     parent: Option<String>,
+    /// True when this style came from the common `office:styles` (a named style a
+    /// user can apply), as opposed to a producer-generated `office:automatic-style`.
+    /// A referenced named text style is preserved as a `Style` identity rather than
+    /// flattened into direct run properties.
+    named: bool,
+    /// The name under which this style is registered (its `style:name`), so a
+    /// referenced named style can be re-emitted by name.
+    style_name: Option<String>,
     alignment: Option<Alignment>,
     run_properties: RunProperties,
     /// The supported paragraph-formatting subset (indent, spacing, keeps, break);
@@ -1212,6 +1220,10 @@ fn resolve_style(
                 inherited.row_height = style.row_height;
             }
             inherited.family = style.family;
+            // The identity (named marker + own name) is the child's, never the
+            // parent's, so it survives the flatten.
+            inherited.named = style.named;
+            inherited.style_name = style.style_name.clone();
             inherited.parent = None;
             style = inherited;
         } else {
@@ -1253,6 +1265,7 @@ fn process_style_element(
             reader,
             element,
             depth,
+            common_container,
             limits,
             attributes,
             attribute_bytes,
@@ -1592,6 +1605,7 @@ fn read_style_header(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
     depth: usize,
+    common_container: bool,
     limits: OdfImportLimits,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
@@ -1654,10 +1668,12 @@ fn read_style_header(
     }
     Ok(OpenStyle {
         depth,
-        name,
+        name: name.clone(),
         style: OdfStyle {
             family,
             parent,
+            named: common_container,
+            style_name: Some(name),
             ..OdfStyle::default()
         },
         is_default: false,
