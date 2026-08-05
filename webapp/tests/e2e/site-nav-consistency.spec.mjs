@@ -1,11 +1,12 @@
 import { test, expect } from "./fixtures.mjs";
 
 // Every marketing/docs page must render the SAME shared header partial with the
-// five primary-nav links (Home · Docs · Examples · Blog · GitHub) plus the
-// "Open editor" CTA. This proves the build-time partial inlining kept the nav
-// consistent site-wide — the whole point of authoring pages from _partials/.
+// four primary-nav links (Overview · Editor · Docs · Fidelity) plus a GitHub
+// link and the "Open the editor" CTA. This proves the build-time partial
+// inlining kept the nav consistent site-wide — the whole point of authoring
+// pages from _partials/.
 const PAGES = ["/", "/docs.html", "/examples.html", "/blog.html", "/fidelity.html"];
-const NAV_LINKS = ["Home", "Docs", "Examples", "Blog", "GitHub"];
+const NAV_LINKS = ["Overview", "Editor", "Docs", "Fidelity"];
 
 for (const path of PAGES) {
   test(`shared header + primary nav render on ${path}`, async ({ page, consoleErrors }) => {
@@ -21,11 +22,17 @@ for (const path of PAGES) {
     for (const label of NAV_LINKS) {
       await expect(nav.getByRole("link", { name: label, exact: true })).toHaveCount(1);
     }
-    // Exactly the five links — no Pricing/Editions (OSS-only positioning).
+    // Exactly the four primary links — no Pricing/Editions (OSS-only positioning).
     await expect(nav.getByRole("link")).toHaveCount(NAV_LINKS.length);
 
-    // The "Open editor" CTA points at the real editor on every page.
-    await expect(header.getByRole("link", { name: /Open editor/ })).toHaveAttribute(
+    // GitHub is a header link that sits outside the primary nav.
+    await expect(header.getByRole("link", { name: "GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/CasualOffice/opendoc",
+    );
+
+    // The "Open the editor" CTA points at the real editor on every page.
+    await expect(header.getByRole("link", { name: /Open the editor/ })).toHaveAttribute(
       "href",
       "./editor.html",
     );
@@ -38,8 +45,11 @@ test("the active page is marked in the nav", async ({ page }) => {
   await page.goto("/docs.html");
   await expect(page.locator('header nav a[data-nav="docs"]')).toHaveAttribute("aria-current", "page");
   // A non-active link on the same page carries no active marker.
-  await expect(page.locator('header nav a[data-nav="blog"]')).not.toHaveAttribute("aria-current", "page");
+  await expect(page.locator('header nav a[data-nav="overview"]')).not.toHaveAttribute("aria-current", "page");
 
-  await page.goto("/examples.html");
-  await expect(page.locator('header nav a[data-nav="examples"]')).toHaveAttribute("aria-current", "page");
+  await page.goto("/");
+  await expect(page.locator('header nav a[data-nav="overview"]')).toHaveAttribute("aria-current", "page");
+
+  await page.goto("/fidelity.html");
+  await expect(page.locator('header nav a[data-nav="fidelity"]')).toHaveAttribute("aria-current", "page");
 });
