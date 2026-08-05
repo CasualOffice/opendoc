@@ -1268,12 +1268,10 @@ impl Writer {
                     self.collect_revisions_in_blocks(&text_box.blocks);
                 }
                 InlineNode::Field(field) => {
-                    // A text-input form field is emitted as ONLY a draw:control
+                    // Every modeled form field is emitted as ONLY a draw:control
                     // anchor (its inlines are never written), so mint its control
                     // and do NOT pre-walk its inlines — recursing would declare an
                     // orphan region for a nested revision the writer drops.
-                    // Every modeled form kind is emitted as ONLY a draw:control
-                    // anchor, so mint it and do not pre-walk its inlines.
                     let minted_form = field.form.is_some();
                     if minted_form {
                         self.assign_form_field(field);
@@ -1368,9 +1366,8 @@ impl Writer {
         self.push("</text:tracked-changes>")
     }
 
-    /// Records a text-input or checkbox form field, minting its `form:id`. Other
-    /// form kinds (drop-down) are not emitted in this slice (they degrade in
-    /// write_inlines).
+    /// Records a text-input, checkbox, or drop-down form field, minting its
+    /// `form:id` and its `office:forms` registry entry.
     fn assign_form_field(&mut self, field: &Field) {
         let Some(form) = &field.form else {
             return;
@@ -1390,8 +1387,9 @@ impl Writer {
     }
 
     /// Emits the `office:forms` control registry (a single `form:form` holding one
-    /// `form:text` per collected text-input field). Emitted only when non-empty,
-    /// with `xmlns:form` declared inline so form-free documents stay byte-identical.
+    /// `form:text`/`form:checkbox`/`form:listbox` per collected control). Emitted
+    /// only when non-empty, with `xmlns:form` declared inline so form-free
+    /// documents stay byte-identical.
     fn write_forms(&mut self) -> Result<(), OdfError> {
         if self.form_controls.is_empty() {
             return Ok(());
