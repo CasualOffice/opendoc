@@ -23,12 +23,17 @@
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 42%, transparent);
   --error: #c0392b;
-  --radius: 8px;
-  --radius-sm: 7px;
-  --radius-md: 8px;
-  /* One shared radius/shadow for every floating "card" surface (settings,
-     context menus, command palette, find panel) — doc 69 §4.3 found these
-     drifting across 8/10/12px with 3 near-duplicate shadows. */
+  /* Canvas / grid aesthetic (redesign): the shell reads as a flat gridded
+     surface split by hairlines, not a stack of rounded cards — so the chrome
+     radii are near-square. Floating popovers keep a small radius so they still
+     detach from the surface (and #outlinePanel stays 10px, asserted by
+     shell-reference-polish.spec). */
+  --radius: 3px;
+  --radius-sm: 3px;
+  --radius-md: 3px;
+  /* Floating surfaces keep their own radius so they detach from the flat
+     canvas — and both are asserted by tests (#outlinePanel 10px in
+     shell-reference-polish; dialog cards 12px in header-menu). */
   --radius-popover: 10px;
   --radius-dialog: 12px;
   --shadow-popover: 0 10px 34px rgba(20, 22, 28, 0.24);
@@ -312,7 +317,7 @@ input {
   gap: 4px;
   padding: 1px 7px 1px 5px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 3px;
   background: var(--surface-alt);
   color: var(--muted);
   font-size: var(--fs-small);
@@ -2310,11 +2315,15 @@ body.modal-open {
 }
 
 /* ---- Ribbon (tabbed toolbar) ----------------------------------------------- */
+/* Canvas/grid ribbon (redesign): full-bleed and flat — no floating rounded
+   card. It is one horizontal band of the shell grid, separated from the bar
+   above and the workarea below by single hairlines. */
 .ribbon {
   background: var(--surface);
-  margin: 6px 8px 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   overflow: hidden;
   z-index: 2;
 }
@@ -2354,8 +2363,8 @@ body.modal-open {
 }
 
 .ribbon.is-collapsed {
-  border-bottom-left-radius: 9px;
-  border-bottom-right-radius: 9px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .ribbon.is-collapsed .ribbon-tabs {
@@ -2992,7 +3001,9 @@ body.is-format-painting .page-wrap * {
   flex: 1;
   display: flex;
   min-height: 0;
-  margin-top: 8px;
+  /* Canvas/grid: the rail + viewport sit flush under the ribbon's bottom
+     hairline — no floating gap now that the ribbon is full-bleed. */
+  margin-top: 0;
 }
 
 .rail {
@@ -3052,7 +3063,9 @@ body.is-format-painting .page-wrap * {
   width: 252px;
   min-width: 0;
   max-width: min(252px, calc(100vw - 52px));
-  margin: 0 8px 8px;
+  /* Inset floating panel: even breathing room on all sides (the rail stays
+     flush under the ribbon; the panels float within the workarea). */
+  margin: 8px;
   display: flex;
   flex-direction: column;
   min-height: 0;
