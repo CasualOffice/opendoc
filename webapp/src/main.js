@@ -10393,7 +10393,7 @@ const settingsReset = document.getElementById("settingsReset");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
-const DEFAULT_SETTINGS = { theme: "system", accent: "#e2622a", authorName: "", authorInitials: "" };
+const DEFAULT_SETTINGS = { theme: "system", accent: "#3355c4", authorName: "", authorInitials: "" };
 let settings = loadSettings();
 
 function loadSettings() {
