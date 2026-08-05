@@ -62,12 +62,16 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
-- **Fields — page number & page count (fidelity parity, T3-1)**: `text:page-number`
-  and `text:page-count` now import to typed `Field` nodes (`FieldKind::Page`/
-  `NumPages`, with a synthesized authoritative instruction) and export back to the
-  ODF field elements, round-tripping to a byte-exact fixed point. The computed
-  display cache is dropped (a renderer recomputes it). First slice of the fields
-  family; other kinds (date/time, references) keep the degraded projection.
+- **Fields — page number, page count, date, time (fidelity parity, T3-1)**:
+  `text:page-number`, `text:page-count`, `text:date`, and `text:time` now import
+  to typed `Field` nodes (`FieldKind::Page`/`NumPages`/`Date`/`Time`, with a
+  synthesized authoritative instruction) and export back to the ODF field
+  elements, round-tripping to a byte-exact fixed point. The computed display cache
+  (and, for date/time, the ODF number/data style with no DOCX format-picture
+  equivalent) is dropped; a renderer recomputes the value. A field inside a
+  hyperlink is not modeled (the model forbids a field nested in an inline
+  wrapper) and stays a degraded text projection. Remaining field kinds
+  (references, sequence, TOC) keep the degraded projection.
 - **Table-level width & alignment (fidelity parity, T2c-5)**: a table's alignment
   (`table:align`) and width (`style:width` absolute / `style:rel-width` relative)
   now round-trip via a new `table` style family, completing table-level geometry.
