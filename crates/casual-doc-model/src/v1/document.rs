@@ -1069,6 +1069,12 @@ impl Document {
                             "drawing.extent.height",
                         )?;
                     }
+                    if let Some(descr) = &drawing.descr {
+                        check_domain(
+                            !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
+                            "drawing.descr",
+                        )?;
+                    }
                     previous_run_properties = None;
                 }
                 InlineNode::AnchoredDrawing(drawing) => {
