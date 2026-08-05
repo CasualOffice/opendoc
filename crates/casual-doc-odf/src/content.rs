@@ -7,12 +7,12 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, BlockNode, Bookmark, BookmarkEnd,
     BookmarkId, BookmarkStart, BorderEdge, Break, BreakKind, CellVerticalAlignment, Color,
     Definitions, Document, DocumentDefaults, Drawing, Extent, ExternalTarget, FontName, FontRef,
-    GridColumn, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
+    GridColumn, HeightRule, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
     LevelJustification, LevelSuffix, MAX_DESCR_BYTES, MAX_EMU, MAX_TABLE_DEPTH, MediaId,
     MediaReference, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstance,
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, Paragraph,
-    ParagraphProperties, RgbColor, Run, RunProperties, Shading, Spacing, Tab, Table, TableBorders,
-    TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
+    ParagraphProperties, RgbColor, RowHeight, Run, RunProperties, Shading, Spacing, Tab, Table,
+    TableBorders, TableCell, TableCellProperties, TableProperties, TableRow, TableRowProperties,
     VerticalAlignment, VerticalMerge,
 };
 use casual_doc_package::CancellationToken;
@@ -421,6 +421,7 @@ struct TableDraft {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TableRowDraft {
     header: bool,
+    height: RowHeight,
     slots: Vec<TableSlotDraft>,
 }
 
@@ -493,6 +494,7 @@ struct OpenTableRow {
     depth: usize,
     repeat: usize,
     header: bool,
+    height: RowHeight,
     slots: Vec<TableSlotDraft>,
     current_cell: Option<OpenTableCell>,
 }
@@ -564,6 +566,7 @@ enum StyleFamily {
     Text,
     TableColumn,
     TableCell,
+    TableRow,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -583,6 +586,8 @@ struct OdfStyle {
     cell_vertical_alignment: Option<CellVerticalAlignment>,
     /// `fo:border[-edge]` edges for a `table-cell` style.
     cell_borders: TableBorders,
+    /// `style:row-height`/`style:min-row-height` for a `table-row` style.
+    row_height: RowHeight,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1217,6 +1222,16 @@ fn process_style_element(
                 style,
                 reporter,
             )?;
+        } else if is_name(name, NamespaceKind::Style, b"table-row-properties") {
+            read_table_row_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
         } else {
             count_and_report_attributes(
                 reader,
@@ -1424,6 +1439,7 @@ fn read_style_header(
                 "text" => Some(StyleFamily::Text),
                 "table-column" => Some(StyleFamily::TableColumn),
                 "table-cell" => Some(StyleFamily::TableCell),
+                "table-row" => Some(StyleFamily::TableRow),
                 _ => {
                     reporter.report(
                         "odf.style.unsupported-family".to_owned(),
@@ -1493,6 +1509,7 @@ fn read_default_style_header(
                 "text" => Some(StyleFamily::Text),
                 "table-column" => Some(StyleFamily::TableColumn),
                 "table-cell" => Some(StyleFamily::TableCell),
+                "table-row" => Some(StyleFamily::TableRow),
                 _ => None,
             };
         } else if !is_namespace_declaration(&attribute) {
@@ -1749,6 +1766,71 @@ fn read_paragraph_style_properties(
                 paragraph.page_break_before
             }
             _ => false,
+        };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reads a `style:table-row-properties` element, capturing `style:row-height`
+/// (exact) or `style:min-row-height` (at-least) into the style. Other row
+/// properties (keep-together, background) are reported and dropped.
+fn read_table_row_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::TableRow) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.table-row-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped = if namespace_kind(&namespace) == NamespaceKind::Style
+            && matches!(local.as_ref(), b"row-height" | b"min-row-height")
+        {
+            // Exact height uses style:row-height; a minimum uses
+            // style:min-row-height. Bound to the model's twips domain.
+            match parse_length_to_twips(&value) {
+                Some(twips) if (0..=31_680).contains(&twips) => {
+                    let rule = if local.as_ref() == b"row-height" {
+                        HeightRule::Exact
+                    } else {
+                        HeightRule::AtLeast
+                    };
+                    style.style.row_height = RowHeight {
+                        value_twips: Some(u32::try_from(twips).unwrap_or(0)),
+                        rule: Some(rule),
+                    };
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            false
         };
         if !mapped && !is_namespace_declaration(&attribute) {
             reporter.report(
@@ -3447,6 +3529,7 @@ fn process_table_start(
             attributes,
             attribute_bytes,
             open_tables,
+            automatic_styles,
             reporter,
         ),
         b"table-cell" => start_table_cell(
@@ -3555,6 +3638,7 @@ fn process_table_empty(
                 attributes,
                 attribute_bytes,
                 open_tables,
+                automatic_styles,
                 reporter,
             )?;
             finish_table_row(open_tables, limits, table_row_count, table_cell_count)
@@ -3712,6 +3796,7 @@ fn start_table_row(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     open_tables: &mut [OpenTable],
+    automatic_styles: &AutomaticStyles,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
     let table = open_tables.last_mut().ok_or(OdfError::MalformedContent)?;
@@ -3723,16 +3808,33 @@ fn start_table_row(
         reader,
         element,
         b"number-rows-repeated",
-        &[],
+        &[b"style-name"],
         limits,
         attributes,
         attribute_bytes,
         reporter,
     )?;
+    // Resolve the row style's height (style-name already counted, not reported,
+    // by read_table_repeat).
+    let mut height = RowHeight::default();
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) == NamespaceKind::Table && local.as_ref() == b"style-name" {
+            let style_name = decode_attribute(&attribute)?;
+            match automatic_styles.get(&(StyleFamily::TableRow, style_name)) {
+                Some(style) => height = style.row_height,
+                None => {
+                    reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
+                }
+            }
+        }
+    }
     table.current_row = Some(OpenTableRow {
         depth,
         repeat,
         header: table.row_container_header,
+        height,
         slots: Vec::new(),
         current_cell: None,
     });
@@ -3977,6 +4079,7 @@ fn finish_table_row(
     *table_cell_count = cells_observed;
     let draft = TableRowDraft {
         header: row.header,
+        height: row.height,
         slots: row.slots,
     };
     table.rows.extend(std::iter::repeat_n(draft, row.repeat));
@@ -5799,6 +5902,7 @@ fn build_table(
             id: row_id,
             properties: TableRowProperties {
                 header: row.header,
+                height: row.height,
                 ..TableRowProperties::default()
             },
             cells,

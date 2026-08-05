@@ -282,6 +282,57 @@ fn table_cell_shading_and_valign_round_trip_to_a_fixed_point() {
 }
 
 #[test]
+fn table_row_height_round_trip_to_a_fixed_point() {
+    use casual_doc_model::v1::{HeightRule, RowHeight};
+    let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    let mut document = import.document;
+    let BlockNode::Table(table) = &mut document.body_mut()[0] else {
+        panic!("table")
+    };
+    table.rows[0].properties.height = RowHeight {
+        value_twips: Some(720), // 36pt
+        rule: Some(HeightRule::Exact),
+    };
+    document.validate().unwrap();
+
+    let first = write_odt(&document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(
+            r#"<style:style style:name="roe720" style:family="table-row"><style:table-row-properties style:row-height="36pt"/></style:style>"#
+        ),
+        "row style missing: {content_xml}"
+    );
+    assert!(
+        content_xml.contains(r#"<table:table-row table:style-name="roe720">"#),
+        "row style ref missing: {content_xml}"
+    );
+
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let BlockNode::Table(table) = &reopened.document.body()[0] else {
+        panic!("table")
+    };
+    assert_eq!(
+        table.rows[0].properties.height,
+        RowHeight {
+            value_twips: Some(720),
+            rule: Some(HeightRule::Exact),
+        }
+    );
+
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn table_cell_borders_round_trip_to_a_fixed_point() {
     use casual_doc_model::v1::BorderEdge;
     let body = r#"<table:table><table:table-column/><table:table-row><table:table-cell><text:p>a</text:p></table:table-cell></table:table-row></table:table>"#;

@@ -5,11 +5,11 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, BookmarkId, BreakKind, CellVerticalAlignment, Color, Definitions,
-    Document, DocumentDefaults, Extent, FontRef, GroupChild, HeaderFooterKind, HyperlinkTarget,
-    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
-    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, RevisionKind,
-    RunProperties, Spacing, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
-    VerticalAlignment, VerticalMerge,
+    Document, DocumentDefaults, Extent, FontRef, GroupChild, HeaderFooterKind, HeightRule,
+    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
+    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    ParagraphProperties, RevisionKind, RowHeight, RunProperties, Spacing, Table, TableCell,
+    TableCellProperties, TableRow, TableRowProperties, VerticalAlignment, VerticalMerge,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -546,6 +546,67 @@ fn push_border_attribute(
     Ok(())
 }
 
+/// The supported table-row-formatting subset (row height), emitted as one
+/// deterministic automatic `table-row` style.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtRowStyle {
+    height_twips: Option<u32>,
+    /// `true` → `style:row-height` (exact); `false` → `style:min-row-height`.
+    exact: bool,
+}
+
+impl OdtRowStyle {
+    /// The representable height: an exact or at-least rule with a value. `auto`
+    /// (or a bare value with no rule) is not representable and stays empty.
+    fn from_height(height: &RowHeight) -> Self {
+        match (height.value_twips, height.rule) {
+            (Some(twips), Some(HeightRule::Exact)) => Self {
+                height_twips: Some(twips),
+                exact: true,
+            },
+            (Some(twips), Some(HeightRule::AtLeast)) => Self {
+                height_twips: Some(twips),
+                exact: false,
+            },
+            _ => Self::default(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.height_twips.is_none()
+    }
+
+    fn name(&self) -> String {
+        match self.height_twips {
+            Some(twips) => format!("ro{}{twips}", if self.exact { 'e' } else { 'm' }),
+            None => "ro".to_owned(),
+        }
+    }
+}
+
+/// Emits the supported `<style:table-row-properties>` attributes for a row style.
+fn push_row_properties(
+    xml: &mut String,
+    style: &OdtRowStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some(twips) = style.height_twips {
+        let attr = if style.exact {
+            " style:row-height=\""
+        } else {
+            " style:min-row-height=\""
+        };
+        push_bounded(xml, attr, max_content_bytes)?;
+        push_bounded(
+            xml,
+            &twips_to_pt(i32::try_from(twips).unwrap_or(0)),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    Ok(())
+}
+
 /// A deterministic, NCName-safe automatic style name for a table column of the
 /// given width (twips). Negative widths (not model-valid, but defensive) use an
 /// `n` marker instead of a bare minus.
@@ -792,6 +853,8 @@ struct Writer {
     column_styles: BTreeSet<i32>,
     /// Distinct cell formatting that needs a `table-cell` style.
     cell_styles: BTreeSet<OdtCellStyle>,
+    /// Distinct row formatting (height) that needs a `table-row` style.
+    row_styles: BTreeSet<OdtRowStyle>,
     run_styles: BTreeSet<OdtRunStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
@@ -828,6 +891,7 @@ impl Writer {
             paragraph_styles: BTreeSet::new(),
             column_styles: BTreeSet::new(),
             cell_styles: BTreeSet::new(),
+            row_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
@@ -1116,6 +1180,11 @@ impl Writer {
             let header_mapped = row_index < header_rows;
             let mut remainder = row.properties.clone();
             remainder.header = false;
+            // A representable row height is emitted as a table-row style, so it is
+            // not part of the unsupported remainder.
+            if !OdtRowStyle::from_height(&row.properties.height).is_empty() {
+                remainder.height = RowHeight::default();
+            }
             if remainder != TableRowProperties::default()
                 || (row.properties.header && !header_mapped)
             {
@@ -1138,8 +1207,17 @@ impl Writer {
         depth: usize,
     ) -> Result<(), OdfError> {
         self.check_depth(depth)?;
-        self.push("<table:table-row>")?;
         let row = &table.rows[row_index];
+        let row_style = OdtRowStyle::from_height(&row.properties.height);
+        if row_style.is_empty() {
+            self.push("<table:table-row>")?;
+        } else {
+            let name = row_style.name();
+            self.row_styles.insert(row_style);
+            self.push("<table:table-row table:style-name=\"")?;
+            self.push(&name)?;
+            self.push("\">")?;
+        }
         for (cell_index, cell) in row.cells.iter().enumerate() {
             let coordinate = (row_index, cell_index);
             let span = cell.properties.grid_span.unwrap_or(1);
@@ -1997,6 +2075,7 @@ fn automatic_styles_xml(
     list_styles: &BTreeMap<NumberingInstanceId, OdtListStyle>,
     column_styles: &BTreeSet<i32>,
     cell_styles: &BTreeSet<OdtCellStyle>,
+    row_styles: &BTreeSet<OdtRowStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
     if paragraph_styles.is_empty()
@@ -2004,6 +2083,7 @@ fn automatic_styles_xml(
         && list_styles.is_empty()
         && column_styles.is_empty()
         && cell_styles.is_empty()
+        && row_styles.is_empty()
     {
         return Ok(String::new());
     }
@@ -2029,6 +2109,17 @@ fn automatic_styles_xml(
             max_content_bytes,
         )?;
         push_cell_properties(&mut xml, style, max_content_bytes)?;
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
+    }
+    for style in row_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"table-row\"><style:table-row-properties",
+            max_content_bytes,
+        )?;
+        push_row_properties(&mut xml, style, max_content_bytes)?;
         push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     for style in paragraph_styles {
@@ -2456,6 +2547,7 @@ fn write_odt_impl(
         &writer.list_styles,
         &writer.column_styles,
         &writer.cell_styles,
+        &writer.row_styles,
         limits.max_content_bytes,
     )?;
     let content_len = content_header

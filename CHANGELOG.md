@@ -62,6 +62,10 @@ a general ODT support claim.
   limits, not grammar conformance — so no schema-validator dependency is bundled.
   A dependency-free `#[ignore]`-gated timing harness records import/export cost
   across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Table row height (fidelity parity, T2c-4)**: a row's height now round-trips
+  via a new `table-row` style family — exact height ↔ `style:row-height`, minimum
+  ↔ `style:min-row-height` (twips↔pt codec, domain-clamped `0..=31680`). Rows with
+  an `auto` height stay byte-identical.
 - **Table cell borders (fidelity parity, T2c-3)**: a cell's four edge borders
   (`fo:border` and per-edge `fo:border-top/-left/-bottom/-right`, each `<width>
   <style> <color>`) now round-trip via the `table-cell` style family. Widths use
