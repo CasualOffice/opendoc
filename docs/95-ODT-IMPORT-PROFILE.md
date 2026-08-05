@@ -51,9 +51,13 @@ The work lands as reviewable commits:
   is preserved as a referenced schema-v1 `Style` identity: the run carries a
   `RunProperties.style_ref` to a `StyleKind::Character` definition (whose name is
   the original `style:name` and whose run properties are the inheritance-resolved
-  subset) instead of the style being flattened onto each run. Named *paragraph*
-  styles still flatten onto the paragraph. The doc 96 writer re-emits the named
-  character style once in styles.xml and references it by name, a byte fixed point.
+  subset) instead of the style being flattened onto each run. A named *paragraph*
+  (`style:family="paragraph"`) style is likewise preserved: the paragraph carries a
+  `ParagraphProperties.style_ref` to a `StyleKind::Paragraph` definition (with the
+  inheritance-resolved paragraph properties) instead of being flattened. Character
+  and paragraph styles use separate name→id maps, so a text and a paragraph style
+  sharing a name are preserved as distinct definitions. The doc 96 writer re-emits
+  each named style once in styles.xml and references it by name, a byte fixed point.
 - Checkpoint 7 maps bounded bullet/decimal list styles, the first paragraph of
   each list item, and nested list levels into deterministic normalized numbering
   definitions. Implementation-dependent defaults, missing/conflicting levels,

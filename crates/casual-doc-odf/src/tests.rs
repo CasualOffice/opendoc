@@ -258,6 +258,133 @@ fn named_style_name_in_run_style_namespace_does_not_collide() {
     assert_eq!(reexported.bytes, export.bytes);
 }
 
+/// Builds an ODT package from raw `content.xml` and `styles.xml` bytes with a
+/// manifest listing both, for the named-style round-trip tests.
+fn package_content_and_styles(content: &[u8], styles: &[u8]) -> Vec<u8> {
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/><m:file-entry m:full-path="styles.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: STYLES_PART,
+            bytes: styles.to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ])
+}
+
+/// A named paragraph style round-trips as a referenced `Style` identity: the
+/// paragraph carries a `style_ref` and the style's properties live on the
+/// definition (emitted once in styles.xml), a byte + semantic fixed point.
+#[test]
+fn named_paragraph_style_round_trips_as_referenced_identity() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p text:style-name="Quote">quoted</text:p></office:text></office:body></office:document-content>"#;
+    let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="Quote" style:family="paragraph"><style:paragraph-properties fo:text-align="end"/></style:style></office:styles></office:document-styles>"##;
+    let bytes = package_content_and_styles(content, styles);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    assert!(imported.report.entries.is_empty());
+
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    assert_eq!(paragraph.properties.alignment, None);
+    let style = imported
+        .document
+        .definitions()
+        .styles
+        .get(&paragraph.properties.style_ref.expect("paragraph style ref"))
+        .expect("paragraph style def");
+    assert_eq!(style.kind, StyleKind::Paragraph);
+    assert_eq!(style.name.as_deref(), Some("Quote"));
+
+    let export = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(
+        r#"<style:style style:family="paragraph" style:name="Quote"><style:paragraph-properties fo:text-align="end"/></style:style>"#
+    ));
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<text:p text:style-name="Quote">quoted</text:p>"#));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, export.bytes);
+}
+
+/// A named paragraph style whose retained name matches the automatic paragraph
+/// style scheme (`P_center`) must be re-minted so it cannot collide with a
+/// direct-center paragraph's automatic `P_center` style — an invalid duplicate
+/// `style:name` and a broken fixed point otherwise.
+#[test]
+fn named_paragraph_style_name_in_automatic_namespace_does_not_collide() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="AutoCenter" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style></office:automatic-styles><office:body><office:text><text:p text:style-name="P_center">named</text:p><text:p text:style-name="AutoCenter">centered</text:p></office:text></office:body></office:document-content>"#;
+    let styles = br##"<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:styles><style:style style:name="P_center" style:family="paragraph"><style:paragraph-properties fo:text-align="end"/></style:style></office:styles></office:document-styles>"##;
+    let bytes = package_content_and_styles(content, styles);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    // The two paragraphs start distinct: a referenced end-aligned paragraph style
+    // and a direct center-aligned paragraph.
+    let assert_distinct = |document: &casual_doc_model::v1::Document| {
+        let BlockNode::Paragraph(named) = &document.body()[0] else {
+            panic!("named paragraph")
+        };
+        let style = document
+            .definitions()
+            .styles
+            .get(&named.properties.style_ref.expect("paragraph style ref"))
+            .expect("paragraph style def");
+        assert_eq!(
+            style
+                .paragraph
+                .as_ref()
+                .and_then(|properties| properties.alignment),
+            Some(Alignment::End)
+        );
+        assert_eq!(named.properties.alignment, None);
+        let BlockNode::Paragraph(direct) = &document.body()[1] else {
+            panic!("direct paragraph")
+        };
+        assert_eq!(direct.properties.alignment, Some(Alignment::Center));
+        assert_eq!(direct.properties.style_ref, None);
+    };
+    assert_distinct(&imported.document);
+
+    let export = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(!styles_out.contains(r#"style:name="P_center""#));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_distinct(&reopened.document);
+    let reexported = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(reexported.bytes, export.bytes);
+}
+
 #[test]
 fn named_styles_part_and_parent_chain_apply_to_content() {
     let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.4"><office:body><office:text><text:p text:style-name="PChild"><text:span text:style-name="TChild">named</text:span></text:p></office:text></office:body></office:document-content>"#;
@@ -299,7 +426,23 @@ fn named_styles_part_and_parent_chain_apply_to_content() {
     let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
         panic!("paragraph")
     };
-    assert_eq!(paragraph.properties.alignment, Some(Alignment::End));
+    // The named paragraph style is likewise a referenced `Style` identity; its
+    // inheritance-resolved alignment lives on the definition, not on the paragraph.
+    assert_eq!(paragraph.properties.alignment, None);
+    let paragraph_style = imported
+        .document
+        .definitions()
+        .styles
+        .get(&paragraph.properties.style_ref.expect("paragraph style ref"))
+        .expect("paragraph style def");
+    assert_eq!(paragraph_style.kind, StyleKind::Paragraph);
+    assert_eq!(
+        paragraph_style
+            .paragraph
+            .as_ref()
+            .and_then(|properties| properties.alignment),
+        Some(Alignment::End)
+    );
     let InlineNode::Run(run) = &paragraph.inlines[0] else {
         panic!("run")
     };

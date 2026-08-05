@@ -155,6 +155,20 @@ Character definition, and any non-run style detail the projection cannot carry,
 are reported. Supported named character styles form a semantic and byte fixed
 point.
 
+Named `StyleKind::Paragraph` definitions are emitted the same way as
+`style:style style:family="paragraph"` entries (with a `style:paragraph-properties`
+child carrying the supported paragraph subset), and a paragraph bearing a
+`ParagraphProperties.style_ref` re-emits `text:style-name="X"` instead of minting
+an automatic `P…` paragraph style. Character and paragraph names are assigned from
+independent id spaces. A retained name matching the automatic paragraph scheme
+(`P`/`P_start`/`P_end`/`P_center`/`P_justify`, optionally with the property-hash
+suffix) is re-minted `Para{n}` so it cannot collide with a direct-formatted
+paragraph's automatic style. A paragraph carrying both a ref and direct
+properties keeps the named style and reports the direct subset; an unresolvable
+ref and non-paragraph style detail (run/table slots, inheritance, UI flags, an
+outline level or numbering link on the style) are reported. Supported named
+paragraph styles form a semantic and byte fixed point.
+
 When schema-v1 sections are present, the writer emits a deterministic
 `styles.xml` page-layout definition and manifest entry for page geometry.
 Section column count, gap, and separator settings are emitted when present.

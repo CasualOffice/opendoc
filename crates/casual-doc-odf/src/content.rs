@@ -537,6 +537,11 @@ struct ParagraphDraft {
     /// The active named character-style reference (the innermost open named
     /// `text:span`'s style name); attached to text pushed while it is set.
     style_ref: Option<String>,
+    /// The paragraph's own named paragraph-style reference (`text:style-name`
+    /// resolving to a common `style:family="paragraph"` style). When set, the
+    /// style's resolved properties live on the referenced `Style` definition
+    /// rather than being flattened onto `paragraph_properties`/`alignment`.
+    paragraph_style_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3818,6 +3823,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                 inlines: Vec::new(),
                 merge_barrier: false,
                 style_ref: None,
+                paragraph_style_ref: None,
             },
             limits,
         )?;
@@ -3843,6 +3849,23 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         .filter(|((family, _), style)| *family == StyleFamily::Text && style.named)
         .map(|((_, name), style)| (name.clone(), style.run_properties.clone()))
         .collect();
+    // The named paragraph styles referenceable by a paragraph's `style_ref`,
+    // resolved to their (inheritance-flattened) paragraph properties (alignment
+    // folded in) for building `Style` definitions.
+    let named_paragraph_styles: BTreeMap<String, ParagraphProperties> = style_catalog
+        .automatic
+        .iter()
+        .filter(|((family, _), style)| *family == StyleFamily::Paragraph && style.named)
+        .map(|((_, name), style)| {
+            (
+                name.clone(),
+                ParagraphProperties {
+                    alignment: style.alignment,
+                    ..style.paragraph_properties.clone()
+                },
+            )
+        })
+        .collect();
     let document = build_document(
         expected_version,
         &paragraphs,
@@ -3854,6 +3877,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &drawings,
         &comments,
         &named_styles,
+        &named_paragraph_styles,
         &style_catalog.defaults,
         &mut reporter,
     )?;
@@ -6606,6 +6630,7 @@ fn start_paragraph(
     let mut outline_level = None;
     let mut alignment = None;
     let mut paragraph_properties = ParagraphProperties::default();
+    let mut paragraph_style_ref = None;
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -6633,9 +6658,17 @@ fn start_paragraph(
             && local.as_ref() == b"style-name"
         {
             let style_name = decode_attribute(&attribute)?;
-            if let Some(style) = automatic_styles.get(&(StyleFamily::Paragraph, style_name)) {
-                alignment = style.alignment;
-                paragraph_properties = style.paragraph_properties.clone();
+            if let Some(style) = automatic_styles.get(&(StyleFamily::Paragraph, style_name.clone()))
+            {
+                if style.named {
+                    // A named paragraph style is preserved as a referenced `Style`
+                    // identity; its resolved properties live on that definition, so
+                    // they are not flattened onto the paragraph here.
+                    paragraph_style_ref = Some(style_name);
+                } else {
+                    alignment = style.alignment;
+                    paragraph_properties = style.paragraph_properties.clone();
+                }
             } else {
                 reporter.report("odf.style.unresolved".to_owned(), ModelOutcome::Degraded);
             }
@@ -6658,6 +6691,7 @@ fn start_paragraph(
         inlines: Vec::new(),
         merge_barrier: false,
         style_ref: None,
+        paragraph_style_ref,
     });
     Ok(())
 }
@@ -7485,6 +7519,7 @@ fn build_document(
     drawings: &[DrawingDraft],
     comments: &[CommentDraft],
     named_styles: &BTreeMap<String, RunProperties>,
+    named_paragraph_styles: &BTreeMap<String, ParagraphProperties>,
     defaults: &DefaultStyles,
     reporter: &mut Reporter,
 ) -> Result<Document, OdfError> {
@@ -7747,6 +7782,47 @@ fn build_document(
         );
         style_ids.insert(name.clone(), style_id);
     }
+    // Paragraph-style identities: mirror the character path for each referenced
+    // named paragraph style. Kept in a separate name→id map from the character
+    // styles because ODF allows a paragraph and a text style to share a name.
+    let mut referenced_paragraph_styles = BTreeSet::new();
+    for paragraph in paragraphs {
+        if let Some(name) = &paragraph.paragraph_style_ref {
+            referenced_paragraph_styles.insert(name.clone());
+        }
+    }
+    let mut paragraph_style_ids: BTreeMap<String, StyleId> = BTreeMap::new();
+    for name in &referenced_paragraph_styles {
+        let Some(paragraph_props) = named_paragraph_styles.get(name) else {
+            continue;
+        };
+        let style_id = StyleId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+        definitions.styles.insert(
+            style_id,
+            ModelStyle {
+                kind: StyleKind::Paragraph,
+                is_default: false,
+                name: Some(name.clone()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: false,
+                locked: false,
+                paragraph: Some(paragraph_props.clone()),
+                run: None,
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+            },
+        );
+        paragraph_style_ids.insert(name.clone(), style_id);
+    }
     for (index, note) in notes.iter().enumerate() {
         let blocks = build_blocks(
             &note.blocks,
@@ -7757,6 +7833,7 @@ fn build_document(
             &note_ids,
             &comment_ids,
             &style_ids,
+            &paragraph_style_ids,
             &media_ids,
             drawings,
         )?;
@@ -7782,6 +7859,7 @@ fn build_document(
         &note_ids,
         &comment_ids,
         &style_ids,
+        &paragraph_style_ids,
         &media_ids,
         drawings,
     )?;
@@ -7865,6 +7943,7 @@ fn build_blocks(
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
     style_ids: &BTreeMap<String, StyleId>,
+    paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
@@ -7879,6 +7958,7 @@ fn build_blocks(
                 note_ids,
                 comment_ids,
                 style_ids,
+                paragraph_style_ids,
                 media_ids,
                 drawings,
             )?),
@@ -7891,6 +7971,7 @@ fn build_blocks(
                 note_ids,
                 comment_ids,
                 style_ids,
+                paragraph_style_ids,
                 media_ids,
                 drawings,
             )?),
@@ -7905,6 +7986,7 @@ fn build_blocks(
                     note_ids,
                     comment_ids,
                     style_ids,
+                    paragraph_style_ids,
                     media_ids,
                     drawings,
                 )?;
@@ -7936,6 +8018,7 @@ fn build_paragraph(
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
     style_ids: &BTreeMap<String, StyleId>,
+    paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Paragraph, OdfError> {
@@ -7947,8 +8030,14 @@ fn build_paragraph(
             instance: numbering_ids[&numbering.instance],
             level: numbering.level,
         }),
+        // A named paragraph style is referenced by id; its resolved properties
+        // live on the `Style` definition, not flattened here.
+        style_ref: draft
+            .paragraph_style_ref
+            .as_ref()
+            .and_then(|name| paragraph_style_ids.get(name).copied()),
         // Carry the supported paragraph-formatting subset resolved from the
-        // paragraph's style; the three fields above are set explicitly on top.
+        // paragraph's (automatic) style; the fields above are set explicitly on top.
         ..draft.paragraph_properties.clone()
     };
     Ok(Paragraph {
@@ -7985,6 +8074,7 @@ fn build_table(
     note_ids: &[NoteId],
     comment_ids: &[CommentId],
     style_ids: &BTreeMap<String, StyleId>,
+    paragraph_style_ids: &BTreeMap<String, StyleId>,
     media_ids: &[MediaId],
     drawings: &[DrawingDraft],
 ) -> Result<Table, OdfError> {
@@ -8006,6 +8096,7 @@ fn build_table(
                         note_ids,
                         comment_ids,
                         style_ids,
+                        paragraph_style_ids,
                         media_ids,
                         drawings,
                     )?;

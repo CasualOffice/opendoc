@@ -15,6 +15,23 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Named paragraph styles (fidelity parity, T4-2)**: a common `office:styles`
+  `style:style style:family="paragraph"` now round-trips as a *referenced*
+  schema-v1 `Style` identity (`StyleKind::Paragraph`), the paragraph analogue of
+  the character-style change below. A paragraph that used the style carries a
+  `ParagraphProperties.style_ref` to the definition (whose inheritance-resolved
+  paragraph properties — alignment, indentation, spacing, keep/break — are emitted
+  once as a named `style:style` in styles.xml), and each paragraph re-emits
+  `text:style-name="X"` — a byte + semantic fixed point (no automatic `P…` style
+  is minted for a purely named paragraph). Character and paragraph styles keep
+  separate name→id maps, so a document with a character and a paragraph style of
+  the same name round-trips both. A retained name matching the automatic paragraph
+  scheme (`P`/`P_start`/`P_end`/`P_center`/`P_justify`, optionally with the
+  property-hash suffix) is re-minted as `Para{n}` so it cannot collide with a
+  direct-formatted paragraph's automatic style. A paragraph carrying both a named
+  style and direct properties keeps the named style and reports the direct subset;
+  an unresolvable ref and non-paragraph style detail (run/table slots, inheritance,
+  UI flags, an outline level or numbering link on the style) are reported.
 - **Named character styles (fidelity parity, T4)**: a common `office:styles`
   `style:style style:family="text"` now round-trips as a *referenced* schema-v1
   `Style` identity (`StyleKind::Character`) rather than being flattened onto every

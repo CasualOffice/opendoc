@@ -304,6 +304,73 @@ impl OdtParagraphStyle {
     }
 }
 
+/// The automatic paragraph-style base names minted by [`OdtParagraphStyle::name`]
+/// (the no-alignment `P` plus each `OdtParagraphAlignment::name`).
+const AUTOMATIC_PARAGRAPH_STYLE_BASES: [&str; 5] =
+    ["P", "P_start", "P_end", "P_center", "P_justify"];
+
+/// Whether `name` is a name that [`OdtParagraphStyle::name`] could mint for an
+/// automatic paragraph style: one of the bases, optionally followed by the
+/// `_{:016x}` lowercase-hex suffix it appends for non-alignment properties. Such a
+/// name is reserved (a named paragraph style reusing it would collide with a minted
+/// automatic style in the paragraph family's shared `style:name` space), mirroring
+/// the `T_` guard for character styles. Precise rather than a blanket `P` prefix so
+/// ordinary names like "Preformatted" are not needlessly re-minted.
+fn is_automatic_paragraph_style_name(name: &str) -> bool {
+    AUTOMATIC_PARAGRAPH_STYLE_BASES.iter().any(|base| {
+        name == *base
+            || name
+                .strip_prefix(base)
+                .and_then(|rest| rest.strip_prefix('_'))
+                .is_some_and(|hex| {
+                    hex.len() == 16
+                        && hex
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+    })
+}
+
+/// Assigns each named style of `kind` the `style:name` it will carry in styles.xml
+/// and be referenced by. The model's retained name is reused verbatim when it is a
+/// valid NCName (the ODT round-trip case, where the name is the original
+/// `style:name`) that is neither already taken nor `is_reserved` (colliding with an
+/// automatic-style namespace); otherwise a deterministic `{mint_prefix}{n}` name is
+/// minted. Order is by `StyleId`, so both the styles.xml emission and the body
+/// references stay deterministic.
+fn assign_named_style_names(
+    definitions: &Definitions,
+    kind: StyleKind,
+    is_reserved: impl Fn(&str) -> bool,
+    mint_prefix: &str,
+) -> BTreeMap<StyleId, String> {
+    let mut used = BTreeSet::new();
+    let mut minted = 0usize;
+    let mut assigned = BTreeMap::new();
+    for (id, style) in definitions.styles.iter() {
+        if style.kind != kind {
+            continue;
+        }
+        let candidate = style
+            .name
+            .as_deref()
+            .filter(|name| is_ncname(name) && !is_reserved(name) && !used.contains(*name));
+        let name = match candidate {
+            Some(name) => name.to_owned(),
+            None => loop {
+                minted += 1;
+                let name = format!("{mint_prefix}{minted}");
+                if !used.contains(&name) {
+                    break name;
+                }
+            },
+        };
+        used.insert(name.clone());
+        assigned.insert(*id, name);
+    }
+    assigned
+}
+
 /// Emits the supported `<style:paragraph-properties>` attributes for a paragraph
 /// style. Lengths use the exactly-reversible `pt` form.
 fn push_paragraph_properties(
@@ -1079,6 +1146,10 @@ struct Writer {
     /// styles.xml and referenced by a run's `text:style-name`. Populated from the
     /// document's `Character` style definitions; empty on documents without any.
     named_styles: BTreeMap<StyleId, String>,
+    /// Named paragraph-style id → the `style:name` emitted for it in styles.xml and
+    /// referenced by a paragraph's `text:style-name`. The paragraph analogue of
+    /// `named_styles`; kept separate because the two share no id space.
+    named_paragraph_styles: BTreeMap<StyleId, String>,
     reporter: Reporter,
 }
 
@@ -1122,6 +1193,7 @@ impl Writer {
             available_media: BTreeMap::new(),
             bookmarks: BTreeMap::new(),
             named_styles: BTreeMap::new(),
+            named_paragraph_styles: BTreeMap::new(),
             reporter: Reporter::new(limits.max_report_features),
         };
         writer.push(BODY_PREFIX)?;
@@ -1137,43 +1209,24 @@ impl Writer {
         );
     }
 
-    /// Assigns each `Character` style definition the `style:name` it will carry in
-    /// styles.xml and be referenced by via `text:style-name`. The model's retained
-    /// name is reused verbatim when it is a valid NCName (the ODT round-trip case,
-    /// where the name is the original `style:name`); otherwise a deterministic
-    /// `Char{n}` name is minted (e.g. a DOCX-sourced style named "Intense Emphasis"),
-    /// keeping every emitted name a unique NCName. Order is by `StyleId`, so both
-    /// the styles.xml emission and the run references stay deterministic.
-    ///
-    /// A retained name is also rejected when it falls in the `T_` namespace that
-    /// [`OdtRunStyle::name`] mints automatic run styles into: named text styles and
-    /// automatic run styles share one document-wide `style:name` space in the text
-    /// family, so reusing a `T_…`-shaped name could collide with a minted run style
-    /// and collapse two distinct styles on re-import (breaking the fixed point). The
-    /// mint (`Char{n}`) is disjoint from `T_` by construction.
+    /// Assigns each named `Character` and `Paragraph` style definition the
+    /// `style:name` it will carry in styles.xml and be referenced by (via a run's
+    /// or paragraph's `text:style-name`). See [`assign_named_style_names`] for how a
+    /// name is chosen and why a name colliding with an automatic-style namespace is
+    /// re-minted; the two families keep separate maps because they share no id space.
     fn register_named_styles(&mut self, definitions: &Definitions) {
-        let mut used = BTreeSet::new();
-        let mut minted = 0usize;
-        for (id, style) in definitions.styles.iter() {
-            if style.kind != StyleKind::Character {
-                continue;
-            }
-            let candidate = style.name.as_deref().filter(|name| {
-                is_ncname(name) && !name.starts_with(RUN_STYLE_PREFIX) && !used.contains(*name)
-            });
-            let name = match candidate {
-                Some(name) => name.to_owned(),
-                None => loop {
-                    minted += 1;
-                    let name = format!("Char{minted}");
-                    if !used.contains(&name) {
-                        break name;
-                    }
-                },
-            };
-            used.insert(name.clone());
-            self.named_styles.insert(*id, name);
-        }
+        self.named_styles = assign_named_style_names(
+            definitions,
+            StyleKind::Character,
+            |name| name.starts_with(RUN_STYLE_PREFIX),
+            "Char",
+        );
+        self.named_paragraph_styles = assign_named_style_names(
+            definitions,
+            StyleKind::Paragraph,
+            is_automatic_paragraph_style_name,
+            "Para",
+        );
     }
 
     fn register_numbering(&mut self, definitions: &Definitions) {
@@ -1931,6 +1984,17 @@ impl Writer {
         self.paragraphs_written = self.paragraphs_written.saturating_add(1);
         let mut remainder = paragraph.properties.clone();
         let outline = remainder.outline_level.take();
+        // A named paragraph style is emitted as its own `style:name`; resolve it and
+        // clear the ref from the remainder so it is not counted as an unmapped
+        // property. An unresolvable ref (a dropped definition) is reported.
+        let named = remainder
+            .style_ref
+            .take()
+            .and_then(|id| self.named_paragraph_styles.get(&id).cloned());
+        if paragraph.properties.style_ref.is_some() && named.is_none() {
+            self.reporter
+                .record("odt.export.paragraph_style_ref", ModelOutcome::Omitted);
+        }
         let style = split_paragraph_properties(&mut remainder);
         if remainder.numbering.take().is_some() && !numbering_mapped {
             self.reporter
@@ -1940,7 +2004,18 @@ impl Writer {
             self.reporter
                 .record("odt.export.paragraph_properties", ModelOutcome::Omitted);
         }
-        let style_name = if style.is_empty() {
+        // A named style and direct paragraph properties cannot both be carried by a
+        // single `text:style-name`; the named style wins and the direct subset is a
+        // reported degrade (only reachable from a DOCX-shaped paragraph).
+        if named.is_some() && !style.is_empty() {
+            self.reporter.record(
+                "odt.export.paragraph_style_ref_with_direct",
+                ModelOutcome::Degraded,
+            );
+        }
+        let style_name = if let Some(name) = named {
+            Some(name)
+        } else if style.is_empty() {
             None
         } else {
             let name = style.name();
@@ -3118,6 +3193,7 @@ fn default_styles_xml(
     defaults: Option<&DocumentDefaults>,
     styles: &DefinitionMap<StyleId, Style>,
     named_styles: &BTreeMap<StyleId, String>,
+    named_paragraph_style_names: &BTreeMap<StyleId, String>,
     reporter: &mut Reporter,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
@@ -3126,6 +3202,13 @@ fn default_styles_xml(
         default_style_defaults(defaults, &mut body, reporter, max_content_bytes)?;
     }
     named_character_styles(styles, named_styles, &mut body, reporter, max_content_bytes)?;
+    named_paragraph_styles(
+        styles,
+        named_paragraph_style_names,
+        &mut body,
+        reporter,
+        max_content_bytes,
+    )?;
     if body.is_empty() {
         return Ok(String::new());
     }
@@ -3193,7 +3276,7 @@ fn named_character_styles(
         let Some(style) = styles.get(id) else {
             continue;
         };
-        if style_has_unsupported_detail(style) {
+        if style_has_common_unsupported_detail(style) || style.paragraph.is_some() {
             reporter.record("odt.export.character_style", ModelOutcome::Degraded);
         }
         let (run_style, remainder) = style
@@ -3221,10 +3304,61 @@ fn named_character_styles(
     Ok(())
 }
 
-/// Reports whether a Character style carries any detail beyond its run properties
-/// (inheritance, flags, or the paragraph/table property slots), none of which the
-/// named-character-style projection represents.
-fn style_has_unsupported_detail(style: &Style) -> bool {
+/// Serializes each named `Paragraph` style as a `<style:style style:family="paragraph">`
+/// with its paragraph-property subset, in `StyleId` order. The paragraph analogue of
+/// [`named_character_styles`]; a style whose paragraph properties fall outside the
+/// supported subset, or that carries non-paragraph detail (run/table properties,
+/// inheritance, flags), is reported so nothing is silently lost.
+fn named_paragraph_styles(
+    styles: &DefinitionMap<StyleId, Style>,
+    named_paragraph_styles: &BTreeMap<StyleId, String>,
+    body: &mut String,
+    reporter: &mut Reporter,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    for (id, name) in named_paragraph_styles.iter() {
+        let Some(style) = styles.get(id) else {
+            continue;
+        };
+        if style_has_common_unsupported_detail(style) || style.run.is_some() {
+            reporter.record("odt.export.paragraph_style", ModelOutcome::Degraded);
+        }
+        let mut remainder = style.paragraph.clone().unwrap_or_default();
+        // A style does not reference another style; the projection maps only the
+        // direct paragraph-formatting subset, so an outline level, numbering link,
+        // or any other leftover property on the style is reported, not silently lost.
+        remainder.style_ref = None;
+        let dropped_outline = remainder.outline_level.take().is_some();
+        let dropped_numbering = remainder.numbering.take().is_some();
+        let paragraph_style = split_paragraph_properties(&mut remainder);
+        if dropped_outline || dropped_numbering || remainder != ParagraphProperties::default() {
+            reporter.record(
+                "odt.export.paragraph_style.paragraph",
+                ModelOutcome::Omitted,
+            );
+        }
+        push_bounded(
+            body,
+            "<style:style style:family=\"paragraph\" style:name=\"",
+            max_content_bytes,
+        )?;
+        push_escaped_attribute(body, name, max_content_bytes)?;
+        push_bounded(body, "\">", max_content_bytes)?;
+        if !paragraph_style.is_empty() {
+            push_bounded(body, "<style:paragraph-properties", max_content_bytes)?;
+            push_paragraph_properties(body, &paragraph_style, max_content_bytes)?;
+            push_bounded(body, "/>", max_content_bytes)?;
+        }
+        push_bounded(body, "</style:style>", max_content_bytes)?;
+    }
+    Ok(())
+}
+
+/// Reports whether a style carries detail the named-style projection does not
+/// represent, EXCLUDING the family's own property slot (a caller adds its own-slot
+/// check — `run` for paragraph styles, `paragraph` for character styles). Covers
+/// inheritance, the UI flags, and the table property slots.
+fn style_has_common_unsupported_detail(style: &Style) -> bool {
     style.is_default
         || style.aliases.is_some()
         || style.based_on.is_some()
@@ -3236,7 +3370,6 @@ fn style_has_unsupported_detail(style: &Style) -> bool {
         || style.unhide_when_used
         || style.q_format
         || style.locked
-        || style.paragraph.is_some()
         || style.table.is_some()
         || style.table_row.is_some()
         || style.table_cell.is_some()
@@ -3432,6 +3565,7 @@ fn write_odt_impl(
         document.definitions().document_defaults.as_ref(),
         &document.definitions().styles,
         &writer.named_styles,
+        &writer.named_paragraph_styles,
         &mut writer.reporter,
         limits.max_content_bytes,
     )?;
