@@ -609,6 +609,26 @@
       </section>
     </div>
 
+    <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">brush</span>
+            <div>
+              <h2 id="styleNameTitle">Create a style</h2>
+              <p id="styleNameDescription">Save the selection's formatting as a new paragraph style.</p>
+            </div>
+          </div>
+          <button id="styleNameClose" type="button" class="dialog-close" title="Close" aria-label="Close create style dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <div class="dialog-body">
+          <label class="dialog-field field-wide">Style name<input id="styleNameInput" type="text" maxlength="253" autocomplete="off" spellcheck="false" placeholder="e.g. Callout" /></label>
+          <p id="styleNameNote" class="dialog-field-note">The new style is based on the current paragraph style and applied to the selection.</p>
+        </div>
+        <footer class="dialog-foot"><span class="dialog-note">One undoable action.</span><div class="dialog-actions"><button id="styleNameCancel" type="button" class="dialog-button">Cancel</button><button id="styleNameConfirm" type="button" class="dialog-button dialog-button-primary">Create</button></div></footer>
+      </section>
+    </div>
+
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
         <div class="cmd-search">
