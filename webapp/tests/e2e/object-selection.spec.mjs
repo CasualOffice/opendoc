@@ -83,7 +83,7 @@ test("clicking body text deselects the object", async ({ page, consoleErrors }) 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a selected object swallows text keys and unsupported Delete feedback clears on exit", async ({
+test("a selected object swallows text keys, and Delete removes the object (undoable)", async ({
   page,
   consoleErrors,
 }) => {
@@ -92,21 +92,25 @@ test("a selected object swallows text keys and unsupported Delete feedback clear
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 
   // Typing does not edit through a selected object (a stale caret is never
-  // mutated); the object stays selected.
+  // mutated); the object stays selected and the typed text is not findable.
   await page.keyboard.type("XYZ");
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  // Delete is a no-op this slice (object deletion is the mutation slice).
-  await page.keyboard.press("Delete");
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  await expect(page.locator("#status")).toContainText("Object deletion is not supported");
-
-  // The document was not mutated: the typed text is not findable.
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#status")).toHaveText("");
   await page.keyboard.press(`${MOD}+f`);
   await page.locator("#findInput").fill("XYZ");
   await expect(page.locator("#findStatus")).toHaveText("No match");
   await page.keyboard.press("Escape");
+
+  // Delete now removes the still-selected object as one undoable action: the
+  // object selection clears and there is something to undo.
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#pages")).not.toHaveAttribute("data-object-mode", /.*/);
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+
+  // One Undo restores it; the image is selectable again.
+  await page.locator("#undoBtn").click();
+  await clickImage(page);
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
 
   expect(consoleErrors).toEqual([]);
 });

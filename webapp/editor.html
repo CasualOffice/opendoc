@@ -690,6 +690,65 @@
       </section>
     </div>
 
+    <div id="altTextDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="altTextTitle" aria-describedby="altTextDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">description</span>
+            <div>
+              <h2 id="altTextTitle">Alt text</h2>
+              <p id="altTextDescription">Describe this object for screen readers and search.</p>
+            </div>
+          </div>
+          <button id="altTextClose" type="button" class="dialog-close" title="Close" aria-label="Close alt text"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="altTextForm" class="dialog-body object-dialog-body">
+          <label for="altTextInput">Description</label>
+          <textarea id="altTextInput" rows="4" autocomplete="off" spellcheck="true" placeholder="e.g. Bar chart of quarterly revenue" aria-describedby="altTextNote"></textarea>
+          <p id="altTextNote" class="dialog-field-note" role="status" aria-live="polite">Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.</p>
+        </form>
+        <footer class="dialog-foot">
+          <span class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button id="altTextCancel" type="button" class="dialog-button">Cancel</button>
+            <button id="altTextApply" type="submit" form="altTextForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div id="cropDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="cropTitle" aria-describedby="cropDescription">
+      <section class="dialog-card dialog-card-compact object-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">crop</span>
+            <div>
+              <h2 id="cropTitle">Crop image</h2>
+              <p id="cropDescription">Hide a percentage of each source edge. 0 keeps the whole edge.</p>
+            </div>
+          </div>
+          <button id="cropClose" type="button" class="dialog-close" title="Close" aria-label="Close crop"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="cropForm" class="dialog-body object-dialog-body">
+          <div class="crop-grid" role="group" aria-label="Crop insets in percent">
+            <label class="crop-field">Left<span class="crop-input"><input id="cropLeft" type="number" min="0" max="100" step="1" inputmode="numeric" value="0" /><span aria-hidden="true">%</span></span></label>
+            <label class="crop-field">Top<span class="crop-input"><input id="cropTop" type="number" min="0" max="100" step="1" inputmode="numeric" value="0" /><span aria-hidden="true">%</span></span></label>
+            <label class="crop-field">Right<span class="crop-input"><input id="cropRight" type="number" min="0" max="100" step="1" inputmode="numeric" value="0" /><span aria-hidden="true">%</span></span></label>
+            <label class="crop-field">Bottom<span class="crop-input"><input id="cropBottom" type="number" min="0" max="100" step="1" inputmode="numeric" value="0" /><span aria-hidden="true">%</span></span></label>
+          </div>
+          <p id="cropNote" class="dialog-field-note" role="status" aria-live="polite">Left + right (and top + bottom) must together stay under 100%.</p>
+        </form>
+        <footer class="dialog-foot">
+          <span class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button id="cropRemove" type="button" class="dialog-button">Remove crop</button>
+            <button id="cropCancel" type="button" class="dialog-button">Cancel</button>
+            <button id="cropApply" type="submit" form="cropForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="cmdPalette" class="cmd-overlay" hidden>
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
         <div class="cmd-search">
