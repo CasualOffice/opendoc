@@ -5902,7 +5902,7 @@ impl WasmDocument {
     }
 
     /// Redefines paragraph style `name` so its run and paragraph formatting match
-    /// the current selection — Word's "Update _<Style>_ to Match Selection". Every
+    /// the current selection — Word's "Update `<style>` to Match Selection". Every
     /// paragraph that references the style reflows. Round-trip safe (the style
     /// registry is regenerated on export). Errors if no paragraph style with that
     /// name exists.
