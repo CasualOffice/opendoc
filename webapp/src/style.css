@@ -2609,6 +2609,43 @@ body.modal-open {
   cursor: default;
 }
 
+/* Format painter: armed uses the shared accent-soft pressed state above; the
+   locked (sticky) state fills the brush so "one-shot" vs "keep painting" reads
+   at a glance, with a live pulse to signal it stays on. */
+.fmt.is-sticky[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  animation: format-painter-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes format-painter-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fmt.is-sticky[aria-pressed="true"] {
+    animation: none;
+  }
+}
+
+/* Paintbrush cursor affordance while armed: shown over the document pages so the
+   pointer signals it will paint formatting, not place a caret. The 24px brush
+   points to its lower-left tip (hotspot 3 21); `copy` is the graceful fallback. */
+body.is-format-painting .page-wrap,
+body.is-format-painting .page-wrap * {
+  cursor:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M3 21c1.6.4 3.4-.2 4.2-1.6.5-.9.3-2-.4-2.7-.7-.7-1.8-.9-2.7-.4C2.7 17 2.4 19.2 3 21z" fill="%23e2622a" stroke="%23000" stroke-width="1.1" stroke-linejoin="round"/><path d="M8.5 15.5 18 6a2 2 0 0 0-2.8-2.8L6 12.6z" fill="%23fff" stroke="%23000" stroke-width="1.1" stroke-linejoin="round"/></svg>')
+      3 21,
+    copy;
+}
+
 /* ---- Viewport & pages ------------------------------------------------------ */
 /* ---- Work area: nav rail · side panels · document viewport ----------------- */
 .workarea {

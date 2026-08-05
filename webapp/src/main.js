@@ -79,6 +79,7 @@ const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
 const highlightMenu = document.getElementById("highlightMenu");
 const clearFormattingBtn = document.getElementById("clearFormatting");
+const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
@@ -914,6 +915,7 @@ function setReviewMode(mode) {
   // Announce a genuine user mode change (not the load-time reset to Editing).
   if (reviewMode !== previous) {
     announceReview(`${reviewMode[0].toUpperCase()}${reviewMode.slice(1)} mode`);
+    disarmFormatPainter(); // a mode change disarms the painter (its apply path may differ)
   }
   // Entering Suggesting auto-enables the markup view so a reviewer immediately
   // sees struck deletions + author-colored insertions (Word/Docs behavior, Q1).
@@ -1912,6 +1914,7 @@ const runControls = [
   shrinkFontBtn,
   changeCaseBtn,
   clearFormattingBtn,
+  formatPainterBtn,
 ];
 const paraControls = [
   ...Object.values(alignBtns),
@@ -3528,6 +3531,13 @@ function onPointerUp(event) {
   if (finishTableColumnResize(event)) return;
   const gesture = pointerGesture;
   resetPointerGesture();
+  // Format painter: this pointer gesture landed on the document, so consume it as
+  // the paint target (a drag's range, or the word under a bare click) instead of
+  // the normal caret/link-chip behavior.
+  if (formatPainter && gesture) {
+    void paintFormatFromGesture(gesture, event);
+    return;
+  }
   if (
     gesture &&
     !gesture.shift &&
@@ -5585,6 +5595,157 @@ onButton(clearFormattingBtn, () => {
   }
   runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
 });
+
+// ---- Format painter (Word/Docs "copy formatting → paint onto target") -------
+// Single click captures the caret/selection's formatting and arms a one-shot
+// paint; the next document click (expanded to the clicked word) or drag receives
+// it, then it disarms. Double-click the brush locks it (sticky) so successive
+// targets keep receiving the format until Esc or another brush click. Formatting
+// is applied through the very same engine ops the toolbar's own Bold/color/…
+// controls use, so painted formatting is indistinguishable from hand-applied.
+let formatPainter = null; // { fmt, sticky } while armed, else null
+
+/** Snapshots the current selection/caret's run + paragraph formatting into a
+ *  plain patch. Mixed run properties (and automatic/theme colors) are left out
+ *  so painting never forces a single value onto a genuinely mixed source. */
+function captureFormatForPainter() {
+  if (!doc || !selection) return null;
+  const range = hasRange();
+  const [sn, so, en, eo] = selEndpoints();
+  const f = range
+    ? doc.selectionFormat(sn, so, en, eo)
+    : doc.caretFormat(selection.focus.node, selection.focus.offset);
+  const fmt = { bold: f.bold, italic: f.italic, underline: f.underline, strike: f.strike };
+  f.free();
+  const rs = range
+    ? doc.selectionRunStyle(sn, so, en, eo)
+    : doc.caretRunStyle(selection.focus.node, selection.focus.offset);
+  if (!rs.sizeMixed && rs.sizePoints) fmt.sizePoints = rs.sizePoints;
+  if (!rs.fontMixed && rs.font) fmt.font = rs.font;
+  if (!rs.colorMixed && rs.color) fmt.color = rs.color; // skip automatic/theme (empty)
+  if (!rs.highlightMixed && rs.highlight) fmt.highlight = rs.highlight; // includes "none"
+  if (!rs.verticalAlignMixed && rs.verticalAlign) fmt.vertAlign = rs.verticalAlign;
+  rs.free();
+  // Paragraph formatting reachable through absolute getter/setter pairs. Indent
+  // and paragraph spacing lack absolute copy ops today (relative-only), so they
+  // are intentionally not painted (tracked as a follow-up).
+  const node = selection.focus.node;
+  fmt.align = doc.alignmentAt(node, selection.focus.offset);
+  const style = doc.paragraphStyleAt(node);
+  if (style) fmt.paraStyle = style;
+  const line = doc.lineSpacingAt(node);
+  if (line) fmt.lineSpacing = line;
+  return fmt;
+}
+
+/** Applies the captured format to the current range via the same edit ops the
+ *  toolbar uses. Returns whether anything was applied. */
+async function applyPaintedFormat() {
+  const fmt = formatPainter?.fmt;
+  if (!fmt || !doc || !hasRange()) return false;
+  if (blockMutationInViewing()) return false;
+  if (reviewMode === "suggesting") {
+    setStatus("Format painter isn't tracked yet; switch to Editing to paint formatting", "error");
+    return false;
+  }
+  // Paragraph style first, so painted direct formatting overrides the style.
+  if (fmt.paraStyle) await runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, fmt.paraStyle));
+  await runToolbarEdit((a, b, c, d) =>
+    doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
+  );
+  if (fmt.sizePoints != null) await runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, fmt.sizePoints));
+  if (fmt.font) await runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, fmt.font));
+  if (fmt.color) {
+    const [r, g, b] = hexToRgb(fmt.color);
+    await runToolbarEdit((a, x, c, d) => doc.setTextColor(a, x, c, d, r, g, b));
+  }
+  if (fmt.highlight) await runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, fmt.highlight));
+  if (fmt.vertAlign) await runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, fmt.vertAlign));
+  if (fmt.align) await runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, fmt.align));
+  if (fmt.lineSpacing) await runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, fmt.lineSpacing));
+  updateToolbar();
+  return true;
+}
+
+/** Reflects the painter's armed / sticky state on the toolbar button and body
+ *  (the body flag drives the paintbrush cursor affordance over the pages). */
+function reflectFormatPainter() {
+  const armed = !!formatPainter;
+  formatPainterBtn.setAttribute("aria-pressed", String(armed));
+  formatPainterBtn.classList.toggle("is-sticky", !!formatPainter?.sticky);
+  document.body.classList.toggle("is-format-painting", armed);
+}
+
+function armFormatPainter(sticky) {
+  if (!doc || !selection) {
+    setStatus("Place the caret in text to copy its formatting", "error");
+    return;
+  }
+  const fmt = captureFormatForPainter();
+  if (!fmt) {
+    setStatus("Place the caret in text to copy its formatting", "error");
+    return;
+  }
+  formatPainter = { fmt, sticky: !!sticky };
+  reflectFormatPainter();
+  setStatus(
+    sticky
+      ? "Format painter locked — paint successive selections; Esc or click the brush to stop"
+      : "Format painter — click a word or drag over text to paint the copied formatting",
+  );
+}
+
+function disarmFormatPainter(reason) {
+  if (!formatPainter) return;
+  formatPainter = null;
+  reflectFormatPainter();
+  if (reason) setStatus(reason);
+}
+
+/** Consumes a document pointer gesture as a paint target: a drag's range, or the
+ *  word under a bare click. Disarms afterward unless the painter is locked. */
+async function paintFormatFromGesture(gesture, event) {
+  if (!hasRange()) {
+    const page = gesture?.page || pageFromClientPoint(event.clientX, event.clientY);
+    if (page) selectWord(page, event);
+  }
+  const painted = hasRange() ? await applyPaintedFormat() : false;
+  if (!formatPainter?.sticky) disarmFormatPainter();
+  else if (painted) setStatus("Painted — keep painting or press Esc to stop");
+}
+
+// Preserve the model selection on mousedown (like every other toolbar control),
+// then arm/lock/cancel on click. `detail` distinguishes single vs double click:
+// double-click locks sticky mode, a single click on an armed brush cancels it.
+formatPainterBtn.addEventListener("mousedown", (e) => e.preventDefault());
+formatPainterBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (formatPainterBtn.disabled) return;
+  if (e.detail >= 2) {
+    armFormatPainter(true);
+    return;
+  }
+  if (formatPainter) {
+    disarmFormatPainter("Format painter off");
+    return;
+  }
+  armFormatPainter(false);
+});
+
+// Escape cancels the painter before any other Escape handler (menu/selection),
+// so a stray Escape always makes the brush the first thing it puts down.
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (formatPainter && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      disarmFormatPainter("Format painter off");
+    }
+  },
+  true,
+);
+
 function suggestRunFormat(patch) {
   return runToolbarEdit((sn, so, en, eo) => {
     if (sn !== en) throw new Error("Tracked formatting requires one paragraph");
@@ -7578,6 +7739,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
+    { id: "format.painter", label: "Format painter", group: "Format", kw: "copy formatting paint brush clone style match", shortcut: "⌘⇧C", enabled: !!selection, disabledReason: "Place the caret or select text to copy its formatting", run: () => armFormatPainter(false) },
     { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
     { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
     { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
@@ -7684,6 +7846,7 @@ const APP_MENU_SECTIONS = {
     ["edit.undo", "edit.redo"],
     ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
     ["edit.selectAll", "edit.find"],
+    ["format.painter"],
   ],
   view: [
     ["view.outline", "review.toggle", "view.showChanges"],
@@ -8955,6 +9118,15 @@ document.addEventListener("keydown", async (e) => {
     return;
   }
 
+  // Word's "copy formatting" shortcut — arm the format painter from the caret /
+  // selection. Its paste twin (⌘/Ctrl+Shift+V) is taken by paste-plain, so a
+  // single armed brush + a click/drag is how the copied format is put down.
+  if (mod && e.shiftKey && lower === "c") {
+    e.preventDefault();
+    breakTypingSession();
+    armFormatPainter(false);
+    return;
+  }
   // Clipboard, select-all, history (⌘/Ctrl based).
   if (mod && lower === "c") {
     e.preventDefault();
