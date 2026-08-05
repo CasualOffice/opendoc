@@ -51,6 +51,7 @@ use casual_doc_model::v1::{
     TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
     VerticalMerge, VerticalPosition, WrapMode,
 };
+use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -240,6 +241,9 @@ enum HistoryKind {
     TableStructure,
     ObjectResize,
     ObjectMove,
+    ObjectCrop,
+    ObjectAltText,
+    ObjectDelete,
     DocumentProperties,
     PageSetup,
     StyleChange,
@@ -268,6 +272,9 @@ impl HistoryKind {
             Self::TableStructure => "Table structure",
             Self::ObjectResize => "Object resize",
             Self::ObjectMove => "Object move",
+            Self::ObjectCrop => "Crop",
+            Self::ObjectAltText => "Alt text",
+            Self::ObjectDelete => "Delete object",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
@@ -317,6 +324,11 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
         Operation::SetExtent { .. } => HistoryKind::ObjectResize,
         Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
+        Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
+        Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
+        Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
+            HistoryKind::ObjectDelete
+        }
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
@@ -773,6 +785,68 @@ impl WasmDocument {
             _ => return Err(to_js(format!("unknown wrap mode: {mode}"))),
         }
         self.commit_anchor(object, anchor)
+    }
+
+    /// Sets or clears the source-rectangle crop (`a:srcRect`) of the picture `node`
+    /// as one undoable action (`SetImageCrop`). `insets` is `[left, top, right,
+    /// bottom]`, each the fraction (0..=1) of that source edge to hide; `None` (or
+    /// an all-zero inset set) clears the crop so the whole source fills the box.
+    /// Out-of-range edges are clamped. Errors if `node` is not a croppable picture
+    /// (an inline or floating drawing) or `insets` is not exactly four values.
+    #[wasm_bindgen(js_name = setImageCrop)]
+    pub fn set_image_crop(
+        &mut self,
+        node: &str,
+        insets: Option<Vec<f64>>,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let crop = match insets {
+            None => None,
+            Some(insets) if insets.len() == 4 => Some(CropRect {
+                left: fraction_to_crop(insets[0]),
+                top: fraction_to_crop(insets[1]),
+                right: fraction_to_crop(insets[2]),
+                bottom: fraction_to_crop(insets[3]),
+            }),
+            Some(_) => return Err(to_js("crop needs four inset fractions".into())),
+        };
+        self.apply_action_caret_as(
+            vec![Operation::SetImageCrop { object, crop }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectCrop,
+        )
+        .map_err(to_js)
+    }
+
+    /// Sets or clears an object's alt text (`wp:docPr@descr`) as one undoable action
+    /// (`SetObjectDescr`). `descr` is the new text, or `None` to clear it. Errors if
+    /// `node` is not an alt-text-bearing object (an inline or floating drawing), or
+    /// the text is empty / longer than the model's byte bound.
+    #[wasm_bindgen(js_name = setObjectDescr)]
+    pub fn set_object_descr(
+        &mut self,
+        node: &str,
+        descr: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        self.apply_action_caret_as(
+            vec![Operation::SetObjectDescr { object, descr }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectAltText,
+        )
+        .map_err(to_js)
+    }
+
+    /// Removes the object `node` (an inline or floating drawing, text box, or group)
+    /// as one undoable action (`DeleteObject`); undo restores it verbatim at its
+    /// original position. Errors if `node` is not a removable object or removing it
+    /// would leave the model invalid (it is a wrapper's sole child, or would leave
+    /// two mergeable runs adjacent — the host handles those before deleting).
+    #[wasm_bindgen(js_name = deleteObject)]
+    pub fn delete_object(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        self.apply_action(vec![Operation::DeleteObject { object }])
+            .map_err(to_js)
     }
 
     /// The current wrap mode of a floating object as one of the
@@ -12715,6 +12789,13 @@ fn node_id(node: &str) -> Result<NodeId, JsValue> {
     NodeId::from_str(node).map_err(|_| to_js(format!("invalid node id: {node}")))
 }
 
+/// Converts a crop inset fraction (0..=1 of a source edge) to the model's
+/// `a:srcRect` unit (thousandths of a percent, [`CROP_FULL`] = 100%). The edit op
+/// clamps the result into the model's valid crop range.
+fn fraction_to_crop(fraction: f64) -> i32 {
+    (fraction * f64::from(CROP_FULL)).round() as i32
+}
+
 /// Where the caret lands after `op` is applied: end of an insertion, start of a
 /// deletion, start of the new paragraph after a split, and the join seam after a
 /// join (recovered from the inverse split's boundary).
@@ -13354,11 +13435,17 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             .map(first_pos_of_block)
             .unwrap_or_else(|| Pos::new(doc_id, 0)),
         Operation::DeleteBlocks { container, .. } => Pos::new(container.unwrap_or(doc_id), 0),
-        // Object resize keeps the object selected (the frontend re-draws the
-        // object chrome, not a text caret); this arm keeps the match exhaustive.
-        Operation::SetExtent { object, .. } | Operation::SetAnchor { object, .. } => {
-            Pos::new(*object, 0)
-        }
+        // Object resize / crop / alt-text keep the object selected (the frontend
+        // re-draws the object chrome, not a text caret); this arm keeps the match
+        // exhaustive.
+        Operation::SetExtent { object, .. }
+        | Operation::SetAnchor { object, .. }
+        | Operation::SetImageCrop { object, .. }
+        | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
+        // Deleting an object removes it, so its own id is a neutral placeholder (the
+        // host re-selects after the delete); its inverse re-inserts into `owner`.
+        Operation::DeleteObject { object } => Pos::new(*object, 0),
+        Operation::InsertObjectNode { owner, .. } => Pos::new(*owner, 0),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -14689,6 +14776,191 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    /// The id of the first inline/floating drawing in `blocks` (recursing wrappers,
+    /// text boxes, table cells, and block SDTs), for the object-editing test.
+    fn first_object(blocks: &[BlockNode]) -> Option<NodeId> {
+        fn in_inlines(inlines: &[InlineNode]) -> Option<NodeId> {
+            for inline in inlines {
+                match inline {
+                    InlineNode::Drawing(drawing) => return Some(drawing.id),
+                    InlineNode::AnchoredDrawing(drawing) => return Some(drawing.id),
+                    InlineNode::Hyperlink(hyperlink) => {
+                        if let Some(id) = in_inlines(&hyperlink.inlines) {
+                            return Some(id);
+                        }
+                    }
+                    InlineNode::Revision(revision) => {
+                        if let Some(id) = in_inlines(&revision.inlines) {
+                            return Some(id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    if let Some(id) = in_inlines(&paragraph.inlines) {
+                        return Some(id);
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(id) = first_object(&cell.blocks) {
+                                return Some(id);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(id) = first_object(&sdt.blocks) {
+                        return Some(id);
+                    }
+                }
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+
+    /// The `(crop, descr)` of the drawing `id`, searched like [`first_object`].
+    fn object_crop_descr(
+        blocks: &[BlockNode],
+        id: NodeId,
+    ) -> Option<(Option<CropRect>, Option<String>)> {
+        fn in_inlines(
+            inlines: &[InlineNode],
+            id: NodeId,
+        ) -> Option<(Option<CropRect>, Option<String>)> {
+            for inline in inlines {
+                match inline {
+                    InlineNode::Drawing(drawing) if drawing.id == id => {
+                        return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
+                        return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::Hyperlink(hyperlink) => {
+                        if let Some(found) = in_inlines(&hyperlink.inlines, id) {
+                            return Some(found);
+                        }
+                    }
+                    InlineNode::Revision(revision) => {
+                        if let Some(found) = in_inlines(&revision.inlines, id) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    if let Some(found) = in_inlines(&paragraph.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(found) = object_crop_descr(&cell.blocks, id) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = object_crop_descr(&sdt.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn object_crop_and_alt_text_wire_through_wasm_and_survive_reopen() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let object = first_object(d.document.body()).expect("a drawing in the corpus");
+        let node = object.to_string();
+        let expected_crop = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        };
+
+        // Crop then alt-text the image through the wasm bindings; each is its own
+        // labeled undo step and lands on the model.
+        d.set_image_crop(&node, Some(vec![0.1, 0.2, 0.05, 0.15]))
+            .expect("crop the image");
+        assert_eq!(d.undo_label(), "Crop");
+        d.set_object_descr(&node, Some("Quarterly chart".to_owned()))
+            .expect("set the alt text");
+        assert_eq!(d.undo_label(), "Alt text");
+        d.document.validate().expect("crop + alt text remain valid");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+
+        // Undo peels off the alt text, then the crop; redo replays both.
+        d.undo().expect("undo alt text");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), None))
+        );
+        d.undo().expect("undo crop");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((None, None))
+        );
+        d.redo().expect("redo crop");
+        d.redo().expect("redo alt text");
+        assert_eq!(
+            object_crop_descr(d.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+
+        // Write (export) then reopen: the crop + alt text round-trip through the
+        // real docx pipeline.
+        let bytes = d
+            .export_docx()
+            .expect("export cropped + alt-texted document");
+        let reopened = open_document(&bytes).expect("reopen the exported document");
+        let object = first_object(reopened.document.body()).expect("the drawing survived reopen");
+        assert_eq!(
+            object_crop_descr(reopened.document.body(), object),
+            Some((Some(expected_crop), Some("Quarterly chart".to_owned())))
+        );
+    }
+
+    #[test]
+    fn delete_object_wires_through_wasm_and_undo_restores_it() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let object = first_object(d.document.body()).expect("a drawing in the corpus");
+        let node = object.to_string();
+        assert!(first_object(d.document.body()).is_some());
+
+        d.delete_object(&node).expect("delete the image");
+        assert_eq!(d.undo_label(), "Delete object");
+        // The deleted drawing is gone from the model.
+        assert!(object_crop_descr(d.document.body(), object).is_none());
+
+        // Undo restores it verbatim; redo removes it again.
+        d.undo().expect("undo the delete");
+        assert!(object_crop_descr(d.document.body(), object).is_some());
+        d.redo().expect("redo the delete");
+        assert!(object_crop_descr(d.document.body(), object).is_none());
     }
 
     #[test]

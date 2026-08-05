@@ -27,6 +27,7 @@ use casual_doc_model::v1::{
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
+use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
@@ -419,6 +420,57 @@ pub enum Operation {
         object: NodeId,
         /// The new anchor (position + wrap + z-order).
         anchor: Box<DrawingAnchor>,
+    },
+    /// Set or clear a picture's source-rectangle crop (`a:srcRect`) on the resolved
+    /// inline drawing or floating anchored drawing — the model side (`CropRect`)
+    /// shipped by P1G-OBJ-MODEL. Self-inverse carrying the previous crop (the
+    /// retained-value pattern, like [`Operation::SetExtent`]); `None` clears the
+    /// crop (the whole source fills the box). An identity (all-zero) crop is
+    /// normalized to `None`, and every edge is clamped into the model's crop range.
+    /// Rejected (doc left unchanged) if `object` is not a croppable picture.
+    SetImageCrop {
+        /// The picture (inline or floating drawing) to crop.
+        object: NodeId,
+        /// The new crop, or `None` to clear it.
+        crop: Option<CropRect>,
+    },
+    /// Set or clear an object's alt text (`wp:docPr@descr`) on the resolved inline
+    /// drawing or floating anchored drawing. Self-inverse carrying the previous
+    /// descr (retained-value pattern); `None` clears it. Rejected (doc left
+    /// unchanged) if `object` is not an alt-text-bearing object, or the text is
+    /// empty / longer than the model's byte bound.
+    SetObjectDescr {
+        /// The object whose alt text is replaced.
+        object: NodeId,
+        /// The new alt text, or `None` to clear it.
+        descr: Option<String>,
+    },
+    /// Remove the resolved object node (an inline drawing, floating anchored
+    /// drawing, text box, or group) from its inline container. Inverse:
+    /// [`Operation::InsertObjectNode`], carrying the removed node + its position, so
+    /// undo restores it verbatim (the retained-content pattern, like
+    /// [`Operation::DeleteTable`]). This is a pure structural removal (surrounding
+    /// runs are not coalesced, so the retained inverse restores verbatim). Rejected
+    /// (doc left unchanged) when removing the object would leave the model invalid:
+    /// it is the sole child of a container that must stay non-empty (a hyperlink,
+    /// revision, or inline content control), or removing it would leave two
+    /// mergeable equal-property runs adjacent — the host merges/reformats those
+    /// siblings (or uses a range delete) before removing such an object.
+    DeleteObject {
+        /// The object to remove.
+        object: NodeId,
+    },
+    /// Re-insert a previously removed object node at 0-based `index` within the
+    /// inline container `owner` (the paragraph, hyperlink, or revision whose inline
+    /// list held it). The inverse vehicle for [`Operation::DeleteObject`]; its own
+    /// inverse is a [`Operation::DeleteObject`] of the re-inserted node.
+    InsertObjectNode {
+        /// The inline container to insert into (a paragraph / hyperlink / revision).
+        owner: NodeId,
+        /// The 0-based inline position within the container.
+        index: u32,
+        /// The object node to insert (its id must be the removed object's).
+        node: Box<InlineNode>,
     },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
@@ -1068,6 +1120,60 @@ pub fn apply(
                 object: *object,
                 anchor: Box::new(previous),
             })
+        }
+        Operation::SetImageCrop { object, crop } => {
+            // Normalize an identity crop to "no crop" and clamp every edge into the
+            // model's round-trippable range before it is stored.
+            let crop = crop.map(CropRect::clamped).filter(|c| !c.is_identity());
+            let previous =
+                set_object_crop(doc.body_mut(), *object, crop).ok_or(EditError::NodeNotFound)?;
+            Ok(Operation::SetImageCrop {
+                object: *object,
+                crop: previous,
+            })
+        }
+        Operation::SetObjectDescr { object, descr } => {
+            // The model bounds alt text to non-empty and at most `MAX_DESCR_BYTES`;
+            // enforce it before mutating because an inline drawing's `descr` is not
+            // length-checked by `Document::validate`.
+            if let Some(text) = descr
+                && (text.is_empty() || text.len() > MAX_DESCR_BYTES)
+            {
+                return Err(EditError::ValueTooLarge);
+            }
+            let previous =
+                set_object_descr(doc.body_mut(), *object, descr).ok_or(EditError::NodeNotFound)?;
+            if let Err(_err) = doc.validate() {
+                // Roll back: any residual model rule (e.g. the anchored path's own
+                // bound) must not leave a partial mutation behind.
+                set_object_descr(doc.body_mut(), *object, &previous);
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetObjectDescr {
+                object: *object,
+                descr: previous,
+            })
+        }
+        Operation::DeleteObject { object } => {
+            let (owner, index, node) =
+                remove_object(doc.body_mut(), *object).ok_or(EditError::NodeNotFound)?;
+            if let Err(_err) = doc.validate() {
+                // Roll back: removing the object emptied a container that must stay
+                // non-empty (a hyperlink / revision / inline SDT's sole child).
+                let _ = try_insert_object(doc.body_mut(), owner, index, &node);
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::InsertObjectNode {
+                owner,
+                index,
+                node: Box::new(node),
+            })
+        }
+        Operation::InsertObjectNode { owner, index, node } => {
+            if !try_insert_object(doc.body_mut(), *owner, *index, node)? {
+                return Err(EditError::NodeNotFound);
+            }
+            Ok(Operation::DeleteObject { object: node.id() })
         }
         Operation::SetTableCellProperties { cell, properties } => {
             let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
@@ -1851,6 +1957,340 @@ fn set_object_anchor_in_inlines(
         }
     }
     None
+}
+
+/// Sets or clears the source-rectangle crop of the picture `object` (an inline
+/// `Drawing` or floating `AnchoredDrawing`), searched the same way as
+/// [`set_object_extent`] (hyperlink/revision wrappers, text-box bodies, table
+/// cells, block SDTs). Returns the **previous** crop; `None` if `object` is not a
+/// croppable picture (a text box / group has no `a:srcRect`).
+/// [`Operation::SetImageCrop`]'s target.
+fn set_object_crop(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    crop: Option<CropRect>,
+) -> Option<Option<CropRect>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut paragraph.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_object_crop(&mut cell.blocks, object, crop) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_object_crop(&mut sdt.blocks, object, crop) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_object_crop_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    crop: Option<CropRect>,
+) -> Option<Option<CropRect>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.crop, crop));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.crop, crop));
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(prev) = set_object_crop(&mut text_box.blocks, object, crop) {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut hyperlink.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(prev) = set_object_crop_in_inlines(&mut revision.inlines, object, crop)
+                {
+                    return Some(prev);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Sets or clears the alt text of the object `object` (an inline `Drawing` or
+/// floating `AnchoredDrawing`), searched the same way as [`set_object_extent`].
+/// Returns the **previous** alt text; `None` if `object` is not an
+/// alt-text-bearing object. [`Operation::SetObjectDescr`]'s target.
+fn set_object_descr(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    descr: &Option<String>,
+) -> Option<Option<String>> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut paragraph.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(prev) = set_object_descr(&mut cell.blocks, object, descr) {
+                            return Some(prev);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(prev) = set_object_descr(&mut sdt.blocks, object, descr) {
+                    return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_object_descr_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    descr: &Option<String>,
+) -> Option<Option<String>> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.descr, descr.clone()));
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(core::mem::replace(&mut drawing.descr, descr.clone()));
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(prev) = set_object_descr(&mut text_box.blocks, object, descr) {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut hyperlink.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(prev) =
+                    set_object_descr_in_inlines(&mut revision.inlines, object, descr)
+                {
+                    return Some(prev);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `node` is a removable object (the target set of
+/// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
+/// text box, or a DrawingML group.
+fn is_object_node(node: &InlineNode) -> bool {
+    matches!(
+        node,
+        InlineNode::Drawing(_)
+            | InlineNode::AnchoredDrawing(_)
+            | InlineNode::TextBox(_)
+            | InlineNode::Group(_)
+    )
+}
+
+/// Removes the object `object` from its inline container, searched the same way as
+/// [`set_object_extent`]. Returns `(owner, index, node)` — the id of the inline
+/// container the object was removed from (a paragraph, hyperlink, or revision), the
+/// 0-based inline position it occupied, and the removed node — so
+/// [`Operation::DeleteObject`] can build an exact-restore inverse. `None` if
+/// `object` is not a removable object.
+fn remove_object(blocks: &mut [BlockNode], object: NodeId) -> Option<(NodeId, u32, InlineNode)> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) =
+                    remove_object_from_inlines(paragraph.id, &mut paragraph.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(found) = remove_object(&mut cell.blocks, object) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = remove_object(&mut sdt.blocks, object) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn remove_object_from_inlines(
+    owner: NodeId,
+    inlines: &mut Vec<InlineNode>,
+    object: NodeId,
+) -> Option<(NodeId, u32, InlineNode)> {
+    // A direct child of this inline list: remove it and record its position.
+    if let Some(index) = inlines
+        .iter()
+        .position(|node| node.id() == object && is_object_node(node))
+    {
+        let node = inlines.remove(index);
+        return Some((owner, index as u32, node));
+    }
+    // Otherwise descend into wrappers (which own their own inline lists) and
+    // text-box bodies, exactly as the resize/anchor resolvers do.
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(found) =
+                    remove_object_from_inlines(hyperlink.id, &mut hyperlink.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(found) =
+                    remove_object_from_inlines(revision.id, &mut revision.inlines, object)
+                {
+                    return Some(found);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(found) = remove_object(&mut text_box.blocks, object) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Inserts `node` at 0-based inline `index` within the container `owner` (a
+/// paragraph, hyperlink, or revision), searched the same way as [`remove_object`].
+/// The re-insertion target for [`Operation::InsertObjectNode`]. Returns `Ok(true)`
+/// when inserted, `Ok(false)` when `owner` is not found, and `Err` when `owner` is
+/// found but `index` is past the end of its inline list.
+fn try_insert_object(
+    blocks: &mut [BlockNode],
+    owner: NodeId,
+    index: u32,
+    node: &InlineNode,
+) -> Result<bool, EditError> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if paragraph.id == owner {
+                    insert_object_at(&mut paragraph.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut paragraph.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if try_insert_object(&mut cell.blocks, owner, index, node)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if try_insert_object(&mut sdt.blocks, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    Ok(false)
+}
+
+fn try_insert_object_in_inlines(
+    inlines: &mut [InlineNode],
+    owner: NodeId,
+    index: u32,
+    node: &InlineNode,
+) -> Result<bool, EditError> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Hyperlink(hyperlink) => {
+                if hyperlink.id == owner {
+                    insert_object_at(&mut hyperlink.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut hyperlink.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if revision.id == owner {
+                    insert_object_at(&mut revision.inlines, index, node)?;
+                    return Ok(true);
+                }
+                if try_insert_object_in_inlines(&mut revision.inlines, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if try_insert_object(&mut text_box.blocks, owner, index, node)? {
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
+}
+
+fn insert_object_at(
+    inlines: &mut Vec<InlineNode>,
+    index: u32,
+    node: &InlineNode,
+) -> Result<(), EditError> {
+    let idx = index as usize;
+    if idx > inlines.len() {
+        return Err(EditError::OffsetOutOfRange);
+    }
+    inlines.insert(idx, node.clone());
+    Ok(())
 }
 
 /// The mutable block list of the cell or SDT with id `id`, searched recursively —
@@ -3714,6 +4154,488 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         ));
+    }
+
+    /// Registers one PNG media part and returns the definitions holding it.
+    fn media_defs(media: casual_doc_model::v1::MediaId) -> Definitions {
+        use casual_doc_model::v1::MediaReference;
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        definitions
+    }
+
+    /// An inline drawing referencing `media`, with the given optional crop/descr.
+    fn drawing(
+        id: u64,
+        media: casual_doc_model::v1::MediaId,
+        descr: Option<String>,
+        crop: Option<CropRect>,
+    ) -> InlineNode {
+        use casual_doc_model::v1::{Drawing, Extent};
+        InlineNode::Drawing(Drawing {
+            id: n(id),
+            media,
+            extent: Some(Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            }),
+            descr,
+            crop,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        })
+    }
+
+    #[test]
+    fn set_image_crop_sets_clears_clamps_and_round_trips() {
+        use casual_doc_model::v1::{CROP_MAX, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 900).unwrap());
+        let drawing_id = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![run(3, "before"), drawing(50, media, None, None)],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+
+        // An out-of-range edge is clamped into the model's crop range.
+        let requested = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 999_999,
+        };
+        let stored = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: CROP_MAX,
+        };
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(requested),
+            },
+        )
+        .expect("crop the drawing");
+        // A freshly cropped image had no prior crop.
+        assert_eq!(
+            inverse,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            }
+        );
+        let crop_of = |doc: &Document| {
+            let BlockNode::Paragraph(p) = &doc.body()[0] else {
+                unreachable!()
+            };
+            let InlineNode::Drawing(dr) = &p.inlines[1] else {
+                panic!("the drawing is intact");
+            };
+            dr.crop
+        };
+        assert_eq!(crop_of(&d), Some(stored));
+
+        // Undo restores the un-cropped state, and redo re-applies the clamped crop.
+        apply(&mut d, &mut ids, &inverse).expect("undo the crop");
+        assert_eq!(crop_of(&d), None);
+        let clear = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(requested),
+            },
+        )
+        .expect("redo the crop");
+        assert_eq!(crop_of(&d), Some(stored));
+
+        // Clearing carries the previous crop, so its own inverse restores it.
+        assert_eq!(
+            clear,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            }
+        );
+        let restore = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: None,
+            },
+        )
+        .expect("clear the crop");
+        assert_eq!(crop_of(&d), None);
+        assert_eq!(
+            restore,
+            Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(stored),
+            }
+        );
+
+        // An identity (all-zero) crop is normalized to "no crop".
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetImageCrop {
+                object: drawing_id,
+                crop: Some(CropRect::default()),
+            },
+        )
+        .expect("identity crop is a no-op clear");
+        assert_eq!(crop_of(&d), None);
+
+        // A text box has no `a:srcRect`; an unknown object is rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetImageCrop {
+                    object: n(999),
+                    crop: Some(stored),
+                },
+            ),
+            Err(EditError::NodeNotFound)
+        ));
+    }
+
+    #[test]
+    fn set_object_descr_sets_clears_round_trips_and_bounds_length() {
+        use casual_doc_model::v1::{MAX_DESCR_BYTES, MediaId};
+        let media = MediaId::new(NodeId::from_parts(7, 901).unwrap());
+        let drawing_id = n(50);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![drawing(50, media, None, None)])],
+            media_defs(media),
+        )
+        .expect("valid document with a registered media part");
+        let mut ids = IdGenerator::new(9);
+
+        let descr_of = |doc: &Document| {
+            let BlockNode::Paragraph(p) = &doc.body()[0] else {
+                unreachable!()
+            };
+            let InlineNode::Drawing(dr) = &p.inlines[0] else {
+                panic!("the drawing is intact");
+            };
+            dr.descr.clone()
+        };
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: Some("Company logo".to_owned()),
+            },
+        )
+        .expect("set the alt text");
+        assert_eq!(
+            inverse,
+            Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: None,
+            }
+        );
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // Undo clears it again; redo restores it.
+        apply(&mut d, &mut ids, &inverse).expect("undo the alt text");
+        assert_eq!(descr_of(&d), None);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object: drawing_id,
+                descr: Some("Company logo".to_owned()),
+            },
+        )
+        .expect("redo the alt text");
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // An empty alt text is rejected and the prior value survives.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetObjectDescr {
+                    object: drawing_id,
+                    descr: Some(String::new()),
+                },
+            ),
+            Err(EditError::ValueTooLarge)
+        ));
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+
+        // An over-long alt text is rejected the same way.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetObjectDescr {
+                    object: drawing_id,
+                    descr: Some("x".repeat(MAX_DESCR_BYTES + 1)),
+                },
+            ),
+            Err(EditError::ValueTooLarge)
+        ));
+        assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+    }
+
+    #[test]
+    fn delete_object_removes_an_inline_drawing_and_inverse_restores_it() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 902).unwrap());
+        let drawing_id = n(50);
+        let original = drawing(50, media, Some("Alt".to_owned()), None);
+        // The surrounding runs carry different properties so removing the object
+        // between them does not leave two mergeable equal-property runs adjacent.
+        let bold_before = InlineNode::Run(Run {
+            id: n(3),
+            properties: RunProperties {
+                bold: Some(true),
+                ..RunProperties::default()
+            },
+            text: "before".to_owned(),
+        });
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![bold_before, original.clone(), run(4, "after")],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with an inline drawing");
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteObject { object: drawing_id },
+        )
+        .expect("delete the drawing");
+        // The inverse re-inserts the exact node at its original inline position.
+        assert_eq!(
+            inverse,
+            Operation::InsertObjectNode {
+                owner: n(2),
+                index: 1,
+                node: Box::new(original.clone()),
+            }
+        );
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 2);
+        assert!(!p.inlines.iter().any(|node| node.id() == drawing_id));
+
+        // Undo restores the drawing verbatim at index 1.
+        let redo = apply(&mut d, &mut ids, &inverse).expect("undo the delete");
+        assert_eq!(redo, Operation::DeleteObject { object: drawing_id });
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 3);
+        assert_eq!(p.inlines[1], original);
+
+        // Redo removes it again.
+        apply(&mut d, &mut ids, &redo).expect("redo the delete");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 2);
+
+        // An unknown object is rejected.
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::DeleteObject { object: n(999) }
+            ),
+            Err(EditError::NodeNotFound)
+        ));
+
+        // Removing an object wedged between two equal-property runs would leave them
+        // mergeable-adjacent (model-invalid); the op is refused and rolls back.
+        let wedged_id = n(80);
+        let mut wedged = Document::new(
+            n(1001),
+            vec![para(
+                5,
+                vec![
+                    run(6, "left"),
+                    drawing(80, media, None, None),
+                    run(7, "right"),
+                ],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a wedged drawing");
+        assert!(matches!(
+            apply(
+                &mut wedged,
+                &mut ids,
+                &Operation::DeleteObject { object: wedged_id },
+            ),
+            Err(EditError::Unsupported)
+        ));
+        let BlockNode::Paragraph(p) = &wedged.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines.len(), 3);
+        assert_eq!(p.inlines[1].id(), wedged_id);
+    }
+
+    #[test]
+    fn delete_object_removes_an_anchored_float_and_rejects_emptying_a_wrapper() {
+        use casual_doc_model::v1::{
+            AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, Extent,
+            HorizontalAnchor, HorizontalPosition, MediaId, VerticalAnchor, VerticalPosition,
+            WrapDistances, WrapMode,
+        };
+        let media = MediaId::new(NodeId::from_parts(7, 903).unwrap());
+        let float_id = n(60);
+        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: float_id,
+            media,
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Page,
+                    position: HorizontalPosition::Offset(100_000),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Page,
+                    position: VerticalPosition::Offset(50_000),
+                },
+                wrap: WrapMode::None,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: true,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        });
+        // A clickable image: a hyperlink whose only child is a drawing. Removing it
+        // would empty the hyperlink, which the model forbids.
+        let linked_id = n(70);
+        let linked_drawing = drawing(70, media, None, None);
+        let hyperlink = InlineNode::Hyperlink(Hyperlink {
+            id: n(71),
+            target: external("https://example.com"),
+            tooltip: None,
+            inlines: vec![linked_drawing],
+        });
+        let mut d = Document::new(
+            n(1000),
+            vec![
+                para(2, vec![run(3, "anchor"), float.clone()]),
+                para(4, vec![hyperlink]),
+            ],
+            media_defs(media),
+        )
+        .expect("valid document with a floating drawing");
+        let mut ids = IdGenerator::new(9);
+
+        // The float round-trips through delete + undo verbatim.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteObject { object: float_id },
+        )
+        .expect("delete the float");
+        assert_eq!(
+            inverse,
+            Operation::InsertObjectNode {
+                owner: n(2),
+                index: 1,
+                node: Box::new(float.clone()),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).expect("undo the float delete");
+        let BlockNode::Paragraph(p) = &d.body()[0] else {
+            unreachable!()
+        };
+        assert_eq!(p.inlines[1], float);
+
+        // Deleting the sole child of a hyperlink is refused, and the document is
+        // left unchanged (the drawing is restored on rollback).
+        assert!(matches!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::DeleteObject { object: linked_id }
+            ),
+            Err(EditError::Unsupported)
+        ));
+        let BlockNode::Paragraph(p) = &d.body()[1] else {
+            unreachable!()
+        };
+        let InlineNode::Hyperlink(link) = &p.inlines[0] else {
+            panic!("the hyperlink is intact");
+        };
+        assert_eq!(link.inlines.len(), 1);
+        assert_eq!(link.inlines[0].id(), linked_id);
+    }
+
+    #[test]
+    fn cropped_and_alt_texted_image_survives_a_model_write_reopen() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 904).unwrap());
+        let crop = CropRect {
+            left: 10_000,
+            top: 20_000,
+            right: 5_000,
+            bottom: 15_000,
+        };
+        let m1 = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![drawing(
+                    50,
+                    media,
+                    Some("Quarterly chart".to_owned()),
+                    Some(crop),
+                )],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document with a cropped, alt-texted image");
+        // Write (serialize) then reopen (deserialize) the model: the crop + alt text
+        // round-trip verbatim.
+        let json = serde_json::to_string(&m1).expect("serialize the model");
+        let m2: Document = serde_json::from_str(&json).expect("reopen the model");
+        assert_eq!(m1, m2);
     }
 
     #[test]
