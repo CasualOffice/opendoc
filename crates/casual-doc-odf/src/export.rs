@@ -1024,6 +1024,9 @@ struct Writer {
     /// Count of emitted table-of-contents, for minting a document-unique
     /// `text:name` when the model carries no tag.
     toc_count: usize,
+    /// Every `text:name` already emitted for a TOC, so a minted or model-carried
+    /// name is never duplicated across indexes (ODF requires unique index names).
+    emitted_toc_names: BTreeSet<String>,
     emitted_footnotes: BTreeSet<NoteId>,
     emitted_endnotes: BTreeSet<NoteId>,
     footnote_occurrences: BTreeMap<NoteId, usize>,
@@ -1064,6 +1067,7 @@ impl Writer {
             endnotes: BTreeMap::new(),
             comments: BTreeMap::new(),
             toc_count: 0,
+            emitted_toc_names: BTreeSet::new(),
             emitted_footnotes: BTreeSet::new(),
             emitted_endnotes: BTreeSet::new(),
             footnote_occurrences: BTreeMap::new(),
@@ -2062,16 +2066,23 @@ impl Writer {
     /// Emits a TOC-shaped block content control as `text:table-of-content`. The
     /// index-body carries the model's cached entry blocks; the level-template
     /// source is minimal (a single outline level). `text:name` comes from the
-    /// model tag when representable, else a document-unique minted ordinal.
+    /// model tag when representable, else a minted ordinal — and is then made
+    /// document-unique (ODF requires distinct index names), since the model does
+    /// not enforce tag uniqueness and a tag can even equal a minted pattern.
     fn write_toc(&mut self, sdt: &BlockSdt, depth: usize) -> Result<(), OdfError> {
         self.check_depth(depth)?;
-        let name = match &sdt.properties.tag {
+        let mut name = match &sdt.properties.tag {
             Some(tag) if is_representable(tag) => tag.clone(),
             _ => {
                 self.toc_count += 1;
                 format!("Table of Contents{}", self.toc_count)
             }
         };
+        while self.emitted_toc_names.contains(&name) {
+            self.toc_count += 1;
+            name = format!("Table of Contents{}", self.toc_count);
+        }
+        self.emitted_toc_names.insert(name.clone());
         self.push("<text:table-of-content text:name=\"")?;
         push_escaped_attribute(&mut self.xml, &name, self.limits.max_content_bytes)?;
         self.push("\"><text:table-of-content-source text:outline-level=\"10\"/><text:index-body>")?;

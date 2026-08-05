@@ -879,6 +879,40 @@ fn unnamed_table_of_content_mints_a_stable_name() {
 }
 
 #[test]
+fn colliding_toc_names_are_made_unique_on_export() {
+    // A tagged TOC named exactly like the mint pattern plus an unnamed sibling
+    // would collide (duplicate text:name = spec-invalid). Export must make them
+    // unique, and the result must still be a byte-exact fixed point.
+    let body = r#"<text:table-of-content text:name="Table of Contents1"><text:index-body><text:p>A</text:p></text:index-body></text:table-of-content><text:table-of-content><text:index-body><text:p>B</text:p></text:index-body></text:table-of-content>"#;
+    let import = import_content_xml(
+        &content("1.4", body),
+        OdfVersion::V1_4,
+        OdfImportLimits::default(),
+    )
+    .unwrap();
+    import.document.validate().unwrap();
+    let first = write_odt(&import.document, OdfExportLimits::default()).unwrap();
+    let mut package = OdtPackage::open(&first.bytes, OdfPackageLimits::default()).unwrap();
+    let content_xml = String::from_utf8(package.read_part(crate::CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_xml.contains(r#"text:name="Table of Contents1""#)
+            && content_xml.contains(r#"text:name="Table of Contents2""#),
+        "colliding TOC names not disambiguated: {content_xml}"
+    );
+    assert_eq!(
+        content_xml
+            .matches(r#"text:name="Table of Contents1""#)
+            .count(),
+        1,
+        "the mint-pattern name must appear exactly once"
+    );
+    let reopened = package.import_document(OdfImportLimits::default()).unwrap();
+    reopened.document.validate().unwrap();
+    let second = write_odt(&reopened.document, OdfExportLimits::default()).unwrap();
+    assert_eq!(first.bytes, second.bytes);
+}
+
+#[test]
 fn comment_annotation_round_trips_to_a_fixed_point() {
     // A two-word author with an ampersand exercises PCDATA escaping and the
     // whitespace path that a naive `write_text` (which encodes spaces as
