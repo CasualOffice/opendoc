@@ -1075,6 +1075,9 @@ impl Document {
                             "drawing.descr",
                         )?;
                     }
+                    if let Some(crop) = &drawing.crop {
+                        check_crop(crop, "drawing.crop")?;
+                    }
                     previous_run_properties = None;
                 }
                 InlineNode::AnchoredDrawing(drawing) => {
@@ -1102,6 +1105,9 @@ impl Document {
                             !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
                             "anchoredDrawing.descr",
                         )?;
+                    }
+                    if let Some(crop) = &drawing.crop {
+                        check_crop(crop, "anchoredDrawing.crop")?;
                     }
                     previous_run_properties = None;
                 }
@@ -1457,6 +1463,9 @@ impl Document {
                             !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES,
                             "group.picture.descr",
                         )?;
+                    }
+                    if let Some(crop) = &picture.crop {
+                        check_crop(crop, "group.picture.crop")?;
                     }
                 }
                 GroupChild::TextBox(text_box) => {
@@ -2604,6 +2613,16 @@ fn check_wrap_distances(distances: &WrapDistances) -> Result<(), ModelError> {
             (0..=MAX_EMU).contains(&distance),
             "drawingAnchor.wrapDistances",
         )?;
+    }
+    Ok(())
+}
+
+/// Bounds the four `a:srcRect` crop edges to `CROP_MIN..=CROP_MAX`, the range
+/// import clamps into and that [`CropRect`] round-trips verbatim; a value outside
+/// it names a source rectangle the model does not represent.
+fn check_crop(crop: &CropRect, property: &'static str) -> Result<(), ModelError> {
+    for edge in [crop.left, crop.top, crop.right, crop.bottom] {
+        check_domain((CROP_MIN..=CROP_MAX).contains(&edge), property)?;
     }
     Ok(())
 }
