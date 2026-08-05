@@ -268,6 +268,37 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 // the same `setParagraphStyle` path.
 const stylesGallery = document.getElementById("stylesGallery");
 
+/** Draws a gallery card's label IN the style it represents, from the engine's
+ *  resolved preview (font family/size/weight/slant/underline/color) — Word's
+ *  Styles gallery. Degrades to the plain slug look if the preview is
+ *  unavailable. The preview font size is clamped so a 28pt Title still fits the
+ *  dense 30px card while keeping the visible hierarchy. */
+function applyStyleCardPreview(label, name) {
+  if (!doc || typeof doc.stylePreview !== "function") return;
+  let preview;
+  try {
+    preview = doc.stylePreview(name);
+  } catch {
+    return; // unknown style — keep the plain label (graceful degrade)
+  }
+  if (!preview) return;
+  const family = preview.fontFamily;
+  if (family) label.style.fontFamily = `"${family.replace(/"/g, "")}", sans-serif`;
+  const size = preview.sizePoints;
+  if (size > 0) {
+    // Map the point size into the card's bounded px range, preserving hierarchy.
+    label.style.fontSize = `${Math.max(11, Math.min(17, Math.round(size * 0.9)))}px`;
+  }
+  label.style.fontWeight = preview.bold ? "700" : "450";
+  label.style.fontStyle = preview.italic ? "italic" : "normal";
+  label.style.textDecoration = preview.underline ? "underline" : "none";
+  // Explicit RGB colors preview as authored; automatic/theme colors resolve to
+  // an empty string and inherit the card's theme-aware ink (light/dark safe).
+  label.style.color = preview.color || "";
+  const align = preview.alignment;
+  label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
+}
+
 /** Rebuilds the Styles gallery cards from the document's style names. */
 function buildStylesGallery(styles) {
   if (!stylesGallery) return;
@@ -291,6 +322,7 @@ function buildStylesGallery(styles) {
     const label = document.createElement("span");
     label.className = "style-card-name";
     label.textContent = name;
+    applyStyleCardPreview(label, name);
     card.appendChild(label);
     card.addEventListener("click", () => {
       if (card.disabled) return;
@@ -307,6 +339,95 @@ function syncStylesGalleryActive() {
   for (const card of stylesGallery.children) {
     card.setAttribute("aria-selected", String(card.dataset.style === active));
   }
+}
+
+// --- Named-style edits: update-from-selection and create-from-selection ------
+// Word's two core Styles verbs, both routed through the same engine op
+// (`SetStyleDefinition`): "Update <Style> to match selection" mutates the style
+// definition so every paragraph using it reflows; "Create a style" adds a new
+// paragraph style (based on the current one) and applies it. Both rebuild the
+// gallery previews and dropdowns from the (now changed) style registry.
+const styleNameDialog = document.getElementById("styleNameDialog");
+const styleNameInput = document.getElementById("styleNameInput");
+const styleNameConfirm = document.getElementById("styleNameConfirm");
+const styleNameCancel = document.getElementById("styleNameCancel");
+const styleNameClose = document.getElementById("styleNameClose");
+let styleNameResolve = null;
+
+/** Opens the create-style dialog and resolves to the entered name, or null if
+ *  cancelled. A single in-flight prompt at a time. */
+function promptStyleName() {
+  if (!styleNameDialog) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    styleNameResolve = resolve;
+    styleNameInput.value = "";
+    styleNameDialog.hidden = false;
+    styleNameInput.focus();
+  });
+}
+
+function closeStyleNameDialog(result) {
+  if (!styleNameDialog || styleNameDialog.hidden) return;
+  styleNameDialog.hidden = true;
+  const resolve = styleNameResolve;
+  styleNameResolve = null;
+  if (resolve) resolve(result);
+}
+
+if (styleNameDialog) {
+  styleNameConfirm.addEventListener("click", () => closeStyleNameDialog(styleNameInput.value.trim()));
+  styleNameCancel.addEventListener("click", () => closeStyleNameDialog(null));
+  styleNameClose.addEventListener("click", () => closeStyleNameDialog(null));
+  styleNameDialog.addEventListener("click", (event) => {
+    if (event.target === styleNameDialog) closeStyleNameDialog(null);
+  });
+  styleNameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      closeStyleNameDialog(styleNameInput.value.trim());
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeStyleNameDialog(null);
+    }
+  });
+}
+
+/** The paragraph style applied at the caret, or "" when none — the target of
+ *  "Update to match selection" and the base for a new style. */
+function currentParagraphStyleName() {
+  if (!doc || !selection) return "";
+  try {
+    return doc.paragraphStyleAt(selection.focus.node) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Redefines paragraph style `name` to match the selection (Word's "Update
+ *  <Style> to Match Selection"). Every paragraph using it reflows. */
+async function updateStyleFromSelection(name) {
+  if (!doc || !name) return;
+  await runToolbarEdit((a, b, c, d) => doc.updateStyleFromSelection(a, b, c, d, name));
+  populateStyles();
+  updateToolbar();
+  setStatus(`Updated “${name}” to match the selection`);
+}
+
+/** Creates a new paragraph style from the selection and applies it (Word's
+ *  "Create a Style"). Prompts for the name; refuses duplicates via the engine. */
+async function createStyleFromSelection() {
+  if (!doc || !selection) return;
+  const name = await promptStyleName();
+  if (!name) return;
+  const exists = doc.listStyles().some((s) => s.toLowerCase() === name.toLowerCase());
+  if (exists) {
+    setStatus(`A style named “${name}” already exists`, "error");
+    return;
+  }
+  await runToolbarEdit((a, b, c, d) => doc.createStyleFromSelection(a, b, c, d, name));
+  populateStyles();
+  updateToolbar();
+  setStatus(`Created style “${name}”`);
 }
 
 // --- Ribbon overflow: collapse groups that don't fit into a "⋯" menu ---------
@@ -7359,6 +7480,27 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => reviewAcceptAll.click() },
     { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => reviewRejectAll.click() },
   ];
+  const styleTarget = currentParagraphStyleName();
+  cmds.push(
+    {
+      id: "style.updateFromSelection",
+      label: styleTarget ? `Update “${styleTarget}” to match selection` : "Update style to match selection",
+      group: "Style",
+      kw: "redefine modify match formatting paragraph style",
+      enabled: !!styleTarget,
+      disabledReason: "Place the caret in a paragraph that uses a named style",
+      run: () => updateStyleFromSelection(styleTarget),
+    },
+    {
+      id: "style.createFromSelection",
+      label: "Create style from selection…",
+      group: "Style",
+      kw: "new define save formatting paragraph style",
+      enabled: !!selection,
+      disabledReason: "Place the caret in a paragraph first",
+      run: () => createStyleFromSelection(),
+    },
+  );
   if (doc) {
     for (const name of doc.listStyles()) {
       cmds.push({
@@ -7406,6 +7548,7 @@ const APP_MENU_SECTIONS = {
     ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
     ["paragraph.list.bullet", "paragraph.list.numbered"],
     ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
+    ["style.updateFromSelection", "style.createFromSelection"],
   ],
   tools: [["layout.pageSetup", "layout.paragraph"], ["file.properties", "view.settings"]],
   help: [["help.commands"]],

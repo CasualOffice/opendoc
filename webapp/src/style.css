@@ -2332,10 +2332,11 @@ body.modal-open {
   font-weight: 450;
 }
 
-/* Render the well-known built-in styles roughly in their own look so the
-   gallery previews the style (template.png). Arbitrary/custom document styles
-   fall back to the plain card text above — an approximation, since the engine
-   exposes style names but not per-style metrics to the webapp. */
+/* Fallback look for the well-known built-in styles. The gallery now draws each
+   card IN its own style from the engine's resolved `stylePreview` (font
+   family/size/weight/slant/underline/color, applied inline in `main.js`), which
+   overrides these class rules. These remain as a graceful degrade for when the
+   preview is unavailable (e.g. before a document's engine is ready). */
 .style-card-title .style-card-name { font-size: 15px; font-weight: 700; }
 .style-card-heading-1 .style-card-name { font-size: 14px; font-weight: 700; }
 .style-card-heading-2 .style-card-name { font-size: 13px; font-weight: 650; }

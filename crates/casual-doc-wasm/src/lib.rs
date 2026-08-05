@@ -45,7 +45,7 @@ use casual_doc_model::v1::{
     NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
     PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
     PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
-    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, StyleId,
+    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, Style, StyleId,
     StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
     TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
     VerticalMerge, VerticalPosition, WrapMode,
@@ -240,6 +240,7 @@ enum HistoryKind {
     ObjectMove,
     DocumentProperties,
     PageSetup,
+    StyleChange,
     Review,
     ReviewTyping,
 }
@@ -264,6 +265,7 @@ impl HistoryKind {
             Self::ObjectMove => "Object move",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
+            Self::StyleChange => "Style change",
             Self::Review => "Review",
             Self::ReviewTyping => "Review typing",
         }
@@ -313,6 +315,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
+        Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
     }
 }
 
@@ -5850,6 +5853,196 @@ impl WasmDocument {
             .and_then(|id| self.document.definitions().styles.get(&id).cloned())
             .and_then(|style| style.name)
             .unwrap_or_default()
+    }
+
+    /// The resolved visual preview of paragraph style `name` — the font family,
+    /// size, weight, slant, underline, text color, and alignment a paragraph
+    /// carrying *only* that style would render with. Powers the Styles gallery,
+    /// where each card is drawn in its own style (Word's Styles gallery). Returns
+    /// a default (empty family, zero size) when the style is unknown, so the
+    /// gallery degrades gracefully instead of throwing.
+    #[wasm_bindgen(js_name = stylePreview)]
+    #[must_use]
+    pub fn style_preview(&self, name: &str) -> StylePreview {
+        let Some(id) = self.style_id_by_name(name) else {
+            return StylePreview::default();
+        };
+        let cascade = StyleCascade::new(self.document.definitions());
+        let anchor = ParagraphProperties {
+            style_ref: Some(id),
+            ..ParagraphProperties::default()
+        };
+        let run = cascade.resolve_run(cascade.paragraph_style(&anchor), &RunProperties::default());
+        let paragraph = cascade.resolve_paragraph(&anchor);
+        let scheme = self.document.definitions().font_scheme.as_ref();
+        let font_family = requested_font_family(&run, scheme)
+            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned());
+        let color = match run.color {
+            Some(Color::Rgb(c)) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
+            // Automatic/theme colors surface as no explicit swatch — the card
+            // inherits the gallery's default text color.
+            _ => String::new(),
+        };
+        let alignment = match paragraph.alignment {
+            Some(Alignment::Center) => "center",
+            Some(Alignment::End) => "end",
+            Some(Alignment::Justify) => "justify",
+            _ => "start",
+        }
+        .to_owned();
+        StylePreview {
+            font_family,
+            size_points: run.size_half_points.map_or(0.0, |hp| hp as f32 / 2.0),
+            bold: run.bold.unwrap_or(false),
+            italic: run.italic.unwrap_or(false),
+            underline: run.underline.unwrap_or(false),
+            color,
+            alignment,
+        }
+    }
+
+    /// Redefines paragraph style `name` so its run and paragraph formatting match
+    /// the current selection — Word's "Update _<Style>_ to Match Selection". Every
+    /// paragraph that references the style reflows. Round-trip safe (the style
+    /// registry is regenerated on export). Errors if no paragraph style with that
+    /// name exists.
+    #[wasm_bindgen(js_name = updateStyleFromSelection)]
+    pub fn update_style_from_selection(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        name: &str,
+    ) -> Result<EditResult, JsValue> {
+        let (start, _end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        let id = self
+            .style_id_by_name(name)
+            .ok_or_else(|| to_js(format!("no paragraph style named {name:?}")))?;
+        let mut style = self
+            .document
+            .definitions()
+            .styles
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| to_js("style not found".into()))?;
+        style.run = Some(self.selection_style_run(start));
+        style.paragraph = Some(self.selection_style_paragraph(start, style.paragraph.clone()));
+        self.apply_action_caret_as(
+            vec![Operation::SetStyleDefinition {
+                id,
+                style: Some(Box::new(style)),
+            }],
+            start,
+            HistoryKind::StyleChange,
+        )
+        .map_err(to_js)
+    }
+
+    /// Creates a new paragraph style `name` from the current selection's
+    /// formatting (based on the selection's current paragraph style) and applies
+    /// it to every selected paragraph — Word's "Create a Style". Errors if a
+    /// paragraph style with that name already exists or the name is blank.
+    #[wasm_bindgen(js_name = createStyleFromSelection)]
+    pub fn create_style_from_selection(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        name: &str,
+    ) -> Result<EditResult, JsValue> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(to_js("style name required".into()));
+        }
+        if self.style_id_by_name(name).is_some() {
+            return Err(to_js(format!("a style named {name:?} already exists")));
+        }
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        // Inherit from the selection's current paragraph style so the new style is
+        // a delta on top of it (Word's `basedOn`).
+        let based_on = paragraph_properties(&self.document, start.node).and_then(|p| p.style_ref);
+        let id = StyleId::new(
+            self.edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".to_string()))?,
+        );
+        let style = Style {
+            kind: StyleKind::Paragraph,
+            is_default: false,
+            name: Some(name.to_owned()),
+            aliases: None,
+            based_on,
+            next: None,
+            link: None,
+            hidden: false,
+            ui_priority: None,
+            semi_hidden: false,
+            unhide_when_used: false,
+            q_format: true,
+            locked: false,
+            paragraph: Some(self.selection_style_paragraph(start, None)),
+            run: Some(self.selection_style_run(start)),
+            table: None,
+            table_row: None,
+            table_cell: None,
+            conditional: Vec::new(),
+        };
+        // One atomic action: create the style, then point every selected paragraph
+        // at it. Undo (inverses applied in reverse) first restores the paragraphs'
+        // prior style refs, then removes the new style — no dangling reference.
+        let mut ops = vec![Operation::SetStyleDefinition {
+            id,
+            style: Some(Box::new(style)),
+        }];
+        for node in self.paragraphs_in_selection(start, end) {
+            if let Some(mut props) = paragraph_properties(&self.document, node) {
+                props.style_ref = Some(id);
+                ops.push(Operation::SetParagraphProperties {
+                    node,
+                    properties: Box::new(props),
+                });
+            }
+        }
+        self.apply_action_caret_as(ops, start, HistoryKind::StyleChange)
+            .map_err(to_js)
+    }
+
+    /// The effective run properties at `start` — the "formatting to match" when
+    /// updating or creating a style from a selection. Word samples the selection's
+    /// start, so a collapsed caret works too. The character-style link is cleared
+    /// so the captured look is self-contained (not chained to a character style).
+    fn selection_style_run(&self, start: Pos) -> RunProperties {
+        let mut run = effective_caret_run_properties(&self.document, start.node, start.offset)
+            .unwrap_or_default();
+        run.style_ref = None;
+        run
+    }
+
+    /// The paragraph formatting to write into a style from the selection: `base`
+    /// (the existing style's paragraph props, so structural fields like
+    /// `outlineLvl`/numbering are preserved on update) with the toolbar-visible
+    /// paragraph attributes — alignment, spacing, indentation — overwritten from
+    /// the selection's effective paragraph properties.
+    fn selection_style_paragraph(
+        &self,
+        start: Pos,
+        base: Option<ParagraphProperties>,
+    ) -> ParagraphProperties {
+        let cascade = StyleCascade::new(self.document.definitions());
+        let effective = paragraph_properties(&self.document, start.node)
+            .map(|direct| cascade.resolve_paragraph(&direct))
+            .unwrap_or_default();
+        let mut props = base.unwrap_or_default();
+        props.alignment = effective.alignment;
+        props.spacing = effective.spacing;
+        props.indentation = effective.indentation;
+        props
     }
 
     /// The document's heading outline as flat `"{level}\t{node}\t{text}"` rows (in
@@ -12978,6 +13171,10 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         Operation::UpdateReviewState { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
+        // The style registry is document-global; a style edit routes through
+        // `apply_action_caret` with the caller's own caret, so this is a neutral
+        // placeholder (see the SetCoreProperties comment above).
+        Operation::SetStyleDefinition { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -13512,6 +13709,74 @@ impl DocStats {
     #[must_use]
     pub fn pages(&self) -> u32 {
         self.pages
+    }
+}
+
+/// The resolved visual preview of a paragraph style — what a paragraph carrying
+/// only that style renders with. The Styles gallery draws each card in its own
+/// style from these fields (Word's Styles gallery).
+#[wasm_bindgen]
+#[derive(Clone, Debug, Default)]
+pub struct StylePreview {
+    font_family: String,
+    size_points: f32,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    color: String,
+    alignment: String,
+}
+
+#[wasm_bindgen]
+impl StylePreview {
+    /// The requested (authored) font family — never a physical fallback. Empty
+    /// when the style is unknown.
+    #[wasm_bindgen(getter, js_name = fontFamily)]
+    #[must_use]
+    pub fn font_family(&self) -> String {
+        self.font_family.clone()
+    }
+
+    /// The font size in points (0 when unknown/unset).
+    #[wasm_bindgen(getter, js_name = sizePoints)]
+    #[must_use]
+    pub fn size_points(&self) -> f32 {
+        self.size_points
+    }
+
+    /// Whether the style renders bold.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn bold(&self) -> bool {
+        self.bold
+    }
+
+    /// Whether the style renders italic.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn italic(&self) -> bool {
+        self.italic
+    }
+
+    /// Whether the style renders underlined.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn underline(&self) -> bool {
+        self.underline
+    }
+
+    /// The text color as `#rrggbb`, or empty for automatic/theme colors.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn color(&self) -> String {
+        self.color.clone()
+    }
+
+    /// The paragraph alignment: `start`, `center`, `end`, or `justify`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn alignment(&self) -> String {
+        self.alignment.clone()
     }
 }
 
