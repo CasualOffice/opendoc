@@ -96,6 +96,10 @@ a general ODT support claim.
   fill, border, and floating anchors are dropped with a finding. The embedded-image
   path (and its href security validation) is unchanged — an image still wins when
   a frame carries both.
+- **Form fields — dropdown (fidelity parity, T6-5c)**: an ODF `form:listbox`
+  (with `form:option` entry labels) anchored by a `draw:control` now round-trips
+  to the model's FORMDROPDOWN `Field` (entries), a byte-exact fixed point. This
+  completes the form-field family (text, checkbox, dropdown).
 - **Form fields — checkbox (fidelity parity, T6-5b)**: an ODF `form:checkbox`
   anchored by a `draw:control` now round-trips to the model's FORMCHECKBOX `Field`
   (with the current checked state from `form:current-state`) and back, a byte-exact
