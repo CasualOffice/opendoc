@@ -1247,6 +1247,13 @@ function renderReviewMarginItems() {
 
   const show = reviewSidebarPreference ?? items.length > 0;
   reviewSidebar.hidden = !show;
+  // Mutually exclusive with the outline panel (see toggleOutline): whenever the
+  // review sidebar is shown the outline closes, so the canvas is only ever
+  // inset from one side at a time.
+  if (show && outlinePanel && !outlinePanel.hidden) {
+    outlinePanel.hidden = true;
+    railOutline.setAttribute("aria-pressed", "false");
+  }
   // Reserve the comment column's width in the page stack only while the column
   // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
   // sits past the comments (never between the canvas and the comments).
@@ -7439,6 +7446,10 @@ function navigateToNode(node) {
 
 function toggleOutline() {
   outlinePanel.hidden = !outlinePanel.hidden;
+  // Outline (left) and the review sidebar (right) are mutually exclusive so the
+  // canvas is never squeezed from both sides at once. Opening the outline closes
+  // the review sidebar; the reverse is enforced in renderReviewMarginItems.
+  if (!outlinePanel.hidden && !reviewSidebar.hidden) toggleReview(false);
   railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   buildOutline();
 }
@@ -10393,7 +10404,7 @@ const settingsReset = document.getElementById("settingsReset");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
-const DEFAULT_SETTINGS = { theme: "system", accent: "#e2622a", authorName: "", authorInitials: "" };
+const DEFAULT_SETTINGS = { theme: "system", accent: "#3355c4", authorName: "", authorInitials: "" };
 let settings = loadSettings();
 
 function loadSettings() {
