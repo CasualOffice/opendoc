@@ -158,11 +158,49 @@ function renderFidelity() {
   body.replaceChildren(frag);
 }
 
+// Per-format pipeline support (validation / import / export / browser host).
+// Kept deliberately conservative so the fidelity story never overstates a format;
+// a drift check asserts ODT stays "partial" until a family is genuinely complete.
+const FORMAT_SUPPORT = [
+  {
+    format: "DOCX",
+    note: "Bounded OOXML admission, semantic import/export, and the browser editor path are implemented and tested.",
+    validation: "full",
+    import: "full",
+    export: "full",
+    host: "full",
+  },
+  {
+    format: "Normalized JSON",
+    note: "Strict bounded schema-v1 validation and deterministic compact export are available through the generic WASM API and the browser Open/Save controls.",
+    validation: "full",
+    import: "full",
+    export: "full",
+    host: "full",
+  },
+  {
+    format: "Plain text",
+    note: "Bounded UTF-8 import, canonical LF export, exact retained unchanged bytes, and loss reporting are available through the generic WASM API and the browser Open/Save controls.",
+    validation: "full",
+    import: "full",
+    export: "full",
+    host: "full",
+  },
+  {
+    format: "ODT",
+    note: "ODF 1.2–1.4 admission plus generic WASM/browser Open and Save are implemented. Core text, safe links, bookmarks, bounded direct/named styles, nested bullet/number lists, recursive tables, typed footnotes/endnotes, and authored citation labels map through the normalized model and a matching writer to a byte-exact fixed point, and unsafe merge geometry is visibly projected and reported rather than dropped. Import/export and therefore host support remain partial: advanced list continuation/item overrides and label layout, broader style/table properties, media beyond references, and full conformance remain in progress.",
+    validation: "full",
+    import: "partial",
+    export: "partial",
+    host: "partial",
+  },
+];
+
 if (typeof document !== "undefined") {
   renderFidelity();
 }
 
 // Expose the data (not the DOM render) to a Node drift check.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { FIDELITY, FIDELITY_STAGE };
+  module.exports = { FIDELITY, FIDELITY_STAGE, FORMAT_SUPPORT };
 }
