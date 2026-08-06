@@ -269,6 +269,43 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 // the same `setParagraphStyle` path.
 const stylesGallery = document.getElementById("stylesGallery");
 
+// Roving-tabindex keyboard navigation for the gallery listbox: the group is a
+// single Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the
+// option cards, matching the WAI-ARIA listbox pattern. Enter/Space already
+// activate a focused card natively (they are <button>s), which applies the
+// style. Attached once here so repeated `buildStylesGallery` rebuilds never
+// stack duplicate listeners.
+if (stylesGallery) {
+  stylesGallery.addEventListener("keydown", (event) => {
+    const cards = [...stylesGallery.querySelectorAll(".style-card")];
+    if (!cards.length) return;
+    const current = document.activeElement;
+    const index = cards.indexOf(current);
+    let next = -1;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        next = index < 0 ? 0 : (index + 1) % cards.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        next = index < 0 ? cards.length - 1 : (index - 1 + cards.length) % cards.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = cards.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    for (const card of cards) card.tabIndex = card === cards[next] ? 0 : -1;
+    cards[next].focus();
+  });
+}
+
 /** Draws a gallery card's label IN the style it represents, from the engine's
  *  resolved preview (font family/size/weight/slant/underline/color) — Word's
  *  Styles gallery. Degrades to the plain slug look if the preview is
@@ -311,7 +348,8 @@ function buildStylesGallery(styles) {
     if (match && !quickStyles.includes(match)) quickStyles.push(match);
   }
   for (const name of styles) if (!quickStyles.includes(name)) quickStyles.push(name);
-  for (const name of quickStyles.slice(0, 4)) {
+  const shown = quickStyles.slice(0, 4);
+  for (const [i, name] of shown.entries()) {
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     const card = document.createElement("button");
     card.type = "button";
@@ -319,6 +357,9 @@ function buildStylesGallery(styles) {
     card.dataset.style = name;
     card.setAttribute("role", "option");
     card.setAttribute("aria-selected", "false");
+    // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
+    // among the rest (see the container keydown handler above).
+    card.tabIndex = i === 0 ? 0 : -1;
     card.title = name;
     const label = document.createElement("span");
     label.className = "style-card-name";
@@ -337,8 +378,15 @@ function buildStylesGallery(styles) {
 function syncStylesGalleryActive() {
   if (!stylesGallery) return;
   const active = paragraphStyleSel.value;
-  for (const card of stylesGallery.children) {
-    card.setAttribute("aria-selected", String(card.dataset.style === active));
+  const cards = [...stylesGallery.children];
+  let tabStop = cards.findIndex((card) => card.dataset.style === active);
+  if (tabStop < 0) tabStop = 0; // no active style visible → first card is the Tab stop
+  for (const [i, card] of cards.entries()) {
+    const isActive = card.dataset.style === active;
+    card.setAttribute("aria-selected", String(isActive));
+    // Keep the roving Tab stop on the applied style so Tab lands where the
+    // caret already is (arrow keys still reach every card).
+    card.tabIndex = i === tabStop ? 0 : -1;
   }
 }
 
