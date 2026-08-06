@@ -120,3 +120,40 @@ impl fmt::Display for PackageError {
 }
 
 impl Error for PackageError {}
+
+impl From<casual_doc_package::PackageError> for PackageError {
+    fn from(error: casual_doc_package::PackageError) -> Self {
+        match error {
+            casual_doc_package::PackageError::InvalidLimitConfiguration {
+                limit,
+                value,
+                hard_ceiling,
+            } => Self::InvalidLimitConfiguration {
+                limit,
+                value,
+                hard_ceiling,
+            },
+            casual_doc_package::PackageError::LimitExceeded {
+                limit,
+                observed,
+                allowed,
+            } => Self::LimitExceeded {
+                limit,
+                observed,
+                allowed,
+            },
+            casual_doc_package::PackageError::MalformedArchive => Self::MalformedArchive,
+            casual_doc_package::PackageError::Cancelled => Self::Cancelled,
+            casual_doc_package::PackageError::UnsafePartName => Self::UnsafePartName,
+            casual_doc_package::PackageError::DuplicatePart => Self::DuplicatePart,
+            casual_doc_package::PackageError::EncryptedEntry => Self::EncryptedEntry,
+            casual_doc_package::PackageError::UnsupportedCompression => {
+                Self::UnsupportedCompression
+            }
+            casual_doc_package::PackageError::OverlappingEntries => Self::OverlappingEntries,
+            casual_doc_package::PackageError::SpecialEntry => Self::SpecialEntry,
+            casual_doc_package::PackageError::PartNotFound => Self::PartNotFound,
+            casual_doc_package::PackageError::PartReadFailed => Self::PartReadFailed,
+        }
+    }
+}

@@ -1,8 +1,8 @@
-//! Host-configurable package limits and their enforcement helpers.
+//! Host-configurable package limits and enforcement helpers.
 
-use crate::error::PackageError;
+use crate::PackageError;
 
-/// Host-configurable DOCX package limits with non-bypassable hard ceilings.
+/// Host-configurable ZIP package limits with non-bypassable hard ceilings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageLimits {
     /// Maximum input package bytes.
@@ -80,11 +80,7 @@ impl Default for PackageLimits {
     }
 }
 
-pub(crate) fn validate_limit(
-    limit: &'static str,
-    value: u64,
-    hard: u64,
-) -> Result<(), PackageError> {
+fn validate_limit(limit: &'static str, value: u64, hard: u64) -> Result<(), PackageError> {
     if value > hard {
         return Err(PackageError::InvalidLimitConfiguration {
             limit,

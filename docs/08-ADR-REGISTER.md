@@ -357,13 +357,37 @@ model/mutation PR (see doc 45 §"Review checklist"), so the in-flight Phase-1F
 construct-family work reinforces the seams. This ADR does **not** choose OT vs CRDT
 (still pending below); it guarantees either remains additive.
 
+## ADR-031 — PDF export backend and writer/subsetter build-vs-buy
+
+**Decision:** *Proposed, not yet accepted.* Add a `casual-doc-pdf` backend that
+transcribes the shared `DisplayList` (ADR-003) into a real, deterministic PDF with a
+selectable text layer and embedded **subset** fonts — never rasterized pages or
+outlined text. Editor↔PDF parity is guaranteed structurally (the exporter reuses the
+editor's layout pass verbatim and performs no layout of its own) and enforced by a CI
+golden. Word parity is *feature* parity (outline/links/metadata, then tagged PDF /
+PDF-A), delivered in phases; layout fidelity to Word is inherited from the layout
+engine, not re-implemented here. **This ADR must additionally choose** build-vs-buy for
+(a) the PDF container writer and (b) the TrueType/CFF font subsetter, evaluated against
+`deny.toml` and `unsafe_code = forbid`. Full design, phasing, and effort:
+`98-PDF-EXPORT-AND-PRINT-DESIGN.md`.
+
+**Why:** the display-list seam already makes a PDF backend additive; the only open
+questions are the dependency posture (writer/subsetter) and the Phase-2 scope gate
+(tagged PDF / PDF-A). Recording them here keeps the "PDF generation backend" pending
+item from being decided implicitly in code.
+
+**Consequence:** blocks Phase 0 of the PDF work until (a)/(b) are chosen (moves the
+estimate by ~1.5 sprints); the Phase-2 accessibility/archival gate is a separate
+in/out decision because it ≈ doubles the effort and shapes the semantic `StructureTree`
+from day one.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;
 - collaboration operation model: OT vs CRDT (seams reserved by ADR-030 / doc 45);
-- PDF generation backend;
+- ~~PDF generation backend~~ — superseded by **ADR-031** (proposed; see doc 98);
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - whether layout uses fixed-point units internally.

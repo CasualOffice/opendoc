@@ -421,6 +421,36 @@ input {
   justify-content: center;
 }
 
+.save-format {
+  height: var(--h-control);
+  max-width: 132px;
+  padding: 0 26px 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.save-format:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--muted);
+}
+
+.save-format:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.compatibility-status {
+  max-width: 150px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--accent) 82%, var(--ink));
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file {
   position: relative;
 }
@@ -4186,6 +4216,8 @@ body:not(.doc-loaded) .rail,
 body:not(.doc-loaded) .footer,
 body:not(.doc-loaded) .search-trigger,
 body:not(.doc-loaded) #save,
+body:not(.doc-loaded) .save-format,
+body:not(.doc-loaded) .compatibility-status,
 body:not(.doc-loaded) #propertiesBtn {
   display: none;
 }
@@ -4459,6 +4491,14 @@ body:not(.doc-loaded) .drop-title {
 
   .controls .btn-label {
     display: none;
+  }
+
+  .save-format {
+    max-width: 84px;
+  }
+
+  .compatibility-status {
+    max-width: 72px;
   }
 
   .find-panel {

@@ -20,7 +20,15 @@ use casual_doc_edit::{
     run_properties_in_range,
 };
 use casual_doc_export::write_document;
+#[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
+#[cfg(test)]
+use casual_doc_io::formats;
+use casual_doc_io::{
+    CompatibilityReport as IoCompatibilityReport, DetectionRequest, DocumentResources, ExportMode,
+    ExportRequest, FormatId, FormatSelection, ModelOutcome as IoModelOutcome,
+    RetentionOutcome as IoRetentionOutcome, SourceEnvelope, builtin_registry_with_package_limits,
+};
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
@@ -54,7 +62,9 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
-use casual_doc_ooxml::{DocxPackage, PackageLimits};
+#[cfg(test)]
+use casual_doc_ooxml::DocxPackage;
+use casual_doc_ooxml::PackageLimits;
 use casual_doc_render::{MediaSource, RegistryFontSource, Surface, render};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
@@ -98,9 +108,10 @@ pub struct WasmDocument {
     /// nothing — a preview is read-only, so no edits arrive while it is on.
     markup_layout: Option<PaginatedLayout>,
     shaper: ParleyShaper,
-    /// Inline-image bytes by package part name — served to the renderer (via
-    /// [`BorrowedMedia`]) and to the semantic writer on export.
-    media: BTreeMap<String, Vec<u8>>,
+    /// Binary resources by adapter identity — served to rendering and export.
+    resources: DocumentResources,
+    /// Source-format identity, retained adapter state, and import findings.
+    format_state: FormatState,
     /// The first-section page geometry — the fallback when a page's section id
     /// resolves to no boundary (a document with no `w:sectPr` falls back to
     /// US-Letter here, exactly as [`document_page_config`] defines).
@@ -152,6 +163,24 @@ pub struct WasmDocument {
     /// `author`/`initials` arguments are omitted. Never serialized itself; only
     /// its `name`/`initials` strings flow into authored comments/revisions.
     active_author: Option<ActiveAuthor>,
+}
+
+#[derive(Debug)]
+struct FormatState {
+    source_format: String,
+    source: Option<SourceEnvelope>,
+    import_report_json: String,
+}
+
+impl FormatState {
+    #[cfg(test)]
+    fn synthetic() -> Self {
+        Self {
+            source_format: formats::DOCX.to_owned(),
+            source: None,
+            import_report_json: "{\"entries\":[]}".to_owned(),
+        }
+    }
 }
 
 /// A host-supplied review identity set through [`WasmDocument::set_active_author`].
@@ -355,7 +384,7 @@ impl core::fmt::Debug for WasmDocument {
     }
 }
 
-/// Imports a `.docx` and paginates it. Returns a handle over the open document.
+/// Auto-detects a registered document format, imports it, and paginates it.
 ///
 /// Errors (bad ZIP, admission failure, import failure) throw a JS `Error`.
 ///
@@ -367,8 +396,57 @@ pub fn open(bytes: &[u8]) -> Result<WasmDocument, JsValue> {
     open_document(bytes).map_err(to_js)
 }
 
+/// Imports bytes through one explicitly selected stable format identifier.
+#[wasm_bindgen(js_name = openAs)]
+pub fn open_as(bytes: &[u8], format_id: &str) -> Result<WasmDocument, JsValue> {
+    let format = FormatId::new(format_id)
+        .map_err(|error| to_js(format!("invalid format identifier: {error}")))?;
+    open_document_as(bytes, FormatSelection::Explicit(format)).map_err(to_js)
+}
+
 #[wasm_bindgen]
 impl WasmDocument {
+    /// See [`WasmDocument::export_as`]. Kept free of `JsValue` so native tests
+    /// exercise the same registry dispatch and compatibility reporting as WASM.
+    fn export_as_inner(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, String> {
+        let format = FormatId::new(format_id)
+            .map_err(|error| format!("invalid format identifier: {error}"))?;
+        let mode = match mode {
+            "semantic" => ExportMode::Semantic,
+            "preserve_when_safe" => ExportMode::PreserveWhenSafe,
+            "exact_if_unchanged" => ExportMode::ExactIfUnchanged,
+            _ => {
+                return Err(
+                    "invalid export mode; expected semantic, preserve_when_safe, or exact_if_unchanged"
+                        .to_owned(),
+                );
+            }
+        };
+        let registry = builtin_registry_with_package_limits(viewer_limits());
+        let artifact = registry
+            .export(
+                &format,
+                ExportRequest {
+                    document: &self.document,
+                    resources: &self.resources,
+                    source: self.format_state.source.as_ref(),
+                    source_unchanged: self.revision == 0,
+                    mode,
+                },
+            )
+            .map_err(|error| format!("export {format}: {error}"))?;
+        let report_json = compatibility_report_json(&artifact.report)?;
+
+        Ok(WasmExportArtifact {
+            bytes: artifact.bytes,
+            format: artifact.format.format.as_str().to_owned(),
+            version: artifact.format.version,
+            mime_type: artifact.mime_type,
+            suggested_extension: artifact.suggested_extension,
+            report_json,
+        })
+    }
+
     /// The number of laid-out pages.
     #[wasm_bindgen(getter, js_name = pageCount)]
     #[must_use]
@@ -6470,8 +6548,90 @@ impl WasmDocument {
     /// `write_document_with_retained_parts`).
     #[wasm_bindgen(js_name = exportDocx)]
     pub fn export_docx(&self) -> Result<Vec<u8>, JsValue> {
-        write_document(&self.document, &self.media)
+        write_document(&self.document, self.resources.as_map())
             .map_err(|e| to_js(format!("export failed: {e:?}")))
+    }
+
+    /// Returns the stable format identifier detected for the open source.
+    #[wasm_bindgen(getter, js_name = sourceFormat)]
+    pub fn source_format(&self) -> String {
+        self.format_state.source_format.clone()
+    }
+
+    /// Returns the deterministic import compatibility report as JSON.
+    #[wasm_bindgen(getter, js_name = importReportJson)]
+    pub fn import_report_json(&self) -> String {
+        self.format_state.import_report_json.clone()
+    }
+
+    /// Returns stable format identifiers currently available for export.
+    #[wasm_bindgen(js_name = availableExportFormats)]
+    pub fn available_export_formats(&self) -> Vec<String> {
+        builtin_registry_with_package_limits(viewer_limits())
+            .export_formats()
+            .into_iter()
+            .map(|format| format.as_str().to_owned())
+            .collect()
+    }
+
+    /// Exports through one explicitly selected format and mode.
+    ///
+    /// Accepted modes are `semantic`, `preserve_when_safe`, and
+    /// `exact_if_unchanged`.
+    #[wasm_bindgen(js_name = exportAs)]
+    pub fn export_as(&self, format_id: &str, mode: &str) -> Result<WasmExportArtifact, JsValue> {
+        self.export_as_inner(format_id, mode).map_err(to_js)
+    }
+}
+
+/// A format-neutral export result returned across the JS/WASM boundary.
+#[derive(Debug)]
+#[wasm_bindgen]
+pub struct WasmExportArtifact {
+    bytes: Vec<u8>,
+    format: String,
+    version: Option<String>,
+    mime_type: String,
+    suggested_extension: String,
+    report_json: String,
+}
+
+#[wasm_bindgen]
+impl WasmExportArtifact {
+    /// Returns a copy of the encoded file bytes.
+    #[wasm_bindgen(getter)]
+    pub fn bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+
+    /// Returns the stable emitted format identifier.
+    #[wasm_bindgen(getter)]
+    pub fn format(&self) -> String {
+        self.format.clone()
+    }
+
+    /// Returns the emitted format profile/version, when known.
+    #[wasm_bindgen(getter)]
+    pub fn version(&self) -> Option<String> {
+        self.version.clone()
+    }
+
+    /// Returns the emitted MIME type.
+    #[wasm_bindgen(getter, js_name = mimeType)]
+    pub fn mime_type(&self) -> String {
+        self.mime_type.clone()
+    }
+
+    /// Returns the suggested filename extension without a leading dot.
+    #[wasm_bindgen(getter, js_name = suggestedExtension)]
+    pub fn suggested_extension(&self) -> String {
+        self.suggested_extension.clone()
+    }
+
+    /// Returns the deterministic export compatibility report as JSON.
+    #[wasm_bindgen(getter, js_name = reportJson)]
+    pub fn report_json(&self) -> String {
+        self.report_json.clone()
     }
 }
 
@@ -6667,7 +6827,7 @@ impl WasmDocument {
             &mut surface,
             dpi,
             &fonts,
-            &BorrowedMedia(&self.media),
+            &BorrowedMedia(self.resources.as_map()),
         );
 
         Ok(PageBitmap {
@@ -12655,30 +12815,31 @@ impl PageBitmap {
     }
 }
 
-/// Imports + paginates a `.docx` into a [`WasmDocument`], returning a plain
-/// message on failure. Split from the `#[wasm_bindgen]` [`open`] so it runs
-/// under native `cargo test`.
+/// Imports through the bounded format registry and paginates the normalized
+/// result. Returns a plain message so native tests exercise the same path as
+/// the `#[wasm_bindgen]` [`open`] and [`open_as`] boundaries.
 fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
-    let mut package =
-        DocxPackage::open(bytes, viewer_limits()).map_err(|e| format!("open package: {e:?}"))?;
-    let imported = import_package(
-        &mut package,
-        ImportConfig {
-            mode: ImportMode::Semantic,
-            ..ImportConfig::default()
-        },
-    )
-    .map_err(|e| format!("import document: {e:?}"))?;
-    let document = imported.document;
+    open_document_as(bytes, FormatSelection::Auto)
+}
 
-    // Snapshot the inline-image bytes rendering will need, so the handle owns
-    // everything and the package can be dropped.
-    let mut media = BTreeMap::new();
-    for (_id, reference) in document.definitions().media.iter() {
-        if let Ok(part_bytes) = package.read_part(&reference.part_name) {
-            media.insert(reference.part_name.clone(), part_bytes);
-        }
-    }
+fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocument, String> {
+    let registry = builtin_registry_with_package_limits(viewer_limits());
+    let imported = registry
+        .import(
+            DetectionRequest {
+                bytes,
+                selection,
+                file_name_hint: None,
+                mime_hint: None,
+            },
+            true,
+        )
+        .map_err(|error| format!("import document: {error}"))?;
+    let source_format = imported.format.format.as_str().to_owned();
+    let import_report_json = compatibility_report_json(&imported.report)?;
+    let document = imported.document;
+    let resources = imported.resources;
+    let source = imported.source;
 
     let shaper = ParleyShaper::new();
     // One call: per-section geometry, flowed headers/footers, anchored drawings,
@@ -12696,7 +12857,12 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         layout,
         markup_layout: None,
         shaper,
-        media,
+        resources,
+        format_state: FormatState {
+            source_format,
+            source: Some(source),
+            import_report_json,
+        },
         default_config,
         edit_ids: IdGenerator::new(edit_namespace),
         undo: Vec::new(),
@@ -12714,6 +12880,60 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
         checklist_checked: None,
         active_author: None,
     })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibilityReportJson<'a> {
+    entries: Vec<CompatibilityEntryJson<'a>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibilityEntryJson<'a> {
+    feature: &'a str,
+    occurrences: u32,
+    location: CompatibilityLocationJson<'a>,
+    model_outcome: &'static str,
+    retention_outcome: &'static str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompatibilityLocationJson<'a> {
+    part_name: Option<&'a str>,
+    namespace: Option<&'a str>,
+    local_name: Option<&'a str>,
+}
+
+fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, String> {
+    let entries = report
+        .entries
+        .iter()
+        .map(|entry| CompatibilityEntryJson {
+            feature: &entry.feature,
+            occurrences: entry.occurrences,
+            location: CompatibilityLocationJson {
+                part_name: entry.location.part_name.as_deref(),
+                namespace: entry.location.namespace.as_deref(),
+                local_name: entry.location.local_name.as_deref(),
+            },
+            model_outcome: match entry.model_outcome {
+                IoModelOutcome::Mapped => "mapped",
+                IoModelOutcome::Degraded => "degraded",
+                IoModelOutcome::Omitted => "omitted",
+            },
+            retention_outcome: match entry.retention_outcome {
+                IoRetentionOutcome::Preserved => "preserved",
+                IoRetentionOutcome::NotRetained => "not_retained",
+                IoRetentionOutcome::Blocked => "blocked",
+                IoRetentionOutcome::Rejected => "rejected",
+                IoRetentionOutcome::NotApplicable => "not_applicable",
+            },
+        })
+        .collect();
+    serde_json::to_string(&CompatibilityReportJson { entries })
+        .map_err(|error| format!("serialize compatibility report: {error}"))
 }
 
 /// Converts an internal error message to a thrown JS `Error`. Only ever runs at
@@ -14460,6 +14680,94 @@ mod tests {
     }
 
     #[test]
+    fn format_neutral_host_opens_text_and_round_trips_through_odt() {
+        let doc = open_document(b"Alpha\nBeta\n").expect("auto-detect plain text");
+        assert_eq!(doc.source_format(), formats::TEXT);
+        assert_eq!(doc.import_report_json(), "{\"entries\":[]}");
+        assert_eq!(
+            doc.available_export_formats(),
+            vec![
+                formats::NORMALIZED_JSON,
+                formats::ODT,
+                formats::DOCX,
+                formats::TEXT,
+            ]
+        );
+
+        let artifact = doc
+            .export_as_inner(formats::ODT, "semantic")
+            .expect("export text model as ODT");
+        assert_eq!(artifact.format, formats::ODT);
+        assert_eq!(
+            artifact.mime_type,
+            "application/vnd.oasis.opendocument.text"
+        );
+        assert_eq!(artifact.suggested_extension, "odt");
+        assert_eq!(artifact.report_json, "{\"entries\":[]}");
+
+        let reopened = open_document(&artifact.bytes).expect("auto-detect emitted ODT");
+        assert_eq!(reopened.source_format(), formats::ODT);
+        let paragraphs = reopened
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(node_plain_text(&paragraph.inlines)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(paragraphs, ["Alpha", "Beta", ""]);
+    }
+
+    #[test]
+    fn exact_export_requires_retained_unchanged_matching_source() {
+        let original = b"Alpha\r\nBeta\n";
+        let mut doc = open_document(original).expect("open text");
+        let exact = doc
+            .export_as_inner(formats::TEXT, "exact_if_unchanged")
+            .expect("return retained source bytes");
+        assert_eq!(exact.bytes, original);
+
+        doc.revision = 1;
+        let error = doc
+            .export_as_inner(formats::TEXT, "exact_if_unchanged")
+            .expect_err("edited source cannot be returned as exact");
+        assert!(error.contains("unchanged"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn explicit_format_selection_validates_the_selected_adapter() {
+        let odt = FormatId::new(formats::ODT).unwrap();
+        let error = open_document_as(b"plain text", FormatSelection::Explicit(odt))
+            .expect_err("plain text is not an ODT package");
+        assert!(
+            error.contains("import document"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn generic_export_surfaces_cross_format_compatibility_findings() {
+        let doc = open_document(RICH_DOCX).expect("open rich DOCX");
+        let artifact = doc
+            .export_as_inner(formats::ODT, "semantic")
+            .expect("export bounded ODT projection");
+        let report: serde_json::Value =
+            serde_json::from_str(&artifact.report_json).expect("compatibility report JSON");
+        let entries = report["entries"].as_array().expect("entries array");
+        assert!(
+            !entries.is_empty(),
+            "rich cross-format export must report loss"
+        );
+        assert!(entries.iter().all(|entry| {
+            entry["feature"].is_string()
+                && entry["occurrences"].is_u64()
+                && entry["modelOutcome"].is_string()
+                && entry["retentionOutcome"].is_string()
+        }));
+    }
+
+    #[test]
     fn document_metadata_exposes_core_app_and_custom_groups() {
         let doc = open_document(SAMPLE_DOCX).expect("open sample docx");
         let metadata: serde_json::Value =
@@ -15347,7 +15655,8 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            media: BTreeMap::new(),
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5d),
             undo: Vec::new(),
@@ -15773,7 +16082,8 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            media: BTreeMap::new(),
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5c),
             undo: Vec::new(),
@@ -16037,7 +16347,8 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            media: BTreeMap::new(),
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5b),
             undo: Vec::new(),
@@ -18615,7 +18926,8 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            media: BTreeMap::new(),
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
             undo: Vec::new(),
@@ -18714,7 +19026,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         let mut d = wasm_document(document_with_floating_image(page_offset_anchor()));
-        d.media
+        d.resources
             .insert("word/media/image1.png".to_owned(), PNG_1X1.to_vec());
         let bytes = d.export_docx().expect("export the float fixture");
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../webapp/float.docx");
@@ -19745,7 +20057,8 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            media: BTreeMap::new(),
+            resources: DocumentResources::default(),
+            format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0x5a),
             undo: Vec::new(),

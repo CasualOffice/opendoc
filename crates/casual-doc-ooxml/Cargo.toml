@@ -10,7 +10,10 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+casual-doc-package.workspace = true
 quick-xml.workspace = true
+
+[dev-dependencies]
 zip.workspace = true
 
 [lints]

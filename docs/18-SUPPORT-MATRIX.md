@@ -1,7 +1,7 @@
 # Support Matrix
 
 **Status:** Accepted for Phase 0
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-04
 
 This document distinguishes target support from implemented support. A target is
 not considered supported until its required CI and conformance gates pass.
@@ -56,7 +56,7 @@ report.
 | Rust library | Yes | Initial pre-release facade implemented. |
 | Headless CLI/service | Yes | Planned. |
 | Tauri desktop | Yes | Planned reference host. |
-| Browser/WASM | Yes | Planned reference host. |
+| Browser/WASM | Yes | WASM facade and reference webapp implemented; generic multi-format Open and target-selectable Save are available with visible compatibility findings. |
 | C ABI | Yes | Planned after the Rust facade stabilizes. |
 | React/Vue/Svelte wrappers | Optional | Must live outside the core runtime. |
 | Native mobile UI | No | Out of scope for v1. |
@@ -65,13 +65,13 @@ report.
 
 | Format/capability | v1 target | Current status |
 | --- | --- | --- |
-| Normalized JSON snapshot | Yes | Strict bounded schema v0 load/export implemented. |
+| Normalized JSON snapshot | Yes | Strict bounded schema-v1 import and deterministic compact export are available through the registry, generic WASM host API, and browser Open/Save controls; the native SDK surface remains pending. |
 | Canonical normalized CBOR | Yes | Designed, not implemented. |
 | DOCX import/export | Yes | Bounded ZIP inspection implemented; semantic import complete (every construct family modeled); the semantic writer (Phase 1B) is complete and round-trips the modeled surface (import → write → reopen = identical model). |
-| TXT import/export | Yes | Planned as a simple conformance path. |
+| TXT import/export | Yes | Bounded strict UTF-8 import, deterministic semantic LF export, exact retained unchanged bytes, and compatibility-loss reporting are available through the registry, generic WASM host API, and browser Open/Save controls; the native SDK surface remains pending. |
 | Page render to raster (PNG) | Yes | CPU backend implemented: real pages, tables, images, and VML render via `tiny-skia`/`skrifa`; structurally strong, not yet pixel-perfect Word-grade (see doc 46). |
-| PDF render/export | Yes | Backend decision pending. |
-| ODT import/export | Later | Not a v1 release gate. |
+| PDF render/export | Later | Design accepted-pending in `98-PDF-EXPORT-AND-PRINT-DESIGN.md` (ADR-031): a `casual-doc-pdf` backend transcribing the shared `DisplayList` into a real, deterministic PDF — selectable text layer, embedded subset fonts (exact layout faces → editor↔PDF parity), vector paint, image XObjects; never rasterized/outlined. Word *feature* parity (outline/links/metadata → tagged PDF/PDF-A) is phased. Not started; blocked on ADR-031 (writer/subsetter build-vs-buy) and the Phase-2 scope gate. |
+| ODT import/export | Later | In progress under docs 94–96. Bounded ODF 1.2–1.4 admission, deterministic registry detection/dispatch, generic WASM open/export, and browser Open/target-selectable Save are implemented. The semantic importer maps validated core paragraphs, headings, spans, explicit spaces, tabs, line breaks, safe external/internal hyperlinks, bookmark points/ranges, automatic/named style chains for paragraph alignment and a bounded direct run-formatting subset, bullet/decimal/letter/Roman list styles and nested list levels, ordered recursive tables with header/repeated rows, repeated/empty cells, nested blocks, validated horizontal/vertical merge geometry, typed footnote/endnote references with recursive note bodies, and bounded `meta.xml` document properties (core fields, statistics, editing duration, and typed custom values). The deterministic ODF 1.4 writer emits the matching core/style/list/table/note/metadata subset, reports unsupported formatting, unsafe merge geometry, or non-one-to-one note ownership in the UI, and can return retained unchanged source bytes exactly. Style defaults/broader properties, advanced list continuation/item overrides and label layout, table formatting, authored note-citation labels, media, edit-tolerant preservation, native SDK integration, corpus conformance, schema validation, and interoperability gates remain incomplete; this is not yet a general ODT support claim or v1 release gate. |
 | HTML/Markdown interchange | Later | Not an editing source of truth. |
 | Macros/VBA execution | No | Blocked by policy. |
 

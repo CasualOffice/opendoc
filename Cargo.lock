@@ -106,6 +106,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-io"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-export",
+ "casual-doc-import",
+ "casual-doc-model",
+ "casual-doc-odf",
+ "casual-doc-ooxml",
+ "zip",
+]
+
+[[package]]
 name = "casual-doc-layout"
 version = "0.0.1"
 dependencies = [
@@ -127,10 +139,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-odf"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+ "casual-doc-package",
+ "quick-xml",
+ "zip",
+]
+
+[[package]]
 name = "casual-doc-ooxml"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-package",
  "quick-xml",
+ "zip",
+]
+
+[[package]]
+name = "casual-doc-package"
+version = "0.0.1"
+dependencies = [
  "zip",
 ]
 
@@ -183,6 +213,7 @@ dependencies = [
  "casual-doc-edit",
  "casual-doc-export",
  "casual-doc-import",
+ "casual-doc-io",
  "casual-doc-layout",
  "casual-doc-model",
  "casual-doc-ooxml",

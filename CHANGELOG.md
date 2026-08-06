@@ -8,6 +8,268 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### OpenDocument Text (ODT) fidelity — 2026-08-05
+
+The bounded ODT adapter (`casual-doc-odf`, `casual-doc-io::OdtAdapter`) gained
+several import/export families, each landed as a reviewed increment and disclosed
+against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
+a general ODT support claim.
+
+- **Floating (anchored) images — first increment (fidelity parity, T5)**: an ODF
+  `draw:frame` with `text:anchor-type="page"` or `"paragraph"` (positioned by
+  `svg:x`/`svg:y`, stacked by `draw:z-index`) now imports to an
+  `InlineNode::AnchoredDrawing` and re-exports through the preserving path to a
+  byte-exact fixed point (previously the floating anchor was dropped and the image
+  fell to the inline path). This increment maps the graphic-style-free reversible
+  core: page/paragraph reference edges, absolute offset positioning, the
+  ODF-default `Square` wrap (no `style:wrap` emitted), z-order, extent, and the
+  image. Everything outside that core is reported and degraded to its nearest
+  representable form — a non-`Square` wrap, text-exclusion distances, alignment
+  positioning, negative offsets, `char`/`frame` anchor types, contour polygons, and
+  the picture transforms (crop/border/flip/rotation) — so nothing is silently lost
+  and the output stays idempotent. Like inline images, a floating image only
+  round-trips through `write_odt_with_retained_parts` (its bytes must be retained);
+  the plain semantic path degrades it to alt text.
+- **Floating images — wrap and distances (fidelity parity, T5 increment 2)**: a
+  floating frame's text wrap and text-exclusion distances now round-trip via a
+  `style:family="graphic"` automatic style: `style:wrap`/`style:run-through` map to
+  the wrap mode and z-band (`none`↔top-and-bottom, `parallel`↔square,
+  `run-through`+`background`↔float-behind-text, `run-through`+`foreground`↔float-over-text)
+  and `fo:margin-*` to the exclusion distances. The style name is a deterministic
+  content hash (`gr…`), so identically-wrapped frames at different positions share
+  one style and a Square-wrap zero-distance frame still emits no graphic style
+  (byte-identical to the first increment). A one-sided/dynamic ODF wrap degrades to
+  square with a finding; the contour polygon, alignment positioning, expanded
+  anchor references, and signed offsets remain for the next increment.
+- **Named paragraph styles (fidelity parity, T4-2)**: a common `office:styles`
+  `style:style style:family="paragraph"` now round-trips as a *referenced*
+  schema-v1 `Style` identity (`StyleKind::Paragraph`), the paragraph analogue of
+  the character-style change below. A paragraph that used the style carries a
+  `ParagraphProperties.style_ref` to the definition (whose inheritance-resolved
+  paragraph properties — alignment, indentation, spacing, keep/break — are emitted
+  once as a named `style:style` in styles.xml), and each paragraph re-emits
+  `text:style-name="X"` — a byte + semantic fixed point (no automatic `P…` style
+  is minted for a purely named paragraph). Character and paragraph styles keep
+  separate name→id maps, so a document with a character and a paragraph style of
+  the same name round-trips both. A retained name matching the automatic paragraph
+  scheme (`P`/`P_start`/`P_end`/`P_center`/`P_justify`, optionally with the
+  property-hash suffix) is re-minted as `Para{n}` so it cannot collide with a
+  direct-formatted paragraph's automatic style. A paragraph carrying both a named
+  style and direct properties keeps the named style and reports the direct subset;
+  an unresolvable ref and non-paragraph style detail (run/table slots, inheritance,
+  UI flags, an outline level or numbering link on the style) are reported.
+- **Named character styles (fidelity parity, T4)**: a common `office:styles`
+  `style:style style:family="text"` now round-trips as a *referenced* schema-v1
+  `Style` identity (`StyleKind::Character`) rather than being flattened onto every
+  run. A run that used the style now carries a `RunProperties.style_ref` to the
+  `Style` definition, whose inheritance-resolved run properties are emitted once as
+  a named `style:style` in styles.xml, and each run re-emits `text:style-name="X"`
+  — a byte + semantic fixed point (no automatic `T_` run style is minted for a
+  purely named run). The style's retained ODF `style:name` is reused verbatim when
+  it is a valid NCName; a non-NCName name (e.g. a DOCX-sourced "Intense Emphasis")
+  is deterministically re-minted as `Char{n}`, and that minted name persists
+  stably across the round trip. Inheritance cycles and missing parents still
+  degrade (reported) with the resolvable properties preserved on the definition. A
+  run carrying *both* a named style and direct run properties keeps the named
+  style and reports the direct subset as a degrade (only reachable from a
+  DOCX-shaped run); a style ref that does not resolve to a Character definition is
+  reported rather than emitted as a broken run. Non-run style detail
+  (inheritance/UI flags, paragraph/table property slots) that a named character
+  style cannot represent is reported. Named *paragraph* styles still flatten.
+- **Master-page header/footer**: `style:header`/`style:footer` (and the `-left`
+  even-page variants) map to schema-v1 `HeaderFooter` definitions and section
+  references and are re-emitted, as a byte + semantic fixed point.
+- **Document style defaults**: `office:styles` `style:default-style` (paragraph +
+  text families, including a paragraph default's run text-properties) map to the
+  model's `DocumentDefaults` cascade base and are re-emitted.
+- **List start-value overrides**: a `text:list-item` `text:start-value` maps to a
+  per-instance numbering start override (out-of-range/invalid values degrade the
+  item rather than failing the import).
+- **Embedded images**: an inline `draw:frame`+`draw:image` maps to a `Drawing`
+  node plus a reference-only `MediaReference` (no image bytes are decoded or held
+  in the model). `xlink:href` is validated as a safe internal package part —
+  external/linked URLs, traversal, absolute paths, drive letters, schemes, and
+  over-long/control-char names are blocked without fetching. The manifest is
+  authoritative for media type, and a missing image part is reported.
+- **Edit-tolerant preservation** (`docs/97`): under `retain_source`, referenced
+  image bytes are retained (bounded, opaque) in the source envelope; a
+  `PreserveWhenSafe` export now re-emits `draw:frame` and repackages those bytes
+  with deterministic manifest entries, so images survive a semantic edit and
+  reopen as a byte + semantic fixed point. Safe *unknown* non-semantic parts
+  (thumbnails, settings, configurations, unreferenced pictures) are also retained
+  and carried verbatim through an edit. Reserved/active-content and orphaned
+  parts are never repackaged. New public API: `OdfRetainedParts`, `RetainedPart`,
+  `OdtPackage::retained_media_parts`, `write_odt_with_retained_parts`,
+  `referenced_retained_parts`; new `OdfImportLimits` retained-part bounds; the ODT
+  adapter now advertises `preserve_when_safe`.
+- **Real-producer interoperability**: the bounded importer now admits authentic
+  LibreOffice/Word output instead of failing closed on constructs outside the
+  modeled subset. Character data outside a modeled paragraph (e.g. index-template
+  titles), style-property children (`style:tab-stops`, drop-caps, background
+  images inside `style:paragraph-properties`), and inline active content
+  (`office:scripts`, `script:event-listener` in `content.xml`) are dropped with a
+  finding rather than aborting the document; the active-content subtree is never
+  modeled or re-emitted, so no macro/handler code survives (`office:scripts` as a
+  *manifest part* is still refused at package open). Interop is fixed by real
+  LibreOffice-converted ODT fixtures under `fixtures/corpus/` — the whole
+  real-producer corpus (rich text, table merges, table/list, footnotes,
+  hyperlinks, header/footer, a round-tripped LibreOffice doc, rich metadata) plus
+  a full sample document, 9 in all — each verified to import, validate, and
+  re-export to a byte-exact canonical fixed point. Published limitations
+  (admitted/mapped, dropped-with-finding, preserved-opaque, not-yet-done, and the
+  round-trip contract) are documented in `docs/95` §10. Relax NG schema
+  validation is a documented out-of-scope decision — the admission bar is
+  structural well-formedness plus the bounded fail-closed profile and security
+  limits, not grammar conformance — so no schema-validator dependency is bundled.
+  A dependency-free `#[ignore]`-gated timing harness records import/export cost
+  across the corpus (import 3.5–42 ms, export 1–8 ms).
+- **Fields — page number, page count, date, time (fidelity parity, T3-1)**:
+  `text:page-number`, `text:page-count`, `text:date`, and `text:time` now import
+  to typed `Field` nodes (`FieldKind::Page`/`NumPages`/`Date`/`Time`, with a
+  synthesized authoritative instruction) and export back to the ODF field
+  elements, round-tripping to a byte-exact fixed point. The computed display cache
+  (and, for date/time, the ODF number/data style with no DOCX format-picture
+  equivalent) is dropped; a renderer recomputes the value. A field inside a
+  hyperlink is not modeled (the model forbids a field nested in an inline
+  wrapper) and stays a degraded text projection.
+- **Fields — references & sequence (fidelity parity, T3-1c/T3-1d)**: a
+  `text:bookmark-ref` (text/page reference format) and a `text:sequence` now
+  import to typed `Field` nodes (`FieldKind::Ref`/`PageRef`/`Seq`) and export
+  back, round-tripping to a byte-exact fixed point. The sequence's own
+  formula/format and the reference's cached display are dropped. Control
+  characters in a target/name round-trip as XML numeric references. Remaining
+  field kinds (TOC) keep the degraded projection.
+- **Comments — `office:annotation` (fidelity parity, T6-1)**: an inline
+  `office:annotation` now imports to a schema-v1 `CommentReference` plus a
+  `Comment` definition — author (`dc:creator`), date (`dc:date`), and body text
+  (`text:p`/`text:h`, flattened to a single plain-text paragraph) — and exports
+  back to `office:annotation` (with the `dc` namespace declared inline on the
+  element, so comment-free documents are byte-unchanged), round-tripping to a
+  byte-exact fixed point. The paired `office:annotation-end` range marker is not
+  modeled, so a commented span collapses to a point comment at the anchor;
+  multi-paragraph bodies flatten to one paragraph; the sequence/thread metadata
+  (`office:name`, reply structure) is dropped. Active content inside an
+  annotation is dropped like anywhere else.
+- **Inline text-box size (fidelity parity, T6-4b)**: an inline text box's extent
+  (`svg:width`/`svg:height`) now round-trips to the model's `TextBox.extent` (EMU)
+  and back, a byte-exact fixed point (reusing the geometry EMU↔cm codec). Fill,
+  border, and floating anchors still degrade.
+- **Inline text boxes (fidelity parity, T6-4)**: an inline
+  `draw:frame`>`draw:text-box` now round-trips to the model's `TextBox` inline and
+  back, a byte-exact fixed point. The box body is captured as a flattened
+  plain-text paragraph (multi-paragraph bodies join with a line break); size,
+  fill, border, and floating anchors are dropped with a finding. The embedded-image
+  path (and its href security validation) is unchanged — an image still wins when
+  a frame carries both.
+- **Form fields — dropdown (fidelity parity, T6-5c)**: an ODF `form:listbox`
+  (with `form:option` entry labels) anchored by a `draw:control` now round-trips
+  to the model's FORMDROPDOWN `Field` (entries), a byte-exact fixed point. This
+  completes the form-field family (text, checkbox, dropdown).
+- **Form fields — checkbox (fidelity parity, T6-5b)**: an ODF `form:checkbox`
+  anchored by a `draw:control` now round-trips to the model's FORMCHECKBOX `Field`
+  (with the current checked state from `form:current-state`) and back, a byte-exact
+  fixed point. Drop-down controls still degrade.
+- **Form fields — text input (fidelity parity, T6-5)**: an ODF `form:text`
+  control anchored by a `draw:control` now round-trips to the model's FORMTEXT
+  `Field` (with a text-input form payload and its name) and back, a byte-exact
+  fixed point. The `office:forms` registry is re-emitted with a minted control id
+  correlated to the body anchor. Checkbox/drop-down controls and richer control
+  attributes degrade for now.
+- **Tracked changes — deletions (fidelity parity, T6-3b)**: an ODF tracked
+  deletion now round-trips to the model's inline `Revision` (deletion). The
+  deleted content — which ODF stores in the change region, not the body — is
+  captured and re-declared in a `text:deletion` region, and the body carries the
+  `text:change` point marker. Completes the tracked-changes family (insertions +
+  deletions); moves/format-changes still degrade.
+- **Tracked changes — insertions (fidelity parity, T6-3)**: an ODF tracked
+  insertion now round-trips to the model's inline `Revision` and back, a
+  byte-exact fixed point. The leading `text:tracked-changes` registry is
+  pre-parsed for author/date (`office:change-info`), the body
+  `text:change-start`/`-end` markers pair by change-id, and the inserted span is
+  captured as a `Revision` wrapping its runs (a merge barrier keeps the inserted
+  text from fusing into the preceding run). Export re-declares each region and
+  wraps the range in markers, minting a change-id when the model's is not a valid
+  unique XML name. This first slice covers same-paragraph insertions; deletions,
+  moves, format changes, and block-spanning ranges degrade with a finding.
+- **Table of contents (fidelity parity, T6-2)**: a block-level
+  `text:table-of-content` now round-trips to the model's block content control
+  (`BlockNode::Sdt`, a "Table of Contents" building-block gallery) — the
+  `text:index-body` entries become the control's block content and `text:name`
+  its tag — and exports back to `text:table-of-content`, a byte-exact fixed
+  point. The level-template source is dropped (a renderer regenerates it); an
+  empty TOC is dropped; an unnamed TOC is given a document-unique name on export.
+- **Table cell margins (fidelity parity, T2c-6)**: a cell's content padding
+  (`fo:padding` shorthand and per-edge `fo:padding-top`/`-bottom`/`-left`/`-right`)
+  now round-trips via the `table-cell` style family to the model's `CellMargins`
+  (twips↔pt codec, domain-clamped `0..=31680`); four equal edges collapse to the
+  `fo:padding` shorthand. **This completes the whole table family both
+  directions** — structure, merges, column widths, cell shading/valign/borders/
+  margins, row height, and table width/alignment all round-trip.
+- **Table-level width & alignment (fidelity parity, T2c-5)**: a table's alignment
+  (`table:align`) and width (`style:width` absolute / `style:rel-width` relative)
+  now round-trip via a new `table` style family, completing table-level geometry.
+  Auto/nil widths and other table properties are reported.
+- **Table row height (fidelity parity, T2c-4)**: a row's height now round-trips
+  via a new `table-row` style family — exact height ↔ `style:row-height`, minimum
+  ↔ `style:min-row-height` (twips↔pt codec, domain-clamped `0..=31680`). Rows with
+  an `auto` height stay byte-identical.
+- **Table cell borders (fidelity parity, T2c-3)**: a cell's four edge borders
+  (`fo:border` and per-edge `fo:border-top/-left/-bottom/-right`, each `<width>
+  <style> <color>`) now round-trip via the `table-cell` style family. Widths use
+  an exact eighth-point↔`pt` codec (bounded to the model's `0..=1024` domain);
+  the style token is stored verbatim; four identical edges collapse to the
+  `fo:border` shorthand. Inside-H/V borders and edges carrying text padding are
+  reported (not cell-representable as `fo:border`).
+- **Table cell shading & vertical alignment (fidelity parity, T2c-2)**: a table
+  cell's background fill (`fo:background-color`) and vertical alignment
+  (`style:vertical-align`) now round-trip via a new `table-cell` style family —
+  import resolves each `table:table-cell`'s referenced style; export mints a
+  deterministic `table-cell` automatic style per distinct (fill, valign) and
+  references it. Property-less cells stay byte-identical. Cell borders/margins
+  remain reported remainders.
+- **Table column widths (fidelity parity, T2c)**: a table's grid column widths
+  now round-trip. Import resolves each `table:table-column`'s referenced
+  `table-column` style (`style:table-column-properties`/`style:column-width`) —
+  `number-columns-repeated` expanded — into `GridColumn.width_twips`; export emits
+  a deterministic `table-column` automatic style per distinct width and references
+  it from the column grid, grouping equal consecutive widths. Width-less tables
+  stay byte-identical to before. Introduces the `table-column` style family the
+  remaining table properties (cell shading, borders) will build on.
+- **Paragraph properties (fidelity parity, T2b)**: paragraph formatting beyond
+  alignment now round-trips — indentation (`fo:margin-left`/`-right`,
+  `fo:text-indent` incl. hanging), spacing (`fo:margin-top`/`-bottom`,
+  `fo:line-height` percent), and keep-with-next / keep-together / break-before.
+  The single-alignment automatic style (`P_center`, …) is generalized to a
+  deterministic paragraph style that keeps its historical name when only
+  alignment is set. Lengths use an exactly-reversible `pt` form; the importer
+  also accepts `cm`/`mm`/`in` from real producers. Tab stops and border/shading
+  remain reported remainders (nested-element sub-slices).
+- **Broader run properties (fidelity parity, T2a)**: the run-property round trip
+  now covers font family (`fo:font-family`), superscript/subscript
+  (`style:text-position`), all-caps (`fo:text-transform`), and small-caps
+  (`fo:font-variant`) on both import and export, beyond the prior
+  bold/italic/underline/strike/color/size subset. A latent bug where
+  style-inheritance resolution silently dropped run properties outside that
+  original subset was fixed. Theme fonts, the complex/east-asian font slots, and
+  highlight remain reported remainders.
+- **Hyperlink & bookmark export (round-trip parity)**: hyperlinks and bookmarks
+  were imported faithfully but dropped on export (a silent round-trip loss).
+  Export now re-emits `text:a` wrappers (external URLs with fragments, and
+  `#anchor` internal targets, plus `office:title` screen-tips) and
+  `text:bookmark-start`/`-end` markers, reaching a byte-exact fixed point with the
+  importer. `xmlns:xlink` is now declared in the semantic content header. The
+  exporter mirrors the importer's hyperlink-scheme allowlist — a blocked scheme
+  (`javascript:`, `data:`, `file:`, …) a non-ODT-origin document might carry is
+  degraded to plain text rather than re-emitted as a live link — and a bookmark
+  name, href, or tooltip carrying an unserializable character degrades that one
+  marker/link with a finding instead of aborting the whole export. First slice of
+  the ODT→DOCX fidelity-parity effort.
+- **Metadata conformance fix**: `meta.xml` now writes the creation timestamp as
+  `meta:creation-date` and the last modification as `dc:date` (the ODF-native
+  elements the importer reads), instead of the non-ODF `dcterms:created`/
+  `dcterms:modified`. This keeps document dates interoperable with LibreOffice/
+  Word and makes the metadata round trip idempotent.
+
 ### Rendering fidelity — 2026-07-27
 
 Layout and rendering now consume the data the importer already models. Driven by

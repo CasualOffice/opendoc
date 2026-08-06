@@ -161,9 +161,10 @@ some footer field-recompute edge cases. Footnote/endnote body placement, inline
 math (OMML), and multi-column layout aren't done. A GPU backend, the Tauri desktop
 shell, worker isolation, and a stable public SDK are not started.
 
-The current focus is deeper DOCX fidelity. A stable public SDK, ODT/plain-text
-and other format adapters, and native PDF export from the engine display list
-are future goals rather than shipped capabilities.
+The current focus is deeper DOCX fidelity. Internal format-neutral registry,
+normalized JSON, and plain-text adapters are implemented; stable public host
+surfaces, ODT and other office adapters, and native PDF export from the engine
+display list remain future goals rather than shipped capabilities.
 
 Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 [support matrix](docs/18-SUPPORT-MATRIX.md).
@@ -176,9 +177,12 @@ Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 | `casual-doc-model` | Normalized document values, IDs, invariants, and snapshot I/O |
 | `casual-doc-transaction` | Atomic operations, inverses, and position mapping |
 | `casual-doc-selection` | Logical caret/range validation and mapping |
+| `casual-doc-package` | Format-neutral, security-bounded ZIP admission and part reads |
 | `casual-doc-ooxml` | Security-bounded OOXML package inspection |
+| `casual-doc-odf` | Security-bounded ODF package/profile admission and incremental ODT semantic import |
 | `casual-doc-import` | WordprocessingML semantic import into the normalized model |
 | `casual-doc-export` | DOCX writers: byte-identical reconstruction and the semantic model → WordprocessingML writer |
+| `casual-doc-io` | Format-neutral identities, capability descriptors, deterministic detection/dispatch, preservation envelopes, and built-in adapters |
 | `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
 | `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
 

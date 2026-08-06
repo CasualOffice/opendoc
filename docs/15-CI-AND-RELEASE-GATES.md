@@ -4,7 +4,7 @@
 **CI provider:** GitHub Actions
 **Development toolchain:** Rust 1.96.0
 **MSRV:** Rust 1.88.0
-**Last updated:** 2026-07-31
+**Last updated:** 2026-08-04
 
 ## Purpose
 
@@ -42,7 +42,35 @@ Every pull request and push to `main` runs required checks with stable job names
 - `repository-policy`.
 
 Scheduled CI adds dependency advisories and a bounded seeded DOCX package fuzz
-campaign.
+campaign. Pull-request CI builds the format-neutral ZIP, DOCX, and ODT package
+fuzz targets; seeded ODT campaigns become required when the rights-reviewed ODT
+corpus lands in MFIO-007.
+
+The ODT semantic-import gate additionally requires namespace/prefix and
+attribute-order invariance, strict version/document-kind checks, DTD and active
+content refusal, bounded XML/text/paragraph/inline/list/table/note/report resources,
+cooperative cancellation, normalized-model validation, and explicit findings
+for every deferred construct family. Synthetic fixtures additionally lock table
+block order, bounded repetition and nesting, empty-cell normalization, and
+strict horizontal/vertical covered-cell topology. The independently locked
+`odt_content` fuzz target compiles in pull-request CI. Rights-reviewed ODF
+fixtures remain a Slice D completion requirement.
+
+Synthetic note fixtures additionally require typed footnote/endnote reference
+resolution, recursive note-body block placement (including notes referenced
+from table cells), deterministic identity, custom-citation loss reporting, and
+atomic rejection of nested, duplicate, malformed, or over-limit notes.
+
+The matching ODT semantic-export gate requires deterministic recursive table
+XML, independent row/cell/column bounds, model → ODT → model equality, byte-stable
+re-export for the supported geometry, and explicit visible fallback for merge
+topology that cannot be represented safely.
+
+Note export additionally requires canonical footnote/endnote containers,
+independent occurrence bounds, recursive note-body fixed points, unique IDs for
+reused definitions, and explicit findings for shared, nested, or unreferenced
+note shapes that do not map one-for-one to ODT's inline note ownership.
+
 Release workflows are separate and receive no write permission during pull
 request validation.
 
@@ -116,6 +144,11 @@ Additional gates should be added as capabilities appear:
 - structure-aware XML and relationship fuzzing;
 - snapshot serialization tests;
 - DOCX corpus import tests;
+- per-format detection, ambiguity, and explicit-selection tests;
+- per-format parser limits, corpus import, semantic reopen, and preservation tests;
+- cross-format export compatibility reports proving that target-inexpressible
+  source data is never dropped silently;
+- schema/profile validation for every emitted standardized package format;
 - round-trip tests;
 - visual layout snapshot tests;
 - benchmark regression checks;

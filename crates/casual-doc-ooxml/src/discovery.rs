@@ -1,15 +1,12 @@
 //! Main-document discovery and bounded package-metadata XML streaming.
 
-use std::collections::BTreeMap;
-use std::io::Cursor;
-
+use casual_doc_package::{BoundedPackage, CancellationToken};
 use quick_xml::Reader;
 use quick_xml::events::Event;
-use zip::ZipArchive;
 
 use crate::contenttypes::ContentTypes;
 use crate::error::PackageError;
-use crate::package::{CancellationToken, ROOT_RELATIONSHIPS_PART, read_indexed};
+use crate::package::ROOT_RELATIONSHIPS_PART;
 use crate::relationships::{
     DocumentRelationship, Relationship, TargetMode, is_office_document_type, parent_segments,
     parse_relationships, relationship_part_name, resolve_relative_target,
@@ -31,7 +28,7 @@ const PART_RELS_LABEL: &str = "<part>/_rels/*.rels";
 pub(crate) fn discover_main_document(
     relationships_bytes: &[u8],
     content_types: &ContentTypes,
-    archive_indexes: &BTreeMap<String, usize>,
+    package: &BoundedPackage<'_>,
 ) -> Result<String, PackageError> {
     let relationships = parse_relationships(relationships_bytes, ROOT_RELATIONSHIPS_PART)?;
     let office: Vec<&Relationship> = relationships
@@ -47,7 +44,7 @@ pub(crate) fn discover_main_document(
     }
     let resolved =
         resolve_relative_target(&[], &office[0].target).ok_or(PackageError::UnsafePartName)?;
-    if !archive_indexes.contains_key(&resolved) {
+    if !package.contains_part(&resolved) {
         return Err(PackageError::MissingMainDocument);
     }
     let content_type = content_types
@@ -65,16 +62,17 @@ pub(crate) fn discover_main_document(
 /// footer, footnotes) resolves its own media/hyperlink references. A part with
 /// no `_rels` part has no relationships.
 pub(crate) fn resolve_part_relationships(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-    archive_indexes: &BTreeMap<String, usize>,
+    package: &mut BoundedPackage<'_>,
     part: &str,
     cancellation: &CancellationToken,
 ) -> Result<Vec<DocumentRelationship>, PackageError> {
     let rels_part = relationship_part_name(part);
-    let Some(&index) = archive_indexes.get(&rels_part) else {
+    if !package.contains_part(&rels_part) {
         return Ok(Vec::new());
-    };
-    let bytes = read_indexed(archive, index, cancellation)?;
+    }
+    let bytes = package
+        .read_part_with_cancellation(&rels_part, cancellation)
+        .map_err(PackageError::from)?;
     let relationships = parse_relationships(&bytes, PART_RELS_LABEL)?;
     let base = parent_segments(part);
     let mut resolved: Vec<DocumentRelationship> = relationships
