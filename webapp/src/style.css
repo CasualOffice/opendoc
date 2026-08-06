@@ -15,18 +15,25 @@
 
 /* --accent is settable at runtime (Settings); everything tints derive from it. */
 :root {
-  --accent: #e2622a;
+  /* Redesign default accent — Studio blue. main.js also sets --accent inline
+     from persisted Settings, so this is the fallback/first-paint value. */
+  --accent: #3355c4;
   --accent-strong: color-mix(in srgb, var(--accent) 82%, var(--ink));
   --accent-ink: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 42%, transparent);
   --error: #c0392b;
-  --radius: 8px;
-  --radius-sm: 7px;
-  --radius-md: 8px;
-  /* One shared radius/shadow for every floating "card" surface (settings,
-     context menus, command palette, find panel) — doc 69 §4.3 found these
-     drifting across 8/10/12px with 3 near-duplicate shadows. */
+  /* Canvas / grid aesthetic (redesign): the shell reads as a flat gridded
+     surface split by hairlines, not a stack of rounded cards — so the chrome
+     radii are near-square. Floating popovers keep a small radius so they still
+     detach from the surface (and #outlinePanel stays 10px, asserted by
+     shell-reference-polish.spec). */
+  --radius: 3px;
+  --radius-sm: 3px;
+  --radius-md: 3px;
+  /* Floating surfaces keep their own radius so they detach from the flat
+     canvas — and both are asserted by tests (#outlinePanel 10px in
+     shell-reference-polish; dialog cards 12px in header-menu). */
   --radius-popover: 10px;
   --radius-dialog: 12px;
   --shadow-popover: 0 10px 34px rgba(20, 22, 28, 0.24);
@@ -67,19 +74,29 @@
 /* Light palette (default + explicit). */
 :root,
 :root[data-theme="light"] {
-  --bg: #e9ebef;
-  --bg-2: #eef0f3;
+  /* Warm "Studio" light palette from the approved editor redesign: paper-white
+     canvas (#FBFAF8), quiet stone surfaces (#F2F1ED), warm-grey hairlines
+     (#EDEBE6 / #DEDBD4), and graphite ink (#14161A). Everything downstream is
+     tokenized, so this single block re-skins the whole chrome. */
+  --bg: #fbfaf8;
+  --bg-2: #f2f1ed;
   --surface: #ffffff;
-  --surface-alt: #f7f8fa;
-  --ink: #1a1c20;
-  --muted: #6a7078;
-  --faint: #9aa0a8;
-  --line: #e3e6ea;
-  --line-strong: #d3d7dd;
-  --scrollbar-thumb: rgba(60, 64, 67, 0.32);
-  --scrollbar-thumb-hover: rgba(60, 64, 67, 0.55);
-  --shadow-sm: 0 1px 2px rgba(20, 22, 28, 0.06);
-  --shadow-page: 0 1px 3px rgba(20, 22, 28, 0.13), 0 10px 30px rgba(20, 22, 28, 0.09);
+  --surface-alt: #fcfcfb;
+  --ink: #14161a;
+  --muted: #565a61;
+  --faint: #8a8e95;
+  --line: #edebe6;
+  --line-strong: #dedbd4;
+  --scrollbar-thumb: rgba(74, 78, 85, 0.3);
+  --scrollbar-thumb-hover: rgba(74, 78, 85, 0.52);
+  --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.05);
+  --shadow-page: 0 1px 3px rgba(20, 22, 26, 0.12), 0 10px 30px rgba(20, 22, 26, 0.09);
+  /* Graphite primary action (redesign): the mock's "Open" / "Save .docx" /
+     "Apply" buttons are solid ink, not the tinted accent. Kept theme-aware so
+     dark mode gets an inverse (light) primary instead of an unreadable dark one. */
+  --primary-bg: #14161a;
+  --primary-bg-hover: #2c2f35;
+  --primary-ink: #fbfaf8;
   color-scheme: light;
 }
 
@@ -99,6 +116,9 @@
     --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+    --primary-bg: #e8eaed;
+    --primary-bg-hover: #ffffff;
+    --primary-ink: #16181c;
     color-scheme: dark;
   }
 }
@@ -117,6 +137,9 @@
   --scrollbar-thumb-hover: rgba(232, 234, 237, 0.5);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --primary-bg: #e8eaed;
+  --primary-bg-hover: #ffffff;
+  --primary-ink: #16181c;
   color-scheme: dark;
 }
 
@@ -292,6 +315,10 @@ input {
   align-items: center;
   flex: 0 0 auto;
   gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface-alt);
   color: var(--muted);
   font-size: var(--fs-small);
   white-space: nowrap;
@@ -378,13 +405,14 @@ input {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-ink);
 }
 
-.btn-primary:hover {
-  filter: brightness(1.05);
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-bg-hover);
+  border-color: var(--primary-bg-hover);
 }
 
 .btn.icon-only {
@@ -753,15 +781,14 @@ body.modal-open {
 }
 
 .dialog-button-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-color: var(--primary-bg);
+  background: var(--primary-bg);
+  color: var(--primary-ink);
 }
 
 .dialog-button-primary:hover {
-  border-color: var(--accent);
-  background: var(--accent);
-  filter: brightness(1.05);
+  border-color: var(--primary-bg-hover);
+  background: var(--primary-bg-hover);
 }
 
 .properties-grid {
@@ -2288,11 +2315,15 @@ body.modal-open {
 }
 
 /* ---- Ribbon (tabbed toolbar) ----------------------------------------------- */
+/* Canvas/grid ribbon (redesign): full-bleed and flat — no floating rounded
+   card. It is one horizontal band of the shell grid, separated from the bar
+   above and the workarea below by single hairlines. */
 .ribbon {
   background: var(--surface);
-  margin: 6px 8px 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   overflow: hidden;
   z-index: 2;
 }
@@ -2332,8 +2363,8 @@ body.modal-open {
 }
 
 .ribbon.is-collapsed {
-  border-bottom-left-radius: 9px;
-  border-bottom-right-radius: 9px;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .ribbon.is-collapsed .ribbon-tabs {
@@ -2378,6 +2409,9 @@ body.modal-open {
 .ribbon-panel {
   display: flex;
   align-items: stretch;
+  /* Redesign: the captioned band sits on a quieter surface than the white tab
+     strip above it, so the divider-separated groups read as one grouped band. */
+  background: var(--surface-alt);
   padding: 6px 10px 5px;
   /* No horizontal scrollbar ever (docs/64): a single no-wrap row whose
      overflowing groups collapse into the "⋯" menu instead. */
@@ -2454,9 +2488,15 @@ body.modal-open {
   text-align: left;
 }
 
+/* Captioned ribbon-group bands (redesign): a small, letter-spaced, uppercase
+   caption sits under each divider-separated group — FONT / PARAGRAPH / STYLES /
+   EDITING. text-transform is presentation only, so the DOM text (e.g. "Font")
+   is unchanged for a11y and tests. */
 .rgroup-label {
-  font-size: var(--fs-ribbon-caption);
-  font-weight: 500;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -2961,7 +3001,9 @@ body.is-format-painting .page-wrap * {
   flex: 1;
   display: flex;
   min-height: 0;
-  margin-top: 8px;
+  /* Canvas/grid: the rail + viewport sit flush under the ribbon's bottom
+     hairline — no floating gap now that the ribbon is full-bleed. */
+  margin-top: 0;
 }
 
 .rail {
@@ -3021,7 +3063,9 @@ body.is-format-painting .page-wrap * {
   width: 252px;
   min-width: 0;
   max-width: min(252px, calc(100vw - 52px));
-  margin: 0 8px 8px;
+  /* Inset floating panel: even breathing room on all sides (the rail stays
+     flush under the ribbon; the panels float within the workarea). */
+  margin: 8px;
   display: flex;
   flex-direction: column;
   min-height: 0;
