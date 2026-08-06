@@ -840,6 +840,7 @@
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span>Outline</span></button>
+        <button id="railPages" type="button" class="rail-btn" title="Pages" aria-label="Pages" aria-pressed="false" disabled><span class="ms" aria-hidden="true">auto_stories</span><span>Pages</span></button>
         <button id="railReview" type="button" class="rail-btn" title="Comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span><span>Comments</span></button>
       </nav>
       <aside id="outlinePanel" class="side-panel" hidden aria-label="Outline">
@@ -848,6 +849,13 @@
           <button id="outlineClose" type="button" class="panel-close" title="Close outline" aria-label="Close outline"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div id="outlineBody" class="panel-body outline-list"></div>
+      </aside>
+      <aside id="pagesPanel" class="side-panel pages-panel" hidden aria-label="Pages">
+        <div class="panel-head">
+          <span class="panel-title">Pages</span>
+          <button id="pagesClose" type="button" class="panel-close" title="Close pages" aria-label="Close pages"><span class="ms" aria-hidden="true">close</span></button>
+        </div>
+        <div id="pagesBody" class="panel-body pages-grid"></div>
       </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
