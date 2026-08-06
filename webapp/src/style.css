@@ -2699,6 +2699,12 @@ body.modal-open {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* Keyboard focus ring for arrow-key roving between cards (listbox model). */
+.style-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .style-card:disabled {
   opacity: 0.5;
   cursor: default;
