@@ -33,7 +33,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins Rust 1.96.0 + the wasm32-unknown-unknown target;
       # rustup honors it on the first cargo invocation. Warm it explicitly.
