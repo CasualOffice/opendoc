@@ -658,10 +658,14 @@ viewOutlineBtn.addEventListener("click", () => toggleOutline());
 viewZoomOut.addEventListener("click", () => stepZoom(-1));
 viewZoomIn.addEventListener("click", () => stepZoom(1));
 const railOutline = document.getElementById("railOutline");
+const railPages = document.getElementById("railPages");
 const railReview = document.getElementById("railReview");
 const outlinePanel = document.getElementById("outlinePanel");
 const outlineClose = document.getElementById("outlineClose");
 const outlineBody = document.getElementById("outlineBody");
+const pagesPanel = document.getElementById("pagesPanel");
+const pagesClose = document.getElementById("pagesClose");
+const pagesBody = document.getElementById("pagesBody");
 const a11yDocument = document.getElementById("a11yDocument");
 const reviewBtn = document.getElementById("reviewBtn");
 const reviewClose = document.getElementById("reviewClose");
@@ -1253,6 +1257,10 @@ function renderReviewMarginItems() {
   if (show && outlinePanel && !outlinePanel.hidden) {
     outlinePanel.hidden = true;
     railOutline.setAttribute("aria-pressed", "false");
+  }
+  if (show && pagesPanel && !pagesPanel.hidden) {
+    pagesPanel.hidden = true;
+    railPages.setAttribute("aria-pressed", "false");
   }
   // Reserve the comment column's width in the page stack only while the column
   // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
@@ -2151,6 +2159,7 @@ function updatePageNumber() {
     if (flat.length) cur = flat[0];
   }
   statPages.textContent = `Page ${cur} of ${pages.length}`;
+  reflectPagesSelection(cur);
 }
 
 async function boot() {
@@ -2279,6 +2288,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     setDocumentState("opened");
     saveBtn.disabled = false;
     railOutline.disabled = false;
+    railPages.disabled = false;
     populateStyles();
     populateTableStyles();
     dropEl.hidden = true;
@@ -2584,6 +2594,7 @@ async function renderAll() {
     // render was running. Clear only the progress message this render owns.
     if (statusEl.textContent === renderingStatus) setStatus("");
     updateStats();
+    if (!pagesPanel.hidden) buildPages();
   }
 }
 
@@ -7450,11 +7461,89 @@ function toggleOutline() {
   // canvas is never squeezed from both sides at once. Opening the outline closes
   // the review sidebar; the reverse is enforced in renderReviewMarginItems.
   if (!outlinePanel.hidden && !reviewSidebar.hidden) toggleReview(false);
+  if (!outlinePanel.hidden && !pagesPanel.hidden) {
+    pagesPanel.hidden = true;
+    railPages.setAttribute("aria-pressed", "false");
+  }
   railOutline.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   buildOutline();
 }
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
+
+/** Builds one thumbnail card per rendered page in the Pages navigator. */
+function buildPages() {
+  if (!doc || pagesPanel.hidden) return;
+  pagesBody.replaceChildren();
+  if (!pages.length) {
+    const empty = document.createElement("div");
+    empty.className = "outline-empty";
+    empty.textContent = "No pages yet.";
+    pagesBody.appendChild(empty);
+    return;
+  }
+  for (const page of pages) {
+    const n = page.pageNumber;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "page-thumb";
+    card.dataset.page = String(n);
+    card.title = `Page ${n}`;
+    card.setAttribute("aria-label", `Page ${n}`);
+    const box = document.createElement("span");
+    box.className = "page-thumb-box";
+    box.style.aspectRatio = `${page.wTwip} / ${page.hTwip}`;
+    const num = document.createElement("span");
+    num.className = "page-thumb-num";
+    num.textContent = String(n);
+    box.appendChild(num);
+    card.appendChild(box);
+    card.addEventListener("click", () => goToPage(n));
+    pagesBody.appendChild(card);
+  }
+  let cur = 1;
+  if (selection) {
+    const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
+    if (flat.length) cur = flat[0];
+  }
+  reflectPagesSelection(cur);
+}
+
+/** Scrolls page `n` into view using the single scroll owner, then highlights it. */
+function goToPage(n) {
+  const page = pages[n - 1];
+  if (!page) return;
+  const wr = page.wrap.getBoundingClientRect();
+  const vp = viewportEl.getBoundingClientRect();
+  viewportEl.scrollTo({ top: Math.max(0, viewportEl.scrollTop + (wr.top - vp.top) - 16), behavior: "auto" });
+  reflectPagesSelection(n);
+}
+
+/** Keeps the Pages navigator's active card synchronized with the caret's page. */
+function reflectPagesSelection(pageNumber) {
+  if (pagesPanel.hidden) return;
+  for (const card of pagesBody.querySelectorAll(".page-thumb")) {
+    const active = Number(card.dataset.page) === pageNumber;
+    card.classList.toggle("is-active", active);
+    if (active) card.setAttribute("aria-current", "page");
+    else card.removeAttribute("aria-current");
+  }
+}
+
+function togglePages() {
+  pagesPanel.hidden = !pagesPanel.hidden;
+  // Pages, Outline (left) and the review sidebar (right) are mutually exclusive
+  // so the canvas is never squeezed from both sides at once.
+  if (!pagesPanel.hidden) {
+    outlinePanel.hidden = true;
+    railOutline.setAttribute("aria-pressed", "false");
+    if (!reviewSidebar.hidden) toggleReview(false);
+  }
+  railPages.setAttribute("aria-pressed", String(!pagesPanel.hidden));
+  buildPages();
+}
+railPages.addEventListener("click", togglePages);
+pagesClose.addEventListener("click", togglePages);
 
 function reviewText(value) {
   return value == null || value === "" ? "Not provided" : String(value);
