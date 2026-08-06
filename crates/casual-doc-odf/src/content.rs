@@ -18,7 +18,7 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
-    HorizontalPosition, VerticalAnchor, VerticalPosition, WrapMode,
+    HorizontalPosition, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
 };
 use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
@@ -518,6 +518,15 @@ struct AnchoredDrawingDraft {
     vertical_offset_emu: i64,
     /// `draw:z-index` stacking order, if present.
     relative_height: Option<u32>,
+    /// Text wrap (`style:wrap` + `style:run-through`) resolved from the frame's
+    /// graphic style; `Square` (the ODF default) when there is none.
+    wrap: WrapMode,
+    behind_doc: bool,
+    /// `fo:margin-*` text-exclusion distances in EMU (0 when absent).
+    wrap_top_emu: i64,
+    wrap_bottom_emu: i64,
+    wrap_start_emu: i64,
+    wrap_end_emu: i64,
 }
 
 /// A `draw:frame`'s modeled content: an inline embedded image, an inline text
@@ -794,6 +803,7 @@ enum StyleFamily {
     TableCell,
     TableRow,
     Table,
+    Graphic,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -829,6 +839,15 @@ struct OdfStyle {
     table_alignment: Option<Alignment>,
     /// `style:width`/`style:rel-width` for a `table` style.
     table_width: Option<TableWidth>,
+    /// `style:wrap` for a `graphic` style (a floating frame's text wrap).
+    graphic_wrap: Option<String>,
+    /// `style:run-through` for a `graphic` style (the float's z-band).
+    graphic_run_through: Option<String>,
+    /// `fo:margin-*` text-exclusion distances for a `graphic` style, in EMU.
+    graphic_margin_top: Option<i64>,
+    graphic_margin_bottom: Option<i64>,
+    graphic_margin_left: Option<i64>,
+    graphic_margin_right: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1313,6 +1332,27 @@ fn resolve_style(
             if style.row_height != RowHeight::default() {
                 inherited.row_height = style.row_height;
             }
+            // Graphic-family fields cascade child-over-parent the same way, so an
+            // inheriting graphic style (e.g. a `fr1` with `parent-style-name`) keeps
+            // its own wrap/run-through/margins instead of the parent's.
+            if style.graphic_wrap.is_some() {
+                inherited.graphic_wrap = style.graphic_wrap.clone();
+            }
+            if style.graphic_run_through.is_some() {
+                inherited.graphic_run_through = style.graphic_run_through.clone();
+            }
+            if style.graphic_margin_top.is_some() {
+                inherited.graphic_margin_top = style.graphic_margin_top;
+            }
+            if style.graphic_margin_bottom.is_some() {
+                inherited.graphic_margin_bottom = style.graphic_margin_bottom;
+            }
+            if style.graphic_margin_left.is_some() {
+                inherited.graphic_margin_left = style.graphic_margin_left;
+            }
+            if style.graphic_margin_right.is_some() {
+                inherited.graphic_margin_right = style.graphic_margin_right;
+            }
             inherited.family = style.family;
             // The identity (named marker + own name) is the child's, never the
             // parent's, so it survives the flatten.
@@ -1513,6 +1553,16 @@ fn process_style_element(
             )?;
         } else if is_name(name, NamespaceKind::Style, b"table-properties") {
             read_table_style_properties(
+                reader,
+                element,
+                limits,
+                attributes,
+                attribute_bytes,
+                style,
+                reporter,
+            )?;
+        } else if is_name(name, NamespaceKind::Style, b"graphic-properties") {
+            read_graphic_style_properties(
                 reader,
                 element,
                 limits,
@@ -1731,6 +1781,7 @@ fn read_style_header(
                 "table-cell" => Some(StyleFamily::TableCell),
                 "table-row" => Some(StyleFamily::TableRow),
                 "table" => Some(StyleFamily::Table),
+                "graphic" => Some(StyleFamily::Graphic),
                 _ => {
                     reporter.report(
                         "odf.style.unsupported-family".to_owned(),
@@ -1804,6 +1855,7 @@ fn read_default_style_header(
                 "table-cell" => Some(StyleFamily::TableCell),
                 "table-row" => Some(StyleFamily::TableRow),
                 "table" => Some(StyleFamily::Table),
+                "graphic" => Some(StyleFamily::Graphic),
                 _ => None,
             };
         } else if !is_namespace_declaration(&attribute) {
@@ -2335,6 +2387,83 @@ fn read_table_cell_style_properties(
             }
             (NamespaceKind::Fo, b"padding-right") => {
                 set_cell_padding(style, |m| &mut m.end_twips, &value)
+            }
+            _ => false,
+        };
+        if !mapped && !is_namespace_declaration(&attribute) {
+            reporter.report(
+                attribute_feature(reader, &attribute),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reads the supported `<style:graphic-properties>` subset for a floating frame's
+/// graphic style: `style:wrap` + `style:run-through` (the text wrap and z-band) and
+/// the `fo:margin-*` text-exclusion distances. Positioning (`style:*-pos`/`-rel`) and
+/// the contour are deferred to a later increment and reported. Distances that fail
+/// to parse (negative/out-of-range) are dropped, never reaching validation.
+fn read_graphic_style_properties(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    style: &mut OpenStyle,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    if style.style.family != Some(StyleFamily::Graphic) {
+        count_and_report_attributes(
+            reader,
+            element,
+            attributes,
+            attribute_bytes,
+            limits,
+            reporter,
+        )?;
+        reporter.report(
+            "odf.style.graphic-properties.family".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    }
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let mapped = match (namespace_kind(&namespace), local.as_ref()) {
+            (NamespaceKind::Style, b"wrap") => {
+                style.style.graphic_wrap = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Style, b"run-through") => {
+                style.style.graphic_run_through = Some(value.trim().to_owned());
+                true
+            }
+            (
+                NamespaceKind::Fo,
+                name @ (b"margin-top" | b"margin-bottom" | b"margin-left" | b"margin-right"),
+            ) => {
+                // `parse_emu` rejects a negative/out-of-range distance; report the
+                // drop rather than losing it silently (symmetric with the anchor
+                // offset clamp), then default it to 0 at build time.
+                let parsed = parse_emu(&value);
+                if parsed.is_none() {
+                    reporter.report(
+                        "odf.style.graphic-margin-dropped".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
+                match name {
+                    b"margin-top" => style.style.graphic_margin_top = parsed,
+                    b"margin-bottom" => style.style.graphic_margin_bottom = parsed,
+                    b"margin-left" => style.style.graphic_margin_left = parsed,
+                    _ => style.style.graphic_margin_right = parsed,
+                }
+                true
             }
             _ => false,
         };
@@ -2994,6 +3123,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &mut text_bytes,
+                            &style_catalog.automatic,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -4129,6 +4259,31 @@ fn floating_anchor_rels(anchor_type: &str) -> Option<(HorizontalAnchor, Vertical
     }
 }
 
+/// Maps a graphic style's `style:wrap` (+ `style:run-through`) to the model wrap and
+/// z-band. The one-sided/dynamic ODF wraps have no model form and degrade to `Square`
+/// with a finding; an unknown value likewise. Absent wrap is the ODF default `Square`.
+fn resolve_graphic_wrap(style: &OdfStyle, reporter: &mut Reporter) -> (WrapMode, bool) {
+    match style.graphic_wrap.as_deref() {
+        None | Some("parallel") => (WrapMode::Square, false),
+        Some("none") => (WrapMode::TopAndBottom, false),
+        Some("run-through") => (
+            WrapMode::None,
+            style.graphic_run_through.as_deref() == Some("background"),
+        ),
+        Some("left" | "right" | "dynamic" | "biggest") => {
+            reporter.report(
+                "odf.style.graphic-wrap-side".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            (WrapMode::Square, false)
+        }
+        Some(_) => {
+            reporter.report("odf.style.graphic-wrap".to_owned(), ModelOutcome::Degraded);
+            (WrapMode::Square, false)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn parse_draw_frame(
     reader: &mut NsReader<&[u8]>,
@@ -4139,6 +4294,7 @@ fn parse_draw_frame(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     text_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<FrameContent>, OdfError> {
@@ -4153,7 +4309,7 @@ fn parse_draw_frame(
     // actually anchored.
     let mut offset_clamped = false;
     let mut z_index: Option<u32> = None;
-    let mut has_graphic_style = false;
+    let mut graphic_style_name: Option<String> = None;
     for attribute in frame.attributes() {
         let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
         count_attribute(&attribute, attributes, attribute_bytes, limits)?;
@@ -4182,7 +4338,7 @@ fn parse_draw_frame(
                         .ok()
                         .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
                 }
-                b"style-name" => has_graphic_style = true,
+                b"style-name" => graphic_style_name = Some(decode_attribute(&attribute)?),
                 _ => {}
             },
             _ => {}
@@ -4453,15 +4609,25 @@ fn parse_draw_frame(
         // image stays inline and the dropped anchor is reported.
         if let Some(anchor) = anchor_type.as_deref() {
             if let Some((horizontal_rel, vertical_rel)) = floating_anchor_rels(anchor) {
-                if has_graphic_style {
-                    // The graphic style's wrap/position/margins are not mapped yet
-                    // (Square wrap and offset positioning are re-derived), so its
-                    // detail is a reported degrade rather than silently kept.
-                    reporter.report(
-                        "odf.draw.anchor-style-deferred".to_owned(),
-                        ModelOutcome::Degraded,
-                    );
-                }
+                // Resolve the frame's graphic style for the wrap + exclusion
+                // distances (positioning stays offset-only this increment). Absent
+                // or unresolvable → the ODF-default Square wrap with no distances.
+                let graphic = graphic_style_name.as_deref().and_then(|name| {
+                    automatic_styles.get(&(StyleFamily::Graphic, name.to_owned()))
+                });
+                let (wrap, behind_doc) = graphic
+                    .map(|style| resolve_graphic_wrap(style, reporter))
+                    .unwrap_or((WrapMode::Square, false));
+                let distances = graphic
+                    .map(|style| {
+                        (
+                            style.graphic_margin_top.unwrap_or(0),
+                            style.graphic_margin_bottom.unwrap_or(0),
+                            style.graphic_margin_left.unwrap_or(0),
+                            style.graphic_margin_right.unwrap_or(0),
+                        )
+                    })
+                    .unwrap_or((0, 0, 0, 0));
                 if let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) {
                     if offset_clamped {
                         // A present but negative/out-of-range `svg:x`/`svg:y` is
@@ -4483,6 +4649,12 @@ fn parse_draw_frame(
                         horizontal_offset_emu: x_emu.unwrap_or(0),
                         vertical_offset_emu: y_emu.unwrap_or(0),
                         relative_height: z_index,
+                        wrap,
+                        behind_doc,
+                        wrap_top_emu: distances.0,
+                        wrap_bottom_emu: distances.1,
+                        wrap_start_emu: distances.2,
+                        wrap_end_emu: distances.3,
                     })));
                 }
                 // An anchor with no extent cannot be modeled (extent is mandatory);
@@ -8652,9 +8824,9 @@ fn build_inlines(
                         width_emu: draft.width_emu,
                         height_emu: draft.height_emu,
                     },
-                    // This increment maps only offset positioning with the ODF
-                    // default (`Square`) wrap; distances, alignment, contour, and the
-                    // picture transforms are deferred (left at their defaults).
+                    // This increment maps offset positioning plus wrap + exclusion
+                    // distances (from the graphic style); alignment positioning, the
+                    // contour, and the picture transforms are deferred (defaults).
                     anchor: DrawingAnchor {
                         horizontal: AnchorHorizontal {
                             relative_from: draft.horizontal_rel,
@@ -8664,10 +8836,15 @@ fn build_inlines(
                             relative_from: draft.vertical_rel,
                             position: VerticalPosition::Offset(draft.vertical_offset_emu),
                         },
-                        wrap: WrapMode::Square,
-                        wrap_distances: Default::default(),
+                        wrap: draft.wrap,
+                        wrap_distances: WrapDistances {
+                            top_emu: draft.wrap_top_emu,
+                            bottom_emu: draft.wrap_bottom_emu,
+                            start_emu: draft.wrap_start_emu,
+                            end_emu: draft.wrap_end_emu,
+                        },
                         wrap_polygon: None,
-                        behind_doc: false,
+                        behind_doc: draft.behind_doc,
                     },
                     descr: draft.descr.clone(),
                     relative_height: draft.relative_height,

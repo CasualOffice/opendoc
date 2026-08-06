@@ -29,9 +29,18 @@ a general ODT support claim.
   the picture transforms (crop/border/flip/rotation) — so nothing is silently lost
   and the output stays idempotent. Like inline images, a floating image only
   round-trips through `write_odt_with_retained_parts` (its bytes must be retained);
-  the plain semantic path degrades it to alt text. Wrap variants, distances, and
-  alignment positioning (via a `style:family="graphic"` automatic style) follow in
-  the next increment.
+  the plain semantic path degrades it to alt text.
+- **Floating images — wrap and distances (fidelity parity, T5 increment 2)**: a
+  floating frame's text wrap and text-exclusion distances now round-trip via a
+  `style:family="graphic"` automatic style: `style:wrap`/`style:run-through` map to
+  the wrap mode and z-band (`none`↔top-and-bottom, `parallel`↔square,
+  `run-through`+`background`↔float-behind-text, `run-through`+`foreground`↔float-over-text)
+  and `fo:margin-*` to the exclusion distances. The style name is a deterministic
+  content hash (`gr…`), so identically-wrapped frames at different positions share
+  one style and a Square-wrap zero-distance frame still emits no graphic style
+  (byte-identical to the first increment). A one-sided/dynamic ODF wrap degrades to
+  square with a finding; the contour polygon, alignment positioning, expanded
+  anchor references, and signed offsets remain for the next increment.
 - **Named paragraph styles (fidelity parity, T4-2)**: a common `office:styles`
   `style:style style:family="paragraph"` now round-trips as a *referenced*
   schema-v1 `Style` identity (`StyleKind::Paragraph`), the paragraph analogue of

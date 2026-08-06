@@ -7,13 +7,14 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
     CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
-    Document, DocumentDefaults, Extent, Field, FieldKind, FontRef, FormFieldKind, GroupChild,
-    HeaderFooterKind, HeightRule, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
-    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
-    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, Revision,
-    RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing, Style, StyleId, StyleKind,
-    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WidthType, WrapMode,
+    Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, FontRef, FormFieldKind,
+    GroupChild, HeaderFooterKind, HeightRule, HorizontalAnchor, HorizontalPosition,
+    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
+    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing,
+    Style, StyleId, StyleKind, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
+    TableWidth, TextBox, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WidthType, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -680,6 +681,74 @@ fn push_border_attribute(
     Ok(())
 }
 
+/// The supported graphic-formatting subset for a floating (anchored) frame that
+/// cannot ride on the frame element alone: the wrap mode (`style:wrap` plus
+/// `style:run-through` for the float-over-text z-band) and the text-exclusion
+/// distances (`fo:margin-*`). It deliberately excludes the per-frame `svg:x`/`svg:y`
+/// offset (which stays on the frame), so two identically-wrapped frames at different
+/// positions share one style. An all-default value means the ODF-default `Square`
+/// wrap with no distances — no graphic style is emitted, keeping a plain offset
+/// frame byte-identical to the first-increment output.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtGraphicStyle {
+    /// `style:wrap` value, `None` for the default (`parallel`/Square).
+    wrap: Option<&'static str>,
+    /// `style:run-through` (`background`/`foreground`), only with `wrap="run-through"`.
+    run_through: Option<&'static str>,
+    /// `fo:margin-*` text-exclusion distances in EMU, `None` when zero.
+    margin_top: Option<i64>,
+    margin_bottom: Option<i64>,
+    margin_left: Option<i64>,
+    margin_right: Option<i64>,
+}
+
+impl OdtGraphicStyle {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// A deterministic, content-addressed NCName in the `gr` namespace (disjoint
+    /// from every other minted family and from a foreign producer's `fr…` names,
+    /// which the writer never re-emits). Identical content hashes to one name, so
+    /// the `BTreeSet` dedups shared styles.
+    fn name(&self) -> String {
+        format!("gr{:016x}", font_family_hash(&format!("{self:?}")))
+    }
+}
+
+/// Emits the supported `<style:graphic-properties>` attributes in a fixed order.
+fn push_graphic_properties(
+    xml: &mut String,
+    style: &OdtGraphicStyle,
+    max_content_bytes: usize,
+) -> Result<(), OdfError> {
+    if let Some(wrap) = style.wrap {
+        push_bounded(xml, " style:wrap=\"", max_content_bytes)?;
+        push_bounded(xml, wrap, max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if let Some(run_through) = style.run_through {
+        push_bounded(xml, " style:run-through=\"", max_content_bytes)?;
+        push_bounded(xml, run_through, max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    for (attr, emu) in [
+        ("fo:margin-top", style.margin_top),
+        ("fo:margin-bottom", style.margin_bottom),
+        ("fo:margin-left", style.margin_left),
+        ("fo:margin-right", style.margin_right),
+    ] {
+        if let Some(emu) = emu {
+            push_bounded(xml, " ", max_content_bytes)?;
+            push_bounded(xml, attr, max_content_bytes)?;
+            push_bounded(xml, "=\"", max_content_bytes)?;
+            push_bounded(xml, &emu_to_cm(emu), max_content_bytes)?;
+            push_bounded(xml, "\"", max_content_bytes)?;
+        }
+    }
+    Ok(())
+}
+
 /// The supported table-row-formatting subset (row height), emitted as one
 /// deterministic automatic `table-row` style.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -1096,6 +1165,8 @@ struct Writer {
     /// Distinct table-level formatting (align/width) that needs a `table` style.
     table_styles: BTreeSet<OdtTableStyle>,
     run_styles: BTreeSet<OdtRunStyle>,
+    /// Distinct floating-frame graphic formatting (wrap + exclusion distances).
+    graphic_styles: BTreeSet<OdtGraphicStyle>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
     footnotes: BTreeMap<NoteId, Note>,
@@ -1164,6 +1235,7 @@ impl Writer {
             row_styles: BTreeSet::new(),
             table_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
+            graphic_styles: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
             footnotes: BTreeMap::new(),
@@ -2680,21 +2752,14 @@ impl Writer {
     ) -> Result<(), OdfError> {
         let max = self.limits.max_content_bytes;
         let anchor = &drawing.anchor;
-        if anchor.wrap != WrapMode::Square {
-            self.reporter
-                .record("odt.export.anchor_wrap", ModelOutcome::Degraded);
-        }
-        if !anchor.wrap_distances.is_zero() {
-            self.reporter
-                .record("odt.export.anchor_wrap_distances", ModelOutcome::Degraded);
-        }
+        // The wrap mode and text-exclusion distances ride on a graphic style; an
+        // all-default (Square, no distances) frame mints none, staying byte-identical
+        // to the first increment. A contour and the picture transforms are still
+        // dropped with a finding.
+        let graphic = self.build_graphic_style(anchor);
         if anchor.wrap_polygon.is_some() {
             self.reporter
                 .record("odt.export.anchor_wrap_polygon", ModelOutcome::Degraded);
-        }
-        if anchor.behind_doc {
-            self.reporter
-                .record("odt.export.anchor_behind_doc", ModelOutcome::Degraded);
         }
         if drawing.crop.is_some()
             || drawing.border.is_some()
@@ -2707,6 +2772,11 @@ impl Writer {
                 ModelOutcome::Degraded,
             );
         }
+        let graphic_name = (!graphic.is_empty()).then(|| {
+            let name = graphic.name();
+            self.graphic_styles.insert(graphic);
+            name
+        });
         let anchor_type = self.anchor_type_name(
             anchor.horizontal.relative_from,
             anchor.vertical.relative_from,
@@ -2716,6 +2786,11 @@ impl Writer {
         self.push("<draw:frame text:anchor-type=\"")?;
         self.push(anchor_type)?;
         self.push("\"")?;
+        if let Some(name) = &graphic_name {
+            self.push(" draw:style-name=\"")?;
+            self.push(name)?;
+            self.push("\"")?;
+        }
         if let Some(z_index) = drawing.relative_height {
             self.push(" draw:z-index=\"")?;
             self.push(&z_index.to_string())?;
@@ -2734,6 +2809,46 @@ impl Writer {
         self.push("\"/>")?;
         self.write_frame_title(drawing.descr.as_deref())?;
         self.push("</draw:frame>")
+    }
+
+    /// Builds the graphic style carrying an anchor's wrap and exclusion distances.
+    /// `Square` with no distances yields an empty (unemitted) style. `Tight`/`Through`
+    /// have no distinct ODF form without a contour polygon (not emitted this
+    /// increment), so they degrade to the default `Square` wrap with a finding.
+    fn build_graphic_style(&mut self, anchor: &DrawingAnchor) -> OdtGraphicStyle {
+        let (wrap, run_through) = match anchor.wrap {
+            WrapMode::Square => (None, None),
+            WrapMode::TopAndBottom => (Some("none"), None),
+            WrapMode::None => (
+                Some("run-through"),
+                Some(if anchor.behind_doc {
+                    "background"
+                } else {
+                    "foreground"
+                }),
+            ),
+            WrapMode::Tight | WrapMode::Through => {
+                self.reporter
+                    .record("odt.export.anchor_wrap_contour", ModelOutcome::Degraded);
+                (None, None)
+            }
+        };
+        // `style:run-through` (the z-band) is only expressible with a run-through
+        // wrap, so a `behind_doc` on any other wrap has no ODF form — report it
+        // rather than dropping it silently.
+        if anchor.behind_doc && anchor.wrap != WrapMode::None {
+            self.reporter
+                .record("odt.export.anchor_behind_doc", ModelOutcome::Degraded);
+        }
+        let distances = &anchor.wrap_distances;
+        OdtGraphicStyle {
+            wrap,
+            run_through,
+            margin_top: (distances.top_emu != 0).then_some(distances.top_emu),
+            margin_bottom: (distances.bottom_emu != 0).then_some(distances.bottom_emu),
+            margin_left: (distances.start_emu != 0).then_some(distances.start_emu),
+            margin_right: (distances.end_emu != 0).then_some(distances.end_emu),
+        }
     }
 
     /// Maps the model's per-axis anchor references to the single ODF
@@ -3057,6 +3172,7 @@ fn automatic_styles_xml(
     cell_styles: &BTreeSet<OdtCellStyle>,
     row_styles: &BTreeSet<OdtRowStyle>,
     table_styles: &BTreeSet<OdtTableStyle>,
+    graphic_styles: &BTreeSet<OdtGraphicStyle>,
     max_content_bytes: usize,
 ) -> Result<String, OdfError> {
     if paragraph_styles.is_empty()
@@ -3066,6 +3182,7 @@ fn automatic_styles_xml(
         && cell_styles.is_empty()
         && row_styles.is_empty()
         && table_styles.is_empty()
+        && graphic_styles.is_empty()
     {
         return Ok(String::new());
     }
@@ -3135,6 +3252,17 @@ fn automatic_styles_xml(
             max_content_bytes,
         )?;
         push_run_text_properties(&mut xml, style, max_content_bytes)?;
+        push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
+    }
+    for style in graphic_styles {
+        push_bounded(&mut xml, "<style:style style:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &style.name(), max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            "\" style:family=\"graphic\"><style:graphic-properties",
+            max_content_bytes,
+        )?;
+        push_graphic_properties(&mut xml, style, max_content_bytes)?;
         push_bounded(&mut xml, "/></style:style>", max_content_bytes)?;
     }
     let mut unique_list_styles = BTreeMap::<&str, &OdtListStyle>::new();
@@ -3705,6 +3833,7 @@ fn write_odt_impl(
         &writer.cell_styles,
         &writer.row_styles,
         &writer.table_styles,
+        &writer.graphic_styles,
         limits.max_content_bytes,
     )?;
     let content_len = content_header

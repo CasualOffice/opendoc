@@ -103,14 +103,15 @@ The work lands as reviewable commits:
 - A floating (anchored) image `draw:frame` — `text:anchor-type="page"` or
   `"paragraph"` — maps to an `AnchoredDrawing` (first increment): the reference
   edges come from the anchor type (page → page/page, paragraph → column/paragraph),
-  `svg:x`/`svg:y` become the offset placement, `draw:z-index` the stacking order,
-  and the wrap is the ODF default (`Square`). The frame's graphic style (its
-  `style:wrap`/position/margins) is not yet consulted, so an explicit wrap or
-  alignment is reported (`odf.draw.anchor-style-deferred`) rather than silently
-  applied; `char`/`frame` anchor types keep the image inline with a finding, and a
-  floating frame without an extent falls back to the inline image. A negative or
-  out-of-range `svg:x`/`svg:y` (the unsigned length codec rejects it) is clamped to
-  zero and reported (`odf.draw.anchor-offset-clamped`).
+  `svg:x`/`svg:y` become the offset placement, and `draw:z-index` the stacking
+  order. The frame's `style:family="graphic"` style supplies the text wrap
+  (`style:wrap` + `style:run-through` → wrap mode and z-band; a one-sided/dynamic
+  wrap degrades to square with a finding) and the `fo:margin-*` text-exclusion
+  distances; positioning stays offset-only and the alignment/expanded-reference
+  properties are still deferred. `char`/`frame` anchor types keep the image inline
+  with a finding, and a floating frame without an extent falls back to the inline
+  image. A negative or out-of-range `svg:x`/`svg:y` (the unsigned length codec
+  rejects it) is clamped to zero and reported (`odf.draw.anchor-offset-clamped`).
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point

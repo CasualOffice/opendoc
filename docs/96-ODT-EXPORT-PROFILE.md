@@ -110,16 +110,19 @@ the report.
   `97-ODT-EDIT-TOLERANT-PRESERVATION.md`; safe unknown-part carry is a later
   checkpoint.
 - An `AnchoredDrawing` (floating image) with retained bytes re-emits a positioned
-  `draw:frame` (first increment): `text:anchor-type` (from the reference edges,
-  page/paragraph), `svg:x`/`svg:y` (offset placement), `draw:z-index`, extent, and
-  the image, with the ODF-default `Square` wrap carried implicitly (no graphic
-  style). Every model state outside that reversible core is reported and mapped to
-  its nearest representable form so the output stays a fixed point: a non-`Square`
-  wrap, `behind_doc`, exclusion distances, and a contour polygon are dropped; an
-  alignment position and a negative offset collapse to a zero offset; a
-  margin-strip/character/line reference degrades to the nearest page/paragraph
-  anchor type; and crop/border/flip/rotation are dropped. Without retained bytes it
-  degrades to alt text like an inline `Drawing`.
+  `draw:frame`: `text:anchor-type` (from the reference edges, page/paragraph),
+  `svg:x`/`svg:y` (offset placement), `draw:z-index`, extent, and the image. The
+  wrap mode and text-exclusion distances ride on a deterministic
+  `style:family="graphic"` automatic style (`style:wrap` + `style:run-through`,
+  `fo:margin-*`), named by a content hash so identically-wrapped frames share one
+  style; a `Square` wrap with no distances emits no graphic style at all. The
+  remaining model states outside the reversible core are reported and mapped to
+  their nearest representable form so the output stays a fixed point: a
+  `Tight`/`Through` contour degrades to `Square`; an alignment position and a
+  negative offset collapse to a zero offset; a margin-strip/character/line reference
+  degrades to the nearest page/paragraph anchor type; the contour polygon and
+  crop/border/flip/rotation are dropped. Without retained bytes it degrades to alt
+  text like an inline `Drawing`.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 
