@@ -7530,7 +7530,12 @@ function buildPages() {
     pagesBody.appendChild(empty);
     return;
   }
-  for (const page of pages) {
+  // A small live render per page, so each card shows the real page layout rather
+  // than a blank box. THUMB_DPI is low (a navigator preview, not readable text),
+  // and each transient bitmap is freed immediately — a whole-document panel of
+  // thumbnails stays a few MB even for long documents.
+  const THUMB_DPI = 24;
+  pages.forEach((page, index) => {
     const n = page.pageNumber;
     const card = document.createElement("button");
     card.type = "button";
@@ -7541,14 +7546,29 @@ function buildPages() {
     const box = document.createElement("span");
     box.className = "page-thumb-box";
     box.style.aspectRatio = `${page.wTwip} / ${page.hTwip}`;
+    try {
+      const bmp = doc.renderPage(index, THUMB_DPI);
+      const canvas = document.createElement("canvas");
+      canvas.className = "page-thumb-canvas";
+      canvas.width = bmp.widthPx;
+      canvas.height = bmp.heightPx;
+      canvas
+        .getContext("2d")
+        .putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
+      bmp.free(); // return the RGBA buffer to WASM now, not at GC.
+      box.appendChild(canvas);
+    } catch (err) {
+      // A page that fails to render still shows a (correctly proportioned) card.
+      console.error(`thumbnail page ${index}`, err);
+      box.classList.add("is-empty");
+    }
     const num = document.createElement("span");
     num.className = "page-thumb-num";
     num.textContent = String(n);
-    box.appendChild(num);
-    card.appendChild(box);
+    card.append(box, num);
     card.addEventListener("click", () => goToPage(n));
     pagesBody.appendChild(card);
-  }
+  });
   let cur = 1;
   if (selection) {
     const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
