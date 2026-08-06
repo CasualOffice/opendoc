@@ -30,7 +30,7 @@ jobs:
     # Pin the toolchain image by digest when adopting this in earnest so the
     # oracle is reproducible; ubuntu-24.04 ships a fixed LibreOffice for now.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install pinned LibreOffice and the bundled metric-compatible fonts
         run: |
