@@ -3648,7 +3648,9 @@ body.is-format-painting .page-wrap * {
 /* One column of page thumbnails; reserve the scrollbar gutter so it never
    overlaps a thumbnail's corner. */
 .pages-grid { display: grid; grid-template-columns: 1fr; gap: 12px; align-content: start; scrollbar-gutter: stable; justify-items: center; }
-.page-thumb { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; padding: 0; border: none; background: none; cursor: pointer; }
+/* Compact thumbnails: a single centered column, each card capped below the
+   panel width so it reads as a small page preview with breathing room. */
+.page-thumb { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; max-width: 176px; padding: 0; border: none; background: none; cursor: pointer; }
 .page-thumb-box { position: relative; width: 100%; display: block; overflow: hidden; background: var(--paper, #fff); border: 1px solid var(--line-strong); border-radius: 3px; box-shadow: var(--shadow-sm); }
 .page-thumb-canvas { display: block; width: 100%; height: auto; }
 .page-thumb-box.is-empty { aspect-ratio: 51 / 66; }
