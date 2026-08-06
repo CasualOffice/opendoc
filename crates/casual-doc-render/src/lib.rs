@@ -857,11 +857,28 @@ impl OutlinePen for GlyphPen<'_> {
 fn rect_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
     let x = rect.origin.x.to_device_px(dpi);
     let y = rect.origin.y.to_device_px(dpi);
-    let w = rect.size.width.to_device_px(dpi);
-    let h = rect.size.height.to_device_px(dpi);
+    let w = hairline_snap(rect.size.width.to_device_px(dpi));
+    let h = hairline_snap(rect.size.height.to_device_px(dpi));
     let mut builder = PathBuilder::new();
-    builder.push_rect(tiny_skia::Rect::from_xywh(x, y, w.max(0.0), h.max(0.0))?);
+    builder.push_rect(tiny_skia::Rect::from_xywh(x, y, w, h)?);
     builder.finish()
+}
+
+/// Keeps a hairline visible. A filled rect that represents a drawn line — a
+/// table or paragraph border, or a horizontal rule — can be thinner than one
+/// device pixel at screen resolutions: a 0.25 pt border (`w:sz="2"`, 5 twips) is
+/// only ~0.38 px at 110 dpi, and a `double` border splits it into two ~0.08 px
+/// bands whose anti-aliased coverage fades to nothing, so the line disappears
+/// (worst hit are a table's outer right and bottom edges). Word and LibreOffice
+/// always paint at least a one-pixel hairline. This snaps a positive sub-pixel
+/// extent up to a whole pixel; a drawn line's long axis is already ≥ 1 px, so
+/// only its thin axis is affected, and any extent ≥ 1 px is left untouched.
+fn hairline_snap(extent: f32) -> f32 {
+    if extent > 0.0 && extent < 1.0 {
+        1.0
+    } else {
+        extent.max(0.0)
+    }
 }
 
 fn ellipse_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
@@ -1581,6 +1598,56 @@ mod tests {
             px[0] < 40 && px[1] < 40 && px[2] < 40,
             "with the clip popped, the whole rect is painted (got {:?})",
             &px[..4]
+        );
+    }
+
+    #[test]
+    fn a_sub_pixel_border_rect_snaps_to_a_visible_hairline() {
+        use casual_doc_layout::display::Color as DisplayColor;
+        use casual_doc_layout::units::{Rect, Size};
+
+        // A 1-twip vertical band — the width of one `double` border band when a
+        // 0.25 pt (`w:sz="2"`) border is split at 110 dpi. It is ~0.08 px wide,
+        // so without a hairline floor its anti-aliased coverage rounds to nothing
+        // and the line (e.g. a table's outer right edge) vanishes. It must
+        // survive as a visible, roughly one-pixel-wide hairline.
+        let dpi = 110.0;
+        let width = 20usize;
+        let height = 40usize;
+        let mut surface = Surface::new(width as u32, height as u32).unwrap();
+        let border = Rect::new(
+            Point::new(Twip::from_points(1), Twip::from_points(1)),
+            Size::new(Twip(1), Twip::from_points(10)),
+        );
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Rect {
+            rect: border,
+            fill: Some(DisplayColor::BLACK),
+            stroke: None,
+        });
+
+        let fonts = SingleFontSource::new(ROBOTO_REGULAR);
+        render(&list, &mut surface, dpi, &fonts, &NoMediaSource);
+
+        // Every column carrying clearly non-white ink along the border height.
+        let inked_columns: Vec<usize> = (0..width)
+            .filter(|&x| {
+                (0..height).any(|y| {
+                    let px = &surface.data()[(y * width + x) * 4..][..4];
+                    px[0] < 200 && px[1] < 200 && px[2] < 200
+                })
+            })
+            .collect();
+        assert!(
+            !inked_columns.is_empty(),
+            "a sub-pixel border must snap to a visible one-pixel hairline"
+        );
+        // The floor is one device pixel: only the snapped pixel (and its
+        // anti-aliased neighbour at a fractional origin) may carry ink — never a
+        // filled block spanning the whole 20px-wide surface.
+        assert!(
+            inked_columns.len() <= 2,
+            "the hairline stays ~1px wide (inked columns: {inked_columns:?})"
         );
     }
 
