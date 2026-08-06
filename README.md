@@ -1,6 +1,6 @@
 # OpenDoc
 
-[![Live demo](https://img.shields.io/badge/demo-opendoc.casualoffice.org-e2622a.svg)](https://opendoc.casualoffice.org)
+[![Live demo](https://img.shields.io/badge/demo-opendoc.casualoffice.org-3355c4.svg)](https://opendoc.casualoffice.org)
 [![Status: Pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](docs/06-ROADMAP-AND-DELIVERY.md)
 [![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-black.svg?logo=rust)](rust-toolchain.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)

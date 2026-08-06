@@ -3645,6 +3645,14 @@ body.is-format-painting .page-wrap * {
   line-height: 1.5;
 }
 
+.pages-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.page-thumb { display: block; padding: 0; border: none; background: none; cursor: pointer; }
+.page-thumb-box { position: relative; display: flex; align-items: flex-end; justify-content: center; padding: 4px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 2px; box-shadow: var(--shadow-sm); }
+.page-thumb:hover .page-thumb-box { border-color: var(--muted); }
+.page-thumb.is-active .page-thumb-box { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.page-thumb-num { font: 500 9px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--faint); }
+.page-thumb.is-active .page-thumb-num { color: var(--accent-strong); }
+
 .review-list { display: grid; gap: 10px; align-content: start; }
 .review-composer { display: grid; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
 .review-composer label { font-size: var(--fs-small); font-weight: 600; }
