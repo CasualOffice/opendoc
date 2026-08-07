@@ -5285,6 +5285,38 @@ fn parse_draw_group(
         reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
         return Ok(None);
     }
+    // Each child coordinate is individually within `MAX_EMU`, but the union bounding
+    // box (max edge − min corner) can exceed it. A group whose bbox is out of the
+    // model's extent domain must be dropped HERE with a finding — building it would
+    // fail `Document::validate` and abort the whole import (losing unrelated
+    // content), unlike every other group degrade which drops only the group.
+    let min_x = children
+        .iter()
+        .map(|child| child.abs_x_emu)
+        .min()
+        .unwrap_or(0);
+    let min_y = children
+        .iter()
+        .map(|child| child.abs_y_emu)
+        .min()
+        .unwrap_or(0);
+    let max_x = children
+        .iter()
+        .map(|child| child.abs_x_emu + child.width_emu)
+        .max()
+        .unwrap_or(0);
+    let max_y = children
+        .iter()
+        .map(|child| child.abs_y_emu + child.height_emu)
+        .max()
+        .unwrap_or(0);
+    if max_x - min_x > MAX_EMU || max_y - min_y > MAX_EMU {
+        reporter.report(
+            "odf.draw.group-oversized".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    }
     let Some((horizontal_rel, vertical_rel)) =
         anchor_type.as_deref().and_then(floating_anchor_rels)
     else {

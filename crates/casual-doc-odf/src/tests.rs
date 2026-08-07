@@ -2315,3 +2315,61 @@ fn multi_child_shape_group_round_trips() {
             .unwrap();
     assert_eq!(reexport.bytes, export.bytes);
 }
+
+/// A `draw:g` whose children are each within the EMU domain but whose union
+/// bounding box exceeds it must drop the group WITH a finding — not abort the whole
+/// import — so unrelated content (a normal paragraph) survives.
+#[test]
+fn oversized_group_bbox_drops_group_not_document() {
+    // Two rects at 0 and 7.5e7 cm, each width 7.5e7 cm (< MAX_EMU individually); the
+    // union spans ~1.5e8 cm > MAX_EMU.
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.4"><office:body><office:text><text:p>Normal text</text:p><text:p><draw:g text:anchor-type="page"><draw:rect svg:x="0cm" svg:y="0cm" svg:width="75000000cm" svg:height="1cm"/><draw:rect svg:x="75000000cm" svg:y="0cm" svg:width="75000000cm" svg:height="1cm"/></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    // Import must SUCCEED (not abort), dropping only the group.
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.group-oversized")
+    );
+    // The normal paragraph survives; the group produced no inline in its paragraph.
+    let BlockNode::Paragraph(first) = &imported.document.body()[0] else {
+        panic!("first paragraph")
+    };
+    let InlineNode::Run(run) = &first.inlines[0] else {
+        panic!("run")
+    };
+    assert_eq!(run.text, "Normal text");
+    let BlockNode::Paragraph(second) = &imported.document.body()[1] else {
+        panic!("second paragraph")
+    };
+    assert!(second.inlines.is_empty());
+}
