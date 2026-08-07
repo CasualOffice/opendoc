@@ -543,7 +543,7 @@ struct AnchoredDrawingDraft {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ShapeDraft {
     /// The preset geometry, from the ODF element name (`draw:rect` → Rectangle,
-    /// `draw:ellipse` → Ellipse).
+    /// `draw:ellipse` → Ellipse, `draw:line` → Line).
     geometry: ShapeGeometry,
     horizontal_rel: HorizontalAnchor,
     vertical_rel: VerticalAnchor,
@@ -554,10 +554,14 @@ struct ShapeDraft {
     height_emu: i64,
     wrap: WrapMode,
     behind_doc: bool,
-    /// Solid fill color (`None` = no fill).
+    /// Solid fill color (`None` = no fill; always `None` for a line).
     fill: Option<RgbColor>,
     /// Solid outline color + width in EMU (`None` = no outline).
     stroke: Option<(RgbColor, i64)>,
+    /// Shape mirroring — for a `draw:line`, the two flips encode which diagonal of
+    /// the bounding box the endpoints span (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`).
+    flip_h: bool,
+    flip_v: bool,
 }
 
 /// A `draw:frame`'s modeled content: an inline embedded image, an inline text
@@ -3282,6 +3286,40 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else if text_body_depth.is_some()
                         && current.is_some()
+                        && is_name(&name, NamespaceKind::Draw, b"line")
+                    {
+                        // Sub-parse an open standalone line off the main loop;
+                        // parse_draw_line consumes the matching `End`, so undo this
+                        // `Start`'s depth increment below.
+                        if let Some(shape) = parse_draw_line(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &style_catalog.automatic,
+                            cancellation,
+                            &mut reporter,
+                        )? {
+                            let index = shapes.len();
+                            shapes.push(shape);
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            push_inline_draft(
+                                current.as_mut().ok_or(OdfError::MalformedContent)?,
+                                &mut active_link,
+                                InlineDraft::Shape(index),
+                            );
+                        }
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
                         && is_name(&name, NamespaceKind::Office, b"annotation")
                     {
                         // Sub-parse the annotation subtree off the main state
@@ -3561,6 +3599,35 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &reader,
                         &element,
                         geometry,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &style_catalog.automatic,
+                        &mut reporter,
+                    )? {
+                        let index = shapes.len();
+                        shapes.push(shape);
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::Shape(index),
+                        );
+                    }
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Draw, b"line")
+                {
+                    // A self-closing `draw:line` standalone shape (the common form and
+                    // exactly what this writer emits). Endpoint-positioned, no subtree.
+                    if let Some(shape) = build_line_draft(
+                        &reader,
+                        &element,
                         limits,
                         &mut attributes,
                         &mut attribute_bytes,
@@ -4589,39 +4656,120 @@ fn build_shape_draft(
         behind_doc,
         fill,
         stroke,
+        flip_h: false,
+        flip_v: false,
     }))
 }
 
-/// Sub-parses an open (non-self-closing) `draw:rect`: reads the shape's attributes,
-/// then consumes and drops its subtree (a text body or decoration is not modeled
-/// this increment, reported as `odf.draw.shape-body`). The caller undoes the
+/// Builds a `ShapeDraft` from a `draw:line`'s attributes. A line is positioned by
+/// its two endpoints (`svg:x1`/`y1`/`x2`/`y2`), which map to the group's bounding
+/// box (offset = min, extent = |delta|) plus a flip pair encoding which diagonal
+/// the endpoints span. A line has an outline but no fill. Returns `None` (reported)
+/// for a non-floating anchor or an endpoint that does not parse (negative/out of
+/// range — signed offsets are a later increment).
+fn build_line_draft(
+    reader: &NsReader<&[u8]>,
+    line: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    reporter: &mut Reporter,
+) -> Result<Option<ShapeDraft>, OdfError> {
+    let mut x1 = None;
+    let mut y1 = None;
+    let mut x2 = None;
+    let mut y2 = None;
+    let mut anchor_type: Option<String> = None;
+    let mut z_index: Option<u32> = None;
+    let mut style_name: Option<String> = None;
+    for attribute in line.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        match namespace_kind(&namespace) {
+            NamespaceKind::Svg => match local.as_ref() {
+                b"x1" => x1 = parse_emu(&decode_attribute(&attribute)?),
+                b"y1" => y1 = parse_emu(&decode_attribute(&attribute)?),
+                b"x2" => x2 = parse_emu(&decode_attribute(&attribute)?),
+                b"y2" => y2 = parse_emu(&decode_attribute(&attribute)?),
+                _ => {}
+            },
+            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+                anchor_type = Some(decode_attribute(&attribute)?);
+            }
+            NamespaceKind::Draw => match local.as_ref() {
+                b"z-index" => {
+                    z_index = decode_attribute(&attribute)?
+                        .parse::<i64>()
+                        .ok()
+                        .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
+                }
+                b"style-name" => style_name = Some(decode_attribute(&attribute)?),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    let Some((horizontal_rel, vertical_rel)) =
+        anchor_type.as_deref().and_then(floating_anchor_rels)
+    else {
+        reporter.report("odf.draw.shape-anchor".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    let (Some(x1), Some(y1), Some(x2), Some(y2)) = (x1, y1, x2, y2) else {
+        // A missing or non-parsing (negative/out-of-range) endpoint cannot be
+        // modeled without a signed codec; skip the line rather than misplace it.
+        reporter.report(
+            "odf.draw.line-endpoint-missing".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    };
+    let offset_x = x1.min(x2);
+    let offset_y = y1.min(y2);
+    let width_emu = (x2 - x1).abs();
+    let height_emu = (y2 - y1).abs();
+    let style = style_name
+        .as_deref()
+        .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
+    let (wrap, behind_doc) = style
+        .map(|style| resolve_graphic_wrap(style, reporter))
+        .unwrap_or((WrapMode::Square, false));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    Ok(Some(ShapeDraft {
+        geometry: ShapeGeometry::Line,
+        horizontal_rel,
+        vertical_rel,
+        horizontal_offset_emu: offset_x,
+        vertical_offset_emu: offset_y,
+        relative_height: z_index,
+        width_emu,
+        height_emu,
+        wrap,
+        behind_doc,
+        fill: None,
+        stroke,
+        flip_h: x1 > x2,
+        flip_v: y1 > y2,
+    }))
+}
+
+/// Consumes an open shape element's subtree (a `draw:rect`/`draw:ellipse`/`draw:line`
+/// that was NOT self-closing), dropping any child — a text body or decoration is not
+/// modeled this increment, reported as `odf.draw.shape-body`. The caller undoes the
 /// `Start`'s depth increment; this consumes the matching `End`.
 #[allow(clippy::too_many_arguments)]
-fn parse_draw_shape(
+fn consume_shape_subtree(
     reader: &mut NsReader<&[u8]>,
-    shape: &BytesStart<'_>,
-    geometry: ShapeGeometry,
     shape_depth: usize,
     limits: OdfImportLimits,
     elements: &mut usize,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
-    automatic_styles: &AutomaticStyles,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
-) -> Result<Option<ShapeDraft>, OdfError> {
-    let draft = build_shape_draft(
-        reader,
-        shape,
-        geometry,
-        limits,
-        attributes,
-        attribute_bytes,
-        automatic_styles,
-        reporter,
-    )?;
-    // Consume the shape's subtree regardless of whether it modeled, so the main
-    // loop resumes at the element after the matching `End`.
+) -> Result<(), OdfError> {
     let mut sub_depth = 0_usize;
     let mut buffer = Vec::new();
     let mut body_dropped = false;
@@ -4701,6 +4849,82 @@ fn parse_draw_shape(
     if body_dropped {
         reporter.report("odf.draw.shape-body".to_owned(), ModelOutcome::Degraded);
     }
+    Ok(())
+}
+
+/// Sub-parses an open (non-self-closing) box shape (`draw:rect`/`draw:ellipse`):
+/// reads the shape's attributes, then consumes its subtree.
+#[allow(clippy::too_many_arguments)]
+fn parse_draw_shape(
+    reader: &mut NsReader<&[u8]>,
+    shape: &BytesStart<'_>,
+    geometry: ShapeGeometry,
+    shape_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Option<ShapeDraft>, OdfError> {
+    let draft = build_shape_draft(
+        reader,
+        shape,
+        geometry,
+        limits,
+        attributes,
+        attribute_bytes,
+        automatic_styles,
+        reporter,
+    )?;
+    consume_shape_subtree(
+        reader,
+        shape_depth,
+        limits,
+        elements,
+        attributes,
+        attribute_bytes,
+        cancellation,
+        reporter,
+    )?;
+    Ok(draft)
+}
+
+/// Sub-parses an open (non-self-closing) `draw:line`: reads the line's endpoints,
+/// then consumes its subtree.
+#[allow(clippy::too_many_arguments)]
+fn parse_draw_line(
+    reader: &mut NsReader<&[u8]>,
+    line: &BytesStart<'_>,
+    line_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Option<ShapeDraft>, OdfError> {
+    let draft = build_line_draft(
+        reader,
+        line,
+        limits,
+        attributes,
+        attribute_bytes,
+        automatic_styles,
+        reporter,
+    )?;
+    consume_shape_subtree(
+        reader,
+        line_depth,
+        limits,
+        elements,
+        attributes,
+        attribute_bytes,
+        cancellation,
+        reporter,
+    )?;
     Ok(draft)
 }
 
@@ -9357,8 +9581,8 @@ fn build_inlines(
                             head_end: None,
                             tail_end: None,
                         }),
-                        flip_h: false,
-                        flip_v: false,
+                        flip_h: draft.flip_h,
+                        flip_v: draft.flip_v,
                         rotation: None,
                     })],
                 })

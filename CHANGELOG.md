@@ -15,6 +15,12 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Standalone shapes — lines (fidelity parity, T6)**: a floating ODF `draw:line`
+  (positioned by its two endpoints `svg:x1`/`y1`/`x2`/`y2`) now round-trips as a
+  `Line` `GroupShape` whose bounding box (offset + extent) plus a flip pair encode
+  the endpoints, and re-emits to the same endpoints. The endpoint↔bounding-box
+  mapping is an exact bijection over all four diagonal directions. A line carries an
+  outline but no fill (a model fill is reported, not emitted).
 - **Standalone shapes — ellipses (fidelity parity, T6)**: a floating ODF
   `draw:ellipse` (the same box geometry as `draw:rect` — position, size, solid
   fill/outline, anchor) now round-trips as an `Ellipse` `GroupShape` and re-emits as
