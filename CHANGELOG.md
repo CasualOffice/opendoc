@@ -15,6 +15,22 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Standalone shapes — rectangles, first increment (fidelity parity, T6)**: a
+  floating ODF `draw:rect` (a preset rectangle with a solid fill and outline,
+  anchored like a frame) now imports to an `InlineNode::Group` holding a single
+  `GroupChild::Shape` — the "group-of-one" model the DOCX adapter also produces for
+  a bare anchored shape — and re-exports through the preserving path to a byte-exact
+  fixed point (previously a `draw:rect` was skipped on import and every group
+  degraded to nothing on export). The rectangle's geometry (`svg:x`/`svg:y`/`svg:width`/
+  `svg:height`), page/paragraph anchor, `draw:z-index`, and text wrap map as for an
+  anchored image; its solid fill and outline (`draw:fill`/`draw:fill-color`,
+  `draw:stroke`/`svg:stroke-color`/`svg:stroke-width`) ride on the same
+  `style:family="graphic"` automatic style, extended for shapes. Because a shape
+  needs the `draw:`/`svg:` namespaces the plain writer does not declare, a shape
+  round-trips only through `write_odt_with_retained_parts`; the plain semantic path
+  degrades it with a finding. Gradient fills, dash patterns, arrowheads,
+  rotation/flip, non-rectangle geometry, multi-child and nested groups, shape text
+  bodies, and negative offsets are deferred with a finding.
 - **Floating (anchored) images — first increment (fidelity parity, T5)**: an ODF
   `draw:frame` with `text:anchor-type="page"` or `"paragraph"` (positioned by
   `svg:x`/`svg:y`, stacked by `draw:z-index`) now imports to an

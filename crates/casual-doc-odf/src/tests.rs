@@ -1,8 +1,8 @@
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Color, HorizontalAnchor, HorizontalPosition, InlineNode, RgbColor,
-    StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
+    Alignment, BlockNode, Color, Fill, GroupChild, HorizontalAnchor, HorizontalPosition,
+    InlineNode, RgbColor, ShapeGeometry, StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
 };
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
@@ -1952,4 +1952,127 @@ fn limits_and_cancellation_are_enforced_atomically() {
             ..
         })
     ));
+}
+
+/// A floating `draw:rect` with a solid fill and outline imports to a single-child
+/// `WordprocessingGroup` (a `GroupShape::Rectangle`) and re-exports through the
+/// preserving path to a byte-exact fixed point.
+#[test]
+fn standalone_rectangle_shape_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc" draw:stroke="solid" svg:stroke-width="0.05cm" svg:stroke-color="#112233"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    // The rectangle becomes a group-of-one holding a filled/outlined GroupShape.
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    assert_eq!(group.extent.width_emu, 5 * 360_000);
+    assert_eq!(group.extent.height_emu, 3 * 360_000);
+    assert_eq!(
+        group.anchor.as_ref().unwrap().horizontal.relative_from,
+        HorizontalAnchor::Column
+    );
+    assert_eq!(
+        group.anchor.as_ref().unwrap().horizontal.position,
+        HorizontalPosition::Offset(2 * 360_000)
+    );
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        panic!("one shape child")
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Rectangle);
+    let Some(Fill::Solid(fill)) = shape.fill else {
+        panic!("solid fill")
+    };
+    assert_eq!((fill.r, fill.g, fill.b), (0x33, 0x66, 0xcc));
+    let stroke = shape.stroke.as_ref().expect("stroke");
+    assert_eq!(
+        (stroke.color.r, stroke.color.g, stroke.color.b),
+        (0x11, 0x22, 0x33)
+    );
+    assert_eq!(stroke.width_emu, 18_000); // 0.05cm
+
+    // The preserving writer re-emits the positioned draw:rect + its graphic style.
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<draw:rect text:anchor-type="paragraph" draw:style-name="#));
+    assert!(content_out.contains(r##"draw:fill="solid" draw:fill-color="#3366cc""##));
+    assert!(content_out.contains(r##"svg:stroke-color="#112233""##));
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+
+    // The plain semantic path has no draw namespaces, so the shape degrades (no
+    // draw:rect emitted) rather than producing namespace-invalid XML.
+    let semantic = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut plain = OdtPackage::open(&semantic.bytes, OdfPackageLimits::default()).unwrap();
+    let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!plain_content.contains("draw:rect"));
+
+    // A translucent shape fill (a < 255, only reachable from a non-ODF-origin
+    // model) loses its alpha on export — `draw:fill-color` is RGB only — but the
+    // drop is reported, not silent.
+    let mut document = imported.document;
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let GroupChild::Shape(shape) = &mut group.children[0] else {
+        panic!("shape")
+    };
+    shape.fill = Some(Fill::Solid(casual_doc_model::v1::Rgba {
+        r: 0x33,
+        g: 0x66,
+        b: 0xcc,
+        a: 0x80,
+    }));
+    let export =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odt.export.shape_fill_opacity")
+    );
 }

@@ -112,6 +112,15 @@ The work lands as reviewable commits:
   with a finding, and a floating frame without an extent falls back to the inline
   image. A negative or out-of-range `svg:x`/`svg:y` (the unsigned length codec
   rejects it) is clamped to zero and reported (`odf.draw.anchor-offset-clamped`).
+- A floating `draw:rect` maps to a standalone rectangle shape (first increment): an
+  `InlineNode::Group` holding a single `GroupChild::Shape` (a `Rectangle` geometry),
+  positioned and anchored exactly like a floating image. Its solid fill and outline
+  come from the frame's `style:family="graphic"` style (`draw:fill`/`draw:fill-color`
+  → `Fill::Solid`; `draw:stroke`/`svg:stroke-color`/`svg:stroke-width` → a
+  `ShapeStroke`); a non-solid fill/outline degrades to none with a finding. A shape's
+  text body (open `draw:rect` form), gradient/dash/arrowhead detail, and the
+  non-rectangle geometries are deferred with a finding; a non-floating
+  (`as-char`/`char`/`frame`) anchor or a missing extent skips the shape.
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point

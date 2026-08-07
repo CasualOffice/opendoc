@@ -123,6 +123,17 @@ the report.
   degrades to the nearest page/paragraph anchor type; the contour polygon and
   crop/border/flip/rotation are dropped. Without retained bytes it degrades to alt
   text like an inline `Drawing`.
+- A `WordprocessingGroup` that is exactly a group-of-one identity-transform
+  `Rectangle` shape re-emits a positioned `draw:rect` (first increment): the anchor
+  type/offset/`draw:z-index`/wrap are written as for a floating image, and the
+  shape's solid fill and outline ride on the same `style:family="graphic"` automatic
+  style (`draw:fill`/`draw:fill-color`, `draw:stroke`/`svg:stroke-color`/
+  `svg:stroke-width`). A shape needs the `draw:`/`svg:` namespaces only the
+  preserving content header declares, so a shape is emitted only on the preserving
+  path; the plain semantic path reports the group as omitted rather than emit
+  namespace-invalid XML. A gradient fill, dash/arrowhead detail, rotation/flip, and
+  any group that is not the recognized single-rectangle shape are reported and
+  dropped.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 
