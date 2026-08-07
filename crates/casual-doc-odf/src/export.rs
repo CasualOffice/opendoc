@@ -2541,9 +2541,11 @@ impl Writer {
                         && let Some(shape) = single_line_shape(group)
                     {
                         self.write_group_line(group, shape)?;
+                    } else if self.drawing_namespaces_available && flat_shape_group(group) {
+                        self.write_group_container(group)?;
                     } else {
-                        // A multi-child group, an unsupported geometry, a picture/
-                        // text-box child, a transformed shape, or the plain path.
+                        // A nested/transformed group, an unsupported geometry, a
+                        // picture/text-box child, or the plain path.
                         self.reporter
                             .record("odt.export.group", ModelOutcome::Omitted);
                     }
@@ -2966,6 +2968,151 @@ impl Writer {
     /// family. A picture transform (flip/rotation) on the shape or a group transform
     /// beyond the identity is reported and dropped — this increment emits an
     /// axis-aligned, untransformed shape only.
+    /// Folds a shape's fill and outline into `graphic` (a base carrying any
+    /// anchor-level wrap for a top-level shape, or empty for a group child). When
+    /// `allow_fill` is false (a line), a model fill is reported, not applied. A
+    /// translucent color, a gradient fill, and dash/arrowhead detail are reported.
+    fn apply_shape_fill_stroke(
+        &mut self,
+        graphic: &mut OdtGraphicStyle,
+        shape: &GroupShape,
+        allow_fill: bool,
+    ) {
+        if allow_fill {
+            match shape.fill {
+                Some(Fill::Solid(color)) => {
+                    // Only the RGB channels map to `draw:fill-color`; a translucent
+                    // fill (a < 255, only from a non-ODF-origin model) loses its
+                    // alpha, reported rather than dropped silently.
+                    if color.a != 255 {
+                        self.reporter
+                            .record("odt.export.shape_fill_opacity", ModelOutcome::Degraded);
+                    }
+                    graphic.fill = Some((color.r, color.g, color.b));
+                }
+                Some(Fill::Gradient { .. }) => {
+                    self.reporter
+                        .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
+                    graphic.fill_none = true;
+                }
+                None => graphic.fill_none = true,
+            }
+        } else if shape.fill.is_some() {
+            // A line has no fill; a model fill is not representable and is reported.
+            self.reporter
+                .record("odt.export.line_fill", ModelOutcome::Degraded);
+        }
+        if let Some(stroke) = &shape.stroke {
+            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
+                self.reporter
+                    .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
+            }
+            if stroke.color.a != 255 {
+                self.reporter
+                    .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
+            }
+            graphic.stroke = Some((
+                (stroke.color.r, stroke.color.g, stroke.color.b),
+                stroke.width_emu,
+            ));
+        } else {
+            graphic.stroke_none = true;
+        }
+    }
+
+    /// Registers a graphic style (if non-empty) and returns its `gr…` name.
+    fn register_graphic_style(&mut self, graphic: OdtGraphicStyle) -> Option<String> {
+        (!graphic.is_empty()).then(|| {
+            let name = graphic.name();
+            self.graphic_styles.insert(graphic);
+            name
+        })
+    }
+
+    /// Emits one box-geometry element (`draw:rect`/`draw:ellipse`) at `(x, y, w, h)`.
+    /// `anchor_type`/`z_index` are emitted only for a top-level shape (a group child
+    /// carries neither — the enclosing `draw:g` owns the anchor). The attribute order
+    /// is fixed so a top-level shape stays byte-identical to prior releases.
+    #[allow(clippy::too_many_arguments)]
+    fn push_box_shape_element(
+        &mut self,
+        element: &str,
+        style_name: Option<&str>,
+        anchor_type: Option<&str>,
+        z_index: Option<u32>,
+        x: i64,
+        y: i64,
+        width: i64,
+        height: i64,
+    ) -> Result<(), OdfError> {
+        self.push("<")?;
+        self.push(element)?;
+        if let Some(anchor_type) = anchor_type {
+            self.push(" text:anchor-type=\"")?;
+            self.push(anchor_type)?;
+            self.push("\"")?;
+        }
+        if let Some(name) = style_name {
+            self.push(" draw:style-name=\"")?;
+            self.push(name)?;
+            self.push("\"")?;
+        }
+        if let Some(z_index) = z_index {
+            self.push(" draw:z-index=\"")?;
+            self.push(&z_index.to_string())?;
+            self.push("\"")?;
+        }
+        self.push(" svg:x=\"")?;
+        self.push(&emu_to_cm(x))?;
+        self.push("\" svg:y=\"")?;
+        self.push(&emu_to_cm(y))?;
+        self.push("\" svg:width=\"")?;
+        self.push(&emu_to_cm(width))?;
+        self.push("\" svg:height=\"")?;
+        self.push(&emu_to_cm(height))?;
+        self.push("\"/>")
+    }
+
+    /// Emits one `draw:line` at the given endpoints, same attribute discipline as
+    /// [`Self::push_box_shape_element`].
+    #[allow(clippy::too_many_arguments)]
+    fn push_line_element(
+        &mut self,
+        style_name: Option<&str>,
+        anchor_type: Option<&str>,
+        z_index: Option<u32>,
+        x1: i64,
+        y1: i64,
+        x2: i64,
+        y2: i64,
+    ) -> Result<(), OdfError> {
+        self.push("<draw:line")?;
+        if let Some(anchor_type) = anchor_type {
+            self.push(" text:anchor-type=\"")?;
+            self.push(anchor_type)?;
+            self.push("\"")?;
+        }
+        if let Some(name) = style_name {
+            self.push(" draw:style-name=\"")?;
+            self.push(name)?;
+            self.push("\"")?;
+        }
+        if let Some(z_index) = z_index {
+            self.push(" draw:z-index=\"")?;
+            self.push(&z_index.to_string())?;
+            self.push("\"")?;
+        }
+        self.push(" svg:x1=\"")?;
+        self.push(&emu_to_cm(x1))?;
+        self.push("\" svg:y1=\"")?;
+        self.push(&emu_to_cm(y1))?;
+        self.push("\" svg:x2=\"")?;
+        self.push(&emu_to_cm(x2))?;
+        self.push("\" svg:y2=\"")?;
+        self.push(&emu_to_cm(y2))?;
+        self.push("\"/>")
+    }
+
     fn write_group_box_shape(
         &mut self,
         group: &WordprocessingGroup,
@@ -2988,76 +3135,24 @@ impl Writer {
                 .record("odt.export.shape_transform", ModelOutcome::Degraded);
         }
         let mut graphic = self.build_graphic_style(anchor);
-        match shape.fill {
-            Some(Fill::Solid(color)) => {
-                // Only the RGB channels map to `draw:fill-color`; a translucent fill
-                // (a < 255, only reachable from a non-ODF-origin model) loses its
-                // alpha, reported rather than dropped silently.
-                if color.a != 255 {
-                    self.reporter
-                        .record("odt.export.shape_fill_opacity", ModelOutcome::Degraded);
-                }
-                graphic.fill = Some((color.r, color.g, color.b));
-            }
-            Some(Fill::Gradient { .. }) => {
-                self.reporter
-                    .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
-                graphic.fill_none = true;
-            }
-            None => graphic.fill_none = true,
-        }
-        if let Some(stroke) = &shape.stroke {
-            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
-                self.reporter
-                    .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
-            }
-            if stroke.color.a != 255 {
-                self.reporter
-                    .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
-            }
-            graphic.stroke = Some((
-                (stroke.color.r, stroke.color.g, stroke.color.b),
-                stroke.width_emu,
-            ));
-        } else {
-            graphic.stroke_none = true;
-        }
-        let graphic_name = (!graphic.is_empty()).then(|| {
-            let name = graphic.name();
-            self.graphic_styles.insert(graphic);
-            name
-        });
+        self.apply_shape_fill_stroke(&mut graphic, shape, true);
+        let graphic_name = self.register_graphic_style(graphic);
         let anchor_type = self.anchor_type_name(
             anchor.horizontal.relative_from,
             anchor.vertical.relative_from,
         );
         let x_emu = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
         let y_emu = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
-        self.push("<")?;
-        self.push(element)?;
-        self.push(" text:anchor-type=\"")?;
-        self.push(anchor_type)?;
-        self.push("\"")?;
-        if let Some(name) = &graphic_name {
-            self.push(" draw:style-name=\"")?;
-            self.push(name)?;
-            self.push("\"")?;
-        }
-        if let Some(z_index) = group.relative_height {
-            self.push(" draw:z-index=\"")?;
-            self.push(&z_index.to_string())?;
-            self.push("\"")?;
-        }
-        self.push(" svg:x=\"")?;
-        self.push(&emu_to_cm(x_emu))?;
-        self.push("\" svg:y=\"")?;
-        self.push(&emu_to_cm(y_emu))?;
-        self.push("\" svg:width=\"")?;
-        self.push(&emu_to_cm(group.extent.width_emu))?;
-        self.push("\" svg:height=\"")?;
-        self.push(&emu_to_cm(group.extent.height_emu))?;
-        self.push("\"/>")?;
-        Ok(())
+        self.push_box_shape_element(
+            element,
+            graphic_name.as_deref(),
+            Some(anchor_type),
+            group.relative_height,
+            x_emu,
+            y_emu,
+            group.extent.width_emu,
+            group.extent.height_emu,
+        )
     }
 
     /// Writes a standalone anchored line (a single-child group carrying one
@@ -3077,33 +3172,8 @@ impl Writer {
             return Ok(());
         };
         let mut graphic = self.build_graphic_style(anchor);
-        if let Some(stroke) = &shape.stroke {
-            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
-                self.reporter
-                    .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
-            }
-            if stroke.color.a != 255 {
-                self.reporter
-                    .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
-            }
-            graphic.stroke = Some((
-                (stroke.color.r, stroke.color.g, stroke.color.b),
-                stroke.width_emu,
-            ));
-        } else {
-            graphic.stroke_none = true;
-        }
-        // A line has no fill; a solid/gradient fill on the model shape is not
-        // representable on a `draw:line` and is reported rather than emitted.
-        if shape.fill.is_some() {
-            self.reporter
-                .record("odt.export.line_fill", ModelOutcome::Degraded);
-        }
-        let graphic_name = (!graphic.is_empty()).then(|| {
-            let name = graphic.name();
-            self.graphic_styles.insert(graphic);
-            name
-        });
+        self.apply_shape_fill_stroke(&mut graphic, shape, false);
+        let graphic_name = self.register_graphic_style(graphic);
         let anchor_type = self.anchor_type_name(
             anchor.horizontal.relative_from,
             anchor.vertical.relative_from,
@@ -3111,44 +3181,95 @@ impl Writer {
         let origin_x =
             self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
         let origin_y = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
-        let width = group.extent.width_emu;
-        let height = group.extent.height_emu;
-        // Invert the importer: the bounding box is [origin, origin+extent]; the flip
-        // pair chooses which corner is (x1,y1) vs (x2,y2). `flip_h` ⇔ x1 > x2,
-        // `flip_v` ⇔ y1 > y2, so re-import recovers the same offset/extent/flip.
-        let (x1, x2) = if shape.flip_h {
-            (origin_x + width, origin_x)
-        } else {
-            (origin_x, origin_x + width)
+        let (x1, y1, x2, y2) = line_endpoints(
+            origin_x,
+            origin_y,
+            group.extent.width_emu,
+            group.extent.height_emu,
+            shape.flip_h,
+            shape.flip_v,
+        );
+        self.push_line_element(
+            graphic_name.as_deref(),
+            Some(anchor_type),
+            group.relative_height,
+            x1,
+            y1,
+            x2,
+            y2,
+        )
+    }
+
+    /// Writes a flat multi-child group as a `<draw:g>` wrapper carrying the anchor
+    /// and z-index, with each child shape emitted at its absolute position (the group
+    /// anchor offset plus the child's group-relative offset — the identity transform
+    /// makes this exact). Children are written in order, which is their intra-group
+    /// paint/z order. Only reached via `flat_shape_group`, so every child is a
+    /// supported box or line shape.
+    fn write_group_container(&mut self, group: &WordprocessingGroup) -> Result<(), OdfError> {
+        let Some(anchor) = &group.anchor else {
+            self.reporter
+                .record("odt.export.group", ModelOutcome::Omitted);
+            return Ok(());
         };
-        let (y1, y2) = if shape.flip_v {
-            (origin_y + height, origin_y)
-        } else {
-            (origin_y, origin_y + height)
-        };
-        self.push("<draw:line text:anchor-type=\"")?;
+        // Report (but do not represent) a non-Square group wrap — the `draw:g` in
+        // this increment carries no graphic style; children carry only fill/stroke.
+        if anchor.wrap != WrapMode::Square || !anchor.wrap_distances.is_zero() || anchor.behind_doc
+        {
+            self.reporter
+                .record("odt.export.group_wrap", ModelOutcome::Degraded);
+        }
+        let anchor_type = self.anchor_type_name(
+            anchor.horizontal.relative_from,
+            anchor.vertical.relative_from,
+        );
+        let base_x = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
+        let base_y = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
+        self.push("<draw:g text:anchor-type=\"")?;
         self.push(anchor_type)?;
         self.push("\"")?;
-        if let Some(name) = &graphic_name {
-            self.push(" draw:style-name=\"")?;
-            self.push(name)?;
-            self.push("\"")?;
-        }
         if let Some(z_index) = group.relative_height {
             self.push(" draw:z-index=\"")?;
             self.push(&z_index.to_string())?;
             self.push("\"")?;
         }
-        self.push(" svg:x1=\"")?;
-        self.push(&emu_to_cm(x1))?;
-        self.push("\" svg:y1=\"")?;
-        self.push(&emu_to_cm(y1))?;
-        self.push("\" svg:x2=\"")?;
-        self.push(&emu_to_cm(x2))?;
-        self.push("\" svg:y2=\"")?;
-        self.push(&emu_to_cm(y2))?;
-        self.push("\"/>")?;
-        Ok(())
+        self.push(">")?;
+        for child in &group.children {
+            let GroupChild::Shape(shape) = child else {
+                continue; // flat_shape_group guarantees only Shape children
+            };
+            let abs_x = base_x + shape.offset.x_emu;
+            let abs_y = base_y + shape.offset.y_emu;
+            if shape.geometry == ShapeGeometry::Line {
+                let mut graphic = OdtGraphicStyle::default();
+                self.apply_shape_fill_stroke(&mut graphic, shape, false);
+                let name = self.register_graphic_style(graphic);
+                let (x1, y1, x2, y2) = line_endpoints(
+                    abs_x,
+                    abs_y,
+                    shape.extent.width_emu,
+                    shape.extent.height_emu,
+                    shape.flip_h,
+                    shape.flip_v,
+                );
+                self.push_line_element(name.as_deref(), None, None, x1, y1, x2, y2)?;
+            } else if let Some(element) = box_shape_element(shape.geometry) {
+                let mut graphic = OdtGraphicStyle::default();
+                self.apply_shape_fill_stroke(&mut graphic, shape, true);
+                let name = self.register_graphic_style(graphic);
+                self.push_box_shape_element(
+                    element,
+                    name.as_deref(),
+                    None,
+                    None,
+                    abs_x,
+                    abs_y,
+                    shape.extent.width_emu,
+                    shape.extent.height_emu,
+                )?;
+            }
+        }
+        self.push("</draw:g>")
     }
 
     /// Emits a frame's alt text as `svg:title`, shared by the inline and anchored
@@ -4265,6 +4386,68 @@ fn single_line_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
         && !transform.flip_v
         && transform.rotation.is_none();
     identity.then_some(shape)
+}
+
+/// Whether a `GroupChild::Shape` is one this increment can emit as a group child:
+/// a supported box or line geometry with no retained preset/adjustments and (box
+/// only) no flip/rotation. A box child's flip/rotation has no ODF box representation;
+/// a line child's flip encodes its diagonal and is permitted.
+fn group_child_is_supported(child: &GroupChild) -> bool {
+    let GroupChild::Shape(shape) = child else {
+        return false;
+    };
+    if shape.preset.is_some() || !shape.adjustments.is_empty() || shape.rotation.is_some() {
+        return false;
+    }
+    match shape.geometry {
+        ShapeGeometry::Line => true,
+        _ => box_shape_element(shape.geometry).is_some() && !shape.flip_h && !shape.flip_v,
+    }
+}
+
+/// Whether `group` is a flat, anchored, identity-transform group whose children are
+/// ALL supported box/line shapes — the multi-child form this increment emits as a
+/// `draw:g`. A group-of-one is handled by the single-shape fast paths first, so this
+/// only accepts 2+ children (or a 1-child group that is not a bare box/line, which
+/// falls through here rather than as a bare shape).
+fn flat_shape_group(group: &WordprocessingGroup) -> bool {
+    if group.anchor.is_none() || group.children.is_empty() {
+        return false;
+    }
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    let transform = &group.transform;
+    let identity = transform.offset == origin
+        && transform.extent == group.extent
+        && transform.child_offset == origin
+        && transform.child_extent == group.extent
+        && !transform.flip_h
+        && !transform.flip_v
+        && transform.rotation.is_none();
+    identity && group.children.iter().all(group_child_is_supported)
+}
+
+/// Reconstructs a line's two endpoints from its bounding box (`origin` + extent) and
+/// flip pair — the exact inverse of the importer's `offset = min`, `flip = (a > b)`
+/// mapping. Shared by the standalone-line writer and the group-child line writer.
+fn line_endpoints(
+    origin_x: i64,
+    origin_y: i64,
+    width: i64,
+    height: i64,
+    flip_h: bool,
+    flip_v: bool,
+) -> (i64, i64, i64, i64) {
+    let (x1, x2) = if flip_h {
+        (origin_x + width, origin_x)
+    } else {
+        (origin_x, origin_x + width)
+    };
+    let (y1, y2) = if flip_v {
+        (origin_y + height, origin_y)
+    } else {
+        (origin_y, origin_y + height)
+    };
+    (x1, y1, x2, y2)
 }
 
 /// The absolute offset of a horizontal placement, or `None` for an alignment

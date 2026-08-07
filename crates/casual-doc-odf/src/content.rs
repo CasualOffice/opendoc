@@ -392,6 +392,9 @@ enum InlineDraft {
     /// A floating (anchored) standalone shape; the index resolves in the `shapes`
     /// vec. Modeled as a single-child `WordprocessingGroup` (no media).
     Shape(usize),
+    /// A floating (anchored) multi-child shape group; the index resolves in the
+    /// `groups` vec. Modeled as a multi-child `WordprocessingGroup`.
+    Group(usize),
     /// A typed field (e.g. page number); its cached display content is dropped.
     Field(FieldKind),
     /// A comment anchor (`office:annotation`); the index selects the captured
@@ -562,6 +565,34 @@ struct ShapeDraft {
     /// the bounding box the endpoints span (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`).
     flip_h: bool,
     flip_v: bool,
+}
+
+/// One shape child of a `draw:g` group, captured with its ABSOLUTE position in the
+/// group's anchor frame (the bbox reduction to a group-relative offset happens at
+/// build time). Mirrors `ShapeDraft` minus the anchor/wrap (which live on the group).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GroupChildDraft {
+    geometry: ShapeGeometry,
+    abs_x_emu: i64,
+    abs_y_emu: i64,
+    width_emu: i64,
+    height_emu: i64,
+    fill: Option<RgbColor>,
+    stroke: Option<(RgbColor, i64)>,
+    flip_h: bool,
+    flip_v: bool,
+}
+
+/// A flat `draw:g` group: its floating anchor plus its ordered shape children (the
+/// child order is the intra-group paint/z order and is preserved verbatim).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GroupDraft {
+    horizontal_rel: HorizontalAnchor,
+    vertical_rel: VerticalAnchor,
+    relative_height: Option<u32>,
+    wrap: WrapMode,
+    behind_doc: bool,
+    children: Vec<GroupChildDraft>,
 }
 
 /// A `draw:frame`'s modeled content: an inline embedded image, an inline text
@@ -3015,6 +3046,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut drawings: Vec<DrawingDraft> = Vec::new();
     let mut anchored_drawings: Vec<AnchoredDrawingDraft> = Vec::new();
     let mut shapes: Vec<ShapeDraft> = Vec::new();
+    let mut groups: Vec<GroupDraft> = Vec::new();
     let mut comments: Vec<CommentDraft> = Vec::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
@@ -3188,6 +3220,40 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &style_catalog.automatic,
                             &mut reporter,
                         )?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
+                        && is_name(&name, NamespaceKind::Draw, b"g")
+                    {
+                        // Sub-parse a multi-child shape group off the main loop;
+                        // parse_draw_group consumes the matching `End`, so undo this
+                        // `Start`'s depth increment below.
+                        if let Some(group) = parse_draw_group(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &style_catalog.automatic,
+                            cancellation,
+                            &mut reporter,
+                        )? {
+                            let index = groups.len();
+                            groups.push(group);
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            push_inline_draft(
+                                current.as_mut().ok_or(OdfError::MalformedContent)?,
+                                &mut active_link,
+                                InlineDraft::Group(index),
+                            );
+                        }
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
                     } else if text_body_depth.is_some()
                         && current.is_some()
                         && is_name(&name, NamespaceKind::Draw, b"frame")
@@ -4271,6 +4337,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &drawings,
         &anchored_drawings,
         &shapes,
+        &groups,
         &comments,
         &named_styles,
         &named_paragraph_styles,
@@ -4926,6 +4993,312 @@ fn parse_draw_line(
         reporter,
     )?;
     Ok(draft)
+}
+
+/// Reads a box-geometry (`draw:rect`/`draw:ellipse`) child of a `draw:g`, keeping
+/// its ABSOLUTE `svg:x/y/width/height`. Returns `None` (reported) for a missing
+/// extent or a negative/out-of-range coordinate (the unsigned codec cannot model it).
+#[allow(clippy::too_many_arguments)]
+fn read_group_box_child(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    geometry: ShapeGeometry,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    reporter: &mut Reporter,
+) -> Result<Option<GroupChildDraft>, OdfError> {
+    let mut x = None;
+    let mut y = None;
+    let mut width = None;
+    let mut height = None;
+    let mut style_name: Option<String> = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        match namespace_kind(&namespace) {
+            NamespaceKind::Svg => match local.as_ref() {
+                b"x" => x = parse_emu(&decode_attribute(&attribute)?),
+                b"y" => y = parse_emu(&decode_attribute(&attribute)?),
+                b"width" => width = parse_emu(&decode_attribute(&attribute)?),
+                b"height" => height = parse_emu(&decode_attribute(&attribute)?),
+                _ => {}
+            },
+            NamespaceKind::Draw if local.as_ref() == b"style-name" => {
+                style_name = Some(decode_attribute(&attribute)?);
+            }
+            _ => {}
+        }
+    }
+    let (Some(x), Some(y), Some(width), Some(height)) = (x, y, width, height) else {
+        reporter.report(
+            "odf.draw.group-child-coord".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    };
+    let style = style_name
+        .as_deref()
+        .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
+    let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    Ok(Some(GroupChildDraft {
+        geometry,
+        abs_x_emu: x,
+        abs_y_emu: y,
+        width_emu: width,
+        height_emu: height,
+        fill,
+        stroke,
+        flip_h: false,
+        flip_v: false,
+    }))
+}
+
+/// Reads a `draw:line` child of a `draw:g`, mapping its endpoints to the ABSOLUTE
+/// bounding box + flip pair (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`). Returns
+/// `None` (reported) for a missing or non-parsing endpoint.
+fn read_group_line_child(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    reporter: &mut Reporter,
+) -> Result<Option<GroupChildDraft>, OdfError> {
+    let mut x1 = None;
+    let mut y1 = None;
+    let mut x2 = None;
+    let mut y2 = None;
+    let mut style_name: Option<String> = None;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        match namespace_kind(&namespace) {
+            NamespaceKind::Svg => match local.as_ref() {
+                b"x1" => x1 = parse_emu(&decode_attribute(&attribute)?),
+                b"y1" => y1 = parse_emu(&decode_attribute(&attribute)?),
+                b"x2" => x2 = parse_emu(&decode_attribute(&attribute)?),
+                b"y2" => y2 = parse_emu(&decode_attribute(&attribute)?),
+                _ => {}
+            },
+            NamespaceKind::Draw if local.as_ref() == b"style-name" => {
+                style_name = Some(decode_attribute(&attribute)?);
+            }
+            _ => {}
+        }
+    }
+    let (Some(x1), Some(y1), Some(x2), Some(y2)) = (x1, y1, x2, y2) else {
+        reporter.report(
+            "odf.draw.group-child-coord".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    };
+    let style = style_name
+        .as_deref()
+        .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    Ok(Some(GroupChildDraft {
+        geometry: ShapeGeometry::Line,
+        abs_x_emu: x1.min(x2),
+        abs_y_emu: y1.min(y2),
+        width_emu: (x2 - x1).abs(),
+        height_emu: (y2 - y1).abs(),
+        fill: None,
+        stroke,
+        flip_h: x1 > x2,
+        flip_v: y1 > y2,
+    }))
+}
+
+/// Sub-parses a `draw:g` group's subtree off the main loop, capturing its floating
+/// anchor and its ordered box/line shape children. The frame `Start` was already
+/// read; this consumes the matching `End`. Returns `None` (reported) for a
+/// non-floating anchor or a group with no supported shape children. Nested groups
+/// and non-shape children are dropped with a finding this increment.
+#[allow(clippy::too_many_arguments)]
+fn parse_draw_group(
+    reader: &mut NsReader<&[u8]>,
+    group: &BytesStart<'_>,
+    group_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Option<GroupDraft>, OdfError> {
+    let mut anchor_type: Option<String> = None;
+    let mut z_index: Option<u32> = None;
+    let mut style_name: Option<String> = None;
+    for attribute in group.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        match namespace_kind(&namespace) {
+            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+                anchor_type = Some(decode_attribute(&attribute)?);
+            }
+            NamespaceKind::Draw => match local.as_ref() {
+                b"z-index" => {
+                    z_index = decode_attribute(&attribute)?
+                        .parse::<i64>()
+                        .ok()
+                        .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
+                }
+                b"style-name" => style_name = Some(decode_attribute(&attribute)?),
+                b"transform" => {
+                    // ODF applications ignore a transform on `draw:g` (it is baked
+                    // into each child), so there is nothing to honor; report it.
+                    reporter.report(
+                        "odf.draw.group-transform".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    let (wrap, behind_doc) = style_name
+        .as_deref()
+        .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())))
+        .map(|style| resolve_graphic_wrap(style, reporter))
+        .unwrap_or((WrapMode::Square, false));
+
+    let mut children: Vec<GroupChildDraft> = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        // Only direct children of the `draw:g` are handled here; a shape child's own
+        // subtree (rare — a title/desc) is consumed by `consume_shape_subtree` for
+        // the `Start` form, and a nested `draw:g` is skipped wholesale, so the loop
+        // always sees the group's own closing `End` at the top level.
+        let (element, is_start) = match event {
+            Event::Eof | Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => (element, true),
+            Event::Empty(element) => (element, false),
+            Event::End(_) => break,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        *elements = checked_increment(*elements)?;
+        enforce(
+            "odf_content_xml_elements",
+            *elements,
+            limits.max_xml_elements,
+        )?;
+        enforce(
+            "odf_content_xml_depth",
+            group_depth
+                .checked_add(1)
+                .ok_or(OdfError::MalformedContent)?,
+            limits.max_xml_depth,
+        )?;
+        validate_name(&element, limits)?;
+        let name = resolved_name(reader, &element);
+        if is_active(&name) {
+            reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+            count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+            if is_start {
+                skip_active_subtree(
+                    reader,
+                    limits,
+                    group_depth
+                        .checked_add(1)
+                        .ok_or(OdfError::MalformedContent)?,
+                    elements,
+                    attributes,
+                    attribute_bytes,
+                    cancellation,
+                )?;
+            }
+            buffer.clear();
+            continue;
+        }
+        let child = if let Some(geometry) = draw_shape_geometry(&name) {
+            read_group_box_child(
+                reader,
+                &element,
+                geometry,
+                limits,
+                attributes,
+                attribute_bytes,
+                automatic_styles,
+                reporter,
+            )?
+        } else if is_name(&name, NamespaceKind::Draw, b"line") {
+            read_group_line_child(
+                reader,
+                &element,
+                limits,
+                attributes,
+                attribute_bytes,
+                automatic_styles,
+                reporter,
+            )?
+        } else {
+            // A nested `draw:g`, a picture/text-box/control, or any other element:
+            // count its attributes and skip; nested groups and non-shape children are
+            // deferred with a finding this increment.
+            count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+            if is_name(&name, NamespaceKind::Draw, b"g") {
+                reporter.report("odf.draw.group-nested".to_owned(), ModelOutcome::Degraded);
+            } else {
+                reporter.report("odf.draw.group-content".to_owned(), ModelOutcome::Degraded);
+            }
+            None
+        };
+        if let Some(child) = child {
+            children.push(child);
+        }
+        // Consume a `Start`-form child's subtree so the loop resumes at the group's
+        // next child (or its own `End`).
+        if is_start {
+            consume_shape_subtree(
+                reader,
+                group_depth
+                    .checked_add(1)
+                    .ok_or(OdfError::MalformedContent)?,
+                limits,
+                elements,
+                attributes,
+                attribute_bytes,
+                cancellation,
+                reporter,
+            )?;
+        }
+        buffer.clear();
+    }
+    if children.is_empty() {
+        reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    }
+    let Some((horizontal_rel, vertical_rel)) =
+        anchor_type.as_deref().and_then(floating_anchor_rels)
+    else {
+        reporter.report("odf.draw.group-anchor".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    Ok(Some(GroupDraft {
+        horizontal_rel,
+        vertical_rel,
+        relative_height: z_index,
+        wrap,
+        behind_doc,
+        children,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8349,6 +8722,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::Drawing(_)
             | InlineDraft::AnchoredDrawing(_)
             | InlineDraft::Shape(_)
+            | InlineDraft::Group(_)
             | InlineDraft::Field(_)
             | InlineDraft::CommentReference(_)
             | InlineDraft::FormField(_) => {}
@@ -8477,6 +8851,7 @@ fn build_document(
     drawings: &[DrawingDraft],
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
+    groups: &[GroupDraft],
     comments: &[CommentDraft],
     named_styles: &BTreeMap<String, RunProperties>,
     named_paragraph_styles: &BTreeMap<String, ParagraphProperties>,
@@ -8814,6 +9189,7 @@ fn build_document(
             &anchored_media_ids,
             anchored_drawings,
             shapes,
+            groups,
         )?;
         match note.kind {
             NoteKind::Footnote => {
@@ -8843,6 +9219,7 @@ fn build_document(
         &anchored_media_ids,
         anchored_drawings,
         shapes,
+        groups,
     )?;
     definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
@@ -8930,6 +9307,7 @@ fn build_blocks(
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
+    groups: &[GroupDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -8948,6 +9326,7 @@ fn build_blocks(
                 anchored_media_ids,
                 anchored_drawings,
                 shapes,
+                groups,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -8964,6 +9343,7 @@ fn build_blocks(
                 anchored_media_ids,
                 anchored_drawings,
                 shapes,
+                groups,
             )?),
             BlockDraft::Toc(toc) => {
                 let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -8982,6 +9362,7 @@ fn build_blocks(
                     anchored_media_ids,
                     anchored_drawings,
                     shapes,
+                    groups,
                 )?;
                 // A TOC with no captured entries is dropped at import (the model
                 // rejects an empty content control), so `inner` is non-empty here.
@@ -9017,6 +9398,7 @@ fn build_paragraph(
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
+    groups: &[GroupDraft],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -9051,6 +9433,7 @@ fn build_paragraph(
             anchored_media_ids,
             anchored_drawings,
             shapes,
+            groups,
         )?,
     })
 }
@@ -9079,6 +9462,7 @@ fn build_table(
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
+    groups: &[GroupDraft],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -9104,6 +9488,7 @@ fn build_table(
                         anchored_media_ids,
                         anchored_drawings,
                         shapes,
+                        groups,
                     )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
@@ -9272,6 +9657,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"shape");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::Group(index) => {
+            hash_bytes(hash, b"group");
+            hash_bytes(hash, &index.to_le_bytes());
+        }
         InlineDraft::Field(kind) => {
             hash_bytes(hash, b"field");
             hash_bytes(hash, field_instruction(kind).as_bytes());
@@ -9376,6 +9765,7 @@ fn build_inlines(
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
+    groups: &[GroupDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -9433,6 +9823,7 @@ fn build_inlines(
                     anchored_media_ids,
                     anchored_drawings,
                     shapes,
+                    groups,
                 )?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
@@ -9587,6 +9978,111 @@ fn build_inlines(
                     })],
                 })
             }
+            InlineDraft::Group(index) => {
+                let draft = groups.get(*index).ok_or(OdfError::InvalidModel)?;
+                // The children carry absolute positions; reduce to the union bbox so
+                // the group's anchor sits at the min corner and each child at a
+                // group-relative offset (an identity transform reproduces the exact
+                // absolute positions on export).
+                let min_x = draft
+                    .children
+                    .iter()
+                    .map(|child| child.abs_x_emu)
+                    .min()
+                    .ok_or(OdfError::InvalidModel)?;
+                let min_y = draft
+                    .children
+                    .iter()
+                    .map(|child| child.abs_y_emu)
+                    .min()
+                    .ok_or(OdfError::InvalidModel)?;
+                let max_x = draft
+                    .children
+                    .iter()
+                    .map(|child| child.abs_x_emu + child.width_emu)
+                    .max()
+                    .ok_or(OdfError::InvalidModel)?;
+                let max_y = draft
+                    .children
+                    .iter()
+                    .map(|child| child.abs_y_emu + child.height_emu)
+                    .max()
+                    .ok_or(OdfError::InvalidModel)?;
+                let extent = Extent {
+                    width_emu: max_x - min_x,
+                    height_emu: max_y - min_y,
+                };
+                let mut children = Vec::with_capacity(draft.children.len());
+                for child in &draft.children {
+                    let child_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                    children.push(GroupChild::Shape(GroupShape {
+                        id: child_id,
+                        offset: PointEmu {
+                            x_emu: child.abs_x_emu - min_x,
+                            y_emu: child.abs_y_emu - min_y,
+                        },
+                        extent: Extent {
+                            width_emu: child.width_emu,
+                            height_emu: child.height_emu,
+                        },
+                        geometry: child.geometry,
+                        preset: None,
+                        adjustments: Vec::new(),
+                        fill: child.fill.map(|color| {
+                            Fill::Solid(Rgba {
+                                r: color.r,
+                                g: color.g,
+                                b: color.b,
+                                a: 255,
+                            })
+                        }),
+                        stroke: child.stroke.map(|(color, width_emu)| ShapeStroke {
+                            color: Rgba {
+                                r: color.r,
+                                g: color.g,
+                                b: color.b,
+                                a: 255,
+                            },
+                            width_emu,
+                            dash: None,
+                            head_end: None,
+                            tail_end: None,
+                        }),
+                        flip_h: child.flip_h,
+                        flip_v: child.flip_v,
+                        rotation: None,
+                    }));
+                }
+                InlineNode::Group(WordprocessingGroup {
+                    id,
+                    anchor: Some(DrawingAnchor {
+                        horizontal: AnchorHorizontal {
+                            relative_from: draft.horizontal_rel,
+                            position: HorizontalPosition::Offset(min_x),
+                        },
+                        vertical: AnchorVertical {
+                            relative_from: draft.vertical_rel,
+                            position: VerticalPosition::Offset(min_y),
+                        },
+                        wrap: draft.wrap,
+                        wrap_distances: WrapDistances::default(),
+                        wrap_polygon: None,
+                        behind_doc: draft.behind_doc,
+                    }),
+                    relative_height: draft.relative_height,
+                    extent,
+                    transform: GroupTransform {
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        child_extent: extent,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    },
+                    children,
+                })
+            }
             InlineDraft::Field(kind) => InlineNode::Field(Field {
                 id,
                 instruction: field_instruction(kind),
@@ -9698,6 +10194,7 @@ fn build_inlines(
                     anchored_media_ids,
                     anchored_drawings,
                     shapes,
+                    groups,
                 )?,
             }),
         });
