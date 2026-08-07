@@ -7,14 +7,14 @@ use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
     CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
-    Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, FontRef, FormFieldKind,
-    GroupChild, HeaderFooterKind, HeightRule, HorizontalAnchor, HorizontalPosition,
-    HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note,
-    NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, Revision, RevisionKind, RowHeight, RunProperties, SdtControlKind, Spacing,
-    Style, StyleId, StyleKind, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
-    TableWidth, TextBox, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WidthType, WrapMode,
+    Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill, FontRef,
+    FormFieldKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule, HorizontalAnchor,
+    HorizontalPosition, HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix,
+    MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
+    ParagraphProperties, PointEmu, Revision, RevisionKind, RowHeight, RunProperties,
+    SdtControlKind, ShapeGeometry, Spacing, Style, StyleId, StyleKind, Table, TableCell,
+    TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, WidthType, WordprocessingGroup, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -700,6 +700,15 @@ struct OdtGraphicStyle {
     margin_bottom: Option<i64>,
     margin_left: Option<i64>,
     margin_right: Option<i64>,
+    /// A shape's solid fill (`draw:fill="solid"` + `draw:fill-color`) as RGB; `None`
+    /// leaves the fill unset (`draw:fill="none"` when `fill_none` is set).
+    fill: Option<(u8, u8, u8)>,
+    /// Emit `draw:fill="none"` (a shape with no fill), distinct from an unset fill.
+    fill_none: bool,
+    /// A shape's solid outline (`svg:stroke-color` + `svg:stroke-width` EMU).
+    stroke: Option<((u8, u8, u8), i64)>,
+    /// Emit `draw:stroke="none"` (a shape with no outline).
+    stroke_none: bool,
 }
 
 impl OdtGraphicStyle {
@@ -745,6 +754,38 @@ fn push_graphic_properties(
             push_bounded(xml, &emu_to_cm(emu), max_content_bytes)?;
             push_bounded(xml, "\"", max_content_bytes)?;
         }
+    }
+    if let Some((red, green, blue)) = style.fill {
+        push_bounded(
+            xml,
+            " draw:fill=\"solid\" draw:fill-color=\"#",
+            max_content_bytes,
+        )?;
+        push_bounded(
+            xml,
+            &format!("{red:02x}{green:02x}{blue:02x}"),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    } else if style.fill_none {
+        push_bounded(xml, " draw:fill=\"none\"", max_content_bytes)?;
+    }
+    if let Some(((red, green, blue), width_emu)) = style.stroke {
+        push_bounded(
+            xml,
+            " draw:stroke=\"solid\" svg:stroke-width=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(xml, &emu_to_cm(width_emu), max_content_bytes)?;
+        push_bounded(xml, "\" svg:stroke-color=\"#", max_content_bytes)?;
+        push_bounded(
+            xml,
+            &format!("{red:02x}{green:02x}{blue:02x}"),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    } else if style.stroke_none {
+        push_bounded(xml, " draw:stroke=\"none\"", max_content_bytes)?;
     }
     Ok(())
 }
@@ -1211,6 +1252,12 @@ struct Writer {
     /// `draw:frame`; otherwise it degrades to an alt-text projection. Empty on
     /// the plain semantic path.
     available_media: BTreeMap<MediaId, String>,
+    /// Whether the content header in use declares the `draw:`/`svg:` namespaces
+    /// (true only for `CONTENT_HEADER_PRESERVING`, i.e. `write_odt_with_retained_parts`).
+    /// A standalone shape (`draw:rect`) needs these even though it has no media of
+    /// its own, so its export gates on this rather than on `available_media` —
+    /// otherwise the plain `write_odt` path would emit a namespace-invalid element.
+    drawing_namespaces_available: bool,
     /// Bookmark id → name, so `BookmarkStart`/`BookmarkEnd` markers can re-emit
     /// their `text:bookmark-start`/`-end` elements.
     bookmarks: BTreeMap<BookmarkId, String>,
@@ -1264,6 +1311,7 @@ impl Writer {
             text_bytes: 0,
             paragraphs_written: 0,
             available_media: BTreeMap::new(),
+            drawing_namespaces_available: false,
             bookmarks: BTreeMap::new(),
             named_styles: BTreeMap::new(),
             named_paragraph_styles: BTreeMap::new(),
@@ -2481,15 +2529,19 @@ impl Writer {
                     .record("odt.export.embedded_object", ModelOutcome::Omitted),
                 InlineNode::TextBox(text_box) => self.write_text_box(text_box, depth + 1)?,
                 InlineNode::Group(group) => {
-                    self.reporter
-                        .record("odt.export.group", ModelOutcome::Omitted);
-                    if group
-                        .children
-                        .iter()
-                        .any(|child| matches!(child, GroupChild::TextBox(_) | GroupChild::Group(_)))
+                    // A `draw:rect` and its graphic style need the `draw:`/`svg:`
+                    // namespaces, which only the preserving content header declares;
+                    // the plain semantic path degrades the shape rather than emit
+                    // namespace-invalid XML (matching the inline-image behavior).
+                    if self.drawing_namespaces_available
+                        && let Some(shape) = single_rectangle_shape(group)
                     {
+                        self.write_group_rectangle(group, shape)?;
+                    } else {
+                        // A multi-child group, a non-rectangle geometry, a picture/
+                        // text-box child, a transformed shape, or the plain path.
                         self.reporter
-                            .record("odt.export.group_text", ModelOutcome::Omitted);
+                            .record("odt.export.group", ModelOutcome::Omitted);
                     }
                 }
                 InlineNode::NoteReference(note) => self.write_note(note, depth + 1)?,
@@ -2848,6 +2900,12 @@ impl Writer {
             margin_bottom: (distances.bottom_emu != 0).then_some(distances.bottom_emu),
             margin_left: (distances.start_emu != 0).then_some(distances.start_emu),
             margin_right: (distances.end_emu != 0).then_some(distances.end_emu),
+            // An anchored image carries no fill/outline; only a shape's caller
+            // (`write_group_rectangle`) sets these on the value this returns.
+            fill: None,
+            fill_none: false,
+            stroke: None,
+            stroke_none: false,
         }
     }
 
@@ -2895,6 +2953,91 @@ impl Writer {
                 0
             }
         }
+    }
+
+    /// Writes a standalone anchored rectangle (a single-child group carrying one
+    /// `GroupShape::Rectangle`) as a positioned `draw:rect`. Mirrors
+    /// `write_anchored_draw_frame`'s anchor-type/offset/wrap handling; the shape's
+    /// fill/outline ride on the same `graphic` automatic-style family. A picture
+    /// transform (flip/rotation) on the shape or a group transform beyond the
+    /// identity is reported and dropped — this increment emits an axis-aligned,
+    /// untransformed rectangle only.
+    fn write_group_rectangle(
+        &mut self,
+        group: &WordprocessingGroup,
+        shape: &GroupShape,
+    ) -> Result<(), OdfError> {
+        // The identity check gating this call already confirmed the transform is
+        // trivial and the shape sits at the group origin; only the fill/outline and
+        // the anchor's wrap/distances need a graphic style.
+        let Some(anchor) = &group.anchor else {
+            // A nested (non-anchored) group-of-one shape is not reachable from this
+            // increment's importer (it only produces top-level anchored groups), but
+            // guard defensively rather than emit an unanchored draw:rect.
+            self.reporter
+                .record("odt.export.group", ModelOutcome::Omitted);
+            return Ok(());
+        };
+        if shape.flip_h || shape.flip_v || shape.rotation.is_some() {
+            self.reporter
+                .record("odt.export.shape_transform", ModelOutcome::Degraded);
+        }
+        let mut graphic = self.build_graphic_style(anchor);
+        match shape.fill {
+            Some(Fill::Solid(color)) => graphic.fill = Some((color.r, color.g, color.b)),
+            Some(Fill::Gradient { .. }) => {
+                self.reporter
+                    .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
+                graphic.fill_none = true;
+            }
+            None => graphic.fill_none = true,
+        }
+        if let Some(stroke) = &shape.stroke {
+            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
+                self.reporter
+                    .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
+            }
+            graphic.stroke = Some((
+                (stroke.color.r, stroke.color.g, stroke.color.b),
+                stroke.width_emu,
+            ));
+        } else {
+            graphic.stroke_none = true;
+        }
+        let graphic_name = (!graphic.is_empty()).then(|| {
+            let name = graphic.name();
+            self.graphic_styles.insert(graphic);
+            name
+        });
+        let anchor_type = self.anchor_type_name(
+            anchor.horizontal.relative_from,
+            anchor.vertical.relative_from,
+        );
+        let x_emu = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
+        let y_emu = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
+        self.push("<draw:rect text:anchor-type=\"")?;
+        self.push(anchor_type)?;
+        self.push("\"")?;
+        if let Some(name) = &graphic_name {
+            self.push(" draw:style-name=\"")?;
+            self.push(name)?;
+            self.push("\"")?;
+        }
+        if let Some(z_index) = group.relative_height {
+            self.push(" draw:z-index=\"")?;
+            self.push(&z_index.to_string())?;
+            self.push("\"")?;
+        }
+        self.push(" svg:x=\"")?;
+        self.push(&emu_to_cm(x_emu))?;
+        self.push("\" svg:y=\"")?;
+        self.push(&emu_to_cm(y_emu))?;
+        self.push("\" svg:width=\"")?;
+        self.push(&emu_to_cm(group.extent.width_emu))?;
+        self.push("\" svg:height=\"")?;
+        self.push(&emu_to_cm(group.extent.height_emu))?;
+        self.push("\"/>")?;
+        Ok(())
     }
 
     /// Emits a frame's alt text as `svg:title`, shared by the inline and anchored
@@ -3746,6 +3889,9 @@ fn write_odt_impl(
     document.validate().map_err(|_| OdfError::InvalidModel)?;
     let mut writer = Writer::new(limits)?;
     writer.available_media = available_media;
+    // Only the preserving writer's header declares `draw:`/`svg:` (see
+    // CONTENT_HEADER_PRESERVING); `retained.is_some()` exactly identifies that path.
+    writer.drawing_namespaces_available = retained.is_some();
     writer.register_numbering(document.definitions());
     writer.register_notes(document.definitions());
     writer.register_bookmarks(document.definitions());
@@ -3935,6 +4081,38 @@ fn package(
         limits.max_package_bytes,
     )?;
     Ok(bytes)
+}
+
+/// Whether `group` is exactly the shape this increment can re-emit as a
+/// standalone `draw:rect`: one `GroupShape::Rectangle` child, no adjustments or
+/// retained preset, at the group's origin, with an identity (untransformed,
+/// unscaled) group transform. Anything else (a picture/text-box/nested-group
+/// child, more than one child, a non-rectangle geometry, or a real transform) is
+/// not this increment's shape and falls back to the reported `odt.export.group`
+/// degrade — never a wrong or lossy `draw:rect`.
+fn single_rectangle_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        return None;
+    };
+    if shape.geometry != ShapeGeometry::Rectangle
+        || shape.preset.is_some()
+        || !shape.adjustments.is_empty()
+    {
+        return None;
+    }
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    if shape.offset != origin || shape.extent != group.extent {
+        return None;
+    }
+    let transform = &group.transform;
+    let identity = transform.offset == origin
+        && transform.extent == group.extent
+        && transform.child_offset == origin
+        && transform.child_extent == group.extent
+        && !transform.flip_h
+        && !transform.flip_v
+        && transform.rotation.is_none();
+    identity.then_some(shape)
 }
 
 /// The absolute offset of a horizontal placement, or `None` for an alignment

@@ -24,6 +24,10 @@ use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
+use casual_doc_model::v1::{
+    Fill, GroupChild, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry, ShapeStroke,
+    WordprocessingGroup,
+};
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;
 use quick_xml::NsReader;
@@ -385,6 +389,9 @@ enum InlineDraft {
     /// A floating (anchored) embedded image; the index resolves in the
     /// `anchored_drawings` vec (a separate media entry, like `Drawing`).
     AnchoredDrawing(usize),
+    /// A floating (anchored) standalone shape; the index resolves in the `shapes`
+    /// vec. Modeled as a single-child `WordprocessingGroup` (no media).
+    Shape(usize),
     /// A typed field (e.g. page number); its cached display content is dropped.
     Field(FieldKind),
     /// A comment anchor (`office:annotation`); the index selects the captured
@@ -527,6 +534,27 @@ struct AnchoredDrawingDraft {
     wrap_bottom_emu: i64,
     wrap_start_emu: i64,
     wrap_end_emu: i64,
+}
+
+/// A bounded floating (anchored) standalone shape (`draw:rect` this increment): a
+/// preset rectangle with a solid fill and/or outline, positioned like an anchored
+/// frame and modeled as a single-child `WordprocessingGroup`. Text bodies, groups,
+/// other geometries, gradients, dashes, arrowheads, rotation, and flips are deferred.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ShapeDraft {
+    horizontal_rel: HorizontalAnchor,
+    vertical_rel: VerticalAnchor,
+    horizontal_offset_emu: i64,
+    vertical_offset_emu: i64,
+    relative_height: Option<u32>,
+    width_emu: i64,
+    height_emu: i64,
+    wrap: WrapMode,
+    behind_doc: bool,
+    /// Solid fill color (`None` = no fill).
+    fill: Option<RgbColor>,
+    /// Solid outline color + width in EMU (`None` = no outline).
+    stroke: Option<(RgbColor, i64)>,
 }
 
 /// A `draw:frame`'s modeled content: an inline embedded image, an inline text
@@ -848,6 +876,16 @@ struct OdfStyle {
     graphic_margin_bottom: Option<i64>,
     graphic_margin_left: Option<i64>,
     graphic_margin_right: Option<i64>,
+    /// `draw:fill` for a shape's `graphic` style (`solid`/`none`/…).
+    graphic_fill: Option<String>,
+    /// `draw:fill-color` (a solid shape fill), resolved to RGB.
+    graphic_fill_color: Option<RgbColor>,
+    /// `draw:stroke` for a shape outline (`solid`/`none`/…).
+    graphic_stroke: Option<String>,
+    /// `svg:stroke-color` (the outline color), resolved to RGB.
+    graphic_stroke_color: Option<RgbColor>,
+    /// `svg:stroke-width` (the outline width) in EMU.
+    graphic_stroke_width: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1352,6 +1390,21 @@ fn resolve_style(
             }
             if style.graphic_margin_right.is_some() {
                 inherited.graphic_margin_right = style.graphic_margin_right;
+            }
+            if style.graphic_fill.is_some() {
+                inherited.graphic_fill = style.graphic_fill.clone();
+            }
+            if style.graphic_fill_color.is_some() {
+                inherited.graphic_fill_color = style.graphic_fill_color;
+            }
+            if style.graphic_stroke.is_some() {
+                inherited.graphic_stroke = style.graphic_stroke.clone();
+            }
+            if style.graphic_stroke_color.is_some() {
+                inherited.graphic_stroke_color = style.graphic_stroke_color;
+            }
+            if style.graphic_stroke_width.is_some() {
+                inherited.graphic_stroke_width = style.graphic_stroke_width;
             }
             inherited.family = style.family;
             // The identity (named marker + own name) is the child's, never the
@@ -2465,6 +2518,26 @@ fn read_graphic_style_properties(
                 }
                 true
             }
+            (NamespaceKind::Draw, b"fill") => {
+                style.style.graphic_fill = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Draw, b"fill-color") => {
+                style.style.graphic_fill_color = parse_rgb_color(&value);
+                style.style.graphic_fill_color.is_some()
+            }
+            (NamespaceKind::Draw, b"stroke") => {
+                style.style.graphic_stroke = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Svg, b"stroke-color") => {
+                style.style.graphic_stroke_color = parse_rgb_color(&value);
+                style.style.graphic_stroke_color.is_some()
+            }
+            (NamespaceKind::Svg, b"stroke-width") => {
+                style.style.graphic_stroke_width = parse_emu(&value);
+                style.style.graphic_stroke_width.is_some()
+            }
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -2934,6 +3007,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
     let mut list_overrides: BTreeMap<(usize, u8), u16> = BTreeMap::new();
     let mut drawings: Vec<DrawingDraft> = Vec::new();
     let mut anchored_drawings: Vec<AnchoredDrawingDraft> = Vec::new();
+    let mut shapes: Vec<ShapeDraft> = Vec::new();
     let mut comments: Vec<CommentDraft> = Vec::new();
     let mut table_count = 0_usize;
     let mut table_row_count = 0_usize;
@@ -3159,6 +3233,40 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                                 current.as_mut().ok_or(OdfError::MalformedContent)?,
                                 &mut active_link,
                                 draft,
+                            );
+                        }
+                        depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                    } else if text_body_depth.is_some()
+                        && current.is_some()
+                        && is_name(&name, NamespaceKind::Draw, b"rect")
+                    {
+                        // Sub-parse a standalone rectangle shape off the main loop;
+                        // parse_draw_shape consumes the matching `End`, so undo this
+                        // `Start`'s depth increment below.
+                        if let Some(shape) = parse_draw_shape(
+                            &mut reader,
+                            &element,
+                            depth,
+                            limits,
+                            &mut elements,
+                            &mut attributes,
+                            &mut attribute_bytes,
+                            &style_catalog.automatic,
+                            cancellation,
+                            &mut reporter,
+                        )? {
+                            let index = shapes.len();
+                            shapes.push(shape);
+                            inline_nodes = checked_increment(inline_nodes)?;
+                            enforce(
+                                "odf_content_inline_nodes",
+                                inline_nodes,
+                                limits.max_inline_nodes,
+                            )?;
+                            push_inline_draft(
+                                current.as_mut().ok_or(OdfError::MalformedContent)?,
+                                &mut active_link,
+                                InlineDraft::Shape(index),
                             );
                         }
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
@@ -3426,6 +3534,35 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         );
                     } else {
                         reporter.report(feature("element", &name), ModelOutcome::Degraded);
+                    }
+                } else if text_body_depth.is_some()
+                    && current.is_some()
+                    && is_name(&name, NamespaceKind::Draw, b"rect")
+                {
+                    // A self-closing `draw:rect` standalone shape (the common form,
+                    // and exactly what this writer emits). No subtree to consume.
+                    if let Some(shape) = build_shape_draft(
+                        &reader,
+                        &element,
+                        limits,
+                        &mut attributes,
+                        &mut attribute_bytes,
+                        &style_catalog.automatic,
+                        &mut reporter,
+                    )? {
+                        let index = shapes.len();
+                        shapes.push(shape);
+                        inline_nodes = checked_increment(inline_nodes)?;
+                        enforce(
+                            "odf_content_inline_nodes",
+                            inline_nodes,
+                            limits.max_inline_nodes,
+                        )?;
+                        push_inline_draft(
+                            current.as_mut().ok_or(OdfError::MalformedContent)?,
+                            &mut active_link,
+                            InlineDraft::Shape(index),
+                        );
                     }
                 } else if text_body_depth.is_some()
                     && current.is_some()
@@ -4049,6 +4186,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         &list_overrides,
         &drawings,
         &anchored_drawings,
+        &shapes,
         &comments,
         &named_styles,
         &named_paragraph_styles,
@@ -4282,6 +4420,253 @@ fn resolve_graphic_wrap(style: &OdfStyle, reporter: &mut Reporter) -> (WrapMode,
             (WrapMode::Square, false)
         }
     }
+}
+
+/// Resolves a shape graphic style's solid fill color. `draw:fill="solid"` with a
+/// color maps to that RGB; `none`/absent is no fill; a non-solid fill (gradient,
+/// bitmap, hatch) or a solid fill without a color degrades to no fill with a finding.
+fn resolve_shape_fill(style: &OdfStyle, reporter: &mut Reporter) -> Option<RgbColor> {
+    match style.graphic_fill.as_deref() {
+        Some("solid") => {
+            if style.graphic_fill_color.is_none() {
+                reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
+            }
+            style.graphic_fill_color
+        }
+        None | Some("none") => None,
+        Some(_) => {
+            reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
+            None
+        }
+    }
+}
+
+/// Resolves a shape graphic style's solid outline (color + EMU width). `none`/absent
+/// is no outline; a non-solid or color-less outline degrades to none with a finding.
+fn resolve_shape_stroke(style: &OdfStyle, reporter: &mut Reporter) -> Option<(RgbColor, i64)> {
+    match style.graphic_stroke.as_deref() {
+        Some("solid") => match style.graphic_stroke_color {
+            Some(color) => Some((color, style.graphic_stroke_width.unwrap_or(0))),
+            None => {
+                reporter.report("odf.draw.shape-stroke".to_owned(), ModelOutcome::Degraded);
+                None
+            }
+        },
+        None | Some("none") => None,
+        Some(_) => {
+            reporter.report("odf.draw.shape-stroke".to_owned(), ModelOutcome::Degraded);
+            None
+        }
+    }
+}
+
+/// Builds a `ShapeDraft` from a `draw:rect`'s attributes alone (no reader
+/// consumption), shared by the self-closing (`Event::Empty`) and open
+/// (`Event::Start`) forms. Returns `None` (reported) for a non-floating anchor or a
+/// missing extent — the shape is then skipped, not modeled.
+fn build_shape_draft(
+    reader: &NsReader<&[u8]>,
+    shape: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    reporter: &mut Reporter,
+) -> Result<Option<ShapeDraft>, OdfError> {
+    let mut width_emu = None;
+    let mut height_emu = None;
+    let mut anchor_type: Option<String> = None;
+    let mut x_emu: Option<i64> = None;
+    let mut y_emu: Option<i64> = None;
+    let mut offset_clamped = false;
+    let mut z_index: Option<u32> = None;
+    let mut style_name: Option<String> = None;
+    for attribute in shape.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        match namespace_kind(&namespace) {
+            NamespaceKind::Svg => match local.as_ref() {
+                b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
+                b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
+                b"x" => {
+                    x_emu = parse_emu(&decode_attribute(&attribute)?);
+                    offset_clamped |= x_emu.is_none();
+                }
+                b"y" => {
+                    y_emu = parse_emu(&decode_attribute(&attribute)?);
+                    offset_clamped |= y_emu.is_none();
+                }
+                _ => {}
+            },
+            NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
+                anchor_type = Some(decode_attribute(&attribute)?);
+            }
+            NamespaceKind::Draw => match local.as_ref() {
+                b"z-index" => {
+                    z_index = decode_attribute(&attribute)?
+                        .parse::<i64>()
+                        .ok()
+                        .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
+                }
+                b"style-name" => style_name = Some(decode_attribute(&attribute)?),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    let Some((horizontal_rel, vertical_rel)) =
+        anchor_type.as_deref().and_then(floating_anchor_rels)
+    else {
+        // A non-floating (as-char) or deferred (char/frame) anchor, or none: the
+        // group-of-one model needs a floating anchor, so the shape is skipped.
+        reporter.report("odf.draw.shape-anchor".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) else {
+        reporter.report(
+            "odf.draw.shape-extent-missing".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    };
+    if offset_clamped {
+        reporter.report(
+            "odf.draw.anchor-offset-clamped".to_owned(),
+            ModelOutcome::Degraded,
+        );
+    }
+    let style = style_name
+        .as_deref()
+        .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
+    let (wrap, behind_doc) = style
+        .map(|style| resolve_graphic_wrap(style, reporter))
+        .unwrap_or((WrapMode::Square, false));
+    let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    Ok(Some(ShapeDraft {
+        horizontal_rel,
+        vertical_rel,
+        horizontal_offset_emu: x_emu.unwrap_or(0),
+        vertical_offset_emu: y_emu.unwrap_or(0),
+        relative_height: z_index,
+        width_emu,
+        height_emu,
+        wrap,
+        behind_doc,
+        fill,
+        stroke,
+    }))
+}
+
+/// Sub-parses an open (non-self-closing) `draw:rect`: reads the shape's attributes,
+/// then consumes and drops its subtree (a text body or decoration is not modeled
+/// this increment, reported as `odf.draw.shape-body`). The caller undoes the
+/// `Start`'s depth increment; this consumes the matching `End`.
+#[allow(clippy::too_many_arguments)]
+fn parse_draw_shape(
+    reader: &mut NsReader<&[u8]>,
+    shape: &BytesStart<'_>,
+    shape_depth: usize,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Option<ShapeDraft>, OdfError> {
+    let draft = build_shape_draft(
+        reader,
+        shape,
+        limits,
+        attributes,
+        attribute_bytes,
+        automatic_styles,
+        reporter,
+    )?;
+    // Consume the shape's subtree regardless of whether it modeled, so the main
+    // loop resumes at the element after the matching `End`.
+    let mut sub_depth = 0_usize;
+    let mut buffer = Vec::new();
+    let mut body_dropped = false;
+    loop {
+        check_cancelled(cancellation)?;
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|_| OdfError::MalformedContent)?;
+        match event {
+            Event::Eof | Event::DocType(_) => return Err(OdfError::MalformedContent),
+            Event::Start(element) => {
+                sub_depth = sub_depth.checked_add(1).ok_or(OdfError::MalformedContent)?;
+                enforce(
+                    "odf_content_xml_depth",
+                    shape_depth
+                        .checked_add(sub_depth)
+                        .ok_or(OdfError::MalformedContent)?,
+                    limits.max_xml_depth,
+                )?;
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                let name = resolved_name(reader, &element);
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                if is_active(&name) {
+                    reporter.report(ACTIVE_CONTENT_FINDING.to_owned(), ModelOutcome::Degraded);
+                    skip_active_subtree(
+                        reader,
+                        limits,
+                        shape_depth
+                            .checked_add(sub_depth)
+                            .ok_or(OdfError::MalformedContent)?,
+                        elements,
+                        attributes,
+                        attribute_bytes,
+                        cancellation,
+                    )?;
+                    sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+                } else {
+                    body_dropped = true;
+                }
+            }
+            Event::Empty(element) => {
+                *elements = checked_increment(*elements)?;
+                enforce(
+                    "odf_content_xml_elements",
+                    *elements,
+                    limits.max_xml_elements,
+                )?;
+                validate_name(&element, limits)?;
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                body_dropped = true;
+            }
+            Event::End(_) => {
+                if sub_depth == 0 {
+                    break;
+                }
+                sub_depth = sub_depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
+            }
+            Event::Text(text) => {
+                if text
+                    .into_inner()
+                    .iter()
+                    .any(|byte| !byte.is_ascii_whitespace())
+                {
+                    body_dropped = true;
+                }
+            }
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if body_dropped {
+        reporter.report("odf.draw.shape-body".to_owned(), ModelOutcome::Degraded);
+    }
+    Ok(draft)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7704,6 +8089,7 @@ fn inline_draft_text_bytes(inlines: &[InlineDraft]) -> Result<usize, OdfError> {
             | InlineDraft::NoteReference { .. }
             | InlineDraft::Drawing(_)
             | InlineDraft::AnchoredDrawing(_)
+            | InlineDraft::Shape(_)
             | InlineDraft::Field(_)
             | InlineDraft::CommentReference(_)
             | InlineDraft::FormField(_) => {}
@@ -7831,6 +8217,7 @@ fn build_document(
     list_overrides: &BTreeMap<(usize, u8), u16>,
     drawings: &[DrawingDraft],
     anchored_drawings: &[AnchoredDrawingDraft],
+    shapes: &[ShapeDraft],
     comments: &[CommentDraft],
     named_styles: &BTreeMap<String, RunProperties>,
     named_paragraph_styles: &BTreeMap<String, ParagraphProperties>,
@@ -8167,6 +8554,7 @@ fn build_document(
             drawings,
             &anchored_media_ids,
             anchored_drawings,
+            shapes,
         )?;
         match note.kind {
             NoteKind::Footnote => {
@@ -8195,6 +8583,7 @@ fn build_document(
         drawings,
         &anchored_media_ids,
         anchored_drawings,
+        shapes,
     )?;
     definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
@@ -8281,6 +8670,7 @@ fn build_blocks(
     drawings: &[DrawingDraft],
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
+    shapes: &[ShapeDraft],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -8298,6 +8688,7 @@ fn build_blocks(
                 drawings,
                 anchored_media_ids,
                 anchored_drawings,
+                shapes,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -8313,6 +8704,7 @@ fn build_blocks(
                 drawings,
                 anchored_media_ids,
                 anchored_drawings,
+                shapes,
             )?),
             BlockDraft::Toc(toc) => {
                 let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -8330,6 +8722,7 @@ fn build_blocks(
                     drawings,
                     anchored_media_ids,
                     anchored_drawings,
+                    shapes,
                 )?;
                 // A TOC with no captured entries is dropped at import (the model
                 // rejects an empty content control), so `inner` is non-empty here.
@@ -8364,6 +8757,7 @@ fn build_paragraph(
     drawings: &[DrawingDraft],
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
+    shapes: &[ShapeDraft],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -8397,6 +8791,7 @@ fn build_paragraph(
             drawings,
             anchored_media_ids,
             anchored_drawings,
+            shapes,
         )?,
     })
 }
@@ -8424,6 +8819,7 @@ fn build_table(
     drawings: &[DrawingDraft],
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
+    shapes: &[ShapeDraft],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -8448,6 +8844,7 @@ fn build_table(
                         drawings,
                         anchored_media_ids,
                         anchored_drawings,
+                        shapes,
                     )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
@@ -8612,6 +9009,10 @@ fn hash_inline_draft(hash: &mut u64, inline: &InlineDraft, bookmarks: &[Bookmark
             hash_bytes(hash, b"anchored-drawing");
             hash_bytes(hash, &index.to_le_bytes());
         }
+        InlineDraft::Shape(index) => {
+            hash_bytes(hash, b"shape");
+            hash_bytes(hash, &index.to_le_bytes());
+        }
         InlineDraft::Field(kind) => {
             hash_bytes(hash, b"field");
             hash_bytes(hash, field_instruction(kind).as_bytes());
@@ -8715,6 +9116,7 @@ fn build_inlines(
     drawings: &[DrawingDraft],
     anchored_media_ids: &[MediaId],
     anchored_drawings: &[AnchoredDrawingDraft],
+    shapes: &[ShapeDraft],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -8771,6 +9173,7 @@ fn build_inlines(
                     drawings,
                     anchored_media_ids,
                     anchored_drawings,
+                    shapes,
                 )?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
@@ -8853,6 +9256,76 @@ fn build_inlines(
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
+                })
+            }
+            InlineDraft::Shape(index) => {
+                let draft = shapes.get(*index).ok_or(OdfError::InvalidModel)?;
+                let extent = Extent {
+                    width_emu: draft.width_emu,
+                    height_emu: draft.height_emu,
+                };
+                // A standalone anchored shape is modeled as a single-child group
+                // (mirroring the DOCX group-of-one), the shape filling the group box
+                // at origin. `id` is the group's; the shape gets its own id.
+                let shape_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                InlineNode::Group(WordprocessingGroup {
+                    id,
+                    anchor: Some(DrawingAnchor {
+                        horizontal: AnchorHorizontal {
+                            relative_from: draft.horizontal_rel,
+                            position: HorizontalPosition::Offset(draft.horizontal_offset_emu),
+                        },
+                        vertical: AnchorVertical {
+                            relative_from: draft.vertical_rel,
+                            position: VerticalPosition::Offset(draft.vertical_offset_emu),
+                        },
+                        wrap: draft.wrap,
+                        wrap_distances: WrapDistances::default(),
+                        wrap_polygon: None,
+                        behind_doc: draft.behind_doc,
+                    }),
+                    relative_height: draft.relative_height,
+                    extent,
+                    transform: GroupTransform {
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        child_extent: extent,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    },
+                    children: vec![GroupChild::Shape(GroupShape {
+                        id: shape_id,
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        geometry: ShapeGeometry::Rectangle,
+                        preset: None,
+                        adjustments: Vec::new(),
+                        fill: draft.fill.map(|color| {
+                            Fill::Solid(Rgba {
+                                r: color.r,
+                                g: color.g,
+                                b: color.b,
+                                a: 255,
+                            })
+                        }),
+                        stroke: draft.stroke.map(|(color, width_emu)| ShapeStroke {
+                            color: Rgba {
+                                r: color.r,
+                                g: color.g,
+                                b: color.b,
+                                a: 255,
+                            },
+                            width_emu,
+                            dash: None,
+                            head_end: None,
+                            tail_end: None,
+                        }),
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    })],
                 })
             }
             InlineDraft::Field(kind) => InlineNode::Field(Field {
@@ -8965,6 +9438,7 @@ fn build_inlines(
                     drawings,
                     anchored_media_ids,
                     anchored_drawings,
+                    shapes,
                 )?,
             }),
         });
