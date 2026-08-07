@@ -4590,6 +4590,10 @@ function openContextLink(link) {
 // still routes through the same transaction-backed actions as the ribbon and
 // command palette, so availability and mutation gates never drift.
 function buildContextCommands(context) {
+  // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
+  // the paragraph-text menu (docs/85 §4.1; Word/Google Docs image menu). The
+  // object was already selected by the handler that resolved this context.
+  if (context.surface === "object") return buildObjectContextCommands(context);
   const registry = new Map(editorCommands(context).map((command) => [command.id, command]));
   const pick = (id, extra = {}) => {
     const base = registry.get(id);
@@ -4982,6 +4986,122 @@ function buildContextCommands(context) {
   return commands.filter(Boolean);
 }
 
+// Builds the right-click menu for a selected object (image / text box). This is
+// the object counterpart to `buildContextCommands`: it emits object commands
+// (Wrap / Alt text / Crop / Delete) instead of paragraph-text ones, reusing the
+// exact same functions the floating object context bar wires up. Mutations are
+// disabled — with the object review-mode reason — in Viewing and Suggesting,
+// mirroring how the text menu greys its structural rows; the underlying
+// functions still gate fail-closed, so the menu can never bypass a review mode.
+function buildObjectContextCommands(context) {
+  const isPicture = context.kind !== "textbox";
+  // Object edits are untrackable, so they are read-only in Viewing and blocked
+  // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
+  const mutationEnabled = reviewMode === "editing";
+  const mutationReason =
+    reviewMode === "viewing"
+      ? "Turn on Editing to change this object"
+      : "Object changes cannot be tracked in Suggesting mode";
+  const commands = [];
+
+  // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
+  // exactly like the context bar. The active mode is checked on the right.
+  if (context.anchored) {
+    const active = doc.objectWrap(context.node);
+    commands.push({
+      id: "object.wrap",
+      label: "Wrap text",
+      group: "arrange",
+      icon: "wrap",
+      submenu: WRAP_MODES.map(([value, text]) => ({
+        id: `object.wrap.${value}`,
+        label: text,
+        group: "wrap",
+        shortcut: value === active ? "✓" : "",
+        enabled: mutationEnabled,
+        disabledReason: mutationReason,
+        run: () => setObjectWrap(value),
+      })),
+    });
+  }
+
+  // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).
+  commands.push({
+    id: "object.altText",
+    label: "Alt text…",
+    group: "arrange",
+    icon: "altText",
+    enabled: mutationEnabled,
+    disabledReason: mutationReason,
+    run: () => openAltTextDialog(),
+  });
+
+  // Crop — picture-only; a text box has no source rectangle to crop.
+  if (isPicture) {
+    commands.push({
+      id: "object.crop",
+      label: "Crop image",
+      group: "arrange",
+      icon: "crop",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => enterCropMode(),
+    });
+  }
+
+  // Delete — the destructive action, kept in its own trailing group.
+  commands.push({
+    id: "object.delete",
+    label: "Delete",
+    group: "delete",
+    icon: "delete",
+    danger: true,
+    enabled: mutationEnabled,
+    disabledReason: mutationReason,
+    run: () => deleteSelectedObject(),
+  });
+  return commands;
+}
+
+// Resolves a pointer event to an OBJECT context (or null). Prefers a fresh
+// object hit-test at the point; falls back to the already-selected object when
+// the click lands on it (e.g. on a resize handle the hit-test skips). The
+// caller selects the object before showing the menu.
+function objectContextAtEvent(page, event) {
+  const { x, y } = pointToTwip(page, event);
+  const object = doc.objectAt(page.pageNumber, x, y);
+  if (object) {
+    const ctx = {
+      surface: "object",
+      node: object.node,
+      kind: object.kind,
+      anchored: object.anchored,
+    };
+    object.free?.();
+    return ctx;
+  }
+  // No fresh hit, but an object is selected and the point is inside its box.
+  if (objectSelection && objectSelection.mode === "selected") {
+    const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
+    if (
+      rect.length >= 5 &&
+      rect[0] === page.pageNumber &&
+      x >= rect[1] &&
+      x <= rect[1] + rect[3] &&
+      y >= rect[2] &&
+      y <= rect[2] + rect[4]
+    ) {
+      return {
+        surface: "object",
+        node: objectSelection.node,
+        kind: objectSelection.kind,
+        anchored: objectSelection.anchored,
+      };
+    }
+  }
+  return null;
+}
+
 // ---- Menu rendering engine (root context menu + nested submenu flyouts) -----
 // Compact, currentColor stroke icons for primary rows and submenu parents. The
 // icon gutter is always reserved so labels align whether or not a row has one —
@@ -5005,6 +5125,10 @@ const MENU_ICONS = {
   tableDelete: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M6.2 6.2 9.8 9.8M9.8 6.2 6.2 9.8"/>'),
   tableSelect: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 6.5h11M6.5 2.5v11"/>'),
   tableLayout: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M2.5 8h11M8 2.5v11"/>'),
+  wrap: menuIcon('<rect x="2.5" y="3" width="6" height="6" rx="1"/><path d="M10.5 4h3M10.5 7h3M2.5 11.5h11M2.5 13.5h11"/>'),
+  altText: menuIcon('<rect x="2.5" y="2.5" width="11" height="11" rx="1.4"/><path d="M5 10.5 7 5l2 5.5M5.6 9h2.8"/><path d="M10.5 5v5.5"/>'),
+  crop: menuIcon('<path d="M4.5 1.5v10a1 1 0 0 0 1 1h9M1.5 4.5h10a1 1 0 0 1 1 1v9"/>'),
+  delete: menuIcon('<path d="M3 4.5h10M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M5 4.5l.6 8a1 1 0 0 0 1 .95h2.8a1 1 0 0 0 1-.95l.6-8"/>'),
 };
 
 function menuLevelItems(level) {
@@ -5230,6 +5354,21 @@ function keyboardContextMenuPoint() {
 pagesEl.addEventListener("contextmenu", (event) => {
   const page = pageFromEvent(event);
   if (!page || !doc) return;
+  // Object hit-test takes precedence (docs/85 §3.1): right-clicking a drawing /
+  // image / text box selects it as a unit and shows its OBJECT menu, not the
+  // paragraph-text menu.
+  const objectContext = objectContextAtEvent(page, event);
+  if (objectContext) {
+    event.preventDefault();
+    selectObject(
+      objectContext.node,
+      objectContext.kind,
+      anchorAt(page, event) || selection?.focus || null,
+      objectContext.anchored,
+    );
+    showContextMenu(event.clientX, event.clientY, objectContext);
+    return;
+  }
   const anchor = anchorAt(page, event);
   if (!anchor) return;
   event.preventDefault();
@@ -5299,10 +5438,26 @@ document.addEventListener("keydown", (event) => {
   }
   if (
     doc &&
-    selection &&
     eventTargetsEditor(event) &&
     ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu")
   ) {
+    // A selected object opens its OBJECT menu, anchored to the object's top-left
+    // (matching how the object context bar is positioned).
+    if (objectSelection && objectSelection.mode === "selected") {
+      const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
+      const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
+      if (!page) return;
+      event.preventDefault();
+      const { rect: pageRect, sx, sy } = scaleOf(page);
+      showContextMenu(pageRect.left + rect[1] * sx, pageRect.top + rect[2] * sy, {
+        surface: "object",
+        node: objectSelection.node,
+        kind: objectSelection.kind,
+        anchored: objectSelection.anchored,
+      });
+      return;
+    }
+    if (!selection) return;
     const point = keyboardContextMenuPoint();
     if (!point) return;
     event.preventDefault();
