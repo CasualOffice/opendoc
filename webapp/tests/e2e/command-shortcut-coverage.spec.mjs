@@ -20,10 +20,13 @@ test("⌘K authors a link on the selection and no longer opens the command palet
   await gotoEditor(page);
   await typeAndSelect(page, "CMDKLINK");
 
-  // ⌘K opens the link prompt (accepted with a URL), not the palette.
-  page.once("dialog", (dialog) => dialog.accept("https://example.com/cmdk"));
+  // ⌘K opens the link dialog (not the palette); enter a URL and apply.
   await page.keyboard.press(`${MOD}+k`);
   await expect(page.locator("#cmdPalette")).toBeHidden();
+  await expect(page.locator("#linkDialog")).toBeVisible();
+  await page.locator("#linkUrlInput").fill("https://example.com/cmdk");
+  await page.locator("#linkUrlInput").press("Enter");
+  await expect(page.locator("#linkDialog")).toBeHidden();
 
   // The selection is now a hyperlink: right-clicking it offers edit/remove
   // (not add), which is only true when a link exists over the range.

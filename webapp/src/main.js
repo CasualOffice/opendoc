@@ -4329,15 +4329,11 @@ linkChip.addEventListener("mousedown", (event) => {
 });
 linkChipAction.addEventListener("click", () => activateLink(activeLink));
 linkChipEdit.addEventListener("click", () => {
-  if (!activeLink || !selection) return;
-  const value = window.prompt("Link URL or #bookmark:", activeLink.url || `#${activeLink.anchor}`);
-  if (value === null) return;
-  const target = value.trim();
-  if (!target) return;
-  runToolbarEdit(() =>
-    doc.setHyperlink(activeLink.startNode, activeLink.startOffset, activeLink.endOffset, target, activeLink.tooltip || null),
-  );
-  hideLinkChip();
+  if (!activeLink || !selection || activeLink.startNode !== activeLink.endNode) return;
+  const link = activeLink;
+  const text = doc.copyText(link.startNode, link.startOffset, link.endNode, link.endOffset);
+  hideLinkChip(); // the model range stays selected; the dialog owns it now
+  openLinkDialog({ node: link.startNode, start: link.startOffset, end: link.endOffset, link, text });
 });
 linkChipRemove.addEventListener("click", () => {
   if (!activeLink || !selection || activeLink.startNode !== activeLink.endNode) return;
@@ -4545,18 +4541,8 @@ function editContextLink(link) {
     focus: { node: link.endNode, offset: link.endOffset },
   };
   drawSelection();
-  const current = link.url || `#${link.anchor}`;
-  const value = window.prompt("Link URL or #bookmark:", current);
-  if (value === null || !value.trim()) return;
-  runToolbarEdit(() =>
-    doc.setHyperlink(
-      link.startNode,
-      link.startOffset,
-      link.endOffset,
-      value.trim(),
-      link.tooltip || null,
-    ),
-  );
+  const text = doc.copyText(link.startNode, link.startOffset, link.endNode, link.endOffset);
+  openLinkDialog({ node: link.startNode, start: link.startOffset, end: link.endOffset, link, text });
 }
 
 function removeContextLink(link) {
@@ -6292,8 +6278,10 @@ function onButton(el, handler) {
   });
 }
 
-/** Creates/updates the selected same-paragraph text as an external URL or
- * `#bookmark`; an empty submitted value removes an exact existing link. */
+/** Opens the Insert link dialog for the selected same-paragraph text (⌘K, the
+ * ribbon Link button, and the command palette). The dialog owns the external
+ * URL / bookmark / ScreenTip entry and applies through the same gated
+ * setHyperlink path the raw prompt used. */
 function editSelectionLink() {
   if (!doc || !selection || !hasRange()) return;
   const { anchor, focus } = selection;
@@ -6303,19 +6291,8 @@ function editSelectionLink() {
   }
   const start = Math.min(anchor.offset, focus.offset);
   const end = Math.max(anchor.offset, focus.offset);
-  const value = window.prompt(
-    "Link URL or #bookmark (leave empty to remove an existing link):",
-    "https://",
-  );
-  if (value === null) return;
-  const target = value.trim();
-  if (target) {
-    runToolbarEdit(() =>
-      doc.setHyperlink(anchor.node, start, end, target),
-    );
-  } else {
-    runToolbarEdit(() => doc.removeHyperlink(anchor.node, start, end));
-  }
+  const text = doc.copyText(anchor.node, start, anchor.node, end);
+  openLinkDialog({ node: anchor.node, start, end, text });
 }
 
 onButton(insertLinkBtn, editSelectionLink);
@@ -9330,6 +9307,227 @@ if (fieldDialog) {
       const index = items.indexOf(document.activeElement);
       const dir = event.key === "ArrowDown" ? 1 : -1;
       items[(index + dir + items.length) % items.length]?.focus();
+    }
+  });
+}
+
+// ---- Insert / edit link dialog ---------------------------------------------
+// A Word/Docs-style hyperlink dialog: a "Text to display" field, a Web-address /
+// Place-in-this-document target picker (the picker is populated from the
+// document's bookmarks so a user never hand-types "#name"), and an optional
+// ScreenTip. It replaces the old window.prompt UI and applies through the very
+// same gated engine ops (`setHyperlink`/`removeHyperlink`, one undoable action,
+// fail-closed in Viewing/Suggesting). Changing the display text re-applies the
+// link via the rich-run paste op so text + link stay one undoable action.
+const linkDialog = document.getElementById("linkDialog");
+const linkDialogForm = document.getElementById("linkDialogForm");
+const linkDialogTitle = document.getElementById("linkDialogTitle");
+const linkTextInput = document.getElementById("linkTextInput");
+const linkUrlInput = document.getElementById("linkUrlInput");
+const linkPlaceSelect = document.getElementById("linkPlaceSelect");
+const linkPlaceEmpty = document.getElementById("linkPlaceEmpty");
+const linkTooltipInput = document.getElementById("linkTooltipInput");
+const linkModeUrl = document.getElementById("linkModeUrl");
+const linkModePlace = document.getElementById("linkModePlace");
+const linkModeUrlPanel = document.getElementById("linkModeUrlPanel");
+const linkModePlacePanel = document.getElementById("linkModePlacePanel");
+const linkDialogNote = document.getElementById("linkDialogNote");
+const linkDialogClose = document.getElementById("linkDialogClose");
+const linkCancelBtn = document.getElementById("linkCancelBtn");
+const linkRemoveBtn = document.getElementById("linkRemoveBtn");
+const LINK_DIALOG_HINT = "Enter applies; Esc cancels.";
+/** The range a currently-open link dialog targets, plus what to restore focus
+ *  to when it closes. `null` when the dialog is closed. */
+let linkDialogCtx = null;
+let linkDialogReturnFocus = null;
+let linkDialogMode = "url";
+
+function setLinkDialogNote(message, isError) {
+  linkDialogNote.textContent = message || LINK_DIALOG_HINT;
+  linkDialogNote.classList.toggle("error", !!isError && !!message);
+}
+
+/** Switches the target picker between an external "Web address" field and the
+ *  document's "Place in this document" bookmark dropdown. */
+function setLinkDialogMode(mode) {
+  linkDialogMode = mode === "place" ? "place" : "url";
+  const place = linkDialogMode === "place";
+  linkModeUrl.setAttribute("aria-selected", String(!place));
+  linkModePlace.setAttribute("aria-selected", String(place));
+  linkModeUrl.classList.toggle("is-active", !place);
+  linkModePlace.classList.toggle("is-active", place);
+  linkModeUrlPanel.hidden = place;
+  linkModePlacePanel.hidden = !place;
+}
+
+/** Fills the place dropdown from the document's bookmarks (headings are not
+ *  offered: the engine's link target is a bookmark anchor or URL, and
+ *  auto-bookmarking a heading would be a second, separate undoable op). Returns
+ *  the bookmark count; `selectedAnchor` pre-selects an existing internal link. */
+function populateLinkPlaces(selectedAnchor) {
+  const entries = bookmarkEntries();
+  linkPlaceSelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = entries.length ? "Choose a bookmark…" : "No bookmarks in this document";
+  linkPlaceSelect.append(placeholder);
+  for (const { name } of entries) {
+    const option = document.createElement("option");
+    option.value = `#${name}`;
+    option.textContent = name;
+    if (selectedAnchor && name === selectedAnchor) option.selected = true;
+    linkPlaceSelect.append(option);
+  }
+  linkPlaceSelect.disabled = entries.length === 0;
+  linkPlaceEmpty.hidden = entries.length !== 0;
+  return entries.length;
+}
+
+/** Opens the dialog over `[node, start)..[node, end)`. `link` (optional) is an
+ *  existing hyperlink to edit — it prefills the URL / bookmark / ScreenTip and
+ *  shows Remove; a fresh insert leaves them empty. `text` is the current display
+ *  text. Fails closed in Viewing/Suggesting (the same gate the apply path
+ *  enforces) so the dialog never opens onto a dead Apply. */
+function openLinkDialog({ node, start, end, link = null, text = "" }) {
+  if (!doc || !linkDialog) return;
+  if (blockMutationInViewing() || blockUntrackedInSuggesting()) return;
+  linkDialogCtx = { node, start, end, editing: !!link, originalText: text };
+  linkDialogReturnFocus = document.activeElement;
+
+  const internal = link?.kind === "internal";
+  const hasPlaces = populateLinkPlaces(internal ? link.anchor : null);
+  linkTextInput.value = text;
+  linkTooltipInput.value = link?.tooltip || "";
+  linkUrlInput.value = internal ? "" : (link?.url || "");
+  setLinkDialogMode(internal && hasPlaces ? "place" : "url");
+  setLinkDialogNote("", false);
+  linkDialogTitle.textContent = link ? "Edit link" : "Insert link";
+  linkRemoveBtn.hidden = !link;
+
+  linkDialog.hidden = false;
+  queueMicrotask(() => {
+    const first = linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput;
+    first.focus();
+    if (first === linkUrlInput) linkUrlInput.select();
+  });
+}
+
+function closeLinkDialog() {
+  if (!linkDialog || linkDialog.hidden) return;
+  linkDialog.hidden = true;
+  linkDialogCtx = null;
+  const returnTo = linkDialogReturnFocus;
+  linkDialogReturnFocus = null;
+  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
+    returnTo.focus({ preventScroll: true });
+  } else {
+    focusEditorSurface();
+  }
+}
+
+/** The target string the active mode resolves to: a trimmed URL, or the picked
+ *  bookmark's `#anchor` value. */
+function linkDialogTarget() {
+  return linkDialogMode === "place"
+    ? linkPlaceSelect.value.trim()
+    : linkUrlInput.value.trim();
+}
+
+/** Applies the dialog as one undoable, gated action. An empty target is
+ *  rejected inline (never creates an empty link). When the display text is
+ *  unchanged the link is set via `setHyperlink` (carrying the ScreenTip); when
+ *  the user edits the text, the text + link are re-applied together via the
+ *  rich-run paste op (one undoable action — the ScreenTip is only persisted
+ *  when the text is left unchanged, since that op carries no tooltip). */
+async function applyLinkDialog() {
+  if (!doc || !linkDialogCtx) return;
+  const { node, start, end, originalText } = linkDialogCtx;
+  const target = linkDialogTarget();
+  if (!target) {
+    setLinkDialogNote(
+      linkDialogMode === "place"
+        ? "Choose a bookmark to link to."
+        : "Enter a web address, or link to a place in this document.",
+      true,
+    );
+    (linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput).focus();
+    return;
+  }
+  const tooltip = linkTooltipInput.value.trim();
+  const displayText = linkTextInput.value;
+  const textChanged = displayText.length > 0 && displayText !== originalText;
+  // Point the model selection at the target range so the shared, gated apply
+  // paths (which read the live selection) act on exactly this link.
+  selection = { anchor: { node, offset: start }, focus: { node, offset: end } };
+  drawSelection();
+
+  if (!textChanged) {
+    await runToolbarEdit(() => doc.setHyperlink(node, start, end, target, tooltip || null));
+  } else {
+    // Rebuild the range as a single run carrying the first run's formatting plus
+    // the new text and href; pasteRichRuns batches InsertText+FormatText+
+    // SetHyperlink into one undoable action.
+    let base = {};
+    try {
+      base = (JSON.parse(doc.copyRichRuns(node, start, node, end)) || [])
+        .find((run) => !run.paragraphBreak) || {};
+    } catch { /* fall back to an unformatted run */ }
+    const run = { ...base, text: displayText, href: target, paragraphBreak: false };
+    await pasteRichRunsJson(JSON.stringify([run]));
+    if (tooltip) setStatus("Link added. Its ScreenTip needs the display text left unchanged.");
+  }
+  closeLinkDialog();
+}
+
+/** Removes the link over the dialog's range (`removeHyperlink`, one gated
+ *  undoable action) — the Remove button, shown only when editing. */
+async function removeLinkDialog() {
+  if (!doc || !linkDialogCtx) return;
+  const { node, start, end } = linkDialogCtx;
+  selection = { anchor: { node, offset: start }, focus: { node, offset: end } };
+  drawSelection();
+  await runToolbarEdit(() => doc.removeHyperlink(node, start, end));
+  closeLinkDialog();
+  setStatus("Link removed");
+}
+
+if (linkDialog) {
+  linkDialogForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void applyLinkDialog();
+  });
+  linkModeUrl.addEventListener("click", () => {
+    setLinkDialogMode("url");
+    linkUrlInput.focus();
+  });
+  linkModePlace.addEventListener("click", () => {
+    setLinkDialogMode("place");
+    linkPlaceSelect.focus();
+  });
+  // Picking a place is a target choice; clear any stale "enter a URL" error.
+  linkPlaceSelect.addEventListener("change", () => setLinkDialogNote("", false));
+  for (const field of [linkUrlInput, linkTextInput, linkTooltipInput]) {
+    field.addEventListener("input", () => {
+      if (linkDialogNote.classList.contains("error")) setLinkDialogNote("", false);
+    });
+  }
+  linkRemoveBtn.addEventListener("click", () => void removeLinkDialog());
+  linkCancelBtn.addEventListener("click", () => closeLinkDialog());
+  linkDialogClose.addEventListener("click", () => closeLinkDialog());
+  linkDialog.addEventListener("click", (event) => {
+    if (event.target === linkDialog) closeLinkDialog();
+  });
+  linkDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeLinkDialog();
+    } else if (event.key === "Enter" && event.target === linkPlaceSelect) {
+      // Enter on the native select would not submit the form; apply explicitly.
+      event.preventDefault();
+      void applyLinkDialog();
+    } else if (event.key === "Tab") {
+      trapModalFocus(event, linkDialog);
     }
   });
 }

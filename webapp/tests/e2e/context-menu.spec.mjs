@@ -114,8 +114,11 @@ test("link and comment ranges receive their exact contextual actions", async ({
   await gotoEditor(page);
   await selectTypedMarker(page, "LINK_COMMENT_CONTEXT");
   await page.locator('[data-tab="insert"]').click();
-  page.once("dialog", (dialog) => dialog.accept("https://example.com/context"));
   await page.locator("#insertLinkBtn").click();
+  await expect(page.locator("#linkDialog")).toBeVisible();
+  await page.locator("#linkUrlInput").fill("https://example.com/context");
+  await page.locator("#linkUrlInput").press("Enter");
+  await expect(page.locator("#linkDialog")).toBeHidden();
 
   let box = await page.locator(".overlay .highlight").first().boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, {
