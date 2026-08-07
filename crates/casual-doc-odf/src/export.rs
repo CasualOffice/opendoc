@@ -8,13 +8,14 @@ use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
     CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
     Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill, FontRef,
-    FormFieldKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule, HorizontalAnchor,
-    HorizontalPosition, HyperlinkTarget, Indentation, InlineNode, LevelJustification, LevelSuffix,
-    MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat, NumberingInstanceId, Paragraph,
-    ParagraphProperties, PointEmu, Revision, RevisionKind, RowHeight, RunProperties,
-    SdtControlKind, ShapeGeometry, Spacing, Style, StyleId, StyleKind, Table, TableCell,
-    TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WidthType, WordprocessingGroup, WrapMode,
+    FormFieldKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, HyperlinkTarget, Indentation, InlineNode,
+    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
+    NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu, Revision, RevisionKind,
+    RowHeight, RunProperties, SdtControlKind, ShapeGeometry, Spacing, Style, StyleId, StyleKind,
+    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
+    VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WidthType,
+    WordprocessingGroup, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -709,6 +710,10 @@ struct OdtGraphicStyle {
     stroke: Option<((u8, u8, u8), i64)>,
     /// Emit `draw:stroke="none"` (a shape with no outline).
     stroke_none: bool,
+    /// `style:horizontal-pos`/`style:vertical-pos` for a floating frame's alignment
+    /// positioning (`None` = offset positioning, no attribute emitted).
+    horizontal_pos: Option<&'static str>,
+    vertical_pos: Option<&'static str>,
 }
 
 impl OdtGraphicStyle {
@@ -752,6 +757,18 @@ fn push_graphic_properties(
             push_bounded(xml, attr, max_content_bytes)?;
             push_bounded(xml, "=\"", max_content_bytes)?;
             push_bounded(xml, &emu_to_cm(emu), max_content_bytes)?;
+            push_bounded(xml, "\"", max_content_bytes)?;
+        }
+    }
+    for (attr, value) in [
+        ("style:horizontal-pos", style.horizontal_pos),
+        ("style:vertical-pos", style.vertical_pos),
+    ] {
+        if let Some(value) = value {
+            push_bounded(xml, " ", max_content_bytes)?;
+            push_bounded(xml, attr, max_content_bytes)?;
+            push_bounded(xml, "=\"", max_content_bytes)?;
+            push_bounded(xml, value, max_content_bytes)?;
             push_bounded(xml, "\"", max_content_bytes)?;
         }
     }
@@ -2839,8 +2856,12 @@ impl Writer {
             anchor.horizontal.relative_from,
             anchor.vertical.relative_from,
         );
-        let x_emu = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
-        let y_emu = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
+        // Alignment positioning is carried by `style:horizontal-pos`/`vertical-pos`
+        // in the graphic style, so an aligned axis emits `svg:x`/`svg:y = 0` silently
+        // (the importer ignores it under alignment); an offset axis clamps a negative
+        // value with a finding.
+        let x_emu = self.anchor_axis_svg(anchor.horizontal.position);
+        let y_emu = self.anchor_axis_svg_v(anchor.vertical.position);
         self.push("<draw:frame text:anchor-type=\"")?;
         self.push(anchor_type)?;
         self.push("\"")?;
@@ -2898,6 +2919,16 @@ impl Writer {
             self.reporter
                 .record("odt.export.anchor_behind_doc", ModelOutcome::Degraded);
         }
+        // ODF `style:vertical-pos` has no inside/outside form (unlike the horizontal
+        // axis), so a vertical inside/outside alignment (only reachable from a
+        // cross-format model) collapses to top/bottom — report the loss.
+        if matches!(
+            anchor.vertical.position,
+            VerticalPosition::Align(VerticalAlign::Inside | VerticalAlign::Outside)
+        ) {
+            self.reporter
+                .record("odt.export.anchor_vertical_align", ModelOutcome::Degraded);
+        }
         let distances = &anchor.wrap_distances;
         OdtGraphicStyle {
             wrap,
@@ -2912,6 +2943,10 @@ impl Writer {
             fill_none: false,
             stroke: None,
             stroke_none: false,
+            // Alignment positioning rides on the style; offset positioning leaves
+            // these `None` (the axis's `svg:x`/`svg:y` carries the position).
+            horizontal_pos: horizontal_pos_name(anchor.horizontal.position),
+            vertical_pos: vertical_pos_name(anchor.vertical.position),
         }
     }
 
@@ -2958,6 +2993,35 @@ impl Writer {
                     .record("odt.export.anchor_align", ModelOutcome::Degraded);
                 0
             }
+        }
+    }
+
+    /// The `svg:x` value for a floating image's horizontal placement. An alignment is
+    /// represented by `style:horizontal-pos` (so `svg:x = 0`, no finding); an offset
+    /// clamps a negative value to 0 with a finding.
+    fn anchor_axis_svg(&mut self, position: HorizontalPosition) -> i64 {
+        match horizontal_position_offset(position) {
+            Some(value) if value >= 0 => value,
+            Some(_) => {
+                self.reporter
+                    .record("odt.export.anchor_offset_negative", ModelOutcome::Degraded);
+                0
+            }
+            None => 0,
+        }
+    }
+
+    /// The `svg:y` value for a floating image's vertical placement; see
+    /// [`Self::anchor_axis_svg`].
+    fn anchor_axis_svg_v(&mut self, position: VerticalPosition) -> i64 {
+        match vertical_position_offset(position) {
+            Some(value) if value >= 0 => value,
+            Some(_) => {
+                self.reporter
+                    .record("odt.export.anchor_offset_negative", ModelOutcome::Degraded);
+                0
+            }
+            None => 0,
         }
     }
 
@@ -4448,6 +4512,33 @@ fn line_endpoints(
         (origin_y, origin_y + height)
     };
     (x1, y1, x2, y2)
+}
+
+/// The `style:horizontal-pos` keyword for an alignment placement, or `None` for an
+/// offset (whose position rides on `svg:x`, no `style:horizontal-pos`).
+fn horizontal_pos_name(position: HorizontalPosition) -> Option<&'static str> {
+    match position {
+        HorizontalPosition::Offset(_) => None,
+        HorizontalPosition::Align(HorizontalAlign::Left) => Some("left"),
+        HorizontalPosition::Align(HorizontalAlign::Center) => Some("center"),
+        HorizontalPosition::Align(HorizontalAlign::Right) => Some("right"),
+        HorizontalPosition::Align(HorizontalAlign::Inside) => Some("inside"),
+        HorizontalPosition::Align(HorizontalAlign::Outside) => Some("outside"),
+    }
+}
+
+/// The `style:vertical-pos` keyword for an alignment placement, or `None` for an
+/// offset. `Inside`/`Outside` have no ODF `style:vertical-pos` form and fall back to
+/// the nearest edge (the caller reports the degrade when it maps the axis).
+fn vertical_pos_name(position: VerticalPosition) -> Option<&'static str> {
+    match position {
+        VerticalPosition::Offset(_) => None,
+        VerticalPosition::Align(VerticalAlign::Top) => Some("top"),
+        VerticalPosition::Align(VerticalAlign::Center) => Some("middle"),
+        VerticalPosition::Align(VerticalAlign::Bottom) => Some("bottom"),
+        VerticalPosition::Align(VerticalAlign::Inside) => Some("top"),
+        VerticalPosition::Align(VerticalAlign::Outside) => Some("bottom"),
+    }
 }
 
 /// The absolute offset of a horizontal placement, or `None` for an alignment

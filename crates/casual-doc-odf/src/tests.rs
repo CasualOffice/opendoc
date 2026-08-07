@@ -2373,3 +2373,102 @@ fn oversized_group_bbox_drops_group_not_document() {
     };
     assert!(second.inlines.is_empty());
 }
+
+/// A floating image whose graphic style uses alignment positioning
+/// (`style:horizontal-pos="center"`, `style:vertical-pos="top"`) imports to
+/// `HorizontalPosition::Align`/`VerticalPosition::Align` and re-exports the same
+/// alignment, a byte-exact fixed point.
+#[test]
+fn floating_anchor_alignment_positioning_round_trips() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties style:horizontal-pos="center" style:vertical-pos="top"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="0cm" svg:y="0cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert_eq!(
+        anchored.anchor.horizontal.position,
+        HorizontalPosition::Align(casual_doc_model::v1::HorizontalAlign::Center)
+    );
+    assert_eq!(
+        anchored.anchor.vertical.position,
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Top)
+    );
+
+    // Export re-emits the alignment on the graphic style, with svg:x/y = 0.
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"style:horizontal-pos="center" style:vertical-pos="top""#));
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// A vertical inside/outside alignment (only reachable from a cross-format model,
+/// since ODF has no `style:vertical-pos` inside/outside) collapses to top/bottom on
+/// export and MUST be reported, not lost silently.
+#[test]
+fn floating_anchor_vertical_inside_align_is_reported() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame text:anchor-type="page" svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let mut document = imported.document;
+    // Force a vertical Inside alignment (a DOCX-origin state ODF cannot express).
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &mut paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    anchored.anchor.vertical.position =
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Inside);
+    let retained = package
+        .retained_media_parts(&document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odt.export.anchor_vertical_align")
+    );
+}
