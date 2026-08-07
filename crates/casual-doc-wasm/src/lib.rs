@@ -1783,7 +1783,12 @@ impl WasmDocument {
         let mut ops = Vec::new();
         for i in 0..n {
             let (start, _end) = self
-                .order_endpoints(&start_nodes[i], start_offsets[i], &end_nodes[i], end_offsets[i])
+                .order_endpoints(
+                    &start_nodes[i],
+                    start_offsets[i],
+                    &end_nodes[i],
+                    end_offsets[i],
+                )
                 .map_err(to_js)?;
             ops.extend(
                 self.selection_delete_ops(
