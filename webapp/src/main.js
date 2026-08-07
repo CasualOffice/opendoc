@@ -3207,10 +3207,15 @@ function updateObjectResize(event) {
   ][drag.handleKind];
   let newW = Math.max(MIN_OBJECT_TWIP, drag.startW + fw * dxTwip);
   let newH = Math.max(MIN_OBJECT_TWIP, drag.startH + fh * dyTwip);
-  // Aspect-lock a corner drag when Shift is held: drive both edges from the axis
-  // that moved more, so the object keeps its proportions.
+  // Corner aspect-lock, kind-aware to match the platform norm: a PICTURE keeps
+  // its proportions by DEFAULT on a corner drag (Word/Docs lock aspect for
+  // images) and Shift frees it; a TEXT BOX resizes freely by default and Shift
+  // locks. Either way the constraint drives both edges from the axis that moved
+  // more, so the object keeps its proportions.
   const isCorner = fw !== 0 && fh !== 0;
-  if (isCorner && event.shiftKey) {
+  const isImage = objectSelection?.kind !== "textbox";
+  const lockAspect = isCorner && (isImage ? !event.shiftKey : event.shiftKey);
+  if (lockAspect) {
     if (Math.abs(newW - drag.startW) >= Math.abs(newH - drag.startH)) {
       newH = Math.max(MIN_OBJECT_TWIP, Math.round(newW / drag.aspect));
     } else {
