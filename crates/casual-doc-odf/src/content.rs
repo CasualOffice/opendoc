@@ -542,6 +542,9 @@ struct AnchoredDrawingDraft {
 /// other geometries, gradients, dashes, arrowheads, rotation, and flips are deferred.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ShapeDraft {
+    /// The preset geometry, from the ODF element name (`draw:rect` → Rectangle,
+    /// `draw:ellipse` → Ellipse).
+    geometry: ShapeGeometry,
     horizontal_rel: HorizontalAnchor,
     vertical_rel: VerticalAnchor,
     horizontal_offset_emu: i64,
@@ -3236,16 +3239,23 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             );
                         }
                         depth = depth.checked_sub(1).ok_or(OdfError::MalformedContent)?;
-                    } else if text_body_depth.is_some()
-                        && current.is_some()
-                        && is_name(&name, NamespaceKind::Draw, b"rect")
+                    } else if let Some(geometry) = text_body_depth
+                        .is_some()
+                        .then(|| {
+                            current
+                                .is_some()
+                                .then(|| draw_shape_geometry(&name))
+                                .flatten()
+                        })
+                        .flatten()
                     {
-                        // Sub-parse a standalone rectangle shape off the main loop;
+                        // Sub-parse an open standalone box shape off the main loop;
                         // parse_draw_shape consumes the matching `End`, so undo this
                         // `Start`'s depth increment below.
                         if let Some(shape) = parse_draw_shape(
                             &mut reader,
                             &element,
+                            geometry,
                             depth,
                             limits,
                             &mut elements,
@@ -3535,15 +3545,22 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                     } else {
                         reporter.report(feature("element", &name), ModelOutcome::Degraded);
                     }
-                } else if text_body_depth.is_some()
-                    && current.is_some()
-                    && is_name(&name, NamespaceKind::Draw, b"rect")
+                } else if let Some(geometry) = text_body_depth
+                    .is_some()
+                    .then(|| {
+                        current
+                            .is_some()
+                            .then(|| draw_shape_geometry(&name))
+                            .flatten()
+                    })
+                    .flatten()
                 {
-                    // A self-closing `draw:rect` standalone shape (the common form,
-                    // and exactly what this writer emits). No subtree to consume.
+                    // A self-closing `draw:rect`/`draw:ellipse` standalone shape (the
+                    // common form, and exactly what this writer emits). No subtree.
                     if let Some(shape) = build_shape_draft(
                         &reader,
                         &element,
+                        geometry,
                         limits,
                         &mut attributes,
                         &mut attribute_bytes,
@@ -4422,6 +4439,19 @@ fn resolve_graphic_wrap(style: &OdfStyle, reporter: &mut Reporter) -> (WrapMode,
     }
 }
 
+/// Maps a `draw:` element name to the preset geometry this increment models as a
+/// standalone shape (`draw:rect`/`draw:ellipse`), or `None` for any other element.
+fn draw_shape_geometry(name: &ResolvedName) -> Option<ShapeGeometry> {
+    if name.namespace != NamespaceKind::Draw {
+        return None;
+    }
+    match name.local.as_slice() {
+        b"rect" => Some(ShapeGeometry::Rectangle),
+        b"ellipse" => Some(ShapeGeometry::Ellipse),
+        _ => None,
+    }
+}
+
 /// Resolves a shape graphic style's solid fill color. `draw:fill="solid"` with a
 /// color maps to that RGB; `none`/absent is no fill; a non-solid fill (gradient,
 /// bitmap, hatch) or a solid fill without a color degrades to no fill with a finding.
@@ -4464,9 +4494,11 @@ fn resolve_shape_stroke(style: &OdfStyle, reporter: &mut Reporter) -> Option<(Rg
 /// consumption), shared by the self-closing (`Event::Empty`) and open
 /// (`Event::Start`) forms. Returns `None` (reported) for a non-floating anchor or a
 /// missing extent — the shape is then skipped, not modeled.
+#[allow(clippy::too_many_arguments)]
 fn build_shape_draft(
     reader: &NsReader<&[u8]>,
     shape: &BytesStart<'_>,
+    geometry: ShapeGeometry,
     limits: OdfImportLimits,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
@@ -4545,6 +4577,7 @@ fn build_shape_draft(
     let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
     let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
     Ok(Some(ShapeDraft {
+        geometry,
         horizontal_rel,
         vertical_rel,
         horizontal_offset_emu: x_emu.unwrap_or(0),
@@ -4567,6 +4600,7 @@ fn build_shape_draft(
 fn parse_draw_shape(
     reader: &mut NsReader<&[u8]>,
     shape: &BytesStart<'_>,
+    geometry: ShapeGeometry,
     shape_depth: usize,
     limits: OdfImportLimits,
     elements: &mut usize,
@@ -4579,6 +4613,7 @@ fn parse_draw_shape(
     let draft = build_shape_draft(
         reader,
         shape,
+        geometry,
         limits,
         attributes,
         attribute_bytes,
@@ -9299,7 +9334,7 @@ fn build_inlines(
                         id: shape_id,
                         offset: PointEmu { x_emu: 0, y_emu: 0 },
                         extent,
-                        geometry: ShapeGeometry::Rectangle,
+                        geometry: draft.geometry,
                         preset: None,
                         adjustments: Vec::new(),
                         fill: draft.fill.map(|color| {

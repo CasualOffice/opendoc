@@ -2529,16 +2529,16 @@ impl Writer {
                     .record("odt.export.embedded_object", ModelOutcome::Omitted),
                 InlineNode::TextBox(text_box) => self.write_text_box(text_box, depth + 1)?,
                 InlineNode::Group(group) => {
-                    // A `draw:rect` and its graphic style need the `draw:`/`svg:`
-                    // namespaces, which only the preserving content header declares;
-                    // the plain semantic path degrades the shape rather than emit
-                    // namespace-invalid XML (matching the inline-image behavior).
+                    // A `draw:rect`/`draw:ellipse` and its graphic style need the
+                    // `draw:`/`svg:` namespaces, which only the preserving content
+                    // header declares; the plain semantic path degrades the shape
+                    // rather than emit namespace-invalid XML (matching inline images).
                     if self.drawing_namespaces_available
-                        && let Some(shape) = single_rectangle_shape(group)
+                        && let Some((shape, element)) = single_box_shape(group)
                     {
-                        self.write_group_rectangle(group, shape)?;
+                        self.write_group_box_shape(group, shape, element)?;
                     } else {
-                        // A multi-child group, a non-rectangle geometry, a picture/
+                        // A multi-child group, an unsupported geometry, a picture/
                         // text-box child, a transformed shape, or the plain path.
                         self.reporter
                             .record("odt.export.group", ModelOutcome::Omitted);
@@ -2955,17 +2955,18 @@ impl Writer {
         }
     }
 
-    /// Writes a standalone anchored rectangle (a single-child group carrying one
-    /// `GroupShape::Rectangle`) as a positioned `draw:rect`. Mirrors
-    /// `write_anchored_draw_frame`'s anchor-type/offset/wrap handling; the shape's
-    /// fill/outline ride on the same `graphic` automatic-style family. A picture
-    /// transform (flip/rotation) on the shape or a group transform beyond the
-    /// identity is reported and dropped — this increment emits an axis-aligned,
-    /// untransformed rectangle only.
-    fn write_group_rectangle(
+    /// Writes a standalone anchored box shape (a single-child group carrying one
+    /// `GroupShape` of a box geometry) as a positioned `draw:rect`/`draw:ellipse`
+    /// (`element`). Mirrors `write_anchored_draw_frame`'s anchor-type/offset/wrap
+    /// handling; the shape's fill/outline ride on the same `graphic` automatic-style
+    /// family. A picture transform (flip/rotation) on the shape or a group transform
+    /// beyond the identity is reported and dropped — this increment emits an
+    /// axis-aligned, untransformed shape only.
+    fn write_group_box_shape(
         &mut self,
         group: &WordprocessingGroup,
         shape: &GroupShape,
+        element: &'static str,
     ) -> Result<(), OdfError> {
         // The identity check gating this call already confirmed the transform is
         // trivial and the shape sits at the group origin; only the fill/outline and
@@ -2973,7 +2974,7 @@ impl Writer {
         let Some(anchor) = &group.anchor else {
             // A nested (non-anchored) group-of-one shape is not reachable from this
             // increment's importer (it only produces top-level anchored groups), but
-            // guard defensively rather than emit an unanchored draw:rect.
+            // guard defensively rather than emit an unanchored shape.
             self.reporter
                 .record("odt.export.group", ModelOutcome::Omitted);
             return Ok(());
@@ -3028,7 +3029,9 @@ impl Writer {
         );
         let x_emu = self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
         let y_emu = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
-        self.push("<draw:rect text:anchor-type=\"")?;
+        self.push("<")?;
+        self.push(element)?;
+        self.push(" text:anchor-type=\"")?;
         self.push(anchor_type)?;
         self.push("\"")?;
         if let Some(name) = &graphic_name {
@@ -4096,21 +4099,31 @@ fn package(
     Ok(bytes)
 }
 
-/// Whether `group` is exactly the shape this increment can re-emit as a
-/// standalone `draw:rect`: one `GroupShape::Rectangle` child, no adjustments or
-/// retained preset, at the group's origin, with an identity (untransformed,
-/// unscaled) group transform. Anything else (a picture/text-box/nested-group
-/// child, more than one child, a non-rectangle geometry, or a real transform) is
-/// not this increment's shape and falls back to the reported `odt.export.group`
-/// degrade — never a wrong or lossy `draw:rect`.
-fn single_rectangle_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
+/// The ODF `draw:` element name for a preset geometry this increment can re-emit
+/// as a standalone shape: `rect` and `ellipse` share the box-geometry form
+/// (`svg:x`/`y`/`width`/`height`). Every other preset returns `None` and falls back
+/// to the reported `odt.export.group` degrade.
+fn box_shape_element(geometry: ShapeGeometry) -> Option<&'static str> {
+    match geometry {
+        ShapeGeometry::Rectangle => Some("draw:rect"),
+        ShapeGeometry::Ellipse => Some("draw:ellipse"),
+        _ => None,
+    }
+}
+
+/// Whether `group` is exactly a shape this increment can re-emit as a standalone
+/// box shape (`draw:rect`/`draw:ellipse`): one supported-geometry `GroupShape`
+/// child, no adjustments or retained preset, at the group's origin, with an
+/// identity (untransformed, unscaled) group transform. Anything else (a
+/// picture/text-box/nested-group child, more than one child, an unsupported
+/// geometry, or a real transform) is not this increment's shape and falls back to
+/// the reported `odt.export.group` degrade — never a wrong or lossy element.
+fn single_box_shape(group: &WordprocessingGroup) -> Option<(&GroupShape, &'static str)> {
     let [GroupChild::Shape(shape)] = group.children.as_slice() else {
         return None;
     };
-    if shape.geometry != ShapeGeometry::Rectangle
-        || shape.preset.is_some()
-        || !shape.adjustments.is_empty()
-    {
+    let element = box_shape_element(shape.geometry)?;
+    if shape.preset.is_some() || !shape.adjustments.is_empty() {
         return None;
     }
     let origin = PointEmu { x_emu: 0, y_emu: 0 };
@@ -4125,7 +4138,7 @@ fn single_rectangle_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
         && !transform.flip_h
         && !transform.flip_v
         && transform.rotation.is_none();
-    identity.then_some(shape)
+    identity.then_some((shape, element))
 }
 
 /// The absolute offset of a horizontal placement, or `None` for an alignment

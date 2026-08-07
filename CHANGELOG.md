@@ -15,6 +15,12 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Standalone shapes — ellipses (fidelity parity, T6)**: a floating ODF
+  `draw:ellipse` (the same box geometry as `draw:rect` — position, size, solid
+  fill/outline, anchor) now round-trips as an `Ellipse` `GroupShape` and re-emits as
+  `draw:ellipse`. The importer maps the `draw:` element name to the geometry and the
+  writer maps it back, so rectangles and ellipses share one code path; every other
+  geometry still degrades with a finding.
 - **Standalone shapes — rectangles, first increment (fidelity parity, T6)**: a
   floating ODF `draw:rect` (a preset rectangle with a solid fill and outline,
   anchored like a frame) now imports to an `InlineNode::Group` holding a single

@@ -2076,3 +2076,64 @@ fn standalone_rectangle_shape_round_trips() {
             .any(|entry| entry.feature == "odt.export.shape_fill_opacity")
     );
 }
+
+/// A floating `draw:ellipse` imports to an `Ellipse` `GroupShape` and re-exports
+/// as `draw:ellipse` (not `draw:rect`), a byte-exact fixed point.
+#[test]
+fn standalone_ellipse_shape_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#22aa44"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:ellipse draw:style-name="gr1" text:anchor-type="page" svg:x="1cm" svg:y="1cm" svg:width="6cm" svg:height="4cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        panic!("one shape child")
+    };
+    assert_eq!(shape.geometry, ShapeGeometry::Ellipse);
+
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<draw:ellipse text:anchor-type="page""#));
+    assert!(!content_out.contains("draw:rect"));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
