@@ -4523,9 +4523,21 @@ function plainTableInfo(node) {
     regular: info.regular,
     rowHeightRule: info.rowHeightRule,
     table: info.table,
+    column: info.column,
   } : null;
   info?.free();
   return value;
+}
+
+// 0-based index of the column containing the caret, or -1 when the node is not
+// inside a table. Used so table sort keys off the caret's own column (Docs/Word
+// standard) rather than always the first column.
+function caretTableColumn(node) {
+  if (!doc?.inTable(node)) return -1;
+  const info = doc.tableInfo(node);
+  const column = info?.found ? info.column : -1;
+  info?.free();
+  return column;
 }
 
 function contextAt(anchor, link = null) {
@@ -4921,10 +4933,10 @@ function buildContextCommands(context) {
       () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
       { regular: true, group: "distribute" }),
     tableMutation("table.sort.ascending", "Sort ascending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending"), { gate: true }),
+      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
       { regular: true, group: "sort" }),
     tableMutation("table.sort.descending", "Sort descending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "descending"), { gate: true }),
+      () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
       { regular: true, group: "sort" }),
   ];
 
@@ -7383,7 +7395,8 @@ for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
 for (const b of tableRibbon.querySelectorAll("[data-table-sort]")) {
   onButton(b, () => {
     if (!selection || !doc) return;
-    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort), { gate: true });
+    const column = caretTableColumn(selection.focus.node);
+    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort, column), { gate: true });
   });
 }
 

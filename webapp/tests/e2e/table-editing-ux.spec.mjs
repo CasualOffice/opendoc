@@ -225,3 +225,70 @@ test("live table properties remain reachable on a narrow viewport", async ({
   await expect(panel).not.toHaveCSS("box-shadow", "none");
   expect(consoleErrors).toEqual([]);
 });
+
+// Reads the model-synced off-screen accessibility tree to return the rows of
+// the table that contains `marker`, each row as an array of cell texts. This is
+// the reliable way to observe table content because the document is painted to
+// an opaque canvas.
+async function a11yTableRows(page, marker) {
+  return page.evaluate((needle) => {
+    const tables = [...document.querySelectorAll("#a11yDocument table")];
+    const target = tables.find((t) => t.textContent.includes(needle));
+    if (!target) return null;
+    return [...target.querySelectorAll("tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent),
+    );
+  }, marker);
+}
+
+test("table sort keys off the column containing the caret, not always the first", async ({
+  page,
+  consoleErrors,
+}) => {
+  // Insert a 2×2 table; the caret is left in its first cell with the editor
+  // surface focused, so typing lands directly in the cells (no extra click that
+  // could miss the cell on the opaque canvas).
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await expect(page.locator("#insertTableMenu")).toBeVisible();
+  await page.locator('.gc[data-r="2"][data-c="2"]').click();
+
+  // Fill the 2×2 grid in Tab (row-major) order so the first column's order
+  // (ALPHA, BETA) is the OPPOSITE of the second column's order (TWO, ONE):
+  //   row 0 = [ALPHA, TWO]
+  //   row 1 = [BETA,  ONE]
+  // A first-column ascending sort would leave the rows unchanged (ALPHA < BETA),
+  // so only a correct second-column sort can reverse them.
+  await page.keyboard.type("ALPHA");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("TWO");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("BETA");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("ONE");
+
+  await expect
+    .poll(() => a11yTableRows(page, "ALPHA"))
+    .toEqual([
+      ["ALPHA", "TWO"],
+      ["BETA", "ONE"],
+    ]);
+
+  // The caret is now in the SECOND column (the cell holding "ONE"). Sorting
+  // ascending from the ribbon must key off that column, moving ONE above TWO and
+  // carrying each row's first column with it.
+  const ribbon = page.locator(".table-ribbon");
+  await page.locator("#tabTable").click();
+  await ribbon.locator('[data-table-sort="ascending"]').click();
+
+  await expect
+    .poll(() => a11yTableRows(page, "ALPHA"))
+    .toEqual([
+      ["BETA", "ONE"],
+      ["ALPHA", "TWO"],
+    ]);
+
+  expect(consoleErrors).toEqual([]);
+});

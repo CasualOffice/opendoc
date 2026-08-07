@@ -3652,11 +3652,18 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Sorts regular-table rows by the first cell's plain text as one undoable edit.
+    /// Sorts regular-table rows by a chosen column's plain text as one undoable
+    /// edit. `column` is a 0-based column index; a negative value sorts by the
+    /// caret's own column. Out-of-range indices clamp to the last column.
     #[wasm_bindgen(js_name = sortTable)]
-    pub fn sort_table(&mut self, node: &str, direction: &str) -> Result<EditResult, JsValue> {
+    pub fn sort_table(
+        &mut self,
+        node: &str,
+        direction: &str,
+        column: i32,
+    ) -> Result<EditResult, JsValue> {
         let nid = node_id(node)?;
-        let (table, _) = locate_table_cell(&self.document, nid)
+        let (table, caret_col) = locate_table_cell(&self.document, nid)
             .ok_or_else(|| to_js("caret is not inside a table".into()))?;
         let mut replacement = find_table(&self.document, table)
             .ok_or_else(|| to_js("table not found".into()))?
@@ -3673,6 +3680,12 @@ impl WasmDocument {
                 ));
             }
         };
+        let columns = table_column_count(&replacement);
+        let sort_col = if column < 0 {
+            caret_col as usize
+        } else {
+            (column as usize).min(columns.saturating_sub(1))
+        };
         let header = replacement
             .rows
             .first()
@@ -3683,13 +3696,13 @@ impl WasmDocument {
         }
         let mut keyed = replacement.rows.split_off(start);
         for row in &keyed {
-            first_cell_plain_text(row).map_err(to_js)?;
+            nth_cell_plain_text(row, sort_col).map_err(to_js)?;
         }
         keyed.sort_by(|left, right| {
-            let left_key = first_cell_plain_text(left)
+            let left_key = nth_cell_plain_text(left, sort_col)
                 .unwrap_or_default()
                 .to_lowercase();
-            let right_key = first_cell_plain_text(right)
+            let right_key = nth_cell_plain_text(right, sort_col)
                 .unwrap_or_default()
                 .to_lowercase();
             let order = left_key.cmp(&right_key);
@@ -13305,11 +13318,15 @@ fn table_selection_anchors(
     out
 }
 
-fn first_cell_plain_text(row: &TableRow) -> Result<String, String> {
-    let cell = row
-        .cells
-        .first()
-        .ok_or_else(|| "row has no first cell".to_owned())?;
+/// Plain text of the `col`-th cell in `row`, used as a sort key. The index is
+/// clamped to the row's last cell, so a column that lands inside a spanned or
+/// short row falls back to that row's final cell text.
+fn nth_cell_plain_text(row: &TableRow, col: usize) -> Result<String, String> {
+    if row.cells.is_empty() {
+        return Err("row has no cells".to_owned());
+    }
+    let index = col.min(row.cells.len() - 1);
+    let cell = &row.cells[index];
     let paragraph = cell
         .blocks
         .first()
@@ -13317,7 +13334,7 @@ fn first_cell_plain_text(row: &TableRow) -> Result<String, String> {
             BlockNode::Paragraph(paragraph) => Some(paragraph),
             _ => None,
         })
-        .ok_or_else(|| "sorting requires paragraph text in the first cell".to_owned())?;
+        .ok_or_else(|| "sorting requires paragraph text in the sort column".to_owned())?;
     Ok(node_plain_text(&paragraph.inlines))
 }
 
@@ -18380,13 +18397,77 @@ mod tests {
             d.insert_text(&node, 0, value.to_owned())
                 .expect("cell text");
         }
-        d.sort_table(&anchor, "ascending").expect("sort ascending");
+        d.sort_table(&anchor, "ascending", -1)
+            .expect("sort ascending");
         let sorted = first_cell_paragraphs(&d);
         assert_eq!(d.copy_text(&sorted[0], 0, &sorted[0], 5), "Alpha");
         assert_eq!(d.copy_text(&sorted[1], 0, &sorted[1], 6), "Bravo");
         d.undo().expect("undo sort");
         let restored = first_cell_paragraphs(&d);
         assert_eq!(d.copy_text(&restored[0], 0, &restored[0], 6), "Bravo");
+    }
+
+    #[test]
+    fn table_sort_uses_chosen_column() {
+        use casual_doc_edit::{find_table, locate_table_cell};
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph");
+        let inserted = d.insert_table(&body, 3, 2).expect("insert table");
+        let anchor = inserted.node();
+        let (table_id, _) = locate_table_cell(
+            &d.document,
+            NodeId::from_str(&anchor).expect("table anchor"),
+        )
+        .expect("table cell");
+        let column_paragraphs = |d: &WasmDocument, col: usize| {
+            find_table(&d.document, table_id)
+                .unwrap()
+                .rows
+                .iter()
+                .map(|row| match row.cells[col].blocks.first().unwrap() {
+                    BlockNode::Paragraph(paragraph) => paragraph.id.to_string(),
+                    _ => panic!("cell paragraph"),
+                })
+                .collect::<Vec<_>>()
+        };
+        // First column order (Charlie, Bravo, Alpha) is the reverse of the
+        // second column order (Alpha, Bravo, Charlie), so a correct sort by the
+        // second column must reorder the rows differently from a first-column
+        // sort.
+        for (node, value) in column_paragraphs(&d, 0)
+            .into_iter()
+            .zip(["Charlie", "Bravo", "Alpha"])
+        {
+            d.insert_text(&node, 0, value.to_owned())
+                .expect("col0 text");
+        }
+        for (node, value) in column_paragraphs(&d, 1)
+            .into_iter()
+            .zip(["Alpha", "Bravo", "Charlie"])
+        {
+            d.insert_text(&node, 0, value.to_owned())
+                .expect("col1 text");
+        }
+        // Sort ascending by the SECOND column (index 1).
+        d.sort_table(&anchor, "ascending", 1)
+            .expect("sort by second column");
+        let col1 = column_paragraphs(&d, 1);
+        assert_eq!(d.copy_text(&col1[0], 0, &col1[0], 5), "Alpha");
+        assert_eq!(d.copy_text(&col1[1], 0, &col1[1], 5), "Bravo");
+        assert_eq!(d.copy_text(&col1[2], 0, &col1[2], 7), "Charlie");
+        // The first column now follows the second column's ordering, proving the
+        // whole row moved by the chosen key rather than the first column.
+        let col0 = column_paragraphs(&d, 0);
+        assert_eq!(d.copy_text(&col0[0], 0, &col0[0], 7), "Charlie");
+        assert_eq!(d.copy_text(&col0[1], 0, &col0[1], 5), "Bravo");
+        assert_eq!(d.copy_text(&col0[2], 0, &col0[2], 5), "Alpha");
     }
 
     #[test]
