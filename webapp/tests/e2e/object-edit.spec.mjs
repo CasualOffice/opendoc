@@ -86,33 +86,64 @@ test("delete removes the object and Undo restores it", async ({ page, consoleErr
   expect(consoleErrors).toEqual([]);
 });
 
-test("the crop dialog applies a crop and Remove crop clears it", async ({
+test("dragging a crop handle crops the image as one undoable action (Word/Docs style)", async ({
   page,
   consoleErrors,
 }) => {
   await gotoFloat(page);
   await selectFloat(page);
 
-  // Apply a crop via the numeric dialog.
+  // Crop is direct manipulation: the button enters a crop MODE with black crop
+  // handles + a dimmed cut region — not a numeric dialog.
   await cropBtn(page).click();
-  await expect(page.locator("#cropDialog")).toBeVisible();
-  await page.locator("#cropLeft").fill("10");
-  await page.locator("#cropTop").fill("12");
-  await page.locator("#cropRight").fill("8");
-  await page.locator("#cropBottom").fill("6");
-  await page.locator("#cropApply").click();
+  await expect(page.locator(".object-crop-handle")).toHaveCount(8);
+  // The button reads Apply (active) while a crop session is live.
+  await expect(page.locator('.object-bar-btn[aria-label="Apply crop (Enter)"]')).toBeVisible();
+  // Nothing is dimmed yet (crop starts at 0); dragging a handle inward reveals it.
+  await expect(page.locator(".object-crop-dim")).toHaveCount(0);
 
-  await expect(page.locator("#cropDialog")).toBeHidden();
+  // Drag the SE handle (index 4) up-and-left to crop off the right + bottom.
+  const se = page.locator('.object-crop-handle[data-handle="4"]');
+  const b = await se.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x - 40, b.y - 30, { steps: 8 });
+  await page.mouse.up();
+  // The removed margins are now dimmed.
+  await expect(page.locator(".object-crop-dim").first()).toBeVisible();
+
+  // Enter commits one SetImageCrop op: crop mode exits, the document is dirty,
+  // and there is exactly one undoable action.
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".object-crop-handle")).toHaveCount(0);
   await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
   await expect(page.locator("#undoBtn")).toBeEnabled();
+  await expect(page.locator("#status")).toContainText("cropped");
 
-  // Reopen and Remove crop — a second undoable op that clears it.
+  // One Undo reverts the crop (it becomes redoable).
+  await page.locator("#undoBtn").click();
+  await expect(page.locator("#redoBtn")).toBeEnabled();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Escape cancels a crop with no change", async ({ page, consoleErrors }) => {
+  await gotoFloat(page);
   await selectFloat(page);
   await cropBtn(page).click();
-  await expect(page.locator("#cropDialog")).toBeVisible();
-  await page.locator("#cropRemove").click();
-  await expect(page.locator("#cropDialog")).toBeHidden();
-  await expect(page.locator("#undoBtn")).toBeEnabled();
+  await expect(page.locator(".object-crop-handle")).toHaveCount(8);
+
+  // Drag then Escape — the crop is discarded: mode exits and nothing is undoable.
+  const se = page.locator('.object-crop-handle[data-handle="4"]');
+  const b = await se.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x - 30, b.y - 20, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.press("Escape");
+
+  await expect(page.locator(".object-crop-handle")).toHaveCount(0);
+  await expect(page.locator("#undoBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);
 });
@@ -140,11 +171,10 @@ test("alt text, delete, and crop are all blocked (fail-closed) in Viewing mode",
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
   await expect(page.locator("#status")).toContainText("read-only");
 
-  // Crop: blocked.
+  // Crop: blocked — crop mode never opens (no handles) and the read-only reason
+  // is surfaced.
   await cropBtn(page).click();
-  await page.locator("#cropLeft").fill("10");
-  await page.locator("#cropApply").click();
-  await expect(page.locator("#cropDialog")).toBeHidden();
+  await expect(page.locator(".object-crop-handle")).toHaveCount(0);
   await expect(page.locator("#status")).toContainText("read-only");
 
   // Nothing mutated: still nothing to undo.
