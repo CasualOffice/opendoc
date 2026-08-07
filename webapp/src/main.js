@@ -8213,8 +8213,12 @@ function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
   const cmds = [
-    { id: "file.open", label: "Open…", group: "File", kw: "load docx", noDoc: true, run: () => fileEl.click() },
-    { id: "file.save", label: "Save (download .docx)", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocx() },
+    { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, run: () => fileEl.click() },
+    { id: "file.save", label: "Save", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocument() },
+    { id: "file.export.docx", label: "Export as DOCX…", group: "File", kw: "export save as word", run: () => exportDocumentAs("org.openxmlformats.wordprocessingml.document") },
+    { id: "file.export.odt", label: "Export as ODT…", group: "File", kw: "export save as opendocument", run: () => exportDocumentAs("org.oasis.opendocument.text") },
+    { id: "file.export.text", label: "Export as Plain text…", group: "File", kw: "export save as txt", run: () => exportDocumentAs("text.plain") },
+    { id: "file.export.json", label: "Export as Normalized JSON…", group: "File", kw: "export save as json", run: () => exportDocumentAs("org.casualoffice.normalized-json") },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
@@ -8412,7 +8416,11 @@ let activeAppMenu = null;
 let activeAppMenuTrigger = null;
 
 const APP_MENU_SECTIONS = {
-  file: [["file.open", "file.save"], ["file.properties"]],
+  file: [
+    ["file.open", "file.save"],
+    ["file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
+    ["file.properties"],
+  ],
   edit: [
     ["edit.undo", "edit.redo"],
     ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
@@ -9169,7 +9177,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (lower === "s" && doc) {
     e.preventDefault();
-    saveDocx();
+    saveDocument();
   }
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
@@ -9648,9 +9656,12 @@ function populateSaveFormats() {
 /** Serializes the edited document through the selected registered exporter and
  *  downloads it. Saving back to the source format preserves unchanged bytes where
  *  safe; a different target uses the semantic writer. */
-function saveDocument() {
-  if (!doc) return;
-  const targetFormat = saveFormatEl && saveFormatEl.value ? saveFormatEl.value : currentSourceFormat;
+/** Exports the current document through the given registered exporter and
+ *  downloads it. Saving back to the source format preserves unchanged bytes where
+ *  safe; a different target uses the semantic writer. Shared by the Save button,
+ *  the ⌘S shortcut, and the File ▸ Export-as menu entries. */
+function exportDocumentAs(targetFormat) {
+  if (!doc || !targetFormat) return;
   try {
     let artifact;
     if (targetFormat === currentSourceFormat) {
@@ -9685,6 +9696,11 @@ function saveDocument() {
     console.error(err);
     setStatus(`Save failed: ${err?.message ?? err}`, "error");
   }
+}
+
+/** Saves using the format chosen in the Save-format selector (default: source). */
+function saveDocument() {
+  exportDocumentAs(saveFormatEl && saveFormatEl.value ? saveFormatEl.value : currentSourceFormat);
 }
 saveBtn.addEventListener("click", saveDocument);
 
