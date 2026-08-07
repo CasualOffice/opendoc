@@ -2046,4 +2046,33 @@ fn standalone_rectangle_shape_round_trips() {
     let mut plain = OdtPackage::open(&semantic.bytes, OdfPackageLimits::default()).unwrap();
     let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
     assert!(!plain_content.contains("draw:rect"));
+
+    // A translucent shape fill (a < 255, only reachable from a non-ODF-origin
+    // model) loses its alpha on export — `draw:fill-color` is RGB only — but the
+    // drop is reported, not silent.
+    let mut document = imported.document;
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let GroupChild::Shape(shape) = &mut group.children[0] else {
+        panic!("shape")
+    };
+    shape.fill = Some(Fill::Solid(casual_doc_model::v1::Rgba {
+        r: 0x33,
+        g: 0x66,
+        b: 0xcc,
+        a: 0x80,
+    }));
+    let export =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odt.export.shape_fill_opacity")
+    );
 }

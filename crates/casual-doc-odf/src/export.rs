@@ -2984,7 +2984,16 @@ impl Writer {
         }
         let mut graphic = self.build_graphic_style(anchor);
         match shape.fill {
-            Some(Fill::Solid(color)) => graphic.fill = Some((color.r, color.g, color.b)),
+            Some(Fill::Solid(color)) => {
+                // Only the RGB channels map to `draw:fill-color`; a translucent fill
+                // (a < 255, only reachable from a non-ODF-origin model) loses its
+                // alpha, reported rather than dropped silently.
+                if color.a != 255 {
+                    self.reporter
+                        .record("odt.export.shape_fill_opacity", ModelOutcome::Degraded);
+                }
+                graphic.fill = Some((color.r, color.g, color.b));
+            }
             Some(Fill::Gradient { .. }) => {
                 self.reporter
                     .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
@@ -2996,6 +3005,10 @@ impl Writer {
             if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
                 self.reporter
                     .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
+            }
+            if stroke.color.a != 255 {
+                self.reporter
+                    .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
             }
             graphic.stroke = Some((
                 (stroke.color.r, stroke.color.g, stroke.color.b),
