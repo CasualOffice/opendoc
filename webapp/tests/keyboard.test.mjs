@@ -5,6 +5,7 @@ import {
   APPLE_PLATFORM,
   STANDARD_PLATFORM,
   keyboardPlatform,
+  lineDeletionDirection,
   navigationDirection,
   wordDeletionDirection,
 } from "../src/keyboard.mjs";
@@ -143,6 +144,44 @@ test("word deletion uses Option on macOS and Ctrl elsewhere", () => {
   );
   assert.equal(
     wordDeletionDirection(key("Delete", { altKey: true }), STANDARD_PLATFORM),
+    null,
+  );
+});
+
+test("line deletion is a macOS ⌘ chord and never fires elsewhere", () => {
+  // macOS: ⌘Backspace clears to line start, ⌘Delete to line end.
+  assert.equal(
+    lineDeletionDirection(key("Backspace", { metaKey: true }), APPLE_PLATFORM),
+    "backward",
+  );
+  assert.equal(
+    lineDeletionDirection(key("Delete", { metaKey: true }), APPLE_PLATFORM),
+    "forward",
+  );
+  // Option (word delete) and plain Backspace must not be treated as line delete.
+  assert.equal(
+    lineDeletionDirection(key("Backspace", { altKey: true }), APPLE_PLATFORM),
+    null,
+  );
+  assert.equal(
+    lineDeletionDirection(key("Backspace"), APPLE_PLATFORM),
+    null,
+  );
+  // ⌘ combined with another deletion modifier is not a plain line delete.
+  assert.equal(
+    lineDeletionDirection(
+      key("Backspace", { metaKey: true, altKey: true }),
+      APPLE_PLATFORM,
+    ),
+    null,
+  );
+  // Windows/Linux have no ⌘-key line delete.
+  assert.equal(
+    lineDeletionDirection(key("Backspace", { metaKey: true }), STANDARD_PLATFORM),
+    null,
+  );
+  assert.equal(
+    lineDeletionDirection(key("Delete", { metaKey: true }), STANDARD_PLATFORM),
     null,
   );
 });

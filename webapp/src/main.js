@@ -21,6 +21,7 @@ import {
 } from "./format_io.mjs";
 import {
   keyboardPlatform,
+  lineDeletionDirection,
   navigationDirection,
   wordDeletionDirection,
 } from "./keyboard.mjs";
@@ -10428,6 +10429,10 @@ async function pasteTrackedRichRuns(runs) {
  * `copyRichRuns` produces. */
 async function pasteRichRunsJson(runsJson) {
   if (!doc || !selection) return;
+  // Retain the rich fragment so the paste-options chip can re-apply it as
+  // "Merge formatting" (emphasis kept, font/size/color dropped). Consumed and
+  // cleared by `offerPasteOptions`.
+  lastRichPasteJson = runsJson;
   if (reviewMode === "suggesting") {
     let runs = null;
     try {
@@ -10582,18 +10587,30 @@ async function pasteAsText() {
 // paste to text-only (undo the rich insertion, re-paste as plain text).
 const pasteOptionsEl = document.getElementById("pasteOptions");
 const pasteOptionsTextOnlyBtn = document.getElementById("pasteOptionsTextOnly");
+const pasteOptionsMergeBtn = document.getElementById("pasteOptionsMerge");
 const pasteOptionsCloseBtn = document.getElementById("pasteOptionsClose");
 let pasteOptionsPlain = null;
+let pasteOptionsRuns = null;
+// The rich-run JSON of the most recent paste, captured by `pasteRichRunsJson`
+// and drained by `offerPasteOptions` for the "Merge formatting" option.
+let lastRichPasteJson = null;
 
 function hidePasteOptions() {
   pasteOptionsEl.hidden = true;
   pasteOptionsPlain = null;
+  pasteOptionsRuns = null;
 }
 /** Shows the chip only when the plain text differs from what a rich paste
- *  produced would matter — i.e. there is text to fall back to. */
+ *  produced would matter — i.e. there is text to fall back to. "Merge
+ *  formatting" additionally needs the rich-run payload the paste applied, so
+ *  its button is only shown when that payload is available. */
 function offerPasteOptions(plain) {
+  const runsJson = lastRichPasteJson;
+  lastRichPasteJson = null;
   if (!plain) return hidePasteOptions();
   pasteOptionsPlain = plain;
+  pasteOptionsRuns = runsJson;
+  pasteOptionsMergeBtn.hidden = !runsJson;
   pasteOptionsEl.hidden = false;
   requestAnimationFrame(positionPasteOptions);
 }
@@ -10626,7 +10643,39 @@ async function switchPasteToTextOnly() {
   await pasteText(text);
   focusEditorSurface();
 }
+/** "Merge formatting": undo the rich paste and re-insert it with each run's
+ *  properties reduced to the emphasis flags only (bold/italic/underline/
+ *  strike/vertAlign). Dropping font, size, color, and highlight lets the text
+ *  inherit the destination paragraph's formatting — the Word/Docs behavior. */
+async function switchPasteToMergeFormatting() {
+  const runsJson = pasteOptionsRuns;
+  hidePasteOptions();
+  if (!runsJson || !doc) return;
+  let runs = null;
+  try {
+    runs = JSON.parse(runsJson);
+  } catch {
+    /* malformed retained payload; nothing to merge */
+  }
+  if (!Array.isArray(runs)) return;
+  const merged = runs.map((run) =>
+    run.paragraphBreak
+      ? { paragraphBreak: true }
+      : {
+          text: run.text,
+          bold: run.bold,
+          italic: run.italic,
+          underline: run.underline,
+          strike: run.strike,
+          vertAlign: run.vertAlign,
+        },
+  );
+  if (doc.canUndo) await runEdit(() => doc.undo());
+  await pasteRichRunsJson(JSON.stringify(merged));
+  focusEditorSurface();
+}
 onButton(pasteOptionsTextOnlyBtn, () => void switchPasteToTextOnly());
+onButton(pasteOptionsMergeBtn, () => void switchPasteToMergeFormatting());
 onButton(pasteOptionsCloseBtn, hidePasteOptions);
 pasteOptionsEl.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "BUTTON") e.preventDefault();
@@ -10903,6 +10952,46 @@ document.addEventListener("keydown", async (e) => {
           ? doc.deleteWordBackward(focus.node, focus.offset)
           : doc.deleteWordForward(focus.node, focus.offset),
     );
+    return;
+  }
+
+  // macOS ⌘Backspace deletes from the caret to the start of the line (⌘Delete to
+  // the line end). The engine's `lineStart`/`lineEnd` caret move gives the same
+  // boundary Home/End navigation uses, and the span is removed as one undoable
+  // range delete. This must run before the `if (mod)` guard, which otherwise
+  // swallows the ⌘ chord.
+  const lineDelete = lineDeletionDirection(e, EDITOR_KEYBOARD_PLATFORM);
+  if (lineDelete) {
+    e.preventDefault();
+    const boundary = range
+      ? null
+      : (() => {
+          const c = doc.moveCaret(focus.node, focus.offset, lineDelete === "backward" ? "lineStart" : "lineEnd");
+          const p = { node: c.node, offset: c.offset };
+          c.free();
+          return p;
+        })();
+    const start = range
+      ? (anchor.offset <= focus.offset ? anchor : focus)
+      : lineDelete === "backward" ? boundary : focus;
+    const end = range
+      ? (anchor.offset <= focus.offset ? focus : anchor)
+      : lineDelete === "backward" ? focus : boundary;
+    if (reviewMode === "suggesting") {
+      if (start.node === end.node && start.offset < end.offset) {
+        await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
+      } else if (!range) {
+        // A no-op (caret already at the line boundary) is fine to swallow; a
+        // cross-paragraph span has no tracked representation yet.
+        if (start.node !== end.node) setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      } else {
+        setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      }
+      return;
+    }
+    if (!(start.node === end.node && start.offset === end.offset)) {
+      await runEdit(() => doc.deleteSelection(start.node, start.offset, end.node, end.offset));
+    }
     return;
   }
 
