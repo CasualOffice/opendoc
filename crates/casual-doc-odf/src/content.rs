@@ -17,8 +17,9 @@ use casual_doc_model::v1::{
     WidthType,
 };
 use casual_doc_model::v1::{
-    AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAnchor,
-    HorizontalPosition, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, DrawingAnchor, HorizontalAlign,
+    HorizontalAnchor, HorizontalPosition, VerticalAlign, VerticalAnchor, VerticalPosition,
+    WrapDistances, WrapMode,
 };
 use casual_doc_model::v1::{
     BlockSdt, FormCheckBox, FormDropDown, FormFieldData, FormFieldKind, FormTextInput, Revision,
@@ -523,9 +524,15 @@ struct AnchoredDrawingDraft {
     /// `text:anchor-type` (page → page/page, paragraph → column/paragraph).
     horizontal_rel: HorizontalAnchor,
     vertical_rel: VerticalAnchor,
-    /// Absolute offsets (`svg:x`/`svg:y`) in EMU; non-negative in this increment.
+    /// Absolute offsets (`svg:x`/`svg:y`) in EMU; used when the corresponding
+    /// alignment below is `None` (offset positioning). Non-negative.
     horizontal_offset_emu: i64,
     vertical_offset_emu: i64,
+    /// Alignment positioning from `style:horizontal-pos`/`style:vertical-pos`
+    /// (`left`/`center`/`right`/…). When `Some`, the axis is aligned and the offset
+    /// above is ignored; when `None`, the axis uses the offset.
+    horizontal_align: Option<HorizontalAlign>,
+    vertical_align: Option<VerticalAlign>,
     /// `draw:z-index` stacking order, if present.
     relative_height: Option<u32>,
     /// Text wrap (`style:wrap` + `style:run-through`) resolved from the frame's
@@ -924,6 +931,11 @@ struct OdfStyle {
     graphic_stroke_color: Option<RgbColor>,
     /// `svg:stroke-width` (the outline width) in EMU.
     graphic_stroke_width: Option<i64>,
+    /// `style:horizontal-pos`/`style:vertical-pos` for a floating frame's anchor
+    /// (`left`/`center`/`right`/`from-left`/`top`/`middle`/`bottom`/`from-top`/…),
+    /// retained verbatim; an alignment keyword selects alignment positioning.
+    graphic_horizontal_pos: Option<String>,
+    graphic_vertical_pos: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1443,6 +1455,12 @@ fn resolve_style(
             }
             if style.graphic_stroke_width.is_some() {
                 inherited.graphic_stroke_width = style.graphic_stroke_width;
+            }
+            if style.graphic_horizontal_pos.is_some() {
+                inherited.graphic_horizontal_pos = style.graphic_horizontal_pos.clone();
+            }
+            if style.graphic_vertical_pos.is_some() {
+                inherited.graphic_vertical_pos = style.graphic_vertical_pos.clone();
             }
             inherited.family = style.family;
             // The identity (named marker + own name) is the child's, never the
@@ -2575,6 +2593,14 @@ fn read_graphic_style_properties(
             (NamespaceKind::Svg, b"stroke-width") => {
                 style.style.graphic_stroke_width = parse_emu(&value);
                 style.style.graphic_stroke_width.is_some()
+            }
+            (NamespaceKind::Style, b"horizontal-pos") => {
+                style.style.graphic_horizontal_pos = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Style, b"vertical-pos") => {
+                style.style.graphic_vertical_pos = Some(value.trim().to_owned());
+                true
             }
             _ => false,
         };
@@ -4548,6 +4574,46 @@ fn floating_anchor_rels(anchor_type: &str) -> Option<(HorizontalAnchor, Vertical
     }
 }
 
+/// Maps a graphic style's `style:horizontal-pos` to an alignment, or `None` for
+/// offset positioning (`from-left`/absent). `from-inside`/`from-outside` have no
+/// pure-alignment form and degrade to offset with a finding.
+fn resolve_horizontal_align(style: &OdfStyle, reporter: &mut Reporter) -> Option<HorizontalAlign> {
+    match style.graphic_horizontal_pos.as_deref() {
+        None | Some("from-left") => None,
+        Some("left") => Some(HorizontalAlign::Left),
+        Some("center") => Some(HorizontalAlign::Center),
+        Some("right") => Some(HorizontalAlign::Right),
+        Some("inside") => Some(HorizontalAlign::Inside),
+        Some("outside") => Some(HorizontalAlign::Outside),
+        Some(_) => {
+            reporter.report(
+                "odf.style.graphic-horizontal-pos".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            None
+        }
+    }
+}
+
+/// Maps a graphic style's `style:vertical-pos` to an alignment, or `None` for offset
+/// positioning (`from-top`/absent). `below` has no alignment form and degrades to
+/// offset with a finding.
+fn resolve_vertical_align(style: &OdfStyle, reporter: &mut Reporter) -> Option<VerticalAlign> {
+    match style.graphic_vertical_pos.as_deref() {
+        None | Some("from-top") => None,
+        Some("top") => Some(VerticalAlign::Top),
+        Some("middle") => Some(VerticalAlign::Center),
+        Some("bottom") => Some(VerticalAlign::Bottom),
+        Some(_) => {
+            reporter.report(
+                "odf.style.graphic-vertical-pos".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            None
+        }
+    }
+}
+
 /// Maps a graphic style's `style:wrap` (+ `style:run-through`) to the model wrap and
 /// z-band. The one-sided/dynamic ODF wraps have no model form and degrade to `Square`
 /// with a finding; an unknown value likewise. Absent wrap is the ODF default `Square`.
@@ -5677,11 +5743,18 @@ fn parse_draw_frame(
                         )
                     })
                     .unwrap_or((0, 0, 0, 0));
+                // Alignment positioning from the graphic style's `style:horizontal-pos`
+                // / `style:vertical-pos`; an alignment keyword selects Align (the
+                // per-axis offset is then ignored), else the axis stays offset-based.
+                let horizontal_align =
+                    graphic.and_then(|style| resolve_horizontal_align(style, reporter));
+                let vertical_align =
+                    graphic.and_then(|style| resolve_vertical_align(style, reporter));
                 if let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) {
-                    if offset_clamped {
+                    if offset_clamped && (horizontal_align.is_none() || vertical_align.is_none()) {
                         // A present but negative/out-of-range `svg:x`/`svg:y` is
                         // clamped to 0; report the drop rather than losing it
-                        // silently (signed offsets are a later increment).
+                        // silently. Only relevant on an axis still using the offset.
                         reporter.report(
                             "odf.draw.anchor-offset-clamped".to_owned(),
                             ModelOutcome::Degraded,
@@ -5697,6 +5770,8 @@ fn parse_draw_frame(
                         vertical_rel,
                         horizontal_offset_emu: x_emu.unwrap_or(0),
                         vertical_offset_emu: y_emu.unwrap_or(0),
+                        horizontal_align,
+                        vertical_align,
                         relative_height: z_index,
                         wrap,
                         behind_doc,
@@ -9909,17 +9984,23 @@ fn build_inlines(
                         width_emu: draft.width_emu,
                         height_emu: draft.height_emu,
                     },
-                    // This increment maps offset positioning plus wrap + exclusion
-                    // distances (from the graphic style); alignment positioning, the
-                    // contour, and the picture transforms are deferred (defaults).
+                    // Offset or alignment positioning (from the graphic style) plus
+                    // wrap + exclusion distances; the contour and the picture
+                    // transforms are deferred (defaults).
                     anchor: DrawingAnchor {
                         horizontal: AnchorHorizontal {
                             relative_from: draft.horizontal_rel,
-                            position: HorizontalPosition::Offset(draft.horizontal_offset_emu),
+                            position: match draft.horizontal_align {
+                                Some(align) => HorizontalPosition::Align(align),
+                                None => HorizontalPosition::Offset(draft.horizontal_offset_emu),
+                            },
                         },
                         vertical: AnchorVertical {
                             relative_from: draft.vertical_rel,
-                            position: VerticalPosition::Offset(draft.vertical_offset_emu),
+                            position: match draft.vertical_align {
+                                Some(align) => VerticalPosition::Align(align),
+                                None => VerticalPosition::Offset(draft.vertical_offset_emu),
+                            },
                         },
                         wrap: draft.wrap,
                         wrap_distances: WrapDistances {
