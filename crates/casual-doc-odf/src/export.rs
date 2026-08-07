@@ -2529,14 +2529,18 @@ impl Writer {
                     .record("odt.export.embedded_object", ModelOutcome::Omitted),
                 InlineNode::TextBox(text_box) => self.write_text_box(text_box, depth + 1)?,
                 InlineNode::Group(group) => {
-                    // A `draw:rect`/`draw:ellipse` and its graphic style need the
-                    // `draw:`/`svg:` namespaces, which only the preserving content
-                    // header declares; the plain semantic path degrades the shape
-                    // rather than emit namespace-invalid XML (matching inline images).
+                    // A shape and its graphic style need the `draw:`/`svg:`
+                    // namespaces, which only the preserving content header declares;
+                    // the plain semantic path degrades the shape rather than emit
+                    // namespace-invalid XML (matching inline images).
                     if self.drawing_namespaces_available
                         && let Some((shape, element)) = single_box_shape(group)
                     {
                         self.write_group_box_shape(group, shape, element)?;
+                    } else if self.drawing_namespaces_available
+                        && let Some(shape) = single_line_shape(group)
+                    {
+                        self.write_group_line(group, shape)?;
                     } else {
                         // A multi-child group, an unsupported geometry, a picture/
                         // text-box child, a transformed shape, or the plain path.
@@ -3052,6 +3056,97 @@ impl Writer {
         self.push(&emu_to_cm(group.extent.width_emu))?;
         self.push("\" svg:height=\"")?;
         self.push(&emu_to_cm(group.extent.height_emu))?;
+        self.push("\"/>")?;
+        Ok(())
+    }
+
+    /// Writes a standalone anchored line (a single-child group carrying one
+    /// `Line`-geometry `GroupShape`) as a positioned `draw:line`. The endpoints are
+    /// reconstructed from the group's anchor offset, its extent, and the shape's
+    /// flip pair: `flip_h`/`flip_v` select which corner of the bounding box each end
+    /// sits at, the exact inverse of the importer's `min`/`|delta|`/`>` mapping. A
+    /// line carries only an outline (no fill); a fill on the model shape is ignored.
+    fn write_group_line(
+        &mut self,
+        group: &WordprocessingGroup,
+        shape: &GroupShape,
+    ) -> Result<(), OdfError> {
+        let Some(anchor) = &group.anchor else {
+            self.reporter
+                .record("odt.export.group", ModelOutcome::Omitted);
+            return Ok(());
+        };
+        let mut graphic = self.build_graphic_style(anchor);
+        if let Some(stroke) = &shape.stroke {
+            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
+                self.reporter
+                    .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
+            }
+            if stroke.color.a != 255 {
+                self.reporter
+                    .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
+            }
+            graphic.stroke = Some((
+                (stroke.color.r, stroke.color.g, stroke.color.b),
+                stroke.width_emu,
+            ));
+        } else {
+            graphic.stroke_none = true;
+        }
+        // A line has no fill; a solid/gradient fill on the model shape is not
+        // representable on a `draw:line` and is reported rather than emitted.
+        if shape.fill.is_some() {
+            self.reporter
+                .record("odt.export.line_fill", ModelOutcome::Degraded);
+        }
+        let graphic_name = (!graphic.is_empty()).then(|| {
+            let name = graphic.name();
+            self.graphic_styles.insert(graphic);
+            name
+        });
+        let anchor_type = self.anchor_type_name(
+            anchor.horizontal.relative_from,
+            anchor.vertical.relative_from,
+        );
+        let origin_x =
+            self.anchor_offset_emu(horizontal_position_offset(anchor.horizontal.position));
+        let origin_y = self.anchor_offset_emu(vertical_position_offset(anchor.vertical.position));
+        let width = group.extent.width_emu;
+        let height = group.extent.height_emu;
+        // Invert the importer: the bounding box is [origin, origin+extent]; the flip
+        // pair chooses which corner is (x1,y1) vs (x2,y2). `flip_h` ⇔ x1 > x2,
+        // `flip_v` ⇔ y1 > y2, so re-import recovers the same offset/extent/flip.
+        let (x1, x2) = if shape.flip_h {
+            (origin_x + width, origin_x)
+        } else {
+            (origin_x, origin_x + width)
+        };
+        let (y1, y2) = if shape.flip_v {
+            (origin_y + height, origin_y)
+        } else {
+            (origin_y, origin_y + height)
+        };
+        self.push("<draw:line text:anchor-type=\"")?;
+        self.push(anchor_type)?;
+        self.push("\"")?;
+        if let Some(name) = &graphic_name {
+            self.push(" draw:style-name=\"")?;
+            self.push(name)?;
+            self.push("\"")?;
+        }
+        if let Some(z_index) = group.relative_height {
+            self.push(" draw:z-index=\"")?;
+            self.push(&z_index.to_string())?;
+            self.push("\"")?;
+        }
+        self.push(" svg:x1=\"")?;
+        self.push(&emu_to_cm(x1))?;
+        self.push("\" svg:y1=\"")?;
+        self.push(&emu_to_cm(y1))?;
+        self.push("\" svg:x2=\"")?;
+        self.push(&emu_to_cm(x2))?;
+        self.push("\" svg:y2=\"")?;
+        self.push(&emu_to_cm(y2))?;
         self.push("\"/>")?;
         Ok(())
     }
@@ -4139,6 +4234,37 @@ fn single_box_shape(group: &WordprocessingGroup) -> Option<(&GroupShape, &'stati
         && !transform.flip_v
         && transform.rotation.is_none();
     identity.then_some((shape, element))
+}
+
+/// Whether `group` is exactly a shape this increment can re-emit as a standalone
+/// `draw:line`: one `Line`-geometry `GroupShape` child at the group's origin with an
+/// identity group transform and no rotation. Unlike a box shape, the SHAPE's own
+/// `flip_h`/`flip_v` are permitted — they encode which diagonal of the bounding box
+/// the line's endpoints span, and the writer reconstructs the endpoints from them.
+fn single_line_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        return None;
+    };
+    if shape.geometry != ShapeGeometry::Line
+        || shape.preset.is_some()
+        || !shape.adjustments.is_empty()
+        || shape.rotation.is_some()
+    {
+        return None;
+    }
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    if shape.offset != origin || shape.extent != group.extent {
+        return None;
+    }
+    let transform = &group.transform;
+    let identity = transform.offset == origin
+        && transform.extent == group.extent
+        && transform.child_offset == origin
+        && transform.child_extent == group.extent
+        && !transform.flip_h
+        && !transform.flip_v
+        && transform.rotation.is_none();
+    identity.then_some(shape)
 }
 
 /// The absolute offset of a horizontal placement, or `None` for an alignment

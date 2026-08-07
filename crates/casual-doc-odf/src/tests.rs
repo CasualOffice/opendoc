@@ -2137,3 +2137,98 @@ fn standalone_ellipse_shape_round_trips() {
             .unwrap();
     assert_eq!(reexport.bytes, export.bytes);
 }
+
+/// A floating `draw:line` imports to a `Line` `GroupShape` whose bounding box +
+/// flip pair encode the endpoints, and re-exports to the same endpoints — verified
+/// for all four diagonal directions, each a byte-exact fixed point.
+#[test]
+fn standalone_line_shape_round_trips_all_directions() {
+    // (x1, y1, x2, y2) in cm, and the expected (flip_h, flip_v).
+    let cases = [
+        ("2", "1", "6", "4", false, false), // top-left → bottom-right
+        ("6", "1", "2", "4", true, false),  // top-right → bottom-left
+        ("2", "4", "6", "1", false, true),  // bottom-left → top-right
+        ("6", "4", "2", "1", true, true),   // bottom-right → top-left
+    ];
+    for (x1, y1, x2, y2, exp_flip_h, exp_flip_v) in cases {
+        let content = format!(
+            r##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-width="0.05cm" svg:stroke-color="#000000"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:line draw:style-name="gr1" text:anchor-type="paragraph" svg:x1="{x1}cm" svg:y1="{y1}cm" svg:x2="{x2}cm" svg:y2="{y2}cm"/></text:p></office:text></office:body></office:document-content>"##
+        )
+        .into_bytes();
+        let manifest = format!(
+            r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+        )
+        .into_bytes();
+        let bytes = package(&[
+            Entry {
+                name: MIMETYPE_PART,
+                bytes: ODT_MIME.as_bytes().to_vec(),
+                compression: CompressionMethod::Stored,
+                local_extra: false,
+            },
+            Entry {
+                name: MANIFEST_PART,
+                bytes: manifest,
+                compression: CompressionMethod::Deflated,
+                local_extra: false,
+            },
+            Entry {
+                name: CONTENT_PART,
+                bytes: content,
+                compression: CompressionMethod::Deflated,
+                local_extra: false,
+            },
+        ]);
+        let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+            .unwrap()
+            .import_document(OdfImportLimits::default())
+            .unwrap();
+        let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+            panic!("paragraph")
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("group ({x1},{y1})-({x2},{y2})")
+        };
+        // Bounding box is the min corner + |delta|, direction-independent.
+        assert_eq!(group.extent.width_emu, 4 * 360_000);
+        assert_eq!(group.extent.height_emu, 3 * 360_000);
+        let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+            panic!("one shape child")
+        };
+        assert_eq!(shape.geometry, ShapeGeometry::Line);
+        assert_eq!(
+            shape.flip_h, exp_flip_h,
+            "flip_h for ({x1},{y1})-({x2},{y2})"
+        );
+        assert_eq!(
+            shape.flip_v, exp_flip_v,
+            "flip_v for ({x1},{y1})-({x2},{y2})"
+        );
+
+        // Export re-emits draw:line with the ORIGINAL endpoints (canonical cm form).
+        let retained = crate::OdfRetainedParts::default();
+        let export = write_odt_with_retained_parts(
+            &imported.document,
+            &retained,
+            OdfExportLimits::default(),
+        )
+        .unwrap();
+        let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+        let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+        assert!(content_out.contains(&format!(
+            r#"svg:x1="{x1}.0000cm" svg:y1="{y1}.0000cm" svg:x2="{x2}.0000cm" svg:y2="{y2}.0000cm""#
+        )));
+        assert!(content_out.contains("<draw:line "));
+
+        // Semantic + byte fixed point.
+        let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+        assert_eq!(reopened.document, imported.document);
+        let reexport = write_odt_with_retained_parts(
+            &reopened.document,
+            &retained,
+            OdfExportLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(reexport.bytes, export.bytes);
+    }
+}
