@@ -15,6 +15,20 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Standalone shapes — multi-child groups (fidelity parity, T6)**: a floating ODF
+  `draw:g` containing multiple box/line shape children now round-trips as a
+  multi-child `WordprocessingGroup`, completing standalone-shape support beyond the
+  single-shape fast paths (previously any `draw:g` was skipped on import and every
+  multi-child group degraded to nothing). A `draw:g` is a pure container whose
+  children carry absolute coordinates; on import the children reduce to their union
+  bounding box (group anchor = min corner, extent = box size, identity transform,
+  each child offset = absolute − min), and export inverts this exactly, preserving
+  each child's position and its order (which is the intra-group paint/z order). The
+  two single-shape writers were refactored to share the child emitters, so a
+  group-of-one still emits a bare `draw:rect`/`draw:ellipse`/`draw:line`
+  (byte-unchanged). Nested groups, non-shape children (pictures/text-boxes/controls),
+  group transforms, non-square group wrap, negative child coordinates, and empty
+  groups degrade with a finding.
 - **Standalone shapes — lines (fidelity parity, T6)**: a floating ODF `draw:line`
   (positioned by its two endpoints `svg:x1`/`y1`/`x2`/`y2`) now round-trips as a
   `Line` `GroupShape` whose bounding box (offset + extent) plus a flip pair encode
