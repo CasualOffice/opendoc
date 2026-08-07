@@ -3604,6 +3604,27 @@ function finishObjectMove(event) {
   return true;
 }
 
+// Arrow-nudge step in twips: a fine ~1/32in step, and a coarse ~1/8in step with
+// Shift (matching Word/Docs arrow-vs-Shift+arrow nudging).
+const NUDGE_TWIP = 45;
+const NUDGE_TWIP_LARGE = 180;
+
+/** Nudges the selected floating object by one step in the given direction, as a
+ *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
+function nudgeSelectedObject(dx, dy, large) {
+  if (!doc || !objectSelection || !objectSelection.anchored) return;
+  const node = objectSelection.node;
+  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
+  if (rect.length < 5) return;
+  const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
+  const nx = Math.max(0, rect[1] + dx * step);
+  const ny = Math.max(0, rect[2] + dy * step);
+  const EMU_PER_TWIP = 635;
+  runEdit(() => doc.setObjectAnchorPosition(node, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
+    gate: true,
+  });
+}
+
 /** Aborts an in-progress float move, discarding the preview (Escape / cancel). */
 function cancelObjectMove() {
   if (!objectMoveDrag) return;
@@ -10706,6 +10727,15 @@ document.addEventListener("keydown", async (e) => {
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
         deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
+        return;
+      }
+      // Arrow keys nudge a FLOATING object's position (Word/Docs); Shift takes a
+      // larger step. Only anchored objects have a position — an inline image has
+      // none, so its arrows still fall through to move the caret off it.
+      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
+      if (nudge && objectSelection.anchored && !mod) {
+        e.preventDefault();
+        nudgeSelectedObject(nudge[0], nudge[1], e.shiftKey);
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
