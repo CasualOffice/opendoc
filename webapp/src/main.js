@@ -9714,10 +9714,62 @@ function clearFindParagraphCache() {
   findParagraphTextCache.clear();
 }
 
+// Capture the current selection as an ordered scope for "find in selection".
+// selectionEdge(...false) is the document-order start, (...true) the end. We
+// copy the values out and free the WASM handles immediately. Returns null when
+// there is no non-empty range to scope to.
+function captureFindScope() {
+  if (!selection || !hasRange()) return null;
+  const { anchor, focus } = selection;
+  const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
+  const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
+  const scope = {
+    startNode: s.node,
+    startOffset: s.offset,
+    endNode: e.node,
+    endOffset: e.offset,
+  };
+  s.free();
+  e.free();
+  return scope;
+}
+
+// True iff position (aNode:aOff) <= position (bNode:bOff) in document order.
+// Same node compares offsets with no WASM call; otherwise selectionEdge(...false)
+// returns whichever endpoint is earlier, and since the two nodes differ the
+// returned node uniquely identifies which one that is.
+function findPosLE(aNode, aOff, bNode, bOff) {
+  if (aNode === bNode) return aOff <= bOff;
+  const edge = doc.selectionEdge(aNode, aOff, bNode, bOff, false);
+  const aIsEarlier = edge.node === aNode;
+  edge.free();
+  return aIsEarlier;
+}
+
+// A find match spans a single paragraph, so match.startNode === match.endNode.
+// Accept iff [match.startOffset .. match.endOffset] on that node lies within the
+// ordered scope [scopeStart .. scopeEnd]. Boundary-node matches (the common
+// single-paragraph case and the first/last paragraph of a multi-paragraph
+// scope) resolve with zero extra WASM calls; only genuinely-interior nodes need
+// the two order tests.
 function matchInFindSelection(match) {
   if (!findSelection.checked) return true;
   if (!findScope) return false;
-  return match.startNode === findScope.node && match.startOffset >= findScope.start && match.endOffset <= findScope.end;
+  const { startNode, startOffset, endNode, endOffset } = findScope;
+  const node = match.startNode;
+  if (node === startNode) {
+    if (match.startOffset < startOffset) return false;
+    // Single-node scope (startNode === endNode) also caps the upper bound.
+    return node === endNode ? match.endOffset <= endOffset : true;
+  }
+  if (node === endNode) {
+    return match.endOffset <= endOffset;
+  }
+  // Interior node: in scope iff scopeStart <= match and match <= scopeEnd.
+  return (
+    findPosLE(startNode, startOffset, node, match.startOffset) &&
+    findPosLE(node, match.endOffset, endNode, endOffset)
+  );
 }
 
 function scanAllMatches(query, matchCase, wholeWord = false) {
@@ -9925,14 +9977,7 @@ findCase.addEventListener("change", () => updateFindStatus());
 findWholeWord.addEventListener("change", () => updateFindStatus());
 findSelection.addEventListener("change", () => {
   if (findSelection.checked) {
-    findScope =
-      selection && hasRange() && selection.anchor.node === selection.focus.node
-        ? {
-            node: selection.anchor.node,
-            start: Math.min(selection.anchor.offset, selection.focus.offset),
-            end: Math.max(selection.anchor.offset, selection.focus.offset),
-          }
-        : null;
+    findScope = captureFindScope();
   } else {
     findScope = null;
   }
