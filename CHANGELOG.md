@@ -15,6 +15,14 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Floating images — alignment positioning (fidelity parity, T5)**: a floating
+  image whose graphic style uses alignment positioning (`style:horizontal-pos` /
+  `style:vertical-pos` = `left`/`center`/`right`/`top`/`middle`/`bottom`) now
+  round-trips as an `Align` position instead of collapsing to a zero offset. The
+  alignment rides on the graphic style; the aligned axis emits `svg:x`/`svg:y` = 0
+  (which the importer ignores under alignment), so the byte fixed point holds and
+  the offset-positioned path is byte-unchanged. `from-left`/`from-top`/absent keep
+  offset positioning.
 - **Standalone shapes — multi-child groups (fidelity parity, T6)**: a floating ODF
   `draw:g` containing multiple box/line shape children now round-trips as a
   multi-child `WordprocessingGroup`, completing standalone-shape support beyond the

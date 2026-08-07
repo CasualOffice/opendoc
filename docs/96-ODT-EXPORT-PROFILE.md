@@ -118,11 +118,12 @@ the report.
   style; a `Square` wrap with no distances emits no graphic style at all. The
   remaining model states outside the reversible core are reported and mapped to
   their nearest representable form so the output stays a fixed point: a
-  `Tight`/`Through` contour degrades to `Square`; an alignment position and a
-  negative offset collapse to a zero offset; a margin-strip/character/line reference
-  degrades to the nearest page/paragraph anchor type; the contour polygon and
-  crop/border/flip/rotation are dropped. Without retained bytes it degrades to alt
-  text like an inline `Drawing`.
+  `Tight`/`Through` contour degrades to `Square`. An `Align` position is emitted as
+  `style:horizontal-pos`/`style:vertical-pos` on the graphic style with `svg:x`/`svg:y`
+  = 0 (the importer ignores the offset under alignment); a negative offset collapses
+  to a zero offset; a margin-strip/character/line reference degrades to the nearest
+  page/paragraph anchor type; the contour polygon and crop/border/flip/rotation are
+  dropped. Without retained bytes it degrades to alt text like an inline `Drawing`.
 - A `WordprocessingGroup` that is exactly a group-of-one identity-transform
   `Rectangle` or `Ellipse` shape re-emits a positioned `draw:rect`/`draw:ellipse`
   (the element chosen from the geometry): the anchor type/offset/`draw:z-index`/wrap
