@@ -9968,44 +9968,28 @@ async function replaceCurrentMatch() {
 async function replaceAllMatches() {
   if (!doc || !findInput.value) return;
   if (blockUntrackedInSuggesting()) return;
-  const query = findInput.value;
   const replacement = replaceInput.value;
-  const matchCase = findCase.checked;
-const wholeWord = findWholeWord.checked;
-  const replacementBytes = new TextEncoder().encode(replacement).length;
-  const first = doc.firstPosition();
-  let node = first.node;
-  let offset = first.offset;
-  first.free();
-  let count = 0;
-  for (let i = 0; i < FIND_SCAN_CAP; i++) {
-    const match = doc.findText(query, node, offset, true, matchCase);
-    if (!match.found) {
-      match.free();
-      break;
-    }
-    const candidate = {
-      startNode: match.startNode,
-      startOffset: match.startOffset,
-      endNode: match.endNode,
-      endOffset: match.endOffset,
-    };
-    const { startNode, startOffset, endNode, endOffset } = candidate;
-    match.free();
-    if (
-      (wholeWord && !isWholeWordMatch(candidate, query)) ||
-      !matchInFindSelection(candidate)
-    ) {
-      node = endNode;
-      offset = endOffset;
-      continue;
-    }
-    await runEdit(() => doc.replaceSelection(startNode, startOffset, endNode, endOffset, replacement));
-    count++;
-    node = startNode;
-    offset = startOffset + replacementBytes;
+  // Collect every match (honoring case / whole-word / selection scope) in
+  // document order, then replace them ALL as ONE undoable action — Word and
+  // Google Docs undo a Replace All in a single step. The ranges are passed in
+  // DESCENDING document order (reverse of the scan) so applying each replacement
+  // never shifts an earlier, not-yet-applied match's offsets.
+  const matches = scanAllMatches(findInput.value, findCase.checked, findWholeWord.checked);
+  if (!matches.length) {
+    setFindStatus("No match", true);
+    return;
   }
-  setFindStatus(count ? `Replaced ${count}` : "No match", count === 0);
+  const ordered = matches.slice().reverse();
+  await runEdit(() =>
+    doc.replaceRanges(
+      ordered.map((m) => m.startNode),
+      ordered.map((m) => m.startOffset),
+      ordered.map((m) => m.endNode),
+      ordered.map((m) => m.endOffset),
+      replacement,
+    ),
+  );
+  setFindStatus(`Replaced ${matches.length}`);
 }
 
 function openFind() {
