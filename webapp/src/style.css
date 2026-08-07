@@ -2281,15 +2281,48 @@ body.modal-open {
   border-color: var(--accent-line);
 }
 
-.sel-toolbar .ctl.swatch {
+/* Text-color / highlight buttons on the floating bar: a glyph over a swatch bar,
+   matching the ribbon's color-apply half, opening the same swatch popovers. */
+.sel-toolbar .sel-color-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--ink);
-  border-color: var(--line-strong);
+  cursor: pointer;
+  transition: background 0.11s;
 }
 
-.sel-toolbar .ctl select {
-  color: var(--ink);
-  border-color: var(--line-strong);
-  background-color: var(--surface);
+.sel-toolbar .sel-color-btn .color-apply-glyph {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sel-toolbar .sel-color-btn .ms.color-apply-glyph {
+  font-size: var(--icon-control);
+  font-weight: 400;
+}
+
+.sel-toolbar .sel-color-btn:hover {
+  background: var(--bg-2);
+}
+
+.sel-toolbar .sel-color-btn[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sel-toolbar .sel-color-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* A host-owned affordance for canvas-painted links. The engine supplies the

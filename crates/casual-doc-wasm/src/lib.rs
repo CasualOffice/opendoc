@@ -13,6 +13,7 @@
 //! boundary (doc 57 §3): `render_page(i, dpi)` rasterizes at `dpi`, where
 //! `device_px = twip / 1440 * dpi`.
 
+use casual_doc_edit::object_descr;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
     apply as apply_edit, caret_run_properties, cell_properties, find_paragraph, find_table,
@@ -900,6 +901,16 @@ impl WasmDocument {
     /// (`SetObjectDescr`). `descr` is the new text, or `None` to clear it. Errors if
     /// `node` is not an alt-text-bearing object (an inline or floating drawing), or
     /// the text is empty / longer than the model's byte bound.
+    /// The object `node`'s current alt text (`wp:docPr@descr`), or `None` when it
+    /// has none or does not resolve to a drawing. Lets a host prefill an alt-text
+    /// editor with the existing description instead of blind-overwriting it.
+    #[wasm_bindgen(js_name = objectDescr)]
+    #[must_use]
+    pub fn object_descr(&self, node: &str) -> Option<String> {
+        let object = node_id(node).ok()?;
+        object_descr(&self.document, object)
+    }
+
     #[wasm_bindgen(js_name = setObjectDescr)]
     pub fn set_object_descr(
         &mut self,

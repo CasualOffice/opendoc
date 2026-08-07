@@ -65,6 +65,28 @@ test("setting alt text applies as one undoable action and Undo reverts it", asyn
   expect(consoleErrors).toEqual([]);
 });
 
+test("the alt-text dialog prefills the existing description instead of blank", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoFloat(page);
+  await selectFloat(page);
+
+  // Set an initial description.
+  await altTextBtn(page).click();
+  await page.locator("#altTextInput").fill("First description");
+  await page.locator("#altTextInput").press("Enter");
+  await expect(page.locator("#altTextDialog")).toBeHidden();
+
+  // Reopening the dialog prefills the current alt text (not blank) so it can be
+  // refined rather than blind-overwritten.
+  await selectFloat(page);
+  await altTextBtn(page).click();
+  await expect(page.locator("#altTextInput")).toHaveValue("First description");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("delete removes the object and Undo restores it", async ({ page, consoleErrors }) => {
   await gotoFloat(page);
   await selectFloat(page);

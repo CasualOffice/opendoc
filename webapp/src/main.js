@@ -83,6 +83,15 @@ const highlightCaret = document.getElementById("highlight");
 const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
 const highlightMenu = document.getElementById("highlightMenu");
+// Floating selection-toolbar color/highlight pickers: mirror the ribbon swatch
+// menus but anchored to buttons that sit near the selection. Declared up here so
+// the shared reflect helpers can update their swatch bars during early init.
+const selTextColorBtn = document.getElementById("selTextColorBtn");
+const selHighlightBtn = document.getElementById("selHighlightBtn");
+const selTextColorMenu = document.getElementById("selTextColorMenu");
+const selHighlightMenu = document.getElementById("selHighlightMenu");
+const selTextColorBar = document.getElementById("selTextColorBar");
+const selHighlightBar = document.getElementById("selHighlightBar");
 const clearFormattingBtn = document.getElementById("clearFormatting");
 const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
@@ -3447,12 +3456,15 @@ function openAltTextDialog() {
   if (!doc || !objectSelection || !altTextDialog) return;
   objectDialogNode = objectSelection.node;
   objectDialogReturnFocus = document.activeElement;
-  // No engine getter exists for the current descr (only the `setObjectDescr`
-  // setter is bound), so the field starts empty; typing replaces the alt text.
-  altTextInput.value = "";
+  // Prefill the current alt text so the user refines it rather than blind-
+  // overwriting (Word/Docs both show the existing description).
+  altTextInput.value = doc.objectDescr(objectSelection.node) ?? "";
   setAltTextNote("", false);
   altTextDialog.hidden = false;
-  queueMicrotask(() => altTextInput.focus());
+  queueMicrotask(() => {
+    altTextInput.focus();
+    altTextInput.select();
+  });
 }
 
 function closeAltTextDialog() {
@@ -3602,6 +3614,27 @@ function finishObjectMove(event) {
     drawSelection();
   }
   return true;
+}
+
+// Arrow-nudge step in twips: a fine ~1/32in step, and a coarse ~1/8in step with
+// Shift (matching Word/Docs arrow-vs-Shift+arrow nudging).
+const NUDGE_TWIP = 45;
+const NUDGE_TWIP_LARGE = 180;
+
+/** Nudges the selected floating object by one step in the given direction, as a
+ *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
+function nudgeSelectedObject(dx, dy, large) {
+  if (!doc || !objectSelection || !objectSelection.anchored) return;
+  const node = objectSelection.node;
+  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
+  if (rect.length < 5) return;
+  const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
+  const nx = Math.max(0, rect[1] + dx * step);
+  const ny = Math.max(0, rect[2] + dy * step);
+  const EMU_PER_TWIP = 635;
+  runEdit(() => doc.setObjectAnchorPosition(node, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
+    gate: true,
+  });
 }
 
 /** Aborts an in-progress float move, discarding the preview (Escape / cancel). */
@@ -6674,6 +6707,7 @@ let lastHighlight = "yellow";
 function reflectTextColorSwatch(hex) {
   if (hex) lastTextColor = hex;
   textColorBar.style.background = lastTextColor;
+  if (selTextColorBar) selTextColorBar.style.background = lastTextColor;
 }
 /** Reflect the current highlight onto the highlighter bar (transparent for none). */
 function reflectHighlightSwatch(name) {
@@ -6681,6 +6715,10 @@ function reflectHighlightSwatch(name) {
   const hex = name === "none" ? null : highlightHex(name || lastHighlight);
   highlightBar.style.background = hex || "transparent";
   highlightBar.classList.toggle("is-none", !hex);
+  if (selHighlightBar) {
+    selHighlightBar.style.background = hex || "transparent";
+    selHighlightBar.classList.toggle("is-none", !hex);
+  }
 }
 
 /** Builds one swatch cell button. `value` is what gets applied (a hex for text,
@@ -6713,8 +6751,7 @@ function makeMenuHeading(text) {
 
 /** (Re)renders a color picker menu, marking the active swatch and refreshing the
  *  recently-used row. Called on each open via the popover's reflect hook. */
-function renderColorMenu(kind) {
-  const menu = kind === "text" ? textColorMenu : highlightMenu;
+function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highlightMenu) {
   const activeValue = kind === "text" ? lastTextColor.toLowerCase() : lastHighlight;
   menu.replaceChildren();
 
@@ -6770,9 +6807,12 @@ function renderColorMenu(kind) {
 const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
 const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
 
-// Text-color menu clicks (mousedown is preventDefault'd by the popover manager,
-// so the document selection survives the pointer press).
-textColorMenu.addEventListener("click", (e) => {
+// One text-color menu-click handler, shared by the ribbon menu and the floating
+// selection-toolbar menu. `popover` is the popover to close after applying; the
+// apply goes through the same `applyTextColor` path (one undoable action, gated
+// in Viewing/Suggesting). (mousedown is preventDefault'd by the popover manager,
+// so the document selection survives the pointer press.)
+function handleTextColorMenuClick(e, popover) {
   if (e.target.closest("[data-more]")) {
     textColorInput.value = lastTextColor;
     textColorInput.click(); // opens the OS color input as the custom fallback
@@ -6785,19 +6825,10 @@ textColorMenu.addEventListener("click", (e) => {
   lastTextColor = hex;
   if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
   reflectTextColorSwatch(hex);
-  closePopover(textColorPopover);
+  closePopover(popover);
   focusEditorSurface();
-});
-// "More colors…" custom fallback commits when the OS picker closes.
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-});
-
-highlightMenu.addEventListener("click", (e) => {
+}
+function handleHighlightMenuClick(e, popover) {
   const cell = e.target.closest("[data-highlight]");
   if (!cell) return;
   const name = cell.dataset.highlight;
@@ -6807,9 +6838,33 @@ highlightMenu.addEventListener("click", (e) => {
     recordRecent(recentHighlights, name);
   }
   reflectHighlightSwatch(name);
-  closePopover(highlightPopover);
+  closePopover(popover);
   focusEditorSurface();
+}
+
+textColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, textColorPopover));
+// "More colors…" custom fallback commits when the OS picker closes.
+textColorInput.addEventListener("change", () => {
+  const hex = textColorInput.value;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
 });
+
+highlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, highlightPopover));
+
+// Floating selection-toolbar pickers: same renderer, same apply path, popovers
+// anchored to the floating buttons so they open next to the selection. Registered
+// after the ribbon popovers so the ribbon behavior is untouched.
+const selTextColorPopover = registerPopover(selTextColorBtn, selTextColorMenu, () =>
+  renderColorMenu("text", selTextColorMenu),
+);
+const selHighlightPopover = registerPopover(selHighlightBtn, selHighlightMenu, () =>
+  renderColorMenu("highlight", selHighlightMenu),
+);
+selTextColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, selTextColorPopover));
+selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, selHighlightPopover));
 
 // Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
 onButton(textColorApplyBtn, () => {
@@ -9714,10 +9769,62 @@ function clearFindParagraphCache() {
   findParagraphTextCache.clear();
 }
 
+// Capture the current selection as an ordered scope for "find in selection".
+// selectionEdge(...false) is the document-order start, (...true) the end. We
+// copy the values out and free the WASM handles immediately. Returns null when
+// there is no non-empty range to scope to.
+function captureFindScope() {
+  if (!selection || !hasRange()) return null;
+  const { anchor, focus } = selection;
+  const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
+  const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
+  const scope = {
+    startNode: s.node,
+    startOffset: s.offset,
+    endNode: e.node,
+    endOffset: e.offset,
+  };
+  s.free();
+  e.free();
+  return scope;
+}
+
+// True iff position (aNode:aOff) <= position (bNode:bOff) in document order.
+// Same node compares offsets with no WASM call; otherwise selectionEdge(...false)
+// returns whichever endpoint is earlier, and since the two nodes differ the
+// returned node uniquely identifies which one that is.
+function findPosLE(aNode, aOff, bNode, bOff) {
+  if (aNode === bNode) return aOff <= bOff;
+  const edge = doc.selectionEdge(aNode, aOff, bNode, bOff, false);
+  const aIsEarlier = edge.node === aNode;
+  edge.free();
+  return aIsEarlier;
+}
+
+// A find match spans a single paragraph, so match.startNode === match.endNode.
+// Accept iff [match.startOffset .. match.endOffset] on that node lies within the
+// ordered scope [scopeStart .. scopeEnd]. Boundary-node matches (the common
+// single-paragraph case and the first/last paragraph of a multi-paragraph
+// scope) resolve with zero extra WASM calls; only genuinely-interior nodes need
+// the two order tests.
 function matchInFindSelection(match) {
   if (!findSelection.checked) return true;
   if (!findScope) return false;
-  return match.startNode === findScope.node && match.startOffset >= findScope.start && match.endOffset <= findScope.end;
+  const { startNode, startOffset, endNode, endOffset } = findScope;
+  const node = match.startNode;
+  if (node === startNode) {
+    if (match.startOffset < startOffset) return false;
+    // Single-node scope (startNode === endNode) also caps the upper bound.
+    return node === endNode ? match.endOffset <= endOffset : true;
+  }
+  if (node === endNode) {
+    return match.endOffset <= endOffset;
+  }
+  // Interior node: in scope iff scopeStart <= match and match <= scopeEnd.
+  return (
+    findPosLE(startNode, startOffset, node, match.startOffset) &&
+    findPosLE(node, match.endOffset, endNode, endOffset)
+  );
 }
 
 function scanAllMatches(query, matchCase, wholeWord = false) {
@@ -9925,14 +10032,7 @@ findCase.addEventListener("change", () => updateFindStatus());
 findWholeWord.addEventListener("change", () => updateFindStatus());
 findSelection.addEventListener("change", () => {
   if (findSelection.checked) {
-    findScope =
-      selection && hasRange() && selection.anchor.node === selection.focus.node
-        ? {
-            node: selection.anchor.node,
-            start: Math.min(selection.anchor.offset, selection.focus.offset),
-            end: Math.max(selection.anchor.offset, selection.focus.offset),
-          }
-        : null;
+    findScope = captureFindScope();
   } else {
     findScope = null;
   }
@@ -10019,8 +10119,6 @@ function applyHighlight(name) {
 
 // ---- Floating selection toolbar (appears above a text selection) ------------
 const selToolbar = document.getElementById("selToolbar");
-const selColor = document.getElementById("selColor");
-const selHighlight = document.getElementById("selHighlight");
 
 /** Shows the floating toolbar centred just above the current range selection (or
  *  below it when there's no room), or hides it when the selection is collapsed. */
@@ -10069,20 +10167,9 @@ function positionSelToolbar() {
 for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
   onButton(b, () => toggleFormat(b.dataset.fmt));
 }
-selColor.addEventListener("change", () => {
-  const [r, g, b] = hexToRgb(selColor.value);
-  armOrApplyRun({ color: selColor.value }, () =>
-    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
-  );
-});
-selHighlight.addEventListener("change", () => {
-  const name = selHighlight.value;
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-  selHighlight.value = "none";
-});
-// Keep clicks inside the bar from collapsing the selection; hide on viewport scroll.
+// Text-color and highlight now use the ribbon's swatch-picker popovers, wired up
+// above (registerPopover on #selTextColorBtn / #selHighlightBtn). Keep clicks
+// inside the bar from collapsing the selection; hide on viewport scroll.
 selToolbar.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
 });
@@ -10661,6 +10748,15 @@ document.addEventListener("keydown", async (e) => {
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
         deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
+        return;
+      }
+      // Arrow keys nudge a FLOATING object's position (Word/Docs); Shift takes a
+      // larger step. Only anchored objects have a position — an inline image has
+      // none, so its arrows still fall through to move the caret off it.
+      const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
+      if (nudge && objectSelection.anchored && !mod) {
+        e.preventDefault();
+        nudgeSelectedObject(nudge[0], nudge[1], e.shiftKey);
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
