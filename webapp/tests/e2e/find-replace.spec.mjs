@@ -211,3 +211,39 @@ test("replace all replaces every occurrence and is fully undoable", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("Replace All is a single undo step (Word/Docs)", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", "MARKMARKMARK");
+    document.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }),
+    );
+  });
+
+  await page.keyboard.press(`${MOD}+f`);
+  await page.locator("#findInput").fill("MARK");
+  await expect(page.locator("#findStatus")).toHaveText(/^\d+ of 3$/);
+  await page.locator("#replaceInput").fill("done");
+  await page.locator("#replaceAll").click();
+  await expect(page.locator("#findStatus")).toHaveText("Replaced 3");
+
+  // Exactly ONE undo restores all three occurrences — the whole Replace All is a
+  // single history action, not three.
+  await page.keyboard.press("Escape");
+  await page.locator("#undoBtn").click();
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.press(`${MOD}+f`);
+  await page.locator("#findInput").fill("MARK");
+  await expect(page.locator("#findStatus")).toHaveText(/^\d+ of 3$/);
+  await page.locator("#findInput").fill("done");
+  await expect(page.locator("#findStatus")).toHaveText("No match");
+  await page.keyboard.press("Escape");
+
+  expect(consoleErrors).toEqual([]);
+});
