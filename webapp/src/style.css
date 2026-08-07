@@ -2870,6 +2870,70 @@ body.modal-open {
 .style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
 .style-card-normal .style-card-name { font-size: 12px; font-weight: 450; }
 
+/* "More styles" ▾ affordance: a compact expander pinned to the end of the inline
+   strip. It keeps its natural width (the cards flex to fill the rest) so the
+   gallery still spans the same width as the style dropdown above it. */
+.styles-more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.styles-more-btn[hidden] {
+  display: none;
+}
+
+.styles-more-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.styles-more-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.styles-more-btn .ms {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* The full Styles gallery revealed by the ▾ button: a scrollable, theme-aware
+   popover holding a live-preview card for every paragraph style. */
+.styles-more-panel {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 4px;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 160px));
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-popover);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.styles-more-panel[hidden] {
+  display: none;
+}
+
+.styles-more-panel .style-card {
+  flex: none;
+  height: 34px;
+}
+
 /* Overflow "⋯" button + menu — collects groups that don't fit the width. */
 .ribbon-overflow-btn {
   position: absolute;

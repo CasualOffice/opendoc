@@ -116,3 +116,45 @@ test("arrow keys rove focus across the gallery cards (listbox keyboard model)", 
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("a style beyond the inline quick set is reachable via 'More styles' and applies", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  // The inline strip shows only the capped quick set; the document defines more.
+  const inline = await page.$$eval("#stylesGallery .style-card", (cards) =>
+    cards.map((c) => c.dataset.style),
+  );
+  const allStyles = await page.$$eval("#paragraphStyle option", (opts) =>
+    opts.map((o) => o.value).filter(Boolean),
+  );
+  const current = await reflectedStyle(page);
+  // A style that is NOT one of the inline quick cards and differs from the caret's,
+  // so applying it is a genuine change reachable ONLY through the More popover.
+  const beyond = allStyles.find((s) => !inline.includes(s) && s !== current);
+  expect(
+    beyond,
+    "fixture should define a style beyond the inline quick set to prove reachability",
+  ).toBeTruthy();
+
+  // Open the "More styles" popover; the beyond-the-strip style has a card there.
+  await page.locator("#stylesMoreBtn").click();
+  const panel = page.locator("#stylesMorePanel");
+  await expect(panel).toBeVisible();
+  const card = panel.locator(`.style-card[data-style="${beyond}"]`);
+  await expect(card).toBeVisible();
+
+  await card.click();
+
+  // It applied through the same engine path (reflected back into the mirror
+  // select), the popover closed, and the edit is a single undoable action.
+  await expect.poll(() => reflectedStyle(page)).toBe(beyond);
+  await expect(panel).toBeHidden();
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+
+  expect(consoleErrors).toEqual([]);
+});

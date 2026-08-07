@@ -283,16 +283,30 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 // the visible all-styles `#paragraphStyle` selector. Both controls apply through
 // the same `setParagraphStyle` path.
 const stylesGallery = document.getElementById("stylesGallery");
+// The ▾ affordance and the scrollable popover it reveals. The inline strip shows
+// only a few quick styles; the popover lists EVERY document style so the whole
+// set is reachable from the gallery, not just via the separate `#paragraphStyle`
+// dropdown. `stylesMorePopover` is the toolbar-popover manager entry, wired up
+// once in the popover section further below.
+const stylesMoreBtn = document.getElementById("stylesMoreBtn");
+const stylesMorePanel = document.getElementById("stylesMorePanel");
+let stylesMorePopover = null;
 
-// Roving-tabindex keyboard navigation for the gallery listbox: the group is a
+// How many quick-access cards the width-constrained inline ribbon strip shows.
+// The remaining styles live in the "More styles" ▾ popover (Word's collapsed
+// gallery row + its More expander), so raising this never hides any style.
+const QUICK_STYLE_COUNT = 4;
+
+// Roving-tabindex keyboard navigation for a Styles listbox: the group is a
 // single Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the
 // option cards, matching the WAI-ARIA listbox pattern. Enter/Space already
 // activate a focused card natively (they are <button>s), which applies the
-// style. Attached once here so repeated `buildStylesGallery` rebuilds never
-// stack duplicate listeners.
-if (stylesGallery) {
-  stylesGallery.addEventListener("keydown", (event) => {
-    const cards = [...stylesGallery.querySelectorAll(".style-card")];
+// style. Attached once per container so repeated `buildStylesGallery` rebuilds
+// never stack duplicate listeners. Shared by the inline strip and the popover.
+function attachGalleryRoving(container) {
+  if (!container) return;
+  container.addEventListener("keydown", (event) => {
+    const cards = [...container.querySelectorAll(".style-card")];
     if (!cards.length) return;
     const current = document.activeElement;
     const index = cards.indexOf(current);
@@ -318,6 +332,20 @@ if (stylesGallery) {
     event.preventDefault();
     for (const card of cards) card.tabIndex = card === cards[next] ? 0 : -1;
     cards[next].focus();
+  });
+}
+attachGalleryRoving(stylesGallery);
+attachGalleryRoving(stylesMorePanel);
+
+// Esc inside the popover closes it and returns focus to the ▾ button (the global
+// popover Escape handler dismisses it too, but without restoring focus).
+if (stylesMorePanel) {
+  stylesMorePanel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeStylesMorePanel({ restoreFocus: true });
+    }
   });
 }
 
@@ -352,48 +380,76 @@ function applyStyleCardPreview(label, name) {
   label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
 }
 
-/** Rebuilds the Styles gallery cards from the document's style names. */
+/** Builds one gallery option card drawn IN its own style. `index === 0` makes it
+ *  the container's initial roving Tab stop. `fromPanel` cards additionally close
+ *  the "More styles" popover after applying (Word closes the gallery on pick). */
+function makeStyleCard(name, index, { fromPanel = false } = {}) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = `style-card style-card-${slug}`;
+  card.dataset.style = name;
+  card.setAttribute("role", "option");
+  card.setAttribute("aria-selected", "false");
+  // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
+  // among the rest (see attachGalleryRoving).
+  card.tabIndex = index === 0 ? 0 : -1;
+  card.title = name;
+  const label = document.createElement("span");
+  label.className = "style-card-name";
+  label.textContent = name;
+  applyStyleCardPreview(label, name);
+  card.appendChild(label);
+  card.addEventListener("click", () => {
+    if (card.disabled) return;
+    runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
+    if (fromPanel) closeStylesMorePanel({ restoreFocus: true });
+  });
+  return card;
+}
+
+/** Rebuilds the Styles gallery from the document's style names: a short inline
+ *  quick-access strip on the ribbon plus the full-set "More styles" popover, so
+ *  every paragraph style is reachable from the gallery. */
 function buildStylesGallery(styles) {
   if (!stylesGallery) return;
-  stylesGallery.replaceChildren();
+  // Drop the previous cards but keep the static ▾ "More styles" button, which the
+  // popover manager holds a reference to.
+  for (const card of stylesGallery.querySelectorAll(".style-card")) card.remove();
+  // Order styles with the common built-ins first; the rest follow document order.
   const preferred = ["Normal", "Body Text", "Title", "Heading 1", "Heading 2", "Subtitle"];
-  const quickStyles = [];
+  const ordered = [];
   for (const preferredName of preferred) {
     const match = styles.find((name) => name.toLowerCase() === preferredName.toLowerCase());
-    if (match && !quickStyles.includes(match)) quickStyles.push(match);
+    if (match && !ordered.includes(match)) ordered.push(match);
   }
-  for (const name of styles) if (!quickStyles.includes(name)) quickStyles.push(name);
-  const shown = quickStyles.slice(0, 4);
+  for (const name of styles) if (!ordered.includes(name)) ordered.push(name);
+
+  // Inline quick strip: a handful of cards, inserted before the ▾ button.
+  const shown = ordered.slice(0, QUICK_STYLE_COUNT);
   for (const [i, name] of shown.entries()) {
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = `style-card style-card-${slug}`;
-    card.dataset.style = name;
-    card.setAttribute("role", "option");
-    card.setAttribute("aria-selected", "false");
-    // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
-    // among the rest (see the container keydown handler above).
-    card.tabIndex = i === 0 ? 0 : -1;
-    card.title = name;
-    const label = document.createElement("span");
-    label.className = "style-card-name";
-    label.textContent = name;
-    applyStyleCardPreview(label, name);
-    card.appendChild(label);
-    card.addEventListener("click", () => {
-      if (card.disabled) return;
-      runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
-    });
-    stylesGallery.appendChild(card);
+    const card = makeStyleCard(name, i);
+    if (stylesMoreBtn) stylesGallery.insertBefore(card, stylesMoreBtn);
+    else stylesGallery.appendChild(card);
+  }
+  if (stylesMoreBtn) stylesMoreBtn.hidden = ordered.length <= QUICK_STYLE_COUNT;
+
+  // Full popover: a card for EVERY style, so nothing is gallery-unreachable.
+  if (stylesMorePanel) {
+    stylesMorePanel.replaceChildren();
+    for (const [i, name] of ordered.entries()) {
+      stylesMorePanel.appendChild(makeStyleCard(name, i, { fromPanel: true }));
+    }
   }
 }
 
-/** Highlights the gallery card matching the reflected paragraph style. */
-function syncStylesGalleryActive() {
-  if (!stylesGallery) return;
+/** Marks the card(s) matching the reflected paragraph style active and keeps
+ *  each container's roving Tab stop on that style — for both the inline strip and
+ *  the "More styles" popover. */
+function reflectActiveCards(container) {
+  if (!container) return;
   const active = paragraphStyleSel.value;
-  const cards = [...stylesGallery.children];
+  const cards = [...container.querySelectorAll(".style-card")];
   let tabStop = cards.findIndex((card) => card.dataset.style === active);
   if (tabStop < 0) tabStop = 0; // no active style visible → first card is the Tab stop
   for (const [i, card] of cards.entries()) {
@@ -403,6 +459,19 @@ function syncStylesGalleryActive() {
     // caret already is (arrow keys still reach every card).
     card.tabIndex = i === tabStop ? 0 : -1;
   }
+}
+
+/** Highlights the gallery card(s) matching the reflected paragraph style. */
+function syncStylesGalleryActive() {
+  reflectActiveCards(stylesGallery);
+  reflectActiveCards(stylesMorePanel);
+}
+
+/** Closes the "More styles" popover, optionally restoring focus to its button. */
+function closeStylesMorePanel({ restoreFocus = false } = {}) {
+  if (!stylesMorePopover || !stylesMorePanel || stylesMorePanel.hidden) return;
+  closePopover(stylesMorePopover);
+  if (restoreFocus && stylesMoreBtn) stylesMoreBtn.focus();
 }
 
 // --- Named-style edits: update-from-selection and create-from-selection ------
@@ -6634,6 +6703,26 @@ function registerPopover(btn, menu, reflect) {
 }
 
 tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
+
+// The "More styles" ▾ popover reuses the same anchored-menu manager (outside-
+// click + Escape dismissal, single-open, anchored positioning). Its reflect()
+// re-marks the active style each time it opens.
+if (stylesMoreBtn && stylesMorePanel) {
+  stylesMorePopover = registerPopover(stylesMoreBtn, stylesMorePanel, syncStylesGalleryActive);
+  // When the ▾ opens the popover, move focus into it (onto the active/first card)
+  // so keyboard users land in the list; a close toggle leaves focus on the button.
+  const focusIntoMorePanel = () => {
+    if (stylesMorePanel.hidden) return;
+    const card =
+      stylesMorePanel.querySelector('.style-card[tabindex="0"]') ||
+      stylesMorePanel.querySelector(".style-card");
+    card?.focus();
+  };
+  stylesMoreBtn.addEventListener("mousedown", focusIntoMorePanel);
+  stylesMoreBtn.addEventListener("click", (e) => {
+    if (e.detail === 0) focusIntoMorePanel();
+  });
+}
 
 document.addEventListener("mousedown", (e) => {
   for (const p of popovers) {

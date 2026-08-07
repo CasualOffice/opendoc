@@ -301,7 +301,7 @@
               <label class="ctl style-select" title="Paragraph style">
                 <select id="paragraphStyle" aria-label="Paragraph style"><option value="">Style</option></select>
               </label>
-              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"></div>
+              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"><button id="stylesMoreBtn" type="button" class="styles-more-btn" title="More styles" aria-label="More styles" aria-haspopup="listbox" aria-expanded="false"><span class="ms" aria-hidden="true">expand_more</span></button></div>
             </div>
             <span class="rgroup-label">Styles</span>
           </div>
@@ -552,6 +552,12 @@
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
     <div id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
+
+    <!-- Full Styles gallery: the scrollable "More styles" popover revealed by the
+         ribbon's ▾ affordance. Holds a live-preview card for EVERY paragraph
+         style so the whole set is reachable from the gallery, not just the four
+         inline quick cards. Populated by buildStylesGallery(). -->
+    <div id="stylesMorePanel" class="styles-more-panel" hidden role="listbox" aria-label="All paragraph styles"></div>
 
     <!-- Font family picker: searchable, each name in its own typeface, a
          recently-used group above the full list (docs/63 §3 popover pattern). -->
