@@ -1198,6 +1198,114 @@ body.modal-open {
   font-weight: 450;
 }
 
+/* ---- Insert/edit link dialog --------------------------------------------- */
+.link-dialog {
+  width: min(460px, 100%);
+}
+
+.link-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.link-body > label {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.link-optional {
+  color: var(--muted);
+  font-weight: 450;
+}
+
+.link-field-label {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.link-body input,
+.link-body select {
+  width: 100%;
+  height: var(--h-field);
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 450;
+}
+
+.link-body input:focus,
+.link-body select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.link-mode {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+}
+
+.link-mode-tab {
+  flex: 1 1 0;
+  height: var(--h-search);
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-mode-tab:hover {
+  color: var(--ink);
+}
+
+.link-mode-tab.is-active {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.link-mode-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.link-mode-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#linkDialogNote.error,
+#linkPlaceEmpty {
+  color: #b3261e;
+  font-weight: 550;
+}
+
+#linkPlaceEmpty {
+  color: var(--muted);
+  font-weight: 450;
+}
+
+@media (prefers-color-scheme: dark) {
+  #linkDialogNote.error { color: #f2b8b5; }
+}
+
 .bookmark-add {
   display: flex;
   flex-direction: column;

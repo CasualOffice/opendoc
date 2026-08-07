@@ -692,6 +692,53 @@
       </section>
     </div>
 
+    <div id="linkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="linkDialogTitle" aria-describedby="linkDialogDescription">
+      <section class="dialog-card link-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">link</span>
+            <div>
+              <h2 id="linkDialogTitle">Insert link</h2>
+              <p id="linkDialogDescription">Link the selected text to a web address or a place in this document.</p>
+            </div>
+          </div>
+          <button id="linkDialogClose" type="button" class="dialog-close" title="Close" aria-label="Close link dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="linkDialogForm" class="dialog-body link-body">
+          <label for="linkTextInput">Text to display</label>
+          <input id="linkTextInput" type="text" autocomplete="off" spellcheck="false" placeholder="Text shown in the document" />
+
+          <span class="link-field-label" id="linkTargetLabel">Link to</span>
+          <div class="link-mode" role="tablist" aria-labelledby="linkTargetLabel">
+            <button type="button" id="linkModeUrl" class="link-mode-tab is-active" role="tab" aria-selected="true" aria-controls="linkModeUrlPanel">Web address</button>
+            <button type="button" id="linkModePlace" class="link-mode-tab" role="tab" aria-selected="false" aria-controls="linkModePlacePanel">Place in this document</button>
+          </div>
+
+          <div id="linkModeUrlPanel" class="link-mode-panel" role="tabpanel" aria-labelledby="linkModeUrl">
+            <input id="linkUrlInput" type="text" autocomplete="off" spellcheck="false" inputmode="url" placeholder="https://example.com" aria-label="Web address" />
+          </div>
+          <div id="linkModePlacePanel" class="link-mode-panel" role="tabpanel" aria-labelledby="linkModePlace" hidden>
+            <select id="linkPlaceSelect" aria-label="Place in this document">
+              <option value="">Choose a bookmark…</option>
+            </select>
+            <p id="linkPlaceEmpty" class="dialog-field-note" hidden>No bookmarks yet. Add one from the Bookmarks manager to link to it.</p>
+          </div>
+
+          <label for="linkTooltipInput">ScreenTip <span class="link-optional">(optional)</span></label>
+          <input id="linkTooltipInput" type="text" autocomplete="off" spellcheck="false" placeholder="Text shown on hover" aria-describedby="linkDialogNote" />
+          <p id="linkDialogNote" class="dialog-field-note" role="status" aria-live="polite">Enter applies; Esc cancels.</p>
+        </form>
+        <footer class="dialog-foot">
+          <span class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button id="linkRemoveBtn" type="button" class="dialog-button" hidden>Remove link</button>
+            <button id="linkCancelBtn" type="button" class="dialog-button">Cancel</button>
+            <button id="linkApplyBtn" type="submit" form="linkDialogForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div id="altTextDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="altTextTitle" aria-describedby="altTextDescription">
       <section class="dialog-card dialog-card-compact object-dialog">
         <header class="dialog-head">
