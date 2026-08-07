@@ -2430,3 +2430,45 @@ fn floating_anchor_alignment_positioning_round_trips() {
             .unwrap();
     assert_eq!(reexport.bytes, export.bytes);
 }
+
+/// A vertical inside/outside alignment (only reachable from a cross-format model,
+/// since ODF has no `style:vertical-pos` inside/outside) collapses to top/bottom on
+/// export and MUST be reported, not lost silently.
+#[test]
+fn floating_anchor_vertical_inside_align_is_reported() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" office:version="1.4"><office:body><office:text><text:p><draw:frame text:anchor-type="page" svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let mut document = imported.document;
+    // Force a vertical Inside alignment (a DOCX-origin state ODF cannot express).
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &mut paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    anchored.anchor.vertical.position =
+        VerticalPosition::Align(casual_doc_model::v1::VerticalAlign::Inside);
+    let retained = package
+        .retained_media_parts(&document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default()).unwrap();
+    assert!(
+        export
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odt.export.anchor_vertical_align")
+    );
+}

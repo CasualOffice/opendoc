@@ -5418,11 +5418,9 @@ fn parse_draw_frame(
     let mut anchor_type: Option<String> = None;
     let mut x_emu: Option<i64> = None;
     let mut y_emu: Option<i64> = None;
-    // Whether a present `svg:x`/`svg:y` failed to parse (negative or out of range).
-    // `parse_emu` rejects those, so the offset defaults to 0 (signed offsets are a
-    // later increment) — but the drop is reported, not silent, when the frame is
-    // actually anchored.
-    let mut offset_clamped = false;
+    // A present `svg:x`/`svg:y` that fails to parse (negative/out of range) stays
+    // `None`; the offset then defaults to 0 and the drop is reported per-axis at the
+    // anchored-image construction (only for an axis actually using the offset).
     let mut z_index: Option<u32> = None;
     let mut graphic_style_name: Option<String> = None;
     for attribute in frame.attributes() {
@@ -5433,14 +5431,8 @@ fn parse_draw_frame(
             NamespaceKind::Svg => match local.as_ref() {
                 b"width" => width_emu = parse_emu(&decode_attribute(&attribute)?),
                 b"height" => height_emu = parse_emu(&decode_attribute(&attribute)?),
-                b"x" => {
-                    x_emu = parse_emu(&decode_attribute(&attribute)?);
-                    offset_clamped |= x_emu.is_none();
-                }
-                b"y" => {
-                    y_emu = parse_emu(&decode_attribute(&attribute)?);
-                    offset_clamped |= y_emu.is_none();
-                }
+                b"x" => x_emu = parse_emu(&decode_attribute(&attribute)?),
+                b"y" => y_emu = parse_emu(&decode_attribute(&attribute)?),
                 _ => {}
             },
             NamespaceKind::Text if local.as_ref() == b"anchor-type" => {
@@ -5751,10 +5743,12 @@ fn parse_draw_frame(
                 let vertical_align =
                     graphic.and_then(|style| resolve_vertical_align(style, reporter));
                 if let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) {
-                    if offset_clamped && (horizontal_align.is_none() || vertical_align.is_none()) {
-                        // A present but negative/out-of-range `svg:x`/`svg:y` is
-                        // clamped to 0; report the drop rather than losing it
-                        // silently. Only relevant on an axis still using the offset.
+                    // Report a clamped offset only for an axis that is actually using
+                    // the offset (an aligned axis legitimately ignores its `svg:x`/`y`,
+                    // so a bad value there is not a loss).
+                    let x_clamped = horizontal_align.is_none() && x_emu.is_none();
+                    let y_clamped = vertical_align.is_none() && y_emu.is_none();
+                    if x_clamped || y_clamped {
                         reporter.report(
                             "odf.draw.anchor-offset-clamped".to_owned(),
                             ModelOutcome::Degraded,

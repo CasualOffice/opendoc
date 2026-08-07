@@ -2919,6 +2919,16 @@ impl Writer {
             self.reporter
                 .record("odt.export.anchor_behind_doc", ModelOutcome::Degraded);
         }
+        // ODF `style:vertical-pos` has no inside/outside form (unlike the horizontal
+        // axis), so a vertical inside/outside alignment (only reachable from a
+        // cross-format model) collapses to top/bottom — report the loss.
+        if matches!(
+            anchor.vertical.position,
+            VerticalPosition::Align(VerticalAlign::Inside | VerticalAlign::Outside)
+        ) {
+            self.reporter
+                .record("odt.export.anchor_vertical_align", ModelOutcome::Degraded);
+        }
         let distances = &anchor.wrap_distances;
         OdtGraphicStyle {
             wrap,
