@@ -3456,12 +3456,15 @@ function openAltTextDialog() {
   if (!doc || !objectSelection || !altTextDialog) return;
   objectDialogNode = objectSelection.node;
   objectDialogReturnFocus = document.activeElement;
-  // No engine getter exists for the current descr (only the `setObjectDescr`
-  // setter is bound), so the field starts empty; typing replaces the alt text.
-  altTextInput.value = "";
+  // Prefill the current alt text so the user refines it rather than blind-
+  // overwriting (Word/Docs both show the existing description).
+  altTextInput.value = doc.objectDescr(objectSelection.node) ?? "";
   setAltTextNote("", false);
   altTextDialog.hidden = false;
-  queueMicrotask(() => altTextInput.focus());
+  queueMicrotask(() => {
+    altTextInput.focus();
+    altTextInput.select();
+  });
 }
 
 function closeAltTextDialog() {

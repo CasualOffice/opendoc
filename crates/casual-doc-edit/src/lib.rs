@@ -2110,6 +2110,54 @@ fn set_object_descr_in_inlines(
     None
 }
 
+/// The current alt text (`wp:docPr@descr`) of the drawing `object`, or `None`
+/// when the object has no alt text or does not resolve to a drawing. Read-only
+/// companion to [`Operation::SetObjectDescr`], searched the same way, so a host
+/// can prefill an alt-text editor with the existing description instead of
+/// blind-overwriting it.
+#[must_use]
+pub fn object_descr(document: &Document, object: NodeId) -> Option<String> {
+    object_descr_in_blocks(document.body(), object)
+}
+
+fn object_descr_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<String> {
+    for block in blocks {
+        let found = match block {
+            BlockNode::Paragraph(paragraph) => object_descr_in_inlines(&paragraph.inlines, object),
+            BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                row.cells
+                    .iter()
+                    .find_map(|cell| object_descr_in_blocks(&cell.blocks, object))
+            }),
+            BlockNode::Sdt(sdt) => object_descr_in_blocks(&sdt.blocks, object),
+            BlockNode::AltChunk(_) => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+fn object_descr_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<String> {
+    for inline in inlines {
+        let found = match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => return drawing.descr.clone(),
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return drawing.descr.clone();
+            }
+            InlineNode::TextBox(text_box) => object_descr_in_blocks(&text_box.blocks, object),
+            InlineNode::Hyperlink(hyperlink) => object_descr_in_inlines(&hyperlink.inlines, object),
+            InlineNode::Revision(revision) => object_descr_in_inlines(&revision.inlines, object),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
 /// Whether `node` is a removable object (the target set of
 /// [`Operation::DeleteObject`]): an inline drawing, a floating anchored drawing, a
 /// text box, or a DrawingML group.
@@ -4400,6 +4448,37 @@ mod tests {
             Err(EditError::ValueTooLarge)
         ));
         assert_eq!(descr_of(&d), Some("Company logo".to_owned()));
+    }
+
+    #[test]
+    fn object_descr_reads_the_current_alt_text() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 903).unwrap());
+        let drawing_id = n(50);
+        // A drawing that carries alt text: the getter returns it.
+        let with_alt = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![drawing(50, media, Some("Company logo".to_owned()), None)],
+            )],
+            media_defs(media),
+        )
+        .expect("valid document");
+        assert_eq!(
+            object_descr(&with_alt, drawing_id),
+            Some("Company logo".to_owned())
+        );
+        // An unknown node id resolves to no alt text (not a panic).
+        assert_eq!(object_descr(&with_alt, n(999)), None);
+        // A drawing with no alt text returns None.
+        let without_alt = Document::new(
+            n(1001),
+            vec![para(2, vec![drawing(50, media, None, None)])],
+            media_defs(media),
+        )
+        .expect("valid document");
+        assert_eq!(object_descr(&without_alt, drawing_id), None);
     }
 
     #[test]
