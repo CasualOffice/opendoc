@@ -81,6 +81,41 @@ test("pasting external HTML (no internal marker) lands as recognizable text", as
   expect(consoleErrors).toEqual([]);
 });
 
+test("pasting Google-Docs-style inline-CSS spans preserves run formatting", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  // Land on a genuinely non-bold line so the toolbar's pressed state reflects
+  // the pasted run's own formatting, not a heading style's inherited bold.
+  for (let line = 0; line < 20; line++) {
+    if ((await page.locator("#bold").getAttribute("aria-pressed")) === "false") break;
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Home");
+  }
+  await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "false");
+
+  // Google Docs wraps every run in a styled <span> with NO <b>/<i>/<u> tags.
+  const marker = "GDOCSRICH";
+  await dispatchClipboardEvent(page, "paste", {
+    "text/html": `<span style="font-weight:700;font-style:italic;text-decoration:underline">${marker}</span>`,
+    "text/plain": marker,
+  });
+
+  // The pasted run sits at the line start; select it and confirm the toolbar
+  // reflects bold + italic + underline carried from the inline CSS.
+  await page.keyboard.press("Shift+Home");
+  await expect(page.locator("#bold")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#italic")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#underline")).toHaveAttribute("aria-pressed", "true");
+
+  await page.locator("#undoBtn").click(); // pasted run
+  expect(consoleErrors).toEqual([]);
+});
+
 test("pasting the internal marker round-trips without reparsing the visible HTML", async ({
   page,
   consoleErrors,
