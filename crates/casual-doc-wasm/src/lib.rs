@@ -1758,6 +1758,56 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Replaces MANY ranges with the same text as ONE undoable action (Replace
+    /// All). The caller supplies the match ranges as four parallel arrays and must
+    /// pass them in DESCENDING document order (last match first), so applying each
+    /// replacement in turn never shifts an earlier, not-yet-applied range's
+    /// offsets. Every range's delete+insert ops are concatenated into a single
+    /// action, so one Ctrl+Z undoes the whole Replace All (matching Word/Docs).
+    #[wasm_bindgen(js_name = replaceRanges)]
+    pub fn replace_ranges(
+        &mut self,
+        start_nodes: Vec<String>,
+        start_offsets: Vec<u32>,
+        end_nodes: Vec<String>,
+        end_offsets: Vec<u32>,
+        text: String,
+    ) -> Result<EditResult, JsValue> {
+        let n = start_nodes.len();
+        if start_offsets.len() != n || end_nodes.len() != n || end_offsets.len() != n {
+            return Err(to_js("replaceRanges: mismatched range arrays".into()));
+        }
+        if n == 0 {
+            return Err(to_js("nothing to do".into()));
+        }
+        let mut ops = Vec::new();
+        for i in 0..n {
+            let (start, _end) = self
+                .order_endpoints(&start_nodes[i], start_offsets[i], &end_nodes[i], end_offsets[i])
+                .map_err(to_js)?;
+            ops.extend(
+                self.selection_delete_ops(
+                    &start_nodes[i],
+                    start_offsets[i],
+                    &end_nodes[i],
+                    end_offsets[i],
+                )
+                .map_err(to_js)?,
+            );
+            if !text.is_empty() {
+                ops.push(Operation::InsertText {
+                    at: start,
+                    text: text.clone(),
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Err(to_js("nothing to do".into()));
+        }
+        self.apply_action_as(ops, HistoryKind::Replace)
+            .map_err(to_js)
+    }
+
     /// Replaces a selection (which may be collapsed) with normalized plain text
     /// as one atomic user action. Newlines become paragraph splits inside the
     /// same operation group, so paste, IME commit, and replace-with-Enter each
