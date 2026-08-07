@@ -2232,3 +2232,144 @@ fn standalone_line_shape_round_trips_all_directions() {
         assert_eq!(reexport.bytes, export.bytes);
     }
 }
+
+/// A `draw:g` with multiple shape children (rect + ellipse + line) imports to a
+/// multi-child `WordprocessingGroup` and re-exports as a `draw:g` preserving each
+/// child's absolute position and order, a byte-exact fixed point.
+#[test]
+fn multi_child_shape_group_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style><style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-width="0.05cm" svg:stroke-color="#000000"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:g text:anchor-type="page" draw:z-index="3"><draw:rect draw:style-name="gr1" svg:x="2cm" svg:y="2cm" svg:width="4cm" svg:height="3cm"/><draw:ellipse draw:style-name="gr1" svg:x="7cm" svg:y="2cm" svg:width="3cm" svg:height="3cm"/><draw:line draw:style-name="gr2" svg:x1="2cm" svg:y1="6cm" svg:x2="10cm" svg:y2="6cm"/></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    // Three children in document (paint) order; union bbox is (2,2)..(10,6).
+    assert_eq!(group.children.len(), 3);
+    assert_eq!(group.extent.width_emu, 8 * 360_000); // 10cm - 2cm
+    assert_eq!(group.extent.height_emu, 4 * 360_000); // 6cm - 2cm
+    let GroupChild::Shape(rect) = &group.children[0] else {
+        panic!("rect")
+    };
+    assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(rect.offset.x_emu, 0); // 2cm - 2cm
+    assert_eq!(rect.offset.y_emu, 0);
+    let GroupChild::Shape(ellipse) = &group.children[1] else {
+        panic!("ellipse")
+    };
+    assert_eq!(ellipse.geometry, ShapeGeometry::Ellipse);
+    assert_eq!(ellipse.offset.x_emu, 5 * 360_000); // 7cm - 2cm
+    let GroupChild::Shape(line) = &group.children[2] else {
+        panic!("line")
+    };
+    assert_eq!(line.geometry, ShapeGeometry::Line);
+
+    // Export re-emits draw:g with the three children at their absolute positions.
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<draw:g text:anchor-type="page" draw:z-index="3">"#));
+    assert!(content_out.contains(r#"<draw:rect draw:style-name="#));
+    assert!(content_out.contains(r#"<draw:ellipse draw:style-name="#));
+    assert!(content_out.contains(r#"<draw:line draw:style-name="#));
+    // Children carry no anchor-type/z-index (the draw:g owns those).
+    assert!(!content_out.contains(r#"<draw:rect text:anchor-type"#));
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// A `draw:g` whose children are each within the EMU domain but whose union
+/// bounding box exceeds it must drop the group WITH a finding — not abort the whole
+/// import — so unrelated content (a normal paragraph) survives.
+#[test]
+fn oversized_group_bbox_drops_group_not_document() {
+    // Two rects at 0 and 7.5e7 cm, each width 7.5e7 cm (< MAX_EMU individually); the
+    // union spans ~1.5e8 cm > MAX_EMU.
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.4"><office:body><office:text><text:p>Normal text</text:p><text:p><draw:g text:anchor-type="page"><draw:rect svg:x="0cm" svg:y="0cm" svg:width="75000000cm" svg:height="1cm"/><draw:rect svg:x="75000000cm" svg:y="0cm" svg:width="75000000cm" svg:height="1cm"/></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    // Import must SUCCEED (not abort), dropping only the group.
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.group-oversized")
+    );
+    // The normal paragraph survives; the group produced no inline in its paragraph.
+    let BlockNode::Paragraph(first) = &imported.document.body()[0] else {
+        panic!("first paragraph")
+    };
+    let InlineNode::Run(run) = &first.inlines[0] else {
+        panic!("run")
+    };
+    assert_eq!(run.text, "Normal text");
+    let BlockNode::Paragraph(second) = &imported.document.body()[1] else {
+        panic!("second paragraph")
+    };
+    assert!(second.inlines.is_empty());
+}

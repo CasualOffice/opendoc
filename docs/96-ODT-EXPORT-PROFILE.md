@@ -139,6 +139,14 @@ the report.
   extent, and the shape's flip pair (the exact inverse of the importer's mapping).
   A line carries only an outline; a model fill on the shape is reported, not
   emitted. Like the box shapes it is emitted only on the preserving path.
+- A flat multi-child `WordprocessingGroup` (an anchored, identity-transform group
+  whose children are all supported box/line shapes) re-emits a `<draw:g>` wrapper
+  carrying the anchor and z-index, with each child emitted at its absolute position
+  (group anchor offset + child offset) and its own fill/stroke graphic style, in
+  child order. A group-of-one is still emitted as a bare shape (the single-shape
+  paths run first), so this only produces `draw:g` for 2+‑child groups. A nested or
+  transformed group, a non-square group wrap, and a non-shape child are reported and
+  the group degrades. Like all shapes it is emitted only on the preserving path.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 

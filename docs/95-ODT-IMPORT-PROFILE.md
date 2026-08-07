@@ -129,6 +129,15 @@ The work lands as reviewable commits:
   recovered on export. A line has an outline but no fill. A negative or
   out-of-range endpoint (the unsigned codec rejects it) skips the whole line with a
   finding.
+- A floating `draw:g` group with multiple box/line children maps to a multi-child
+  `WordprocessingGroup`. Since `draw:g` is a pure container whose children carry
+  absolute coordinates, the children reduce to their union bounding box: the group's
+  anchor sits at the min corner, its extent is the box size, the transform is
+  identity, and each child's offset is its absolute position minus the min. Child
+  order is preserved (it is the intra-group paint order). Nested `draw:g`, non-shape
+  children (image/text-box/control/custom-shape), a `draw:transform` on the group, a
+  non-square group wrap, a child with a negative coordinate, and an empty group are
+  each dropped with a finding; a `draw:g` with a non-floating anchor is skipped.
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point
