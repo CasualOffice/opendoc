@@ -160,12 +160,50 @@ function applyInlineStyle(format, style) {
 
   const color = parseCssColor(decls.color);
   if (color) format.color = color;
-  // background-color -> highlight (the insert path — `doc.pasteRichRuns` /
-  // `suggestStyledInsert` — accepts a `highlight` run field). Skip the
-  // transparent/no-fill values Docs and Word emit on unhighlighted runs, so an
-  // ordinary paste does not gain a phantom highlight.
-  const highlight = parseCssColor(decls["background-color"]);
+  // background-color -> highlight. `w:highlight` is a NAMED enum (yellow, green,
+  // …), not arbitrary hex — and the engine maps any unrecognized name to Yellow,
+  // so sending a raw hex would turn EVERY pasted background (incl. subtle table/
+  // paragraph shading) into a bright-yellow highlight. Snap the background to the
+  // nearest classic highlighter color, and only when it is bright+saturated
+  // enough to actually be a highlight; ordinary shading/near-white/gray is
+  // dropped rather than mis-highlighted.
+  const highlight = nearestHighlightName(parseCssColor(decls["background-color"]));
   if (highlight) format.highlight = highlight;
+}
+
+// The classic highlighter colors the engine recognizes as `w:highlight` names.
+const HIGHLIGHT_PALETTE = [
+  ["yellow", 0xff, 0xff, 0x00],
+  ["green", 0x00, 0xff, 0x00],
+  ["cyan", 0x00, 0xff, 0xff],
+  ["magenta", 0xff, 0x00, 0xff],
+  ["red", 0xff, 0x00, 0x00],
+  ["blue", 0x00, 0x00, 0xff],
+];
+
+/** Maps a `#rrggbb` background color to the nearest named highlight color, or
+ *  `null` when it is not a bright, saturated highlighter color (so ordinary
+ *  shading — near-white/gray/dark or low-saturation fills — is dropped instead
+ *  of becoming a phantom highlight). */
+function nearestHighlightName(hex) {
+  if (!hex) return null;
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(hex);
+  if (!m) return null;
+  const [r, g, b] = m.slice(1, 4).map((h) => parseInt(h, 16));
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  // Require a bright, saturated color — a real highlighter, not shading.
+  if (max < 128 || max - min < 64) return null;
+  let best = null;
+  let bestDist = Infinity;
+  for (const [name, pr, pg, pb] of HIGHLIGHT_PALETTE) {
+    const dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = name;
+    }
+  }
+  return best;
 }
 
 /** Splits a CSS declaration string into a `{ property: value }` map, with

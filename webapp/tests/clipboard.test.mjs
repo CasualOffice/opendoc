@@ -133,15 +133,21 @@ test("htmlToRuns merges tag and inline-style signals (either wins)", () => {
   ]);
 });
 
-test("htmlToRuns maps background-color to highlight but skips transparent", () => {
+test("htmlToRuns snaps a bright background-color to a named highlight, and drops shading/transparent", () => {
   const runs = htmlToRuns(
     root(
-      el("span", { style: "background-color:#ffff00" }, txt("hi")),
+      el("span", { style: "background-color:#ffff00" }, txt("hi")), // bright yellow -> "yellow"
+      el("span", { style: "background-color:#00ff05" }, txt("gr")), // near-green -> "green"
+      el("span", { style: "background-color:#f3f3f3" }, txt("sh")), // subtle gray shading -> dropped
       el("span", { style: "background-color:transparent" }, txt("no")),
     ),
   );
+  // Highlight is a NAMED enum, not hex — so a real highlighter color maps to its
+  // name, while ordinary low-saturation shading never becomes a phantom highlight.
   assert.deepEqual(runs, [
-    { text: "hi", highlight: "#ffff00" },
+    { text: "hi", highlight: "yellow" },
+    { text: "gr", highlight: "green" },
+    { text: "sh" },
     { text: "no" },
   ]);
 });
