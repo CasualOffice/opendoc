@@ -21,13 +21,15 @@ async function outlineSize(page) {
   });
 }
 
-async function dragHandle(page, handleIndex, dx, dy) {
+async function dragHandle(page, handleIndex, dx, dy, { shift = false } = {}) {
   const handle = page.locator(`.overlay .object-handle[data-handle="${handleIndex}"]`).first();
   const b = await handle.boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
+  if (shift) await page.keyboard.down("Shift");
   await page.mouse.move(b.x + b.width / 2 + dx, b.y + b.height / 2 + dy, { steps: 6 });
   await page.mouse.up();
+  if (shift) await page.keyboard.up("Shift");
   await page.waitForTimeout(150);
 }
 
@@ -55,6 +57,36 @@ test("dragging a corner handle resizes the object, and one undo reverts it", asy
   const undone = await outlineSize(page);
   expect(Math.abs(undone.w - before.w)).toBeLessThanOrEqual(3);
   expect(Math.abs(undone.h - before.h)).toBeLessThanOrEqual(3);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a picture keeps its aspect ratio on a corner drag by default; Shift frees it", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await selectImage(page);
+  const before = await outlineSize(page);
+  const ratio = before.w / before.h;
+
+  // Non-proportional corner drag (mostly horizontal) WITHOUT Shift: because a
+  // picture aspect-locks by default (Word/Docs), height grows in proportion — so
+  // the ratio is preserved even though the pointer moved far more in x.
+  await dragHandle(page, 4, 120, 8);
+  const locked = await outlineSize(page);
+  expect(locked.w).toBeGreaterThan(before.w + 10);
+  expect(locked.h).toBeGreaterThan(before.h + 10);
+  expect(Math.abs(locked.w / locked.h - ratio)).toBeLessThan(ratio * 0.15);
+
+  // Undo, then the SAME drag WITH Shift frees the aspect: width grows, height
+  // barely moves.
+  await page.keyboard.press(`${MOD}+z`);
+  await page.waitForTimeout(150);
+  await dragHandle(page, 4, 120, 8, { shift: true });
+  const free = await outlineSize(page);
+  expect(free.w).toBeGreaterThan(before.w + 40);
+  expect(Math.abs(free.h - before.h)).toBeLessThan(30);
 
   expect(consoleErrors).toEqual([]);
 });
