@@ -131,3 +131,34 @@ test("a floating object resizes from its handles too", async ({ page, consoleErr
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("arrow keys nudge a floating object and Shift takes a larger step; one undo reverts", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoFloat(page);
+  await selectFloat(page);
+  const before = await outlineBox(page);
+
+  // A plain ArrowRight nudges the object right by a small step.
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(120);
+  const nudged = await outlineBox(page);
+  expect(nudged.x).toBeGreaterThan(before.x);
+  const smallStep = nudged.x - before.x;
+
+  // Shift+ArrowRight takes a visibly larger step than the plain nudge.
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.waitForTimeout(120);
+  const big = await outlineBox(page);
+  expect(big.x - nudged.x).toBeGreaterThan(smallStep);
+
+  // Each nudge is one undoable action: two undos return to the start.
+  await page.keyboard.press(`${MOD}+z`);
+  await page.keyboard.press(`${MOD}+z`);
+  await page.waitForTimeout(150);
+  const undone = await outlineBox(page);
+  expect(Math.abs(undone.x - before.x)).toBeLessThanOrEqual(3);
+
+  expect(consoleErrors).toEqual([]);
+});
