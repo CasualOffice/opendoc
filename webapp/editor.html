@@ -570,6 +570,11 @@
     <div id="highlightMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Highlight color"></div>
     <input id="textColorCustom" type="color" value="#000000" class="visually-offscreen" tabindex="-1" aria-hidden="true" />
 
+    <!-- Floating selection-toolbar pickers: the same swatch menus as the ribbon,
+         anchored near the selection instead of the ribbon color carets. -->
+    <div id="selTextColorMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Text color"></div>
+    <div id="selHighlightMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Highlight color"></div>
+
     <div id="changeCaseMenu" class="context-menu change-case-menu" hidden role="menu" aria-label="Change case">
       <button type="button" class="menu-item" data-case="upper" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">UPPERCASE</span></button>
       <button type="button" class="menu-item" data-case="lower" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">lowercase</span></button>
@@ -811,15 +816,14 @@
       <button type="button" class="fmt" data-fmt="underline" title="Underline (⌘U)" aria-label="Underline"><span class="format-glyph underline-glyph" aria-hidden="true">U</span></button>
       <button type="button" class="fmt" data-fmt="strike" title="Strikethrough" aria-label="Strikethrough"><span class="format-glyph strike-glyph" aria-hidden="true">S</span></button>
       <span class="sel-divider"></span>
-      <label class="ctl swatch" title="Text color"><span>A</span><input id="selColor" type="color" value="#000000" /></label>
-      <label class="ctl" title="Highlight">
-        <select id="selHighlight" aria-label="Highlight">
-          <option value="none">Highlight</option>
-          <option value="yellow">Yellow</option><option value="green">Green</option>
-          <option value="cyan">Cyan</option><option value="magenta">Magenta</option>
-          <option value="red">Red</option><option value="none">None</option>
-        </select>
-      </label>
+      <button type="button" id="selTextColorBtn" class="sel-color-btn" title="Text color" aria-haspopup="dialog" aria-expanded="false" aria-controls="selTextColorMenu" aria-label="Text color">
+        <span class="color-apply-glyph" aria-hidden="true">A</span>
+        <span id="selTextColorBar" class="color-apply-bar" aria-hidden="true"></span>
+      </button>
+      <button type="button" id="selHighlightBtn" class="sel-color-btn" title="Highlight color" aria-haspopup="dialog" aria-expanded="false" aria-controls="selHighlightMenu" aria-label="Highlight color">
+        <span class="ms color-apply-glyph" aria-hidden="true">ink_highlighter</span>
+        <span id="selHighlightBar" class="color-apply-bar" aria-hidden="true"></span>
+      </button>
       <span class="sel-divider"></span>
       <button id="selComment" type="button" class="fmt" title="Add comment" aria-label="Add comment"><span class="ms" aria-hidden="true">add_comment</span></button>
     </div>

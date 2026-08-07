@@ -83,6 +83,15 @@ const highlightCaret = document.getElementById("highlight");
 const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
 const highlightMenu = document.getElementById("highlightMenu");
+// Floating selection-toolbar color/highlight pickers: mirror the ribbon swatch
+// menus but anchored to buttons that sit near the selection. Declared up here so
+// the shared reflect helpers can update their swatch bars during early init.
+const selTextColorBtn = document.getElementById("selTextColorBtn");
+const selHighlightBtn = document.getElementById("selHighlightBtn");
+const selTextColorMenu = document.getElementById("selTextColorMenu");
+const selHighlightMenu = document.getElementById("selHighlightMenu");
+const selTextColorBar = document.getElementById("selTextColorBar");
+const selHighlightBar = document.getElementById("selHighlightBar");
 const clearFormattingBtn = document.getElementById("clearFormatting");
 const formatPainterBtn = document.getElementById("formatPainter");
 const spacingBtn = document.getElementById("spacingBtn");
@@ -6674,6 +6683,7 @@ let lastHighlight = "yellow";
 function reflectTextColorSwatch(hex) {
   if (hex) lastTextColor = hex;
   textColorBar.style.background = lastTextColor;
+  if (selTextColorBar) selTextColorBar.style.background = lastTextColor;
 }
 /** Reflect the current highlight onto the highlighter bar (transparent for none). */
 function reflectHighlightSwatch(name) {
@@ -6681,6 +6691,10 @@ function reflectHighlightSwatch(name) {
   const hex = name === "none" ? null : highlightHex(name || lastHighlight);
   highlightBar.style.background = hex || "transparent";
   highlightBar.classList.toggle("is-none", !hex);
+  if (selHighlightBar) {
+    selHighlightBar.style.background = hex || "transparent";
+    selHighlightBar.classList.toggle("is-none", !hex);
+  }
 }
 
 /** Builds one swatch cell button. `value` is what gets applied (a hex for text,
@@ -6713,8 +6727,7 @@ function makeMenuHeading(text) {
 
 /** (Re)renders a color picker menu, marking the active swatch and refreshing the
  *  recently-used row. Called on each open via the popover's reflect hook. */
-function renderColorMenu(kind) {
-  const menu = kind === "text" ? textColorMenu : highlightMenu;
+function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highlightMenu) {
   const activeValue = kind === "text" ? lastTextColor.toLowerCase() : lastHighlight;
   menu.replaceChildren();
 
@@ -6770,9 +6783,12 @@ function renderColorMenu(kind) {
 const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
 const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
 
-// Text-color menu clicks (mousedown is preventDefault'd by the popover manager,
-// so the document selection survives the pointer press).
-textColorMenu.addEventListener("click", (e) => {
+// One text-color menu-click handler, shared by the ribbon menu and the floating
+// selection-toolbar menu. `popover` is the popover to close after applying; the
+// apply goes through the same `applyTextColor` path (one undoable action, gated
+// in Viewing/Suggesting). (mousedown is preventDefault'd by the popover manager,
+// so the document selection survives the pointer press.)
+function handleTextColorMenuClick(e, popover) {
   if (e.target.closest("[data-more]")) {
     textColorInput.value = lastTextColor;
     textColorInput.click(); // opens the OS color input as the custom fallback
@@ -6785,19 +6801,10 @@ textColorMenu.addEventListener("click", (e) => {
   lastTextColor = hex;
   if (!cell.dataset.auto) recordRecent(recentTextColors, hex);
   reflectTextColorSwatch(hex);
-  closePopover(textColorPopover);
+  closePopover(popover);
   focusEditorSurface();
-});
-// "More colors…" custom fallback commits when the OS picker closes.
-textColorInput.addEventListener("change", () => {
-  const hex = textColorInput.value;
-  applyTextColor(hex);
-  lastTextColor = hex;
-  recordRecent(recentTextColors, hex);
-  reflectTextColorSwatch(hex);
-});
-
-highlightMenu.addEventListener("click", (e) => {
+}
+function handleHighlightMenuClick(e, popover) {
   const cell = e.target.closest("[data-highlight]");
   if (!cell) return;
   const name = cell.dataset.highlight;
@@ -6807,9 +6814,33 @@ highlightMenu.addEventListener("click", (e) => {
     recordRecent(recentHighlights, name);
   }
   reflectHighlightSwatch(name);
-  closePopover(highlightPopover);
+  closePopover(popover);
   focusEditorSurface();
+}
+
+textColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, textColorPopover));
+// "More colors…" custom fallback commits when the OS picker closes.
+textColorInput.addEventListener("change", () => {
+  const hex = textColorInput.value;
+  applyTextColor(hex);
+  lastTextColor = hex;
+  recordRecent(recentTextColors, hex);
+  reflectTextColorSwatch(hex);
 });
+
+highlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, highlightPopover));
+
+// Floating selection-toolbar pickers: same renderer, same apply path, popovers
+// anchored to the floating buttons so they open next to the selection. Registered
+// after the ribbon popovers so the ribbon behavior is untouched.
+const selTextColorPopover = registerPopover(selTextColorBtn, selTextColorMenu, () =>
+  renderColorMenu("text", selTextColorMenu),
+);
+const selHighlightPopover = registerPopover(selHighlightBtn, selHighlightMenu, () =>
+  renderColorMenu("highlight", selHighlightMenu),
+);
+selTextColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, selTextColorPopover));
+selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, selHighlightPopover));
 
 // Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
 onButton(textColorApplyBtn, () => {
@@ -10019,8 +10050,6 @@ function applyHighlight(name) {
 
 // ---- Floating selection toolbar (appears above a text selection) ------------
 const selToolbar = document.getElementById("selToolbar");
-const selColor = document.getElementById("selColor");
-const selHighlight = document.getElementById("selHighlight");
 
 /** Shows the floating toolbar centred just above the current range selection (or
  *  below it when there's no room), or hides it when the selection is collapsed. */
@@ -10069,20 +10098,9 @@ function positionSelToolbar() {
 for (const b of selToolbar.querySelectorAll("[data-fmt]")) {
   onButton(b, () => toggleFormat(b.dataset.fmt));
 }
-selColor.addEventListener("change", () => {
-  const [r, g, b] = hexToRgb(selColor.value);
-  armOrApplyRun({ color: selColor.value }, () =>
-    runToolbarEdit((a, bo, c, d) => doc.setTextColor(a, bo, c, d, r, g, b)),
-  );
-});
-selHighlight.addEventListener("change", () => {
-  const name = selHighlight.value;
-  armOrApplyRun({ highlight: name }, () =>
-    runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, name)),
-  );
-  selHighlight.value = "none";
-});
-// Keep clicks inside the bar from collapsing the selection; hide on viewport scroll.
+// Text-color and highlight now use the ribbon's swatch-picker popovers, wired up
+// above (registerPopover on #selTextColorBtn / #selHighlightBtn). Keep clicks
+// inside the bar from collapsing the selection; hide on viewport scroll.
 selToolbar.addEventListener("mousedown", (e) => {
   if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") e.preventDefault();
 });
