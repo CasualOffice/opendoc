@@ -1122,6 +1122,64 @@ fn floating_anchored_image_round_trips() {
     assert_eq!(reexport.bytes, export.bytes);
 }
 
+/// A floating frame whose graphic style pins `style:horizontal-rel="page-content"`
+/// derives a PRECISE horizontal reference (Margin) rather than the anchor-type
+/// default (Page); export re-emits the `style:horizontal-rel` so the reference
+/// round-trips to a byte-exact fixed point.
+#[test]
+fn floating_anchor_horizontal_rel_round_trips() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties style:horizontal-rel="page-content"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    // `style:horizontal-rel="page-content"` pins the horizontal reference to Margin;
+    // the absent vertical-rel keeps the page anchor-type's Page derivation.
+    assert_eq!(
+        anchored.anchor.horizontal.relative_from,
+        HorizontalAnchor::Margin
+    );
+    assert_eq!(anchored.anchor.vertical.relative_from, VerticalAnchor::Page);
+
+    // Export re-emits the precise reference through a graphic automatic style, and
+    // does NOT emit a `style:vertical-rel` (Page is the page anchor-type default).
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"style:horizontal-rel="page-content""#));
+    assert!(!content_out.contains("style:vertical-rel"));
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
 /// A floating frame with a negative `svg:x` clamps the offset to zero but must
 /// REPORT the drop (not lose it silently); the result still round-trips.
 /// A floating frame whose graphic style carries a behind-text (run-through) wrap
