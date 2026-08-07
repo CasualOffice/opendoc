@@ -84,3 +84,19 @@ export function wordDeletionDirection(event, platform = keyboardPlatform()) {
   if (!wordModifier) return null;
   return event.key === "Backspace" ? "backward" : "forward";
 }
+
+/** Returns the semantic line-deletion direction for a collapsed caret.
+ *
+ * This is a macOS-only convention: ⌘Backspace deletes from the caret to the
+ * start of the line, and ⌘Delete (fn+Delete) to the end of the line. Windows
+ * and Linux have no ⌘-key equivalent, so the standard keymap always returns
+ * `null` and leaves ⌘/Ctrl combinations to the browser. Word deletion (Option
+ * on macOS, Ctrl elsewhere) is handled separately by `wordDeletionDirection`.
+ */
+export function lineDeletionDirection(event, platform = keyboardPlatform()) {
+  if (platform !== APPLE_PLATFORM) return null;
+  if (event.key !== "Backspace" && event.key !== "Delete") return null;
+  const lineModifier = event.metaKey && !event.altKey && !event.ctrlKey;
+  if (!lineModifier) return null;
+  return event.key === "Backspace" ? "backward" : "forward";
+}
