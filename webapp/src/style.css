@@ -3991,6 +3991,45 @@ body.is-format-painting .page-wrap * {
   pointer-events: none;
 }
 
+/* Image crop chrome (Word/Docs-style direct manipulation). The removed margins
+ * are dimmed by four strips; the kept rectangle stays clear over the canvas
+ * image beneath, bordered, with black crop handles dragged to adjust it. */
+.overlay .object-crop-dim {
+  position: absolute;
+  background: rgba(20, 22, 28, 0.55);
+  pointer-events: none;
+}
+.overlay .object-crop-rect {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(20, 22, 28, 0.55);
+  pointer-events: none;
+}
+.overlay .object-crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px; /* center on the handle point */
+  background: #14161a;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  touch-action: none;
+}
+.overlay .object-crop-handle[data-handle="0"],
+.overlay .object-crop-handle[data-handle="4"] { cursor: nwse-resize; }
+.overlay .object-crop-handle[data-handle="2"],
+.overlay .object-crop-handle[data-handle="6"] { cursor: nesw-resize; }
+.overlay .object-crop-handle[data-handle="1"],
+.overlay .object-crop-handle[data-handle="5"] { cursor: ns-resize; }
+.overlay .object-crop-handle[data-handle="3"],
+.overlay .object-crop-handle[data-handle="7"] { cursor: ew-resize; }
+/* Active state for the Crop → Apply button while a crop session is live. */
+.object-bar-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* Placeholder object context bar (docs/85 §4.1): names the selected object and
  * the actions the later slices will make real. */
 .object-context-bar {
@@ -4085,45 +4124,7 @@ body.is-format-painting .page-wrap * {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.crop-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.crop-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--muted);
-  font-size: var(--fs-small);
-  font-weight: 600;
-}
-.crop-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-}
-.crop-input > input {
-  width: 100%;
-  min-width: 0;
-  height: var(--h-field);
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--fs-body);
-  font-weight: 450;
-}
-.crop-input > input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-#altTextNote.error,
-#cropNote.error {
+#altTextNote.error {
   color: #b3261e;
   font-weight: 550;
 }

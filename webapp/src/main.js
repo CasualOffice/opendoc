@@ -2053,6 +2053,11 @@ let objectSelection = null; // { node, kind, mode: "selected" | "editing" } | nu
 /** Active object resize drag (docs/85 §5.3): a handle drag that previews as host
  * chrome and commits ONE `SetExtent` op on release. `null` when not resizing. */
 let objectResizeDrag = null;
+/** Active image-crop session — the Word/Docs-style direct-manipulation crop: the
+ * selected image shows crop handles + a dimmed overlay of the region being cut,
+ * dragged live and committed as ONE `SetImageCrop` op on Enter / click-away.
+ * `{ node, box:[x,y,w,h twips], crop:{l,t,r,b fractions}, handleDrag }` or null. */
+let objectCropSession = null;
 /** Active floating-object move drag (docs/85 §5.3): a body drag that previews an
  * outline and commits ONE `SetAnchor` (position) on release. `null` when idle. */
 let objectMoveDrag = null;
@@ -2327,6 +2332,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     applyActiveAuthorToDocument();
     selection = null;
     tableSelection = null;
+    objectCropSession = null; // a new document invalidates any in-progress crop
     reviewMode = "editing";
     suggestingBanner.hidden = true;
     if (viewingBanner) viewingBanner.hidden = true;
@@ -2932,6 +2938,12 @@ function paintTableResizeHandles(focus) {
  *  the chrome matches the raster exactly. Handles are display-only this slice. */
 function paintObjectSelection() {
   const { node } = objectSelection;
+  // In crop mode the image shows crop chrome (dimmed cut region + crop handles)
+  // in place of the resize handles — the Word/Docs crop experience.
+  if (objectCropSession && objectCropSession.node === node) {
+    paintObjectCrop();
+    return;
+  }
   place(doc.objectRect(node), "object-outline");
   const handles = doc.objectHandles(node); // [page, cx, cy, kind] * 8
   for (let i = 0; i + 3 < handles.length; i += 4) {
@@ -2947,6 +2959,186 @@ function paintObjectSelection() {
     el.addEventListener("pointerdown", (event) => startObjectResize(event, page, node, kind));
     page.overlay.appendChild(el);
   }
+}
+
+// ---- Image crop (direct-manipulation, Word/Docs standard) -------------------
+// The Crop button enters a live crop MODE on the selected image: the image keeps
+// its outline, the region that will be removed is dimmed, and eight crop handles
+// on the kept rectangle are dragged to adjust it. Enter (or clicking Crop again,
+// or clicking away) commits one SetImageCrop op; Esc cancels with no change.
+// Crop is picture-only and, like resize, not representable as a tracked revision,
+// so it is blocked in Suggesting/Viewing.
+//
+// Model note: `setImageCrop` insets are fractions of the SOURCE image and there
+// is no engine getter for the current crop, so — like the previous numeric
+// dialog — entering crop treats the displayed box as the full frame and a commit
+// REPLACES any existing crop. (Outward re-crop of an already-cropped image needs
+// an engine crop-getter + source-bytes binding; tracked as a follow-up.)
+
+/** Enters crop mode on the selected image (or, if already cropping, commits). */
+function enterCropMode() {
+  if (!doc || !objectSelection || objectSelection.kind === "textbox") return;
+  if (objectCropSession) {
+    commitCrop();
+    return;
+  }
+  if (reviewMode === "viewing") {
+    blockMutationInViewing();
+    return;
+  }
+  if (reviewMode === "suggesting") {
+    setStatus("Cropping an image is not tracked; switch to Editing to crop it", "error");
+    return;
+  }
+  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
+  if (rect.length < 5) return;
+  const [, x, y, w, h] = rect;
+  objectCropSession = {
+    node: objectSelection.node,
+    box: [x, y, w, h],
+    crop: { l: 0, t: 0, r: 0, b: 0 },
+    handleDrag: null,
+  };
+  focusEditorSurface();
+  drawSelection();
+  updateObjectContextBar();
+  setStatus("Drag the handles to crop · Enter to apply · Esc to cancel");
+}
+
+// The smallest keep-fraction of the image per axis, so a crop can't collapse it.
+const MIN_CROP_KEEP = 0.08;
+
+/** Paints the crop chrome: the image outline, four dim strips over the removed
+ *  margins (leaving the kept rectangle bright over the canvas image beneath),
+ *  the kept-rectangle border, and eight draggable crop handles. Re-derives pixels
+ *  from the stable box + live crop fractions, so it is correct after scroll/zoom. */
+function paintObjectCrop() {
+  const s = objectCropSession;
+  const [bx, by, bw, bh] = s.box;
+  const rectFlat = doc.objectRect(s.node);
+  if (rectFlat.length < 5) return;
+  const pageNumber = rectFlat[0];
+  const page = pages[pageNumber - 1];
+  if (!page) return;
+  const { sx, sy } = scaleOf(page);
+  place([pageNumber, bx, by, bw, bh], "object-outline");
+  // Kept rectangle in twips (source box minus cropped edges).
+  const kx = bx + s.crop.l * bw;
+  const ky = by + s.crop.t * bh;
+  const kw = bw * (1 - s.crop.l - s.crop.r);
+  const kh = bh * (1 - s.crop.t - s.crop.b);
+  // Four dim strips covering the removed margins around the kept rectangle.
+  const strip = (x, y, w, h) => {
+    if (w <= 0 || h <= 0) return;
+    const el = document.createElement("div");
+    el.className = "object-crop-dim";
+    el.style.left = `${x * sx}px`;
+    el.style.top = `${y * sy}px`;
+    el.style.width = `${w * sx}px`;
+    el.style.height = `${h * sy}px`;
+    page.overlay.appendChild(el);
+  };
+  strip(bx, by, bw, ky - by); // top
+  strip(bx, ky + kh, bw, by + bh - (ky + kh)); // bottom
+  strip(bx, ky, kx - bx, kh); // left
+  strip(kx + kw, ky, bx + bw - (kx + kw), kh); // right
+  // Kept-rectangle border.
+  const rect = document.createElement("div");
+  rect.className = "object-crop-rect";
+  rect.style.left = `${kx * sx}px`;
+  rect.style.top = `${ky * sy}px`;
+  rect.style.width = `${kw * sx}px`;
+  rect.style.height = `${kh * sy}px`;
+  page.overlay.appendChild(rect);
+  // Eight crop handles on the kept rectangle (NW,N,NE,E,SE,S,SW,W).
+  const points = [
+    [kx, ky], [kx + kw / 2, ky], [kx + kw, ky], [kx + kw, ky + kh / 2],
+    [kx + kw, ky + kh], [kx + kw / 2, ky + kh], [kx, ky + kh], [kx, ky + kh / 2],
+  ];
+  points.forEach(([cx, cy], kind) => {
+    const el = document.createElement("div");
+    el.className = "object-crop-handle";
+    el.dataset.handle = String(kind);
+    el.style.left = `${cx * sx}px`;
+    el.style.top = `${cy * sy}px`;
+    el.addEventListener("pointerdown", (event) => startCropHandleDrag(event, page, kind));
+    page.overlay.appendChild(el);
+  });
+}
+
+/** Begins dragging a crop handle. The kept rectangle updates live; the model is
+ *  untouched until commit. */
+function startCropHandleDrag(event, page, handleKind) {
+  if (!objectCropSession) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const s = objectCropSession;
+  s.handleDrag = {
+    handleKind,
+    page,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startCrop: { ...s.crop },
+  };
+  const move = (e) => updateCropHandleDrag(e);
+  const up = (e) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    if (objectCropSession) objectCropSession.handleDrag = null;
+    e.preventDefault();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+/** Updates the kept rectangle from a crop-handle drag. Per-handle signs decide
+ *  which edges move; each edge is clamped so opposite edges keep MIN_CROP_KEEP of
+ *  the image between them and neither passes the image bounds. */
+function updateCropHandleDrag(event) {
+  const s = objectCropSession;
+  if (!s || !s.handleDrag) return;
+  const drag = s.handleDrag;
+  const [, , bw, bh] = s.box;
+  const { sx, sy } = scaleOf(drag.page);
+  const dxFrac = bw > 0 ? (event.clientX - drag.startClientX) / sx / bw : 0;
+  const dyFrac = bh > 0 ? (event.clientY - drag.startClientY) / sy / bh : 0;
+  // Handle index → which edges it moves. NW,N,NE,E,SE,S,SW,W.
+  const movesLeft = [true, false, false, false, false, false, true, true][drag.handleKind];
+  const movesRight = [false, false, true, true, true, false, false, false][drag.handleKind];
+  const movesTop = [true, true, true, false, false, false, false, false][drag.handleKind];
+  const movesBottom = [false, false, false, false, true, true, true, false][drag.handleKind];
+  const c = { ...drag.startCrop };
+  if (movesLeft) c.l = Math.min(Math.max(0, drag.startCrop.l + dxFrac), 1 - drag.startCrop.r - MIN_CROP_KEEP);
+  if (movesRight) c.r = Math.min(Math.max(0, drag.startCrop.r - dxFrac), 1 - drag.startCrop.l - MIN_CROP_KEEP);
+  if (movesTop) c.t = Math.min(Math.max(0, drag.startCrop.t + dyFrac), 1 - drag.startCrop.b - MIN_CROP_KEEP);
+  if (movesBottom) c.b = Math.min(Math.max(0, drag.startCrop.b - dyFrac), 1 - drag.startCrop.t - MIN_CROP_KEEP);
+  s.crop = c;
+  drawSelection();
+  event.preventDefault();
+}
+
+/** Commits the crop as one SetImageCrop op (or clears it when nothing is cropped),
+ *  then exits crop mode. */
+function commitCrop() {
+  const s = objectCropSession;
+  if (!s) return;
+  const { l, t, r, b } = s.crop;
+  const node = s.node;
+  const cropped = l > 0.0005 || t > 0.0005 || r > 0.0005 || b > 0.0005;
+  objectCropSession = null;
+  runEdit(() => doc.setImageCrop(node, cropped ? [l, t, r, b] : null), { gate: true }).then(() => {
+    updateObjectContextBar();
+    setStatus(cropped ? "Image cropped" : "");
+  });
+}
+
+/** Exits crop mode with no change. */
+function cancelCrop() {
+  if (!objectCropSession) return;
+  objectCropSession = null;
+  drawSelection();
+  updateObjectContextBar();
+  setStatus("");
 }
 
 /** Begins a handle drag-resize (docs/85 §5.3). Records the object's current
@@ -3131,7 +3323,17 @@ function updateObjectContextBar() {
   actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
   if (objectSelection.kind !== "textbox") {
     // Crop is a picture-only operation; a text box has no source rectangle.
-    actions.appendChild(objectBarButton("crop", "Crop", "Crop image", openCropDialog));
+    // Direct-manipulation crop (drag handles) is the primary gesture; while a
+    // crop session is live the button becomes "Apply" and reads as active.
+    const cropping = !!objectCropSession && objectCropSession.node === objectSelection.node;
+    const cropBtn = objectBarButton(
+      "crop",
+      cropping ? "Apply" : "Crop",
+      cropping ? "Apply crop (Enter)" : "Crop image",
+      enterCropMode,
+    );
+    if (cropping) cropBtn.classList.add("is-active");
+    actions.appendChild(cropBtn);
   }
   actions.appendChild(objectBarButton("delete", "Delete", "Delete object", deleteSelectedObject, true));
   objectContextBarEl.appendChild(actions);
@@ -3218,14 +3420,6 @@ const altTextNote = document.getElementById("altTextNote");
 const altTextClose = document.getElementById("altTextClose");
 const altTextCancel = document.getElementById("altTextCancel");
 const ALT_TEXT_HINT = "Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.";
-const cropDialog = document.getElementById("cropDialog");
-const cropForm = document.getElementById("cropForm");
-const cropNote = document.getElementById("cropNote");
-const cropClose = document.getElementById("cropClose");
-const cropCancel = document.getElementById("cropCancel");
-const cropRemove = document.getElementById("cropRemove");
-const cropInputs = ["cropLeft", "cropTop", "cropRight", "cropBottom"].map((id) => document.getElementById(id));
-const CROP_HINT = "Left + right (and top + bottom) must together stay under 100%.";
 /** The object a currently-open object dialog is editing, and the chrome to
  *  restore focus to when it closes. */
 let objectDialogNode = null;
@@ -3290,63 +3484,6 @@ function applyAltText() {
   });
 }
 
-function setCropNote(message, isError) {
-  cropNote.textContent = message || CROP_HINT;
-  cropNote.classList.toggle("error", !!isError && !!message);
-}
-
-function openCropDialog() {
-  if (!doc || !objectSelection || !cropDialog) return;
-  if (objectSelection.kind === "textbox") return; // crop is picture-only
-  objectDialogNode = objectSelection.node;
-  objectDialogReturnFocus = document.activeElement;
-  // No engine getter exists for the current crop (only the `setImageCrop`
-  // setter is bound), so the inputs start at 0; applying replaces the crop.
-  for (const input of cropInputs) input.value = "0";
-  setCropNote("", false);
-  cropDialog.hidden = false;
-  queueMicrotask(() => cropInputs[0].focus());
-}
-
-function closeCropDialog() {
-  if (!cropDialog || cropDialog.hidden) return;
-  cropDialog.hidden = true;
-  objectDialogNode = null;
-  restoreObjectDialogFocus();
-}
-
-/** Reads a crop input as a 0..1 fraction, clamped to [0,1]; blank/NaN → 0. */
-function cropFraction(input) {
-  const pct = Number(input.value);
-  if (!Number.isFinite(pct)) return 0;
-  return Math.min(1, Math.max(0, pct / 100));
-}
-
-/** Applies the four-edge crop as one undoable action (mirrors the wrap op's
- *  `runEdit(..., { gate:true })` apply path). Opposite edges may not sum to ≥ 1
- *  (that would hide the whole image), which is caught inline before the op. */
-function applyCrop() {
-  if (!doc || !objectDialogNode) return;
-  const [l, t, r, b] = cropInputs.map(cropFraction);
-  if (l + r >= 1 || t + b >= 1) {
-    setCropNote("Opposite edges can't remove the whole image.", true);
-    return;
-  }
-  const node = objectDialogNode;
-  runEdit(() => doc.setImageCrop(node, [l, t, r, b]), { gate: true }).then(() => {
-    closeCropDialog();
-  });
-}
-
-/** Clears any crop from the image (`setImageCrop(node, null)`), one undoable op. */
-function removeCrop() {
-  if (!doc || !objectDialogNode) return;
-  const node = objectDialogNode;
-  runEdit(() => doc.setImageCrop(node, null), { gate: true }).then(() => {
-    closeCropDialog();
-  });
-}
-
 /** Returns focus to the chrome that opened an object dialog, or the canvas if it
  *  is gone (the context bar is rebuilt on every repaint, so its buttons detach). */
 function restoreObjectDialogFocus() {
@@ -3386,33 +3523,6 @@ if (altTextDialog) {
       closeAltTextDialog();
     } else if (event.key === "Tab") {
       trapModalFocus(event, altTextDialog);
-    }
-  });
-}
-
-if (cropDialog) {
-  cropForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    applyCrop();
-  });
-  for (const input of cropInputs) {
-    input.addEventListener("input", () => {
-      if (cropNote.classList.contains("error")) setCropNote("", false);
-    });
-  }
-  cropRemove.addEventListener("click", () => removeCrop());
-  cropClose.addEventListener("click", () => closeCropDialog());
-  cropCancel.addEventListener("click", () => closeCropDialog());
-  cropDialog.addEventListener("click", (event) => {
-    if (event.target === cropDialog) closeCropDialog();
-  });
-  cropDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeCropDialog();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, cropDialog);
     }
   });
 }
@@ -3766,6 +3876,14 @@ function activateLink(link) {
 
 function onPointerDown(page, event) {
   if (event.button !== 0) return;
+  // A pointerdown that reaches the page during a crop (a crop handle's own
+  // pointerdown stops propagation) is a click-away → commit the crop, exactly as
+  // Word/Docs do. This click is consumed by the commit; the next click interacts.
+  if (objectCropSession) {
+    event.preventDefault();
+    commitCrop();
+    return;
+  }
   focusEditorSurface();
   hideLinkChip();
   clearLinkHover();
@@ -5626,6 +5744,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
 function navCaret(dir, extend) {
   if (!selection) return;
+  if (objectCropSession) cancelCrop(); // arrow-navigating away discards the crop preview
   objectSelection = null; // moving the caret leaves any object selection
   clearObjectStatus();
   breakTypingSession();
@@ -10133,6 +10252,19 @@ document.addEventListener("keydown", async (e) => {
     cancelObjectResize(); // Escape during a drag cancels it (docs/85 §4.2)
     cancelObjectMove();
     return;
+  }
+  // Crop mode owns Enter (apply) and Escape (cancel) before the object grammar.
+  if (objectCropSession) {
+    if (key === "Enter") {
+      e.preventDefault();
+      commitCrop();
+      return;
+    }
+    if (key === "Escape") {
+      e.preventDefault();
+      cancelCrop();
+      return;
+    }
   }
   if (objectSelection) {
     if (key === "Escape") {
