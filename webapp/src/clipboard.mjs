@@ -70,10 +70,12 @@ const SKIP_TAGS = new Set(["SCRIPT", "STYLE"]);
 
 /** Parses a browser-native DOM (from an external app's `text/html` paste —
  * Word, Docs, a browser selection) into `ClipboardRun[]`. Best-effort and
- * sanitizing: recognizes common formatting tags, `<a href>`, and a simple
- * inline `color` style; anything else (tables, images, scripts, styles,
- * unknown elements) is either skipped or flattened to its plain text — never
- * silently dropped, only unstyled. */
+ * sanitizing: recognizes common formatting tags, `<a href>`, and inline CSS on
+ * the `style` attribute (Google Docs / Word wrap every run in a styled `<span>`
+ * with no `<b>/<i>/<u>` tags, so tag-only detection would flatten them). Tag
+ * and inline-style signals are merged — either sets a format on. Anything else
+ * (tables, images, scripts, styles, unknown elements) is either skipped or
+ * flattened to its plain text — never silently dropped, only unstyled. */
 export function htmlToRuns(root) {
   const runs = [];
   let sawParagraph = false;
@@ -99,6 +101,10 @@ export function htmlToRuns(root) {
         if (sawParagraph) runs.push({ paragraphBreak: true });
         sawParagraph = true;
       }
+      // Start from the inherited format, then let this element's tag and its
+      // inline style each turn formats on (either signal wins). Inline style
+      // is read last so a Docs-style `<span style>` with no tags is honored,
+      // and a deeper span's size/color overrides an ancestor's.
       const next = { ...format };
       if (tag === "B" || tag === "STRONG") next.bold = true;
       if (tag === "I" || tag === "EM") next.italic = true;
@@ -110,8 +116,7 @@ export function htmlToRuns(root) {
         const href = child.getAttribute("href");
         if (href) next.href = href;
       }
-      const color = parseInlineColor(child.getAttribute("style"));
-      if (color) next.color = color;
+      applyInlineStyle(next, child.getAttribute("style"));
       walk(child, next);
     }
   }
@@ -120,13 +125,92 @@ export function htmlToRuns(root) {
   return runs;
 }
 
-function parseInlineColor(style) {
-  if (!style) return undefined;
-  const hex = /color\s*:\s*(#[0-9a-fA-F]{6})\b/.exec(style);
-  if (hex) return hex[1].toLowerCase();
-  const rgb = /color\s*:\s*rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/.exec(style);
+// `sizeHalfPoints` is `pt * 2` (matches main.js run-size handling). Clamp to a
+// sane range — Word caps font size at 1638pt; the floor is 1pt.
+const MIN_SIZE_HALF_POINTS = 2;
+const MAX_SIZE_HALF_POINTS = 3276;
+
+/** Mutates `format` with the run properties an element's inline `style`
+ * declares, mapping CSS to the model's run shape. Only ever turns formats on
+ * (never unsets an inherited one), so it composes with tag-based signals and
+ * ancestor styles the same way "either wins" nesting does. */
+function applyInlineStyle(format, style) {
+  if (!style) return;
+  const decls = parseDeclarations(style);
+
+  const weight = decls["font-weight"];
+  if (weight && (weight === "bold" || weight === "bolder" || Number(weight) >= 600)) {
+    format.bold = true;
+  }
+  const fontStyle = decls["font-style"];
+  if (fontStyle && (fontStyle.startsWith("italic") || fontStyle.startsWith("oblique"))) {
+    format.italic = true;
+  }
+  const decoration = decls["text-decoration-line"] || decls["text-decoration"];
+  if (decoration) {
+    if (/\bunderline\b/.test(decoration)) format.underline = true;
+    if (/\bline-through\b/.test(decoration)) format.strike = true;
+  }
+  const vAlign = decls["vertical-align"];
+  if (vAlign === "super") format.vertAlign = "super";
+  if (vAlign === "sub") format.vertAlign = "sub";
+
+  const size = parseFontSize(decls["font-size"]);
+  if (size !== undefined) format.sizeHalfPoints = size;
+
+  const color = parseCssColor(decls.color);
+  if (color) format.color = color;
+  // background-color -> highlight (the insert path — `doc.pasteRichRuns` /
+  // `suggestStyledInsert` — accepts a `highlight` run field). Skip the
+  // transparent/no-fill values Docs and Word emit on unhighlighted runs, so an
+  // ordinary paste does not gain a phantom highlight.
+  const highlight = parseCssColor(decls["background-color"]);
+  if (highlight) format.highlight = highlight;
+}
+
+/** Splits a CSS declaration string into a `{ property: value }` map, with
+ * properties lowercased and values trimmed+lowercased. */
+function parseDeclarations(style) {
+  const map = {};
+  for (const decl of style.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx === -1) continue;
+    const prop = decl.slice(0, idx).trim().toLowerCase();
+    const value = decl.slice(idx + 1).trim().toLowerCase();
+    if (prop && value) map[prop] = value;
+  }
+  return map;
+}
+
+/** Converts a CSS `font-size` (pt or px) to the model's `sizeHalfPoints`, or
+ * `undefined` when absent/unparseable/zero. px is converted at 96dpi
+ * (1px = 0.75pt). Clamped to a sane range. */
+function parseFontSize(value) {
+  if (!value) return undefined;
+  const match = /^([\d.]+)\s*(pt|px)$/.exec(value);
+  if (!match) return undefined;
+  const num = Number(match[1]);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  const pt = match[2] === "px" ? num * 0.75 : num;
+  const halfPoints = Math.round(pt * 2);
+  if (halfPoints < MIN_SIZE_HALF_POINTS) return MIN_SIZE_HALF_POINTS;
+  if (halfPoints > MAX_SIZE_HALF_POINTS) return MAX_SIZE_HALF_POINTS;
+  return halfPoints;
+}
+
+/** Parses a CSS color value (6-digit hex, 3-digit hex, or `rgb()`/`rgba()`) to
+ * a lowercase `#rrggbb`, or `undefined` for anything else — including the
+ * `transparent`/no-fill keywords Docs and Word emit on unstyled backgrounds. */
+function parseCssColor(value) {
+  if (!value || value === "transparent") return undefined;
+  const hex6 = /^#([0-9a-f]{6})$/.exec(value);
+  if (hex6) return `#${hex6[1]}`;
+  const hex3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(value);
+  if (hex3) return `#${hex3[1]}${hex3[1]}${hex3[2]}${hex3[2]}${hex3[3]}${hex3[3]}`;
+  const rgb = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/.exec(value);
   if (!rgb) return undefined;
   const [r, g, b] = rgb.slice(1, 4).map(Number);
+  if ([r, g, b].some((n) => n > 255)) return undefined;
   return `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
 }
 
