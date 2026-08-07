@@ -119,9 +119,16 @@ The work lands as reviewable commits:
   `style:family="graphic"` style (`draw:fill`/`draw:fill-color` → `Fill::Solid`;
   `draw:stroke`/`svg:stroke-color`/`svg:stroke-width` → a `ShapeStroke`); a
   non-solid fill/outline degrades to none with a finding. A shape's text body (open
-  form), gradient/dash/arrowhead detail, and the other geometries (line, custom,
-  presets) are deferred with a finding; a non-floating (`as-char`/`char`/`frame`)
-  anchor or a missing extent skips the shape.
+  form), gradient/dash/arrowhead detail, and the other geometries (custom, presets)
+  are deferred with a finding; a non-floating (`as-char`/`char`/`frame`) anchor or a
+  missing extent skips the shape.
+- A floating `draw:line` maps to a `Line` `GroupShape`: its two endpoints
+  (`svg:x1`/`y1`/`x2`/`y2`) become the group's bounding box (offset = min corner,
+  extent = |delta|) plus a flip pair (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`)
+  that records which diagonal the endpoints span, so the exact endpoints are
+  recovered on export. A line has an outline but no fill. A negative or
+  out-of-range endpoint (the unsigned codec rejects it) skips the whole line with a
+  finding.
 - Document style defaults are mapped: `office:styles` `style:default-style`
   entries for the paragraph and text families feed the bounded supported subset
   (paragraph alignment; direct bold/italic/underline/strike/RGB-color/half-point

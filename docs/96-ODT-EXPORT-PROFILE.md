@@ -132,8 +132,13 @@ the report.
   `draw:`/`svg:` namespaces only the preserving content header declares, so a shape
   is emitted only on the preserving path; the plain semantic path reports the group
   as omitted rather than emit namespace-invalid XML. A gradient fill, dash/arrowhead
-  detail, rotation/flip, a non-box geometry, and any group that is not the recognized
-  single-shape form are reported and dropped.
+  detail, rotation/flip, and any group that is not a recognized single-shape form
+  are reported and dropped.
+- A group-of-one `Line` shape re-emits a `draw:line`: the two endpoints
+  (`svg:x1`/`y1`/`x2`/`y2`) are reconstructed from the group's anchor offset, its
+  extent, and the shape's flip pair (the exact inverse of the importer's mapping).
+  A line carries only an outline; a model fill on the shape is reported, not
+  emitted. Like the box shapes it is emitted only on the preserving path.
 - `ExactIfUnchanged` returns retained original ODT bytes only when the source
   format matches and the caller asserts the document is unchanged.
 
