@@ -1864,6 +1864,10 @@ body.modal-open {
   border-color: var(--accent);
 }
 
+.menu-row .menu-select {
+  margin-left: auto;
+}
+
 .menu-select {
   height: 26px;
   padding: 0 6px;

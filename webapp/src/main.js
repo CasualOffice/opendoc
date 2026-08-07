@@ -99,6 +99,9 @@ const spacingBtn = document.getElementById("spacingBtn");
 const spacingMenu = document.getElementById("spacingMenu");
 const spaceBeforeInput = document.getElementById("spaceBefore");
 const spaceAfterInput = document.getElementById("spaceAfter");
+const lineSpacingMode = document.getElementById("lineSpacingMode");
+const lineSpacingValue = document.getElementById("lineSpacingValue");
+const lineSpacingUnit = document.getElementById("lineSpacingUnit");
 const paraOptsBtn = document.getElementById("paraOptsBtn");
 const paragraphPropertiesPanel = document.getElementById("paragraphPropertiesPanel");
 const paragraphPropertiesContext = document.getElementById("paragraphPropertiesContext");
@@ -7172,6 +7175,23 @@ function reflectSpacingMenu() {
   for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
     b.setAttribute("aria-checked", String(Number(b.dataset.percent) === percent));
   }
+  // Reflect the mode + value fields (lineRule: 0 auto/multiple, 1 atLeast, 2 exact).
+  const editingCustom =
+    document.activeElement === lineSpacingMode ||
+    document.activeElement === lineSpacingValue;
+  if (!editingCustom) {
+    if (s.lineRule === 1) {
+      lineSpacingMode.value = "atLeast";
+      lineSpacingValue.value = s.lineTwip > 0 ? String(round2(s.lineTwip / TWIPS_PER_POINT)) : "";
+    } else if (s.lineRule === 2) {
+      lineSpacingMode.value = "exact";
+      lineSpacingValue.value = s.lineTwip > 0 ? String(round2(s.lineTwip / TWIPS_PER_POINT)) : "";
+    } else {
+      lineSpacingMode.value = "multiple";
+      lineSpacingValue.value = s.linePercent > 0 ? String(round2(s.linePercent / 100)) : "";
+    }
+    reflectLineSpacingUnit();
+  }
   // Don't overwrite a field the user is mid-edit in.
   if (document.activeElement !== spaceBeforeInput) {
     spaceBeforeInput.value = s.beforeTwip >= 0 ? String(Math.round(s.beforeTwip / TWIPS_PER_POINT)) : "";
@@ -7188,6 +7208,44 @@ for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
     reflectSpacingMenu();
   });
 }
+
+/** Round to at most 2 decimals, trimming trailing zeros. */
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/** Sync the value field's unit label + step to the current mode (× for a
+ *  multiple, pt for atLeast/exact). */
+function reflectLineSpacingUnit() {
+  const multiple = lineSpacingMode.value === "multiple";
+  lineSpacingUnit.textContent = multiple ? "×" : "pt";
+  lineSpacingValue.step = multiple ? "0.05" : "1";
+}
+
+/** Commit the custom line-spacing mode + value. Multiple rides `setLineSpacing`
+ *  (the `auto` percent rule); At least / Exactly ride `setLineSpacingExact`
+ *  (twips + `at_least` flag: true → atLeast, false → exact). Blank/non-numeric
+ *  is ignored. */
+function applyCustomLineSpacing() {
+  const raw = lineSpacingValue.value.trim();
+  if (raw === "" || !Number.isFinite(Number(raw))) return;
+  const v = Number(raw);
+  if (v <= 0) return;
+  const mode = lineSpacingMode.value;
+  if (mode === "multiple") {
+    const percent = Math.round(v * 100);
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, percent));
+  } else {
+    const twips = Math.max(0, Math.round(v * TWIPS_PER_POINT));
+    const atLeast = mode === "atLeast";
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacingExact(a, x, c, d, twips, atLeast));
+  }
+  reflectSpacingMenu();
+}
+// Switching mode only reinterprets the value's unit; it never auto-applies (a
+// multiple typed as "1.5" must not be re-read as 1.5 pt). Commit on value change.
+lineSpacingMode.addEventListener("change", reflectLineSpacingUnit);
+lineSpacingValue.addEventListener("change", applyCustomLineSpacing);
 
 /** Commit a space-before/after field: blank clears (back to style default),
  *  otherwise points → twips (clamped ≥ 0). Ignores non-numeric input. */

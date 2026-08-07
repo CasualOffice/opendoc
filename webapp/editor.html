@@ -503,6 +503,14 @@
       <button type="button" class="menu-item spacing-line" data-percent="150" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>1.5</button>
       <button type="button" class="menu-item spacing-line" data-percent="200" role="menuitemradio"><span class="menu-check" aria-hidden="true"></span>Double</button>
       <div class="menu-divider"></div>
+      <div class="menu-heading">Line spacing options</div>
+      <label class="menu-row">Mode<select id="lineSpacingMode" class="menu-select" aria-label="Line spacing mode">
+        <option value="multiple">Multiple</option>
+        <option value="atLeast">At least</option>
+        <option value="exact">Exactly</option>
+      </select></label>
+      <label class="menu-row">Value<input id="lineSpacingValue" type="number" min="0" step="0.05" inputmode="decimal" aria-label="Line spacing value" /><span class="menu-unit" id="lineSpacingUnit">&times;</span></label>
+      <div class="menu-divider"></div>
       <label class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
       <label class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
     </div>
