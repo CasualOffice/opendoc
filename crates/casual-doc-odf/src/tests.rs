@@ -3108,6 +3108,78 @@ fn group_picture_child_round_trips() {
     assert!(plain_pkg.read_part("Pictures/logo.png").is_err());
 }
 
+/// When a `draw:g` holds supported shapes AND a picture whose media is not retained,
+/// the export must emit the group with the healthy shapes (dropping only the picture)
+/// rather than sinking the whole group and silently losing the shapes — which the
+/// parent WOULD have kept (it ignored the frame at import). Regression for the
+/// collateral-loss defect: an unrepresentable child drops individually, not the group.
+#[test]
+fn group_with_unavailable_picture_keeps_sibling_shapes() {
+    // A group with two shapes (rect, ellipse) plus a picture placed at the bottom (so it
+    // does NOT determine the union's min corner — dropping it leaves the shapes' absolute
+    // positions unchanged).
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:g text:anchor-type="page" draw:z-index="3"><draw:rect draw:style-name="gr1" svg:x="2cm" svg:y="2cm" svg:width="4cm" svg:height="3cm"/><draw:ellipse draw:style-name="gr1" svg:x="7cm" svg:y="2cm" svg:width="3cm" svg:height="3cm"/><draw:frame svg:x="2cm" svg:y="9cm" svg:width="2cm" svg:height="2cm"><draw:image xlink:href="Pictures/logo.png"/></draw:frame></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/logo.png" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/logo.png",
+            bytes: b"\x89PNG\r\n\x1a\nLOGO".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    // Import models all three children.
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    assert_eq!(group.children.len(), 3);
+
+    // Export on the preserving path but with NO retained media (the picture's media is
+    // unavailable, drawing namespaces are still active). The two shapes must survive.
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(
+        content_out.contains("<draw:g"),
+        "the group survives with its healthy shapes"
+    );
+    assert!(content_out.contains("<draw:rect"), "the rect survives");
+    assert!(
+        content_out.contains("<draw:ellipse"),
+        "the ellipse survives"
+    );
+    // The unavailable picture is dropped — no frame, no image reference, no orphan part.
+    assert!(!content_out.contains("draw:image"));
+    assert!(!content_out.contains("draw:frame"));
+    assert!(out.read_part("Pictures/logo.png").is_err());
+
+    // Byte fixed point: re-importing yields a group of just the two shapes, and a second
+    // export is byte-identical (the dropped picture never re-enters the model).
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(reparagraph) = &reopened.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(regroup) = &reparagraph.inlines[0] else {
+        panic!("group")
+    };
+    assert_eq!(regroup.children.len(), 2, "only the two shapes remain");
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
 /// A `draw:g` whose children are each within the EMU domain but whose union
 /// bounding box exceeds it must drop the group WITH a finding — not abort the whole
 /// import — so unrelated content (a normal paragraph) survives.

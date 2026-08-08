@@ -2727,13 +2727,14 @@ impl Writer {
                     {
                         self.write_group_line(group, shape)?;
                     } else if self.drawing_namespaces_available
-                        && flat_shape_group(group, &self.available_media)
+                        && top_group_emittable(group, &self.available_media)
                     {
                         self.write_group_container(group)?;
                     } else {
-                        // A nested/transformed group, an unsupported geometry, a
-                        // text-box child, a picture whose media is not retained, or the
-                        // plain path (no drawing namespaces / no available media).
+                        // A non-anchored or transformed top-level group, a group whose
+                        // children are ALL unrepresentable, or the plain path (no drawing
+                        // namespaces). A group with only SOME unrepresentable children is
+                        // handled above — those children are dropped individually.
                         self.reporter
                             .record("odt.export.group", ModelOutcome::Omitted);
                     }
@@ -3518,8 +3519,8 @@ impl Writer {
     /// z-index, with each child emitted at its absolute position (the group anchor
     /// offset plus the child's group-relative offset — the identity transform makes
     /// this exact). Children are written in order, which is their intra-group paint/z
-    /// order. Only reached via `flat_shape_group`, so every child is a supported box or
-    /// line shape or a supported nested group.
+    /// order. Only reached via `top_group_emittable`; `write_group_children` drops any
+    /// individually-unrepresentable child, so at least one emittable child is written.
     fn write_group_container(&mut self, group: &WordprocessingGroup) -> Result<(), OdfError> {
         let Some(anchor) = &group.anchor else {
             self.reporter
@@ -3558,7 +3559,8 @@ impl Writer {
     /// (WITHOUT `text:anchor-type`/`draw:z-index` — those belong only to the top-level
     /// group) and recurses with `base + transform.offset` as its children's origin (the
     /// identity-scale transform the recognizer guarantees makes this a pure
-    /// translation). Only reached with children `flat_shape_group` accepted.
+    /// translation). Individually-unrepresentable children are skipped with a
+    /// `group_child` finding; the emittable rest are written.
     fn write_group_children(
         &mut self,
         children: &[GroupChild],
@@ -3566,6 +3568,16 @@ impl Writer {
         base_y: i64,
     ) -> Result<(), OdfError> {
         for child in children {
+            if !group_child_emittable(child, &self.available_media) {
+                // An unrepresentable child (unsupported geometry, a transformed or
+                // unretained picture, or a non-translation nested group): drop just this
+                // child so its emittable siblings survive, rather than sinking the whole
+                // group. `top_group_emittable`/`nested_group_emittable` guarantee at
+                // least one sibling remains, so the enclosing `draw:g` is never empty.
+                self.reporter
+                    .record("odt.export.group_child", ModelOutcome::Omitted);
+                continue;
+            }
             match child {
                 GroupChild::Shape(shape) => {
                     let abs_x = base_x + shape.offset.x_emu;
@@ -3601,8 +3613,9 @@ impl Writer {
                 }
                 GroupChild::Picture(picture) => {
                     // A picture child is a `draw:frame > draw:image` at its absolute
-                    // position, sized by its OWN extent. `flat_shape_group` guarantees
-                    // the media resolves, so this `get` is always `Some`.
+                    // position, sized by its OWN extent. The `group_child_emittable`
+                    // filter guarantees the media resolves, so this `get` is always
+                    // `Some`.
                     let abs_x = base_x + picture.offset.x_emu;
                     let abs_y = base_y + picture.offset.y_emu;
                     if let Some(part_name) = self.available_media.get(&picture.media).cloned() {
@@ -3619,7 +3632,7 @@ impl Writer {
                     self.write_group_children(&nested.children, nested_base_x, nested_base_y)?;
                     self.push("</draw:g>")?;
                 }
-                // `flat_shape_group` guarantees only Shape/Picture/Group children.
+                // The `group_child_emittable` filter admits only Shape/Picture/Group.
                 _ => continue,
             }
         }
@@ -4842,17 +4855,60 @@ fn nested_group_is_supported(
             .all(|child| group_child_is_supported(child, available_media))
 }
 
-/// Whether `group` is an anchored, identity-transform group whose children are ALL
-/// supported box/line shapes, retained pictures, or nested groups — the multi-child
-/// form this increment emits as a `draw:g`. A group-of-one bare box/line is handled by
-/// the single-shape fast paths first, so this only accepts 2+ children (or a 1-child
-/// group that is not a bare box/line — e.g. a lone nested group or a lone picture —
-/// which falls through here).
-fn flat_shape_group(
+/// Whether a `GroupChild` can be emitted inside a `draw:g` while its emittable siblings
+/// survive: a supported box/line shape, a retained untransformed picture, or a nested
+/// group with SOME emittable descendant. Unlike [`group_child_is_supported`] (which
+/// requires an ENTIRE nested subtree to be supported), a nested group here need only
+/// contain some emittable content — its unrepresentable children are dropped one at a
+/// time by [`write_group_children`], not the whole subtree.
+fn group_child_emittable(child: &GroupChild, available_media: &BTreeMap<MediaId, String>) -> bool {
+    match child {
+        GroupChild::Shape(_) | GroupChild::Picture(_) => {
+            group_child_is_supported(child, available_media)
+        }
+        GroupChild::Group(nested) => nested_group_emittable(nested, available_media),
+        _ => false,
+    }
+}
+
+/// Whether a NESTED group can be emitted as a child `<draw:g>` retaining at least its
+/// emittable descendants: no anchor / z-index (both belong only to the top-level group),
+/// a translation-only (identity-scale, unflipped, unrotated) transform, and SOME
+/// emittable child. Unrepresentable children are dropped individually.
+fn nested_group_emittable(
     group: &WordprocessingGroup,
     available_media: &BTreeMap<MediaId, String>,
 ) -> bool {
-    if group.anchor.is_none() || group.children.is_empty() {
+    if group.anchor.is_some() || group.relative_height.is_some() {
+        return false;
+    }
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    let transform = &group.transform;
+    let identity_scale = transform.child_offset == origin
+        && transform.child_extent == group.extent
+        && transform.extent == group.extent
+        && !transform.flip_h
+        && !transform.flip_v
+        && transform.rotation.is_none();
+    identity_scale
+        && group
+            .children
+            .iter()
+            .any(|child| group_child_emittable(child, available_media))
+}
+
+/// Whether an ANCHORED top-level group can be emitted as a `draw:g` retaining at least
+/// its emittable children: an identity transform and SOME emittable child. A group with
+/// a MIX of supported and unrepresentable children (e.g. a healthy shape beside a
+/// picture whose media is not retained) emits the supported ones — each dropped child is
+/// reported by [`write_group_children`] — rather than dropping the whole group and
+/// silently losing the healthy siblings the parent would have kept. A group-of-one bare
+/// box/line is handled by the single-shape fast paths first; this accepts the rest.
+fn top_group_emittable(
+    group: &WordprocessingGroup,
+    available_media: &BTreeMap<MediaId, String>,
+) -> bool {
+    if group.anchor.is_none() {
         return false;
     }
     let origin = PointEmu { x_emu: 0, y_emu: 0 };
@@ -4868,7 +4924,7 @@ fn flat_shape_group(
         && group
             .children
             .iter()
-            .all(|child| group_child_is_supported(child, available_media))
+            .any(|child| group_child_emittable(child, available_media))
 }
 
 /// Reconstructs a line's two endpoints from its bounding box (`origin` + extent) and
