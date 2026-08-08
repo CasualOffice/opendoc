@@ -3264,12 +3264,12 @@ impl Writer {
         )
     }
 
-    /// Writes a flat multi-child group as a `<draw:g>` wrapper carrying the anchor
-    /// and z-index, with each child shape emitted at its absolute position (the group
-    /// anchor offset plus the child's group-relative offset — the identity transform
-    /// makes this exact). Children are written in order, which is their intra-group
-    /// paint/z order. Only reached via `flat_shape_group`, so every child is a
-    /// supported box or line shape.
+    /// Writes a multi-child group as a `<draw:g>` wrapper carrying the anchor and
+    /// z-index, with each child emitted at its absolute position (the group anchor
+    /// offset plus the child's group-relative offset — the identity transform makes
+    /// this exact). Children are written in order, which is their intra-group paint/z
+    /// order. Only reached via `flat_shape_group`, so every child is a supported box or
+    /// line shape or a supported nested group.
     fn write_group_container(&mut self, group: &WordprocessingGroup) -> Result<(), OdfError> {
         let Some(anchor) = &group.anchor else {
             self.reporter
@@ -3298,42 +3298,72 @@ impl Writer {
             self.push("\"")?;
         }
         self.push(">")?;
-        for child in &group.children {
-            let GroupChild::Shape(shape) = child else {
-                continue; // flat_shape_group guarantees only Shape children
-            };
-            let abs_x = base_x + shape.offset.x_emu;
-            let abs_y = base_y + shape.offset.y_emu;
-            if shape.geometry == ShapeGeometry::Line {
-                let mut graphic = OdtGraphicStyle::default();
-                self.apply_shape_fill_stroke(&mut graphic, shape, false);
-                let name = self.register_graphic_style(graphic);
-                let (x1, y1, x2, y2) = line_endpoints(
-                    abs_x,
-                    abs_y,
-                    shape.extent.width_emu,
-                    shape.extent.height_emu,
-                    shape.flip_h,
-                    shape.flip_v,
-                );
-                self.push_line_element(name.as_deref(), None, None, x1, y1, x2, y2)?;
-            } else if let Some(element) = box_shape_element(shape.geometry) {
-                let mut graphic = OdtGraphicStyle::default();
-                self.apply_shape_fill_stroke(&mut graphic, shape, true);
-                let name = self.register_graphic_style(graphic);
-                self.push_box_shape_element(
-                    element,
-                    name.as_deref(),
-                    None,
-                    None,
-                    abs_x,
-                    abs_y,
-                    shape.extent.width_emu,
-                    shape.extent.height_emu,
-                )?;
+        self.write_group_children(&group.children, base_x, base_y)?;
+        self.push("</draw:g>")
+    }
+
+    /// Writes the ORDERED children of a `draw:g` at their absolute positions, given the
+    /// enclosing group's coordinate-space origin `(base_x, base_y)`. A leaf shape is
+    /// emitted at `base + child.offset`; a nested group emits a child `<draw:g>`
+    /// (WITHOUT `text:anchor-type`/`draw:z-index` — those belong only to the top-level
+    /// group) and recurses with `base + transform.offset` as its children's origin (the
+    /// identity-scale transform the recognizer guarantees makes this a pure
+    /// translation). Only reached with children `flat_shape_group` accepted.
+    fn write_group_children(
+        &mut self,
+        children: &[GroupChild],
+        base_x: i64,
+        base_y: i64,
+    ) -> Result<(), OdfError> {
+        for child in children {
+            match child {
+                GroupChild::Shape(shape) => {
+                    let abs_x = base_x + shape.offset.x_emu;
+                    let abs_y = base_y + shape.offset.y_emu;
+                    if shape.geometry == ShapeGeometry::Line {
+                        let mut graphic = OdtGraphicStyle::default();
+                        self.apply_shape_fill_stroke(&mut graphic, shape, false);
+                        let name = self.register_graphic_style(graphic);
+                        let (x1, y1, x2, y2) = line_endpoints(
+                            abs_x,
+                            abs_y,
+                            shape.extent.width_emu,
+                            shape.extent.height_emu,
+                            shape.flip_h,
+                            shape.flip_v,
+                        );
+                        self.push_line_element(name.as_deref(), None, None, x1, y1, x2, y2)?;
+                    } else if let Some(element) = box_shape_element(shape.geometry) {
+                        let mut graphic = OdtGraphicStyle::default();
+                        self.apply_shape_fill_stroke(&mut graphic, shape, true);
+                        let name = self.register_graphic_style(graphic);
+                        self.push_box_shape_element(
+                            element,
+                            name.as_deref(),
+                            None,
+                            None,
+                            abs_x,
+                            abs_y,
+                            shape.extent.width_emu,
+                            shape.extent.height_emu,
+                        )?;
+                    }
+                }
+                GroupChild::Group(nested) => {
+                    // A nested `draw:g` establishes no new frame; its children are
+                    // absolute, offset from this group's origin by the nested group's
+                    // (translation-only) transform offset.
+                    let nested_base_x = base_x + nested.transform.offset.x_emu;
+                    let nested_base_y = base_y + nested.transform.offset.y_emu;
+                    self.push("<draw:g>")?;
+                    self.write_group_children(&nested.children, nested_base_x, nested_base_y)?;
+                    self.push("</draw:g>")?;
+                }
+                // `flat_shape_group` guarantees only Shape/Group children.
+                _ => continue,
             }
         }
-        self.push("</draw:g>")
+        Ok(())
     }
 
     /// Emits a frame's alt text as `svg:title`, shared by the inline and anchored
@@ -4452,13 +4482,16 @@ fn single_line_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
     identity.then_some(shape)
 }
 
-/// Whether a `GroupChild::Shape` is one this increment can emit as a group child:
-/// a supported box or line geometry with no retained preset/adjustments and (box
-/// only) no flip/rotation. A box child's flip/rotation has no ODF box representation;
-/// a line child's flip encodes its diagonal and is permitted.
+/// Whether a `GroupChild` is one this increment can emit inside a `draw:g`: a
+/// supported box/line shape, or a NESTED group that is itself emittable (recursively).
+/// A box child's flip/rotation has no ODF box representation (rejected); a line child's
+/// flip encodes its diagonal and is permitted; a nested group must satisfy
+/// [`nested_group_is_supported`].
 fn group_child_is_supported(child: &GroupChild) -> bool {
-    let GroupChild::Shape(shape) = child else {
-        return false;
+    let shape = match child {
+        GroupChild::Shape(shape) => shape,
+        GroupChild::Group(nested) => return nested_group_is_supported(nested),
+        _ => return false,
     };
     if shape.preset.is_some() || !shape.adjustments.is_empty() || shape.rotation.is_some() {
         return false;
@@ -4469,11 +4502,32 @@ fn group_child_is_supported(child: &GroupChild) -> bool {
     }
 }
 
-/// Whether `group` is a flat, anchored, identity-transform group whose children are
-/// ALL supported box/line shapes — the multi-child form this increment emits as a
-/// `draw:g`. A group-of-one is handled by the single-shape fast paths first, so this
-/// only accepts 2+ children (or a 1-child group that is not a bare box/line, which
-/// falls through here rather than as a bare shape).
+/// Whether a NESTED group (a `GroupChild::Group`) is one this increment can re-emit as
+/// a child `<draw:g>`: no anchor and no z-index (both belong only to the top-level
+/// group), a translation-only (identity-scale, unflipped, unrotated) transform so a
+/// descendant's absolute coordinate is `base + transform.offset + child.offset`, and a
+/// non-empty child list whose members are themselves supported (recursively). The
+/// depth of this recursion is bounded by the model's `MAX_GROUP_DEPTH` invariant.
+fn nested_group_is_supported(group: &WordprocessingGroup) -> bool {
+    if group.anchor.is_some() || group.relative_height.is_some() || group.children.is_empty() {
+        return false;
+    }
+    let origin = PointEmu { x_emu: 0, y_emu: 0 };
+    let transform = &group.transform;
+    let identity_scale = transform.child_offset == origin
+        && transform.child_extent == group.extent
+        && transform.extent == group.extent
+        && !transform.flip_h
+        && !transform.flip_v
+        && transform.rotation.is_none();
+    identity_scale && group.children.iter().all(group_child_is_supported)
+}
+
+/// Whether `group` is an anchored, identity-transform group whose children are ALL
+/// supported box/line shapes or nested groups — the multi-child form this increment
+/// emits as a `draw:g`. A group-of-one bare box/line is handled by the single-shape
+/// fast paths first, so this only accepts 2+ children (or a 1-child group that is not
+/// a bare box/line — e.g. a lone nested group — which falls through here).
 fn flat_shape_group(group: &WordprocessingGroup) -> bool {
     if group.anchor.is_none() || group.children.is_empty() {
         return false;

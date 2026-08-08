@@ -26,8 +26,8 @@ use casual_doc_model::v1::{
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_model::v1::{
-    Fill, GroupChild, GroupShape, GroupTransform, PointEmu, Rgba, ShapeGeometry, ShapeStroke,
-    WordprocessingGroup,
+    Fill, GroupChild, GroupShape, GroupTransform, MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry,
+    ShapeStroke, WordprocessingGroup,
 };
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;
@@ -574,11 +574,11 @@ struct ShapeDraft {
     flip_v: bool,
 }
 
-/// One shape child of a `draw:g` group, captured with its ABSOLUTE position in the
-/// group's anchor frame (the bbox reduction to a group-relative offset happens at
+/// One leaf shape child of a `draw:g` group, captured with its ABSOLUTE position in
+/// the group's anchor frame (the bbox reduction to a group-relative offset happens at
 /// build time). Mirrors `ShapeDraft` minus the anchor/wrap (which live on the group).
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct GroupChildDraft {
+struct GroupShapeDraft {
     geometry: ShapeGeometry,
     abs_x_emu: i64,
     abs_y_emu: i64,
@@ -588,6 +588,18 @@ struct GroupChildDraft {
     stroke: Option<(RgbColor, i64)>,
     flip_h: bool,
     flip_v: bool,
+}
+
+/// One child of a `draw:g`: either a leaf box/line shape or a NESTED `draw:g`
+/// (itself an ordered list of children). In ODF every descendant of a `draw:g`
+/// carries ABSOLUTE coordinates — a nested group establishes no new coordinate
+/// frame — so a nested-group draft holds only its (absolute-coord) children; its
+/// bounding box and the identity transform that positions it within its parent are
+/// derived at build time. Child order is the intra-group paint/z order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum GroupChildDraft {
+    Shape(GroupShapeDraft),
+    Group(Vec<GroupChildDraft>),
 }
 
 /// A flat `draw:g` group: its floating anchor plus its ordered shape children (the
@@ -5110,7 +5122,7 @@ fn read_group_box_child(
         .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
     let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
     let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
-    Ok(Some(GroupChildDraft {
+    Ok(Some(GroupChildDraft::Shape(GroupShapeDraft {
         geometry,
         abs_x_emu: x,
         abs_y_emu: y,
@@ -5120,7 +5132,7 @@ fn read_group_box_child(
         stroke,
         flip_h: false,
         flip_v: false,
-    }))
+    })))
 }
 
 /// Reads a `draw:line` child of a `draw:g`, mapping its endpoints to the ABSOLUTE
@@ -5169,7 +5181,7 @@ fn read_group_line_child(
         .as_deref()
         .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
     let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
-    Ok(Some(GroupChildDraft {
+    Ok(Some(GroupChildDraft::Shape(GroupShapeDraft {
         geometry: ShapeGeometry::Line,
         abs_x_emu: x1.min(x2),
         abs_y_emu: y1.min(y2),
@@ -5179,7 +5191,7 @@ fn read_group_line_child(
         stroke,
         flip_h: x1 > x2,
         flip_v: y1 > y2,
-    }))
+    })))
 }
 
 /// Sub-parses a `draw:g` group's subtree off the main loop, capturing its floating
@@ -5238,6 +5250,85 @@ fn parse_draw_group(
         .map(|style| resolve_graphic_wrap(style, reporter))
         .unwrap_or((WrapMode::Square, false));
 
+    let children = parse_group_children(
+        reader,
+        group_depth,
+        0,
+        limits,
+        elements,
+        attributes,
+        attribute_bytes,
+        automatic_styles,
+        cancellation,
+        reporter,
+    )?;
+    if children.is_empty() {
+        reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    }
+    // Each descendant coordinate is individually within `MAX_EMU`, but the union
+    // bounding box (max edge − min corner) over ALL descendants (nested groups
+    // included) can exceed it. A group whose bbox is out of the model's extent domain
+    // must be dropped HERE with a finding — building it would fail `Document::validate`
+    // and abort the whole import (losing unrelated content), unlike every other group
+    // degrade which drops only the group.
+    let Some((min_x, min_y, max_x, max_y)) = group_children_bbox(&children) else {
+        // Unreachable: `children` is non-empty and every leaf contributes a box.
+        reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    if max_x - min_x > MAX_EMU || max_y - min_y > MAX_EMU {
+        reporter.report(
+            "odf.draw.group-oversized".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(None);
+    }
+    let Some((horizontal_rel, vertical_rel)) =
+        anchor_type.as_deref().and_then(floating_anchor_rels)
+    else {
+        reporter.report("odf.draw.group-anchor".to_owned(), ModelOutcome::Degraded);
+        return Ok(None);
+    };
+    Ok(Some(GroupDraft {
+        horizontal_rel,
+        vertical_rel,
+        relative_height: z_index,
+        wrap,
+        behind_doc,
+        children,
+    }))
+}
+
+/// Parses the ORDERED children of a `draw:g` (the opening `Start`/attributes were
+/// already read by the caller) up to — and consuming — its matching `End`, returning
+/// the box/line shapes and nested groups in document (paint/z) order. Shared by the
+/// top-level [`parse_draw_group`] and its own nested-group recursion.
+///
+/// Every descendant of a `draw:g` carries ABSOLUTE coordinates (ODF establishes no
+/// nested coordinate frame), so a nested `draw:g` recurses into this same function and
+/// its children keep their absolute positions — the bbox reduction to per-level
+/// offsets happens at build time. `nesting_depth` is the model group depth of the
+/// group whose children are being parsed (0 for the top-level group); a nested group
+/// one level deeper than [`MAX_GROUP_DEPTH`] allows is reported (`odf.draw.group-depth`)
+/// and skipped rather than built (which would fail `Document::validate`). Recursion is
+/// thus bounded by `MAX_GROUP_DEPTH`, and the XML-depth limit is enforced per event.
+#[allow(clippy::too_many_arguments)]
+fn parse_group_children(
+    reader: &mut NsReader<&[u8]>,
+    group_depth: usize,
+    nesting_depth: u32,
+    limits: OdfImportLimits,
+    elements: &mut usize,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    automatic_styles: &AutomaticStyles,
+    cancellation: &CancellationToken,
+    reporter: &mut Reporter,
+) -> Result<Vec<GroupChildDraft>, OdfError> {
+    let child_depth = group_depth
+        .checked_add(1)
+        .ok_or(OdfError::MalformedContent)?;
     let mut children: Vec<GroupChildDraft> = Vec::new();
     let mut buffer = Vec::new();
     loop {
@@ -5245,10 +5336,11 @@ fn parse_draw_group(
         let event = reader
             .read_event_into(&mut buffer)
             .map_err(|_| OdfError::MalformedContent)?;
-        // Only direct children of the `draw:g` are handled here; a shape child's own
-        // subtree (rare — a title/desc) is consumed by `consume_shape_subtree` for
-        // the `Start` form, and a nested `draw:g` is skipped wholesale, so the loop
-        // always sees the group's own closing `End` at the top level.
+        // Only direct children of this `draw:g` are handled here; a shape child's own
+        // subtree (rare — a title/desc) is consumed by `consume_shape_subtree` for the
+        // `Start` form, and a nested `draw:g`'s subtree is consumed by the recursive
+        // call (or `consume_shape_subtree` when over the depth budget), so the loop
+        // always sees this group's own closing `End` at the top level.
         let (element, is_start) = match event {
             Event::Eof | Event::DocType(_) => return Err(OdfError::MalformedContent),
             Event::Start(element) => (element, true),
@@ -5265,13 +5357,7 @@ fn parse_draw_group(
             *elements,
             limits.max_xml_elements,
         )?;
-        enforce(
-            "odf_content_xml_depth",
-            group_depth
-                .checked_add(1)
-                .ok_or(OdfError::MalformedContent)?,
-            limits.max_xml_depth,
-        )?;
+        enforce("odf_content_xml_depth", child_depth, limits.max_xml_depth)?;
         validate_name(&element, limits)?;
         let name = resolved_name(reader, &element);
         if is_active(&name) {
@@ -5281,9 +5367,7 @@ fn parse_draw_group(
                 skip_active_subtree(
                     reader,
                     limits,
-                    group_depth
-                        .checked_add(1)
-                        .ok_or(OdfError::MalformedContent)?,
+                    child_depth,
                     elements,
                     attributes,
                     attribute_bytes,
@@ -5314,29 +5398,85 @@ fn parse_draw_group(
                 automatic_styles,
                 reporter,
             )?
-        } else {
-            // A nested `draw:g`, a picture/text-box/control, or any other element:
-            // count its attributes and skip; nested groups and non-shape children are
-            // deferred with a finding this increment.
-            count_attributes_only(&element, attributes, attribute_bytes, limits)?;
-            if is_name(&name, NamespaceKind::Draw, b"g") {
-                reporter.report("odf.draw.group-nested".to_owned(), ModelOutcome::Degraded);
-            } else {
-                reporter.report("odf.draw.group-content".to_owned(), ModelOutcome::Degraded);
+        } else if is_name(&name, NamespaceKind::Draw, b"g") {
+            // A NESTED group. Count its own attributes (a transform on a `draw:g` is
+            // ignored by ODF — it is baked into the descendants' absolute coords — so
+            // report it exactly like the top-level group does, then recurse).
+            for attribute in element.attributes() {
+                let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+                let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                if namespace_kind(&namespace) == NamespaceKind::Draw
+                    && local.as_ref() == b"transform"
+                {
+                    reporter.report(
+                        "odf.draw.group-transform".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
             }
+            // A nested group would sit at model depth `nesting_depth + 1`; refuse it
+            // once that would exceed `MAX_GROUP_DEPTH` (equivalently `nesting_depth >=
+            // MAX_GROUP_DEPTH`), which also bounds this function's recursion.
+            if nesting_depth >= MAX_GROUP_DEPTH {
+                // One level past what the model permits: report and skip the subtree
+                // rather than build a group `Document::validate` would reject.
+                reporter.report("odf.draw.group-depth".to_owned(), ModelOutcome::Degraded);
+                if is_start {
+                    consume_shape_subtree(
+                        reader,
+                        child_depth,
+                        limits,
+                        elements,
+                        attributes,
+                        attribute_bytes,
+                        cancellation,
+                        reporter,
+                    )?;
+                }
+                buffer.clear();
+                continue;
+            }
+            if is_start {
+                let nested = parse_group_children(
+                    reader,
+                    child_depth,
+                    nesting_depth + 1,
+                    limits,
+                    elements,
+                    attributes,
+                    attribute_bytes,
+                    automatic_styles,
+                    cancellation,
+                    reporter,
+                )?;
+                if nested.is_empty() {
+                    reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
+                } else {
+                    children.push(GroupChildDraft::Group(nested));
+                }
+            } else {
+                // A self-closing `<draw:g/>`: an empty nested group, nothing to build.
+                reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
+            }
+            buffer.clear();
+            continue;
+        } else {
+            // A picture/text-box/control or any other element: count its attributes
+            // and skip; non-shape children are deferred with a finding this increment.
+            count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+            reporter.report("odf.draw.group-content".to_owned(), ModelOutcome::Degraded);
             None
         };
         if let Some(child) = child {
             children.push(child);
         }
-        // Consume a `Start`-form child's subtree so the loop resumes at the group's
-        // next child (or its own `End`).
+        // Consume a `Start`-form leaf child's subtree so the loop resumes at the
+        // group's next child (or its own `End`).
         if is_start {
             consume_shape_subtree(
                 reader,
-                group_depth
-                    .checked_add(1)
-                    .ok_or(OdfError::MalformedContent)?,
+                child_depth,
                 limits,
                 elements,
                 attributes,
@@ -5347,56 +5487,37 @@ fn parse_draw_group(
         }
         buffer.clear();
     }
-    if children.is_empty() {
-        reporter.report("odf.draw.group-empty".to_owned(), ModelOutcome::Degraded);
-        return Ok(None);
+    Ok(children)
+}
+
+/// The union bounding box `(min_x, min_y, max_x, max_y)` in ABSOLUTE coordinates over
+/// every LEAF shape reachable from `children` (recursing through nested groups).
+/// `None` only when there is no leaf (an all-empty tree), which the caller treats as
+/// an empty group. Each leaf coordinate is bounded by `parse_emu` to `0..=MAX_EMU`, so
+/// the sums here cannot overflow `i64`.
+fn group_children_bbox(children: &[GroupChildDraft]) -> Option<(i64, i64, i64, i64)> {
+    let mut bounds: Option<(i64, i64, i64, i64)> = None;
+    for child in children {
+        let (min_x, min_y, max_x, max_y) = match child {
+            GroupChildDraft::Shape(shape) => (
+                shape.abs_x_emu,
+                shape.abs_y_emu,
+                shape.abs_x_emu + shape.width_emu,
+                shape.abs_y_emu + shape.height_emu,
+            ),
+            GroupChildDraft::Group(nested) => group_children_bbox(nested)?,
+        };
+        bounds = Some(match bounds {
+            None => (min_x, min_y, max_x, max_y),
+            Some((bx0, by0, bx1, by1)) => (
+                bx0.min(min_x),
+                by0.min(min_y),
+                bx1.max(max_x),
+                by1.max(max_y),
+            ),
+        });
     }
-    // Each child coordinate is individually within `MAX_EMU`, but the union bounding
-    // box (max edge − min corner) can exceed it. A group whose bbox is out of the
-    // model's extent domain must be dropped HERE with a finding — building it would
-    // fail `Document::validate` and abort the whole import (losing unrelated
-    // content), unlike every other group degrade which drops only the group.
-    let min_x = children
-        .iter()
-        .map(|child| child.abs_x_emu)
-        .min()
-        .unwrap_or(0);
-    let min_y = children
-        .iter()
-        .map(|child| child.abs_y_emu)
-        .min()
-        .unwrap_or(0);
-    let max_x = children
-        .iter()
-        .map(|child| child.abs_x_emu + child.width_emu)
-        .max()
-        .unwrap_or(0);
-    let max_y = children
-        .iter()
-        .map(|child| child.abs_y_emu + child.height_emu)
-        .max()
-        .unwrap_or(0);
-    if max_x - min_x > MAX_EMU || max_y - min_y > MAX_EMU {
-        reporter.report(
-            "odf.draw.group-oversized".to_owned(),
-            ModelOutcome::Degraded,
-        );
-        return Ok(None);
-    }
-    let Some((horizontal_rel, vertical_rel)) =
-        anchor_type.as_deref().and_then(floating_anchor_rels)
-    else {
-        reporter.report("odf.draw.group-anchor".to_owned(), ModelOutcome::Degraded);
-        return Ok(None);
-    };
-    Ok(Some(GroupDraft {
-        horizontal_rel,
-        vertical_rel,
-        relative_height: z_index,
-        wrap,
-        behind_doc,
-        children,
-    }))
+    bounds
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9853,6 +9974,100 @@ fn hash_run_properties(hash: &mut u64, properties: &RunProperties) {
     );
 }
 
+/// Builds the model [`GroupChild`]s for one group level from its (absolute-coord)
+/// drafts, expressing each in the coordinate space whose origin is `(base_x, base_y)`
+/// — the min corner of the ENCLOSING group's bounding box. A leaf shape becomes a
+/// [`GroupChild::Shape`] at `abs - base`. A nested group becomes a
+/// [`GroupChild::Group`] with `anchor: None`, positioned by an identity transform:
+/// `offset = nmin - base`, `extent = child_extent = nmin..nmax`, `child_offset = 0`;
+/// its own children recurse with `base = nmin`, so a descendant's exported absolute
+/// coordinate telescopes back to `base + (nmin - base) + (abs - nmin) = abs`. Ids are
+/// allocated in document order (parent before its children), matching the flat path's
+/// per-shape allocation so a flat group's model is unchanged.
+fn build_group_children(
+    drafts: &[GroupChildDraft],
+    base_x: i64,
+    base_y: i64,
+    ids: &mut IdGenerator,
+) -> Result<Vec<GroupChild>, OdfError> {
+    let mut children = Vec::with_capacity(drafts.len());
+    for child in drafts {
+        match child {
+            GroupChildDraft::Shape(shape) => {
+                let child_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                children.push(GroupChild::Shape(GroupShape {
+                    id: child_id,
+                    offset: PointEmu {
+                        x_emu: shape.abs_x_emu - base_x,
+                        y_emu: shape.abs_y_emu - base_y,
+                    },
+                    extent: Extent {
+                        width_emu: shape.width_emu,
+                        height_emu: shape.height_emu,
+                    },
+                    geometry: shape.geometry,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    fill: shape.fill.map(|color| {
+                        Fill::Solid(Rgba {
+                            r: color.r,
+                            g: color.g,
+                            b: color.b,
+                            a: 255,
+                        })
+                    }),
+                    stroke: shape.stroke.map(|(color, width_emu)| ShapeStroke {
+                        color: Rgba {
+                            r: color.r,
+                            g: color.g,
+                            b: color.b,
+                            a: 255,
+                        },
+                        width_emu,
+                        dash: None,
+                        head_end: None,
+                        tail_end: None,
+                    }),
+                    flip_h: shape.flip_h,
+                    flip_v: shape.flip_v,
+                    rotation: None,
+                }));
+            }
+            GroupChildDraft::Group(nested) => {
+                // The nested group's own box = the union of ITS descendants (absolute).
+                let (nmin_x, nmin_y, nmax_x, nmax_y) =
+                    group_children_bbox(nested).ok_or(OdfError::InvalidModel)?;
+                let nested_extent = Extent {
+                    width_emu: nmax_x - nmin_x,
+                    height_emu: nmax_y - nmin_y,
+                };
+                let group_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                let nested_children = build_group_children(nested, nmin_x, nmin_y, ids)?;
+                children.push(GroupChild::Group(WordprocessingGroup {
+                    id: group_id,
+                    anchor: None,
+                    relative_height: None,
+                    extent: nested_extent,
+                    transform: GroupTransform {
+                        offset: PointEmu {
+                            x_emu: nmin_x - base_x,
+                            y_emu: nmin_y - base_y,
+                        },
+                        extent: nested_extent,
+                        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        child_extent: nested_extent,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    },
+                    children: nested_children,
+                }));
+            }
+        }
+    }
+    Ok(children)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_inlines(
     drafts: &[InlineDraft],
@@ -10087,79 +10302,18 @@ fn build_inlines(
             }
             InlineDraft::Group(index) => {
                 let draft = groups.get(*index).ok_or(OdfError::InvalidModel)?;
-                // The children carry absolute positions; reduce to the union bbox so
-                // the group's anchor sits at the min corner and each child at a
-                // group-relative offset (an identity transform reproduces the exact
-                // absolute positions on export).
-                let min_x = draft
-                    .children
-                    .iter()
-                    .map(|child| child.abs_x_emu)
-                    .min()
-                    .ok_or(OdfError::InvalidModel)?;
-                let min_y = draft
-                    .children
-                    .iter()
-                    .map(|child| child.abs_y_emu)
-                    .min()
-                    .ok_or(OdfError::InvalidModel)?;
-                let max_x = draft
-                    .children
-                    .iter()
-                    .map(|child| child.abs_x_emu + child.width_emu)
-                    .max()
-                    .ok_or(OdfError::InvalidModel)?;
-                let max_y = draft
-                    .children
-                    .iter()
-                    .map(|child| child.abs_y_emu + child.height_emu)
-                    .max()
-                    .ok_or(OdfError::InvalidModel)?;
+                // Descendants carry absolute positions; reduce to the union bbox over
+                // ALL descendants (nested groups included) so the top-level anchor sits
+                // at the min corner and every child at a group-relative offset. The
+                // identity outer transform reproduces the exact absolute positions on
+                // export; each nested group is positioned by its own transform.
+                let (min_x, min_y, max_x, max_y) =
+                    group_children_bbox(&draft.children).ok_or(OdfError::InvalidModel)?;
                 let extent = Extent {
                     width_emu: max_x - min_x,
                     height_emu: max_y - min_y,
                 };
-                let mut children = Vec::with_capacity(draft.children.len());
-                for child in &draft.children {
-                    let child_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
-                    children.push(GroupChild::Shape(GroupShape {
-                        id: child_id,
-                        offset: PointEmu {
-                            x_emu: child.abs_x_emu - min_x,
-                            y_emu: child.abs_y_emu - min_y,
-                        },
-                        extent: Extent {
-                            width_emu: child.width_emu,
-                            height_emu: child.height_emu,
-                        },
-                        geometry: child.geometry,
-                        preset: None,
-                        adjustments: Vec::new(),
-                        fill: child.fill.map(|color| {
-                            Fill::Solid(Rgba {
-                                r: color.r,
-                                g: color.g,
-                                b: color.b,
-                                a: 255,
-                            })
-                        }),
-                        stroke: child.stroke.map(|(color, width_emu)| ShapeStroke {
-                            color: Rgba {
-                                r: color.r,
-                                g: color.g,
-                                b: color.b,
-                                a: 255,
-                            },
-                            width_emu,
-                            dash: None,
-                            head_end: None,
-                            tail_end: None,
-                        }),
-                        flip_h: child.flip_h,
-                        flip_v: child.flip_v,
-                        rotation: None,
-                    }));
-                }
+                let children = build_group_children(&draft.children, min_x, min_y, ids)?;
                 InlineNode::Group(WordprocessingGroup {
                     id,
                     anchor: Some(DrawingAnchor {

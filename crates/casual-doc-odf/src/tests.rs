@@ -2316,6 +2316,111 @@ fn multi_child_shape_group_round_trips() {
     assert_eq!(reexport.bytes, export.bytes);
 }
 
+/// A `draw:g` containing a leaf shape AND a NESTED `draw:g` (itself holding an
+/// ellipse + line) imports to a `WordprocessingGroup` whose second child is a
+/// `GroupChild::Group` (anchor `None`, positioned by a translation-only transform),
+/// and re-exports the nested `<draw:g>` — WITHOUT `text:anchor-type` — reproducing
+/// every descendant's absolute coordinate, a byte-exact fixed point.
+#[test]
+fn nested_shape_group_round_trips() {
+    const CM: i64 = 360_000;
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style><style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-width="0.05cm" svg:stroke-color="#000000"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:g text:anchor-type="page" draw:z-index="3"><draw:rect draw:style-name="gr1" svg:x="2cm" svg:y="2cm" svg:width="2cm" svg:height="2cm"/><draw:g><draw:ellipse draw:style-name="gr1" svg:x="10cm" svg:y="10cm" svg:width="2cm" svg:height="2cm"/><draw:line draw:style-name="gr2" svg:x1="10cm" svg:y1="15cm" svg:x2="14cm" svg:y2="15cm"/></draw:g></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    // Outer union bbox over ALL descendants is (2,2)..(14,15) → extent 12cm x 13cm.
+    assert_eq!(group.children.len(), 2);
+    assert_eq!(group.extent.width_emu, 12 * CM);
+    assert_eq!(group.extent.height_emu, 13 * CM);
+    let GroupChild::Shape(rect) = &group.children[0] else {
+        panic!("rect")
+    };
+    assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(rect.offset.x_emu, 0); // 2cm - outer min 2cm
+    assert_eq!(rect.offset.y_emu, 0);
+    // The second child is a NESTED group, positioned by a translation-only transform.
+    let GroupChild::Group(nested) = &group.children[1] else {
+        panic!("nested group")
+    };
+    assert!(nested.anchor.is_none());
+    assert!(nested.relative_height.is_none());
+    // Nested bbox is (10,10)..(14,15); its offset within the outer child space is
+    // nmin - outer_min = (8cm, 8cm).
+    assert_eq!(nested.transform.offset.x_emu, 8 * CM);
+    assert_eq!(nested.transform.offset.y_emu, 8 * CM);
+    assert_eq!(nested.extent.width_emu, 4 * CM);
+    assert_eq!(nested.extent.height_emu, 5 * CM);
+    assert_eq!(nested.transform.child_offset.x_emu, 0);
+    assert_eq!(nested.transform.child_extent.width_emu, 4 * CM);
+    assert_eq!(nested.children.len(), 2);
+    let GroupChild::Shape(ellipse) = &nested.children[0] else {
+        panic!("ellipse")
+    };
+    assert_eq!(ellipse.geometry, ShapeGeometry::Ellipse);
+    assert_eq!(ellipse.offset.x_emu, 0); // 10cm - nested min 10cm
+    assert_eq!(ellipse.offset.y_emu, 0);
+    let GroupChild::Shape(line) = &nested.children[1] else {
+        panic!("line")
+    };
+    assert_eq!(line.geometry, ShapeGeometry::Line);
+    assert_eq!(line.offset.x_emu, 0); // 10cm - 10cm
+    assert_eq!(line.offset.y_emu, 5 * CM); // 15cm - 10cm
+
+    // Export re-emits the outer draw:g plus a bare nested draw:g (no anchor-type/z).
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<draw:g text:anchor-type="page" draw:z-index="3">"#));
+    // Exactly two draw:g opens: the anchored outer one and one bare nested one.
+    assert_eq!(content_out.matches("<draw:g").count(), 2);
+    assert_eq!(content_out.matches("</draw:g>").count(), 2);
+    assert!(content_out.contains("<draw:g>")); // the nested group carries no attributes
+    assert!(content_out.contains(r#"<draw:ellipse draw:style-name="#));
+    assert!(content_out.contains(r#"<draw:line draw:style-name="#));
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
 /// A `draw:g` whose children are each within the EMU domain but whose union
 /// bounding box exceeds it must drop the group WITH a finding — not abort the whole
 /// import — so unrelated content (a normal paragraph) survives.
