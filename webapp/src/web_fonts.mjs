@@ -125,6 +125,23 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
     url: `${NOTO}/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf`,
     scripts: Object.freeze(["Zyyy", "Latn"]),
   }),
+  // Pictographic emoji. Real documents carry them — a .docx written anywhere
+  // else can contain 😀 in a heading — and without a covering face every one of
+  // them painted as tofu, whatever produced it.
+  //
+  // This is the MONOCHROME Noto Emoji, deliberately: it is an ordinary outline
+  // font, so it shapes and rasterizes through the existing glyph pipeline with
+  // no colour-glyph (COLR/CBDT/sbix) support in the engine. Colour emoji remain
+  // a separate, much larger piece of work; black-and-white emoji that are
+  // legible and correctly spaced beat notdef boxes in the meantime.
+  //
+  // Like every bucket here it is coverage-driven: `missingCoverage()` only asks
+  // for it when the open document actually contains these scalars, so documents
+  // without emoji never pay the ~2 MB.
+  emoji: Object.freeze({
+    url: `${GOOGLE_FONTS}/notoemoji/NotoEmoji%5Bwght%5D.ttf`,
+    scripts: Object.freeze(["Zyyy", "Latn"]),
+  }),
 });
 
 /** Which script fallback bucket (if any) covers a Unicode scalar. */
@@ -156,14 +173,30 @@ export function fontKeyForCodePoint(cp) {
   if (cp >= 0x0d80 && cp <= 0x0dff) return "sinhala";
   if (cp >= 0x0590 && cp <= 0x05ff) return "hebrew";
   if (cp >= 0x0e00 && cp <= 0x0e7f) return "thai";
-  // Geometric Shapes / Miscellaneous Symbols / Dingbats — not full emoji
-  // (those need color-glyph rendering support the engine doesn't have yet).
+  // Geometric Shapes / Miscellaneous Symbols / Dingbats. Noto Sans Symbols 2
+  // covers these monochrome shapes, and they are what a checklist's ☐/☒ markers
+  // and similar plain content use.
   if (
     (cp >= 0x25a0 && cp <= 0x25ff) ||
     (cp >= 0x2600 && cp <= 0x26ff) ||
     (cp >= 0x2700 && cp <= 0x27bf)
   )
     return "symbols";
+  // Pictographic emoji, in the astral plane. Every block here is covered by the
+  // monochrome Noto Emoji face registered above; before it existed these all
+  // resolved to no font at all and rendered as notdef boxes in any document
+  // that contained them.
+  if (
+    (cp >= 0x1f300 && cp <= 0x1f5ff) || // Misc Symbols and Pictographs
+    (cp >= 0x1f600 && cp <= 0x1f64f) || // Emoticons
+    (cp >= 0x1f680 && cp <= 0x1f6ff) || // Transport and Map
+    (cp >= 0x1f700 && cp <= 0x1f77f) || // Alchemical Symbols
+    (cp >= 0x1f780 && cp <= 0x1f7ff) || // Geometric Shapes Extended
+    (cp >= 0x1f900 && cp <= 0x1f9ff) || // Supplemental Symbols and Pictographs
+    (cp >= 0x1fa70 && cp <= 0x1faff) || // Symbols and Pictographs Extended-A
+    (cp >= 0x1f1e6 && cp <= 0x1f1ff) // Regional indicators (flag pairs)
+  )
+    return "emoji";
   return null;
 }
 

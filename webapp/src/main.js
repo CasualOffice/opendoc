@@ -2624,6 +2624,12 @@ async function provisionFonts(name) {
 /** The script fallback buckets already fetched + registered this session, so a
  *  later coverage check never re-fetches a font it already has. */
 const provisionedFallbackKeys = new Set();
+// Buckets whose fetch is in flight. Coverage is now checked after every edit, so
+// several checks can overlap — typing three emoji fires three — and without this
+// each would see an empty `provisionedFallbackKeys` and start its own ~2 MB
+// download of the same face. Membership is cleared on failure so a genuine
+// network error is still retried by the next edit.
+const inFlightFallbackKeys = new Set();
 
 /** Fetches and registers any script fallback fonts the document now needs but
  *  hasn't got yet (`doc.missingCoverage()` → buckets), skipping ones already
@@ -2634,9 +2640,12 @@ async function provisionMissingFallbacks(label) {
   const warnings = [];
   if (!doc) return warnings;
   const missing = doc.missingCoverage();
-  const keys = fallbackKeysFor(missing).filter((key) => !provisionedFallbackKeys.has(key));
+  const keys = fallbackKeysFor(missing).filter(
+    (key) => !provisionedFallbackKeys.has(key) && !inFlightFallbackKeys.has(key),
+  );
   if (keys.length === 0) return warnings;
   setStatus(`Fetching fonts for ${label} (${keys.join(", ")})…`);
+  for (const key of keys) inFlightFallbackKeys.add(key);
   for (const key of keys) {
     const { url, scripts } = SCRIPT_FALLBACK_FONTS[key];
     try {
@@ -2650,6 +2659,8 @@ async function provisionMissingFallbacks(label) {
       console.warn(`font ${key} (${url}) failed:`, err);
       setStatus(`Could not load the ${key} font — some text may show as ▯`, "error");
       warnings.push(key);
+    } finally {
+      inFlightFallbackKeys.delete(key);
     }
   }
   return warnings;
@@ -6175,6 +6186,14 @@ async function applyEditResult(res) {
   }
   scheduleChromeRefresh({ stats: true, outline: true });
   scrollCaretIntoView();
+  // Any edit can introduce a scalar no provisioned face covers — an emoji from
+  // the picker, a paste from another app, an IME commit. Coverage used to be
+  // checked only on open and for the two edits known to add symbols (checklist
+  // and list markers), so everything else rendered as notdef boxes until the
+  // document was reopened. `missingCoverage()` is an engine-side scan that
+  // returns nothing in the overwhelmingly common case, and the fetch only
+  // happens when a bucket is genuinely absent, so this stays off the hot path.
+  void ensureGlyphCoverage("this edit");
 }
 
 /** Ends the current typing gesture. The next printable key receives a fresh
@@ -11757,7 +11776,7 @@ document.addEventListener("pointerdown", (e) => {
 document.addEventListener("keydown", (e) => {
   if (pasteOptionsEl.hidden) return;
   if (e.key === "Escape") return hidePasteOptions();
-  const editingKey = e.key.length === 1
+  const editingKey = [...e.key].length === 1
     || ["Backspace", "Delete", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key);
   if (editingKey && !e.metaKey && !e.ctrlKey && !e.altKey) hidePasteOptions();
 }, true);
@@ -11863,8 +11882,9 @@ document.addEventListener("keydown", async (e) => {
         return;
       }
       // Swallow text-producing keys; navigation/modifier combos fall through so
-      // the user can still move the caret off the object.
-      if (key.length === 1 && !mod) {
+      // the user can still move the caret off the object. Code points, not UTF-16
+      // units, so an emoji is swallowed here too rather than leaking through.
+      if ([...key].length === 1 && !mod) {
         e.preventDefault();
         return;
       }
@@ -12145,8 +12165,12 @@ document.addEventListener("keydown", async (e) => {
     );
     return;
   }
-  // A printable character (single key, no modifiers).
-  if (key.length === 1) {
+  // A printable character (single key, no modifiers). Counted in CODE POINTS,
+  // not UTF-16 units: an emoji arrives as a surrogate pair, so `key.length === 1`
+  // silently discarded every astral character the user typed or an IME committed
+  // — while the same character pasted or inserted from a picker went in fine.
+  // Named keys ("Enter", "F1", "Tab") are still longer than one code point.
+  if ([...key].length === 1) {
     e.preventDefault();
     const session = typingSessionForKey();
     if (range) {
