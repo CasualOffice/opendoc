@@ -698,6 +698,32 @@ impl WasmDocument {
             })
     }
 
+    /// Every selectable object in the document, in paint order, as JSON
+    /// `[{ node, kind, page, anchored }]`.
+    ///
+    /// Floating objects are otherwise reachable only by pointing at them:
+    /// `objectAt` needs a coordinate, so a keyboard user cannot select an image
+    /// or text box at all, and a screen reader cannot find a text box while
+    /// reading body text because it floats above the text layer. This is the
+    /// ordered list Tab / Shift+Tab traversal walks (docs/85 §8d, Q1) — Word
+    /// cycles floating objects with Tab once one is selected, and Word for the
+    /// web moves between graphics the same way.
+    #[wasm_bindgen(js_name = objectOrder)]
+    #[must_use]
+    pub fn object_order(&self) -> String {
+        let objects: Vec<ObjectOrderEntryJson> = self
+            .object_boxes()
+            .into_iter()
+            .map(|obj| ObjectOrderEntryJson {
+                node: obj.node.to_string(),
+                kind: obj.kind.to_owned(),
+                page: obj.page,
+                anchored: obj.anchored,
+            })
+            .collect();
+        serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
+    }
+
     /// The placed rectangle of the object `node`, as `[page, xTwip, yTwip,
     /// wTwip, hTwip]` — the geometry the frontend paints the selection outline
     /// from (docs/85 §3.3 `objectRect`). Empty if `node` is not a currently
@@ -9482,6 +9508,19 @@ enum A11yBlockJson {
     Table {
         rows: Vec<Vec<String>>,
     },
+}
+
+/// One entry of [`object_order`]: a selectable object and the little the caller
+/// needs to select it without a second round-trip.
+///
+/// [`object_order`]: WasmDocument::object_order
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ObjectOrderEntryJson {
+    node: String,
+    kind: String,
+    page: u32,
+    anchored: bool,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
