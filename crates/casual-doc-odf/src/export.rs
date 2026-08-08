@@ -714,6 +714,12 @@ struct OdtGraphicStyle {
     /// positioning (`None` = offset positioning, no attribute emitted).
     horizontal_pos: Option<&'static str>,
     vertical_pos: Option<&'static str>,
+    /// `style:horizontal-rel`/`style:vertical-rel` for a floating frame's anchor,
+    /// emitted ONLY when the model reference differs from the one the emitted
+    /// `text:anchor-type` implies (so a plain page/paragraph frame stays byte-identical
+    /// to a producer that relies on the anchor-type derivation). `None` = not emitted.
+    horizontal_rel: Option<&'static str>,
+    vertical_rel: Option<&'static str>,
 }
 
 impl OdtGraphicStyle {
@@ -763,6 +769,8 @@ fn push_graphic_properties(
     for (attr, value) in [
         ("style:horizontal-pos", style.horizontal_pos),
         ("style:vertical-pos", style.vertical_pos),
+        ("style:horizontal-rel", style.horizontal_rel),
+        ("style:vertical-rel", style.vertical_rel),
     ] {
         if let Some(value) = value {
             push_bounded(xml, " ", max_content_bytes)?;
@@ -2831,7 +2839,7 @@ impl Writer {
         // all-default (Square, no distances) frame mints none, staying byte-identical
         // to the first increment. A contour and the picture transforms are still
         // dropped with a finding.
-        let graphic = self.build_graphic_style(anchor);
+        let mut graphic = self.build_graphic_style(anchor);
         if anchor.wrap_polygon.is_some() {
             self.reporter
                 .record("odt.export.anchor_wrap_polygon", ModelOutcome::Degraded);
@@ -2847,15 +2855,21 @@ impl Writer {
                 ModelOutcome::Degraded,
             );
         }
+        let anchor_type = self.anchor_type_name(
+            anchor.horizontal.relative_from,
+            anchor.vertical.relative_from,
+        );
+        // The per-axis reference rides on the graphic style, emitted only when it
+        // differs from the anchor type's implied default — so a plain page/paragraph
+        // frame mints no rel attributes (byte-identical to the anchor-type-only path)
+        // while an expanded reference (e.g. `page-content`) round-trips precisely.
+        graphic.horizontal_rel = horizontal_rel_name(anchor_type, anchor.horizontal.relative_from);
+        graphic.vertical_rel = vertical_rel_name(anchor_type, anchor.vertical.relative_from);
         let graphic_name = (!graphic.is_empty()).then(|| {
             let name = graphic.name();
             self.graphic_styles.insert(graphic);
             name
         });
-        let anchor_type = self.anchor_type_name(
-            anchor.horizontal.relative_from,
-            anchor.vertical.relative_from,
-        );
         // Alignment positioning is carried by `style:horizontal-pos`/`vertical-pos`
         // in the graphic style, so an aligned axis emits `svg:x`/`svg:y = 0` silently
         // (the importer ignores it under alignment); an offset axis clamps a negative
@@ -2947,6 +2961,12 @@ impl Writer {
             // these `None` (the axis's `svg:x`/`svg:y` carries the position).
             horizontal_pos: horizontal_pos_name(anchor.horizontal.position),
             vertical_pos: vertical_pos_name(anchor.vertical.position),
+            // The per-axis references depend on the emitted `text:anchor-type`, which
+            // this builder does not know; `write_anchored_draw_frame` sets them after
+            // resolving the anchor type. A shape's anchor always matches its
+            // anchor-type default, so these stay `None` there (byte-identical).
+            horizontal_rel: None,
+            vertical_rel: None,
         }
     }
 
@@ -4592,6 +4612,71 @@ fn vertical_pos_name(position: VerticalPosition) -> Option<&'static str> {
         VerticalPosition::Align(VerticalAlign::Bottom) => Some("bottom"),
         VerticalPosition::Align(VerticalAlign::Inside) => Some("top"),
         VerticalPosition::Align(VerticalAlign::Outside) => Some("bottom"),
+    }
+}
+
+/// The `style:horizontal-rel` value expressing a floating frame's horizontal
+/// reference, or `None` when the reference already matches the one the emitted
+/// `text:anchor-type` implies (page → Page, paragraph → Column) — that default is
+/// left implicit so a plain frame stays byte-identical. The page-/paragraph- prefix
+/// is chosen to match `anchor_type` so the value re-imports to the same reference.
+/// A mirrored inside/outside margin has no ODF horizontal-rel form (the pair was
+/// already degraded by `anchor_type_name`), so it too falls back to the default.
+fn horizontal_rel_name(anchor_type: &str, rel: HorizontalAnchor) -> Option<&'static str> {
+    let paragraph = anchor_type == "paragraph";
+    let default = if paragraph {
+        HorizontalAnchor::Column
+    } else {
+        HorizontalAnchor::Page
+    };
+    if rel == default {
+        return None;
+    }
+    match rel {
+        HorizontalAnchor::Page => Some("page"),
+        HorizontalAnchor::Column => Some("paragraph"),
+        HorizontalAnchor::Character => Some("char"),
+        HorizontalAnchor::Margin => Some(if paragraph {
+            "paragraph-content"
+        } else {
+            "page-content"
+        }),
+        HorizontalAnchor::LeftMargin => Some(if paragraph {
+            "paragraph-start-margin"
+        } else {
+            "page-start-margin"
+        }),
+        HorizontalAnchor::RightMargin => Some(if paragraph {
+            "paragraph-end-margin"
+        } else {
+            "page-end-margin"
+        }),
+        HorizontalAnchor::InsideMargin | HorizontalAnchor::OutsideMargin => None,
+    }
+}
+
+/// The `style:vertical-rel` value expressing a floating frame's vertical reference,
+/// or `None` when it matches the emitted `text:anchor-type`'s implied default (page
+/// → Page, paragraph → Paragraph). Top/bottom/inside/outside margins have no ODF
+/// vertical-rel form (already degraded by `anchor_type_name`) and fall back too.
+fn vertical_rel_name(anchor_type: &str, rel: VerticalAnchor) -> Option<&'static str> {
+    let default = if anchor_type == "paragraph" {
+        VerticalAnchor::Paragraph
+    } else {
+        VerticalAnchor::Page
+    };
+    if rel == default {
+        return None;
+    }
+    match rel {
+        VerticalAnchor::Page => Some("page"),
+        VerticalAnchor::Margin => Some("page-content"),
+        VerticalAnchor::Paragraph => Some("paragraph"),
+        VerticalAnchor::Line => Some("line"),
+        VerticalAnchor::TopMargin
+        | VerticalAnchor::BottomMargin
+        | VerticalAnchor::InsideMargin
+        | VerticalAnchor::OutsideMargin => None,
     }
 }
 

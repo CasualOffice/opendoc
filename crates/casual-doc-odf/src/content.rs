@@ -948,6 +948,12 @@ struct OdfStyle {
     /// retained verbatim; an alignment keyword selects alignment positioning.
     graphic_horizontal_pos: Option<String>,
     graphic_vertical_pos: Option<String>,
+    /// `style:horizontal-rel`/`style:vertical-rel` for a floating frame's anchor
+    /// (`page`/`page-content`/`paragraph`/`char`/…), retained verbatim. When present
+    /// they pin the model's per-axis reference precisely; when absent the reference
+    /// falls back to the `text:anchor-type` derivation.
+    graphic_horizontal_rel: Option<String>,
+    graphic_vertical_rel: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1473,6 +1479,12 @@ fn resolve_style(
             }
             if style.graphic_vertical_pos.is_some() {
                 inherited.graphic_vertical_pos = style.graphic_vertical_pos.clone();
+            }
+            if style.graphic_horizontal_rel.is_some() {
+                inherited.graphic_horizontal_rel = style.graphic_horizontal_rel.clone();
+            }
+            if style.graphic_vertical_rel.is_some() {
+                inherited.graphic_vertical_rel = style.graphic_vertical_rel.clone();
             }
             inherited.family = style.family;
             // The identity (named marker + own name) is the child's, never the
@@ -2612,6 +2624,14 @@ fn read_graphic_style_properties(
             }
             (NamespaceKind::Style, b"vertical-pos") => {
                 style.style.graphic_vertical_pos = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Style, b"horizontal-rel") => {
+                style.style.graphic_horizontal_rel = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Style, b"vertical-rel") => {
+                style.style.graphic_vertical_rel = Some(value.trim().to_owned());
                 true
             }
             _ => false,
@@ -4607,6 +4627,33 @@ fn resolve_horizontal_align(style: &OdfStyle, reporter: &mut Reporter) -> Option
     }
 }
 
+/// Resolves a floating frame's horizontal reference from the graphic style's
+/// `style:horizontal-rel`, falling back to the `text:anchor-type`-derived
+/// `fallback` when the attribute is absent. An unknown value is reported and
+/// also falls back, so the reference is always representable.
+fn resolve_horizontal_rel(
+    style: &OdfStyle,
+    fallback: HorizontalAnchor,
+    reporter: &mut Reporter,
+) -> HorizontalAnchor {
+    match style.graphic_horizontal_rel.as_deref() {
+        None => fallback,
+        Some("page") => HorizontalAnchor::Page,
+        Some("page-content") | Some("paragraph-content") => HorizontalAnchor::Margin,
+        Some("page-start-margin") | Some("paragraph-start-margin") => HorizontalAnchor::LeftMargin,
+        Some("page-end-margin") | Some("paragraph-end-margin") => HorizontalAnchor::RightMargin,
+        Some("paragraph") => HorizontalAnchor::Column,
+        Some("char") => HorizontalAnchor::Character,
+        Some(_) => {
+            reporter.report(
+                "odf.style.graphic-horizontal-rel".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            fallback
+        }
+    }
+}
+
 /// Maps a graphic style's `style:vertical-pos` to an alignment, or `None` for offset
 /// positioning (`from-top`/absent). `below` has no alignment form and degrades to
 /// offset with a finding.
@@ -4622,6 +4669,30 @@ fn resolve_vertical_align(style: &OdfStyle, reporter: &mut Reporter) -> Option<V
                 ModelOutcome::Degraded,
             );
             None
+        }
+    }
+}
+
+/// Resolves a floating frame's vertical reference from the graphic style's
+/// `style:vertical-rel`, falling back to the `text:anchor-type`-derived `fallback`
+/// when absent. An unknown value is reported and also falls back.
+fn resolve_vertical_rel(
+    style: &OdfStyle,
+    fallback: VerticalAnchor,
+    reporter: &mut Reporter,
+) -> VerticalAnchor {
+    match style.graphic_vertical_rel.as_deref() {
+        None => fallback,
+        Some("page") => VerticalAnchor::Page,
+        Some("page-content") => VerticalAnchor::Margin,
+        Some("paragraph") | Some("paragraph-content") | Some("text") => VerticalAnchor::Paragraph,
+        Some("line") | Some("baseline") | Some("char") => VerticalAnchor::Line,
+        Some(_) => {
+            reporter.report(
+                "odf.style.graphic-vertical-rel".to_owned(),
+                ModelOutcome::Degraded,
+            );
+            fallback
         }
     }
 }
@@ -5843,6 +5914,15 @@ fn parse_draw_frame(
                 let graphic = graphic_style_name.as_deref().and_then(|name| {
                     automatic_styles.get(&(StyleFamily::Graphic, name.to_owned()))
                 });
+                // The style's `style:horizontal-rel`/`style:vertical-rel` pin the
+                // per-axis reference precisely when present; absent, the axis keeps
+                // the `text:anchor-type`-derived reference above.
+                let horizontal_rel = graphic
+                    .map(|style| resolve_horizontal_rel(style, horizontal_rel, reporter))
+                    .unwrap_or(horizontal_rel);
+                let vertical_rel = graphic
+                    .map(|style| resolve_vertical_rel(style, vertical_rel, reporter))
+                    .unwrap_or(vertical_rel);
                 let (wrap, behind_doc) = graphic
                     .map(|style| resolve_graphic_wrap(style, reporter))
                     .unwrap_or((WrapMode::Square, false));
