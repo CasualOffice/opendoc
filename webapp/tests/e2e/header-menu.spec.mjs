@@ -1,6 +1,7 @@
 import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
-const MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Tools", "Help"];
+// Review sits after Format, mirroring where Word puts its Review tab.
+const MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Review", "Tools", "Help"];
 
 test("the Vellum-style title block exposes real menus and honest local document state", async ({
   page,

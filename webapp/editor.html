@@ -50,6 +50,7 @@
           <button type="button" class="app-menu-button" data-menu="view" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">View</button>
           <button type="button" class="app-menu-button" data-menu="insert" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Insert</button>
           <button type="button" class="app-menu-button" data-menu="format" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Format</button>
+          <button type="button" class="app-menu-button" data-menu="review" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Review</button>
           <button type="button" class="app-menu-button" data-menu="tools" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Tools</button>
           <button type="button" class="app-menu-button" data-menu="help" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Help</button>
         </nav>
@@ -196,6 +197,7 @@
         <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
         <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
         <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
+        <button id="tabReview" type="button" class="ribbon-tab" data-tab="review" role="tab" aria-controls="panelReview" aria-selected="false" tabindex="-1">Review</button>
         <button id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
       </div>
       <div class="ribbon-body">
@@ -463,6 +465,41 @@
               <button id="pageSetupBtn" type="button" class="fmt" title="Page setup (size, margins, orientation)" aria-label="Page setup" aria-haspopup="dialog" aria-expanded="false" disabled><span class="ms" aria-hidden="true">draft</span></button>
             </div>
             <span class="rgroup-label">Page setup</span>
+          </div>
+        </div>
+        <!-- Word's Review tab: Tracking (how changes are recorded and shown),
+             Changes (walk the revisions and decide them), Comments. Every one of
+             these commands already existed and was reachable ONLY from the
+             command palette or from buttons inside the review sidebar, which
+             only exist while that sidebar is open — so accepting a change had no
+             durable affordance. The buttons here run the very same commands. -->
+        <div id="panelReview" class="ribbon-panel" data-panel="review" role="tabpanel" aria-labelledby="tabReview" hidden>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="reviewTrackBtn" type="button" class="fmt" title="Track changes (Suggesting mode)" aria-label="Track changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">track_changes</span></button>
+              <button id="reviewShowChangesBtn" type="button" class="fmt" title="Show tracked changes in the document" aria-label="Show changes" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span></button>
+            </div>
+            <span class="rgroup-label">Tracking</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="reviewPrevBtn" type="button" class="fmt" title="Previous comment or change" aria-label="Previous comment or change" disabled><span class="ms" aria-hidden="true">navigate_before</span></button>
+              <button id="reviewNextBtn" type="button" class="fmt" title="Next comment or change" aria-label="Next comment or change" disabled><span class="ms" aria-hidden="true">navigate_next</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button id="reviewAcceptBtn" type="button" class="fmt" title="Accept the change at the cursor and move to the next" aria-label="Accept change" disabled><span class="ms" aria-hidden="true">check</span></button>
+              <button id="reviewRejectBtn" type="button" class="fmt" title="Reject the change at the cursor and move to the next" aria-label="Reject change" disabled><span class="ms" aria-hidden="true">close</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button id="reviewAcceptAllBtn" type="button" class="fmt" title="Accept all changes" aria-label="Accept all changes" disabled><span class="ms" aria-hidden="true">done_all</span></button>
+              <button id="reviewRejectAllBtn" type="button" class="fmt" title="Reject all changes" aria-label="Reject all changes" disabled><span class="ms" aria-hidden="true">remove_done</span></button>
+            </div>
+            <span class="rgroup-label">Changes</span>
+          </div>
+          <div class="rgroup">
+            <div class="rgroup-ctl">
+              <button id="reviewCommentBtn" type="button" class="fmt" title="Add a comment on the selection" aria-label="Add comment" disabled><span class="ms" aria-hidden="true">add_comment</span></button>
+              <button id="reviewPanelBtn" type="button" class="fmt" title="Toggle comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
+            </div>
+            <span class="rgroup-label">Comments</span>
           </div>
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead

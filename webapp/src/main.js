@@ -169,6 +169,17 @@ const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
 const insertEmojiBtn = document.getElementById("insertEmojiBtn");
+const tabReviewBtn = document.getElementById("tabReview");
+const reviewTrackBtn = document.getElementById("reviewTrackBtn");
+const reviewShowChangesBtn = document.getElementById("reviewShowChangesBtn");
+const reviewPrevBtn = document.getElementById("reviewPrevBtn");
+const reviewNextBtn = document.getElementById("reviewNextBtn");
+const reviewAcceptBtn = document.getElementById("reviewAcceptBtn");
+const reviewRejectBtn = document.getElementById("reviewRejectBtn");
+const reviewAcceptAllBtn = document.getElementById("reviewAcceptAllBtn");
+const reviewRejectAllBtn = document.getElementById("reviewRejectAllBtn");
+const reviewCommentBtn = document.getElementById("reviewCommentBtn");
+const reviewPanelBtn = document.getElementById("reviewPanelBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
@@ -6125,6 +6136,30 @@ const INSERT_SURFACE = [
 /** The one enablement rule for an Insert command, shared by its ribbon button,
  *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
  *  that already computed the selection state (the context menu) pass it in. */
+// ---- Review surface: one declaration per Review command ---------------------
+// Word's Review tab — Tracking, Changes, Comments. Every command below already
+// existed and was reachable ONLY from the command palette, or from buttons
+// living inside the review sidebar, which exist only while that sidebar is open.
+// So a user with a document full of tracked changes had no durable affordance
+// for accepting one. Each row names the command its button runs and whether the
+// button is a toggle, and `review-surface.spec.mjs` asserts the ribbon's id set
+// equals the Review menu's, so a command cannot reach one surface and miss the
+// other. Enablement is deliberately just "a document is open": the commands
+// themselves report why nothing happened (no change at the cursor, none left to
+// accept), which is more use than a button that is silently dead.
+const REVIEW_SURFACE = [
+  { command: "review.mode.suggesting", button: () => reviewTrackBtn, run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting") },
+  { command: "view.showChanges", button: () => reviewShowChangesBtn, run: () => toggleShowChanges() },
+  { command: "review.previous", button: () => reviewPrevBtn, run: () => navigateReview(-1) },
+  { command: "review.next", button: () => reviewNextBtn, run: () => navigateReview(1) },
+  { command: "review.acceptNext", button: () => reviewAcceptBtn, run: () => decideReviewAndAdvance(true) },
+  { command: "review.rejectNext", button: () => reviewRejectBtn, run: () => decideReviewAndAdvance(false) },
+  { command: "review.acceptAll", button: () => reviewAcceptAllBtn, run: () => reviewAcceptAll.click() },
+  { command: "review.rejectAll", button: () => reviewRejectAllBtn, run: () => reviewRejectAll.click() },
+  { command: "review.comment", button: () => reviewCommentBtn, requires: "range", run: () => openReviewComposer() },
+  { command: "review.toggle", button: () => reviewPanelBtn, run: () => toggleReview() },
+];
+
 function insertCommandEnabled(commandId, context = {}) {
   const entry = INSERT_SURFACE.find((candidate) => candidate.command === commandId);
   if (!entry || !doc) return false;
@@ -6609,6 +6644,17 @@ function updateToolbar() {
   for (const entry of INSERT_SURFACE) {
     entry.button.disabled = !insertCommandEnabled(entry.command, { hasRange: range });
   }
+  // Review: a document is the only precondition, except commenting, which needs
+  // text to attach to. The two toggles reflect engine state rather than a local
+  // flag, so the ribbon always agrees with the footer's mode control.
+  for (const entry of REVIEW_SURFACE) {
+    const button = entry.button();
+    if (!button) continue;
+    button.disabled = !doc || (entry.requires === "range" && !range);
+  }
+  if (reviewTrackBtn) reviewTrackBtn.setAttribute("aria-pressed", String(reviewMode === "suggesting"));
+  if (reviewShowChangesBtn) reviewShowChangesBtn.setAttribute("aria-pressed", String(showingChanges));
+  if (reviewPanelBtn) reviewPanelBtn.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -6726,6 +6772,16 @@ function editSelectionLink() {
 // `onButton` seam so pointer activation never steals the selection. Insert table
 // is the exception: it has no direct action, it opens the row × column grid
 // popover, and is wired by `registerPopover` where that popover is built.
+// Every Review ribbon button runs the very command its menu row and palette
+// entry run, through the shared `onButton` seam, and carries its command id so
+// the ribbon's membership is readable from the DOM for the parity test.
+for (const entry of REVIEW_SURFACE) {
+  const button = entry.button();
+  if (!button) continue;
+  onButton(button, entry.run);
+  button.dataset.command = entry.command;
+}
+
 for (const entry of INSERT_SURFACE) {
   if (entry.activate) onButton(entry.button, entry.activate);
   // Stamp the command id onto the button so the ribbon's membership is readable
@@ -9362,6 +9418,14 @@ const APP_MENU_SECTIONS = {
     ["view.outline", "review.toggle", "view.showChanges"],
     ["view.zoomIn", "view.zoomOut"],
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
+  ],
+  review: [
+    ["review.comment", "review.toggle"],
+    ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
+    ["view.showChanges"],
+    ["review.previous", "review.next"],
+    ["review.acceptNext", "review.rejectNext"],
+    ["review.acceptAll", "review.rejectAll"],
   ],
   insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
