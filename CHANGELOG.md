@@ -15,6 +15,26 @@ several import/export families, each landed as a reviewed increment and disclose
 against the profiles in `docs/95`/`docs/96`/`docs/97`. Still a bounded subset, not
 a general ODT support claim.
 
+- **Standalone shapes — stroke dash patterns (fidelity parity, T6)**: a shape
+  outline that is dashed (rather than solid) now round-trips. Each `DashStyle`
+  preset maps to a synthesized, content-addressed `<draw:stroke-dash>` definition
+  in `styles.xml` (`office:styles`), referenced via `draw:stroke="dash"`; a solid
+  outline is byte-unchanged. Foreign (non-canonical) dash definitions map to the
+  nearest preset (lossy but a stable fixed point). Arrowheads/line-ends remain
+  deferred with a finding.
+- **Standalone shapes — pictures in groups (fidelity parity, T6)**: a `draw:g`
+  shape group whose children include an embedded picture (`draw:frame` >
+  `draw:image`) now round-trips the picture alongside its sibling shapes (through
+  the preserving path, which repackages the image bytes), instead of degrading the
+  whole group. A group child that cannot be represented (a picture whose media is
+  not retained, or one carrying a crop/border/flip/rotation, a text-box, or a
+  non-translation nested group) is now dropped individually with a finding, so its
+  healthy sibling shapes survive rather than the whole group being lost.
+- **Floating images — flip and border (fidelity parity, T5)**: a floating image
+  that is mirrored (`draw:mirror`) or has a solid, opaque `fo:border` now
+  round-trips the flip and the border. An image with neither is byte-unchanged.
+  Crop (`fo:clip`) and rotation (`draw:transform`) remain deferred with a finding
+  (no clean byte-stable fixed point in this increment).
 - **Floating images — alignment positioning (fidelity parity, T5)**: a floating
   image whose graphic style uses alignment positioning (`style:horizontal-pos` /
   `style:vertical-pos` = `left`/`center`/`right`/`top`/`middle`/`bottom`) now
