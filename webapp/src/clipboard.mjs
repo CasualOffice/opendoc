@@ -125,6 +125,138 @@ export function htmlToRuns(root) {
   return runs;
 }
 
+const LIST_TAGS = new Set(["UL", "OL"]);
+
+/** Parses a browser-native DOM (an external app's `text/html` paste) into the
+ * `ExternalFragment` the engine's `pasteExternalStructured` consumes — a list of
+ * blocks, each a `{ kind: "paragraph", runs, list? }` or `{ kind: "table", rows }`
+ * — so external tables and bullet/numbered lists paste as REAL structure instead
+ * of the flat runs `htmlToRuns` produces. Returns `null` when the DOM carries no
+ * table and no list, so ordinary prose stays on the flat rich-run path (which also
+ * keeps tracked Suggesting-mode paste). Common cases are handled precisely; merged
+ * cells (colspan/rowspan) flatten to single grid cells and nested tables inside a
+ * cell degrade to text — the engine still builds a valid table from either. */
+export function htmlToStructured(root) {
+  const blocks = [];
+  collectStructuredBlocks(root, blocks);
+  // Only reconstruct when there is real structure to preserve; otherwise let the
+  // caller fall back to the flat rich-run paste.
+  const hasStructure = blocks.some(
+    (b) => b.kind === "table" || (b.kind === "paragraph" && b.list),
+  );
+  if (!hasStructure) return null;
+  // Drop empty, non-list paragraphs (blank lines between blocks) — an empty list
+  // item still paginates as a bullet, so it is kept.
+  const kept = blocks.filter(
+    (b) => b.kind === "table" || b.list || (b.runs && b.runs.length),
+  );
+  if (!kept.length) return null;
+  return { blocks: kept };
+}
+
+/** Walks `root`'s children in document order, appending `ExternalFragment` blocks:
+ * a `<table>` becomes a table block, a `<ul>`/`<ol>` becomes list-item paragraphs,
+ * and any other block/inline chunk becomes paragraph block(s). A container that
+ * merely wraps a table/list (a Google-Docs `<b>` shell, a `<div>`) is recursed
+ * into so block order is preserved. */
+function collectStructuredBlocks(root, out) {
+  for (const node of root.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.textContent.trim()) {
+        for (const b of runsToParagraphBlocks(htmlToRuns(node))) out.push(b);
+      }
+      continue;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const tag = node.tagName;
+    if (SKIP_TAGS.has(tag)) continue;
+    if (tag === "TABLE") {
+      out.push(parseStructuredTable(node));
+      continue;
+    }
+    if (LIST_TAGS.has(tag)) {
+      collectListItems(node, tag === "OL", 0, out);
+      continue;
+    }
+    // A wrapper that itself holds a table/list: recurse so the structure lands in
+    // document order rather than being flattened by `htmlToRuns`.
+    if (node.querySelector && node.querySelector("table, ul, ol")) {
+      collectStructuredBlocks(node, out);
+      continue;
+    }
+    for (const b of runsToParagraphBlocks(htmlToRuns(node))) out.push(b);
+  }
+}
+
+/** Splits a `ClipboardRun[]` (possibly carrying `paragraphBreak` markers, e.g. a
+ * cell with several `<p>`) into `{ kind: "paragraph", runs }` blocks. A run's
+ * literal `"\n"` (from a `<br>`) stays inline; only an explicit `paragraphBreak`
+ * starts a new paragraph. */
+function runsToParagraphBlocks(runs) {
+  const blocks = [];
+  let current = [];
+  for (const run of runs) {
+    if (run.paragraphBreak) {
+      blocks.push({ kind: "paragraph", runs: current });
+      current = [];
+    } else if (run.text) {
+      current.push(run);
+    }
+  }
+  blocks.push({ kind: "paragraph", runs: current });
+  return blocks.filter((b) => b.runs.length);
+}
+
+/** Builds a `{ kind: "table", rows }` block from a `<table>`. Rows are gathered
+ * across `thead`/`tbody`/`tfoot` but not from nested tables (a nested table stays
+ * within its own cell, flattened to that cell's text). Each `<td>`/`<th>` becomes
+ * one cell whose blocks are the cell's paragraphs; colspan/rowspan are not
+ * expanded (they degrade to single cells — the engine pads the grid). */
+function parseStructuredTable(tableEl) {
+  const rows = [];
+  const trs = [...tableEl.querySelectorAll("tr")].filter(
+    (tr) => tr.closest("table") === tableEl,
+  );
+  for (const tr of trs) {
+    const cells = [];
+    for (const cellEl of tr.children) {
+      if (cellEl.tagName !== "TD" && cellEl.tagName !== "TH") continue;
+      let cellBlocks = [];
+      // A cell can hold its own nested tables/lists; reuse the block walker so
+      // those survive, and fall back to flat paragraphs for plain cell text.
+      if (cellEl.querySelector && cellEl.querySelector("table, ul, ol")) {
+        collectStructuredBlocks(cellEl, cellBlocks);
+      } else {
+        cellBlocks = runsToParagraphBlocks(htmlToRuns(cellEl));
+      }
+      cells.push({ blocks: cellBlocks });
+    }
+    if (cells.length) rows.push(cells);
+  }
+  return { kind: "table", rows };
+}
+
+/** Appends one list-item paragraph per `<li>` in `listEl`, each annotated with
+ * `{ ordered, level }`; a `<ul>`/`<ol>` nested inside an item recurses at
+ * `level + 1` so nesting depth maps to indent level. An item's own text excludes
+ * its nested lists (they become their own deeper items). */
+function collectListItems(listEl, ordered, level, out) {
+  for (const li of listEl.children) {
+    if (li.tagName !== "LI") continue;
+    // The item's own text, without the nested lists (rebuilt from a clone so the
+    // original tree is untouched).
+    const clone = li.cloneNode(true);
+    clone.querySelectorAll("ul, ol").forEach((n) => n.remove());
+    const runs = htmlToRuns(clone).filter((run) => !run.paragraphBreak && run.text);
+    out.push({ kind: "paragraph", runs, list: { ordered, level } });
+    for (const nested of li.children) {
+      if (LIST_TAGS.has(nested.tagName)) {
+        collectListItems(nested, nested.tagName === "OL", level + 1, out);
+      }
+    }
+  }
+}
+
 // `sizeHalfPoints` is `pt * 2` (matches main.js run-size handling). Clamp to a
 // sane range — Word caps font size at 1638pt; the floor is 1pt.
 const MIN_SIZE_HALF_POINTS = 2;

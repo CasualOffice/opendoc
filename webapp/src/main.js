@@ -13,7 +13,7 @@ import {
   fetchFontBytes,
   packFontBytes,
 } from "./web_fonts.mjs";
-import { embedMarker, extractMarker, htmlToRuns, runsToHtml } from "./clipboard.mjs";
+import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import {
   compatibilityOccurrenceCount,
   downloadNameForFormat,
@@ -10796,9 +10796,46 @@ async function pasteHtml(html) {
     return true;
   }
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  // An external `<table>` or `<ul>`/`<ol>` pastes as REAL structure (a table, or
+  // bullet/numbered list paragraphs) via `pasteExternalStructured`, as one
+  // undoable action — before the flat rich-run fallback that would flatten it to
+  // text. Suggesting mode has no tracked structural representation (GAP-009), so it
+  // keeps the flat rich path; and a structured insert only lands at a collapsed
+  // body caret — otherwise the engine declines and we fall back below.
+  if (reviewMode !== "suggesting") {
+    const structured = htmlToStructured(parsed.body);
+    if (structured && (await pasteExternalStructured(structured))) return true;
+  }
   const runs = htmlToRuns(parsed.body);
   if (!runs.length) return false;
   await pasteRichRunsJson(JSON.stringify(runs));
+  return true;
+}
+
+/** Editing-mode paste of external structure (a foreign `<table>` / `<ul>`/`<ol>`
+ * parsed by `htmlToStructured`): reconstructs real tables and list paragraphs at
+ * the caret via `doc.pasteExternalStructured`, as one undoable action. Returns
+ * true when applied; false when the engine declines (a range selection, or a caret
+ * that is not a top-level body paragraph), so the caller falls back to the flat
+ * rich-run paste. Calls the engine directly (not through `runEdit`, which swallows
+ * the decline) so the fallback can see it. */
+async function pasteExternalStructured(fragment) {
+  if (!doc || !selection) return false;
+  const { anchor, focus } = selection;
+  breakTypingSession();
+  let res;
+  try {
+    res = doc.pasteExternalStructured(
+      anchor.node,
+      anchor.offset,
+      focus.node,
+      focus.offset,
+      JSON.stringify(fragment),
+    );
+  } catch {
+    return false;
+  }
+  await applyEditResult(res);
   return true;
 }
 
