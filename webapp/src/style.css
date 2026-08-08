@@ -4603,12 +4603,15 @@ body:not(.doc-loaded) .drop-title {
    the window narrows they *shed* the lowest-value indicators. We reproduce that
    with the `[data-status-priority]` ladder further down, so a new indicator
    inherits the behaviour by declaring a number instead of by earning its own
-   breakpoint. `overflow-x: clip` is the backstop behind the ladder — an
-   unanticipated indicator degrades into clipped chrome instead of pushing
-   `documentElement.scrollWidth` past the viewport and scrolling the whole page
-   sideways (the failure this bar produced at 720px). It is not the fix:
-   `scrollWidth` still reports clipped content, so the shell-overflow spec keeps
-   catching a real regression rather than being silenced by it. */
+   breakpoint. The strip deliberately declares no `overflow` of its own: an
+   earlier revision added `overflow-x: clip` here as a "backstop", but clip does
+   not propagate to `documentElement.scrollWidth` — measured on this page, a
+   400px overspill forced into `.foot-right` at a 720px viewport reports
+   `.footer.scrollWidth` 861 while `documentElement.scrollWidth` stays 720. Since
+   the shell-overflow spec asserts `documentElement` and `.bar`, that backstop
+   silenced the very assertion that caught this bar overflowing in the first
+   place. Getting the ladder wrong must stay visible, so the clip is gone and the
+   spec now measures `.foot-right` against its own box as well. */
 .footer {
   display: flex;
   align-items: center;
@@ -4622,7 +4625,6 @@ body:not(.doc-loaded) .drop-title {
   background: var(--bg-2);
   z-index: 2;
   min-width: 0;
-  overflow-x: clip;
 }
 
 .foot-left,
@@ -4789,14 +4791,26 @@ body:not(.doc-loaded) .drop-title {
      2 — character count, and the "Mode" caption the pressed segment already
          conveys.
      1 — word count and page position: last to go, only at phone widths.
-     none — engine status, the mode control and zoom: never shed. */
-@media (max-width: 1000px) {
+     none — engine status, the mode control and zoom: never shed.
+
+   The rungs sit where the row genuinely runs out of room, not where it is
+   convenient to test. Measured on this page with the demo document, the full
+   three-count row needs 735px of footer; dropping the paragraph count brings
+   that to ~635px, and the 780px condense rung below takes ~30px more. So 840
+   keeps every count for as long as a realistic document's figures fit (they
+   collide at ~820px), and 700 is comfortably below the 720px width the
+   shell-overflow spec measures — at 720 the character count survives with
+   ~115px to spare, which absorbs the ~13-23px that CI's font metrics add.
+   An earlier revision shed at 1000px and 900px instead, which dropped the
+   character count — shipped for Word status-bar parity — from every window
+   under 900px while 78px of the strip was still empty. */
+@media (max-width: 840px) {
   .footer [data-status-priority="3"] {
     display: none;
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 700px) {
   .footer [data-status-priority="2"] {
     display: none;
   }

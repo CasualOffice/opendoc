@@ -157,23 +157,69 @@ test("outline navigation centers the heading target", async ({ page, consoleErro
   expect(consoleErrors).toEqual([]);
 });
 
+// The shell must never give the document a horizontal scrollbar. `documentElement`
+// alone is NOT a sufficient guard: any `overflow` value on an ancestor stops the
+// spill from ever reaching it, so a footer that is 100px too wide reads as clean.
+// A revision of this bar shipped exactly that — `overflow-x: clip` on `.footer`
+// left `documentElement.scrollWidth` at the viewport while `.footer.scrollWidth`
+// reported 861 — which is why the footer's live-control half is measured against
+// its own box here too. `.foot-left` is deliberately NOT measured that way: it is
+// a truncation region (the transient engine message ellipsizes inside it), so its
+// `scrollWidth` legitimately exceeds its box whenever a long message is showing.
 for (const width of [720, 390]) {
-  test(`the editor header does not create page overflow at ${width}px`, async ({
+  test(`the editor shell does not create page overflow at ${width}px`, async ({
     page,
     consoleErrors,
   }) => {
     await page.setViewportSize({ width, height: 800 });
     await gotoEditor(page);
 
-    const metrics = await page.evaluate(() => ({
-      viewport: window.innerWidth,
-      document: document.documentElement.scrollWidth,
-      header: document.querySelector(".bar").scrollWidth,
-    }));
+    const metrics = await page.evaluate(() => {
+      const box = (selector) => {
+        const el = document.querySelector(selector);
+        return { scroll: el.scrollWidth, client: el.clientWidth, right: el.getBoundingClientRect().right };
+      };
+      return {
+        viewport: window.innerWidth,
+        document: document.documentElement.scrollWidth,
+        header: document.querySelector(".bar").scrollWidth,
+        footer: box(".footer"),
+        footRight: box(".foot-right"),
+      };
+    });
     expect(metrics.document).toBeLessThanOrEqual(metrics.viewport);
     expect(metrics.header).toBeLessThanOrEqual(metrics.viewport);
+    // The strip and its live controls fit inside their own boxes, so no ancestor
+    // `overflow` can launder a layout mistake into a passing assertion.
+    expect(metrics.footer.scroll).toBeLessThanOrEqual(metrics.footer.client);
+    expect(metrics.footRight.scroll).toBeLessThanOrEqual(metrics.footRight.client);
+    expect(metrics.footRight.right).toBeLessThanOrEqual(metrics.viewport);
     await expect(page.locator("#searchTrigger")).toBeVisible();
     await expect(page.locator("#railOutline")).toContainText("Outline");
     expect(consoleErrors).toEqual([]);
   });
 }
+
+// The counts are the point of the status bar, so the ladder must not trade them
+// away while the strip still has room. Word keeps its word count and page
+// position at tablet widths; the character count shipped for that same parity.
+test("the status bar keeps its counts and live controls at 720px", async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 720, height: 800 });
+  await gotoEditor(page);
+
+  await expect(page.locator("#statWords")).toBeVisible();
+  await expect(page.locator("#statChars")).toBeVisible();
+  await expect(page.locator("#statPages")).toBeVisible();
+  await expect(page.locator("#reviewModeControl")).toBeVisible();
+  await expect(page.locator(".zoom")).toBeVisible();
+
+  // Every mode segment is fully readable — not squeezed to an ellipsis — and the
+  // zoom control is clickable rather than merely on-screen.
+  const clipped = await page.evaluate(() =>
+    [...document.querySelectorAll(".footer .review-mode-seg")].filter((el) => el.scrollWidth > el.clientWidth).length,
+  );
+  expect(clipped).toBe(0);
+  await page.locator("#zoomIn").click();
+
+  expect(consoleErrors).toEqual([]);
+});
