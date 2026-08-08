@@ -163,7 +163,12 @@ const tableDescription = document.getElementById("tableDescription");
 const tableFormula = document.getElementById("tableFormula");
 const tableFormulaApply = document.getElementById("tableFormulaApply");
 const insertTableBtn = document.getElementById("insertTableBtn");
+const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
+const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
+const insertFieldBtn = document.getElementById("insertFieldBtn");
+const insertSymbolBtn = document.getElementById("insertSymbolBtn");
+const insertEmojiBtn = document.getElementById("insertEmojiBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
@@ -2128,8 +2133,44 @@ let renderToken = 0;
  * `observePages`) and is `null` for off-screen pages. `visible` mirrors the
  * IntersectionObserver so repaints know whether a live canvas exists. */
 let pages = [];
-/** Current selection as model anchors, or null. `focus` trails the pointer. */
+/** The document's insertion point as model anchors — a range when `anchor` and
+ * `focus` differ, a caret when they coincide. `focus` trails the pointer.
+ *
+ * `null` means "no document is open", NOT "the user has not clicked yet": Word
+ * and Google Docs give an open document a live insertion point at the start of
+ * the body, which is why Insert ▸ Picture / Symbol / Field never ask you to
+ * click first. `openBytes` seeds this from the engine's own `firstPosition()`
+ * for exactly that reason. */
 let selection = null; // { anchor: {node, offset}, focus: {node, offset} }
+/** The position `openBytes` seeded the insertion point at, or `null` once the
+ * user has taken ownership of the caret. While it is set AND the selection still
+ * sits exactly on it, the caret is "implicit": every command acts on it, but the
+ * blinking caret is not painted and Find still searches from the top.
+ *
+ * The paint suppression is not cosmetic. `.overlay .caret` animates
+ * unconditionally (style.css) and the editor's keydown handler drops every key
+ * unless `#pages` holds focus (`eventTargetsEditor`), so painting a cursor on a
+ * document nobody has focused yet would advertise a caret that silently swallows
+ * typing.
+ *
+ * Recording the position rather than a bare flag means any selection MOVE — a
+ * click, a Find hit, Select All, arrow keys — makes the caret explicit for free.
+ * The three places that clear it outright are the ones where a deliberate action
+ * can land back ON the seed and must still show a caret: focusing the surface,
+ * navigating from the outline, and applying an edit. */
+let implicitCaretAt = null; // { node, offset } | null
+
+/** Whether `selection` is still the untouched load-time default caret. */
+function caretIsImplicit() {
+  if (!implicitCaretAt || !selection) return false;
+  const { anchor, focus } = selection;
+  return (
+    anchor.node === implicitCaretAt.node &&
+    anchor.offset === implicitCaretAt.offset &&
+    focus.node === implicitCaretAt.node &&
+    focus.offset === implicitCaretAt.offset
+  );
+}
 /** Current object selection (docs/85 §3.2 `Selection::Object`): a drawing/image/
  * text box selected as a unit, distinct from the text caret/range in `selection`.
  * `mode` is the interaction-grammar state (§4): "selected" shows the outline +
@@ -2427,7 +2468,31 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     doc = open(bytes);
     currentSourceFormat = doc.sourceFormat;
     applyActiveAuthorToDocument();
-    selection = null;
+    // Word/Docs: an open document always has an insertion point, so Insert ▸
+    // Picture / Symbol / Emoji / Field / Table are live the instant it loads
+    // instead of demanding a click first. Seeded from the engine's own
+    // body-start position — `firstPosition()` walks the body only, so it is
+    // never a header, footer or footnote, and it descends into a leading table
+    // exactly as Word's insertion point does. Set here, before `onOpened()` and
+    // the first render/`drawSelection`, so the very first `updateToolbar` is
+    // already correct and the ribbon is never briefly wrong.
+    const startPosition = doc.firstPosition();
+    selection = {
+      anchor: { node: startPosition.node, offset: startPosition.offset },
+      focus: { node: startPosition.node, offset: startPosition.offset },
+    };
+    // ...but only implicit while the surface is UNFOCUSED. If `#pages` already
+    // holds focus when a document opens — drop a .docx onto the viewport after
+    // clicking into the previous one, and HTML5 drag never moves focus — no
+    // `focus` event will fire to promote it, and the pair would sit in the one
+    // state that is genuinely a lie: typing accepted, no caret painted. Decide
+    // it here from the live focus instead of waiting for an event that has
+    // already happened.
+    implicitCaretAt =
+      document.activeElement === pagesEl
+        ? null
+        : { node: startPosition.node, offset: startPosition.offset };
+    startPosition.free();
     tableSelection = null;
     objectCropSession = null; // a new document invalidates any in-progress crop
     reviewMode = "editing";
@@ -3905,6 +3970,11 @@ function paintSelection({ anchor, focus }) {
     }
     // No visible rects (e.g. a tiny drag within one caret slot) → fall to caret.
   }
+  // The load-time insertion point is real — every Insert command acts on it —
+  // but it is not yet the user's caret, and the editor surface it belongs to
+  // does not have focus, so keystrokes would go nowhere. Painting a blinking
+  // cursor there would be a lie; it appears the moment `#pages` takes focus.
+  if (collapsed && caretIsImplicit()) return;
   place(doc.caretRect(focus.node, focus.offset), "caret");
 }
 
@@ -4461,6 +4531,16 @@ pagesEl.addEventListener("pointerdown", (e) => {
   // continuation still uses nearest-page resolution once a gesture exists.
   const page = pageFromEvent(e);
   if (page) onPointerDown(page, e);
+});
+// Focus is the moment the load-time insertion point stops being implicit: the
+// surface can now receive typing (`#pages` is tabindex="0"), so the blinking
+// caret is finally honest. This covers keyboard entry (Tab) as much as clicks,
+// and every `focusEditorSurface()` a command ends with — which is why an insert
+// run from the ribbon leaves a visible caret after the thing it inserted.
+pagesEl.addEventListener("focus", () => {
+  if (!implicitCaretAt) return;
+  implicitCaretAt = null;
+  if (doc) drawSelection();
 });
 pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
@@ -5956,6 +6036,53 @@ function hasRange() {
   );
 }
 
+// ---- Insert surface: one declaration per Insert command ---------------------
+// The Insert ribbon tab, the Insert app menu, and the command palette are three
+// faces of the SAME command set. Their membership used to be authored three
+// times — hand-written HTML buttons, an id list in APP_MENU_SECTIONS, and
+// bespoke `someBtn.disabled = …` lines in `updateToolbar` — with nothing
+// reconciling them, and they drifted: Picture, Symbol, Emoji, Bookmark and Field
+// shipped to the menu and the palette while the ribbon still showed only Table
+// and Link, so a user looking at the Insert tab could not insert a picture at
+// all. This table is the single declaration the ribbon is built from: each row
+// names the command it mirrors, the button that renders it, what the command
+// genuinely requires, and how the button activates it.
+// It unifies enablement and activation, not membership: the buttons are still
+// authored in editor.html and the menu roster is still its own id list, so a new
+// command CAN still reach one surface and miss another. What closes that gap is
+// the test — each row stamps its command id onto its button, and
+// `insert-surface.spec.mjs` asserts the ribbon's id set equals the Insert menu's,
+// so the omission that shipped Picture unreachable now fails CI instead.
+const INSERT_SURFACE = [
+  // "doc" is Word's rule: an open document has an insertion point, so the
+  // command is live the moment a document loads (see `implicitCaretAt`).
+  // Viewing/Suggesting are deliberately NOT expressed here — every run path
+  // already fails closed through `blockMutationInViewing` /
+  // `blockUntrackedInSuggesting`, which tells the user WHY the insert did not
+  // happen. A greyed button would only say "no".
+  { command: "insert.table", button: insertTableBtn, requires: "doc", activate: null },
+  { command: "insert.image", button: insertPictureBtn, requires: "doc", activate: () => insertImageFromFile() },
+  // Link is the one Insert command that genuinely needs a range: it hyperlinks
+  // selected text. A cross-paragraph range still enables the button and is
+  // answered by `editSelectionLink`'s "Links must stay within one paragraph",
+  // which is more useful than a silently dead control.
+  { command: "insert.link", button: insertLinkBtn, requires: "range", activate: () => editSelectionLink() },
+  { command: "insert.bookmark", button: insertBookmarkBtn, requires: "doc", activate: () => openBookmarkManager() },
+  { command: "insert.field", button: insertFieldBtn, requires: "doc", activate: () => openFieldDialog() },
+  { command: "insert.symbol", button: insertSymbolBtn, requires: "doc", activate: () => openSymbolPicker() },
+  { command: "insert.emoji", button: insertEmojiBtn, requires: "doc", activate: () => openEmojiPicker() },
+];
+
+/** The one enablement rule for an Insert command, shared by its ribbon button,
+ *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
+ *  that already computed the selection state (the context menu) pass it in. */
+function insertCommandEnabled(commandId, context = {}) {
+  const entry = INSERT_SURFACE.find((candidate) => candidate.command === commandId);
+  if (!entry || !doc) return false;
+  if (entry.requires === "range") return !!(context.hasRange ?? hasRange());
+  return true;
+}
+
 /** Re-raster a single page after an edit — the incremental repaint that keeps
  *  editing latency to one page, not the whole document. If the page is on screen
  *  it is re-rendered in place; if it is virtualized off-screen, its stale canvas
@@ -6035,6 +6162,10 @@ async function applyEditResult(res) {
   const newCount = res.pageCount;
   res.free();
   clearFindParagraphCache();
+  // An edit has landed, so the caret the editor now shows is the result of the
+  // user's own action — never the untouched load-time seed, even if the two
+  // positions coincide.
+  implicitCaretAt = null;
   selection = { anchor: { node, offset }, focus: { node, offset } };
   if (newCount !== pages.length) {
     await renderAll(); // structural change (page added/removed): rebuild the list
@@ -6414,10 +6545,13 @@ function updateToolbar() {
   }
   tableInfo?.free();
 
-  // Insert-table needs just a caret to drop the new table after.
-  insertTableBtn.disabled = !(hasSel && doc);
-  insertLinkBtn.disabled =
-    !range || selection.anchor.node !== selection.focus.node;
+  // The Insert ribbon takes its enablement from the shared INSERT_SURFACE
+  // descriptors — the same rule the Insert menu and the palette use. Nothing
+  // about Insert is decided here any more; a per-button rule written at this
+  // spot is exactly how the ribbon drifted out of sync with the menu.
+  for (const entry of INSERT_SURFACE) {
+    entry.button.disabled = !insertCommandEnabled(entry.command, { hasRange: range });
+  }
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -6530,7 +6664,20 @@ function editSelectionLink() {
   openLinkDialog({ node: anchor.node, start, end, text });
 }
 
-onButton(insertLinkBtn, editSelectionLink);
+// Every Insert ribbon button runs the very command its menu row and palette
+// entry run — one implementation behind three surfaces, wired through the shared
+// `onButton` seam so pointer activation never steals the selection. Insert table
+// is the exception: it has no direct action, it opens the row × column grid
+// popover, and is wired by `registerPopover` where that popover is built.
+for (const entry of INSERT_SURFACE) {
+  if (entry.activate) onButton(entry.button, entry.activate);
+  // Stamp the command id onto the button so the ribbon's membership is readable
+  // from the DOM. `insert-surface.spec.mjs` compares this set against the Insert
+  // menu's own `data-command` ids, which is what actually catches the drift this
+  // table is meant to prevent: a command added to the menu and the palette but
+  // never given a ribbon button — exactly how Picture shipped unreachable.
+  entry.button.dataset.command = entry.command;
+}
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
 }
@@ -8134,6 +8281,10 @@ function reflectOutlineSelection() {
 /** Places the caret at the start of `node` and scrolls it into view. */
 function navigateToNode(node) {
   if (!doc) return;
+  // Picking an outline row IS placing the caret, so the caret must be painted
+  // even when the target is the first heading — the one node that happens to
+  // sit exactly where the load-time insertion point was seeded.
+  implicitCaretAt = null;
   selection = { anchor: { node, offset: 0 }, focus: { node, offset: 0 } };
   drawSelection();
   scrollCaretIntoView("center");
@@ -8958,20 +9109,26 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(-360) },
-    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: !!selection, disabledReason: "Place the caret before inserting a table", run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: context.hasRange ?? hasRange(), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
-    { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", run: () => openBookmarkManager() },
-    { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: !!selection, disabledReason: "Place the caret before inserting a field", run: () => openFieldDialog() },
-    { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: !!selection, disabledReason: "Place the caret before inserting a picture", run: () => insertImageFromFile() },
-    { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: !!selection, disabledReason: "Place the caret before inserting a symbol", run: () => openSymbolPicker() },
-    { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: !!selection, disabledReason: "Place the caret before inserting an emoji", run: () => openEmojiPicker() },
+    // Insert commands take their `enabled` from `insertCommandEnabled`, the same
+    // predicate the Insert ribbon buttons use, so a command can never be live on
+    // one surface and greyed on another. None of them asks for a prior click:
+    // an open document already has an insertion point (Word/Docs), so the only
+    // Insert precondition left is a real one — Link needs text to link.
+    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: insertCommandEnabled("insert.table"), run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
+    { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: insertCommandEnabled("insert.field"), run: () => openFieldDialog() },
+    { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
+    { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
+    { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
+    // The per-kind field shortcuts share Field…'s precondition; they are the
+    // same dialog's choices reached directly from the palette.
     ...FIELD_KINDS.map((f) => ({
       id: `insert.field.${f.kind}`,
       label: `Insert field: ${f.label}`,
       group: "Insert",
       kw: `field ${f.kw}`,
-      enabled: !!selection,
-      disabledReason: "Place the caret before inserting a field",
+      enabled: insertCommandEnabled("insert.field"),
       run: () => insertFieldAtCaret(f.kind),
     })),
     { id: "view.outline", label: "Toggle outline", group: "View", kw: "headings navigation", run: () => toggleOutline() },
@@ -9600,11 +9757,10 @@ function fieldResultText(kind) {
  *  caret-position path so the field renders inline, the caret lands after it, and
  *  Undo/Redo treats it as one action. */
 async function insertFieldAtCaret(kind) {
-  if (!doc || !selection) {
-    setStatus("Place the caret before inserting a field", "error");
-    focusEditorSurface();
-    return;
-  }
+  // A null `selection` here means no document is open, not "click first" — an
+  // open document always carries an insertion point. Defensive guard only; the
+  // command is not reachable without a document.
+  if (!doc || !selection) return;
   if (blockMutationInViewing()) return;
   breakTypingSession();
   if (blockUntrackedInSuggesting()) return;
@@ -9654,11 +9810,9 @@ async function decodeImageBlob(blob) {
 /** Inserts an already-decoded image at the caret as one undoable action, gated
  *  like the other object edits (read-only in Viewing, blocked in Suggesting). */
 async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
-  if (!doc || !selection) {
-    setStatus("Place the caret to insert a picture", "error");
-    focusEditorSurface();
-    return;
-  }
+  // Defensive only — see `insertFieldAtCaret`. The picture lands at the caret,
+  // which on a document nobody has clicked into is the start of the body.
+  if (!doc || !selection) return;
   if (blockMutationInViewing()) return;
   breakTypingSession();
   if (blockUntrackedInSuggesting()) return;
@@ -9700,13 +9854,11 @@ async function insertImageFromBlob(blob) {
   }
 }
 
-/** Insert ▸ Picture: opens a file picker and inserts the chosen image. */
+/** Insert ▸ Picture: opens a file picker and inserts the chosen image at the
+ *  insertion point — the caret if the user placed one, otherwise the start of
+ *  the body, exactly as Word and Google Docs do. */
 function insertImageFromFile() {
-  if (!doc || !selection) {
-    setStatus("Place the caret to insert a picture", "error");
-    focusEditorSurface();
-    return;
-  }
+  if (!doc || !selection) return;
   if (blockMutationInViewing()) return;
   const input = document.createElement("input");
   input.type = "file";
@@ -9728,15 +9880,17 @@ function fieldChoiceButtons() {
   return fieldList ? [...fieldList.querySelectorAll(".field-choice")] : [];
 }
 
-/** Opens the field picker with the caret's position captured; the first choice
- *  is focused for keyboard use. Requires a live caret (matches insert.table). */
+/** Opens the field picker against the current insertion point; the first choice
+ *  is focused for keyboard use. Needs only an open document — Word's Insert ▸
+ *  Quick Parts ▸ Field is never gated on having clicked into the page first. */
 function openFieldDialog() {
   if (!doc || !fieldDialog) return;
-  if (!selection) {
-    setStatus("Place the caret before inserting a field", "error");
-    focusEditorSurface();
-    return;
-  }
+  // Viewing is read-only: refuse before opening, as the symbol and emoji pickers
+  // do, so the dialog never opens onto an insert that cannot happen. Promoting
+  // Field to the ribbon is what makes this reachable without a deliberate detour
+  // through the palette, and picking a field only to be told no is a worse
+  // answer than not opening.
+  if (blockMutationInViewing()) return;
   fieldReturnFocus = document.activeElement;
   fieldDialog.hidden = false;
   queueMicrotask(() => fieldChoiceButtons()[0]?.focus());
@@ -10046,11 +10200,9 @@ const EMOJI_GROUPS = [
  *  non-coalescing history entry per call (the "paste" HistoryKind never merges),
  *  so every glyph is exactly one Undo. The picker stays open (Word/Docs). */
 async function insertGlyphAtCaret(glyph) {
-  if (!doc || !glyph) return;
-  if (!selection) {
-    setStatus("Place the caret before inserting", "error");
-    return;
-  }
+  // Defensive only: an open document always has an insertion point, so the
+  // glyph lands at the caret, or at the start of the body if none was placed.
+  if (!doc || !glyph || !selection) return;
   await pasteText(glyph, "paste");
 }
 
@@ -10189,12 +10341,9 @@ function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeI
   doneBtn?.addEventListener("click", () => close());
 
   function open() {
+    // An open document is the only precondition — Word's Insert ▸ Symbol and
+    // Docs' Insert ▸ Special characters are never gated on a prior click.
     if (!doc) return;
-    if (!selection) {
-      setStatus("Place the caret before inserting", "error");
-      focusEditorSurface();
-      return;
-    }
     // Viewing is read-only; fail closed before opening (mirrors the link dialog)
     // so the picker never opens onto a dead insert. Suggesting is allowed — the
     // insert routes through the tracked suggestion path.
@@ -10747,7 +10896,10 @@ function updateFindStatus() {
     setFindStatus("1 match");
     return;
   }
-  const idx = selection
+  // An untouched load-time caret is not a place the user searched from, so it
+  // counts as "no position" here: a document whose first characters are the
+  // query still reports "N matches", not "1 of N".
+  const idx = selection && !caretIsImplicit()
     ? matches.findIndex(
         (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
       )
@@ -10804,7 +10956,10 @@ function findFromSelection(forward) {
     setFindStatus("No match", true);
     return false;
   }
-  const current = selection
+  // Same rule as `updateFindStatus`: the untouched load-time caret means "start
+  // from the top", so Find Next cannot skip a match sitting at the document
+  // start. Selecting the hit moves the caret off the seed, making it explicit.
+  const current = selection && !caretIsImplicit()
     ? matches.findIndex(
         (m) => m.startNode === selection.anchor.node && m.startOffset === selection.anchor.offset,
       )
@@ -12735,5 +12890,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 fileEl.disabled = true;
-updateToolbar(); // start with the toolbar controls disabled (no selection yet)
+// No document is open yet, so every document-scoped control starts disabled.
+// (Not "no selection yet": once a document opens it always has an insertion
+// point — see `openBytes` — so `selection` tracks the document, not the click.)
+updateToolbar();
 boot();
