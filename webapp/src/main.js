@@ -6959,12 +6959,17 @@ onButton(indentDecBtn, () => adjustIndentCommand(-360));
 onButton(indentIncBtn, () => adjustIndentCommand(360));
 onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
 onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
-onButton(checkListBtn, () => {
+/** Toggles the caret's paragraphs into (or out of) a checklist. Shared by the
+ *  ribbon button and the `paragraph.list.checklist` command, so the two cannot
+ *  diverge — the command used not to exist at all, which left the checklist
+ *  reachable only by finding one button on the Home tab. */
+function toggleChecklistCommand() {
   runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "checklist"));
   // A brand-new checklist introduces the `☐` marker glyph; fetch its covering
   // symbol font (once) so it renders instead of a .notdef box, then re-render.
   void ensureGlyphCoverage("checklist");
-});
+}
+onButton(checkListBtn, toggleChecklistCommand);
 onButton(restartListBtn, () => {
   if (selection && doc) runNodeEdit(() => doc.restartList(selection.focus.node));
 });
@@ -7504,16 +7509,22 @@ const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMen
 const numberGalleryPopover = registerPopover(numberedListMenuBtn, numberGalleryMenu, () =>
   reflectListGallery(numberGalleryMenu),
 );
+/** Applies a list-marker spec ("bullet:•", "numbered:decimal", …) to the caret's
+ *  list. Shared by the gallery cells and by the `paragraph.listFormat.*`
+ *  commands, which are generated from the very same cells. */
+function applyListFormatCommand(spec) {
+  if (!selection || !doc) return;
+  const applied = runNodeEdit(() => doc.setListFormat(selection.focus.node, spec));
+  // A newly chosen bullet glyph may need its covering symbol font fetched
+  // (once) so it renders instead of a .notdef box, then re-render.
+  if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
+}
 function wireListGallery(menu, popover) {
   menu.addEventListener("click", (e) => {
     const cell = e.target.closest("[data-spec]");
     if (!cell || !selection || !doc) return;
     closePopover(popover);
-    const spec = cell.dataset.spec;
-    const applied = runNodeEdit(() => doc.setListFormat(selection.focus.node, spec));
-    // A newly chosen bullet glyph may need its covering symbol font fetched
-    // (once) so it renders instead of a .notdef box, then re-render.
-    if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
+    applyListFormatCommand(cell.dataset.spec);
   });
 }
 wireListGallery(bulletGalleryMenu, bulletGalleryPopover);
@@ -9162,6 +9173,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.align.justify", label: "Justify", group: "Paragraph", kw: "align", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("justify") },
     { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
     { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { id: "paragraph.list.checklist", label: "Checklist", group: "Paragraph", kw: "checklist checkbox todo task tick check box", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleChecklistCommand() },
     { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
     { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
@@ -9240,6 +9252,46 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => createStyleFromSelection(),
     },
   );
+  // Line spacing and the list-marker galleries were ribbon-only: they exist as
+  // popover controls on the Home tab and had no command entry at all, so neither
+  // the palette nor any app menu could reach them. Docs gives line spacing a
+  // whole top-level submenu (Format ▸ Line & paragraph spacing) and both products
+  // put the marker galleries behind a searchable menu path.
+  //
+  // The rows are generated FROM the popovers' own markup rather than restated
+  // here: the presets carry their percentage and label, and each gallery cell
+  // carries the spec it applies plus the assistive-technology name it already
+  // needs. A preset or bullet style added to the markup therefore gets its
+  // command for free, and none of these labels can drift from the control they
+  // mirror. Both run the same functions the popovers run.
+  if (doc) {
+    for (const preset of spacingMenu?.querySelectorAll(".spacing-line") ?? []) {
+      const percent = Number(preset.dataset.percent);
+      cmds.push({
+        id: `paragraph.spacing.${percent}`,
+        label: `Line spacing: ${preset.textContent.trim()}`,
+        group: "Paragraph",
+        kw: "line spacing leading single double space",
+        enabled: !!selection,
+        disabledReason: "Place the caret in a paragraph",
+        run: () => runToolbarEdit((a, o, e, f) => doc.setLineSpacing(a, o, e, f, percent)),
+      });
+    }
+    for (const [menu, noun] of [[bulletGalleryMenu, "Bullet style"], [numberGalleryMenu, "Numbering format"]]) {
+      for (const cell of menu?.querySelectorAll(".list-gallery-cell") ?? []) {
+        const spec = cell.dataset.spec;
+        cmds.push({
+          id: `paragraph.listFormat.${spec}`,
+          label: `${noun}: ${cell.getAttribute("aria-label")}`,
+          group: "Paragraph",
+          kw: `list marker bullet numbering ${cell.getAttribute("aria-label")}`.toLowerCase(),
+          enabled: !!selection,
+          disabledReason: "Place the caret in a list",
+          run: () => applyListFormatCommand(spec),
+        });
+      }
+    }
+  }
   if (doc) {
     for (const name of doc.listStyles()) {
       cmds.push({
