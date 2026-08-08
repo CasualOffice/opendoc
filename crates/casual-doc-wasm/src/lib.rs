@@ -2882,6 +2882,160 @@ impl WasmDocument {
         }
     }
 
+    /// The marker format of the caret paragraph's own list level, as a compact
+    /// token the toolbar's bullet/number gallery highlights the current choice
+    /// with: a numbered level returns its `ST_NumberFormat` token
+    /// (`"decimal"`, `"lowerLetter"`, `"upperLetter"`, `"lowerRoman"`,
+    /// `"upperRoman"`, `"decimalZero"`, `"ordinal"`, `"cardinalText"`,
+    /// `"ordinalText"`, `"none"`, or a verbatim `Other` token); a bullet level
+    /// returns `"bullet:"` followed by its glyph (the `w:lvlText`). Returns `""`
+    /// when the paragraph is not a list item. The same tokens are accepted back
+    /// by [`set_list_format`](Self::set_list_format).
+    #[wasm_bindgen(js_name = listFormatAt)]
+    #[must_use]
+    pub fn list_format_at(&self, node: &str) -> String {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        let Some(reference) = paragraph_properties(&self.document, nid).and_then(|p| p.numbering)
+        else {
+            return String::new();
+        };
+        let defs = self.document.definitions();
+        let Some(level) = defs
+            .numbering
+            .get(&reference.instance)
+            .and_then(|inst| defs.abstract_numbering.get(&inst.abstract_ref))
+            .and_then(|abs| {
+                abs.levels
+                    .iter()
+                    .find(|l| l.level == reference.level)
+                    .or_else(|| abs.levels.first())
+            })
+        else {
+            return String::new();
+        };
+        match &level.num_fmt {
+            Some(NumberFormat::Bullet) => {
+                let glyph = level.lvl_text.as_deref().unwrap_or("").trim();
+                format!("bullet:{glyph}")
+            }
+            Some(other) => number_format_token(other).to_string(),
+            None => String::new(),
+        }
+    }
+
+    /// Sets the marker format of the caret paragraph's list — the bullet glyph
+    /// (for a bullet list) or the number format (for a numbered list) — matching
+    /// the picker in Word/Docs, as one undoable action. `spec` is a token from
+    /// [`list_format_at`](Self::list_format_at): `"bullet:<glyph>"` sets a bullet
+    /// list whose marker is `<glyph>`; a bare `ST_NumberFormat` token
+    /// (`"decimal"`, `"lowerLetter"`, `"upperLetter"`, `"lowerRoman"`,
+    /// `"upperRoman"`, `"decimalZero"`) sets a numbered list to that numeral
+    /// system.
+    ///
+    /// The change is scoped to the caret's list only: a fresh abstract definition
+    /// (cloned from the current one, with the caret level's `w:numFmt`/`w:lvlText`
+    /// retargeted) and a fresh instance are minted, and every paragraph in the
+    /// contiguous run that shares the caret's list instance is repointed at the
+    /// new instance — so other lists sharing the editor's reusable definition are
+    /// untouched. Only single-level marker formatting is handled here; authoring a
+    /// full multilevel list is a separate follow-up.
+    ///
+    /// Errors when the caret is not a list item, or when `spec` is empty or names
+    /// no supported format.
+    #[wasm_bindgen(js_name = setListFormat)]
+    pub fn set_list_format(&mut self, node: &str, spec: &str) -> Result<EditResult, JsValue> {
+        let start_node = node_id(node)?;
+        let Some(current) =
+            paragraph_properties(&self.document, start_node).and_then(|p| p.numbering)
+        else {
+            return Err(to_js("list formatting requires a list item".into()));
+        };
+        let level = current.level;
+
+        // Clone the current abstract and retarget the caret level's marker.
+        let abstract_ref = self
+            .document
+            .definitions()
+            .numbering
+            .get(&current.instance)
+            .ok_or_else(|| to_js("numbering definition not found".into()))?
+            .abstract_ref;
+        let mut abstract_def = self
+            .document
+            .definitions()
+            .abstract_numbering
+            .get(&abstract_ref)
+            .ok_or_else(|| to_js("abstract numbering not found".into()))?
+            .clone();
+        let target_level = abstract_def
+            .levels
+            .iter_mut()
+            .find(|l| l.level == level)
+            .ok_or_else(|| to_js("numbering level not found".into()))?;
+        apply_marker_spec(target_level, spec).map_err(to_js)?;
+
+        // Mint a fresh abstract + instance so only this list changes.
+        let exhausted = || to_js("id space exhausted".into());
+        let new_abstract =
+            AbstractNumberingId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let new_instance =
+            NumberingInstanceId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let defs = self.document.definitions_mut();
+        defs.abstract_numbering.insert(new_abstract, abstract_def);
+        defs.numbering.insert(
+            new_instance,
+            NumberingInstance {
+                abstract_ref: new_abstract,
+                overrides: Vec::new(),
+            },
+        );
+
+        // Repoint the contiguous run sharing the caret's list instance, keeping
+        // each paragraph's own level.
+        let ordered = self.ordered_paragraphs();
+        let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
+            return Err(to_js("paragraph not found".into()));
+        };
+        let mut run: Vec<NodeId> = vec![start_node];
+        for (id, _) in ordered[..index].iter().rev() {
+            match paragraph_properties(&self.document, *id).and_then(|p| p.numbering) {
+                Some(n) if n.instance == current.instance => run.push(*id),
+                _ => break,
+            }
+        }
+        for (id, _) in ordered.iter().skip(index + 1) {
+            match paragraph_properties(&self.document, *id).and_then(|p| p.numbering) {
+                Some(n) if n.instance == current.instance => run.push(*id),
+                _ => break,
+            }
+        }
+        let mut ops = Vec::with_capacity(run.len());
+        for id in run {
+            let Some(properties) = paragraph_properties(&self.document, id) else {
+                continue;
+            };
+            let Some(numbering) = properties.numbering else {
+                continue;
+            };
+            let mut next = properties.clone();
+            next.numbering = Some(NumberingRef {
+                instance: new_instance,
+                level: numbering.level,
+            });
+            ops.push(Operation::SetParagraphProperties {
+                node: id,
+                properties: Box::new(next),
+            });
+        }
+        if ops.is_empty() {
+            return Err(to_js("no list paragraphs to reformat".into()));
+        }
+        self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
+            .map_err(to_js)
+    }
+
     /// Inserts an empty table row above or below the row containing the caret's
     /// paragraph (`below` = after it). The new row mirrors the anchor row's column
     /// structure (cell count, widths, spans) with empty cells; the caret lands in
@@ -13690,6 +13844,69 @@ fn list_level(numbered: bool, level: u8) -> NumberingLevel {
     }
 }
 
+/// The `ST_NumberFormat` token a typed [`NumberFormat`] reflects as, for the
+/// toolbar's marker-format gallery. Mirrors the export/paginate mapping.
+fn number_format_token(format: &NumberFormat) -> &str {
+    match format {
+        NumberFormat::Decimal => "decimal",
+        NumberFormat::Bullet => "bullet",
+        NumberFormat::LowerRoman => "lowerRoman",
+        NumberFormat::UpperRoman => "upperRoman",
+        NumberFormat::LowerLetter => "lowerLetter",
+        NumberFormat::UpperLetter => "upperLetter",
+        NumberFormat::Ordinal => "ordinal",
+        NumberFormat::CardinalText => "cardinalText",
+        NumberFormat::OrdinalText => "ordinalText",
+        NumberFormat::DecimalZero => "decimalZero",
+        NumberFormat::None => "none",
+        NumberFormat::Other(value) => value.as_str(),
+    }
+}
+
+/// The numbered `ST_NumberFormat` token accepted by the marker-format picker,
+/// as a typed [`NumberFormat`]. Bullet lists are set through the `"bullet:"`
+/// glyph spec, not this map, so `bullet`/`none` are not offered here.
+fn number_format_from_token(token: &str) -> Option<NumberFormat> {
+    Some(match token {
+        "decimal" => NumberFormat::Decimal,
+        "decimalZero" => NumberFormat::DecimalZero,
+        "lowerLetter" => NumberFormat::LowerLetter,
+        "upperLetter" => NumberFormat::UpperLetter,
+        "lowerRoman" => NumberFormat::LowerRoman,
+        "upperRoman" => NumberFormat::UpperRoman,
+        _ => return None,
+    })
+}
+
+/// Retargets one numbering level's marker in place from a picker `spec`:
+/// `"bullet:<glyph>"` makes it a bullet whose `w:lvlText` is `<glyph>`; a bare
+/// numbered token (see [`number_format_from_token`]) sets `w:numFmt` and gives
+/// the level a placeholder `w:lvlText` (`%n.`) if it lacks one — so switching a
+/// bullet list to a numbered one produces a rendering template rather than a
+/// stale glyph. Errors when the spec is empty or unrecognized.
+fn apply_marker_spec(level: &mut NumberingLevel, spec: &str) -> Result<(), String> {
+    if let Some(glyph) = spec.strip_prefix("bullet:") {
+        if glyph.is_empty() {
+            return Err("bullet marker requires a glyph".into());
+        }
+        level.num_fmt = Some(NumberFormat::Bullet);
+        level.lvl_text = Some(glyph.to_string());
+        return Ok(());
+    }
+    let format =
+        number_format_from_token(spec).ok_or_else(|| format!("unsupported list format: {spec}"))?;
+    level.num_fmt = Some(format);
+    let has_placeholder = level.lvl_text.as_deref().is_some_and(|t| t.contains('%'));
+    if !has_placeholder {
+        let placeholders = (1..=u16::from(level.level) + 1)
+            .map(|part| format!("%{part}"))
+            .collect::<Vec<_>>()
+            .join(".");
+        level.lvl_text = Some(format!("{placeholders}."));
+    }
+    Ok(())
+}
+
 fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos {
     let doc_id = document.id();
     let table_anchor = |table| {
@@ -18748,6 +18965,69 @@ mod tests {
         d.toggle_list(&empty, 0, &empty, 0, "bullet")
             .expect("exit empty list item");
         assert_eq!(d.list_style_at(&empty), "");
+    }
+
+    /// The marker-format picker changes a numbered list's `numFmt` and a bullet
+    /// list's glyph, reflects the new choice, is a single undoable action whose
+    /// inverse restores the original, and the reformatted list survives a DOCX
+    /// round-trip.
+    #[test]
+    fn set_list_format_changes_marker_reflects_undoes_and_round_trips() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        // A numbered list starts as decimal; the picker switches it to lowerLetter.
+        d.toggle_list(&node, 0, &node, 0, "numbered")
+            .expect("toggle numbered on");
+        assert_eq!(d.list_format_at(&node), "decimal");
+        d.set_list_format(&node, "lowerLetter")
+            .expect("set lowerLetter");
+        assert_eq!(d.list_format_at(&node), "lowerLetter");
+        assert_eq!(d.list_style_at(&node), "numbered", "still a numbered list");
+        // The reformatted level really carries the new numFmt in the model.
+        let level = paragraph_properties(&d.document, NodeId::from_str(&node).unwrap())
+            .unwrap()
+            .numbering
+            .unwrap();
+        let defs = d.document.definitions();
+        let fmt = defs
+            .numbering
+            .get(&level.instance)
+            .and_then(|i| defs.abstract_numbering.get(&i.abstract_ref))
+            .and_then(|a| a.levels.iter().find(|l| l.level == level.level))
+            .and_then(|l| l.num_fmt.clone());
+        assert_eq!(fmt, Some(NumberFormat::LowerLetter));
+
+        // One undo restores the original decimal format.
+        d.undo().expect("undo");
+        assert_eq!(d.list_format_at(&node), "decimal");
+
+        // A bullet glyph swap through the same binding.
+        d.toggle_list(&node, 0, &node, 0, "bullet")
+            .expect("toggle bullet on");
+        assert_eq!(d.list_format_at(&node), "bullet:\u{2022}");
+        d.set_list_format(&node, "bullet:\u{25aa}")
+            .expect("set square bullet");
+        assert_eq!(d.list_format_at(&node), "bullet:\u{25aa}");
+        assert_eq!(d.list_style_at(&node), "bullet", "still a bullet list");
+
+        // The chosen bullet glyph survives an export/reopen round-trip.
+        let bytes = d.export_docx().expect("export docx");
+        let d2 = open_document(&bytes).expect("reopen exported docx");
+        let mut nodes2 = Vec::new();
+        collect_block_text(d2.document.body(), &mut nodes2);
+        let node2 = nodes2
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph after round-trip");
+        assert_eq!(d2.list_format_at(&node2), "bullet:\u{25aa}");
     }
 
     #[test]
