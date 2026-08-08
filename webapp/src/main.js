@@ -3841,6 +3841,46 @@ function updateRunningMarker(page, event) {
   else hideRunningMarker();
 }
 
+/** Which running-content variants are on, read from the engine rather than a
+ *  local flag so the labels can never drift from the document. */
+function runningVariantState() {
+  if (!doc) return { firstPage: false, evenOdd: false };
+  try {
+    return JSON.parse(doc.runningVariants());
+  } catch {
+    return { firstPage: false, evenOdd: false };
+  }
+}
+
+/** Toggles Word's "Different First Page" / "Different Odd & Even Pages".
+ *
+ *  Each only says a variant APPLIES; its content is a separate header/footer
+ *  reference, so turning one on for a document that has no such variant shows an
+ *  empty band until one is created — which is what Word does too. */
+async function toggleRunningVariant(which) {
+  if (!doc) return;
+  if (blockMutationInViewing()) return;
+  if (reviewMode === "suggesting") {
+    setStatus("Page-setup changes cannot be tracked yet; switch to Editing", "error");
+    return;
+  }
+  const state = runningVariantState();
+  const next = !state[which];
+  try {
+    const result =
+      which === "firstPage" ? doc.setFirstPageVariant(next) : doc.setEvenOddVariant(next);
+    await applyEditResult(result);
+  } catch (err) {
+    setStatus(`Could not change the page setup: ${err.message ?? err}`, "error");
+    return;
+  }
+  setStatus(
+    which === "firstPage"
+      ? `Different first page ${next ? "on" : "off"}`
+      : `Different odd & even pages ${next ? "on" : "off"}`,
+  );
+}
+
 /** Creates an empty header or footer and enters it. Gated like any other
  *  mutation: refused read-only in Viewing, and blocked in Suggesting because
  *  adding running content has no tracked-change representation. */
@@ -9624,6 +9664,8 @@ function editorCommands(context = { surface: "palette" }) {
     // Insert precondition left is a real one — Link needs text to link.
     { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: insertCommandEnabled("insert.table"), run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "layout.firstPageVariant", label: `Different first page: ${runningVariantState().firstPage ? "on" : "off"}`, group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("firstPage") },
+    { id: "layout.evenOddVariant", label: `Different odd & even pages: ${runningVariantState().evenOdd ? "on" : "off"}`, group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("evenOdd") },
     { id: "insert.header", label: "Edit header", group: "Insert", kw: "header running title page top margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("header") },
     { id: "insert.footer", label: "Edit footer", group: "Insert", kw: "footer running page number bottom margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("footer") },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
@@ -9813,7 +9855,7 @@ const APP_MENU_SECTIONS = {
     ["review.acceptNext", "review.rejectNext"],
     ["review.acceptAll", "review.rejectAll"],
   ],
-  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
+  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],

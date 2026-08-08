@@ -720,6 +720,29 @@ pub enum Operation {
         /// The body to link, or `None` to inherit from the previous section.
         reference: Option<HeaderFooterId>,
     },
+    /// Turn a section's distinct first-page header/footer on or off
+    /// (`w:titlePg`) — Word's "Different First Page" (docs/85 §9-Q6, decided in
+    /// #462). Self-inverse, carrying the previous value.
+    ///
+    /// The flag only says a First variant APPLIES; the variant's content is a
+    /// separate `HeaderFooterRef`, so turning this on for a section that has no
+    /// First reference makes the first page show nothing until one is created —
+    /// which is exactly Word's behaviour.
+    SetSectionTitlePage {
+        /// The section to update.
+        section: SectionId,
+        /// The new value (`None` clears the property).
+        title_page: Option<bool>,
+    },
+    /// Turn distinct even/odd headers and footers on or off
+    /// (`w:evenAndOddHeaders`) — Word's "Different Odd & Even Pages".
+    ///
+    /// Document-scoped, not per-section: OOXML carries it in settings, and both
+    /// Word and Google Docs present it as one document-wide choice. Self-inverse.
+    SetEvenAndOddHeaders {
+        /// Whether even pages use their own header/footer variant.
+        enabled: bool,
+    },
 }
 
 /// Whether a running-content op addresses the header or the footer side.
@@ -1693,6 +1716,29 @@ pub fn apply(
                 at: Pos::new(node, offset),
                 field: Box::new(removed),
             })
+        }
+        Operation::SetSectionTitlePage {
+            section,
+            title_page,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = boundary.title_page;
+            boundary.title_page = *title_page;
+            Ok(Operation::SetSectionTitlePage {
+                section: *section,
+                title_page: previous,
+            })
+        }
+        Operation::SetEvenAndOddHeaders { enabled } => {
+            let settings = &mut doc.definitions_mut().settings;
+            let previous = settings.even_and_odd_headers;
+            settings.even_and_odd_headers = *enabled;
+            Ok(Operation::SetEvenAndOddHeaders { enabled: previous })
         }
         Operation::CreateHeaderFooterBody { region, id, blocks } => {
             // Refuse rather than overwrite: an existing body silently replaced
@@ -5813,6 +5859,62 @@ mod tests {
     /// reach it. Resolution used to start at `doc.body_mut()` unconditionally, so
     /// every one of these positions answered `NodeNotFound` — the reason nothing
     /// outside the body could be typed into.
+    /// Word's "Different First Page" (docs/85 Q6): a section flag, self-inverse.
+    #[test]
+    fn the_first_page_flag_toggles_and_restores() {
+        let mut definitions = Definitions::default();
+        let mut boundary = section(950);
+        boundary.title_page = None;
+        let section_id = boundary.id;
+        definitions.sections.push(boundary);
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionTitlePage {
+                section: section_id,
+                title_page: Some(true),
+            },
+        )
+        .unwrap();
+        assert_eq!(d.definitions().sections[0].title_page, Some(true));
+        assert_eq!(
+            inverse,
+            Operation::SetSectionTitlePage {
+                section: section_id,
+                title_page: None,
+            },
+            "the inverse carries the value that was there before"
+        );
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d.definitions().sections[0].title_page, None);
+    }
+
+    /// Word's "Different Odd & Even Pages" is document-scoped, matching where
+    /// OOXML carries it (`w:evenAndOddHeaders` in settings).
+    #[test]
+    fn the_even_odd_flag_is_document_scoped_and_self_inverse() {
+        let mut d = doc(vec![para(2, vec![run(3, "body")])]);
+        let mut ids = IdGenerator::new(9);
+        assert!(!d.definitions().settings.even_and_odd_headers);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetEvenAndOddHeaders { enabled: true },
+        )
+        .unwrap();
+        assert!(d.definitions().settings.even_and_odd_headers);
+        assert_eq!(inverse, Operation::SetEvenAndOddHeaders { enabled: false });
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert!(!d.definitions().settings.even_and_odd_headers);
+    }
+
     /// docs/85 §8.3: creating a header body and linking a section to it are
     /// separate ops, and both retain exact inverses.
     #[test]
