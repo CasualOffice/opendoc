@@ -441,6 +441,141 @@ has **no `link_to_previous` field**. For editing we must decide (§9-Q7):
   adding a boolean the writer would have to reconcile — **recommended**, pending
   owner confirmation.
 
+## 8b. Status reconciliation (2026-08-09)
+
+This design was written 2026-08-01. Substantial parts of it have since shipped,
+and several "open questions" were in practice answered by that code rather than
+by a decision. Recorded here so the remaining decisions are only the ones that
+are genuinely still open. Every claim below was checked against the tree at
+`4754e1e`, not against memory.
+
+**Shipped since the design was written**
+
+- **Phase 0 is complete.** Image crop (`a:srcRect`) and `descr` alt-text are in
+  the model (`casual-doc-model/src/v1/body.rs`), with import/export/layout.
+- **Phase A object editing is largely in place**: selection, move, resize,
+  anchoring, crop, alt-text and the object context menu, covered by
+  `object-selection`, `object-geometry`, `object-anchor`, `object-edit` and
+  `object-context-menu` browser specs.
+- **Image insertion ships** (`insertImageFromFile` / `insertImageFromBlob`), from
+  a file or a clipboard paste.
+- **Object edits fail closed in Suggesting**, as Q5 decided.
+
+**Questions the shipped code has already answered**
+
+- **Q1 (Escape grammar) — answered for Escape.** `objectSelection` carries
+  `mode: "selected" | "editing"` and the two-step Escape is implemented. The
+  *Tab/Shift+Tab object traversal* half of Q1 is NOT implemented and remains a
+  genuine choice.
+- **Q2 (context bar vs contextual tab) — answered: a floating context bar.**
+  `object-context-bar` is built and shipped. Note the shell has since grown two
+  contextual/permanent ribbon tabs (Table, and Review as of #455), so if a
+  "Picture Format" tab is still wanted it now has precedent to follow; the bar
+  and a tab are not mutually exclusive.
+- **Q8 (where image bytes come from) — answered by the shipped insert path.**
+
+**Still genuinely open, and blocking Phase B**
+
+- **Q1 (Tab/Shift+Tab object traversal)** — unimplemented, still a choice.
+- **Q6 (`title_page` / section running toggles)** and **Q7 (link-to-previous
+  semantics)** — untouched. Both are header/footer semantics, so both gate
+  Phase B rather than Phase A.
+- **Q9 (phasing granularity)** — worth re-asking now that Phase A has largely
+  landed piecemeal rather than as one tracked phase.
+
+**The keystone has not been started**
+
+There is no `Location` (or equivalent sub-document address) type anywhere in the
+workspace. Everything that needs a caret outside the body therefore remains
+unavailable, and an audit of the editing surfaces on 2026-08-09 confirmed it from
+the outside: the editor exposes **no command at all** for header/footer editing,
+footnote/endnote insertion or bodies, text-box text editing, or shape drawing —
+the palette returns nothing for "text box", "footnote" or "shape".
+
+This is the single largest remaining gap in the editor, and it is one dependency,
+not four: header/footer, note bodies and text-box text all need the same thing —
+an address that says *which* sub-document a position is in, threaded through
+selection, hit-testing, the edit ops, layout and the accessibility projection.
+Inserting a footnote before that exists would create a note body the user cannot
+type into, which is why note *insertion* is deliberately still not wired up even
+though the engine ops for it exist.
+
+## 8c. Competitive research round 2 — LibreOffice, and how the model addresses a sub-document (2026-08-09)
+
+§10 compares OnlyOffice, Word and Google Docs on *interaction*. Two things it does
+not cover turn out to matter more than any of the open questions: **LibreOffice
+Writer**, which is this project's own layout oracle and was missing from the
+survey, and **how any of these editors actually addresses a position inside a
+header, note or text box** — the question the `Location` keystone exists to answer.
+
+### 8c.1 LibreOffice Writer's header/footer affordance
+
+Writer does not use Word's bare double-click. Clicking above the top margin
+raises a **header marker with a `+` button**; clicking `+` creates and enters the
+header. Once it exists the marker carries a **down-arrow** opening a menu to
+format or delete it. Exit is `Esc` or a click in the body — matching Word and
+Docs.
+
+Worth adopting the marker: it makes an *absent* header discoverable, which the
+pure double-click of Word/Docs does not. A user who has never been told that
+double-clicking the margin does something will never find it. That is the same
+"one-surface-only" reachability failure the command-surface audit kept finding,
+in a different disguise.
+
+### 8c.2 How LibreOffice addresses sub-document positions — and why it matters here
+
+Writer keeps **one node array** (`SwNodes`) divided into fixed ranges, with
+boundary accessors: `GetEndOfPostIts()`, `GetEndOfInserts()` (footnotes and
+endnotes), `GetEndOfAutotext()` (**Flys — floating frames and text boxes — plus
+headers and footers**), `GetEndOfRedlines()`, and `GetEndOfContent()` (body text).
+Header, footer, footnote and text-box content live in the *same* array as body
+text, in dedicated ranges.
+
+The consequence is the important part: a cursor (`SwPaM`) is a node index plus an
+offset, and that is the *whole* address. Writer has no "which sub-document am I
+in" type threaded through its editing layer, because a node index already answers
+it. The ranges are a property of *where a node sits*, looked up when needed — not
+a coordinate the cursor carries.
+
+### 8c.3 This model already has the same property
+
+Checked against the tree at `4754e1e`:
+
+- `HeaderFooter`, `Note` and `Comment` each hold `blocks: Vec<BlockNode>` — the
+  *same* recursive block model as the body, not a parallel representation.
+- `Document::validate` records the ids of every block inside every header,
+  footer, note and comment into the **same document-wide uniqueness set** as body
+  ids (`document.rs`, `record_block_ids` over `definitions.headers` /
+  `footers` / `notes` / `comments`).
+
+So `Pos { node, offset }` **already uniquely addresses a position inside a header,
+footer, note or comment**, exactly as a node index does in Writer. The address
+type this design has been waiting on largely already exists.
+
+What is actually missing is narrower than "a new address threaded everywhere":
+
+1. **Op resolution is hardcoded to the body.** 56 sites in `casual-doc-edit`
+   resolve through `doc.body_mut()`, and the crate contains **zero** references to
+   `definitions.headers`, `footers` or `notes`. The resolution helpers themselves
+   are already surface-agnostic — `find_paragraph(blocks, id)` takes any block
+   slice — so what is body-specific is the *entry point*, not the traversal.
+2. **Hit-testing and layout** must map a click in the header band, a note, or a
+   text box to those nodes and back.
+3. **A "which surface does this node live in" lookup**, for gating and for the
+   things that genuinely differ per surface (per-section headers, note numbering).
+
+That is a materially smaller and better-founded piece of work than the phrasing
+elsewhere in this document implies, and it removes the argument for inventing a
+`Location` enum that every op signature has to carry. It should be re-scoped
+before Phase B is planned, and Q9 (phasing granularity) should be answered with
+this in hand.
+
+**Sources.** LibreOffice help, "About Headers and Footers"
+(help.libreoffice.org/6.2/en-US/text/swriter/guide/header_footer.html); LibreOffice
+Getting Started Guide 26.2, ch. 2; LibreOffice `SwNodes` class reference
+(docs.libreoffice.org/sw/html/classSwNodes.html) for the node-array ranges and
+their accessors.
+
 ## 9. Open questions for owner review
 
 Three questions are now **DECIDED** (recorded 2026-08-01) and folded into the
