@@ -34,6 +34,20 @@ Milestones landed here:
   through a host-owned `http`/`https`/`mailto` allowlist; internal hyperlinks
   and TOC rows resolve their bookmark and scroll to the target caret/page.
   Insert → Link creates, updates, or removes an undoable same-paragraph link.
+- **Editing surface**: text entry and formatting, paragraph styles, lists and
+  checklists, table editing (insert, split/merge, properties, formulas), picture
+  insert from file or clipboard, structured paste of external tables and lists,
+  find/replace, bookmarks, fields, comments, and tracked changes with
+  Editing / Suggesting / Read-only modes. Insert → Symbol and Insert → Emoji add
+  categorized glyph pickers; ⌘/Ctrl+P prints. Every mutation routes through the
+  same gated, undoable path, so read-only fails closed and Suggesting is tracked.
+- **Status bar**: live word, character, paragraph, and page counts. The strip
+  sheds its lowest-value indicators as the window narrows, in
+  `data-status-priority` order, rather than giving the page a horizontal
+  scrollbar — see the ladder in `src/style.css`. `shell-reference-polish.spec.mjs`
+  measures the footer and its live-control half against their own boxes, because
+  `documentElement.scrollWidth` alone cannot see a strip that overflows behind an
+  ancestor's `overflow`.
 
 Native find/AT overlay remains a later milestone.
 
