@@ -27,8 +27,8 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::v1::{
     DashStyle, Fill, GradientKind, GradientStop, GroupChild, GroupPicture, GroupShape,
-    GroupTransform,
-    MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry, ShapeStroke, WordprocessingGroup,
+    GroupTransform, MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry, ShapeStroke,
+    WordprocessingGroup,
 };
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;

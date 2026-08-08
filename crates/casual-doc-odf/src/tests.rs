@@ -1233,6 +1233,41 @@ fn floating_image_border_round_trips() {
     assert_eq!(reexport.bytes, export.bytes);
 }
 
+/// A `fo:border` width that is NOT on the 4-decimal-cm grid (here `1pt` = 12700 EMU)
+/// must still yield an idempotent FIRST export: the style's content-addressed name is
+/// hashed from the grid-snapped width that is actually written, so re-exporting the
+/// re-imported document is byte-identical. Without snapping, the name would be hashed
+/// from the raw 12700 EMU while the bytes emit the snapped `0.0352cm`, so the first
+/// re-export would differ only in the `gr<hash>` style name.
+#[test]
+fn floating_image_non_grid_border_width_is_idempotent() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties fo:border="1pt solid #ff0000"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let bytes = floating_image_package(content);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    // `1pt` = 12700 EMU floors to the emitted `0.0352cm` (= 12672 EMU).
+    assert!(content_out.contains(r#"fo:border="0.0352cm solid #ff0000""#));
+
+    // The FIRST re-export is byte-identical — the style name and the emitted width agree.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
 /// A page-parity `draw:mirror` variant has no model form: the flip is dropped with
 /// a finding rather than re-emitted as a plain (semantics-changing) mirror.
 #[test]

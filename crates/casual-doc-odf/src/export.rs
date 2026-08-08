@@ -3063,9 +3063,12 @@ impl Writer {
                 && border.color.a == 255
         });
         if let Some(border) = border_emittable {
+            // Snap the width to the emitted cm grid so the style's content-addressed
+            // name matches the `fo:border` bytes actually written — the first export is
+            // then idempotent even for a non-grid width (e.g. a `1pt` = 12700-EMU border).
             graphic.border = Some((
                 (border.color.r, border.color.g, border.color.b),
-                border.width_emu,
+                emu_snapped_to_cm(border.width_emu),
             ));
         }
         if drawing.crop.is_some()
@@ -5131,6 +5134,18 @@ fn emu_to_cm(emu: i64) -> String {
     // instead of being dropped on re-import.
     let centimetres = (emu as f64 / 360_000.0 * 10_000.0).floor() / 10_000.0;
     format!("{centimetres:.4}cm")
+}
+
+/// The EMU value that `emu_to_cm(emu)` round-trips to on re-import — i.e. the length
+/// snapped to the 4-decimal-cm grid actually written. Applying this to a length BEFORE
+/// it enters a content-addressed style name keeps the name (hashed from EMU) consistent
+/// with the emitted `cm` bytes, so the FIRST export is already idempotent for lengths
+/// that are not grid-aligned (e.g. a `1pt` = 12700-EMU border). Mirrors the importer's
+/// `emu_to_cm` → parse arithmetic exactly.
+fn emu_snapped_to_cm(emu: i64) -> i64 {
+    let cm = emu_to_cm(emu);
+    let number: f64 = cm.trim_end_matches("cm").parse().unwrap_or(0.0);
+    (number * 360_000.0).round() as i64
 }
 
 /// Builds the manifest deterministically. With no styles/meta/retained parts this
