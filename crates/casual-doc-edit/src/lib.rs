@@ -26,6 +26,7 @@ use casual_doc_model::v1::{
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
+use casual_doc_model::v1::HeaderFooterId;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
@@ -726,8 +727,8 @@ pub fn apply(
             if text.is_empty() {
                 return Err(EditError::EmptyEdit);
             }
-            let para =
-                find_paragraph_mut(doc.body_mut(), at.node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
+                .ok_or(EditError::NodeNotFound)?;
             if at.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -744,8 +745,9 @@ pub fn apply(
             if range.end.offset <= range.start.offset {
                 return Err(EditError::EmptyEdit);
             }
-            let para = find_paragraph_mut(doc.body_mut(), range.start.node)
-                .ok_or(EditError::NodeNotFound)?;
+            let para =
+                find_paragraph_mut(blocks_owning_mut(doc, range.start.node)?, range.start.node)
+                    .ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -795,11 +797,17 @@ pub fn apply(
                 // means "carry on", so there is nothing to change.
                 (next != current).then_some(next)
             });
-            if !split_paragraph(doc.body_mut(), at.node, at.offset, *new_id, ids)? {
+            if !split_paragraph(
+                blocks_owning_mut(doc, at.node)?,
+                at.node,
+                at.offset,
+                *new_id,
+                ids,
+            )? {
                 return Err(EditError::NodeNotFound);
             }
             if let Some(next) = next_style
-                && let Some(para) = find_paragraph_mut(doc.body_mut(), *new_id)
+                && let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
             {
                 para.properties.style_ref = Some(next);
             }
@@ -809,7 +817,7 @@ pub fn apply(
             })
         }
         Operation::JoinParagraphs { first, second } => {
-            match join_paragraphs(doc.body_mut(), *first, *second)? {
+            match join_paragraphs(blocks_owning_mut(doc, *first)?, *first, *second)? {
                 Some(split_at) => Ok(Operation::SplitParagraph {
                     at: Pos::new(*first, split_at),
                     new_id: *second,
@@ -825,7 +833,8 @@ pub fn apply(
                 return Err(EditError::EmptyEdit);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
+                .ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -857,7 +866,8 @@ pub fn apply(
                 return Err(EditError::EmptyEdit);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
+                .ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -895,7 +905,8 @@ pub fn apply(
                 return Err(EditError::Unsupported);
             }
             let node = range.start.node;
-            let para = find_paragraph_mut(doc.body_mut(), node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, node)?, node)
+                .ok_or(EditError::NodeNotFound)?;
             if range.end.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -970,7 +981,8 @@ pub fn apply(
             Ok(Operation::SetInlines { node, inlines: old })
         }
         Operation::SetInlines { node, inlines } => {
-            let para = find_paragraph_mut(doc.body_mut(), *node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, *node)?, *node)
+                .ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut para.inlines, inlines.clone());
             Ok(Operation::SetInlines {
                 node: *node,
@@ -978,7 +990,8 @@ pub fn apply(
             })
         }
         Operation::SetParagraphProperties { node, properties } => {
-            let para = find_paragraph_mut(doc.body_mut(), *node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, *node)?, *node)
+                .ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut para.properties, (**properties).clone());
             Ok(Operation::SetParagraphProperties {
                 node: *node,
@@ -1547,7 +1560,7 @@ pub fn apply(
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidField));
             if let Err(err) = outcome {
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), at.node) {
+                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node) {
                     para.inlines = snapshot;
                 }
                 return Err(err);
@@ -1566,7 +1579,7 @@ pub fn apply(
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::Unsupported));
             if let Err(err) = outcome {
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), at.node) {
+                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node) {
                     para.inlines = snapshot;
                 }
                 return Err(err);
@@ -1580,7 +1593,7 @@ pub fn apply(
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+            if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                 para.inlines
                     .retain(|i| !(is_object_node(i) && i.id() == *object));
                 // Removing the object can leave the two equal-property runs it kept
@@ -1589,7 +1602,7 @@ pub fn apply(
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             if doc.validate().is_err() {
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                     para.inlines = snapshot;
                 }
                 return Err(EditError::Unsupported);
@@ -1606,14 +1619,14 @@ pub fn apply(
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+            if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                 remove_field_by_id(&mut para.inlines, *field);
                 // Removing the field can leave two equal-property runs it kept
                 // apart adjacent, which the model forbids; coalesce them back.
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             if doc.validate().is_err() {
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                if let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, node)?, node) {
                     para.inlines = snapshot;
                 }
                 return Err(EditError::InvalidField);
@@ -1639,8 +1652,8 @@ pub fn apply(
             if already_defined {
                 return Err(EditError::Unsupported);
             }
-            let para =
-                find_paragraph_mut(doc.body_mut(), at.node).ok_or(EditError::NodeNotFound)?;
+            let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
+                .ok_or(EditError::NodeNotFound)?;
             if at.offset > paragraph_text_len(para) {
                 return Err(EditError::OffsetOutOfRange);
             }
@@ -1691,7 +1704,7 @@ pub fn apply(
                         doc.definitions_mut().endnotes.remove(note);
                     }
                 }
-                let para = find_paragraph_mut(doc.body_mut(), at.node)
+                let para = find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
                     .expect("the paragraph we just edited still exists");
                 para.inlines = old_inlines;
                 return Err(EditError::Unsupported);
@@ -2983,6 +2996,121 @@ fn uniform<T: PartialEq>(
 /// Finds the paragraph with `id` (immutable), recursing into tables and content
 /// controls.
 #[must_use]
+/// Which of the document's block surfaces a node lives in.
+///
+/// Header, footer and note content is ordinary block content in the SAME id
+/// space as the body — `Document::validate` records their block ids into one
+/// document-wide uniqueness set — so `Pos { node, offset }` already addresses a
+/// position inside any of them. This is the same property LibreOffice Writer
+/// relies on: its header, footer, footnote and floating-frame text sit in one
+/// node array beside body text, and a cursor is a node index, so nothing has to
+/// carry "which sub-document am I in".
+///
+/// So this is derived on demand rather than threaded through op signatures: the
+/// closed op set (doc 45, invariant I2) keeps addressing positions by `NodeId`,
+/// and resolution finds the surface that id belongs to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Surface {
+    /// The document body.
+    Body,
+    /// A header definition's content.
+    Header(HeaderFooterId),
+    /// A footer definition's content.
+    Footer(HeaderFooterId),
+    /// A footnote definition's content.
+    Footnote(NoteId),
+    /// An endnote definition's content.
+    Endnote(NoteId),
+}
+
+/// Whether `blocks` (recursively) contains a paragraph or table with `id`.
+fn blocks_contain(blocks: &[BlockNode], id: NodeId) -> bool {
+    if find_paragraph(blocks, id).is_some() {
+        return true;
+    }
+    blocks.iter().any(|block| match block {
+        BlockNode::Table(table) => {
+            table.id == id
+                || table.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| blocks_contain(&cell.blocks, id))
+                })
+        }
+        BlockNode::Sdt(sdt) => blocks_contain(&sdt.blocks, id),
+        BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => false,
+    })
+}
+
+/// The surface holding `id`, searched body-first because that is the
+/// overwhelmingly common case. `None` means no surface owns the id.
+#[must_use]
+pub fn surface_of(doc: &Document, id: NodeId) -> Option<Surface> {
+    if blocks_contain(doc.body(), id) {
+        return Some(Surface::Body);
+    }
+    let definitions = doc.definitions();
+    for (key, header) in definitions.headers.iter() {
+        if blocks_contain(&header.blocks, id) {
+            return Some(Surface::Header(*key));
+        }
+    }
+    for (key, footer) in definitions.footers.iter() {
+        if blocks_contain(&footer.blocks, id) {
+            return Some(Surface::Footer(*key));
+        }
+    }
+    for (key, note) in definitions.footnotes.iter() {
+        if blocks_contain(&note.blocks, id) {
+            return Some(Surface::Footnote(*key));
+        }
+    }
+    for (key, note) in definitions.endnotes.iter() {
+        if blocks_contain(&note.blocks, id) {
+            return Some(Surface::Endnote(*key));
+        }
+    }
+    None
+}
+
+/// The block list for a surface, for mutation. Split from [`surface_of`] so the
+/// immutable search and the mutable borrow never overlap.
+fn surface_blocks_mut<'a>(
+    doc: &'a mut Document,
+    surface: &Surface,
+) -> Option<&'a mut Vec<BlockNode>> {
+    match surface {
+        Surface::Body => Some(doc.body_mut()),
+        Surface::Header(key) => doc
+            .definitions_mut()
+            .headers
+            .get_mut(key)
+            .map(|header| &mut header.blocks),
+        Surface::Footer(key) => doc
+            .definitions_mut()
+            .footers
+            .get_mut(key)
+            .map(|footer| &mut footer.blocks),
+        Surface::Footnote(key) => doc
+            .definitions_mut()
+            .footnotes
+            .get_mut(key)
+            .map(|note| &mut note.blocks),
+        Surface::Endnote(key) => doc
+            .definitions_mut()
+            .endnotes
+            .get_mut(key)
+            .map(|note| &mut note.blocks),
+    }
+}
+
+/// The block list owning `id`, wherever it lives — the body-agnostic replacement
+/// for `doc.body_mut()` in ops that address a position by node.
+fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNode>, EditError> {
+    let surface = surface_of(doc, id).ok_or(EditError::NodeNotFound)?;
+    surface_blocks_mut(doc, &surface).ok_or(EditError::NodeNotFound)
+}
+
 pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
     for block in blocks {
         match block {
@@ -4108,6 +4236,17 @@ mod tests {
     }
 
     /// The concatenated text of paragraph `id` (top-level runs), for assertions.
+    /// The concatenated run text of an inline list, for sub-document assertions.
+    fn runs_text(inlines: &[InlineNode]) -> String {
+        inlines
+            .iter()
+            .filter_map(|inline| match inline {
+                InlineNode::Run(run) => Some(run.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn text_of(document: &Document, id: NodeId) -> String {
         fn walk(blocks: &[BlockNode], id: NodeId) -> Option<String> {
             for block in blocks {
@@ -5327,6 +5466,111 @@ mod tests {
     /// Word's `w:next`: Enter at the END of a heading starts the style the
     /// heading declares it is followed by, which is why typing a heading and
     /// pressing Enter puts you in body text rather than in a second heading.
+    /// Header, footer and note content is ordinary block content in the same id
+    /// space as the body, so an op that addresses a position by `NodeId` should
+    /// reach it. Resolution used to start at `doc.body_mut()` unconditionally, so
+    /// every one of these positions answered `NodeNotFound` — the reason nothing
+    /// outside the body could be typed into.
+    #[test]
+    fn text_ops_reach_a_paragraph_inside_a_header() {
+        let header_id = HeaderFooterId::new(n(900));
+        let para_id = n(901);
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![run(902, "Draft")],
+                })],
+            },
+        );
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        assert_eq!(
+            surface_of(&d, para_id),
+            Some(Surface::Header(header_id)),
+            "the header's paragraph resolves to the header surface"
+        );
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(para_id, 5),
+                text: " copy".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let header = d
+            .definitions()
+            .headers
+            .get(&header_id)
+            .expect("header definition");
+        let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+            unreachable!("the header holds one paragraph");
+        };
+        assert_eq!(runs_text(&paragraph.inlines), "Draft copy");
+        // The body is untouched by an edit addressed at the header.
+        assert_eq!(text_of(&d, n(2)), "body");
+    }
+
+    /// The same for a footnote body — the surface a note-insert command would
+    /// need before it could put the caret in the note it just created.
+    #[test]
+    fn text_ops_reach_a_paragraph_inside_a_footnote() {
+        let note_id = NoteId::new(n(910));
+        let para_id = n(911);
+        let mut definitions = Definitions::default();
+        definitions.footnotes.insert(
+            note_id,
+            Note {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![run(912, "See")],
+                })],
+            },
+        );
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        assert_eq!(surface_of(&d, para_id), Some(Surface::Footnote(note_id)));
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(para_id, 3),
+                text: " also".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let note = d
+            .definitions()
+            .footnotes
+            .get(&note_id)
+            .expect("footnote definition");
+        let BlockNode::Paragraph(paragraph) = &note.blocks[0] else {
+            unreachable!("the note holds one paragraph");
+        };
+        assert_eq!(runs_text(&paragraph.inlines), "See also");
+    }
+
+    /// A node no surface owns is still `NodeNotFound`: resolution must not become
+    /// a way for a bad position to succeed somewhere unexpected.
+    #[test]
+    fn an_unknown_node_still_resolves_to_nothing() {
+        let d = doc(vec![para(2, vec![run(3, "body")])]);
+        assert_eq!(surface_of(&d, n(4242)), None);
+    }
+
     #[test]
     fn split_at_end_starts_the_style_the_current_one_is_followed_by() {
         let heading = StyleId::new(n(700));

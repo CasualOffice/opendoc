@@ -94,6 +94,14 @@ impl<K: Ord, V> DefinitionMap<K, V> {
         self.0.get(key)
     }
 
+    /// Mutable access to a value. The editor needs this to reach the block
+    /// content of a header, footer or note — which is ordinary block content in
+    /// the same id space as the body, not a parallel representation — so an edit
+    /// op can resolve a position that lives inside one.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.0.get_mut(key)
+    }
+
     /// Returns whether a key is present.
     pub fn contains_key(&self, key: &K) -> bool {
         self.0.contains_key(key)
