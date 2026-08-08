@@ -8,14 +8,14 @@ use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
     CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
     Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill, FontRef,
-    FormFieldKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, HyperlinkTarget, Indentation, InlineNode,
-    LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference, NumberFormat,
-    NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu, Revision, RevisionKind,
-    RowHeight, RunProperties, SdtControlKind, ShapeGeometry, Spacing, Style, StyleId, StyleKind,
-    Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth, TextBox,
-    VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, WidthType,
-    WordprocessingGroup, WrapMode,
+    FormFieldKind, GradientKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule,
+    HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget, Indentation,
+    InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
+    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu, Revision,
+    RevisionKind, RowHeight, RunProperties, SdtControlKind, ShapeGeometry, Spacing, Style, StyleId,
+    StyleKind, Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth,
+    TextBox, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WidthType, WordprocessingGroup, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -690,6 +690,30 @@ fn push_border_attribute(
 /// positions share one style. An all-default value means the ODF-default `Square`
 /// wrap with no distances — no graphic style is emitted, keeping a plain offset
 /// frame byte-identical to the first-increment output.
+/// A synthesized `<draw:gradient>` definition for a shape's `Fill::Gradient`: the
+/// two endpoint colors, the sweep style, and the ODF `draw:angle` (1/10 degree, 0
+/// for radial). Emitted once per distinct value into `office:styles` (styles.xml)
+/// and referenced by a graphic style's `draw:fill-gradient-name`. All fields are
+/// `Copy` so an owning `OdtGraphicStyle` stays `Copy`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtGradientDef {
+    /// The `draw:style` keyword (`"linear"` or `"radial"`).
+    style: &'static str,
+    start: (u8, u8, u8),
+    end: (u8, u8, u8),
+    /// `draw:angle` in 1/10 of a degree (0 for a radial gradient).
+    angle_tenths: i32,
+}
+
+impl OdtGradientDef {
+    /// A deterministic, content-addressed NCName in the `grad` namespace, disjoint
+    /// from the `gr`/`fr` graphic-style names. Identical content hashes to one name,
+    /// so the `BTreeSet` and the referencing style dedup shared gradients.
+    fn name(&self) -> String {
+        format!("grad{:016x}", font_family_hash(&format!("{self:?}")))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 struct OdtGraphicStyle {
     /// `style:wrap` value, `None` for the default (`parallel`/Square).
@@ -704,6 +728,10 @@ struct OdtGraphicStyle {
     /// A shape's solid fill (`draw:fill="solid"` + `draw:fill-color`) as RGB; `None`
     /// leaves the fill unset (`draw:fill="none"` when `fill_none` is set).
     fill: Option<(u8, u8, u8)>,
+    /// A shape's gradient fill (`draw:fill="gradient"` + `draw:fill-gradient-name`),
+    /// carrying the referenced definition so distinct gradients hash to distinct
+    /// graphic-style names. Takes precedence over `fill`/`fill_none` when set.
+    fill_gradient: Option<OdtGradientDef>,
     /// Emit `draw:fill="none"` (a shape with no fill), distinct from an unset fill.
     fill_none: bool,
     /// A shape's solid outline (`svg:stroke-color` + `svg:stroke-width` EMU).
@@ -780,7 +808,15 @@ fn push_graphic_properties(
             push_bounded(xml, "\"", max_content_bytes)?;
         }
     }
-    if let Some((red, green, blue)) = style.fill {
+    if let Some(gradient) = &style.fill_gradient {
+        push_bounded(
+            xml,
+            " draw:fill=\"gradient\" draw:fill-gradient-name=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(xml, &gradient.name(), max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    } else if let Some((red, green, blue)) = style.fill {
         push_bounded(
             xml,
             " draw:fill=\"solid\" draw:fill-color=\"#",
@@ -1233,6 +1269,9 @@ struct Writer {
     run_styles: BTreeSet<OdtRunStyle>,
     /// Distinct floating-frame graphic formatting (wrap + exclusion distances).
     graphic_styles: BTreeSet<OdtGraphicStyle>,
+    /// Distinct synthesized `<draw:gradient>` fill definitions, emitted into
+    /// `office:styles` (styles.xml) and referenced by graphic styles.
+    gradient_defs: BTreeSet<OdtGradientDef>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
     footnotes: BTreeMap<NoteId, Note>,
@@ -1308,6 +1347,7 @@ impl Writer {
             table_styles: BTreeSet::new(),
             run_styles: BTreeSet::new(),
             graphic_styles: BTreeSet::new(),
+            gradient_defs: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
             footnotes: BTreeMap::new(),
@@ -2954,6 +2994,7 @@ impl Writer {
             // An anchored image carries no fill/outline; only a shape's caller
             // (`write_group_rectangle`) sets these on the value this returns.
             fill: None,
+            fill_gradient: None,
             fill_none: false,
             stroke: None,
             stroke_none: false,
@@ -3074,10 +3115,64 @@ impl Writer {
                     }
                     graphic.fill = Some((color.r, color.g, color.b));
                 }
-                Some(Fill::Gradient { .. }) => {
-                    self.reporter
-                        .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
-                    graphic.fill_none = true;
+                Some(Fill::Gradient { ref stops, kind }) => {
+                    match (stops.first(), stops.last()) {
+                        (Some(first), Some(last)) => {
+                            // ODF gradients are two-color: use the first stop as the
+                            // start and the last as the end. A gradient that is not a
+                            // clean two-stop at 0..100000 (only reachable from a
+                            // non-ODF-origin model — this importer always produces
+                            // that shape) keeps its endpoints, with the dropped
+                            // intermediate detail reported.
+                            if stops.len() != 2 || first.position != 0 || last.position != 100_000 {
+                                self.reporter.record(
+                                    "odt.export.shape_fill_gradient_stops",
+                                    ModelOutcome::Degraded,
+                                );
+                            }
+                            // `draw:gradient` has no alpha channel; a translucent
+                            // stop loses its opacity, reported rather than dropped.
+                            if first.color.a != 255 || last.color.a != 255 {
+                                self.reporter.record(
+                                    "odt.export.shape_fill_opacity",
+                                    ModelOutcome::Degraded,
+                                );
+                            }
+                            let (style, angle_tenths) = match kind {
+                                GradientKind::Linear { angle } => {
+                                    // Model angle is 60000ths of a degree; ODF
+                                    // `draw:angle` is 1/10 degree. The bijection is
+                                    // exact for a round-tripped value (a multiple of
+                                    // 6000); any other value rounds, with a finding.
+                                    let tenths = if angle.rem_euclid(6000) == 0 {
+                                        angle / 6000
+                                    } else {
+                                        self.reporter.record(
+                                            "odt.export.shape_fill_gradient_angle",
+                                            ModelOutcome::Degraded,
+                                        );
+                                        (f64::from(angle) / 6000.0).round() as i32
+                                    };
+                                    ("linear", tenths)
+                                }
+                                GradientKind::Radial => ("radial", 0),
+                            };
+                            let def = OdtGradientDef {
+                                style,
+                                start: (first.color.r, first.color.g, first.color.b),
+                                end: (last.color.r, last.color.g, last.color.b),
+                                angle_tenths,
+                            };
+                            self.gradient_defs.insert(def);
+                            graphic.fill_gradient = Some(def);
+                        }
+                        // A gradient with no stops is not representable; no fill.
+                        _ => {
+                            self.reporter
+                                .record("odt.export.shape_fill_gradient", ModelOutcome::Degraded);
+                            graphic.fill_none = true;
+                        }
+                    }
                 }
                 None => graphic.fill_none = true,
             }
@@ -4328,6 +4423,13 @@ fn write_odt_impl(
         &writer.graphic_styles,
         limits.max_content_bytes,
     )?;
+    // Synthesize the shapes' `<draw:gradient>` fill definitions and fold them into
+    // the `office:styles` block (styles.xml). They are additive: a document with no
+    // gradient-filled shape produces an empty string and leaves `office:styles`
+    // (and its namespace set) byte-identical to prior releases.
+    let gradient_defs = gradient_definitions_xml(&writer.gradient_defs, limits.max_content_bytes)?;
+    let has_gradients = !writer.gradient_defs.is_empty();
+    let office_styles = combine_office_styles(default_styles, &gradient_defs);
     let content_len = content_header
         .len()
         .checked_add(styles.len())
@@ -4336,7 +4438,7 @@ fn write_odt_impl(
         // buffer swap / separate string), so fold their bytes in here or they
         // would escape the content byte budget.
         .and_then(|value| value.checked_add(master_page.total_len()))
-        .and_then(|value| value.checked_add(default_styles.len()))
+        .and_then(|value| value.checked_add(office_styles.len()))
         .ok_or(OdfError::LimitExceeded {
             limit: "odt_export_content_bytes",
             observed: usize::MAX,
@@ -4358,7 +4460,7 @@ fn write_odt_impl(
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let page_styles = page_styles_xml(document, &master_page, &default_styles);
+    let page_styles = page_styles_xml(document, &master_page, &office_styles, has_gradients);
     let empty_retained = crate::OdfRetainedParts::default();
     let bytes = package(
         &content,
@@ -4790,12 +4892,14 @@ fn store_master_slot(slot: &mut Option<String>, fragment: String, reporter: &mut
 fn page_styles_xml(
     document: &Document,
     master: &MasterPageXml,
-    default_styles: &str,
+    office_styles: &str,
+    has_gradients: bool,
 ) -> Option<Vec<u8>> {
     let section = document.definitions().sections.first();
-    // styles.xml exists when there is page geometry or document defaults. A
-    // master-page (headers/footers) only ever accompanies a section.
-    if section.is_none() && default_styles.is_empty() {
+    // styles.xml exists when there is page geometry, document defaults, or a
+    // gradient definition (all of which land in `office_styles`). A master-page
+    // (headers/footers) only ever accompanies a section.
+    if section.is_none() && office_styles.is_empty() {
         return None;
     }
     let automatic_styles = section.map(page_layout_xml).unwrap_or_default();
@@ -4806,9 +4910,68 @@ fn page_styles_xml(
     } else {
         " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
     };
+    // The drawing namespace is only declared when an `office:styles` gradient
+    // definition needs it, so gradient-free output stays byte-identical.
+    let draw_ns = if has_gradients {
+        " xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\""
+    } else {
+        ""
+    };
     let master_styles = master_styles_xml(master);
     // ODF orders office:styles, then office:automatic-styles, then master-styles.
-    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{text_ns}office:version=\"1.4\">{default_styles}{automatic_styles}{master_styles}</office:document-styles>").into_bytes())
+    Some(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><office:document-styles xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:style=\"urn:oasis:names:tc:opendocument:xmlns:style:1.0\" xmlns:fo=\"urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0\"{draw_ns}{text_ns}office:version=\"1.4\">{office_styles}{automatic_styles}{master_styles}</office:document-styles>").into_bytes())
+}
+
+/// Serializes the shapes' distinct `<draw:gradient>` fill definitions (the two-color
+/// linear/radial subset). Deterministic: the `BTreeSet` is sorted and each element's
+/// name is a content hash, so re-export mints byte-identical output. Empty when there
+/// are no gradient-filled shapes.
+fn gradient_definitions_xml(
+    defs: &BTreeSet<OdtGradientDef>,
+    max_content_bytes: usize,
+) -> Result<String, OdfError> {
+    let mut xml = String::new();
+    for def in defs {
+        push_bounded(&mut xml, "<draw:gradient draw:name=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &def.name(), max_content_bytes)?;
+        push_bounded(&mut xml, "\" draw:style=\"", max_content_bytes)?;
+        push_bounded(&mut xml, def.style, max_content_bytes)?;
+        push_bounded(&mut xml, "\" draw:start-color=\"#", max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            &format!("{:02x}{:02x}{:02x}", def.start.0, def.start.1, def.start.2),
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, "\" draw:end-color=\"#", max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            &format!("{:02x}{:02x}{:02x}", def.end.0, def.end.1, def.end.2),
+            max_content_bytes,
+        )?;
+        push_bounded(
+            &mut xml,
+            "\" draw:start-intensity=\"100%\" draw:end-intensity=\"100%\" draw:angle=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, &def.angle_tenths.to_string(), max_content_bytes)?;
+        push_bounded(&mut xml, "\" draw:border=\"0%\"/>", max_content_bytes)?;
+    }
+    Ok(xml)
+}
+
+/// Folds the gradient definitions into the `office:styles` block. `default_styles`
+/// is either empty or `<office:styles>…</office:styles>`; the gradient markup is
+/// inserted before the closing tag (or wrapped fresh when there are no other
+/// document styles). With no gradients it returns `default_styles` unchanged, so
+/// gradient-free output is byte-identical.
+fn combine_office_styles(default_styles: String, gradient_defs: &str) -> String {
+    if gradient_defs.is_empty() {
+        return default_styles;
+    }
+    match default_styles.strip_suffix("</office:styles>") {
+        Some(prefix) => format!("{prefix}{gradient_defs}</office:styles>"),
+        None => format!("<office:styles>{gradient_defs}</office:styles>"),
+    }
 }
 
 /// Builds the `<office:automatic-styles>` page-layout block for one section.

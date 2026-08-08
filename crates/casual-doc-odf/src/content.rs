@@ -26,8 +26,8 @@ use casual_doc_model::v1::{
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_model::v1::{
-    Fill, GroupChild, GroupShape, GroupTransform, MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry,
-    ShapeStroke, WordprocessingGroup,
+    Fill, GradientKind, GradientStop, GroupChild, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
+    PointEmu, Rgba, ShapeGeometry, ShapeStroke, WordprocessingGroup,
 };
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;
@@ -564,8 +564,9 @@ struct ShapeDraft {
     height_emu: i64,
     wrap: WrapMode,
     behind_doc: bool,
-    /// Solid fill color (`None` = no fill; always `None` for a line).
-    fill: Option<RgbColor>,
+    /// The resolved shape fill (`None` = no fill; always `None` for a line): a solid
+    /// color or a two-stop gradient.
+    fill: Option<Fill>,
     /// Solid outline color + width in EMU (`None` = no outline).
     stroke: Option<(RgbColor, i64)>,
     /// Shape mirroring — for a `draw:line`, the two flips encode which diagonal of
@@ -584,7 +585,7 @@ struct GroupShapeDraft {
     abs_y_emu: i64,
     width_emu: i64,
     height_emu: i64,
-    fill: Option<RgbColor>,
+    fill: Option<Fill>,
     stroke: Option<(RgbColor, i64)>,
     flip_h: bool,
     flip_v: bool,
@@ -937,6 +938,9 @@ struct OdfStyle {
     graphic_fill: Option<String>,
     /// `draw:fill-color` (a solid shape fill), resolved to RGB.
     graphic_fill_color: Option<RgbColor>,
+    /// `draw:fill-gradient-name` (a gradient shape fill), the referenced
+    /// `<draw:gradient>` definition name, resolved against the gradient catalog.
+    graphic_fill_gradient_name: Option<String>,
     /// `draw:stroke` for a shape outline (`solid`/`none`/…).
     graphic_stroke: Option<String>,
     /// `svg:stroke-color` (the outline color), resolved to RGB.
@@ -1058,12 +1062,35 @@ type AutomaticStyles = BTreeMap<(StyleFamily, String), OdfStyle>;
 type ListStyles = BTreeMap<String, BTreeMap<u8, OdfListLevel>>;
 /// Family-wide `style:default-style` properties keyed by family.
 type DefaultStyles = BTreeMap<StyleFamily, OdfStyle>;
+/// Named `<draw:gradient>` definitions (`draw:name` → geometry), collected from
+/// both `office:styles` (styles.xml) and `office:automatic-styles` (content.xml).
+type Gradients = BTreeMap<String, OdfGradient>;
+
+/// A parsed `<draw:gradient>` definition: the two endpoint colors, the sweep style,
+/// and the ODF `draw:angle` (1/10 degree). Only the two-color linear/radial subset
+/// is modeled; intensity/border detail is deferred with a finding at resolution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OdfGradient {
+    /// The `draw:style` keyword (`linear`/`axial` → linear, everything else radial).
+    kind: OdfGradientKind,
+    start_color: RgbColor,
+    end_color: RgbColor,
+    /// `draw:angle` in 1/10 of a degree (0 for a radial gradient).
+    angle_tenths: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OdfGradientKind {
+    Linear,
+    Radial,
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct StyleCatalog {
     automatic: AutomaticStyles,
     lists: ListStyles,
     defaults: DefaultStyles,
+    gradients: Gradients,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1107,6 +1134,14 @@ fn parse_style_catalog(
             reporter.report("odf.list-style.shadowed".to_owned(), ModelOutcome::Degraded);
         }
     }
+    for (name, gradient) in content_styles.gradients {
+        if catalog.gradients.insert(name, gradient).is_some() {
+            reporter.report(
+                "odf.draw.gradient-shadowed".to_owned(),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
     // `style:default-style` only appears in the common `office:styles`, i.e. the
     // styles.xml part, so the styles-part parse is the sole source; merge
     // defensively in case a content default ever appears.
@@ -1146,6 +1181,7 @@ fn parse_style_document(
     let mut styles = AutomaticStyles::new();
     let mut list_styles = ListStyles::new();
     let mut defaults = DefaultStyles::new();
+    let mut gradients = Gradients::new();
     let mut common_container = false;
 
     loop {
@@ -1225,6 +1261,7 @@ fn parse_style_document(
                         &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
+                        &mut gradients,
                         common_container,
                         false,
                         reporter,
@@ -1279,6 +1316,7 @@ fn parse_style_document(
                         &mut defaults,
                         &mut open_list_style,
                         &mut list_styles,
+                        &mut gradients,
                         common_container,
                         true,
                         reporter,
@@ -1347,6 +1385,7 @@ fn parse_style_document(
         automatic: styles,
         lists: list_styles,
         defaults,
+        gradients,
     })
 }
 
@@ -1465,6 +1504,9 @@ fn resolve_style(
             if style.graphic_fill_color.is_some() {
                 inherited.graphic_fill_color = style.graphic_fill_color;
             }
+            if style.graphic_fill_gradient_name.is_some() {
+                inherited.graphic_fill_gradient_name = style.graphic_fill_gradient_name.clone();
+            }
             if style.graphic_stroke.is_some() {
                 inherited.graphic_stroke = style.graphic_stroke.clone();
             }
@@ -1520,11 +1562,26 @@ fn process_style_element(
     defaults: &mut DefaultStyles,
     open_list_style: &mut Option<OpenListStyle>,
     list_styles: &mut ListStyles,
+    gradients: &mut Gradients,
     common_container: bool,
     empty: bool,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
-    if depth == 3 && is_name(name, NamespaceKind::Style, b"style") {
+    if depth == 3 && is_name(name, NamespaceKind::Draw, b"gradient") {
+        // A named `<draw:gradient>` fill definition, a direct child of the style
+        // container (`office:styles` or `office:automatic-styles`). It carries no
+        // subtree, so both the self-closing and (spec-invalid) open forms are read
+        // here; an open form's `End` merely decrements depth (no `open_style`).
+        read_draw_gradient(
+            reader,
+            element,
+            limits,
+            attributes,
+            attribute_bytes,
+            gradients,
+            reporter,
+        )?;
+    } else if depth == 3 && is_name(name, NamespaceKind::Style, b"style") {
         if open_style.is_some() || open_list_style.is_some() {
             return Err(OdfError::MalformedContent);
         }
@@ -2538,6 +2595,99 @@ fn read_table_cell_style_properties(
 /// the `fo:margin-*` text-exclusion distances. Positioning (`style:*-pos`/`-rel`) and
 /// the contour are deferred to a later increment and reported. Distances that fail
 /// to parse (negative/out-of-range) are dropped, never reaching validation.
+/// Parses one `<draw:gradient>` definition (`draw:name`, `draw:style`,
+/// `draw:start-color`/`draw:end-color`, `draw:angle`) into the gradient catalog.
+/// Only the two-color linear/radial subset is modeled: a non-100% intensity or a
+/// non-zero border is retained as a finding but not applied, and an unknown
+/// `draw:style` collapses to a concentric (radial) fill. A definition missing a
+/// name or either endpoint color is reported and dropped (a referencing shape then
+/// degrades to no fill).
+fn read_draw_gradient(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    gradients: &mut Gradients,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let mut name: Option<String> = None;
+    let mut style_kind: Option<OdfGradientKind> = None;
+    let mut start_color: Option<RgbColor> = None;
+    let mut end_color: Option<RgbColor> = None;
+    let mut angle_tenths = 0_i32;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) != NamespaceKind::Draw {
+            continue;
+        }
+        match local.as_ref() {
+            b"name" => name = Some(value.trim().to_owned()),
+            b"style" => {
+                style_kind = Some(match value.trim() {
+                    "linear" | "axial" => OdfGradientKind::Linear,
+                    "radial" | "ellipsoid" | "square" | "rectangular" => OdfGradientKind::Radial,
+                    _ => {
+                        reporter
+                            .report("odf.draw.gradient-style".to_owned(), ModelOutcome::Degraded);
+                        OdfGradientKind::Radial
+                    }
+                });
+            }
+            b"start-color" => start_color = parse_rgb_color(value.trim()),
+            b"end-color" => end_color = parse_rgb_color(value.trim()),
+            b"angle" => angle_tenths = value.trim().parse::<i32>().unwrap_or(0),
+            b"start-intensity" | b"end-intensity" => {
+                if value.trim() != "100%" {
+                    reporter.report(
+                        "odf.draw.gradient-intensity".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
+            }
+            b"border" => {
+                let border = value.trim();
+                if border != "0%" && border != "0" {
+                    reporter.report(
+                        "odf.draw.gradient-border".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    let (Some(name), Some(start_color), Some(end_color)) = (name, start_color, end_color) else {
+        reporter.report(
+            "odf.draw.gradient-incomplete".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    };
+    let kind = style_kind.unwrap_or(OdfGradientKind::Linear);
+    let gradient = OdfGradient {
+        kind,
+        start_color,
+        end_color,
+        // A radial gradient has no meaningful sweep; normalize the angle away so it
+        // never leaks into the model or a re-export.
+        angle_tenths: match kind {
+            OdfGradientKind::Linear => angle_tenths,
+            OdfGradientKind::Radial => 0,
+        },
+    };
+    if gradients.insert(name, gradient).is_some() {
+        reporter.report(
+            "odf.draw.gradient-shadowed".to_owned(),
+            ModelOutcome::Degraded,
+        );
+    }
+    Ok(())
+}
+
 fn read_graphic_style_properties(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -2605,6 +2755,10 @@ fn read_graphic_style_properties(
             (NamespaceKind::Draw, b"fill-color") => {
                 style.style.graphic_fill_color = parse_rgb_color(&value);
                 style.style.graphic_fill_color.is_some()
+            }
+            (NamespaceKind::Draw, b"fill-gradient-name") => {
+                style.style.graphic_fill_gradient_name = Some(value.trim().to_owned());
+                true
             }
             (NamespaceKind::Draw, b"stroke") => {
                 style.style.graphic_stroke = Some(value.trim().to_owned());
@@ -3294,6 +3448,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &style_catalog.automatic,
+                            &style_catalog.gradients,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -3390,6 +3545,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &style_catalog.automatic,
+                            &style_catalog.gradients,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -3727,6 +3883,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut attributes,
                         &mut attribute_bytes,
                         &style_catalog.automatic,
+                        &style_catalog.gradients,
                         &mut reporter,
                     )? {
                         let index = shapes.len();
@@ -4735,22 +4892,69 @@ fn draw_shape_geometry(name: &ResolvedName) -> Option<ShapeGeometry> {
     }
 }
 
-/// Resolves a shape graphic style's solid fill color. `draw:fill="solid"` with a
-/// color maps to that RGB; `none`/absent is no fill; a non-solid fill (gradient,
-/// bitmap, hatch) or a solid fill without a color degrades to no fill with a finding.
-fn resolve_shape_fill(style: &OdfStyle, reporter: &mut Reporter) -> Option<RgbColor> {
+/// Resolves a shape graphic style's fill to a model [`Fill`]. `draw:fill="solid"`
+/// with a color maps to `Fill::Solid`; `draw:fill="gradient"` with a
+/// `draw:fill-gradient-name` resolving against `gradients` maps to `Fill::Gradient`
+/// (two endpoint stops); `none`/absent is no fill. A solid fill without a color, a
+/// gradient with a missing/unresolvable name, or any other fill kind (bitmap, hatch)
+/// degrades to no fill with a finding.
+fn resolve_shape_fill(
+    style: &OdfStyle,
+    gradients: &Gradients,
+    reporter: &mut Reporter,
+) -> Option<Fill> {
     match style.graphic_fill.as_deref() {
         Some("solid") => {
-            if style.graphic_fill_color.is_none() {
+            let Some(color) = style.graphic_fill_color else {
                 reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
-            }
-            style.graphic_fill_color
+                return None;
+            };
+            Some(Fill::Solid(rgb_to_rgba(color)))
+        }
+        Some("gradient") => {
+            let gradient = style
+                .graphic_fill_gradient_name
+                .as_deref()
+                .and_then(|name| gradients.get(name));
+            let Some(gradient) = gradient else {
+                reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
+                return None;
+            };
+            Some(Fill::Gradient {
+                stops: vec![
+                    GradientStop {
+                        position: 0,
+                        color: rgb_to_rgba(gradient.start_color),
+                    },
+                    GradientStop {
+                        position: 100_000,
+                        color: rgb_to_rgba(gradient.end_color),
+                    },
+                ],
+                kind: match gradient.kind {
+                    // ODF `draw:angle` is 1/10 of a degree; the model is 60000ths.
+                    OdfGradientKind::Linear => GradientKind::Linear {
+                        angle: gradient.angle_tenths * 6000,
+                    },
+                    OdfGradientKind::Radial => GradientKind::Radial,
+                },
+            })
         }
         None | Some("none") => None,
         Some(_) => {
             reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
             None
         }
+    }
+}
+
+/// Widens an opaque ODF `RgbColor` to a model `Rgba` (alpha 255).
+const fn rgb_to_rgba(color: RgbColor) -> Rgba {
+    Rgba {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: 255,
     }
 }
 
@@ -4786,6 +4990,7 @@ fn build_shape_draft(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    gradients: &Gradients,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
     let mut width_emu = None;
@@ -4857,7 +5062,7 @@ fn build_shape_draft(
     let (wrap, behind_doc) = style
         .map(|style| resolve_graphic_wrap(style, reporter))
         .unwrap_or((WrapMode::Square, false));
-    let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
+    let fill = style.and_then(|style| resolve_shape_fill(style, gradients, reporter));
     let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
     Ok(Some(ShapeDraft {
         geometry,
@@ -5081,6 +5286,7 @@ fn parse_draw_shape(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    gradients: &Gradients,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
@@ -5092,6 +5298,7 @@ fn parse_draw_shape(
         attributes,
         attribute_bytes,
         automatic_styles,
+        gradients,
         reporter,
     )?;
     consume_shape_subtree(
@@ -5156,6 +5363,7 @@ fn read_group_box_child(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    gradients: &Gradients,
     reporter: &mut Reporter,
 ) -> Result<Option<GroupChildDraft>, OdfError> {
     let mut x = None;
@@ -5191,7 +5399,7 @@ fn read_group_box_child(
     let style = style_name
         .as_deref()
         .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
-    let fill = style.and_then(|style| resolve_shape_fill(style, reporter));
+    let fill = style.and_then(|style| resolve_shape_fill(style, gradients, reporter));
     let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
     Ok(Some(GroupChildDraft::Shape(GroupShapeDraft {
         geometry,
@@ -5280,6 +5488,7 @@ fn parse_draw_group(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    gradients: &Gradients,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<GroupDraft>, OdfError> {
@@ -5330,6 +5539,7 @@ fn parse_draw_group(
         attributes,
         attribute_bytes,
         automatic_styles,
+        gradients,
         cancellation,
         reporter,
     )?;
@@ -5394,6 +5604,7 @@ fn parse_group_children(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    gradients: &Gradients,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Vec<GroupChildDraft>, OdfError> {
@@ -5457,6 +5668,7 @@ fn parse_group_children(
                 attributes,
                 attribute_bytes,
                 automatic_styles,
+                gradients,
                 reporter,
             )?
         } else if is_name(&name, NamespaceKind::Draw, b"line") {
@@ -5518,6 +5730,7 @@ fn parse_group_children(
                     attributes,
                     attribute_bytes,
                     automatic_styles,
+                    gradients,
                     cancellation,
                     reporter,
                 )?;
@@ -10088,14 +10301,7 @@ fn build_group_children(
                     geometry: shape.geometry,
                     preset: None,
                     adjustments: Vec::new(),
-                    fill: shape.fill.map(|color| {
-                        Fill::Solid(Rgba {
-                            r: color.r,
-                            g: color.g,
-                            b: color.b,
-                            a: 255,
-                        })
-                    }),
+                    fill: shape.fill.clone(),
                     stroke: shape.stroke.map(|(color, width_emu)| ShapeStroke {
                         color: Rgba {
                             r: color.r,
@@ -10354,14 +10560,7 @@ fn build_inlines(
                         geometry: draft.geometry,
                         preset: None,
                         adjustments: Vec::new(),
-                        fill: draft.fill.map(|color| {
-                            Fill::Solid(Rgba {
-                                r: color.r,
-                                g: color.g,
-                                b: color.b,
-                                a: 255,
-                            })
-                        }),
+                        fill: draft.fill.clone(),
                         stroke: draft.stroke.map(|(color, width_emu)| ShapeStroke {
                             color: Rgba {
                                 r: color.r,
