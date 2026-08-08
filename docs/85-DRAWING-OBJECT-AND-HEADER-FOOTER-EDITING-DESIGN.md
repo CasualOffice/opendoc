@@ -441,6 +441,65 @@ has **no `link_to_previous` field**. For editing we must decide (§9-Q7):
   adding a boolean the writer would have to reconcile — **recommended**, pending
   owner confirmation.
 
+## 8b. Status reconciliation (2026-08-09)
+
+This design was written 2026-08-01. Substantial parts of it have since shipped,
+and several "open questions" were in practice answered by that code rather than
+by a decision. Recorded here so the remaining decisions are only the ones that
+are genuinely still open. Every claim below was checked against the tree at
+`4754e1e`, not against memory.
+
+**Shipped since the design was written**
+
+- **Phase 0 is complete.** Image crop (`a:srcRect`) and `descr` alt-text are in
+  the model (`casual-doc-model/src/v1/body.rs`), with import/export/layout.
+- **Phase A object editing is largely in place**: selection, move, resize,
+  anchoring, crop, alt-text and the object context menu, covered by
+  `object-selection`, `object-geometry`, `object-anchor`, `object-edit` and
+  `object-context-menu` browser specs.
+- **Image insertion ships** (`insertImageFromFile` / `insertImageFromBlob`), from
+  a file or a clipboard paste.
+- **Object edits fail closed in Suggesting**, as Q5 decided.
+
+**Questions the shipped code has already answered**
+
+- **Q1 (Escape grammar) — answered for Escape.** `objectSelection` carries
+  `mode: "selected" | "editing"` and the two-step Escape is implemented. The
+  *Tab/Shift+Tab object traversal* half of Q1 is NOT implemented and remains a
+  genuine choice.
+- **Q2 (context bar vs contextual tab) — answered: a floating context bar.**
+  `object-context-bar` is built and shipped. Note the shell has since grown two
+  contextual/permanent ribbon tabs (Table, and Review as of #455), so if a
+  "Picture Format" tab is still wanted it now has precedent to follow; the bar
+  and a tab are not mutually exclusive.
+- **Q8 (where image bytes come from) — answered by the shipped insert path.**
+
+**Still genuinely open, and blocking Phase B**
+
+- **Q1 (Tab/Shift+Tab object traversal)** — unimplemented, still a choice.
+- **Q6 (`title_page` / section running toggles)** and **Q7 (link-to-previous
+  semantics)** — untouched. Both are header/footer semantics, so both gate
+  Phase B rather than Phase A.
+- **Q9 (phasing granularity)** — worth re-asking now that Phase A has largely
+  landed piecemeal rather than as one tracked phase.
+
+**The keystone has not been started**
+
+There is no `Location` (or equivalent sub-document address) type anywhere in the
+workspace. Everything that needs a caret outside the body therefore remains
+unavailable, and an audit of the editing surfaces on 2026-08-09 confirmed it from
+the outside: the editor exposes **no command at all** for header/footer editing,
+footnote/endnote insertion or bodies, text-box text editing, or shape drawing —
+the palette returns nothing for "text box", "footnote" or "shape".
+
+This is the single largest remaining gap in the editor, and it is one dependency,
+not four: header/footer, note bodies and text-box text all need the same thing —
+an address that says *which* sub-document a position is in, threaded through
+selection, hit-testing, the edit ops, layout and the accessibility projection.
+Inserting a footnote before that exists would create a note body the user cannot
+type into, which is why note *insertion* is deliberately still not wired up even
+though the engine ops for it exist.
+
 ## 9. Open questions for owner review
 
 Three questions are now **DECIDED** (recorded 2026-08-01) and folded into the
