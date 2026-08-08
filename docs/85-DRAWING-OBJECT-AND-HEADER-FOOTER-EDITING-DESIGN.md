@@ -500,6 +500,82 @@ Inserting a footnote before that exists would create a note body the user cannot
 type into, which is why note *insertion* is deliberately still not wired up even
 though the engine ops for it exist.
 
+## 8c. Competitive research round 2 — LibreOffice, and how the model addresses a sub-document (2026-08-09)
+
+§10 compares OnlyOffice, Word and Google Docs on *interaction*. Two things it does
+not cover turn out to matter more than any of the open questions: **LibreOffice
+Writer**, which is this project's own layout oracle and was missing from the
+survey, and **how any of these editors actually addresses a position inside a
+header, note or text box** — the question the `Location` keystone exists to answer.
+
+### 8c.1 LibreOffice Writer's header/footer affordance
+
+Writer does not use Word's bare double-click. Clicking above the top margin
+raises a **header marker with a `+` button**; clicking `+` creates and enters the
+header. Once it exists the marker carries a **down-arrow** opening a menu to
+format or delete it. Exit is `Esc` or a click in the body — matching Word and
+Docs.
+
+Worth adopting the marker: it makes an *absent* header discoverable, which the
+pure double-click of Word/Docs does not. A user who has never been told that
+double-clicking the margin does something will never find it. That is the same
+"one-surface-only" reachability failure the command-surface audit kept finding,
+in a different disguise.
+
+### 8c.2 How LibreOffice addresses sub-document positions — and why it matters here
+
+Writer keeps **one node array** (`SwNodes`) divided into fixed ranges, with
+boundary accessors: `GetEndOfPostIts()`, `GetEndOfInserts()` (footnotes and
+endnotes), `GetEndOfAutotext()` (**Flys — floating frames and text boxes — plus
+headers and footers**), `GetEndOfRedlines()`, and `GetEndOfContent()` (body text).
+Header, footer, footnote and text-box content live in the *same* array as body
+text, in dedicated ranges.
+
+The consequence is the important part: a cursor (`SwPaM`) is a node index plus an
+offset, and that is the *whole* address. Writer has no "which sub-document am I
+in" type threaded through its editing layer, because a node index already answers
+it. The ranges are a property of *where a node sits*, looked up when needed — not
+a coordinate the cursor carries.
+
+### 8c.3 This model already has the same property
+
+Checked against the tree at `4754e1e`:
+
+- `HeaderFooter`, `Note` and `Comment` each hold `blocks: Vec<BlockNode>` — the
+  *same* recursive block model as the body, not a parallel representation.
+- `Document::validate` records the ids of every block inside every header,
+  footer, note and comment into the **same document-wide uniqueness set** as body
+  ids (`document.rs`, `record_block_ids` over `definitions.headers` /
+  `footers` / `notes` / `comments`).
+
+So `Pos { node, offset }` **already uniquely addresses a position inside a header,
+footer, note or comment**, exactly as a node index does in Writer. The address
+type this design has been waiting on largely already exists.
+
+What is actually missing is narrower than "a new address threaded everywhere":
+
+1. **Op resolution is hardcoded to the body.** 56 sites in `casual-doc-edit`
+   resolve through `doc.body_mut()`, and the crate contains **zero** references to
+   `definitions.headers`, `footers` or `notes`. The resolution helpers themselves
+   are already surface-agnostic — `find_paragraph(blocks, id)` takes any block
+   slice — so what is body-specific is the *entry point*, not the traversal.
+2. **Hit-testing and layout** must map a click in the header band, a note, or a
+   text box to those nodes and back.
+3. **A "which surface does this node live in" lookup**, for gating and for the
+   things that genuinely differ per surface (per-section headers, note numbering).
+
+That is a materially smaller and better-founded piece of work than the phrasing
+elsewhere in this document implies, and it removes the argument for inventing a
+`Location` enum that every op signature has to carry. It should be re-scoped
+before Phase B is planned, and Q9 (phasing granularity) should be answered with
+this in hand.
+
+**Sources.** LibreOffice help, "About Headers and Footers"
+(help.libreoffice.org/6.2/en-US/text/swriter/guide/header_footer.html); LibreOffice
+Getting Started Guide 26.2, ch. 2; LibreOffice `SwNodes` class reference
+(docs.libreoffice.org/sw/html/classSwNodes.html) for the node-array ranges and
+their accessors.
+
 ## 9. Open questions for owner review
 
 Three questions are now **DECIDED** (recorded 2026-08-01) and folded into the
