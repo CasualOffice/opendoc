@@ -3719,6 +3719,91 @@ function traverseObjects(step) {
 // know what Esc should do.
 let runningEditBand = null; // "header" | "footer" | null
 
+// ---- Header / footer markers -------------------------------------------------
+// LibreOffice Writer raises a marker with a `+` button when the pointer is in the
+// top or bottom margin, and that is the affordance adopted in docs/85 §8d. Word
+// and Docs rely on a bare double-click, which is invisible to anyone who has not
+// been told about it — and an ABSENT header has nothing to double-click on, so
+// the capability is unreachable without knowing the command exists. This is the
+// same one-surface-only reachability failure the command-surface audit kept
+// finding, so it is worth the small piece of chrome.
+let runningMarkerEl = null;
+let runningMarkerBand = null;
+
+/** The page's top/bottom margin bands in page-local twips, from the document's
+ *  own geometry rather than a guessed fraction of the sheet. */
+function marginBandsOf() {
+  if (!doc) return null;
+  let setup;
+  try {
+    setup = JSON.parse(doc.pageSetup());
+  } catch {
+    return null;
+  }
+  if (!setup?.pageMargins) return null;
+  return { top: setup.pageMargins.topTwips, bottom: setup.pageMargins.bottomTwips };
+}
+
+function hideRunningMarker() {
+  if (!runningMarkerEl) return;
+  runningMarkerEl.hidden = true;
+  runningMarkerBand = null;
+}
+
+/** Shows the marker over `band` on `page`, creating the element on first use. */
+function showRunningMarker(page, band) {
+  if (runningMarkerBand === band && runningMarkerEl && !runningMarkerEl.hidden) return;
+  if (!runningMarkerEl) {
+    runningMarkerEl = document.createElement("button");
+    runningMarkerEl.type = "button";
+    runningMarkerEl.className = "running-marker";
+    runningMarkerEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = runningMarkerBand;
+      hideRunningMarker();
+      if (target) editRunningContent(target);
+    });
+    pagesEl.appendChild(runningMarkerEl);
+  }
+  runningMarkerBand = band;
+  runningMarkerEl.textContent = band === "header" ? "+ Header" : "+ Footer";
+  runningMarkerEl.title = `Edit the page ${band}`;
+  runningMarkerEl.setAttribute("aria-label", `Edit the page ${band}`);
+  const wrap = page.wrap;
+  const rect = wrap.getBoundingClientRect();
+  const host = pagesEl.getBoundingClientRect();
+  runningMarkerEl.style.left = `${rect.left - host.left + pagesEl.scrollLeft + 8}px`;
+  runningMarkerEl.style.top =
+    band === "header"
+      ? `${rect.top - host.top + pagesEl.scrollTop + 6}px`
+      : `${rect.bottom - host.top + pagesEl.scrollTop - 30}px`;
+  runningMarkerEl.hidden = false;
+}
+
+/** Decides whether the pointer is in a margin band and shows/hides the marker.
+ *  Suppressed while already editing running content — the context is open, so
+ *  the marker would only be an invitation to do what is already happening. */
+function updateRunningMarker(page, event) {
+  // Moving onto the marker itself must not dismiss it: the pointer is then over
+  // the button rather than a page, so `pageFromEvent` finds nothing and the
+  // naive read of that is "left the band". Hovering an affordance cannot be the
+  // thing that destroys it.
+  if (runningMarkerEl && event?.target && runningMarkerEl.contains(event.target)) return;
+  if (!doc || runningEditBand || !page) {
+    hideRunningMarker();
+    return;
+  }
+  const bands = marginBandsOf();
+  if (!bands) {
+    hideRunningMarker();
+    return;
+  }
+  const { y } = pointToTwip(page, event);
+  if (y < bands.top) showRunningMarker(page, "header");
+  else if (y > page.hTwip - bands.bottom) showRunningMarker(page, "footer");
+  else hideRunningMarker();
+}
+
 /** Creates an empty header or footer and enters it. Gated like any other
  *  mutation: refused read-only in Viewing, and blocked in Suggesting because
  *  adding running content has no tracked-change representation. */
@@ -4736,7 +4821,10 @@ pagesEl.addEventListener("focus", () => {
 pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
   if (page && !dragging) onPointerMove(page, e);
+  // The header/footer marker follows the pointer into a margin band.
+  if (!dragging) updateRunningMarker(page, e);
 });
+pagesEl.addEventListener("pointerleave", () => hideRunningMarker());
 window.addEventListener("pointermove", (e) => {
   if (objectMoveDrag) {
     updateObjectMove(e);

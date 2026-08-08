@@ -5644,3 +5644,37 @@ body.running-edit #pages {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
+/* ---- Header / footer marker -------------------------------------------------- */
+/* LibreOffice Writer's affordance (docs/85 §8d): a marker appears when the
+   pointer is in a margin band, so an ABSENT header is discoverable — a bare
+   double-click is invisible to anyone who has not been told about it. Positioned
+   over the page in the overlay layer, never composited into the raster. */
+.running-marker {
+  position: absolute;
+  z-index: 4;
+  padding: 3px 9px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+}
+
+.running-marker:hover {
+  background: var(--accent);
+  color: var(--bg-1);
+}
+
+.running-marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.running-marker[hidden] {
+  display: none;
+}
