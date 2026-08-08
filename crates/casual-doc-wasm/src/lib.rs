@@ -382,7 +382,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         // typing either side of it.
         Operation::CreateHeaderFooterBody { .. }
         | Operation::RemoveHeaderFooterBody { .. }
-        | Operation::SetSectionRunningRef { .. } => HistoryKind::Edit,
+        | Operation::SetSectionRunningRef { .. }
+        | Operation::SetSectionTitlePage { .. }
+        | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
     }
 }
 
@@ -1824,6 +1826,56 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = insertFootnote)]
     pub fn insert_footnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         self.insert_note(NoteKind::Footnote, node, offset)
+    }
+
+    /// Whether the first page uses its own header/footer, and whether even pages
+    /// do, as JSON `{ firstPage, evenOdd }` — the read side of Word's two
+    /// running-content toggles (docs/85 Q6).
+    #[wasm_bindgen(js_name = runningVariants)]
+    #[must_use]
+    pub fn running_variants(&self) -> String {
+        let definitions = self.document.definitions();
+        let first_page = definitions
+            .sections
+            .first()
+            .and_then(|section| section.title_page)
+            .unwrap_or(false);
+        format!(
+            "{{\"firstPage\":{},\"evenOdd\":{}}}",
+            first_page, definitions.settings.even_and_odd_headers
+        )
+    }
+
+    /// Turns the distinct first-page header/footer on or off for the first
+    /// section (Word's "Different First Page").
+    #[wasm_bindgen(js_name = setFirstPageVariant)]
+    pub fn set_first_page_variant(&mut self, enabled: bool) -> Result<EditResult, JsValue> {
+        let section = self
+            .document
+            .definitions()
+            .sections
+            .first()
+            .map(|boundary| boundary.id)
+            .ok_or_else(|| to_js("the document has no section".to_string()))?;
+        self.apply_action_as(
+            vec![Operation::SetSectionTitlePage {
+                section,
+                title_page: Some(enabled),
+            }],
+            HistoryKind::Edit,
+        )
+        .map_err(to_js)
+    }
+
+    /// Turns distinct even/odd headers and footers on or off (Word's "Different
+    /// Odd & Even Pages"). Document-scoped, as OOXML carries it.
+    #[wasm_bindgen(js_name = setEvenOddVariant)]
+    pub fn set_even_odd_variant(&mut self, enabled: bool) -> Result<EditResult, JsValue> {
+        self.apply_action_as(
+            vec![Operation::SetEvenAndOddHeaders { enabled }],
+            HistoryKind::Edit,
+        )
+        .map_err(to_js)
     }
 
     /// Creates an empty header or footer for the section a page belongs to, and
@@ -14922,7 +14974,9 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // places the caret when it enters the header, so leave it where it was.
         Operation::CreateHeaderFooterBody { .. }
         | Operation::RemoveHeaderFooterBody { .. }
-        | Operation::SetSectionRunningRef { .. } => Pos::new(doc_id, 0),
+        | Operation::SetSectionRunningRef { .. }
+        | Operation::SetSectionTitlePage { .. }
+        | Operation::SetEvenAndOddHeaders { .. } => Pos::new(doc_id, 0),
     }
 }
 
