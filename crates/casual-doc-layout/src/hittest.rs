@@ -265,7 +265,7 @@ impl<'a> LayoutSnapshot<'a> {
     /// affinity.
     #[must_use]
     pub fn caret_rect(&self, pos: ModelPos) -> Option<(u32, Rect)> {
-        let lines = self.line_boxes();
+        let lines = self.line_boxes_with_running();
         let idx = caret_start_line(&lines, pos)?;
         let lb = &lines[idx];
         let stops = stops_for(lb.line, lb.left);
@@ -338,7 +338,7 @@ impl<'a> LayoutSnapshot<'a> {
     /// `range.end`. An empty or inverted range yields no rectangles.
     #[must_use]
     pub fn selection_rects(&self, range: ModelRange) -> Vec<(u32, Rect)> {
-        let lines = self.line_boxes();
+        let lines = self.line_boxes_with_running();
         let Some(mut start_i) = caret_start_line(&lines, range.start) else {
             return Vec::new();
         };
@@ -458,6 +458,32 @@ impl<'a> LayoutSnapshot<'a> {
             });
         }
         None
+    }
+
+    /// Body line boxes plus every page's running content.
+    ///
+    /// Used by the caret and selection geometry ONLY, never by `hit_test`: a
+    /// position resolves against whichever surface owns its node (a node lives in
+    /// exactly one), so body positions resolve exactly as before, while a
+    /// position inside a header or footer — which previously found no line and
+    /// so painted no caret — now has geometry. Feeding these to `hit_test`
+    /// instead would change what a margin click means, which is why the walks
+    /// stay separate.
+    fn line_boxes_with_running(&self) -> Vec<LineBox<'a>> {
+        let mut out = self.line_boxes();
+        for page in &self.layout.pages {
+            for placed in page.header.iter().chain(page.footer.iter()) {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut out,
+                );
+            }
+        }
+        out
     }
 
     /// The line boxes of one running band on one page.
@@ -1324,6 +1350,38 @@ mod tests {
             node(1),
             "the body walk still answers with body content"
         );
+    }
+
+    /// A caret inside a header has geometry. Without it the caret simply did not
+    /// paint there, so a user typing in a header would see no cursor at all.
+    #[test]
+    fn caret_rect_resolves_a_position_inside_the_header() {
+        let mut paginated = layout(&[ltr_para(1, &[3])]);
+        paginated.pages[0].header.push(PlacedFragment {
+            fragment: ltr_para(77, &[3]),
+            rect: Rect::new(
+                Point::new(Twip(MARGIN), Twip(120)),
+                Size::new(Twip(5000), Twip(240)),
+            ),
+            section: None,
+        });
+        let snap = LayoutSnapshot::new(&paginated);
+
+        let (page, rect) = snap
+            .caret_rect(ModelPos::new(node(77), 0))
+            .expect("the header position has caret geometry");
+        assert_eq!(page, 1);
+        assert_eq!(
+            rect.origin.y,
+            Twip(120),
+            "the caret sits on the header line"
+        );
+
+        // A body position is unaffected.
+        let (_, body_rect) = snap
+            .caret_rect(ModelPos::new(node(1), 0))
+            .expect("body caret still resolves");
+        assert_ne!(body_rect.origin.y, Twip(120));
     }
 
     /// A point in neither band is `None`, so a caller can try running content

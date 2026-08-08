@@ -167,6 +167,8 @@ const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
+const insertHeaderBtn = document.getElementById("insertHeaderBtn");
+const insertFooterBtn = document.getElementById("insertFooterBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
 const insertEmojiBtn = document.getElementById("insertEmojiBtn");
 const tabReviewBtn = document.getElementById("tabReview");
@@ -3704,6 +3706,93 @@ function traverseObjects(step) {
   setStatus(`${target.kind === "textbox" ? "Text box" : "Picture"} ${next + 1} of ${objects.length}`);
 }
 
+// ---- Header / footer editing -----------------------------------------------
+// Word, Docs, OnlyOffice and LibreOffice all treat this as an editing CONTEXT
+// SWITCH — double-click into the band, edit in place with the body
+// de-emphasised, leave with Esc or a click in the body — never a modal dialog
+// and never a document mutation in itself (docs/85 §10.2).
+//
+// There is no sub-document address behind it: `runningHitTest` answers with an
+// ordinary NodeId + offset, and the edit ops already resolve a position in
+// whichever surface owns it, so editing a header is ordinary text editing with a
+// different caret position. This state exists only to drive the chrome and to
+// know what Esc should do.
+let runningEditBand = null; // "header" | "footer" | null
+
+/** Finds a caret position inside a page's header or footer by walking the band
+ *  inward from the page edge until the engine answers.
+ *
+ *  `runningHitTest` resolves only points actually inside placed running content,
+ *  and the band's height depends on the document's own margins, so a fixed probe
+ *  point would miss. Walking in from the edge finds the first line whatever the
+ *  geometry, and stops well before the body's content area so a document with no
+ *  running content answers nothing rather than capturing a body line. */
+function probeRunningBand(page, band) {
+  if (!doc) return null;
+  const x = Math.round(page.wTwip / 2);
+  // A generous fraction of the page, which covers ordinary and large margins
+  // without reaching the middle of the sheet.
+  const span = Math.round(page.hTwip * 0.2);
+  const STEP = 40; // ~0.7mm; fine enough to land inside a single line box
+  for (let d = 0; d <= span; d += STEP) {
+    const y = band === "header" ? d : page.hTwip - d;
+    const hit = doc.runningHitTest(page.pageNumber, x, y);
+    if (!hit) continue;
+    const found = { band: hit.band, node: hit.node, offset: hit.offset };
+    hit.free?.();
+    if (found.band === band) return found;
+  }
+  return null;
+}
+
+/** Enters header/footer editing at `position`, an ordinary caret position that
+ *  happens to live in running content. */
+function enterRunningEdit(band, node, offset) {
+  runningEditBand = band;
+  objectSelection = null;
+  tableSelection = null;
+  selection = { anchor: { node, offset }, focus: { node, offset } };
+  pagesEl.dataset.runningEdit = band;
+  document.body.classList.add("running-edit");
+  setStatus(`Editing the ${band} — press Esc to return to the document`);
+  focusEditorSurface();
+  drawSelection();
+  updateToolbar();
+}
+
+/** Leaves header/footer editing. The caret stays where it is rather than
+ *  jumping: Word and Docs both leave the insertion point alone and simply end
+ *  the context, and a caret that teleports on Esc loses the user's place. */
+function exitRunningEdit() {
+  if (!runningEditBand) return false;
+  runningEditBand = null;
+  delete pagesEl.dataset.runningEdit;
+  document.body.classList.remove("running-edit");
+  setStatus("");
+  drawSelection();
+  updateToolbar();
+  return true;
+}
+
+/** Puts the caret in a page's header or footer, entering the context. Used by
+ *  the double-click in the band and by the Insert menu / palette commands —
+ *  a double-click alone is invisible to anyone who has not been told about it,
+ *  and an ABSENT header has nothing to double-click on (docs/85 §8d). */
+function editRunningContent(band) {
+  if (!doc) return;
+  const page = pages[0];
+  if (!page) return;
+  const hit = probeRunningBand(page, band);
+  if (!hit) {
+    // Nothing is placed in that band, so there is nothing to put a caret in.
+    // Creating one on demand is the `+` marker's job (docs/85 §8d) and a
+    // separate slice; saying so is better than opening an empty context.
+    setStatus(`This document has no ${band} yet`, "error");
+    return;
+  }
+  enterRunningEdit(hit.band, hit.node, hit.offset);
+}
+
 /** The wrap-mode choices offered for a floating object (docs/85 §5.3 / §10). */
 const WRAP_MODES = [
   ["square", "Square"],
@@ -4657,6 +4746,20 @@ pagesEl.addEventListener("dblclick", (e) => {
       selectObject(node, kind, anchorAt(page, e) || selection?.focus || null);
     }
     enterObjectEditMode();
+    e.preventDefault();
+    return;
+  }
+  // A double-click in the header/footer band enters that context — the gesture
+  // every reference editor uses (docs/85 §10.2). Checked before word selection
+  // because a band click has no word to select, and after objects so a
+  // double-clicked image in a header still enters the image.
+  const running = doc?.runningHitTest(page.pageNumber, x, y);
+  if (running) {
+    const band = running.band;
+    const node = running.node;
+    const offset = running.offset;
+    running.free?.();
+    enterRunningEdit(band, node, offset);
     e.preventDefault();
     return;
   }
@@ -6161,6 +6264,8 @@ const INSERT_SURFACE = [
   { command: "insert.link", button: insertLinkBtn, requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", button: insertBookmarkBtn, requires: "doc", activate: () => openBookmarkManager() },
   { command: "insert.field", button: insertFieldBtn, requires: "doc", activate: () => openFieldDialog() },
+  { command: "insert.header", button: insertHeaderBtn, requires: "doc", activate: () => editRunningContent("header") },
+  { command: "insert.footer", button: insertFooterBtn, requires: "doc", activate: () => editRunningContent("footer") },
   { command: "insert.symbol", button: insertSymbolBtn, requires: "doc", activate: () => openSymbolPicker() },
   { command: "insert.emoji", button: insertEmojiBtn, requires: "doc", activate: () => openEmojiPicker() },
 ];
@@ -9292,6 +9397,8 @@ function editorCommands(context = { surface: "palette" }) {
     // Insert precondition left is a real one — Link needs text to link.
     { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: insertCommandEnabled("insert.table"), run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "insert.header", label: "Edit header", group: "Insert", kw: "header running title page top margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("header") },
+    { id: "insert.footer", label: "Edit footer", group: "Insert", kw: "footer running page number bottom margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("footer") },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
     { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: insertCommandEnabled("insert.field"), run: () => openFieldDialog() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
@@ -9479,7 +9586,7 @@ const APP_MENU_SECTIONS = {
     ["review.acceptNext", "review.rejectNext"],
     ["review.acceptAll", "review.rejectAll"],
   ],
-  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
+  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
@@ -12128,6 +12235,13 @@ document.addEventListener("keydown", async (e) => {
       cancelCrop();
       return;
     }
+  }
+  // Esc leaves header/footer editing first: while that context is open it is the
+  // thing Esc most obviously means, and Word closes the header on Esc too.
+  if (runningEditBand && key === "Escape") {
+    e.preventDefault();
+    exitRunningEdit();
+    return;
   }
   if (objectSelection) {
     if (key === "Escape") {

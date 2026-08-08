@@ -7960,6 +7960,27 @@ impl WasmDocument {
     fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
         collect_block_text(self.document.body(), &mut nodes);
+        // Running content and notes are ordinary block content in the same id
+        // space, and a caret can now be placed in them, so their paragraphs have
+        // to be orderable too — `order_endpoints` resolves an endpoint by finding
+        // it in this list, and a position it cannot find is rejected before any
+        // op is built. Each surface is appended whole and after the body, so
+        // ordering WITHIN a surface (all a selection can span) is correct; the
+        // relative order of two different surfaces is arbitrary and meaningless,
+        // which is fine because no gesture produces a range across two.
+        let definitions = self.document.definitions();
+        for (_, header) in definitions.headers.iter() {
+            collect_block_text(&header.blocks, &mut nodes);
+        }
+        for (_, footer) in definitions.footers.iter() {
+            collect_block_text(&footer.blocks, &mut nodes);
+        }
+        for (_, note) in definitions.footnotes.iter() {
+            collect_block_text(&note.blocks, &mut nodes);
+        }
+        for (_, note) in definitions.endnotes.iter() {
+            collect_block_text(&note.blocks, &mut nodes);
+        }
         nodes
             .into_iter()
             .map(|(id, text)| (id, text.len() as u32))
