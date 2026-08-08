@@ -8,14 +8,14 @@ use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
     CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DashStyle, DefinitionMap,
     Definitions, Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill,
-    FontRef, FormFieldKind, GradientKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule,
-    HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget, Indentation,
-    InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
-    NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu, Revision,
-    RevisionKind, RowHeight, RunProperties, SdtControlKind, ShapeGeometry, Spacing, Style, StyleId,
-    StyleKind, Table, TableCell, TableCellProperties, TableRow, TableRowProperties, TableWidth,
-    TextBox, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WidthType, WordprocessingGroup, WrapMode,
+    FontRef, FormFieldKind, GradientKind, GroupChild, GroupPicture, GroupShape, HeaderFooterKind,
+    HeightRule, HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget,
+    Indentation, InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind,
+    NoteReference, NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu,
+    Revision, RevisionKind, RowHeight, RunProperties, SdtControlKind, ShapeGeometry, Spacing,
+    Style, StyleId, StyleKind, Table, TableCell, TableCellProperties, TableRow, TableRowProperties,
+    TableWidth, TextBox, VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WidthType, WordprocessingGroup, WrapMode,
 };
 use zip::CompressionMethod;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -2726,11 +2726,14 @@ impl Writer {
                         && let Some(shape) = single_line_shape(group)
                     {
                         self.write_group_line(group, shape)?;
-                    } else if self.drawing_namespaces_available && flat_shape_group(group) {
+                    } else if self.drawing_namespaces_available
+                        && flat_shape_group(group, &self.available_media)
+                    {
                         self.write_group_container(group)?;
                     } else {
                         // A nested/transformed group, an unsupported geometry, a
-                        // picture/text-box child, or the plain path.
+                        // text-box child, a picture whose media is not retained, or the
+                        // plain path (no drawing namespaces / no available media).
                         self.reporter
                             .record("odt.export.group", ModelOutcome::Omitted);
                     }
@@ -3596,6 +3599,16 @@ impl Writer {
                         )?;
                     }
                 }
+                GroupChild::Picture(picture) => {
+                    // A picture child is a `draw:frame > draw:image` at its absolute
+                    // position, sized by its OWN extent. `flat_shape_group` guarantees
+                    // the media resolves, so this `get` is always `Some`.
+                    let abs_x = base_x + picture.offset.x_emu;
+                    let abs_y = base_y + picture.offset.y_emu;
+                    if let Some(part_name) = self.available_media.get(&picture.media).cloned() {
+                        self.write_group_picture(&part_name, abs_x, abs_y, picture)?;
+                    }
+                }
                 GroupChild::Group(nested) => {
                     // A nested `draw:g` establishes no new frame; its children are
                     // absolute, offset from this group's origin by the nested group's
@@ -3606,11 +3619,38 @@ impl Writer {
                     self.write_group_children(&nested.children, nested_base_x, nested_base_y)?;
                     self.push("</draw:g>")?;
                 }
-                // `flat_shape_group` guarantees only Shape/Group children.
+                // `flat_shape_group` guarantees only Shape/Picture/Group children.
                 _ => continue,
             }
         }
         Ok(())
+    }
+
+    /// Writes an embedded-picture group child as a positioned `draw:frame > draw:image`
+    /// at its absolute position `(abs_x, abs_y)`, sized by the picture's OWN extent.
+    /// The `xlink:href` is the retained package part name; the alt text (if any) rides
+    /// as an `svg:title`, so the frame re-imports to the same [`GroupPicture`].
+    fn write_group_picture(
+        &mut self,
+        part_name: &str,
+        abs_x: i64,
+        abs_y: i64,
+        picture: &GroupPicture,
+    ) -> Result<(), OdfError> {
+        let max = self.limits.max_content_bytes;
+        self.push("<draw:frame svg:x=\"")?;
+        self.push(&emu_to_cm(abs_x))?;
+        self.push("\" svg:y=\"")?;
+        self.push(&emu_to_cm(abs_y))?;
+        self.push("\" svg:width=\"")?;
+        self.push(&emu_to_cm(picture.extent.width_emu))?;
+        self.push("\" svg:height=\"")?;
+        self.push(&emu_to_cm(picture.extent.height_emu))?;
+        self.push("\"><draw:image xlink:href=\"")?;
+        push_escaped_attribute(&mut self.xml, part_name, max)?;
+        self.push("\"/>")?;
+        self.write_frame_title(picture.descr.as_deref())?;
+        self.push("</draw:frame>")
     }
 
     /// Emits a frame's alt text as `svg:title`, shared by the inline and anchored
@@ -4741,14 +4781,28 @@ fn single_line_shape(group: &WordprocessingGroup) -> Option<&GroupShape> {
 }
 
 /// Whether a `GroupChild` is one this increment can emit inside a `draw:g`: a
-/// supported box/line shape, or a NESTED group that is itself emittable (recursively).
-/// A box child's flip/rotation has no ODF box representation (rejected); a line child's
-/// flip encodes its diagonal and is permitted; a nested group must satisfy
+/// supported box/line shape, an embedded picture whose media is retained (resolves in
+/// `available_media`), or a NESTED group that is itself emittable (recursively). A box
+/// child's flip/rotation has no ODF box representation (rejected); a line child's flip
+/// encodes its diagonal and is permitted; a picture with a crop/border/flip/rotation
+/// has no plain-`draw:frame` form (rejected, so the whole group degrades rather than
+/// silently dropping the transform); a nested group must satisfy
 /// [`nested_group_is_supported`].
-fn group_child_is_supported(child: &GroupChild) -> bool {
+fn group_child_is_supported(
+    child: &GroupChild,
+    available_media: &BTreeMap<MediaId, String>,
+) -> bool {
     let shape = match child {
         GroupChild::Shape(shape) => shape,
-        GroupChild::Group(nested) => return nested_group_is_supported(nested),
+        GroupChild::Group(nested) => return nested_group_is_supported(nested, available_media),
+        GroupChild::Picture(picture) => {
+            return picture.crop.is_none()
+                && picture.border.is_none()
+                && !picture.flip_h
+                && !picture.flip_v
+                && picture.rotation.is_none()
+                && available_media.contains_key(&picture.media);
+        }
         _ => return false,
     };
     if shape.preset.is_some() || !shape.adjustments.is_empty() || shape.rotation.is_some() {
@@ -4766,7 +4820,10 @@ fn group_child_is_supported(child: &GroupChild) -> bool {
 /// descendant's absolute coordinate is `base + transform.offset + child.offset`, and a
 /// non-empty child list whose members are themselves supported (recursively). The
 /// depth of this recursion is bounded by the model's `MAX_GROUP_DEPTH` invariant.
-fn nested_group_is_supported(group: &WordprocessingGroup) -> bool {
+fn nested_group_is_supported(
+    group: &WordprocessingGroup,
+    available_media: &BTreeMap<MediaId, String>,
+) -> bool {
     if group.anchor.is_some() || group.relative_height.is_some() || group.children.is_empty() {
         return false;
     }
@@ -4778,15 +4835,23 @@ fn nested_group_is_supported(group: &WordprocessingGroup) -> bool {
         && !transform.flip_h
         && !transform.flip_v
         && transform.rotation.is_none();
-    identity_scale && group.children.iter().all(group_child_is_supported)
+    identity_scale
+        && group
+            .children
+            .iter()
+            .all(|child| group_child_is_supported(child, available_media))
 }
 
 /// Whether `group` is an anchored, identity-transform group whose children are ALL
-/// supported box/line shapes or nested groups — the multi-child form this increment
-/// emits as a `draw:g`. A group-of-one bare box/line is handled by the single-shape
-/// fast paths first, so this only accepts 2+ children (or a 1-child group that is not
-/// a bare box/line — e.g. a lone nested group — which falls through here).
-fn flat_shape_group(group: &WordprocessingGroup) -> bool {
+/// supported box/line shapes, retained pictures, or nested groups — the multi-child
+/// form this increment emits as a `draw:g`. A group-of-one bare box/line is handled by
+/// the single-shape fast paths first, so this only accepts 2+ children (or a 1-child
+/// group that is not a bare box/line — e.g. a lone nested group or a lone picture —
+/// which falls through here).
+fn flat_shape_group(
+    group: &WordprocessingGroup,
+    available_media: &BTreeMap<MediaId, String>,
+) -> bool {
     if group.anchor.is_none() || group.children.is_empty() {
         return false;
     }
@@ -4799,7 +4864,11 @@ fn flat_shape_group(group: &WordprocessingGroup) -> bool {
         && !transform.flip_h
         && !transform.flip_v
         && transform.rotation.is_none();
-    identity && group.children.iter().all(group_child_is_supported)
+    identity
+        && group
+            .children
+            .iter()
+            .all(|child| group_child_is_supported(child, available_media))
 }
 
 /// Reconstructs a line's two endpoints from its bounding box (`origin` + extent) and

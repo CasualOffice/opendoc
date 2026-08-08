@@ -3010,6 +3010,104 @@ fn nested_shape_group_round_trips() {
     assert_eq!(reexport.bytes, export.bytes);
 }
 
+/// A `draw:g` containing a `draw:rect` AND a `draw:frame > draw:image` (an embedded
+/// picture) imports to a `WordprocessingGroup` whose children are a `GroupChild::Shape`
+/// and a `GroupChild::Picture` (media resolving in `definitions().media`, the picture's
+/// bbox extending the group box), and re-exports through the PRESERVING path as a
+/// `draw:g` carrying both the box and the positioned frame — repackaging the image
+/// bytes — a byte-exact fixed point. The PLAIN path (no retained media) degrades the
+/// whole group and writes no orphan media.
+#[test]
+fn group_picture_child_round_trips() {
+    const CM: i64 = 360_000;
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:g text:anchor-type="page" draw:z-index="3"><draw:rect draw:style-name="gr1" svg:x="2cm" svg:y="2cm" svg:width="4cm" svg:height="3cm"/><draw:frame svg:x="7cm" svg:y="2cm" svg:width="2cm" svg:height="2cm"><draw:image xlink:href="Pictures/logo.png"/></draw:frame></draw:g></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let image_bytes = b"\x89PNG\r\n\x1a\nLOGO".to_vec();
+    let bytes = image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/logo.png" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/logo.png",
+            bytes: image_bytes.clone(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    );
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    // Two children: the rect shape and the embedded picture. The union bbox spans the
+    // rect (2,2)..(6,5) AND the picture (7,2)..(9,4) → (2,2)..(9,5), extent 7cm x 3cm.
+    assert_eq!(group.children.len(), 2);
+    assert_eq!(group.extent.width_emu, 7 * CM);
+    assert_eq!(group.extent.height_emu, 3 * CM);
+    let GroupChild::Shape(rect) = &group.children[0] else {
+        panic!("rect")
+    };
+    assert_eq!(rect.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(rect.offset.x_emu, 0);
+    let GroupChild::Picture(picture) = &group.children[1] else {
+        panic!("picture")
+    };
+    // The picture keeps its OWN extent (2cm) and sits at 7cm-2cm = 5cm within the box.
+    assert_eq!(picture.offset.x_emu, 5 * CM);
+    assert_eq!(picture.offset.y_emu, 0);
+    assert_eq!(picture.extent.width_emu, 2 * CM);
+    assert_eq!(picture.extent.height_emu, 2 * CM);
+    // Its media resolves to the retained package part.
+    let media = imported
+        .document
+        .definitions()
+        .media
+        .get(&picture.media)
+        .expect("group picture media reference");
+    assert_eq!(media.part_name, "Pictures/logo.png");
+
+    // Preserving export re-emits the draw:g with the box AND the positioned frame, and
+    // repackages the image bytes under the same part name.
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"<draw:g text:anchor-type="page" draw:z-index="3">"#));
+    assert!(content_out.contains(r#"<draw:rect draw:style-name="#));
+    assert!(content_out.contains(
+        r#"<draw:frame svg:x="7.0000cm" svg:y="2.0000cm" svg:width="2.0000cm" svg:height="2.0000cm"><draw:image xlink:href="Pictures/logo.png"/></draw:frame>"#
+    ));
+    // The image bytes are repackaged verbatim (no orphan; the part round-trips).
+    assert_eq!(out.read_part("Pictures/logo.png").unwrap(), image_bytes);
+
+    // Semantic + byte fixed point: re-import equals the model, re-export identical.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+
+    // The PLAIN path has no retained media (and no drawing namespaces), so the whole
+    // group degrades — no `draw:g`, no orphaned `draw:image` — rather than emitting a
+    // frame whose part was never packaged.
+    let plain = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut plain_pkg = OdtPackage::open(&plain.bytes, OdfPackageLimits::default()).unwrap();
+    let plain_content = String::from_utf8(plain_pkg.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!plain_content.contains("<draw:g"));
+    assert!(!plain_content.contains("draw:image"));
+    assert!(plain_pkg.read_part("Pictures/logo.png").is_err());
+}
+
 /// A `draw:g` whose children are each within the EMU domain but whose union
 /// bounding box exceeds it must drop the group WITH a finding — not abort the whole
 /// import — so unrelated content (a normal paragraph) survives.

@@ -26,7 +26,8 @@ use casual_doc_model::v1::{
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_model::v1::{
-    DashStyle, Fill, GradientKind, GradientStop, GroupChild, GroupShape, GroupTransform,
+    DashStyle, Fill, GradientKind, GradientStop, GroupChild, GroupPicture, GroupShape,
+    GroupTransform,
     MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry, ShapeStroke, WordprocessingGroup,
 };
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
@@ -591,15 +592,35 @@ struct GroupShapeDraft {
     flip_v: bool,
 }
 
-/// One child of a `draw:g`: either a leaf box/line shape or a NESTED `draw:g`
-/// (itself an ordered list of children). In ODF every descendant of a `draw:g`
-/// carries ABSOLUTE coordinates — a nested group establishes no new coordinate
-/// frame — so a nested-group draft holds only its (absolute-coord) children; its
-/// bounding box and the identity transform that positions it within its parent are
-/// derived at build time. Child order is the intra-group paint/z order.
+/// One embedded-picture child of a `draw:g` group (a `draw:frame > draw:image`),
+/// captured with its ABSOLUTE `svg:x/y/width/height` (the bbox reduction to a
+/// group-relative offset happens at build time, exactly like a shape child). The
+/// safe package part name + inferred media type are threaded to a per-child
+/// `MediaReference` at build time (mirroring the inline-image path).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GroupPictureDraft {
+    abs_x_emu: i64,
+    abs_y_emu: i64,
+    width_emu: i64,
+    height_emu: i64,
+    /// Safe internal package part name (the `draw:image/@xlink:href`).
+    part_name: String,
+    /// Content type inferred from the part-name extension.
+    media_type: String,
+    /// `svg:title`/`svg:desc` alt text, if present.
+    descr: Option<String>,
+}
+
+/// One child of a `draw:g`: a leaf box/line shape, an embedded picture, or a
+/// NESTED `draw:g` (itself an ordered list of children). In ODF every descendant of
+/// a `draw:g` carries ABSOLUTE coordinates — a nested group establishes no new
+/// coordinate frame — so a nested-group draft holds only its (absolute-coord)
+/// children; its bounding box and the identity transform that positions it within
+/// its parent are derived at build time. Child order is the intra-group paint/z order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum GroupChildDraft {
     Shape(GroupShapeDraft),
+    Picture(GroupPictureDraft),
     Group(Vec<GroupChildDraft>),
 }
 
@@ -3672,6 +3693,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut elements,
                             &mut attributes,
                             &mut attribute_bytes,
+                            &mut text_bytes,
                             &style_catalog.automatic,
                             draw_defs,
                             cancellation,
@@ -5772,6 +5794,7 @@ fn parse_draw_group(
     elements: &mut usize,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
+    text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
     defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
@@ -5823,6 +5846,7 @@ fn parse_draw_group(
         elements,
         attributes,
         attribute_bytes,
+        text_bytes,
         automatic_styles,
         defs,
         cancellation,
@@ -5888,6 +5912,7 @@ fn parse_group_children(
     elements: &mut usize,
     attributes: &mut usize,
     attribute_bytes: &mut usize,
+    text_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
     defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
@@ -6015,6 +6040,7 @@ fn parse_group_children(
                     elements,
                     attributes,
                     attribute_bytes,
+                    text_bytes,
                     automatic_styles,
                     defs,
                     cancellation,
@@ -6031,9 +6057,91 @@ fn parse_group_children(
             }
             buffer.clear();
             continue;
+        } else if is_name(&name, NamespaceKind::Draw, b"frame") {
+            // An embedded-picture child (`draw:frame > draw:image`). The frame carries
+            // ABSOLUTE `svg:x/y/width/height` (like a shape child); its image href is
+            // validated + typed by `parse_draw_frame` (the same security path as the
+            // inline image, so an unsafe/linked href is never adopted). A frame that is
+            // a text box, has no safe image, or lacks a modelable position is dropped
+            // with the `group-content` finding — the group keeps its other children.
+            let (mut fx, mut fy, mut fw, mut fh) = (None, None, None, None);
+            for attribute in element.attributes() {
+                let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+                // Do NOT count here: `parse_draw_frame` (Start) or the
+                // `count_attributes_only` below (Empty) charges the frame's attributes
+                // exactly once.
+                let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                if namespace_kind(&namespace) == NamespaceKind::Svg {
+                    match local.as_ref() {
+                        b"x" => fx = parse_emu(&decode_attribute(&attribute)?),
+                        b"y" => fy = parse_emu(&decode_attribute(&attribute)?),
+                        b"width" => fw = parse_emu(&decode_attribute(&attribute)?),
+                        b"height" => fh = parse_emu(&decode_attribute(&attribute)?),
+                        _ => {}
+                    }
+                }
+            }
+            let image = if is_start {
+                // Reuse the inline-frame sub-parser wholesale (href validation, media
+                // typing, alt-text capture, active-content stripping); it consumes the
+                // frame's subtree AND its matching `End`.
+                match parse_draw_frame(
+                    reader,
+                    &element,
+                    child_depth,
+                    limits,
+                    elements,
+                    attributes,
+                    attribute_bytes,
+                    text_bytes,
+                    automatic_styles,
+                    cancellation,
+                    reporter,
+                )? {
+                    Some(FrameContent::Image(image)) => {
+                        Some((image.part_name, image.media_type, image.descr))
+                    }
+                    Some(FrameContent::AnchoredImage(anchored)) => {
+                        Some((anchored.part_name, anchored.media_type, anchored.descr))
+                    }
+                    // A text box or an image-less/unsafe frame: no picture to model.
+                    Some(FrameContent::TextBox(_)) | None => None,
+                }
+            } else {
+                // A self-closing `<draw:frame/>`: no image child at all.
+                count_attributes_only(&element, attributes, attribute_bytes, limits)?;
+                None
+            };
+            match image {
+                Some((part_name, media_type, descr)) => {
+                    if let (Some(x), Some(y), Some(width), Some(height)) = (fx, fy, fw, fh) {
+                        children.push(GroupChildDraft::Picture(GroupPictureDraft {
+                            abs_x_emu: x,
+                            abs_y_emu: y,
+                            width_emu: width,
+                            height_emu: height,
+                            part_name,
+                            media_type,
+                            descr,
+                        }));
+                    } else {
+                        // A safe image but a missing/out-of-range position: the unsigned
+                        // offset codec cannot model it, so drop it like a shape child.
+                        reporter.report(
+                            "odf.draw.group-child-coord".to_owned(),
+                            ModelOutcome::Degraded,
+                        );
+                    }
+                }
+                None => {
+                    reporter.report("odf.draw.group-content".to_owned(), ModelOutcome::Degraded);
+                }
+            }
+            buffer.clear();
+            continue;
         } else {
-            // A picture/text-box/control or any other element: count its attributes
-            // and skip; non-shape children are deferred with a finding this increment.
+            // A text-box/control or any other element: count its attributes and skip;
+            // unsupported children are deferred with a finding this increment.
             count_attributes_only(&element, attributes, attribute_bytes, limits)?;
             reporter.report("odf.draw.group-content".to_owned(), ModelOutcome::Degraded);
             None
@@ -6074,6 +6182,12 @@ fn group_children_bbox(children: &[GroupChildDraft]) -> Option<(i64, i64, i64, i
                 shape.abs_y_emu,
                 shape.abs_x_emu + shape.width_emu,
                 shape.abs_y_emu + shape.height_emu,
+            ),
+            GroupChildDraft::Picture(picture) => (
+                picture.abs_x_emu,
+                picture.abs_y_emu,
+                picture.abs_x_emu + picture.width_emu,
+                picture.abs_y_emu + picture.height_emu,
             ),
             GroupChildDraft::Group(nested) => group_children_bbox(nested)?,
         };
@@ -9862,6 +9976,18 @@ fn build_document(
         );
         anchored_media_ids.push(media_id);
     }
+    // One media reference per embedded-picture child of a group (recursing into
+    // nested groups), minted in the SAME document-order traversal that
+    // `build_group_children` consumes them, so each `GroupChild::Picture` resolves to
+    // its own part. The reference is inserted into `definitions.media`, so the
+    // retained-parts repackaging (which iterates `definitions().media`) covers a
+    // group picture exactly like an inline/anchored drawing.
+    let mut group_media_ids: Vec<Vec<MediaId>> = Vec::with_capacity(groups.len());
+    for group in groups {
+        let mut per_group = Vec::new();
+        collect_group_picture_media(&group.children, &mut definitions, &mut ids, &mut per_group)?;
+        group_media_ids.push(per_group);
+    }
     // One comment definition per annotation. The body is a single flattened
     // plain-text paragraph (empty body -> no blocks); the paired range is not
     // modeled, so each anchor is a point `CommentReference`.
@@ -9991,6 +10117,7 @@ fn build_document(
             anchored_drawings,
             shapes,
             groups,
+            &group_media_ids,
         )?;
         match note.kind {
             NoteKind::Footnote => {
@@ -10021,6 +10148,7 @@ fn build_document(
         anchored_drawings,
         shapes,
         groups,
+        &group_media_ids,
     )?;
     definitions.document_defaults = build_document_defaults(defaults);
     Document::new(document_id, body, definitions).map_err(|_| OdfError::InvalidModel)
@@ -10109,6 +10237,7 @@ fn build_blocks(
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
     groups: &[GroupDraft],
+    group_media_ids: &[Vec<MediaId>],
 ) -> Result<Vec<BlockNode>, OdfError> {
     let mut blocks = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -10128,6 +10257,7 @@ fn build_blocks(
                 anchored_drawings,
                 shapes,
                 groups,
+                group_media_ids,
             )?),
             BlockDraft::Table(table) => BlockNode::Table(build_table(
                 table,
@@ -10145,6 +10275,7 @@ fn build_blocks(
                 anchored_drawings,
                 shapes,
                 groups,
+                group_media_ids,
             )?),
             BlockDraft::Toc(toc) => {
                 let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -10164,6 +10295,7 @@ fn build_blocks(
                     anchored_drawings,
                     shapes,
                     groups,
+                    group_media_ids,
                 )?;
                 // A TOC with no captured entries is dropped at import (the model
                 // rejects an empty content control), so `inner` is non-empty here.
@@ -10200,6 +10332,7 @@ fn build_paragraph(
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
     groups: &[GroupDraft],
+    group_media_ids: &[Vec<MediaId>],
 ) -> Result<Paragraph, OdfError> {
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
     let properties = ParagraphProperties {
@@ -10235,6 +10368,7 @@ fn build_paragraph(
             anchored_drawings,
             shapes,
             groups,
+            group_media_ids,
         )?,
     })
 }
@@ -10264,6 +10398,7 @@ fn build_table(
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
     groups: &[GroupDraft],
+    group_media_ids: &[Vec<MediaId>],
 ) -> Result<Table, OdfError> {
     let owners = table_owners(draft)?;
     let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
@@ -10290,6 +10425,7 @@ fn build_table(
                         anchored_drawings,
                         shapes,
                         groups,
+                        group_media_ids,
                     )?;
                     if blocks.is_empty() {
                         blocks.push(build_empty_paragraph(ids)?);
@@ -10553,21 +10689,63 @@ fn hash_run_properties(hash: &mut u64, properties: &RunProperties) {
     );
 }
 
+/// Mints one [`MediaReference`] per embedded-picture child of `drafts` (recursing
+/// into nested groups in document order), inserting each into `definitions.media`
+/// and appending its [`MediaId`] to `out`. The traversal order matches
+/// [`build_group_children`]'s picture consumption exactly (pre-order, children in
+/// document order, a nested group's pictures before its later siblings), so the
+/// `out` slice aligns positionally with that build's cursor.
+fn collect_group_picture_media(
+    drafts: &[GroupChildDraft],
+    definitions: &mut Definitions,
+    ids: &mut IdGenerator,
+    out: &mut Vec<MediaId>,
+) -> Result<(), OdfError> {
+    for child in drafts {
+        match child {
+            GroupChildDraft::Picture(picture) => {
+                let media_id = MediaId::new(ids.next_id().map_err(|_| OdfError::InvalidModel)?);
+                definitions.media.insert(
+                    media_id,
+                    MediaReference {
+                        relationship_id: picture.part_name.clone(),
+                        media_type: picture.media_type.clone(),
+                        part_name: picture.part_name.clone(),
+                    },
+                );
+                out.push(media_id);
+            }
+            GroupChildDraft::Group(nested) => {
+                collect_group_picture_media(nested, definitions, ids, out)?;
+            }
+            GroupChildDraft::Shape(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// Builds the model [`GroupChild`]s for one group level from its (absolute-coord)
 /// drafts, expressing each in the coordinate space whose origin is `(base_x, base_y)`
 /// — the min corner of the ENCLOSING group's bounding box. A leaf shape becomes a
-/// [`GroupChild::Shape`] at `abs - base`. A nested group becomes a
+/// [`GroupChild::Shape`] at `abs - base`; a picture becomes a [`GroupChild::Picture`]
+/// at `abs - base`, sized by its own extent, resolving its media from `media` in
+/// document order via `media_cursor`. A nested group becomes a
 /// [`GroupChild::Group`] with `anchor: None`, positioned by an identity transform:
 /// `offset = nmin - base`, `extent = child_extent = nmin..nmax`, `child_offset = 0`;
 /// its own children recurse with `base = nmin`, so a descendant's exported absolute
 /// coordinate telescopes back to `base + (nmin - base) + (abs - nmin) = abs`. Ids are
 /// allocated in document order (parent before its children), matching the flat path's
-/// per-shape allocation so a flat group's model is unchanged.
+/// per-shape allocation so a flat group's model is unchanged. `media` is the group's
+/// pre-minted picture ids (see [`collect_group_picture_media`]); `media_cursor` is the
+/// running index into it, shared across the nested recursion so pictures resolve in
+/// the same traversal order they were minted.
 fn build_group_children(
     drafts: &[GroupChildDraft],
     base_x: i64,
     base_y: i64,
     ids: &mut IdGenerator,
+    media: &[MediaId],
+    media_cursor: &mut usize,
 ) -> Result<Vec<GroupChild>, OdfError> {
     let mut children = Vec::with_capacity(drafts.len());
     for child in drafts {
@@ -10602,6 +10780,30 @@ fn build_group_children(
                     rotation: None,
                 }));
             }
+            GroupChildDraft::Picture(picture) => {
+                let child_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
+                // Resolve this picture's pre-minted media id (document-order cursor).
+                let media_id = *media.get(*media_cursor).ok_or(OdfError::InvalidModel)?;
+                *media_cursor += 1;
+                children.push(GroupChild::Picture(GroupPicture {
+                    id: child_id,
+                    media: media_id,
+                    offset: PointEmu {
+                        x_emu: picture.abs_x_emu - base_x,
+                        y_emu: picture.abs_y_emu - base_y,
+                    },
+                    extent: Extent {
+                        width_emu: picture.width_emu,
+                        height_emu: picture.height_emu,
+                    },
+                    descr: picture.descr.clone(),
+                    crop: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                }));
+            }
             GroupChildDraft::Group(nested) => {
                 // The nested group's own box = the union of ITS descendants (absolute).
                 let (nmin_x, nmin_y, nmax_x, nmax_y) =
@@ -10611,7 +10813,8 @@ fn build_group_children(
                     height_emu: nmax_y - nmin_y,
                 };
                 let group_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
-                let nested_children = build_group_children(nested, nmin_x, nmin_y, ids)?;
+                let nested_children =
+                    build_group_children(nested, nmin_x, nmin_y, ids, media, media_cursor)?;
                 children.push(GroupChild::Group(WordprocessingGroup {
                     id: group_id,
                     anchor: None,
@@ -10651,6 +10854,7 @@ fn build_inlines(
     anchored_drawings: &[AnchoredDrawingDraft],
     shapes: &[ShapeDraft],
     groups: &[GroupDraft],
+    group_media_ids: &[Vec<MediaId>],
 ) -> Result<Vec<InlineNode>, OdfError> {
     let mut inlines = Vec::with_capacity(drafts.len());
     for draft in drafts {
@@ -10709,6 +10913,7 @@ fn build_inlines(
                     anchored_drawings,
                     shapes,
                     groups,
+                    group_media_ids,
                 )?,
             }),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
@@ -10872,7 +11077,18 @@ fn build_inlines(
                     width_emu: max_x - min_x,
                     height_emu: max_y - min_y,
                 };
-                let children = build_group_children(&draft.children, min_x, min_y, ids)?;
+                // The group's pre-minted picture media ids, consumed in document order
+                // by `build_group_children` (see `collect_group_picture_media`).
+                let picture_media = group_media_ids.get(*index).ok_or(OdfError::InvalidModel)?;
+                let mut media_cursor = 0_usize;
+                let children = build_group_children(
+                    &draft.children,
+                    min_x,
+                    min_y,
+                    ids,
+                    picture_media,
+                    &mut media_cursor,
+                )?;
                 InlineNode::Group(WordprocessingGroup {
                     id,
                     anchor: Some(DrawingAnchor {
@@ -11015,6 +11231,7 @@ fn build_inlines(
                     anchored_drawings,
                     shapes,
                     groups,
+                    group_media_ids,
                 )?,
             }),
         });
