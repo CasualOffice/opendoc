@@ -9,7 +9,7 @@
 //
 // There is no sub-document address anywhere in this: a header position is an
 // ordinary NodeId + offset, so typing into a header is ordinary text editing.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode, MOD } from "./fixtures.mjs";
 
 // The rich demo fixture has no running content; sample.docx does, so the tests
 // that need a real header open it through the ordinary file path.
@@ -86,19 +86,51 @@ test("double-clicking the header band enters the context", async ({ page, consol
   expect(consoleErrors).toEqual([]);
 });
 
-test("a document with no header says so instead of opening an empty context", async ({
+test("a document with no header gets one created on demand", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page); // the rich fixture has no running content
   await clickIntoFirstPage(page);
+  const bodyBefore = await page.locator("#a11yDocument").textContent();
 
   await runCommand(page, "Edit header");
 
-  // Creating one on demand is the `+` marker's job and a separate slice; an
-  // empty context that swallows keystrokes would be worse than saying no.
-  await expect(page.locator("#status")).toContainText("no header yet");
+  // Word and Docs both create the header the moment you ask to edit a document
+  // that has none — the ask IS the intent — rather than refusing.
+  await expect.poll(() => band(page)).toBe("header");
+  await page.keyboard.type("MADE");
+
+  // It is a real header: the text is not in the body projection.
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("creating a header is one undoable action, and refused in Viewing", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Viewing is read-only, and adding running content has no tracked-change
+  // representation, so it must fail closed rather than mutate.
+  await setReviewMode(page, "viewing");
+  await runCommand(page, "Edit header");
+  await expect(page.locator("#status")).toContainText("read-only");
   expect(await band(page)).toBeNull();
+  await expect(page.locator("#undoBtn")).toBeDisabled();
+
+  // Back in Editing it creates, and one undo removes the whole thing — the body
+  // and the section's link to it are a single action.
+  await setReviewMode(page, "editing");
+  await runCommand(page, "Edit header");
+  await expect.poll(() => band(page)).toBe("header");
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(page.locator("#undoBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);
 });
