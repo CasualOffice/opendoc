@@ -8309,25 +8309,44 @@ function buildAccessibilityTree() {
     nodes = [];
   }
   const frag = document.createDocumentFragment();
-  let listEl = null;
-  let listOrdered = null;
+  // A list is a STACK of open lists, one per depth, because screen readers
+  // announce nesting from the lists they are given: a level-1 item has to sit in
+  // a list inside the level-0 item above it. Emitting every item as a sibling —
+  // which this did before `level` reached the projection — told assistive
+  // technology that an indented list was flat, even though the engine tracks the
+  // depth correctly and Tab really does demote into it.
+  let listStack = []; // [{ el, ordered }], innermost last
   const flushList = () => {
-    if (listEl) {
-      frag.appendChild(listEl);
-      listEl = null;
-      listOrdered = null;
+    if (listStack.length > 0) {
+      frag.appendChild(listStack[0].el);
+      listStack = [];
     }
   };
   for (const node of Array.isArray(nodes) ? nodes : []) {
     if (node.kind === "listItem") {
-      if (!listEl || listOrdered !== node.ordered) {
-        flushList();
-        listEl = document.createElement(node.ordered ? "ol" : "ul");
-        listOrdered = node.ordered;
+      const depth = Math.max(0, Number(node.level) || 0);
+      const ordered = !!node.ordered;
+      // Leaving a level closes every list below it; switching between ordered and
+      // unordered at the same depth starts a new list, as it always did.
+      if (listStack.length > depth + 1) listStack.length = depth + 1;
+      if (listStack.length > 0 && listStack[listStack.length - 1].ordered !== ordered) {
+        listStack.length -= 1;
+      }
+      // Entering a deeper level nests the new list inside the last item of the
+      // level above; a gap in depth (level 2 with no level 1) is filled so the
+      // markup stays well formed rather than dropping the item.
+      while (listStack.length < depth + 1) {
+        const el = document.createElement(ordered ? "ol" : "ul");
+        const parent = listStack[listStack.length - 1];
+        if (parent) {
+          const host = parent.el.lastElementChild ?? parent.el.appendChild(document.createElement("li"));
+          host.appendChild(el);
+        }
+        listStack.push({ el, ordered });
       }
       const li = document.createElement("li");
       li.textContent = String(node.text ?? "");
-      listEl.appendChild(li);
+      listStack[listStack.length - 1].el.appendChild(li);
       continue;
     }
     flushList();

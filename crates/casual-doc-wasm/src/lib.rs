@@ -7061,6 +7061,7 @@ impl WasmDocument {
                     } else if let Some(reference) = paragraph.properties.numbering.as_ref() {
                         out.push(A11yBlockJson::ListItem {
                             ordered: self.numbering_ordered(reference),
+                            level: reference.level,
                             text,
                         });
                     } else {
@@ -9461,10 +9462,26 @@ fn collect_checklist_paragraphs(
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum A11yBlockJson {
-    Heading { level: u8, text: String },
-    Paragraph { text: String },
-    ListItem { ordered: bool, text: String },
-    Table { rows: Vec<Vec<String>> },
+    Heading {
+        level: u8,
+        text: String,
+    },
+    Paragraph {
+        text: String,
+    },
+    /// `level` is the 0-based list depth (`NumberingRef::level`). Without it the
+    /// projection could only emit one flat list, so a nested list — which the
+    /// engine tracks correctly, and Tab really does demote into — reached
+    /// assistive technology as a single level. Screen readers announce depth
+    /// from the nesting of the lists they are given.
+    ListItem {
+        ordered: bool,
+        level: u8,
+        text: String,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+    },
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -21241,7 +21258,7 @@ mod tests {
         assert!(
             after.iter().any(|node| matches!(
                 node,
-                A11yBlockJson::ListItem { ordered: false, text } if *text == plain_text
+                A11yBlockJson::ListItem { ordered: false, level: 0, text } if *text == plain_text
             )),
             "the converted paragraph is now an unordered list item: {after:?}"
         );
