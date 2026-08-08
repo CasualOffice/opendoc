@@ -5635,14 +5635,41 @@ body:not(.doc-loaded) .drop-title {
    §10.2). The page itself is a canvas, so the cue is drawn on the shell rather
    than composited into the raster: the pages dim, and the caret and selection
    the engine paints on the overlay stay at full strength above them. */
-body.running-edit .page {
-  opacity: 0.55;
-  transition: opacity 120ms ease;
+/* Deliberately NOT a dim over the canvas. The header is painted INTO the page
+   raster, so dimming `.page` washed out the very content being edited and turned
+   the whole sheet grey — the cue has to sit beside the band, not on top of it.
+   Word and LibreOffice both mark the band with a boundary and a label instead. */
+.running-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  border-bottom: 1px dashed var(--accent);
 }
 
-body.running-edit #pages {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.running-band.is-footer {
+  border-top: 1px dashed var(--accent);
+  border-bottom: none;
+}
+
+.running-band-label {
+  position: absolute;
+  left: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--bg-1);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
+.running-band:not(.is-footer) .running-band-label {
+  bottom: 0;
+}
+
+.running-band.is-footer .running-band-label {
+  top: 0;
 }
 
 /* ---- Header / footer marker -------------------------------------------------- */

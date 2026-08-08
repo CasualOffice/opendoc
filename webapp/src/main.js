@@ -3004,6 +3004,22 @@ function pointToTwip(page, event) {
 /** Resolve a pointer event to a model anchor, or null if it misses content. */
 function anchorAt(page, event) {
   const { x, y } = pointToTwip(page, event);
+  // While a header or footer is open, a point inside a running band belongs to
+  // THAT content: without this every click and drag in the band resolved through
+  // the body walk, so the caret jumped into the body and text in the header
+  // could not be selected at all. Outside the context the body walk still owns
+  // margin clicks, which is what keeps entering a header deliberate.
+  if (runningEditBand) {
+    const running = doc.runningHitTest(page.pageNumber, x, y);
+    if (running) {
+      const anchor = { node: running.node, offset: running.offset };
+      running.free?.();
+      return anchor;
+    }
+    // A click outside the bands leaves the context, as it does in Word, Docs,
+    // OnlyOffice and LibreOffice — then resolves as an ordinary body click.
+    exitRunningEdit();
+  }
   const hit = doc.hitTest(page.pageNumber, x, y);
   if (!hit) return null;
   const anchor = { node: hit.node, offset: hit.offset };
@@ -3763,21 +3779,32 @@ function showRunningMarker(page, band) {
       hideRunningMarker();
       if (target) editRunningContent(target);
     });
-    pagesEl.appendChild(runningMarkerEl);
+  }
+  if (page.wrap && runningMarkerEl.parentElement !== page.wrap) {
+    page.wrap.appendChild(runningMarkerEl);
   }
   runningMarkerBand = band;
   runningMarkerEl.textContent = band === "header" ? "+ Header" : "+ Footer";
   runningMarkerEl.title = `Edit the page ${band}`;
   runningMarkerEl.setAttribute("aria-label", `Edit the page ${band}`);
-  const wrap = page.wrap;
-  const rect = wrap.getBoundingClientRect();
-  const host = pagesEl.getBoundingClientRect();
-  runningMarkerEl.style.left = `${rect.left - host.left + pagesEl.scrollLeft + 8}px`;
-  runningMarkerEl.style.top =
-    band === "header"
-      ? `${rect.top - host.top + pagesEl.scrollTop + 6}px`
-      : `${rect.bottom - host.top + pagesEl.scrollTop - 30}px`;
+  // Page-local, inside the sheet: positioned against the page's own wrap (which
+  // the overlays already use as their containing block) rather than against the
+  // scroller, where the offsets put it above the paper entirely.
+  runningMarkerEl.style.left = "10px";
+  runningMarkerEl.style.top = band === "header" ? "10px" : "auto";
+  runningMarkerEl.style.bottom = band === "footer" ? "10px" : "auto";
   runningMarkerEl.hidden = false;
+}
+
+/** Which margin band a page-local y falls in, or `null` for the body. The one
+ *  place the band geometry is interpreted, so the marker, the double-click and
+ *  the context all agree on where the header is. */
+function runningBandAt(page, yTwip) {
+  const bands = marginBandsOf();
+  if (!bands || !page) return null;
+  if (yTwip < bands.top) return "header";
+  if (yTwip > page.hTwip - bands.bottom) return "footer";
+  return null;
 }
 
 /** Decides whether the pointer is in a margin band and shows/hides the marker.
@@ -3799,8 +3826,8 @@ function updateRunningMarker(page, event) {
     return;
   }
   const { y } = pointToTwip(page, event);
-  if (y < bands.top) showRunningMarker(page, "header");
-  else if (y > page.hTwip - bands.bottom) showRunningMarker(page, "footer");
+  const band = runningBandAt(page, y);
+  if (band) showRunningMarker(page, band);
   else hideRunningMarker();
 }
 
@@ -3863,10 +3890,46 @@ function enterRunningEdit(band, node, offset) {
   selection = { anchor: { node, offset }, focus: { node, offset } };
   pagesEl.dataset.runningEdit = band;
   document.body.classList.add("running-edit");
+  hideRunningMarker();
+  drawRunningBands(band);
   setStatus(`Editing the ${band} — press Esc to return to the document`);
   focusEditorSurface();
   drawSelection();
   updateToolbar();
+}
+
+/** Marks the band being edited on every page: a dashed boundary at the edge of
+ *  the running area plus a small label, the way Word and LibreOffice show it.
+ *
+ *  This replaced dimming the canvas. The header is painted INTO the page raster,
+ *  so dimming the page washed out the content being edited and greyed the whole
+ *  sheet — the cue has to sit beside the band, not over it. */
+function drawRunningBands(band) {
+  clearRunningBands();
+  const bands = marginBandsOf();
+  if (!bands) return;
+  for (const page of pages) {
+    if (!page.wrap) continue;
+    const { sy } = scaleOf(page);
+    const el = document.createElement("div");
+    el.className = `running-band${band === "footer" ? " is-footer" : ""}`;
+    if (band === "header") {
+      el.style.top = "0px";
+      el.style.height = `${Math.round(bands.top * sy)}px`;
+    } else {
+      el.style.bottom = "0px";
+      el.style.height = `${Math.round(bands.bottom * sy)}px`;
+    }
+    const label = document.createElement("span");
+    label.className = "running-band-label";
+    label.textContent = band === "header" ? "Header" : "Footer";
+    el.appendChild(label);
+    page.wrap.appendChild(el);
+  }
+}
+
+function clearRunningBands() {
+  for (const el of pagesEl.querySelectorAll(".running-band")) el.remove();
 }
 
 /** Leaves header/footer editing. The caret stays where it is rather than
@@ -3877,6 +3940,7 @@ function exitRunningEdit() {
   runningEditBand = null;
   delete pagesEl.dataset.runningEdit;
   document.body.classList.remove("running-edit");
+  clearRunningBands();
   setStatus("");
   drawSelection();
   updateToolbar();
@@ -4864,17 +4928,15 @@ pagesEl.addEventListener("dblclick", (e) => {
     return;
   }
   // A double-click in the header/footer band enters that context — the gesture
-  // every reference editor uses (docs/85 §10.2). Checked before word selection
-  // because a band click has no word to select, and after objects so a
-  // double-clicked image in a header still enters the image.
-  const running = doc?.runningHitTest(page.pageNumber, x, y);
-  if (running) {
-    const band = running.band;
-    const node = running.node;
-    const offset = running.offset;
-    running.free?.();
-    enterRunningEdit(band, node, offset);
+  // every reference editor uses (docs/85 §10.2). Decided from the BAND GEOMETRY,
+  // not from whether running content happens to exist: a document with no header
+  // has nothing to hit-test, so keying off a hit meant double-clicking the top
+  // margin fell through to word-selection and grabbed a word out of the BODY —
+  // the opposite of what the gesture asks for.
+  const bandAtPoint = runningBandAt(page, y);
+  if (bandAtPoint) {
     e.preventDefault();
+    void editRunningContent(bandAtPoint);
     return;
   }
   selectWord(page, e);

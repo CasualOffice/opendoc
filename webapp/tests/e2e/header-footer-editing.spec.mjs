@@ -149,3 +149,100 @@ test("clicking body text still puts the caret in the body", async ({ page, conso
 
   expect(consoleErrors).toEqual([]);
 });
+
+// ---- Regressions from real use ------------------------------------------------
+// Everything below was reported by using the editor, after a version shipped that
+// passed its own tests. Those tests asserted `data-running-edit` and never looked
+// at what the gestures actually did, so they were green while double-clicking the
+// header selected a word in the BODY and header text could not be selected at all.
+
+async function pageBox(page) {
+  return page.locator(".page-wrap .page").first().boundingBox();
+}
+
+test("double-clicking the header band does not select a word in the body", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  const box = await pageBox(page);
+
+  // The fixture has no header, so there is nothing in the band to hit-test.
+  // Keying the gesture off a hit made it fall through to word-selection, which
+  // grabbed a word out of the body — the opposite of what the gesture asks for.
+  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+
+  await expect.poll(() => band(page)).toBe("header");
+  // No body word got selected on the way: the floating format toolbar that a
+  // word selection raises must not be showing.
+  await expect(page.locator("#selToolbar")).toBeHidden();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("header text can be selected by dragging inside the band", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  const box = await pageBox(page);
+  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+  await expect.poll(() => band(page)).toBe("header");
+  await page.keyboard.type("Quarterly Report 2026");
+
+  // Every click and drag used to resolve through the body walk, so a drag in the
+  // header moved the caret into the body and selected nothing there.
+  await page.mouse.move(box.x + 80, box.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 240, box.y + 12, { steps: 12 });
+  await page.mouse.up();
+
+  expect(await band(page)).toBe("header");
+  await expect.poll(() => page.locator(".overlay .highlight").count()).toBeGreaterThan(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the page is not dimmed while editing running content", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  const box = await pageBox(page);
+  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+  await expect.poll(() => band(page)).toBe("header");
+
+  // The header is painted INTO the page raster, so dimming the page washed out
+  // the very content being edited and greyed the whole sheet.
+  const opacity = await page
+    .locator(".page-wrap .page")
+    .first()
+    .evaluate((el) => getComputedStyle(el).opacity);
+  expect(Number(opacity)).toBe(1);
+
+  // The band is marked instead — a boundary and a label, as Word and LibreOffice
+  // show it.
+  await expect(page.locator(".running-band").first()).toBeVisible();
+  await expect(page.locator(".running-band-label").first()).toHaveText("Header");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("clicking the body leaves the header context", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  const box = await pageBox(page);
+  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+  await expect.poll(() => band(page)).toBe("header");
+
+  // Word, Docs, OnlyOffice and LibreOffice all leave on a click in the body.
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.4);
+  await expect.poll(() => band(page)).toBeNull();
+  await page.keyboard.type("BODYTEXT");
+  await expect(page.locator("#a11yDocument")).toContainText("BODYTEXT");
+
+  expect(consoleErrors).toEqual([]);
+});
