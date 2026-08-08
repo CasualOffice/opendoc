@@ -330,18 +330,52 @@
           </div>
         </div>
 
+        <!-- Insert band mirrors Word's Insert tab group order (Tables ▸
+             Illustrations ▸ Links ▸ Text ▸ Symbols) so muscle memory transfers,
+             restricted to capabilities opendoc actually ships — the same house
+             rule the Home band above follows. Table and Picture are the tab's
+             headline actions and render as two-line buttons, as they do in Word.
+             Every button here is the ribbon face of a command that also lives in
+             the Insert app menu and the command palette; all three surfaces are
+             driven from ONE declaration (`INSERT_SURFACE` in main.js) so an
+             Insert feature can no longer ship to the menu and the palette while
+             the ribbon — the surface a user actually looks at — silently keeps
+             showing yesterday's two buttons. -->
         <div id="panelInsert" class="ribbon-panel" data-panel="insert" role="tabpanel" aria-labelledby="tabInsert" hidden>
-          <div class="rgroup">
+          <div class="rgroup" data-group="insert-table" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <button id="insertTableBtn" type="button" class="fmt" title="Insert table" aria-label="Insert table" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span></button>
+              <button id="insertTableBtn" type="button" class="fmt fmt-big" title="Insert table" aria-label="Insert table" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span><span class="fmt-big-label">Table</span></button>
             </div>
             <span class="rgroup-label">Table</span>
           </div>
-          <div class="rgroup">
+          <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <button id="insertLinkBtn" type="button" class="fmt" title="Add or edit link" aria-label="Add or edit link" disabled><span class="ms" aria-hidden="true">link</span></button>
+              <button id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span class="fmt-big-label">Picture</span></button>
             </div>
-            <span class="rgroup-label">Link</span>
+            <span class="rgroup-label">Illustrations</span>
+          </div>
+          <div class="rgroup" data-group="insert-links">
+            <div class="rgroup-ctl">
+              <button id="insertLinkBtn" type="button" class="fmt" title="Add or edit link (⌘K)" aria-label="Add or edit link" disabled><span class="ms" aria-hidden="true">link</span></button>
+              <button id="insertBookmarkBtn" type="button" class="fmt" title="Create, rename, or go to a bookmark" aria-label="Bookmark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">bookmark</span></button>
+            </div>
+            <span class="rgroup-label">Links</span>
+          </div>
+          <div class="rgroup" data-group="insert-text">
+            <div class="rgroup-ctl">
+              <button id="insertFieldBtn" type="button" class="fmt" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span></button>
+            </div>
+            <span class="rgroup-label">Text</span>
+          </div>
+          <!-- Symbols is Word's right-most Insert group. Both buttons reuse the
+               glyph that heads the dialog they open (editor.html #symbolDialog /
+               #emojiDialog), so the ribbon control visually predicts its dialog. -->
+          <div class="rgroup" data-group="insert-symbols">
+            <div class="rgroup-ctl">
+              <button id="insertSymbolBtn" type="button" class="fmt" title="Insert a special character" aria-label="Insert symbol" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">functions</span></button>
+              <button id="insertEmojiBtn" type="button" class="fmt" title="Insert an emoji" aria-label="Insert emoji" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">mood</span></button>
+            </div>
+            <span class="rgroup-label">Symbols</span>
           </div>
         </div>
 
