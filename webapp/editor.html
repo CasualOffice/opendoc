@@ -1132,24 +1132,27 @@
     <footer class="footer">
       <span class="foot-left">
         <span id="status" class="status">Loading engine…</span>
+        <!-- data-status-priority drives the status bar's progressive
+             disclosure (see "Status-bar progressive disclosure" in style.css):
+             higher numbers are shed first as the window narrows, mirroring how
+             Word drops its lowest-value indicators. Separators are generated in
+             CSS so a shed count cannot orphan one. -->
         <span class="stats" id="stats" hidden>
-          <span id="statWords">0 words</span>
-          <span class="dot">·</span>
-          <span id="statChars">0 characters</span>
-          <span class="dot">·</span>
-          <span id="statParas">0 paragraphs</span>
+          <span id="statWords" data-status-priority="1">0 words</span>
+          <span id="statChars" data-status-priority="2">0 characters</span>
+          <span id="statParas" data-status-priority="3">0 paragraphs</span>
         </span>
       </span>
       <span class="foot-right">
         <span class="footer-mode">
-          <span class="footer-mode-label">Mode</span>
+          <span class="footer-mode-label" data-status-priority="2">Mode</span>
           <span id="reviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
             <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled>Editing</button>
             <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled>Suggesting</button>
             <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled>Read only</button>
           </span>
         </span>
-        <span id="statPages" class="stat-pages" hidden>Page 1 of 1</span>
+        <span id="statPages" class="stat-pages" data-status-priority="1" hidden>Page 1 of 1</span>
         <span class="zoom">
           <button id="zoomOut" type="button" class="zbtn" title="Zoom out" aria-label="Zoom out"><span class="ms" aria-hidden="true">remove</span></button>
           <span class="zoom-value-control">
