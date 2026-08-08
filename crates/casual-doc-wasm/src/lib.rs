@@ -1372,11 +1372,11 @@ impl WasmDocument {
     /// body paragraph**, as one undoable action. Distinct from
     /// [`paste_structured`](Self::paste_structured) (the model-native round-trip of
     /// an *internal* OpenDoc copy): the fragment is a small JS-built contract
-    /// ([`ExternalFragment`]) so the clipboard bridge never hand-writes model node
-    /// ids or numbering instances — run formatting rides the same [`ClipboardRun`]
+    /// (`ExternalFragment`) so the clipboard bridge never hand-writes model node
+    /// ids or numbering instances — run formatting rides the same `ClipboardRun`
     /// the flat rich paste already uses, and each list paragraph names a
     /// `{ ordered, level }` bound to a real numbering instance here via
-    /// [`ensure_list`](Self::ensure_list). Rejects a non-collapsed selection or a
+    /// `ensure_list`. Rejects a non-collapsed selection or a
     /// caret outside a top-level body paragraph (the caller falls back to the flat
     /// rich-run paste), matching `paste_structured`'s target contract. Text,
     /// formatting, links, tables, and list levels survive; merged cells and deep
