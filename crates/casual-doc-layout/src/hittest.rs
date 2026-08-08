@@ -472,6 +472,9 @@ impl<'a> LayoutSnapshot<'a> {
     fn line_boxes_with_running(&self) -> Vec<LineBox<'a>> {
         let mut out = self.line_boxes();
         for page in &self.layout.pages {
+            out.extend(self.text_box_line_boxes(page.number));
+        }
+        for page in &self.layout.pages {
             for placed in page.header.iter().chain(page.footer.iter()) {
                 collect_fragment(
                     &placed.fragment,
@@ -484,6 +487,74 @@ impl<'a> LayoutSnapshot<'a> {
             }
         }
         out
+    }
+
+    /// The line boxes of every inline TEXT BOX on a page.
+    ///
+    /// A text box's content is flowed through the same pipeline as the body
+    /// (`Line::text_boxes` carries real `BlockFragment`s), but it hangs off a
+    /// LINE rather than off the page's block list, so the ordinary walk never
+    /// reaches it: its content contributed no line boxes at all, which is why a
+    /// caret inside a text box had no geometry and a click in one could not be
+    /// resolved.
+    fn text_box_line_boxes(&self, page_number: u32) -> Vec<LineBox<'a>> {
+        let mut out = Vec::new();
+        let mut host = Vec::new();
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            for placed in &page.placed {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut host,
+                );
+            }
+        }
+        // Each host line's boxes are positioned relative to the line's own
+        // content origin, and their blocks relative to the box's content origin
+        // (the box inset by its internal margin and vertical anchoring).
+        for line in &host {
+            for text_box in &line.line.text_boxes {
+                let left = line.left + text_box.origin.x + text_box.content_layout.origin.x;
+                let mut top = line.top + text_box.origin.y + text_box.content_layout.origin.y;
+                for block in &text_box.blocks {
+                    collect_fragment(block, left, top, page_number, None, &mut out);
+                    top = top + block.height();
+                }
+            }
+        }
+        out
+    }
+
+    /// Resolves a point inside an inline text box's content, if it falls in one.
+    ///
+    /// Separate from `hit_test` on purpose: a single click on a text box selects
+    /// the OBJECT (docs/85 §4), so ordinary clicks must keep resolving against
+    /// the body. The host asks for this only once it has entered the box's text,
+    /// exactly as it does for a header band.
+    #[must_use]
+    pub fn hit_test_text_box(&self, page_number: u32, point: Point) -> Option<HitResult> {
+        let lines = self.text_box_line_boxes(page_number);
+        if lines.is_empty() {
+            return None;
+        }
+        let (x, y) = (point.x.raw(), point.y.raw());
+        let chosen = lines
+            .iter()
+            .find(|lb| lb.contains_y(y))
+            .or_else(|| lines.iter().min_by_key(|lb| (lb.top.raw() - y).abs()))?;
+        let stops = stops_for(chosen.line, chosen.left);
+        let nearest = nearest_stop(&stops, Twip(x));
+        Some(HitResult {
+            pos: ModelPos::new(chosen.line.range.start.node, nearest.offset),
+            zone: if chosen.contains_y(y) {
+                HitZone::Content
+            } else {
+                HitZone::Outside
+            },
+        })
     }
 
     /// The line boxes of one running band on one page.
@@ -1350,6 +1421,59 @@ mod tests {
             node(1),
             "the body walk still answers with body content"
         );
+    }
+
+    /// A caret inside an inline text box has geometry, and a point in the box
+    /// resolves to its content. Both were impossible before: a text box's lines
+    /// hang off a LINE rather than the page's block list, so the ordinary walk
+    /// never reached them.
+    #[test]
+    fn a_text_box_contributes_caret_geometry_and_hit_resolution() {
+        let inner = node(88);
+        let mut paginated = layout(&[ltr_para(1, &[3])]);
+        // Attach a text box to the body paragraph's first line, carrying one
+        // flowed paragraph of its own.
+        let BlockFragment::Paragraph { lines, .. } = &mut paginated.pages[0].placed[0].fragment
+        else {
+            unreachable!("the fixture places a paragraph");
+        };
+        let BlockFragment::Paragraph {
+            lines: inner_lines, ..
+        } = ltr_para(88, &[3])
+        else {
+            unreachable!("ltr_para builds a paragraph");
+        };
+        lines.lines[0].text_boxes.push(crate::text::InlineTextBox {
+            origin: Point::new(Twip(200), Twip(0)),
+            size: Size::new(Twip(3000), Twip(400)),
+            blocks: vec![BlockFragment::Paragraph {
+                id: inner,
+                lines: inner_lines,
+                box_metrics: BoxMetrics::default(),
+                break_control: BreakControl::default(),
+                decor: crate::block::ParagraphDecor::default(),
+            }],
+            border: None,
+            fill: None,
+            content_layout: crate::text::TextBoxContentLayout::default(),
+        });
+        let snap = LayoutSnapshot::new(&paginated);
+
+        assert!(
+            snap.caret_rect(ModelPos::new(inner, 0)).is_some(),
+            "a caret in the box has geometry, so it can be painted"
+        );
+        let hit = snap
+            .hit_test_text_box(1, Point::new(Twip(MARGIN + 250), Twip(LINE_H / 2)))
+            .expect("a point in the box resolves to its content");
+        assert_eq!(hit.pos.node, inner);
+
+        // The body walk is unchanged: an ordinary click still answers with body
+        // content, because a click on a text box selects the OBJECT.
+        let body = snap
+            .hit_test(1, Point::new(Twip(MARGIN), Twip(LINE_H / 2)))
+            .expect("body hit");
+        assert_eq!(body.pos.node, node(1));
     }
 
     /// A caret inside a header has geometry. Without it the caret simply did not

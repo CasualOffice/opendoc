@@ -687,6 +687,30 @@ impl WasmDocument {
     /// (`P1G-OBJ-SELECT`) **and** top-level floating/anchored images and text
     /// boxes (`P1G-OBJ-ANCHOR-SELECT`; `anchored` = true). Group children,
     /// table-cell and header/footer objects remain later slices.
+    /// Resolves a page-local point inside an inline TEXT BOX's content, as
+    /// `{ node, offset, zone }`, or `None` if the point is in no text box.
+    ///
+    /// Separate from [`hit_test`] for the same reason `runningHitTest` is: a
+    /// single click on a text box selects the OBJECT (docs/85 §4), so ordinary
+    /// clicks keep resolving against the body. The host asks for this only once
+    /// it has entered the box's text.
+    ///
+    /// [`hit_test`]: WasmDocument::hit_test
+    #[wasm_bindgen(js_name = textBoxHitTest)]
+    #[must_use]
+    pub fn text_box_hit_test(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<HitPayload> {
+        let snapshot = LayoutSnapshot::new(&self.layout);
+        let hit = snapshot.hit_test_text_box(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        Some(HitPayload {
+            node: hit.pos.node.to_string(),
+            offset: hit.pos.offset,
+            zone: match hit.zone {
+                HitZone::Content => "content",
+                HitZone::Outside => "outside",
+            },
+        })
+    }
+
     /// Resolves a page-local point inside a page's HEADER or FOOTER content, as
     /// `{ node, offset, band }`, or `None` if the point is in neither band.
     ///
@@ -9532,10 +9556,31 @@ fn highlight_name(color: HighlightColor) -> String {
 /// Collects every text-bearing node (paragraphs, including those inside tables and
 /// block content controls) in document order, paired with its shaped plain text —
 /// the byte space hit-testing addresses (doc 58 §3).
+/// Collects the paragraphs of any inline text boxes (including those inside
+/// hyperlink and field wrappers) so they are orderable like body paragraphs.
+fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
+            InlineNode::Hyperlink(link) => collect_text_box_text(&link.inlines, out),
+            InlineNode::Field(field) => collect_text_box_text(&field.inlines, out),
+            _ => {}
+        }
+    }
+}
+
 fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     for block in blocks {
         match block {
-            BlockNode::Paragraph(p) => out.push((p.id, node_plain_text(&p.inlines))),
+            BlockNode::Paragraph(p) => {
+                out.push((p.id, node_plain_text(&p.inlines)));
+                // A paragraph can hold an inline TEXT BOX whose own paragraphs
+                // are ordinary content in the same id space. Without them here,
+                // `order_endpoints` cannot find a position inside a box and
+                // every edit there is rejected before an op is built — the
+                // caret lands in the box and typing does nothing.
+                collect_text_box_text(&p.inlines, out);
+            }
             BlockNode::Table(t) => {
                 for row in &t.rows {
                     for cell in &row.cells {
