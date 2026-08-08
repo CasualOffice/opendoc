@@ -31,7 +31,11 @@ export async function gotoEditor(page) {
         status !== null &&
         status.textContent === "" &&
         !status.classList.contains("error") &&
-        document.querySelectorAll(".page-wrap").length > 0
+        document.querySelectorAll(".page-wrap").length > 0 &&
+        // The document now paints before the ~9.5 MB of named web fonts arrive,
+        // then re-renders once they register. Tests wait for that upgrade so a
+        // geometry assertion can never race the repaint; the product does not.
+        document.body.dataset.fontsReady === "true"
       );
     },
     null,

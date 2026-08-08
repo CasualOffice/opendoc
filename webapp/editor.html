@@ -12,6 +12,15 @@
     <link rel="canonical" href="https://opendoc.casualoffice.org/editor.html" />
     <link rel="stylesheet" href="./src/fonts.css" />
     <link rel="stylesheet" href="./src/style.css" />
+    <!-- Start the engine download at parse time. `init()` lives at the bottom of
+         a 500 KB module graph, so without these the ~9 MB (gzipped) wasm did not
+         begin downloading until main.js had been fetched, parsed and evaluated —
+         two large transfers run back to back instead of together. `as="fetch"`
+         with crossorigin matches how wasm-bindgen's glue requests it, so the
+         preload is reused rather than fetched twice. -->
+    <link rel="modulepreload" href="./src/main.js" />
+    <link rel="modulepreload" href="./pkg/casual_doc_wasm.js" />
+    <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_doc_wasm_bg.wasm" />
   </head>
   <body>
     <header class="bar">
