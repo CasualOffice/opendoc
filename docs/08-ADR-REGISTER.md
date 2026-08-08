@@ -381,6 +381,37 @@ estimate by ~1.5 sprints); the Phase-2 accessibility/archival gate is a separate
 in/out decision because it ≈ doubles the effort and shapes the semantic `StructureTree`
 from day one.
 
+## ADR-032 — Keep `opt-level = 3`; buy WASM load time with delivery, not codegen
+
+**Decision:** Leave `[profile.release] opt-level` at its default (3). Do not trade
+engine speed for WASM bytes. Load time is bought at the delivery layer instead —
+paint from the bundled metric-compatible faces before the ~9.5 MB of named web fonts
+arrive, preload the engine at parse time, and warm it from the site on intent.
+
+**Why:** measured, not assumed. Against `webapp/pkg/casual_doc_wasm_bg.wasm` (18.9 MB
+raw / 8.58 MB gzipped at the time of writing), the codegen levers buy little and cost
+a great deal:
+
+| build | raw | gzip | typing 100 graphemes | model load 100 paragraphs |
+|---|---|---|---|---|
+| `opt-level = 3` (current) | 18.9 MB | 8.58 MB | baseline | baseline |
+| `wasm-opt -Oz` only | 18.8 MB | 8.58 MB | not measured | not measured |
+| `opt-level = "s"` | 16.9 MB | 8.12 MB | **+29%** | **+19%** |
+| `opt-level = "z"` | 16.0 MB | 7.85 MB | **+78%** | **+110%** |
+
+(`opendoc-benchmark`, 15 samples per case, run-to-run noise +/-2%.) The best case saves
+0.73 MB gzipped — about 8% of the engine, and under 4% of what the editor used to
+transfer before first paint — for typing that is measurably slower on every keystroke.
+`opt-level` is also workspace-wide, so it would compile the layout and render hot
+paths for size in native builds too, where the download does not exist at all.
+`wasm-opt -Oz` is separately not worth configuring: it produced no gain over `-O`.
+
+**Consequence:** WASM size stays a delivery and dependency-footprint problem. Real
+reductions must come from what is compiled in (feature-trimming heavy dependencies,
+splitting rarely-used format support out of the first payload), not from asking the
+compiler to pessimize the hot paths. Re-open only with numbers from the same
+benchmark, and only for a lever that does not tax runtime.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
