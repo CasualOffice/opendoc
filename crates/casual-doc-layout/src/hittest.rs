@@ -60,6 +60,29 @@ pub struct HitResult {
     pub zone: HitZone,
 }
 
+/// Which running band a running hit landed in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunningBand {
+    /// The page's header band.
+    Header,
+    /// The page's footer band.
+    Footer,
+}
+
+/// A hit resolved inside a page's running content.
+///
+/// Kept separate from [`HitResult`] on purpose: body hit-testing must keep
+/// answering exactly as it does today — a click in the top margin still snaps to
+/// the nearest body line — so entering a header stays a deliberate gesture the
+/// host asks for, not a side effect of clicking near the top of a page.
+#[derive(Clone, Copy, Debug)]
+pub struct RunningHitResult {
+    /// The resolved model position inside the header or footer content.
+    pub pos: ModelPos,
+    /// Which band the point fell in.
+    pub band: RunningBand,
+}
+
 /// One caret slot within a line: a page-local x and the model offset a caret
 /// placed there addresses.
 #[derive(Clone, Copy, Debug)]
@@ -397,6 +420,68 @@ impl<'a> LayoutSnapshot<'a> {
 
     /// Flattens the layout into its lines, in flow (document) order, each located
     /// in absolute page-local coordinates.
+    /// Resolves a point inside a page's header or footer content, if it falls in
+    /// one of those bands.
+    ///
+    /// Header and footer content is laid out with real positions
+    /// (`Page::header` / `Page::footer` hold `PlacedFragment`s exactly as the
+    /// body does), so the same line walk resolves it; only the fragments fed in
+    /// differ. Returns `None` when the page has no running content, or when the
+    /// point is outside both bands' vertical extent — so a caller can try this
+    /// first and fall back to the body hit test.
+    #[must_use]
+    pub fn hit_test_running(&self, page_number: u32, point: Point) -> Option<RunningHitResult> {
+        for band in [RunningBand::Header, RunningBand::Footer] {
+            let lines = self.running_line_boxes(page_number, band);
+            if lines.is_empty() {
+                continue;
+            }
+            let (top, bottom) = lines.iter().fold((i32::MAX, i32::MIN), |(t, b), lb| {
+                (t.min(lb.top.raw()), b.max(lb.bottom()))
+            });
+            let y = point.y.raw();
+            if y < top || y > bottom {
+                continue;
+            }
+            let x = point.x.raw();
+            let chosen = lines
+                .iter()
+                .find(|lb| lb.contains_y(y))
+                .or_else(|| lines.iter().min_by_key(|lb| (lb.top.raw() - y).abs()))?;
+            // Same caret resolution the body walk uses: the nearest stop on the
+            // chosen line, addressed against that line's own paragraph node.
+            let stops = stops_for(chosen.line, chosen.left);
+            let nearest = nearest_stop(&stops, Twip(x));
+            return Some(RunningHitResult {
+                pos: ModelPos::new(chosen.line.range.start.node, nearest.offset),
+                band,
+            });
+        }
+        None
+    }
+
+    /// The line boxes of one running band on one page.
+    fn running_line_boxes(&self, page_number: u32, band: RunningBand) -> Vec<LineBox<'a>> {
+        let mut out = Vec::new();
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            let fragments = match band {
+                RunningBand::Header => &page.header,
+                RunningBand::Footer => &page.footer,
+            };
+            for placed in fragments {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut out,
+                );
+            }
+        }
+        out
+    }
+
     fn line_boxes(&self) -> Vec<LineBox<'a>> {
         let mut out = Vec::new();
         for page in &self.layout.pages {
@@ -678,7 +763,7 @@ fn caret_end_line(lines: &[LineBox<'_>], pos: ModelPos) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::block::{BlockFragment, BoxMetrics, BreakControl};
-    use crate::page::PaginatedLayout;
+    use crate::page::{PaginatedLayout, PlacedFragment};
     use crate::paginate::{PageConfig, paginate};
     use crate::text::{Decoration, FontId, Glyph, GlyphRun, Line, LineBreak, LineLayout};
     use crate::units::Size;
@@ -1187,6 +1272,71 @@ mod tests {
         let paginated = layout(&frags);
         let snap = LayoutSnapshot::new(&paginated);
         assert!(snap.caret_rect(ModelPos::new(node(999), 0)).is_none());
+    }
+
+    /// A click in the header band resolves to the HEADER's paragraph, not to the
+    /// nearest body line. Header and footer content is placed with real
+    /// positions, so the same line walk resolves it — only the fragments fed in
+    /// differ.
+    #[test]
+    fn running_hit_test_resolves_a_point_in_the_header_band() {
+        let mut paginated = layout(&[ltr_para(1, &[3])]);
+        let header_node = node(77);
+        // Place a header line in the top margin, above the body's content area.
+        paginated.pages[0].header.push(PlacedFragment {
+            fragment: ltr_para(77, &[3]),
+            rect: Rect::new(
+                Point::new(Twip(MARGIN), Twip(120)),
+                Size::new(Twip(5000), Twip(240)),
+            ),
+            section: None,
+        });
+        let snap = LayoutSnapshot::new(&paginated);
+
+        let hit = snap
+            .hit_test_running(1, Point::new(Twip(MARGIN), Twip(200)))
+            .expect("the point is inside the header band");
+        assert_eq!(hit.pos.node, header_node);
+        assert_eq!(hit.band, RunningBand::Header);
+    }
+
+    /// Body hit-testing must be untouched: a click in the top margin still snaps
+    /// to the nearest BODY line, so entering a header stays a deliberate gesture
+    /// the host asks for rather than a side effect of clicking near the top.
+    #[test]
+    fn running_content_does_not_change_body_hit_testing() {
+        let mut paginated = layout(&[ltr_para(1, &[3])]);
+        paginated.pages[0].header.push(PlacedFragment {
+            fragment: ltr_para(77, &[3]),
+            rect: Rect::new(
+                Point::new(Twip(MARGIN), Twip(120)),
+                Size::new(Twip(5000), Twip(240)),
+            ),
+            section: None,
+        });
+        let snap = LayoutSnapshot::new(&paginated);
+
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN), Twip(200)))
+            .expect("page has caret lines");
+        assert_eq!(
+            hit.pos.node,
+            node(1),
+            "the body walk still answers with body content"
+        );
+    }
+
+    /// A point in neither band is `None`, so a caller can try running content
+    /// first and fall back to the body.
+    #[test]
+    fn running_hit_test_outside_both_bands_is_none() {
+        let paginated = layout(&[ltr_para(1, &[3])]);
+        let snap = LayoutSnapshot::new(&paginated);
+        assert!(
+            snap.hit_test_running(1, Point::new(Twip(MARGIN), Twip(200)))
+                .is_none(),
+            "a page with no running content has no running hit"
+        );
     }
 
     #[test]
