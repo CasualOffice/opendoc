@@ -3239,11 +3239,38 @@ fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNod
     surface_blocks_mut(doc, &surface).ok_or(EditError::NodeNotFound)
 }
 
+/// Searches an inline list for a paragraph inside a text box, recursing through
+/// the wrappers that can hold one: hyperlinks, fields, shape groups, and text
+/// boxes themselves (a text box may contain a table whose cells hold more).
+fn find_paragraph_in_inlines(inlines: &[InlineNode], id: NodeId) -> Option<&Paragraph> {
+    for inline in inlines {
+        let found = match inline {
+            InlineNode::TextBox(text_box) => find_paragraph(&text_box.blocks, id),
+            InlineNode::Hyperlink(link) => find_paragraph_in_inlines(&link.inlines, id),
+            InlineNode::Field(field) => find_paragraph_in_inlines(&field.inlines, id),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
 pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(p) if p.id == id => return Some(p),
-            BlockNode::Paragraph(_) => {}
+            // A paragraph can also live INSIDE a paragraph, in an inline text
+            // box (or one nested in a shape group). Its ids are in the same
+            // document-wide space as every other block's — `record_inline_ids`
+            // puts them there — so a position inside one is an ordinary
+            // `Pos { node, offset }` and resolution just has to look.
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) = find_paragraph_in_inlines(&paragraph.inlines, id) {
+                    return Some(found);
+                }
+            }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
@@ -4007,11 +4034,44 @@ fn split_inlines(
 
 /// Finds the paragraph with `id`, recursing into table cells and block content
 /// controls (document order), for in-place mutation.
+/// The mutable twin of [`find_paragraph_in_inlines`].
+fn find_paragraph_in_inlines_mut(inlines: &mut [InlineNode], id: NodeId) -> Option<&mut Paragraph> {
+    for inline in inlines {
+        let found = match inline {
+            InlineNode::TextBox(text_box) => find_paragraph_mut(&mut text_box.blocks, id),
+            InlineNode::Hyperlink(link) => find_paragraph_in_inlines_mut(&mut link.inlines, id),
+            InlineNode::Field(field) => find_paragraph_in_inlines_mut(&mut field.inlines, id),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
 fn find_paragraph_mut(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut Paragraph> {
+    // Two passes, as `find_table_mut` does: a returned borrow in a loop that also
+    // recurses trips the borrow checker, so the direct hit at this level is found
+    // by index first and only then borrowed.
+    if let Some(index) = blocks
+        .iter()
+        .position(|block| matches!(block, BlockNode::Paragraph(p) if p.id == id))
+    {
+        let BlockNode::Paragraph(paragraph) = &mut blocks[index] else {
+            unreachable!("the position matched a paragraph");
+        };
+        return Some(paragraph);
+    }
     for block in blocks {
         match block {
-            BlockNode::Paragraph(p) if p.id == id => return Some(p),
-            BlockNode::Paragraph(_) => {}
+            // Text-box content is reached through the paragraph that holds the
+            // box, not from the block list — see `find_paragraph`.
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) = find_paragraph_in_inlines_mut(&mut paragraph.inlines, id) {
+                    return Some(found);
+                }
+            }
             BlockNode::Table(table) => {
                 for row in &mut table.rows {
                     for cell in &mut row.cells {
@@ -5594,6 +5654,61 @@ mod tests {
     /// Word's `w:next`: Enter at the END of a heading starts the style the
     /// heading declares it is followed by, which is why typing a heading and
     /// pressing Enter puts you in body text rather than in a second heading.
+    /// A paragraph inside an inline TEXT BOX is ordinary block content in the same
+    /// id space too — `record_inline_ids` records it there — so an op that
+    /// addresses it by `NodeId` should reach it. Resolution walked only block
+    /// lists, never into the paragraph that HOLDS a box, so every position inside
+    /// one answered `NodeNotFound`: the reason a text box could not be typed in.
+    #[test]
+    fn text_ops_reach_a_paragraph_inside_an_inline_text_box() {
+        let inner = n(960);
+        let box_id = n(961);
+        let host = n(2);
+        let mut d = doc(vec![BlockNode::Paragraph(Paragraph {
+            id: host,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run(3, "before"),
+                InlineNode::TextBox(casual_doc_model::v1::TextBox {
+                    id: box_id,
+                    anchor: None,
+                    relative_height: None,
+                    extent: None,
+                    fill: None,
+                    border: None,
+                    body_properties: casual_doc_model::v1::TextBoxBodyProperties::default(),
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: inner,
+                        properties: ParagraphProperties::default(),
+                        inlines: vec![run(962, "Caption")],
+                    })],
+                }),
+            ],
+        })]);
+        let mut ids = IdGenerator::new(9);
+
+        assert_eq!(
+            surface_of(&d, inner),
+            Some(Surface::Body),
+            "the box lives in the body, so its content resolves to the body surface"
+        );
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(inner, 7),
+                text: " text".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let paragraph = find_paragraph(d.body(), inner).expect("the box's paragraph");
+        assert_eq!(runs_text(&paragraph.inlines), "Caption text");
+        // The paragraph holding the box is untouched.
+        assert_eq!(text_of(&d, host), "before");
+    }
+
     /// Header, footer and note content is ordinary block content in the same id
     /// space as the body, so an op that addresses a position by `NodeId` should
     /// reach it. Resolution used to start at `doc.body_mut()` unconditionally, so
