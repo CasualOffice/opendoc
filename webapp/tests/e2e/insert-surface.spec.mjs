@@ -14,7 +14,7 @@
 //
 // Accordingly, no test in this file clicks into the page. `gotoEditor` alone is
 // the precondition, exactly as it is for a user who has just opened a file.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, setReviewMode } from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
 // exercises the real file-picker → decode → insert path without shipping a
@@ -55,6 +55,10 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   page,
   consoleErrors,
 }) => {
+  // Pinned wide: `updateRibbonOverflow` relocates non-pinned `.rgroup`s into
+  // #ribbonOverflowMenu at narrow widths, so an unpinned viewport would drop
+  // groups from the roster below and fail for a reason that is not a regression.
+  await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
   await openInsertTab(page);
 
@@ -82,21 +86,21 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "Symbols",
   ]);
 
-  // Each control is labelled for assistive technology and carries the icon its
-  // dialog is headed with, so the button predicts what it opens.
+  // Each control is labelled for assistive technology. The icon ligature itself
+  // is deliberately not asserted: swapping a glyph changes nothing a user can
+  // act on, and pinning it would fail a cosmetic refresh while catching nothing.
   const expected = [
-    ["#insertTableBtn", "Insert table", "table_chart"],
-    ["#insertPictureBtn", "Insert picture", "image"],
-    ["#insertLinkBtn", "Add or edit link", "link"],
-    ["#insertBookmarkBtn", "Bookmark", "bookmark"],
-    ["#insertFieldBtn", "Insert field", "data_object"],
-    ["#insertSymbolBtn", "Insert symbol", "functions"],
-    ["#insertEmojiBtn", "Insert emoji", "mood"],
+    ["#insertTableBtn", "Insert table"],
+    ["#insertPictureBtn", "Insert picture"],
+    ["#insertLinkBtn", "Add or edit link"],
+    ["#insertBookmarkBtn", "Bookmark"],
+    ["#insertFieldBtn", "Insert field"],
+    ["#insertSymbolBtn", "Insert symbol"],
+    ["#insertEmojiBtn", "Insert emoji"],
   ];
-  for (const [selector, label, icon] of expected) {
+  for (const [selector, label] of expected) {
     await expect(page.locator(selector)).toBeVisible();
     await expect(page.locator(selector)).toHaveAttribute("aria-label", label);
-    await expect(page.locator(`${selector} .ms`)).toHaveText(icon);
   }
 
   // The ribbon teaches the shortcut the palette already lists.
@@ -322,6 +326,95 @@ test("the load-time insertion point exists but paints no caret until the editor 
   // And it is a real caret: typing goes in at the start of the body.
   await page.keyboard.type("Z");
   await expect(bodyStartHeading(page)).toHaveText(`Z${BODY_START_HEADING}`);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// The drift guard. `INSERT_SURFACE` unifies enablement and activation, but the
+// ribbon buttons are authored in editor.html while the menu roster is its own id
+// list, so nothing in the code stops a new command reaching one surface and
+// missing the other — which is exactly how Picture shipped with no ribbon
+// button. Comparing the two rosters through the DOM is what makes that omission
+// fail CI: each ribbon button carries the command id it runs.
+test("the Insert ribbon's command set is exactly the Insert menu's", async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoEditor(page);
+
+  await page.locator('.app-menu-button[data-menu="insert"]').click();
+  const menuCommands = await page
+    .locator("#appMenuPopover .app-menu-item[data-command]")
+    .evaluateAll((items) =>
+      items.map((item) => item.dataset.command).filter((id) => id.startsWith("insert.")),
+    );
+  await page.keyboard.press("Escape");
+
+  await openInsertTab(page);
+  const ribbonCommands = await page
+    .locator("#panelInsert .rgroup button[data-command]")
+    .evaluateAll((buttons) => buttons.map((button) => button.dataset.command));
+
+  expect(menuCommands.length).toBeGreaterThan(0);
+  expect([...ribbonCommands].sort()).toEqual([...menuCommands].sort());
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// The guards must hold on the path this change created — a ribbon insert with no
+// prior click. Every pre-existing read-only spec calls `clickIntoFirstPage`
+// first, so none of them covers this state.
+test("Viewing mode refuses every ribbon insert on a freshly loaded document", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoEditor(page);
+  await setReviewMode(page, "viewing");
+  await openInsertTab(page);
+
+  // Each dialog-opening insert refuses BEFORE opening, so the user is never led
+  // into picking something that cannot be applied.
+  for (const [button, dialog] of [
+    ["#insertSymbolBtn", "#symbolDialog"],
+    ["#insertEmojiBtn", "#emojiDialog"],
+    ["#insertFieldBtn", "#fieldDialog"],
+  ]) {
+    await page.locator(button).click();
+    await expect(page.locator(dialog)).toBeHidden();
+    await expect(page.locator("#status")).toContainText("read-only");
+  }
+
+  // Nothing entered history: a refused insert is not an edit.
+  await expect(page.locator("#undoBtn")).toBeDisabled();
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// The insertion point must be honest in BOTH directions. Seeding it at open
+// while `#pages` already holds focus would leave the surface focused, typing
+// accepted, and no caret painted — the user typing blind. Dropping a file onto
+// an editor that has been clicked into reaches exactly that state, because HTML5
+// drag never moves focus.
+test("opening a document into an already-focused surface paints its caret immediately", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await page.locator("#pages").focus();
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+
+  // Re-open a document while #pages still holds focus. `setInputFiles` drives the
+  // real open path without moving focus, which is what a file drop also does.
+  const status = page.locator("#status");
+  await page.locator("#file").setInputFiles("demo.docx");
+  // The open path names the file while it works, then clears the strip; waiting
+  // for both edges proves the reopen actually completed before we measure.
+  await expect(status).toContainText("demo.docx");
+  await expect(status).not.toContainText("demo.docx");
+
+  // Focused surface ⇒ the caret is real and painted, not implicit.
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+  await page.keyboard.type("Q");
+  await expect(bodyStartHeading(page)).toHaveText(`Q${BODY_START_HEADING}`);
 
   expect(consoleErrors).toEqual([]);
 });

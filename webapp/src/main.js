@@ -2481,7 +2481,17 @@ async function openBytes(bytes, name, onOpened, onRendered) {
       anchor: { node: startPosition.node, offset: startPosition.offset },
       focus: { node: startPosition.node, offset: startPosition.offset },
     };
-    implicitCaretAt = { node: startPosition.node, offset: startPosition.offset };
+    // ...but only implicit while the surface is UNFOCUSED. If `#pages` already
+    // holds focus when a document opens — drop a .docx onto the viewport after
+    // clicking into the previous one, and HTML5 drag never moves focus — no
+    // `focus` event will fire to promote it, and the pair would sit in the one
+    // state that is genuinely a lie: typing accepted, no caret painted. Decide
+    // it here from the live focus instead of waiting for an event that has
+    // already happened.
+    implicitCaretAt =
+      document.activeElement === pagesEl
+        ? null
+        : { node: startPosition.node, offset: startPosition.offset };
     startPosition.free();
     tableSelection = null;
     objectCropSession = null; // a new document invalidates any in-progress crop
@@ -6036,8 +6046,13 @@ function hasRange() {
 // and Link, so a user looking at the Insert tab could not insert a picture at
 // all. This table is the single declaration the ribbon is built from: each row
 // names the command it mirrors, the button that renders it, what the command
-// genuinely requires, and how the button activates it. Adding an Insert command
-// means adding a row, so it can no longer reach one surface and miss another.
+// genuinely requires, and how the button activates it.
+// It unifies enablement and activation, not membership: the buttons are still
+// authored in editor.html and the menu roster is still its own id list, so a new
+// command CAN still reach one surface and miss another. What closes that gap is
+// the test — each row stamps its command id onto its button, and
+// `insert-surface.spec.mjs` asserts the ribbon's id set equals the Insert menu's,
+// so the omission that shipped Picture unreachable now fails CI instead.
 const INSERT_SURFACE = [
   // "doc" is Word's rule: an open document has an insertion point, so the
   // command is live the moment a document loads (see `implicitCaretAt`).
@@ -6656,6 +6671,12 @@ function editSelectionLink() {
 // popover, and is wired by `registerPopover` where that popover is built.
 for (const entry of INSERT_SURFACE) {
   if (entry.activate) onButton(entry.button, entry.activate);
+  // Stamp the command id onto the button so the ribbon's membership is readable
+  // from the DOM. `insert-surface.spec.mjs` compares this set against the Insert
+  // menu's own `data-command` ids, which is what actually catches the drift this
+  // table is meant to prevent: a command added to the menu and the palette but
+  // never given a ribbon button — exactly how Picture shipped unreachable.
+  entry.button.dataset.command = entry.command;
 }
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
@@ -9864,6 +9885,12 @@ function fieldChoiceButtons() {
  *  Quick Parts ▸ Field is never gated on having clicked into the page first. */
 function openFieldDialog() {
   if (!doc || !fieldDialog) return;
+  // Viewing is read-only: refuse before opening, as the symbol and emoji pickers
+  // do, so the dialog never opens onto an insert that cannot happen. Promoting
+  // Field to the ribbon is what makes this reachable without a deliberate detour
+  // through the palette, and picking a field only to be told no is a worse
+  // answer than not opening.
+  if (blockMutationInViewing()) return;
   fieldReturnFocus = document.activeElement;
   fieldDialog.hidden = false;
   queueMicrotask(() => fieldChoiceButtons()[0]?.focus());
