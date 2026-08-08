@@ -26,8 +26,8 @@ use casual_doc_model::v1::{
     RevisionKind, SdtControlKind, SdtProperties, TextBox,
 };
 use casual_doc_model::v1::{
-    Fill, GradientKind, GradientStop, GroupChild, GroupShape, GroupTransform, MAX_GROUP_DEPTH,
-    PointEmu, Rgba, ShapeGeometry, ShapeStroke, WordprocessingGroup,
+    DashStyle, Fill, GradientKind, GradientStop, GroupChild, GroupShape, GroupTransform,
+    MAX_GROUP_DEPTH, PointEmu, Rgba, ShapeGeometry, ShapeStroke, WordprocessingGroup,
 };
 use casual_doc_model::v1::{Style as ModelStyle, StyleId, StyleKind};
 use casual_doc_package::CancellationToken;
@@ -567,8 +567,8 @@ struct ShapeDraft {
     /// The resolved shape fill (`None` = no fill; always `None` for a line): a solid
     /// color or a two-stop gradient.
     fill: Option<Fill>,
-    /// Solid outline color + width in EMU (`None` = no outline).
-    stroke: Option<(RgbColor, i64)>,
+    /// Outline color + width in EMU + optional dash preset (`None` = no outline).
+    stroke: Option<ResolvedStroke>,
     /// Shape mirroring — for a `draw:line`, the two flips encode which diagonal of
     /// the bounding box the endpoints span (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`).
     flip_h: bool,
@@ -586,7 +586,7 @@ struct GroupShapeDraft {
     width_emu: i64,
     height_emu: i64,
     fill: Option<Fill>,
-    stroke: Option<(RgbColor, i64)>,
+    stroke: Option<ResolvedStroke>,
     flip_h: bool,
     flip_v: bool,
 }
@@ -947,6 +947,9 @@ struct OdfStyle {
     graphic_stroke_color: Option<RgbColor>,
     /// `svg:stroke-width` (the outline width) in EMU.
     graphic_stroke_width: Option<i64>,
+    /// `draw:stroke-dash` (a dashed outline's named `<draw:stroke-dash>` definition),
+    /// resolved against the dash catalog only when `draw:stroke="dash"`.
+    graphic_stroke_dash_name: Option<String>,
     /// `style:horizontal-pos`/`style:vertical-pos` for a floating frame's anchor
     /// (`left`/`center`/`right`/`from-left`/`top`/`middle`/`bottom`/`from-top`/…),
     /// retained verbatim; an alignment keyword selects alignment positioning.
@@ -1085,12 +1088,128 @@ enum OdfGradientKind {
     Radial,
 }
 
+/// Named `<draw:stroke-dash>` definitions (`draw:name` → geometry), collected from
+/// both `office:styles` (styles.xml) and `office:automatic-styles` (content.xml).
+type DashDefs = BTreeMap<String, OdfDashDef>;
+
+/// A parsed `<draw:stroke-dash>` definition: the dots/gaps geometry a graphic style's
+/// `draw:stroke="dash"` references. Recognized back to a model [`DashStyle`] preset at
+/// resolution (exact match against the canonical table, else a coarse heuristic).
+/// Lengths are EMU; an absent `draw:dots2`/length defaults to 0.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OdfDashDef {
+    /// `draw:style`: `true` → `"round"` (dots), `false` → `"rect"`/other (dashes).
+    round: bool,
+    dots1: u32,
+    dots1_len_emu: i64,
+    dots2: u32,
+    dots2_len_emu: i64,
+    distance_emu: i64,
+}
+
+/// The canonical `<draw:stroke-dash>` geometry synthesized for a model [`DashStyle`],
+/// shared by export (forward synthesis) and import (reverse recognition) so the
+/// model→def→re-import→model closure holds by construction. Lengths are EMU, chosen
+/// as exact multiples of 36 (= 0.0001cm) so `emu_to_cm`→`parse_emu` round-trips
+/// losslessly and the reverse match is exact.
+pub(crate) struct DashCanonical {
+    /// `draw:style`: `true` → `"round"` (a dot pattern), `false` → `"rect"` (dashes).
+    pub round: bool,
+    pub dots1: u32,
+    pub dots1_len_emu: i64,
+    pub dots2: u32,
+    pub dots2_len_emu: i64,
+    pub distance_emu: i64,
+}
+
+// Canonical dash lengths/gaps (EMU, all multiples of 36 for lossless cm round-trip).
+const DASH_DOT_LEN: i64 = 36_000; // 0.1cm — a short dot
+const DASH_MID_LEN: i64 = 144_000; // 0.4cm — a dash
+const DASH_LONG_LEN: i64 = 288_000; // 0.8cm — a long dash
+const DASH_GAP: i64 = 108_000; // 0.3cm — the standard gap
+const DASH_SYS_GAP: i64 = 72_000; // 0.2cm — the tighter "system" gap
+
+/// Maps a model [`DashStyle`] preset to its canonical `<draw:stroke-dash>` geometry,
+/// or `None` for `Solid` (a solid stroke carries no dash definition). Every non-solid
+/// preset yields a DISTINCT geometry tuple, so [`dash_style_from_def`] recovers the
+/// exact preset on re-import. The "system" variants reuse the same dot/dash lengths as
+/// their non-system twins but a tighter distance, keeping each tuple unique.
+pub(crate) fn dash_canonical(style: DashStyle) -> Option<DashCanonical> {
+    let make = |round, dots1, dots1_len_emu, dots2, dots2_len_emu, distance_emu| {
+        Some(DashCanonical {
+            round,
+            dots1,
+            dots1_len_emu,
+            dots2,
+            dots2_len_emu,
+            distance_emu,
+        })
+    };
+    match style {
+        DashStyle::Solid => None,
+        DashStyle::Dot => make(true, 1, DASH_DOT_LEN, 0, 0, DASH_GAP),
+        DashStyle::Dash => make(false, 1, DASH_MID_LEN, 0, 0, DASH_GAP),
+        DashStyle::LargeDash => make(false, 1, DASH_LONG_LEN, 0, 0, DASH_GAP),
+        DashStyle::DashDot => make(false, 1, DASH_MID_LEN, 1, DASH_DOT_LEN, DASH_GAP),
+        DashStyle::LargeDashDot => make(false, 1, DASH_LONG_LEN, 1, DASH_DOT_LEN, DASH_GAP),
+        DashStyle::LargeDashDotDot => make(false, 1, DASH_LONG_LEN, 2, DASH_DOT_LEN, DASH_GAP),
+        DashStyle::SystemDash => make(false, 1, DASH_MID_LEN, 0, 0, DASH_SYS_GAP),
+        DashStyle::SystemDot => make(true, 1, DASH_DOT_LEN, 0, 0, DASH_SYS_GAP),
+        DashStyle::SystemDashDot => make(false, 1, DASH_MID_LEN, 1, DASH_DOT_LEN, DASH_SYS_GAP),
+        DashStyle::SystemDashDotDot => make(false, 1, DASH_MID_LEN, 2, DASH_DOT_LEN, DASH_SYS_GAP),
+    }
+}
+
+/// Every non-solid model [`DashStyle`], for the exact-match reverse recognition below.
+const NON_SOLID_DASH_STYLES: [DashStyle; 10] = [
+    DashStyle::Dot,
+    DashStyle::Dash,
+    DashStyle::LargeDash,
+    DashStyle::DashDot,
+    DashStyle::LargeDashDot,
+    DashStyle::LargeDashDotDot,
+    DashStyle::SystemDash,
+    DashStyle::SystemDot,
+    DashStyle::SystemDashDot,
+    DashStyle::SystemDashDotDot,
+];
+
+/// Recognizes a parsed `<draw:stroke-dash>` back to a model [`DashStyle`]. An EXACT
+/// match against a preset's canonical geometry wins (guaranteeing the
+/// model→def→re-import→model closure); otherwise a coarse heuristic classifies a
+/// foreign producer's dash: a two-part pattern (`dots2 > 0`) → `DashDot`, a short
+/// single dot → `Dot`, anything longer → `Dash`. The heuristic is best-effort (a first
+/// import), never relied on for the closure.
+fn dash_style_from_def(def: &OdfDashDef) -> DashStyle {
+    for style in NON_SOLID_DASH_STYLES {
+        let matches = dash_canonical(style).is_some_and(|canonical| {
+            canonical.round == def.round
+                && canonical.dots1 == def.dots1
+                && canonical.dots1_len_emu == def.dots1_len_emu
+                && canonical.dots2 == def.dots2
+                && canonical.dots2_len_emu == def.dots2_len_emu
+                && canonical.distance_emu == def.distance_emu
+        });
+        if matches {
+            return style;
+        }
+    }
+    if def.dots2 > 0 {
+        DashStyle::DashDot
+    } else if def.dots1_len_emu <= DASH_DOT_LEN {
+        DashStyle::Dot
+    } else {
+        DashStyle::Dash
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct StyleCatalog {
     automatic: AutomaticStyles,
     lists: ListStyles,
     defaults: DefaultStyles,
     gradients: Gradients,
+    dashes: DashDefs,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1142,6 +1261,14 @@ fn parse_style_catalog(
             );
         }
     }
+    for (name, dash) in content_styles.dashes {
+        if catalog.dashes.insert(name, dash).is_some() {
+            reporter.report(
+                "odf.draw.stroke-dash-shadowed".to_owned(),
+                ModelOutcome::Degraded,
+            );
+        }
+    }
     // `style:default-style` only appears in the common `office:styles`, i.e. the
     // styles.xml part, so the styles-part parse is the sole source; merge
     // defensively in case a content default ever appears.
@@ -1182,6 +1309,7 @@ fn parse_style_document(
     let mut list_styles = ListStyles::new();
     let mut defaults = DefaultStyles::new();
     let mut gradients = Gradients::new();
+    let mut dashes = DashDefs::new();
     let mut common_container = false;
 
     loop {
@@ -1262,6 +1390,7 @@ fn parse_style_document(
                         &mut open_list_style,
                         &mut list_styles,
                         &mut gradients,
+                        &mut dashes,
                         common_container,
                         false,
                         reporter,
@@ -1317,6 +1446,7 @@ fn parse_style_document(
                         &mut open_list_style,
                         &mut list_styles,
                         &mut gradients,
+                        &mut dashes,
                         common_container,
                         true,
                         reporter,
@@ -1386,6 +1516,7 @@ fn parse_style_document(
         lists: list_styles,
         defaults,
         gradients,
+        dashes,
     })
 }
 
@@ -1510,6 +1641,9 @@ fn resolve_style(
             if style.graphic_stroke.is_some() {
                 inherited.graphic_stroke = style.graphic_stroke.clone();
             }
+            if style.graphic_stroke_dash_name.is_some() {
+                inherited.graphic_stroke_dash_name = style.graphic_stroke_dash_name.clone();
+            }
             if style.graphic_stroke_color.is_some() {
                 inherited.graphic_stroke_color = style.graphic_stroke_color;
             }
@@ -1563,11 +1697,25 @@ fn process_style_element(
     open_list_style: &mut Option<OpenListStyle>,
     list_styles: &mut ListStyles,
     gradients: &mut Gradients,
+    dashes: &mut DashDefs,
     common_container: bool,
     empty: bool,
     reporter: &mut Reporter,
 ) -> Result<(), OdfError> {
-    if depth == 3 && is_name(name, NamespaceKind::Draw, b"gradient") {
+    if depth == 3 && is_name(name, NamespaceKind::Draw, b"stroke-dash") {
+        // A named `<draw:stroke-dash>` outline definition, a direct child of the style
+        // container. Like `<draw:gradient>` it carries no subtree, so both the
+        // self-closing and (spec-invalid) open forms are read here.
+        read_draw_stroke_dash(
+            reader,
+            element,
+            limits,
+            attributes,
+            attribute_bytes,
+            dashes,
+            reporter,
+        )?;
+    } else if depth == 3 && is_name(name, NamespaceKind::Draw, b"gradient") {
         // A named `<draw:gradient>` fill definition, a direct child of the style
         // container (`office:styles` or `office:automatic-styles`). It carries no
         // subtree, so both the self-closing and (spec-invalid) open forms are read
@@ -2688,6 +2836,73 @@ fn read_draw_gradient(
     Ok(())
 }
 
+/// Parses one `<draw:stroke-dash>` definition (`draw:name`, `draw:style`,
+/// `draw:dots1`/`-length`, `draw:dots2`/`-length`, `draw:distance`) into the dash
+/// catalog. A missing `draw:style` defaults to `rect` (dashes); an absent dots count
+/// or length defaults to 0; a non-parsing length is treated as absent. A definition
+/// missing a name is reported and dropped (a referencing shape then keeps a solid
+/// outline). The geometry is mapped to a model [`DashStyle`] preset at resolution.
+fn read_draw_stroke_dash(
+    reader: &NsReader<&[u8]>,
+    element: &BytesStart<'_>,
+    limits: OdfImportLimits,
+    attributes: &mut usize,
+    attribute_bytes: &mut usize,
+    dashes: &mut DashDefs,
+    reporter: &mut Reporter,
+) -> Result<(), OdfError> {
+    let mut name: Option<String> = None;
+    let mut round = false;
+    let mut dots1 = 0_u32;
+    let mut dots1_len_emu = 0_i64;
+    let mut dots2 = 0_u32;
+    let mut dots2_len_emu = 0_i64;
+    let mut distance_emu = 0_i64;
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|_| OdfError::MalformedContent)?;
+        count_attribute(&attribute, attributes, attribute_bytes, limits)?;
+        let value = decode_attribute(&attribute)?;
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        if namespace_kind(&namespace) != NamespaceKind::Draw {
+            continue;
+        }
+        match local.as_ref() {
+            b"name" => name = Some(value.trim().to_owned()),
+            b"style" => round = value.trim() == "round",
+            b"dots1" => dots1 = value.trim().parse::<u32>().unwrap_or(0),
+            b"dots1-length" => dots1_len_emu = parse_emu(&value).unwrap_or(0),
+            b"dots2" => dots2 = value.trim().parse::<u32>().unwrap_or(0),
+            b"dots2-length" => dots2_len_emu = parse_emu(&value).unwrap_or(0),
+            b"distance" => distance_emu = parse_emu(&value).unwrap_or(0),
+            _ => {}
+        }
+    }
+    let Some(name) = name else {
+        reporter.report(
+            "odf.draw.stroke-dash-incomplete".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return Ok(());
+    };
+    let dash = OdfDashDef {
+        round,
+        dots1,
+        dots1_len_emu,
+        // A pattern with a zero dots2 count has no second part, so normalize its
+        // length away (a stray length never leaks into the reverse match).
+        dots2,
+        dots2_len_emu: if dots2 == 0 { 0 } else { dots2_len_emu },
+        distance_emu,
+    };
+    if dashes.insert(name, dash).is_some() {
+        reporter.report(
+            "odf.draw.stroke-dash-shadowed".to_owned(),
+            ModelOutcome::Degraded,
+        );
+    }
+    Ok(())
+}
+
 fn read_graphic_style_properties(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -2762,6 +2977,10 @@ fn read_graphic_style_properties(
             }
             (NamespaceKind::Draw, b"stroke") => {
                 style.style.graphic_stroke = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Draw, b"stroke-dash") => {
+                style.style.graphic_stroke_dash_name = Some(value.trim().to_owned());
                 true
             }
             (NamespaceKind::Svg, b"stroke-color") => {
@@ -3221,6 +3440,12 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
         cancellation,
         &mut reporter,
     )?;
+    // The named draw definitions a shape's fill/stroke may reference, bundled once for
+    // the shape builders below (`style_catalog` is immutable from here on).
+    let draw_defs = DrawDefs {
+        gradients: &style_catalog.gradients,
+        dashes: &style_catalog.dashes,
+    };
 
     let mut reader = NsReader::from_reader(bytes);
     reader
@@ -3448,7 +3673,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &style_catalog.automatic,
-                            &style_catalog.gradients,
+                            draw_defs,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -3545,7 +3770,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &style_catalog.automatic,
-                            &style_catalog.gradients,
+                            draw_defs,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -3580,6 +3805,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                             &mut attributes,
                             &mut attribute_bytes,
                             &style_catalog.automatic,
+                            draw_defs,
                             cancellation,
                             &mut reporter,
                         )? {
@@ -3883,7 +4109,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut attributes,
                         &mut attribute_bytes,
                         &style_catalog.automatic,
-                        &style_catalog.gradients,
+                        draw_defs,
                         &mut reporter,
                     )? {
                         let index = shapes.len();
@@ -3913,6 +4139,7 @@ pub(crate) fn import_content_xml_with_styles_and_cancellation(
                         &mut attributes,
                         &mut attribute_bytes,
                         &style_catalog.automatic,
+                        draw_defs,
                         &mut reporter,
                     )? {
                         let index = shapes.len();
@@ -4892,15 +5119,35 @@ fn draw_shape_geometry(name: &ResolvedName) -> Option<ShapeGeometry> {
     }
 }
 
+/// Borrowed named draw definitions threaded to the shape builders: gradient fills and
+/// dash stroke patterns resolved from the style catalog. Bundled so a single reference
+/// carries every catalog a shape's fill/stroke may reference (rather than one function
+/// parameter per catalog).
+#[derive(Clone, Copy)]
+struct DrawDefs<'a> {
+    gradients: &'a Gradients,
+    dashes: &'a DashDefs,
+}
+
+/// A resolved shape outline: color + width, plus an optional recognized dash preset.
+/// The intermediate between a graphic style and the model [`ShapeStroke`] (arrowhead
+/// decorations are not resolved this increment).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResolvedStroke {
+    color: RgbColor,
+    width_emu: i64,
+    dash: Option<DashStyle>,
+}
+
 /// Resolves a shape graphic style's fill to a model [`Fill`]. `draw:fill="solid"`
 /// with a color maps to `Fill::Solid`; `draw:fill="gradient"` with a
-/// `draw:fill-gradient-name` resolving against `gradients` maps to `Fill::Gradient`
-/// (two endpoint stops); `none`/absent is no fill. A solid fill without a color, a
-/// gradient with a missing/unresolvable name, or any other fill kind (bitmap, hatch)
-/// degrades to no fill with a finding.
+/// `draw:fill-gradient-name` resolving against the gradient catalog maps to
+/// `Fill::Gradient` (two endpoint stops); `none`/absent is no fill. A solid fill
+/// without a color, a gradient with a missing/unresolvable name, or any other fill
+/// kind (bitmap, hatch) degrades to no fill with a finding.
 fn resolve_shape_fill(
     style: &OdfStyle,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     reporter: &mut Reporter,
 ) -> Option<Fill> {
     match style.graphic_fill.as_deref() {
@@ -4915,7 +5162,7 @@ fn resolve_shape_fill(
             let gradient = style
                 .graphic_fill_gradient_name
                 .as_deref()
-                .and_then(|name| gradients.get(name));
+                .and_then(|name| defs.gradients.get(name));
             let Some(gradient) = gradient else {
                 reporter.report("odf.draw.shape-fill".to_owned(), ModelOutcome::Degraded);
                 return None;
@@ -4958,23 +5205,55 @@ const fn rgb_to_rgba(color: RgbColor) -> Rgba {
     }
 }
 
-/// Resolves a shape graphic style's solid outline (color + EMU width). `none`/absent
-/// is no outline; a non-solid or color-less outline degrades to none with a finding.
-fn resolve_shape_stroke(style: &OdfStyle, reporter: &mut Reporter) -> Option<(RgbColor, i64)> {
-    match style.graphic_stroke.as_deref() {
-        Some("solid") => match style.graphic_stroke_color {
-            Some(color) => Some((color, style.graphic_stroke_width.unwrap_or(0))),
-            None => {
-                reporter.report("odf.draw.shape-stroke".to_owned(), ModelOutcome::Degraded);
-                None
-            }
-        },
-        None | Some("none") => None,
+/// Resolves a shape graphic style's outline (color + EMU width, plus a recognized dash
+/// preset). `draw:stroke="solid"` is a plain outline; `draw:stroke="dash"` additionally
+/// resolves `draw:stroke-dash` against the dash catalog and recognizes its geometry as a
+/// model [`DashStyle`]. `none`/absent is no outline; a non-solid/non-dash or color-less
+/// outline degrades to none with a finding. A `dash` outline whose named definition is
+/// missing keeps its color/width and reports the dropped pattern (a solid outline).
+fn resolve_shape_stroke(
+    style: &OdfStyle,
+    defs: DrawDefs<'_>,
+    reporter: &mut Reporter,
+) -> Option<ResolvedStroke> {
+    let dashed = match style.graphic_stroke.as_deref() {
+        Some("solid") => false,
+        Some("dash") => true,
+        None | Some("none") => return None,
         Some(_) => {
             reporter.report("odf.draw.shape-stroke".to_owned(), ModelOutcome::Degraded);
-            None
+            return None;
         }
-    }
+    };
+    let Some(color) = style.graphic_stroke_color else {
+        reporter.report("odf.draw.shape-stroke".to_owned(), ModelOutcome::Degraded);
+        return None;
+    };
+    let dash = if dashed {
+        match style
+            .graphic_stroke_dash_name
+            .as_deref()
+            .and_then(|name| defs.dashes.get(name))
+        {
+            Some(def) => Some(dash_style_from_def(def)),
+            None => {
+                // A dashed outline whose `<draw:stroke-dash>` is missing/unresolvable:
+                // keep the color/width as a solid outline, report the dropped pattern.
+                reporter.report(
+                    "odf.draw.stroke-dash-unresolved".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Some(ResolvedStroke {
+        color,
+        width_emu: style.graphic_stroke_width.unwrap_or(0),
+        dash,
+    })
 }
 
 /// Builds a `ShapeDraft` from a `draw:rect`'s attributes alone (no reader
@@ -4990,7 +5269,7 @@ fn build_shape_draft(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
     let mut width_emu = None;
@@ -5062,8 +5341,8 @@ fn build_shape_draft(
     let (wrap, behind_doc) = style
         .map(|style| resolve_graphic_wrap(style, reporter))
         .unwrap_or((WrapMode::Square, false));
-    let fill = style.and_then(|style| resolve_shape_fill(style, gradients, reporter));
-    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    let fill = style.and_then(|style| resolve_shape_fill(style, defs, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, defs, reporter));
     Ok(Some(ShapeDraft {
         geometry,
         horizontal_rel,
@@ -5088,6 +5367,7 @@ fn build_shape_draft(
 /// the endpoints span. A line has an outline but no fill. Returns `None` (reported)
 /// for a non-floating anchor or an endpoint that does not parse (negative/out of
 /// range — signed offsets are a later increment).
+#[allow(clippy::too_many_arguments)]
 fn build_line_draft(
     reader: &NsReader<&[u8]>,
     line: &BytesStart<'_>,
@@ -5095,6 +5375,7 @@ fn build_line_draft(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    defs: DrawDefs<'_>,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
     let mut x1 = None;
@@ -5157,7 +5438,7 @@ fn build_line_draft(
     let (wrap, behind_doc) = style
         .map(|style| resolve_graphic_wrap(style, reporter))
         .unwrap_or((WrapMode::Square, false));
-    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, defs, reporter));
     Ok(Some(ShapeDraft {
         geometry: ShapeGeometry::Line,
         horizontal_rel,
@@ -5286,7 +5567,7 @@ fn parse_draw_shape(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
@@ -5298,7 +5579,7 @@ fn parse_draw_shape(
         attributes,
         attribute_bytes,
         automatic_styles,
-        gradients,
+        defs,
         reporter,
     )?;
     consume_shape_subtree(
@@ -5326,6 +5607,7 @@ fn parse_draw_line(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<ShapeDraft>, OdfError> {
@@ -5336,6 +5618,7 @@ fn parse_draw_line(
         attributes,
         attribute_bytes,
         automatic_styles,
+        defs,
         reporter,
     )?;
     consume_shape_subtree(
@@ -5363,7 +5646,7 @@ fn read_group_box_child(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     reporter: &mut Reporter,
 ) -> Result<Option<GroupChildDraft>, OdfError> {
     let mut x = None;
@@ -5399,8 +5682,8 @@ fn read_group_box_child(
     let style = style_name
         .as_deref()
         .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
-    let fill = style.and_then(|style| resolve_shape_fill(style, gradients, reporter));
-    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    let fill = style.and_then(|style| resolve_shape_fill(style, defs, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, defs, reporter));
     Ok(Some(GroupChildDraft::Shape(GroupShapeDraft {
         geometry,
         abs_x_emu: x,
@@ -5417,6 +5700,7 @@ fn read_group_box_child(
 /// Reads a `draw:line` child of a `draw:g`, mapping its endpoints to the ABSOLUTE
 /// bounding box + flip pair (`flip_h` = `x1 > x2`, `flip_v` = `y1 > y2`). Returns
 /// `None` (reported) for a missing or non-parsing endpoint.
+#[allow(clippy::too_many_arguments)]
 fn read_group_line_child(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -5424,6 +5708,7 @@ fn read_group_line_child(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
+    defs: DrawDefs<'_>,
     reporter: &mut Reporter,
 ) -> Result<Option<GroupChildDraft>, OdfError> {
     let mut x1 = None;
@@ -5459,7 +5744,7 @@ fn read_group_line_child(
     let style = style_name
         .as_deref()
         .and_then(|name| automatic_styles.get(&(StyleFamily::Graphic, name.to_owned())));
-    let stroke = style.and_then(|style| resolve_shape_stroke(style, reporter));
+    let stroke = style.and_then(|style| resolve_shape_stroke(style, defs, reporter));
     Ok(Some(GroupChildDraft::Shape(GroupShapeDraft {
         geometry: ShapeGeometry::Line,
         abs_x_emu: x1.min(x2),
@@ -5488,7 +5773,7 @@ fn parse_draw_group(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Option<GroupDraft>, OdfError> {
@@ -5539,7 +5824,7 @@ fn parse_draw_group(
         attributes,
         attribute_bytes,
         automatic_styles,
-        gradients,
+        defs,
         cancellation,
         reporter,
     )?;
@@ -5604,7 +5889,7 @@ fn parse_group_children(
     attributes: &mut usize,
     attribute_bytes: &mut usize,
     automatic_styles: &AutomaticStyles,
-    gradients: &Gradients,
+    defs: DrawDefs<'_>,
     cancellation: &CancellationToken,
     reporter: &mut Reporter,
 ) -> Result<Vec<GroupChildDraft>, OdfError> {
@@ -5668,7 +5953,7 @@ fn parse_group_children(
                 attributes,
                 attribute_bytes,
                 automatic_styles,
-                gradients,
+                defs,
                 reporter,
             )?
         } else if is_name(&name, NamespaceKind::Draw, b"line") {
@@ -5679,6 +5964,7 @@ fn parse_group_children(
                 attributes,
                 attribute_bytes,
                 automatic_styles,
+                defs,
                 reporter,
             )?
         } else if is_name(&name, NamespaceKind::Draw, b"g") {
@@ -5730,7 +6016,7 @@ fn parse_group_children(
                     attributes,
                     attribute_bytes,
                     automatic_styles,
-                    gradients,
+                    defs,
                     cancellation,
                     reporter,
                 )?;
@@ -10302,15 +10588,12 @@ fn build_group_children(
                     preset: None,
                     adjustments: Vec::new(),
                     fill: shape.fill.clone(),
-                    stroke: shape.stroke.map(|(color, width_emu)| ShapeStroke {
-                        color: Rgba {
-                            r: color.r,
-                            g: color.g,
-                            b: color.b,
-                            a: 255,
-                        },
-                        width_emu,
-                        dash: None,
+                    stroke: shape.stroke.map(|stroke| ShapeStroke {
+                        color: rgb_to_rgba(stroke.color),
+                        width_emu: stroke.width_emu,
+                        dash: stroke.dash,
+                        // Arrowhead decorations are not resolved from ODF this
+                        // increment (no round-tripping preset-marker form).
                         head_end: None,
                         tail_end: None,
                     }),
@@ -10561,15 +10844,12 @@ fn build_inlines(
                         preset: None,
                         adjustments: Vec::new(),
                         fill: draft.fill.clone(),
-                        stroke: draft.stroke.map(|(color, width_emu)| ShapeStroke {
-                            color: Rgba {
-                                r: color.r,
-                                g: color.g,
-                                b: color.b,
-                                a: 255,
-                            },
-                            width_emu,
-                            dash: None,
+                        stroke: draft.stroke.map(|stroke| ShapeStroke {
+                            color: rgb_to_rgba(stroke.color),
+                            width_emu: stroke.width_emu,
+                            dash: stroke.dash,
+                            // Arrowhead decorations are not resolved from ODF this
+                            // increment (no round-tripping preset-marker form).
                             head_end: None,
                             tail_end: None,
                         }),

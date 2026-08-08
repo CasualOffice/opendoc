@@ -1,9 +1,9 @@
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Color, Fill, GradientKind, GradientStop, GroupChild, HorizontalAnchor,
-    HorizontalPosition, InlineNode, RgbColor, ShapeGeometry, StyleKind, VerticalAnchor,
-    VerticalPosition, WrapMode,
+    Alignment, BlockNode, Color, DashStyle, Fill, GradientKind, GradientStop, GroupChild,
+    HorizontalAnchor, HorizontalPosition, InlineNode, RgbColor, ShapeGeometry, ShapeStroke,
+    StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
 };
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
@@ -2248,6 +2248,278 @@ fn standalone_shape_linear_gradient_round_trips() {
     if let Ok(part) = plain.read_part(STYLES_PART) {
         assert!(!String::from_utf8(part).unwrap().contains("draw:gradient"));
     }
+}
+
+/// A floating `draw:rect` whose graphic style references a `<draw:stroke-dash>` via
+/// `draw:stroke="dash"` imports to `ShapeStroke::dash = Some(DashStyle::Dash)` (the
+/// source def matches the `Dash` canonical geometry) and re-exports through the
+/// preserving path — the synthesized dash definition landing in `office:styles`
+/// (styles.xml) — as a byte-exact fixed point. Also asserts the model→canonical
+/// def→re-import→model closure for every non-solid preset (so `export2 == export3`
+/// holds for each), and that `Solid`/`None` carry no dash definition.
+#[test]
+fn standalone_shape_dashed_stroke_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="dash" draw:stroke-dash="D1" svg:stroke-width="0.05cm" svg:stroke-color="#112233"/></style:style><draw:stroke-dash draw:name="D1" draw:style="rect" draw:dots1="1" draw:dots1-length="0.4cm" draw:distance="0.3cm"/></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    // The source dash geometry matches the `Dash` canonical, so it imports to that
+    // preset, carrying the outline color/width alongside.
+    let shape = dashed_shape(&imported.document);
+    let stroke = shape.stroke.as_ref().expect("stroke");
+    assert_eq!(stroke.dash, Some(DashStyle::Dash));
+    assert_eq!(
+        (stroke.color.r, stroke.color.g, stroke.color.b),
+        (0x11, 0x22, 0x33)
+    );
+    assert_eq!(stroke.width_emu, 18_000); // 0.05cm
+
+    // The preserving writer re-emits `draw:stroke="dash"` referencing a synthesized
+    // `<draw:stroke-dash>` definition that lands in styles.xml (`office:styles`).
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"draw:stroke="dash" draw:stroke-dash="dash"#));
+    assert!(content_out.contains(r##"svg:stroke-color="#112233""##));
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(r#"<draw:stroke-dash draw:name="dash"#));
+    assert!(styles_out.contains(r#"draw:style="rect""#));
+    assert!(styles_out.contains(r#"draw:dots1="1""#));
+    assert!(styles_out.contains(r#"draw:dots1-length="0.4000cm""#));
+    assert!(styles_out.contains(r#"draw:distance="0.3000cm""#));
+    assert!(
+        styles_out.contains(r#"xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0""#)
+    );
+
+    // Semantic + byte fixed point for the imported `Dash`.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+
+    // The model→canonical def→re-import→model closure for EVERY non-solid preset: set
+    // the shape's dash to each variant, export, re-import, and confirm it recovers the
+    // SAME preset and that a second export is byte-identical (export2 == export3).
+    for variant in [
+        DashStyle::Dot,
+        DashStyle::Dash,
+        DashStyle::LargeDash,
+        DashStyle::DashDot,
+        DashStyle::LargeDashDot,
+        DashStyle::LargeDashDotDot,
+        DashStyle::SystemDash,
+        DashStyle::SystemDot,
+        DashStyle::SystemDashDot,
+        DashStyle::SystemDashDotDot,
+    ] {
+        let mut document = imported.document.clone();
+        set_shape_dash(&mut document, Some(variant));
+        let export2 =
+            write_odt_with_retained_parts(&document, &retained, OdfExportLimits::default())
+                .unwrap();
+        let mut pkg = OdtPackage::open(&export2.bytes, OdfPackageLimits::default()).unwrap();
+        let styles = String::from_utf8(pkg.read_part(STYLES_PART).unwrap()).unwrap();
+        assert!(
+            styles.contains("<draw:stroke-dash draw:name=\"dash"),
+            "variant {variant:?} should emit a stroke-dash def"
+        );
+        let reimported = pkg.import_document(OdfImportLimits::default()).unwrap();
+        assert_eq!(
+            dashed_shape(&reimported.document)
+                .stroke
+                .as_ref()
+                .unwrap()
+                .dash,
+            Some(variant),
+            "variant {variant:?} must re-import to the same preset"
+        );
+        let export3 = write_odt_with_retained_parts(
+            &reimported.document,
+            &retained,
+            OdfExportLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            export2.bytes, export3.bytes,
+            "variant {variant:?} export must be a fixed point"
+        );
+    }
+
+    // `Solid` and `None` both carry NO dash definition — a solid outline, byte-identical
+    // to each other and free of any orphan `<draw:stroke-dash>`.
+    let mut solid_dash = imported.document.clone();
+    set_shape_dash(&mut solid_dash, Some(DashStyle::Solid));
+    let mut no_dash = imported.document.clone();
+    set_shape_dash(&mut no_dash, None);
+    let solid_export =
+        write_odt_with_retained_parts(&solid_dash, &retained, OdfExportLimits::default()).unwrap();
+    let none_export =
+        write_odt_with_retained_parts(&no_dash, &retained, OdfExportLimits::default()).unwrap();
+    assert_eq!(solid_export.bytes, none_export.bytes);
+    let mut solid_pkg = OdtPackage::open(&solid_export.bytes, OdfPackageLimits::default()).unwrap();
+    let solid_content = String::from_utf8(solid_pkg.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(solid_content.contains(r#"draw:stroke="solid""#));
+    assert!(!solid_content.contains("draw:stroke-dash"));
+    if let Ok(part) = solid_pkg.read_part(STYLES_PART) {
+        assert!(
+            !String::from_utf8(part)
+                .unwrap()
+                .contains("draw:stroke-dash")
+        );
+    }
+
+    // The plain semantic path has no draw namespaces, so the shape degrades and no
+    // orphan `<draw:stroke-dash>` definition is emitted.
+    let semantic = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut plain = OdtPackage::open(&semantic.bytes, OdfPackageLimits::default()).unwrap();
+    let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!plain_content.contains("draw:rect"));
+    assert!(!plain_content.contains("draw:stroke-dash"));
+}
+
+/// Two shapes with an identical stroke color+width but DIFFERENT dash patterns must
+/// synthesize DISTINCT `gr<hash>` graphic-style names. `OdtGraphicStyle::name()`
+/// builds its hash from only the present fields, so the dash field must contribute to
+/// the key — otherwise the two styles collide on one name, emitting duplicate
+/// `style:name` definitions (invalid ODF) that the importer rejects with
+/// `MalformedContent`, breaking `export2 == export3`. This is the common real-world
+/// case: a diagram with same-colored lines, some solid and some dashed.
+#[test]
+fn shapes_differing_only_in_dash_get_distinct_style_names() {
+    // One dashed rect and one SOLID-stroke rect, same color (#112233) and width (0.05cm).
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gd" style:family="graphic"><style:graphic-properties draw:stroke="dash" draw:stroke-dash="D1" svg:stroke-width="0.05cm" svg:stroke-color="#112233"/></style:style><style:style style:name="gs" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-width="0.05cm" svg:stroke-color="#112233"/></style:style><draw:stroke-dash draw:name="D1" draw:style="rect" draw:dots1="1" draw:dots1-length="0.4cm" draw:distance="0.3cm"/></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gd" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/><draw:rect draw:style-name="gs" text:anchor-type="paragraph" svg:x="9cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+
+    // The dashed rect and the solid rect must reference two DIFFERENT graphic styles.
+    let names: Vec<&str> = content_out
+        .match_indices("draw:style-name=\"")
+        .map(|(i, m)| {
+            let rest = &content_out[i + m.len()..];
+            &rest[..rest.find('"').unwrap()]
+        })
+        .filter(|n| n.starts_with("gr"))
+        .collect();
+    assert_eq!(names.len(), 2, "two shape styles referenced");
+    assert_ne!(
+        names[0], names[1],
+        "a dashed and a solid shape must not collide on one style name"
+    );
+
+    // The re-import must SUCCEED (the collision previously emitted duplicate
+    // `style:name` defs that the importer rejected with `MalformedContent`).
+    let reopened = out
+        .import_document(OdfImportLimits::default())
+        .expect("re-import must not fail on duplicate style names");
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// Returns the single `GroupShape` child of the first paragraph's first inline group.
+fn dashed_shape(document: &casual_doc_model::v1::Document) -> &casual_doc_model::v1::GroupShape {
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        panic!("one shape child")
+    };
+    shape
+}
+
+/// Sets the dash preset on the single shape child of the first inline group.
+fn set_shape_dash(document: &mut casual_doc_model::v1::Document, dash: Option<DashStyle>) {
+    let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let [GroupChild::Shape(shape)] = group.children.as_mut_slice() else {
+        panic!("one shape child")
+    };
+    let stroke = shape.stroke.get_or_insert(ShapeStroke {
+        color: casual_doc_model::v1::Rgba {
+            r: 0x11,
+            g: 0x22,
+            b: 0x33,
+            a: 255,
+        },
+        width_emu: 18_000,
+        dash: None,
+        head_end: None,
+        tail_end: None,
+    });
+    stroke.dash = dash;
 }
 
 /// A floating `draw:rect` with a radial `<draw:gradient>` imports to a

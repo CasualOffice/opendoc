@@ -6,9 +6,9 @@ use std::io::{Cursor, Write};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, AnchoredDrawing, BlockNode, BlockSdt, BookmarkId, BreakKind, CellMargins,
-    CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DefinitionMap, Definitions,
-    Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill, FontRef,
-    FormFieldKind, GradientKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule,
+    CellVerticalAlignment, Color, Comment, CommentId, CommentReference, DashStyle, DefinitionMap,
+    Definitions, Document, DocumentDefaults, DrawingAnchor, Extent, Field, FieldKind, Fill,
+    FontRef, FormFieldKind, GradientKind, GroupChild, GroupShape, HeaderFooterKind, HeightRule,
     HorizontalAlign, HorizontalAnchor, HorizontalPosition, HyperlinkTarget, Indentation,
     InlineNode, LevelJustification, LevelSuffix, MediaId, Note, NoteId, NoteKind, NoteReference,
     NumberFormat, NumberingInstanceId, Paragraph, ParagraphProperties, PointEmu, Revision,
@@ -714,6 +714,49 @@ impl OdtGradientDef {
     }
 }
 
+/// A synthesized `<draw:stroke-dash>` definition for a shape's `ShapeStroke::dash`:
+/// the canonical dots/gaps geometry for one model [`DashStyle`] preset. Emitted once
+/// per distinct value into `office:styles` (styles.xml) and referenced by a graphic
+/// style's `draw:stroke="dash"` + `draw:stroke-dash`. The geometry comes from the
+/// shared [`crate::content::dash_canonical`] table (also used by import's reverse
+/// recognition), so the model→def→re-import→model closure holds by construction. All
+/// fields are `Copy` so an owning `OdtGraphicStyle` stays `Copy`.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct OdtDashDef {
+    /// `draw:style`: `true` → `"round"` (dots), `false` → `"rect"` (dashes).
+    round: bool,
+    dots1: u32,
+    /// `draw:dots1-length` in EMU (a multiple of 36 so `emu_to_cm` round-trips).
+    dots1_len_emu: i64,
+    dots2: u32,
+    /// `draw:dots2-length` in EMU (0 when `dots2` is 0; the attributes are omitted).
+    dots2_len_emu: i64,
+    /// `draw:distance` (the gap) in EMU.
+    distance_emu: i64,
+}
+
+impl OdtDashDef {
+    /// The canonical definition for a model preset, or `None` for `Solid` (a solid
+    /// stroke carries no dash definition, keeping that path byte-identical).
+    fn from_style(style: DashStyle) -> Option<Self> {
+        crate::content::dash_canonical(style).map(|canonical| Self {
+            round: canonical.round,
+            dots1: canonical.dots1,
+            dots1_len_emu: canonical.dots1_len_emu,
+            dots2: canonical.dots2,
+            dots2_len_emu: canonical.dots2_len_emu,
+            distance_emu: canonical.distance_emu,
+        })
+    }
+
+    /// A deterministic, content-addressed NCName in the `dash` namespace, disjoint
+    /// from the `gr`/`grad`/`fr` names. Identical geometry hashes to one name, so the
+    /// `BTreeSet` and the referencing style dedup shared dashes.
+    fn name(&self) -> String {
+        format!("dash{:016x}", font_family_hash(&format!("{self:?}")))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 struct OdtGraphicStyle {
     /// `style:wrap` value, `None` for the default (`parallel`/Square).
@@ -736,6 +779,11 @@ struct OdtGraphicStyle {
     fill_none: bool,
     /// A shape's solid outline (`svg:stroke-color` + `svg:stroke-width` EMU).
     stroke: Option<((u8, u8, u8), i64)>,
+    /// A shape outline's dash pattern (`draw:stroke="dash"` + `draw:stroke-dash`),
+    /// carrying the referenced definition so distinct dashes hash to distinct
+    /// graphic-style names. Only meaningful alongside `stroke` (a dashed outline still
+    /// carries a color + width); `None` leaves the outline solid.
+    stroke_dash: Option<OdtDashDef>,
     /// Emit `draw:stroke="none"` (a shape with no outline).
     stroke_none: bool,
     /// `style:horizontal-pos`/`style:vertical-pos` for a floating frame's alignment
@@ -799,6 +847,9 @@ impl OdtGraphicStyle {
         }
         if let Some(((r, g, b), w)) = self.stroke {
             let _ = write!(key, "stroke={r},{g},{b},{w};");
+        }
+        if let Some(dash) = &self.stroke_dash {
+            let _ = write!(key, "dash={};", dash.name());
         }
         if self.stroke_none {
             key.push_str("strokenone;");
@@ -887,11 +938,21 @@ fn push_graphic_properties(
         push_bounded(xml, " draw:fill=\"none\"", max_content_bytes)?;
     }
     if let Some(((red, green, blue), width_emu)) = style.stroke {
-        push_bounded(
-            xml,
-            " draw:stroke=\"solid\" svg:stroke-width=\"",
-            max_content_bytes,
-        )?;
+        if let Some(dash) = &style.stroke_dash {
+            push_bounded(
+                xml,
+                " draw:stroke=\"dash\" draw:stroke-dash=\"",
+                max_content_bytes,
+            )?;
+            push_bounded(xml, &dash.name(), max_content_bytes)?;
+            push_bounded(xml, "\" svg:stroke-width=\"", max_content_bytes)?;
+        } else {
+            push_bounded(
+                xml,
+                " draw:stroke=\"solid\" svg:stroke-width=\"",
+                max_content_bytes,
+            )?;
+        }
         push_bounded(xml, &emu_to_cm(width_emu), max_content_bytes)?;
         push_bounded(xml, "\" svg:stroke-color=\"#", max_content_bytes)?;
         push_bounded(
@@ -1327,6 +1388,9 @@ struct Writer {
     /// Distinct synthesized `<draw:gradient>` fill definitions, emitted into
     /// `office:styles` (styles.xml) and referenced by graphic styles.
     gradient_defs: BTreeSet<OdtGradientDef>,
+    /// Distinct synthesized `<draw:stroke-dash>` outline definitions, emitted into
+    /// `office:styles` (styles.xml) and referenced by graphic styles.
+    dash_defs: BTreeSet<OdtDashDef>,
     list_styles: BTreeMap<NumberingInstanceId, OdtListStyle>,
     emitted_lists: BTreeSet<NumberingInstanceId>,
     footnotes: BTreeMap<NoteId, Note>,
@@ -1403,6 +1467,7 @@ impl Writer {
             run_styles: BTreeSet::new(),
             graphic_styles: BTreeSet::new(),
             gradient_defs: BTreeSet::new(),
+            dash_defs: BTreeSet::new(),
             list_styles: BTreeMap::new(),
             emitted_lists: BTreeSet::new(),
             footnotes: BTreeMap::new(),
@@ -3052,6 +3117,7 @@ impl Writer {
             fill_gradient: None,
             fill_none: false,
             stroke: None,
+            stroke_dash: None,
             stroke_none: false,
             // Alignment positioning rides on the style; offset positioning leaves
             // these `None` (the axis's `svg:x`/`svg:y` carries the position).
@@ -3237,13 +3303,24 @@ impl Writer {
                 .record("odt.export.line_fill", ModelOutcome::Degraded);
         }
         if let Some(stroke) = &shape.stroke {
-            if stroke.dash.is_some() || stroke.head_end.is_some() || stroke.tail_end.is_some() {
+            // An arrowhead decoration has no ODF preset-marker form that round-trips
+            // the model's relative size tokens; it is deferred (reported), not dropped
+            // silently. A dash pattern, by contrast, is synthesized below.
+            if stroke.head_end.is_some() || stroke.tail_end.is_some() {
                 self.reporter
                     .record("odt.export.shape_stroke_detail", ModelOutcome::Degraded);
             }
             if stroke.color.a != 255 {
                 self.reporter
                     .record("odt.export.shape_stroke_opacity", ModelOutcome::Degraded);
+            }
+            // A `dash` (other than `Solid`, which is the solid path) synthesizes a
+            // canonical `<draw:stroke-dash>` def, deduped into `dash_defs` and
+            // referenced by the graphic style. `Solid` normalizes to no dash (a solid
+            // outline), matching a re-imported model.
+            graphic.stroke_dash = stroke.dash.and_then(OdtDashDef::from_style);
+            if let Some(dash) = graphic.stroke_dash {
+                self.dash_defs.insert(dash);
             }
             graphic.stroke = Some((
                 (stroke.color.r, stroke.color.g, stroke.color.b),
@@ -4483,8 +4560,12 @@ fn write_odt_impl(
     // gradient-filled shape produces an empty string and leaves `office:styles`
     // (and its namespace set) byte-identical to prior releases.
     let gradient_defs = gradient_definitions_xml(&writer.gradient_defs, limits.max_content_bytes)?;
-    let has_gradients = !writer.gradient_defs.is_empty();
-    let office_styles = combine_office_styles(default_styles, &gradient_defs);
+    let dash_defs = dash_definitions_xml(&writer.dash_defs, limits.max_content_bytes)?;
+    // Both def kinds live in the same `office:styles` block and share the `draw:`
+    // namespace declaration; either one present forces styles.xml to carry it.
+    let draw_defs = format!("{gradient_defs}{dash_defs}");
+    let has_draw_defs = !writer.gradient_defs.is_empty() || !writer.dash_defs.is_empty();
+    let office_styles = combine_office_styles(default_styles, &draw_defs);
     let content_len = content_header
         .len()
         .checked_add(styles.len())
@@ -4515,7 +4596,7 @@ fn write_odt_impl(
         .filter(|properties| !properties.is_empty())
         .map(metadata_xml)
         .transpose()?;
-    let page_styles = page_styles_xml(document, &master_page, &office_styles, has_gradients);
+    let page_styles = page_styles_xml(document, &master_page, &office_styles, has_draw_defs);
     let empty_retained = crate::OdfRetainedParts::default();
     let bytes = package(
         &content,
@@ -4948,12 +5029,12 @@ fn page_styles_xml(
     document: &Document,
     master: &MasterPageXml,
     office_styles: &str,
-    has_gradients: bool,
+    has_draw_defs: bool,
 ) -> Option<Vec<u8>> {
     let section = document.definitions().sections.first();
-    // styles.xml exists when there is page geometry, document defaults, or a
-    // gradient definition (all of which land in `office_styles`). A master-page
-    // (headers/footers) only ever accompanies a section.
+    // styles.xml exists when there is page geometry, document defaults, or a draw
+    // definition (gradient/stroke-dash — all of which land in `office_styles`). A
+    // master-page (headers/footers) only ever accompanies a section.
     if section.is_none() && office_styles.is_empty() {
         return None;
     }
@@ -4965,9 +5046,10 @@ fn page_styles_xml(
     } else {
         " xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
     };
-    // The drawing namespace is only declared when an `office:styles` gradient
-    // definition needs it, so gradient-free output stays byte-identical.
-    let draw_ns = if has_gradients {
+    // The drawing namespace is only declared when an `office:styles` draw
+    // definition (gradient/stroke-dash) needs it, so def-free output stays
+    // byte-identical.
+    let draw_ns = if has_draw_defs {
         " xmlns:draw=\"urn:oasis:names:tc:opendocument:xmlns:drawing:1.0\""
     } else {
         ""
@@ -5014,18 +5096,60 @@ fn gradient_definitions_xml(
     Ok(xml)
 }
 
-/// Folds the gradient definitions into the `office:styles` block. `default_styles`
-/// is either empty or `<office:styles>…</office:styles>`; the gradient markup is
-/// inserted before the closing tag (or wrapped fresh when there are no other
-/// document styles). With no gradients it returns `default_styles` unchanged, so
-/// gradient-free output is byte-identical.
-fn combine_office_styles(default_styles: String, gradient_defs: &str) -> String {
-    if gradient_defs.is_empty() {
+/// Serializes the shapes' distinct `<draw:stroke-dash>` outline definitions. Each
+/// element's name is a content hash and the `BTreeSet` is sorted, so re-export mints
+/// byte-identical output. The `dots2` attributes are emitted only for a two-part
+/// pattern (a bare dash omits them), matching import's absent→0 default so the
+/// geometry re-imports to the same preset. Empty when no shape has a dashed outline.
+fn dash_definitions_xml(
+    defs: &BTreeSet<OdtDashDef>,
+    max_content_bytes: usize,
+) -> Result<String, OdfError> {
+    let mut xml = String::new();
+    for def in defs {
+        push_bounded(
+            &mut xml,
+            "<draw:stroke-dash draw:name=\"",
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, &def.name(), max_content_bytes)?;
+        push_bounded(&mut xml, "\" draw:style=\"", max_content_bytes)?;
+        push_bounded(
+            &mut xml,
+            if def.round { "round" } else { "rect" },
+            max_content_bytes,
+        )?;
+        push_bounded(&mut xml, "\" draw:dots1=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &def.dots1.to_string(), max_content_bytes)?;
+        push_bounded(&mut xml, "\" draw:dots1-length=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &emu_to_cm(def.dots1_len_emu), max_content_bytes)?;
+        push_bounded(&mut xml, "\"", max_content_bytes)?;
+        if def.dots2 > 0 {
+            push_bounded(&mut xml, " draw:dots2=\"", max_content_bytes)?;
+            push_bounded(&mut xml, &def.dots2.to_string(), max_content_bytes)?;
+            push_bounded(&mut xml, "\" draw:dots2-length=\"", max_content_bytes)?;
+            push_bounded(&mut xml, &emu_to_cm(def.dots2_len_emu), max_content_bytes)?;
+            push_bounded(&mut xml, "\"", max_content_bytes)?;
+        }
+        push_bounded(&mut xml, " draw:distance=\"", max_content_bytes)?;
+        push_bounded(&mut xml, &emu_to_cm(def.distance_emu), max_content_bytes)?;
+        push_bounded(&mut xml, "\"/>", max_content_bytes)?;
+    }
+    Ok(xml)
+}
+
+/// Folds the synthesized draw definitions (gradients + stroke-dashes) into the
+/// `office:styles` block. `default_styles` is either empty or
+/// `<office:styles>…</office:styles>`; the def markup is inserted before the closing
+/// tag (or wrapped fresh when there are no other document styles). With no defs it
+/// returns `default_styles` unchanged, so def-free output is byte-identical.
+fn combine_office_styles(default_styles: String, draw_defs: &str) -> String {
+    if draw_defs.is_empty() {
         return default_styles;
     }
     match default_styles.strip_suffix("</office:styles>") {
-        Some(prefix) => format!("{prefix}{gradient_defs}</office:styles>"),
-        None => format!("<office:styles>{gradient_defs}</office:styles>"),
+        Some(prefix) => format!("{prefix}{draw_defs}</office:styles>"),
+        None => format!("<office:styles>{draw_defs}</office:styles>"),
     }
 }
 
