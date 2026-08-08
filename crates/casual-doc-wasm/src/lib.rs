@@ -16,8 +16,8 @@
 use casual_doc_edit::object_descr;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
-    apply as apply_edit, caret_run_properties, cell_properties, find_paragraph, find_table,
-    locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
+    RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_paragraph,
+    find_table, locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
     run_properties_in_range,
 };
 use casual_doc_export::write_document;
@@ -61,6 +61,7 @@ use casual_doc_model::v1::{
     VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{HeaderFooterId, HeaderFooterKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
@@ -1823,6 +1824,57 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = insertFootnote)]
     pub fn insert_footnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         self.insert_note(NoteKind::Footnote, node, offset)
+    }
+
+    /// Creates an empty header or footer for the section a page belongs to, and
+    /// links the section's default variant to it, as one undoable action. Returns
+    /// the `EditResult` whose caret is the new body's first paragraph, so the
+    /// host can enter the context it just created.
+    ///
+    /// `Edit header` on a document that has none previously had to refuse: the
+    /// ops to make one (docs/85 §8.3) exist but nothing called them. The body is
+    /// created carrying ONE empty paragraph rather than no blocks, because an
+    /// empty `Vec<BlockNode>` has nowhere to put a caret — the user would enter a
+    /// header they could not type in.
+    #[wasm_bindgen(js_name = createRunningContent)]
+    pub fn create_running_content(&mut self, region: &str) -> Result<EditResult, JsValue> {
+        let region = match region {
+            "header" => RunningRegion::Header,
+            "footer" => RunningRegion::Footer,
+            _ => return Err(to_js("region must be \"header\" or \"footer\"".to_string())),
+        };
+        let section = self
+            .document
+            .definitions()
+            .sections
+            .first()
+            .map(|boundary| boundary.id)
+            .ok_or_else(|| to_js("the document has no section".to_string()))?;
+        let exhausted = || to_js("id space exhausted".to_string());
+        let body = HeaderFooterId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
+        let paragraph = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        self.apply_action_caret_as(
+            vec![
+                Operation::CreateHeaderFooterBody {
+                    region,
+                    id: body,
+                    blocks: vec![BlockNode::Paragraph(Paragraph {
+                        id: paragraph,
+                        properties: ParagraphProperties::default(),
+                        inlines: Vec::new(),
+                    })],
+                },
+                Operation::SetSectionRunningRef {
+                    section,
+                    region,
+                    kind: HeaderFooterKind::Default,
+                    reference: Some(body),
+                },
+            ],
+            Pos::new(paragraph, 0),
+            HistoryKind::Edit,
+        )
+        .map_err(to_js)
     }
 
     /// Inserts an endnote at the caret, the endnote counterpart of

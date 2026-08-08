@@ -3719,6 +3719,30 @@ function traverseObjects(step) {
 // know what Esc should do.
 let runningEditBand = null; // "header" | "footer" | null
 
+/** Creates an empty header or footer and enters it. Gated like any other
+ *  mutation: refused read-only in Viewing, and blocked in Suggesting because
+ *  adding running content has no tracked-change representation. */
+async function createRunningContent(band) {
+  if (blockMutationInViewing()) return;
+  if (reviewMode === "suggesting") {
+    setStatus(`Adding a ${band} cannot be tracked yet; switch to Editing`, "error");
+    return;
+  }
+  let result;
+  try {
+    result = doc.createRunningContent(band);
+  } catch (err) {
+    setStatus(`Could not add a ${band}: ${err.message ?? err}`, "error");
+    return;
+  }
+  const node = result.node;
+  const offset = result.offset;
+  await applyEditResult(result);
+  // The new body is now laid out, so its paragraph has geometry to put a caret
+  // on; entering after the render is what makes the caret visible.
+  enterRunningEdit(band, node, offset);
+}
+
 /** Finds a caret position inside a page's header or footer by walking the band
  *  inward from the page edge until the engine answers.
  *
@@ -3783,14 +3807,16 @@ function editRunningContent(band) {
   const page = pages[0];
   if (!page) return;
   const hit = probeRunningBand(page, band);
-  if (!hit) {
-    // Nothing is placed in that band, so there is nothing to put a caret in.
-    // Creating one on demand is the `+` marker's job (docs/85 §8d) and a
-    // separate slice; saying so is better than opening an empty context.
-    setStatus(`This document has no ${band} yet`, "error");
+  if (hit) {
+    enterRunningEdit(hit.band, hit.node, hit.offset);
     return;
   }
-  enterRunningEdit(hit.band, hit.node, hit.offset);
+  // Nothing placed in that band: make one. Word and Docs both create the
+  // header the moment you ask to edit a document that has none, rather than
+  // refusing — the ask IS the intent. One undoable action creates the body and
+  // links the section to it, and the caret it returns is the new body's first
+  // (empty) paragraph.
+  void createRunningContent(band);
 }
 
 /** The wrap-mode choices offered for a floating object (docs/85 §5.3 / §10). */
