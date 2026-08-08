@@ -61,7 +61,7 @@ use casual_doc_model::v1::{
     VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
-use casual_doc_model::v1::{HeaderFooterId, HeaderFooterKind};
+use casual_doc_model::v1::{GroupChild, HeaderFooterId, HeaderFooterKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
@@ -8728,17 +8728,21 @@ impl WasmDocument {
                 }
             }
             // Floating (anchored) objects: `PlacedAnchor.rect` is already the
-            // absolute page rect, and `node` links back to the model anchor node
-            // (top-level `AnchoredDrawing`/floating `TextBox`; group children carry
-            // `None` and are not individually selectable yet).
+            // absolute page rect, and `node` links back to the model node — a
+            // top-level `AnchoredDrawing`/floating `TextBox`, or, since group
+            // children now carry their own identity, an individual child of a
+            // shape group.
             for placed in &page.anchored {
                 let Some(node) = placed.node else {
                     continue;
                 };
-                // Only body floats are editable this slice: a header/footer float's
-                // node lives in the running-content part, not `body()`, so the
-                // geometry ops can't resolve it — don't offer it for selection.
-                if object_anchor(self.document.body(), node).is_none() {
+                // Only body objects are offered: a header/footer float's node lives
+                // in the running-content part, so the geometry ops cannot resolve
+                // it. A group CHILD is not itself an anchor — the group is — so it
+                // is admitted by finding it in a group instead.
+                if object_anchor(self.document.body(), node).is_none()
+                    && !body_contains_group_child(self.document.body(), node)
+                {
                     continue;
                 }
                 let kind = match &placed.content {
@@ -9610,12 +9614,61 @@ fn highlight_name(color: HighlightColor) -> String {
 /// the byte space hit-testing addresses (doc 58 §3).
 /// Collects the paragraphs of any inline text boxes (including those inside
 /// hyperlink and field wrappers) so they are orderable like body paragraphs.
+/// Collects the paragraphs of text boxes inside a shape group, recursing into
+/// nested groups, so positions in them are orderable like body paragraphs.
+/// Whether `node` is a child of some shape group in `blocks` (recursing into
+/// nested groups). A group child is selectable in its own right, but it is not a
+/// top-level anchor, so `object_anchor` never finds it.
+fn body_contains_group_child(blocks: &[BlockNode], node: NodeId) -> bool {
+    fn in_children(children: &[GroupChild], node: NodeId) -> bool {
+        children.iter().any(|child| match child {
+            GroupChild::Picture(picture) => picture.id == node,
+            GroupChild::TextBox(text_box) => text_box.id == node,
+            GroupChild::Shape(shape) => shape.id == node,
+            GroupChild::Group(nested) => nested.id == node || in_children(&nested.children, node),
+        })
+    }
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
+        inlines.iter().any(|inline| match inline {
+            InlineNode::Group(group) => in_children(&group.children, node),
+            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+            InlineNode::Field(field) => in_inlines(&field.inlines, node),
+            InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, node),
+            _ => false,
+        })
+    }
+    fn in_blocks(blocks: &[BlockNode], node: NodeId) -> bool {
+        blocks.iter().any(|block| match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, node),
+            BlockNode::Table(table) => table
+                .rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| in_blocks(&cell.blocks, node))),
+            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, node),
+            BlockNode::AltChunk(_) => false,
+        })
+    }
+    in_blocks(blocks, node)
+}
+
+fn collect_group_text(children: &[GroupChild], out: &mut Vec<(NodeId, String)>) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
+            GroupChild::Group(nested) => collect_group_text(&nested.children, out),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
 fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>) {
     for inline in inlines {
         match inline {
             InlineNode::TextBox(text_box) => collect_block_text(&text_box.blocks, out),
             InlineNode::Hyperlink(link) => collect_text_box_text(&link.inlines, out),
             InlineNode::Field(field) => collect_text_box_text(&field.inlines, out),
+            // Groups hold text boxes too, and nest.
+            InlineNode::Group(group) => collect_group_text(&group.children, out),
             _ => {}
         }
     }

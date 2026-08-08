@@ -746,7 +746,11 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
-                        node: None,
+                        // A group child's identity, so a click on it resolves to
+                        // the model like any other object. Left as `None` before,
+                        // which is why grouped content rendered but could not be
+                        // selected, entered, or edited at all.
+                        node: Some(picture.id),
                         content: AnchorContent::Image {
                             media,
                             crop: picture.crop,
@@ -783,7 +787,7 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
-                        node: None,
+                        node: Some(text_box.id),
                         content: AnchorContent::TextBox {
                             blocks: flowed.blocks,
                             fill: text_box.fill.clone(),
@@ -884,7 +888,7 @@ fn place_group_children(
                     layout,
                     page_index,
                     PlacedAnchor {
-                        node: None,
+                        node: Some(shape.id),
                         content,
                         rect,
                         behind_doc,

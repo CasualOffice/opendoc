@@ -26,6 +26,7 @@ use casual_doc_model::v1::{
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
+use casual_doc_model::v1::GroupChild;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
@@ -3349,12 +3350,48 @@ fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNod
 /// Searches an inline list for a paragraph inside a text box, recursing through
 /// the wrappers that can hold one: hyperlinks, fields, shape groups, and text
 /// boxes themselves (a text box may contain a table whose cells hold more).
+/// Searches a shape group's children (recursing into nested groups) for a
+/// paragraph inside one of their text boxes.
+fn find_paragraph_in_group(children: &[GroupChild], id: NodeId) -> Option<&Paragraph> {
+    for child in children {
+        let found = match child {
+            GroupChild::TextBox(text_box) => find_paragraph(&text_box.blocks, id),
+            GroupChild::Group(nested) => find_paragraph_in_group(&nested.children, id),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// The mutable twin of [`find_paragraph_in_group`].
+fn find_paragraph_in_group_mut(children: &mut [GroupChild], id: NodeId) -> Option<&mut Paragraph> {
+    for child in children {
+        let found = match child {
+            GroupChild::TextBox(text_box) => find_paragraph_mut(&mut text_box.blocks, id),
+            GroupChild::Group(nested) => find_paragraph_in_group_mut(&mut nested.children, id),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
 fn find_paragraph_in_inlines(inlines: &[InlineNode], id: NodeId) -> Option<&Paragraph> {
     for inline in inlines {
         let found = match inline {
             InlineNode::TextBox(text_box) => find_paragraph(&text_box.blocks, id),
             InlineNode::Hyperlink(link) => find_paragraph_in_inlines(&link.inlines, id),
             InlineNode::Field(field) => find_paragraph_in_inlines(&field.inlines, id),
+            // A shape GROUP can hold text boxes, and groups nest, so a paragraph
+            // can be arbitrarily deep inside one. Their ids are in the same
+            // document-wide space (`record_group_ids`), so only the walk was
+            // missing.
+            InlineNode::Group(group) => find_paragraph_in_group(&group.children, id),
             _ => None,
         };
         if found.is_some() {
@@ -4148,6 +4185,7 @@ fn find_paragraph_in_inlines_mut(inlines: &mut [InlineNode], id: NodeId) -> Opti
             InlineNode::TextBox(text_box) => find_paragraph_mut(&mut text_box.blocks, id),
             InlineNode::Hyperlink(link) => find_paragraph_in_inlines_mut(&mut link.inlines, id),
             InlineNode::Field(field) => find_paragraph_in_inlines_mut(&mut field.inlines, id),
+            InlineNode::Group(group) => find_paragraph_in_group_mut(&mut group.children, id),
             _ => None,
         };
         if found.is_some() {
