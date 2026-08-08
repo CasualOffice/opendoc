@@ -796,6 +796,14 @@ struct OdtGraphicStyle {
     /// to a producer that relies on the anchor-type derivation). `None` = not emitted.
     horizontal_rel: Option<&'static str>,
     vertical_rel: Option<&'static str>,
+    /// A floating image's picture flip (`draw:mirror`): mirror across the vertical
+    /// (`mirror_h`) / horizontal (`mirror_v`) axis. Emitted as a single
+    /// `draw:mirror="horizontal[ vertical]"` when either is set.
+    mirror_h: bool,
+    mirror_v: bool,
+    /// A floating image's solid border (`fo:border`): RGB color + width in EMU.
+    /// Distinct from `stroke` (a shape's `svg:stroke-*` outline).
+    border: Option<((u8, u8, u8), i64)>,
 }
 
 impl OdtGraphicStyle {
@@ -865,6 +873,15 @@ impl OdtGraphicStyle {
         }
         if let Some(v) = self.vertical_rel {
             let _ = write!(key, "vrel={v};");
+        }
+        if self.mirror_h {
+            key.push_str("mirh;");
+        }
+        if self.mirror_v {
+            key.push_str("mirv;");
+        }
+        if let Some(((r, g, b), w)) = self.border {
+            let _ = write!(key, "border={r},{g},{b},{w};");
         }
         format!("gr{:016x}", font_family_hash(&key))
     }
@@ -963,6 +980,31 @@ fn push_graphic_properties(
         push_bounded(xml, "\"", max_content_bytes)?;
     } else if style.stroke_none {
         push_bounded(xml, " draw:stroke=\"none\"", max_content_bytes)?;
+    }
+    if let Some(((red, green, blue), width_emu)) = style.border {
+        // A floating image's `fo:border` shorthand: width, the `solid` style, then
+        // the color, matching the canonical order the importer parses back.
+        push_bounded(xml, " fo:border=\"", max_content_bytes)?;
+        push_bounded(xml, &emu_to_cm(width_emu), max_content_bytes)?;
+        push_bounded(xml, " solid #", max_content_bytes)?;
+        push_bounded(
+            xml,
+            &format!("{red:02x}{green:02x}{blue:02x}"),
+            max_content_bytes,
+        )?;
+        push_bounded(xml, "\"", max_content_bytes)?;
+    }
+    if style.mirror_h || style.mirror_v {
+        push_bounded(xml, " draw:mirror=\"", max_content_bytes)?;
+        let value = match (style.mirror_h, style.mirror_v) {
+            (true, true) => "horizontal vertical",
+            (true, false) => "horizontal",
+            (false, true) => "vertical",
+            // Unreachable: the block is gated on either flag being set.
+            (false, false) => "",
+        };
+        push_bounded(xml, value, max_content_bytes)?;
+        push_bounded(xml, "\"", max_content_bytes)?;
     }
     Ok(())
 }
@@ -3008,11 +3050,27 @@ impl Writer {
             self.reporter
                 .record("odt.export.anchor_wrap_polygon", ModelOutcome::Degraded);
         }
+        // The flip pair (`draw:mirror`) always round-trips. A solid, opaque border
+        // with no dash or line-ends maps to `fo:border`; any richer border form has
+        // no `fo:border` shorthand. Crop and rotation have no clean ODF fixed point
+        // (see the type docs) and stay deferred. Anything not emittable degrades.
+        graphic.mirror_h = drawing.flip_h;
+        graphic.mirror_v = drawing.flip_v;
+        let border_emittable = drawing.border.as_ref().filter(|border| {
+            border.dash.is_none()
+                && border.head_end.is_none()
+                && border.tail_end.is_none()
+                && border.color.a == 255
+        });
+        if let Some(border) = border_emittable {
+            graphic.border = Some((
+                (border.color.r, border.color.g, border.color.b),
+                border.width_emu,
+            ));
+        }
         if drawing.crop.is_some()
-            || drawing.border.is_some()
-            || drawing.flip_h
-            || drawing.flip_v
             || drawing.rotation.is_some()
+            || (drawing.border.is_some() && border_emittable.is_none())
         {
             self.reporter.record(
                 "odt.export.anchor_picture_transform",
@@ -3133,6 +3191,11 @@ impl Writer {
             // anchor-type default, so these stay `None` there (byte-identical).
             horizontal_rel: None,
             vertical_rel: None,
+            // The picture transforms are set by the anchored-image caller after this
+            // wrap/anchor builder returns; a shape leaves them at their defaults.
+            mirror_h: false,
+            mirror_v: false,
+            border: None,
         }
     }
 

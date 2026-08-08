@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
     Alignment, BlockNode, Color, DashStyle, Fill, GradientKind, GradientStop, GroupChild,
-    HorizontalAnchor, HorizontalPosition, InlineNode, RgbColor, ShapeGeometry, ShapeStroke,
+    HorizontalAnchor, HorizontalPosition, InlineNode, RgbColor, Rgba, ShapeGeometry, ShapeStroke,
     StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
 };
 use casual_doc_package::CancellationToken;
@@ -1121,6 +1121,194 @@ fn floating_anchored_image_round_trips() {
         write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
             .unwrap();
     assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// Builds an ODT package holding a single-pixel PNG at `Pictures/pic.dat` and the
+/// given `content.xml`, mirroring the floating-image fixtures.
+fn floating_image_package(content: Vec<u8>) -> Vec<u8> {
+    image_package(
+        content,
+        r#"<m:file-entry m:full-path="Pictures/pic.dat" m:media-type="image/png"/>"#,
+        &[Entry {
+            name: "Pictures/pic.dat",
+            bytes: b"\x89PNG\r\n".to_vec(),
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        }],
+    )
+}
+
+/// A floating image whose graphic style carries `draw:mirror="horizontal vertical"`
+/// imports to the model's flip pair and re-emits the mirror to a byte fixed point.
+#[test]
+fn floating_image_mirror_round_trips() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties draw:mirror="horizontal vertical"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = floating_image_package(content);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert!(anchored.flip_h);
+    assert!(anchored.flip_v);
+    assert!(anchored.crop.is_none());
+    assert!(anchored.border.is_none());
+    assert_eq!(anchored.rotation, None);
+
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"draw:mirror="horizontal vertical""#));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// A floating image whose graphic style carries a solid `fo:border` imports to the
+/// model's picture outline (opaque color + EMU width) and re-emits it to a fixed
+/// point. `0.06cm` is an exact multiple of the `cm` grid the writer floors to.
+#[test]
+fn floating_image_border_round_trips() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties fo:border="0.06cm solid #ff0000"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = floating_image_package(content);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert_eq!(
+        anchored.border,
+        Some(ShapeStroke {
+            color: Rgba {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            width_emu: 6 * 3600, // 0.06cm
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        })
+    );
+    assert!(!anchored.flip_h);
+    assert!(!anchored.flip_v);
+
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"fo:border="0.0600cm solid #ff0000""#));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let retained2 = out
+        .retained_media_parts(&reopened.document, OdfImportLimits::default())
+        .unwrap();
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained2, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+}
+
+/// A page-parity `draw:mirror` variant has no model form: the flip is dropped with
+/// a finding rather than re-emitted as a plain (semantics-changing) mirror.
+#[test]
+fn floating_image_mirror_on_even_is_deferred() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties draw:mirror="horizontal-on-even"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = floating_image_package(content);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert!(!anchored.flip_h);
+    assert!(!anchored.flip_v);
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.style.graphic-mirror-deferred")
+    );
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!content_out.contains("draw:mirror"));
+}
+
+/// An image crop (`fo:clip`) and a frame rotation (`draw:transform`) have no clean
+/// model fixed point in this slice: both are dropped with a finding, never modeled
+/// or re-emitted, and neither aborts the import.
+#[test]
+fn floating_image_clip_and_transform_are_deferred() {
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="fr1" style:family="graphic"><style:graphic-properties fo:clip="rect(0.5cm 0.5cm 0.5cm 0.5cm)"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:frame draw:style-name="fr1" text:anchor-type="page" draw:transform="rotate(0.5) translate(5cm 3cm)" svg:x="5cm" svg:y="3cm" svg:width="4cm" svg:height="2cm"><draw:image xlink:href="Pictures/pic.dat"/></draw:frame></text:p></office:text></office:body></office:document-content>"#.to_vec();
+    let bytes = floating_image_package(content);
+    let mut package = OdtPackage::open(&bytes, OdfPackageLimits::default()).unwrap();
+    let imported = package.import_document(OdfImportLimits::default()).unwrap();
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::AnchoredDrawing(anchored) = &paragraph.inlines[0] else {
+        panic!("anchored drawing")
+    };
+    assert!(anchored.crop.is_none());
+    assert_eq!(anchored.rotation, None);
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.style.graphic-clip-deferred")
+    );
+    assert!(
+        imported
+            .report
+            .entries
+            .iter()
+            .any(|entry| entry.feature == "odf.draw.frame-transform-deferred")
+    );
+    // Export emits neither a crop nor a transform.
+    let retained = package
+        .retained_media_parts(&imported.document, OdfImportLimits::default())
+        .unwrap();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!content_out.contains("fo:clip"));
+    assert!(!content_out.contains("draw:transform"));
 }
 
 /// A floating frame whose graphic style pins `style:horizontal-rel="page-content"`

@@ -545,6 +545,13 @@ struct AnchoredDrawingDraft {
     wrap_bottom_emu: i64,
     wrap_start_emu: i64,
     wrap_end_emu: i64,
+    /// Picture flip from `draw:mirror` on the frame's graphic style (mirror across
+    /// the vertical / horizontal axis). `false` when absent or a deferred variant.
+    flip_h: bool,
+    flip_v: bool,
+    /// Picture border from `fo:border` on the frame's graphic style: a solid
+    /// outline (RGB color + width in EMU). `None` when absent or unrepresentable.
+    border: Option<(RgbColor, i64)>,
 }
 
 /// A bounded floating (anchored) standalone shape (`draw:rect` this increment): a
@@ -982,6 +989,15 @@ struct OdfStyle {
     /// falls back to the `text:anchor-type` derivation.
     graphic_horizontal_rel: Option<String>,
     graphic_vertical_rel: Option<String>,
+    /// `draw:mirror` for a floating image's graphic style: the picture flip
+    /// (`horizontal`/`vertical`/`horizontal vertical`). Retained verbatim; only the
+    /// plain axis tokens map to the model's flip pair, the page-parity variants
+    /// (`horizontal-on-even`/`-odd`) degrade with a finding.
+    graphic_mirror: Option<String>,
+    /// `fo:border` for a floating image's graphic style, parsed to a solid outline
+    /// (RGB color + width in EMU). Only a solid, colored border round-trips; a
+    /// non-solid or color-less border degrades to none with a finding.
+    graphic_border: Option<(RgbColor, i64)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3028,6 +3044,37 @@ fn read_graphic_style_properties(
                 style.style.graphic_vertical_rel = Some(value.trim().to_owned());
                 true
             }
+            (NamespaceKind::Draw, b"mirror") => {
+                style.style.graphic_mirror = Some(value.trim().to_owned());
+                true
+            }
+            (NamespaceKind::Fo, b"clip") => {
+                // A rectangular image crop. The `rect(...)` insets are lengths off the
+                // INTRINSIC image edges, so recovering the model's source-fraction crop
+                // needs the picture's natural pixel size, which the importer does not
+                // decode — deferred with a finding rather than modeled lossily.
+                reporter.report(
+                    "odf.style.graphic-clip-deferred".to_owned(),
+                    ModelOutcome::Degraded,
+                );
+                true
+            }
+            (NamespaceKind::Fo, b"border") => {
+                let trimmed = value.trim();
+                // `none`/empty is a genuine no-border (nothing lost). A solid,
+                // colored border maps to the model's stroke; any other form
+                // (double/dashed/color-less) degrades to no border with a finding.
+                if !(trimmed.is_empty() || trimmed == "none") {
+                    match parse_graphic_border(trimmed) {
+                        Some(border) => style.style.graphic_border = Some(border),
+                        None => reporter.report(
+                            "odf.style.graphic-border-dropped".to_owned(),
+                            ModelOutcome::Degraded,
+                        ),
+                    }
+                }
+                true
+            }
             _ => false,
         };
         if !mapped && !is_namespace_declaration(&attribute) {
@@ -3134,6 +3181,48 @@ fn parse_fo_border(value: &str) -> Option<BorderEdge> {
         color,
         space_points: None,
     })
+}
+
+/// Parses an `fo:border` shorthand for a floating image into a solid outline
+/// (RGB color + width in EMU). Only a `solid`, colored border is modeled; a
+/// non-solid style keyword, a missing/duplicate token, or a missing color yields
+/// `None` so the caller degrades the border to none with a finding. A missing
+/// width defaults to 0 (a hairline). The EMU width round-trips through the
+/// canonical `cm` form the exporter emits (a fixed point).
+fn parse_graphic_border(value: &str) -> Option<(RgbColor, i64)> {
+    let mut width: Option<i64> = None;
+    let mut color: Option<RgbColor> = None;
+    let mut solid = false;
+    let mut had_style = false;
+    for token in value.split_whitespace() {
+        if token.starts_with('#') {
+            if color.is_some() {
+                return None;
+            }
+            color = Some(parse_rgb_color(token)?);
+        } else if token.ends_with("cm")
+            || token.ends_with("mm")
+            || token.ends_with("in")
+            || token.ends_with("pt")
+            || token.ends_with("pc")
+        {
+            if width.is_some() {
+                return None;
+            }
+            width = Some(parse_emu(token)?);
+        } else {
+            // A style keyword (`solid`/`dashed`/`double`/…). Only `solid` maps.
+            if had_style {
+                return None;
+            }
+            had_style = true;
+            solid = token == "solid";
+        }
+    }
+    if !solid {
+        return None;
+    }
+    Some((color?, width.unwrap_or(0)))
 }
 
 /// Parses a border width length into eighth-points (`w:sz`, 1 eighth-pt =
@@ -5278,6 +5367,36 @@ fn resolve_shape_stroke(
     })
 }
 
+/// Resolves a floating image's `draw:mirror` into the model's flip pair
+/// (`horizontal` → across the vertical axis, `vertical` → across the horizontal).
+/// The plain axis tokens round-trip; a page-parity variant (`horizontal-on-even`/
+/// `-odd`) or any unrecognized token has no model form, so the whole mirror
+/// degrades to no flip with a finding rather than silently re-emitting a partial
+/// value.
+fn resolve_graphic_mirror(style: &OdfStyle, reporter: &mut Reporter) -> (bool, bool) {
+    let Some(value) = style.graphic_mirror.as_deref() else {
+        return (false, false);
+    };
+    let mut flip_h = false;
+    let mut flip_v = false;
+    let mut clean = true;
+    for token in value.split_whitespace() {
+        match token {
+            "horizontal" => flip_h = true,
+            "vertical" => flip_v = true,
+            _ => clean = false,
+        }
+    }
+    if !clean {
+        reporter.report(
+            "odf.style.graphic-mirror-deferred".to_owned(),
+            ModelOutcome::Degraded,
+        );
+        return (false, false);
+    }
+    (flip_h, flip_v)
+}
+
 /// Builds a `ShapeDraft` from a `draw:rect`'s attributes alone (no reader
 /// consumption), shared by the self-closing (`Event::Empty`) and open
 /// (`Event::Start`) forms. Returns `None` (reported) for a non-floating anchor or a
@@ -6251,6 +6370,16 @@ fn parse_draw_frame(
                         .map(|value| value.clamp(0, i64::from(u32::MAX)) as u32);
                 }
                 b"style-name" => graphic_style_name = Some(decode_attribute(&attribute)?),
+                b"transform" => {
+                    // A `rotate(...) translate(...)` frame transform (rotation). A
+                    // center-anchored rotate+translate has no byte-stable model fixed
+                    // point under the `cm` quantization the writer uses, so rotation is
+                    // deferred with a finding rather than modeled.
+                    reporter.report(
+                        "odf.draw.frame-transform-deferred".to_owned(),
+                        ModelOutcome::Degraded,
+                    );
+                }
                 _ => {}
             },
             _ => {}
@@ -6556,6 +6685,13 @@ fn parse_draw_frame(
                     graphic.and_then(|style| resolve_horizontal_align(style, reporter));
                 let vertical_align =
                     graphic.and_then(|style| resolve_vertical_align(style, reporter));
+                // Picture transforms carried on the graphic style: the flip pair
+                // (`draw:mirror`) and a solid border (`fo:border`). Crop and rotation
+                // remain deferred (see the frame-level finding on their ODF forms).
+                let (flip_h, flip_v) = graphic
+                    .map(|style| resolve_graphic_mirror(style, reporter))
+                    .unwrap_or((false, false));
+                let border = graphic.and_then(|style| style.graphic_border);
                 if let (Some(width_emu), Some(height_emu)) = (width_emu, height_emu) {
                     // Report a clamped offset only for an axis that is actually using
                     // the offset (an aligned axis legitimately ignores its `svg:x`/`y`,
@@ -6587,6 +6723,9 @@ fn parse_draw_frame(
                         wrap_bottom_emu: distances.1,
                         wrap_start_emu: distances.2,
                         wrap_end_emu: distances.3,
+                        flip_h,
+                        flip_v,
+                        border,
                     })));
                 }
                 // An anchor with no extent cannot be modeled (extent is mandatory);
@@ -10997,10 +11136,19 @@ fn build_inlines(
                     },
                     descr: draft.descr.clone(),
                     relative_height: draft.relative_height,
+                    // Crop (`fo:clip`) and rotation (`draw:transform`) remain deferred;
+                    // the flip pair (`draw:mirror`) and a solid border (`fo:border`)
+                    // round-trip.
                     crop: None,
-                    border: None,
-                    flip_h: false,
-                    flip_v: false,
+                    border: draft.border.map(|(color, width_emu)| ShapeStroke {
+                        color: rgb_to_rgba(color),
+                        width_emu,
+                        dash: None,
+                        head_end: None,
+                        tail_end: None,
+                    }),
+                    flip_h: draft.flip_h,
+                    flip_v: draft.flip_v,
                     rotation: None,
                 })
             }
