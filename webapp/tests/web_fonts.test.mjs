@@ -79,10 +79,42 @@ test("checkbox/dingbat symbols outside Noto Sans's coverage fall back too", () =
   assert.deepEqual(SCRIPT_FALLBACK_FONTS.symbols.scripts, ["Zyyy", "Latn"]);
 });
 
-test("every script fallback font resolves to a pinned, immutable Noto URL", () => {
+// Pictographic emoji are ordinary document content — a .docx authored anywhere
+// else can carry 😀 in a heading — so they must resolve to a covering face like
+// any other script. Before the `emoji` bucket existed every one of these scalars
+// mapped to no font and painted as a notdef box, whatever produced the document.
+test("pictographic emoji fall back to the monochrome emoji face", () => {
+  assert.deepEqual(
+    fallbackKeysFor([
+      0x1f600, // 😀 GRINNING FACE — Emoticons
+      0x1f525, // 🔥 FIRE — Misc Symbols and Pictographs
+      0x1f680, // 🚀 ROCKET — Transport and Map
+      0x1f9ea, // 🧪 TEST TUBE — Supplemental Symbols and Pictographs
+      0x1fa79, // 🩹 ADHESIVE BANDAGE — Extended-A
+      0x1f1ee, // 🇮 REGIONAL INDICATOR I — flag pairs
+    ]),
+    ["emoji"],
+  );
+  assert.deepEqual(SCRIPT_FALLBACK_FONTS.emoji.scripts, ["Zyyy", "Latn"]);
+});
+
+// The monochrome symbol blocks must keep resolving to Noto Sans Symbols 2 rather
+// than being swallowed by the new emoji bucket: ☐/☒ checklist markers sit at
+// U+2610/U+2612, immediately below the emoji ranges.
+test("monochrome symbol blocks still resolve to the symbols face, not emoji", () => {
+  assert.deepEqual(fallbackKeysFor([0x2610, 0x2612, 0x25a1, 0x2764]), ["symbols"]);
+});
+
+test("every script fallback font resolves to a pinned, immutable upstream URL", () => {
   for (const [key, font] of Object.entries(SCRIPT_FALLBACK_FONTS)) {
     assert.ok(font.scripts.length > 0, `${key} declares no scripts`);
-    assert.match(font.url, /^https:\/\/cdn\.jsdelivr\.net\/gh\/notofonts\//);
+    // notofonts hosts the script fallbacks; google/fonts hosts Noto Emoji, which
+    // is not published in the notofonts distribution. Both are commit-pinned.
+    assert.match(
+      font.url,
+      /^https:\/\/cdn\.jsdelivr\.net\/gh\/(notofonts|google\/fonts)/,
+      `${key} is not served from a pinned upstream`,
+    );
     assert.match(font.url, /@[0-9a-f]{40}\//);
   }
 });
