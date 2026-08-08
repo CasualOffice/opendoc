@@ -4908,6 +4908,182 @@ function openContextLink(link) {
 // tucked into submenus so no single target dumps a 30-row list. Every entry
 // still routes through the same transaction-backed actions as the ribbon and
 // command palette, so availability and mutation gates never drift.
+// The table tools, built from a context the caller supplies. Extracted from the
+// right-click menu so the command palette can offer the SAME rows when the caret
+// is in a table: every structural table command used to exist ONLY on the
+// contextual Table ribbon tab and the right-click menu, so typing "insert row"
+// or "merge cells" into the palette found nothing. Word reaches all of them from
+// Tell Me, and Docs files them under Format ▸ Table.
+function tableToolCommands(context) {
+  // Structural table edits rewrite the grid, which the engine cannot represent as
+  // a tracked change, so Suggesting disables them with that as the stated reason.
+  const structuralEnabled = !context.suggesting;
+  const structuralReason = structuralEnabled
+    ? ""
+    : "This structural change cannot be tracked in Suggesting mode";
+  const regular = context.table.regular;
+  const selectedTable = tableSelection
+    ? plainTableInfo(tableSelection.node)?.table
+    : "";
+  const hasTableSelection =
+    !!selectedTable && selectedTable === context.table.table;
+  const columnsReason = regular
+    ? structuralReason
+    : "Unavailable for merged or spanned tables";
+  const tableMutation = (id, label, run, options = {}) => ({
+    id,
+    label,
+    group: options.group ?? "op",
+    enabled:
+      structuralEnabled &&
+      (options.regular !== true || regular) &&
+      (options.enabled ?? true),
+    disabledReason:
+      !structuralEnabled
+        ? structuralReason
+        : options.regular === true && !regular
+          ? columnsReason
+          : options.enabled === false
+            ? options.disabledReason
+            : "",
+    danger: options.danger,
+    run,
+  });
+
+  const insertSubmenu = [
+    tableMutation("table.insert.rowAbove", "Row above",
+      () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
+      { group: "row" }),
+    tableMutation("table.insert.rowBelow", "Row below",
+      () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
+      { group: "row" }),
+    tableMutation("table.insert.columnLeft", "Column left",
+      () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
+      { regular: true, group: "col" }),
+    tableMutation("table.insert.columnRight", "Column right",
+      () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
+      { regular: true, group: "col" }),
+  ];
+  const deleteSubmenu = [
+    tableMutation("table.delete.row", "Delete row",
+      () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
+      { danger: true, group: "cell" }),
+    tableMutation("table.delete.column", "Delete column",
+      () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
+      { danger: true, regular: true, group: "cell" }),
+    tableMutation("table.delete.table", "Delete table",
+      () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
+      { danger: true, group: "table" }),
+  ];
+  const selectSubmenu = [
+    {
+      id: "table.select.row",
+      label: "Select row",
+      group: "sel",
+      run: () => selectTableContext(context.anchor.node, "row"),
+    },
+    {
+      id: "table.select.column",
+      label: "Select column",
+      group: "sel",
+      enabled: regular,
+      disabledReason: regular ? "" : columnsReason,
+      run: () => selectTableContext(context.anchor.node, "column"),
+    },
+    {
+      id: "table.select.table",
+      label: "Select table",
+      group: "sel",
+      run: () => selectTableContext(context.anchor.node, "table"),
+    },
+  ];
+  const layoutSubmenu = [
+    tableMutation("table.distribute.rows", "Distribute rows",
+      () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
+      {
+        regular: true,
+        group: "distribute",
+        enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
+        disabledReason: "Rows need a fixed or minimum height before distribution",
+      }),
+    tableMutation("table.distribute.columns", "Distribute columns",
+      () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
+      { regular: true, group: "distribute" }),
+    tableMutation("table.sort.ascending", "Sort ascending",
+      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
+      { regular: true, group: "sort" }),
+    tableMutation("table.sort.descending", "Sort descending",
+      () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
+      { regular: true, group: "sort" }),
+  ];
+
+  return [
+    {
+      id: "table.insert",
+      label: "Insert",
+      group: "table",
+      icon: "tableInsert",
+      submenu: insertSubmenu,
+    },
+    {
+      id: "table.delete",
+      label: "Delete",
+      group: "table",
+      icon: "tableDelete",
+      submenu: deleteSubmenu,
+    },
+    tableMutation("table.merge", "Merge cells",
+      async () => {
+        await runEdit(() =>
+          doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
+        tableSelection = null;
+      },
+      {
+        group: "table",
+        enabled: hasTableSelection,
+        disabledReason: "Select a row, column, or table before merging",
+      }),
+    tableMutation("table.split", "Split cell…",
+      () => toggleSplitCellDialog(true),
+      { group: "table" }),
+    {
+      id: "table.select",
+      label: "Select",
+      group: "table-select",
+      icon: "tableSelect",
+      submenu: selectSubmenu,
+    },
+    {
+      id: "table.layout",
+      label: "Autofit & sort",
+      group: "table-select",
+      icon: "tableLayout",
+      submenu: layoutSubmenu,
+    },
+    {
+      id: "table.cellFormat",
+      label: "Cell formatting…",
+      group: "table-properties",
+      icon: "paragraph",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => {
+        selectRibbonTab("table");
+        tableBtn.click();
+      },
+    },
+    {
+      id: "table.properties",
+      label: "Table properties…",
+      group: "table-properties",
+      icon: "settings",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => toggleTableProperties(true),
+    },
+  ];
+}
+
 function buildContextCommands(context) {
   // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
   // the paragraph-text menu (docs/85 §4.1; Word/Google Docs image menu). The
@@ -5125,167 +5301,7 @@ function buildContextCommands(context) {
   // then Select / Autofit & sort, then the property dialogs), matching Word's
   // and Google Docs' table menus. The generic text-format rows are demoted to a
   // single trailing "Format ▸" submenu.
-  const regular = context.table.regular;
-  const selectedTable = tableSelection
-    ? plainTableInfo(tableSelection.node)?.table
-    : "";
-  const hasTableSelection =
-    !!selectedTable && selectedTable === context.table.table;
-  const columnsReason = regular
-    ? structuralReason
-    : "Unavailable for merged or spanned tables";
-  const tableMutation = (id, label, run, options = {}) => ({
-    id,
-    label,
-    group: options.group ?? "op",
-    enabled:
-      structuralEnabled &&
-      (options.regular !== true || regular) &&
-      (options.enabled ?? true),
-    disabledReason:
-      !structuralEnabled
-        ? structuralReason
-        : options.regular === true && !regular
-          ? columnsReason
-          : options.enabled === false
-            ? options.disabledReason
-            : "",
-    danger: options.danger,
-    run,
-  });
-
-  const insertSubmenu = [
-    tableMutation("table.insert.rowAbove", "Row above",
-      () => runEdit(() => doc.insertRow(context.anchor.node, false), { gate: true }),
-      { group: "row" }),
-    tableMutation("table.insert.rowBelow", "Row below",
-      () => runEdit(() => doc.insertRow(context.anchor.node, true), { gate: true }),
-      { group: "row" }),
-    tableMutation("table.insert.columnLeft", "Column left",
-      () => runEdit(() => doc.insertColumn(context.anchor.node, false), { gate: true }),
-      { regular: true, group: "col" }),
-    tableMutation("table.insert.columnRight", "Column right",
-      () => runEdit(() => doc.insertColumn(context.anchor.node, true), { gate: true }),
-      { regular: true, group: "col" }),
-  ];
-  const deleteSubmenu = [
-    tableMutation("table.delete.row", "Delete row",
-      () => runEdit(() => doc.deleteRow(context.anchor.node), { gate: true }),
-      { danger: true, group: "cell" }),
-    tableMutation("table.delete.column", "Delete column",
-      () => runEdit(() => doc.deleteColumn(context.anchor.node), { gate: true }),
-      { danger: true, regular: true, group: "cell" }),
-    tableMutation("table.delete.table", "Delete table",
-      () => runEdit(() => doc.deleteTable(context.anchor.node), { gate: true }),
-      { danger: true, group: "table" }),
-  ];
-  const selectSubmenu = [
-    {
-      id: "table.select.row",
-      label: "Select row",
-      group: "sel",
-      run: () => selectTableContext(context.anchor.node, "row"),
-    },
-    {
-      id: "table.select.column",
-      label: "Select column",
-      group: "sel",
-      enabled: regular,
-      disabledReason: regular ? "" : columnsReason,
-      run: () => selectTableContext(context.anchor.node, "column"),
-    },
-    {
-      id: "table.select.table",
-      label: "Select table",
-      group: "sel",
-      run: () => selectTableContext(context.anchor.node, "table"),
-    },
-  ];
-  const layoutSubmenu = [
-    tableMutation("table.distribute.rows", "Distribute rows",
-      () => runEdit(() => doc.distributeTableRows(context.anchor.node), { gate: true }),
-      {
-        regular: true,
-        group: "distribute",
-        enabled: ["exact", "atLeast"].includes(context.table.rowHeightRule),
-        disabledReason: "Rows need a fixed or minimum height before distribution",
-      }),
-    tableMutation("table.distribute.columns", "Distribute columns",
-      () => runEdit(() => doc.distributeTableColumns(context.anchor.node), { gate: true }),
-      { regular: true, group: "distribute" }),
-    tableMutation("table.sort.ascending", "Sort ascending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "ascending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
-    tableMutation("table.sort.descending", "Sort descending",
-      () => runEdit(() => doc.sortTable(context.anchor.node, "descending", context.table?.column ?? -1), { gate: true }),
-      { regular: true, group: "sort" }),
-  ];
-
-  commands.push(
-    {
-      id: "table.insert",
-      label: "Insert",
-      group: "table",
-      icon: "tableInsert",
-      submenu: insertSubmenu,
-    },
-    {
-      id: "table.delete",
-      label: "Delete",
-      group: "table",
-      icon: "tableDelete",
-      submenu: deleteSubmenu,
-    },
-    tableMutation("table.merge", "Merge cells",
-      async () => {
-        await runEdit(() =>
-          doc.mergeTableSelection(tableSelection.node, tableSelection.mode), { gate: true });
-        tableSelection = null;
-      },
-      {
-        group: "table",
-        enabled: hasTableSelection,
-        disabledReason: "Select a row, column, or table before merging",
-      }),
-    tableMutation("table.split", "Split cell…",
-      () => toggleSplitCellDialog(true),
-      { group: "table" }),
-    {
-      id: "table.select",
-      label: "Select",
-      group: "table-select",
-      icon: "tableSelect",
-      submenu: selectSubmenu,
-    },
-    {
-      id: "table.layout",
-      label: "Autofit & sort",
-      group: "table-select",
-      icon: "tableLayout",
-      submenu: layoutSubmenu,
-    },
-    {
-      id: "table.cellFormat",
-      label: "Cell formatting…",
-      group: "table-properties",
-      icon: "paragraph",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => {
-        selectRibbonTab("table");
-        tableBtn.click();
-      },
-    },
-    {
-      id: "table.properties",
-      label: "Table properties…",
-      group: "table-properties",
-      icon: "settings",
-      enabled: structuralEnabled,
-      disabledReason: structuralReason,
-      run: () => toggleTableProperties(true),
-    },
-  );
+  commands.push(...tableToolCommands(context));
 
   // Annotations sit below the table tools, then the demoted text-format submenu.
   commands.push(...annotate);
@@ -9212,6 +9228,33 @@ function editorCommands(context = { surface: "palette" }) {
         run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name)),
       });
     }
+  }
+  // Table structure, when the caret is in a table. These commands existed only on
+  // the contextual Table ribbon tab and the right-click menu, so searching the
+  // palette for "insert row" or "merge cells" found nothing — the same
+  // one-surface-only defect that left Picture off the Insert ribbon. Word reaches
+  // every one of them from Tell Me; Docs files them under Format ▸ Table. Built
+  // from the caret's own context so enablement and the "why not" reasons are the
+  // menu's, not a second opinion, and flattened out of their submenus with the
+  // parent's name kept ("Table: Insert row above") so the palette reads as a flat
+  // searchable list. `surface` is checked because the context menu composes these
+  // rows itself — it must not receive them twice.
+  if (doc && context.surface !== "context" && selection && plainTableInfo(selection.anchor.node)) {
+    const flatten = (entries, trail) =>
+      entries.flatMap((entry) =>
+        entry.submenu
+          ? flatten(entry.submenu, trail ? `${trail} ${entry.label}` : entry.label)
+          : [{
+            id: entry.id,
+            label: trail ? `Table: ${trail} ${entry.label}` : `Table: ${entry.label}`,
+            group: "Table",
+            kw: `table ${trail} ${entry.label}`.toLowerCase(),
+            enabled: entry.enabled,
+            disabledReason: entry.disabledReason,
+            run: entry.run,
+          }],
+      );
+    cmds.push(...flatten(tableToolCommands(contextAt(selection.anchor)), ""));
   }
   return cmds.filter((command) => doc || command.noDoc);
 }
