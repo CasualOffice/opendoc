@@ -276,8 +276,14 @@
             <div class="rgroup-ctl">
               <div class="fmt-rows">
                 <div class="fmt-row-line">
-                  <button id="bulletList" type="button" class="fmt" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_bulleted</span></button>
-                  <button id="numberedList" type="button" class="fmt" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_numbered</span></button>
+                  <span class="list-split">
+                    <button id="bulletList" type="button" class="fmt list-split-main" title="Bulleted list" aria-label="Bulleted list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_bulleted</span></button>
+                    <button id="bulletListMenuBtn" type="button" class="fmt list-caret" title="Bullet style" aria-label="Bullet style" aria-haspopup="menu" aria-controls="bulletGalleryMenu" aria-expanded="false"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </span>
+                  <span class="list-split">
+                    <button id="numberedList" type="button" class="fmt list-split-main" title="Numbered list" aria-label="Numbered list" aria-pressed="false"><span class="ms" aria-hidden="true">format_list_numbered</span></button>
+                    <button id="numberedListMenuBtn" type="button" class="fmt list-caret" title="Numbering format" aria-label="Numbering format" aria-haspopup="menu" aria-controls="numberGalleryMenu" aria-expanded="false"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </span>
                   <button id="checkList" type="button" class="fmt" title="Checklist" aria-label="Checklist" aria-pressed="false"><span class="ms" aria-hidden="true">checklist</span></button>
                   <button id="indentDec" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent"><span class="ms" aria-hidden="true">format_indent_decrease</span></button>
                   <button id="indentInc" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent"><span class="ms" aria-hidden="true">format_indent_increase</span></button>
@@ -595,6 +601,23 @@
       <button type="button" class="menu-item" data-case="title" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">Capitalize Each Word</span></button>
       <button type="button" class="menu-item" data-case="sentence" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">Sentence case</span></button>
       <button type="button" class="menu-item" data-case="toggle" role="menuitem"><span class="menu-item-icon" aria-hidden="true"></span><span class="menu-item-label">tOGGLE cASE</span></button>
+    </div>
+
+    <div id="bulletGalleryMenu" class="context-menu list-gallery-menu" hidden role="menu" aria-label="Bullet style">
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x2022;" role="menuitemradio" aria-checked="false" title="Filled round bullet" aria-label="Filled round bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x2022;</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x25E6;" role="menuitemradio" aria-checked="false" title="Hollow round bullet" aria-label="Hollow round bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x25E6;</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x25AA;" role="menuitemradio" aria-checked="false" title="Filled square bullet" aria-label="Filled square bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x25AA;</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x2023;" role="menuitemradio" aria-checked="false" title="Triangular bullet" aria-label="Triangular bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x2023;</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x2013;" role="menuitemradio" aria-checked="false" title="Dash bullet" aria-label="Dash bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x2013;</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="bullet:&#x00BB;" role="menuitemradio" aria-checked="false" title="Arrowhead bullet" aria-label="Arrowhead bullet"><span class="list-gallery-glyph" aria-hidden="true">&#x00BB;</span></button>
+    </div>
+
+    <div id="numberGalleryMenu" class="context-menu list-gallery-menu list-gallery-menu-number" hidden role="menu" aria-label="Numbering format">
+      <button type="button" class="list-gallery-cell" data-spec="decimal" role="menuitemradio" aria-checked="false" title="1. 2. 3." aria-label="Decimal numbers"><span class="list-gallery-sample" aria-hidden="true">1.<br />2.<br />3.</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="lowerLetter" role="menuitemradio" aria-checked="false" title="a. b. c." aria-label="Lowercase letters"><span class="list-gallery-sample" aria-hidden="true">a.<br />b.<br />c.</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="upperLetter" role="menuitemradio" aria-checked="false" title="A. B. C." aria-label="Uppercase letters"><span class="list-gallery-sample" aria-hidden="true">A.<br />B.<br />C.</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="lowerRoman" role="menuitemradio" aria-checked="false" title="i. ii. iii." aria-label="Lowercase Roman numerals"><span class="list-gallery-sample" aria-hidden="true">i.<br />ii.<br />iii.</span></button>
+      <button type="button" class="list-gallery-cell" data-spec="upperRoman" role="menuitemradio" aria-checked="false" title="I. II. III." aria-label="Uppercase Roman numerals"><span class="list-gallery-sample" aria-hidden="true">I.<br />II.<br />III.</span></button>
     </div>
 
     <div id="zoomMenu" class="context-menu zoom-menu" hidden role="menu" aria-label="Zoom presets">

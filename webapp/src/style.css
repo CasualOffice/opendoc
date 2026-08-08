@@ -5007,6 +5007,93 @@ body:not(.doc-loaded) .drop-title {
   color: var(--accent);
 }
 
+/* Split list buttons: the main toggle keeps its plain `.fmt` look while a
+   slim caret opens the marker-format gallery, mirroring Word/Docs. */
+.list-split {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.list-split .list-split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.list-caret {
+  width: 14px;
+  min-width: 14px;
+  padding: 0;
+  color: var(--muted);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.list-caret .ms {
+  font-size: 18px;
+}
+
+.list-caret[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Marker-format gallery: a compact grid of preview cells. */
+.list-gallery-menu {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 6px;
+}
+
+.list-gallery-menu-number {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.list-gallery-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: var(--radius-sm);
+  background: var(--surface, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.11s, border-color 0.11s;
+}
+
+.list-gallery-glyph {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.list-gallery-sample {
+  font-size: 10px;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--ink);
+}
+
+.list-gallery-cell:hover,
+.list-gallery-cell:focus-visible {
+  background: var(--bg-2);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.list-gallery-cell[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.list-gallery-cell[aria-checked="true"] .list-gallery-sample {
+  color: var(--accent);
+}
+
 /* Keep the last Font control clear of the Paragraph divider (mirrors the old
    highlight control's 10px right margin the ribbon-home suite guards). */
 [data-group="font"] .color-control-highlight {

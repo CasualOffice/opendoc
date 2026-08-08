@@ -2039,6 +2039,10 @@ const indentDecBtn = document.getElementById("indentDec");
 const indentIncBtn = document.getElementById("indentInc");
 const bulletListBtn = document.getElementById("bulletList");
 const numberedListBtn = document.getElementById("numberedList");
+const bulletListMenuBtn = document.getElementById("bulletListMenuBtn");
+const numberedListMenuBtn = document.getElementById("numberedListMenuBtn");
+const bulletGalleryMenu = document.getElementById("bulletGalleryMenu");
+const numberGalleryMenu = document.getElementById("numberGalleryMenu");
 const checkListBtn = document.getElementById("checkList");
 const restartListBtn = document.getElementById("restartList");
 const continueListBtn = document.getElementById("continueList");
@@ -7164,6 +7168,39 @@ changeCaseMenu.addEventListener("click", (e) => {
   closePopover(changeCasePopover);
   void applyChangeCase(item.dataset.case);
 });
+
+// -- List marker-format galleries (bullet glyph / number format) ---------------
+// The bullet and numbered buttons carry a ▾ split that opens a small gallery of
+// marker choices; picking one retargets the caret's list through the gated
+// `setListFormat` path (one undo; blocked in Viewing/Suggesting like the sibling
+// restart/continue list ops). The main button keeps its plain on/off toggle.
+/** Mark the gallery cell matching the caret's current list marker as checked. */
+function reflectListGallery(menu) {
+  const current = doc && selection ? doc.listFormatAt(selection.focus.node) : "";
+  for (const cell of menu.querySelectorAll(".list-gallery-cell")) {
+    cell.setAttribute("aria-checked", String(cell.dataset.spec === current));
+  }
+}
+const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMenu, () =>
+  reflectListGallery(bulletGalleryMenu),
+);
+const numberGalleryPopover = registerPopover(numberedListMenuBtn, numberGalleryMenu, () =>
+  reflectListGallery(numberGalleryMenu),
+);
+function wireListGallery(menu, popover) {
+  menu.addEventListener("click", (e) => {
+    const cell = e.target.closest("[data-spec]");
+    if (!cell || !selection || !doc) return;
+    closePopover(popover);
+    const spec = cell.dataset.spec;
+    const applied = runNodeEdit(() => doc.setListFormat(selection.focus.node, spec));
+    // A newly chosen bullet glyph may need its covering symbol font fetched
+    // (once) so it renders instead of a .notdef box, then re-render.
+    if (applied && spec.startsWith("bullet:")) void ensureGlyphCoverage("list marker");
+  });
+}
+wireListGallery(bulletGalleryMenu, bulletGalleryPopover);
+wireListGallery(numberGalleryMenu, numberGalleryPopover);
 
 // -- Line & paragraph spacing --------------------------------------------------
 /** Reflect the caret paragraph's spacing into the menu (line-preset check +
