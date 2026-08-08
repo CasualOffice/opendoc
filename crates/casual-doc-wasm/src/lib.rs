@@ -37,7 +37,7 @@ use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_cached, paginate_document_view,
 };
 use casual_doc_layout::flow::{ReviewView, node_plain_text};
-use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot};
+use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
 use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
@@ -680,6 +680,42 @@ impl WasmDocument {
     /// (`P1G-OBJ-SELECT`) **and** top-level floating/anchored images and text
     /// boxes (`P1G-OBJ-ANCHOR-SELECT`; `anchored` = true). Group children,
     /// table-cell and header/footer objects remain later slices.
+    /// Resolves a page-local point inside a page's HEADER or FOOTER content, as
+    /// `{ node, offset, band }`, or `None` if the point is in neither band.
+    ///
+    /// Deliberately separate from [`hit_test`]: the body walk must keep
+    /// answering exactly as it does today — a click in the top margin still
+    /// snaps to the nearest body line — so entering a header stays a gesture the
+    /// host asks for rather than a side effect of clicking near the top of a
+    /// page. The host tries this first only when it means to (a double-click in
+    /// the margin band, or the header marker), and falls back to `hitTest`.
+    ///
+    /// The position it returns is an ordinary `NodeId` + offset, which the edit
+    /// ops already resolve wherever it lives (the surface resolution in
+    /// `casual-doc-edit`), so nothing downstream needs a sub-document address.
+    ///
+    /// [`hit_test`]: WasmDocument::hit_test
+    #[wasm_bindgen(js_name = runningHitTest)]
+    #[must_use]
+    pub fn running_hit_test(
+        &self,
+        page: u32,
+        x_twip: i32,
+        y_twip: i32,
+    ) -> Option<RunningHitPayload> {
+        let snapshot = LayoutSnapshot::new(&self.layout);
+        let hit = snapshot.hit_test_running(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        Some(RunningHitPayload {
+            node: hit.pos.node.to_string(),
+            offset: hit.pos.offset,
+            band: match hit.band {
+                RunningBand::Header => "header",
+                RunningBand::Footer => "footer",
+            }
+            .to_owned(),
+        })
+    }
+
     #[wasm_bindgen(js_name = objectAt)]
     #[must_use]
     pub fn object_at(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<ObjectHitPayload> {
@@ -13317,6 +13353,42 @@ impl HitPayload {
     #[must_use]
     pub fn zone(&self) -> String {
         self.zone.to_string()
+    }
+}
+
+/// A position resolved inside a page's running content: the same `NodeId` +
+/// offset pair any body position uses, plus which band it came from. The
+/// position needs no sub-document address because header, footer and note
+/// content already live in the document's single id space.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct RunningHitPayload {
+    node: String,
+    offset: u32,
+    band: String,
+}
+
+#[wasm_bindgen]
+impl RunningHitPayload {
+    /// The anchor node id (32-hex string; compare/pass back, never arithmetic).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn node(&self) -> String {
+        self.node.clone()
+    }
+
+    /// The node-relative UTF-8 byte offset.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    /// `"header"` or `"footer"`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn band(&self) -> String {
+        self.band.clone()
     }
 }
 
