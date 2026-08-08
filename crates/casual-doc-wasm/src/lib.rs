@@ -274,6 +274,7 @@ enum HistoryKind {
     ObjectCrop,
     ObjectAltText,
     ObjectDelete,
+    ObjectInsert,
     DocumentProperties,
     PageSetup,
     StyleChange,
@@ -305,6 +306,7 @@ impl HistoryKind {
             Self::ObjectCrop => "Crop",
             Self::ObjectAltText => "Alt text",
             Self::ObjectDelete => "Delete object",
+            Self::ObjectInsert => "Insert image",
             Self::DocumentProperties => "Document properties",
             Self::PageSetup => "Page setup",
             Self::StyleChange => "Style change",
@@ -358,6 +360,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
+        }
+        Operation::InsertInlineObject { .. } | Operation::RemoveInlineObject { .. } => {
+            HistoryKind::ObjectInsert
         }
         Operation::SetTableCellProperties { .. }
         | Operation::SetTableProperties { .. }
@@ -922,6 +927,80 @@ impl WasmDocument {
             vec![Operation::SetObjectDescr { object, descr }],
             Pos::new(object, 0),
             HistoryKind::ObjectAltText,
+        )
+        .map_err(to_js)
+    }
+
+    /// Inserts a picture at the caret `(node, offset)`. The host supplies the
+    /// decoded `bytes`, its natural size in EMU, and the `mime` (the engine owns
+    /// no image codec — see docs/85 §Q8). The bytes are registered as a media
+    /// part and referenced by a fresh inline `Drawing`, inserted as one undoable
+    /// action. Rejects an unsupported image type. `mime` is one of image/png,
+    /// image/jpeg, image/gif, image/bmp, image/tiff, image/webp.
+    #[wasm_bindgen(js_name = insertImage)]
+    pub fn insert_image(
+        &mut self,
+        node: &str,
+        offset: u32,
+        bytes: Vec<u8>,
+        width_emu: f64,
+        height_emu: f64,
+        mime: String,
+    ) -> Result<EditResult, JsValue> {
+        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+        let (media_type, ext) = match mime.to_ascii_lowercase().as_str() {
+            "image/png" => ("image/png", "png"),
+            "image/jpeg" | "image/jpg" => ("image/jpeg", "jpeg"),
+            "image/gif" => ("image/gif", "gif"),
+            "image/bmp" | "image/x-ms-bmp" => ("image/bmp", "bmp"),
+            "image/tiff" => ("image/tiff", "tiff"),
+            "image/webp" => ("image/webp", "webp"),
+            _ => return Err(to_js(format!("unsupported image type {mime:?}"))),
+        };
+        if bytes.is_empty() {
+            return Err(to_js("the image has no bytes".into()));
+        }
+        let owner = node_id(node)?;
+        let width = (width_emu.round() as i64).clamp(1, MAX_EMU);
+        let height = (height_emu.round() as i64).clamp(1, MAX_EMU);
+        let exhausted = || to_js("id space exhausted".into());
+        let media_seq = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let drawing_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let media_id = MediaId::new(media_seq);
+        // The resources map (and the model) reference media by PART NAME; use a
+        // unique editor-authored name so it can never collide with an imported
+        // part. An orphaned entry left after undo is harmless (unreferenced media
+        // is valid — only a dangling drawing->media ref is not).
+        let part_name = format!("word/media/editor-{media_seq}.{ext}");
+        self.resources.insert(part_name.clone(), bytes);
+        self.document.definitions_mut().media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: format!("rIdEditorImg{media_seq}"),
+                media_type: media_type.to_owned(),
+                part_name,
+            },
+        );
+        let drawing = Drawing {
+            id: drawing_id,
+            media: media_id,
+            extent: Some(Extent {
+                width_emu: width,
+                height_emu: height,
+            }),
+            descr: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        };
+        self.apply_action_as(
+            vec![Operation::InsertInlineObject {
+                at: Pos::new(owner, offset),
+                node: Box::new(InlineNode::Drawing(drawing)),
+            }],
+            HistoryKind::ObjectInsert,
         )
         .map_err(to_js)
     }
@@ -14273,6 +14352,12 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // host re-selects after the delete); its inverse re-inserts into `owner`.
         Operation::DeleteObject { object } => Pos::new(*object, 0),
         Operation::InsertObjectNode { owner, .. } => Pos::new(*owner, 0),
+        // A freshly inserted inline object: the caret sits at its insertion point
+        // (the host re-selects the new object as its own chrome).
+        Operation::InsertInlineObject { at, .. } => Pos::new(at.node, at.offset),
+        // Removing an inline object (only ever an inverse/undo of an insert): its
+        // own id is a neutral placeholder; the frontend re-parks the caret.
+        Operation::RemoveInlineObject { object } => Pos::new(*object, 0),
         // Cell/table formatting keeps the selection (the frontend does not collapse
         // to this); these arms only keep the match exhaustive.
         Operation::SetTableCellProperties { cell, .. } => {
@@ -15454,6 +15539,55 @@ mod tests {
         );
         assert_eq!(doc.page_count(), before);
         assert!(doc.missing_coverage().is_empty());
+    }
+
+    #[test]
+    fn insert_image_registers_media_and_places_a_drawing_undoably() {
+        let mut doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(doc.document.body(), &mut nodes);
+        let para = nodes
+            .iter()
+            .find(|(id, _)| !doc.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+        let media_before = doc.document.definitions().media.len();
+        let has_drawing = |doc: &WasmDocument, para: &str| {
+            doc.document.body().iter().any(|b| {
+                matches!(b, BlockNode::Paragraph(p)
+                    if p.id.to_string() == para
+                        && p.inlines.iter().any(|i| matches!(i, InlineNode::Drawing(_))))
+            })
+        };
+
+        // Insert a picture at the paragraph start (bytes are host-supplied; the
+        // engine stores them and builds a Drawing at the given extent).
+        doc.insert_image(
+            &para,
+            0,
+            vec![0x89, 0x50, 0x4e, 0x47],
+            914_400.0,
+            457_200.0,
+            "image/png".to_string(),
+        )
+        .expect("insert image");
+        assert_eq!(
+            doc.document.definitions().media.len(),
+            media_before + 1,
+            "a media entry was registered"
+        );
+        doc.document
+            .validate()
+            .expect("valid after inserting the image");
+        assert!(
+            has_drawing(&doc, &para),
+            "a drawing was placed in the paragraph"
+        );
+
+        // One undo removes the drawing and the document stays valid.
+        doc.undo().expect("undo the insert");
+        assert!(!has_drawing(&doc, &para), "undo removed the drawing");
+        doc.document.validate().expect("valid after undo");
     }
 
     #[test]
