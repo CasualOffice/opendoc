@@ -9274,6 +9274,7 @@ function editorCommands(context = { surface: "palette" }) {
       disabledReason: "Select text to comment on",
       run: () => openReviewComposer(),
     },
+    { id: "tools.smartQuotes", label: `Smart quotes: ${smartQuotesEnabled ? "on" : "off"}`, group: "Tools", kw: "smart curly typographic quotes apostrophe straight autocorrect", noDoc: true, run: () => setSmartQuotes(!smartQuotesEnabled) },
     { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
     { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
     { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
@@ -9438,7 +9439,7 @@ const APP_MENU_SECTIONS = {
     ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
     ["style.updateFromSelection", "style.createFromSelection"],
   ],
-  tools: [["layout.pageSetup", "layout.paragraph"], ["file.properties", "view.settings"]],
+  tools: [["layout.pageSetup", "layout.paragraph"], ["tools.smartQuotes"], ["file.properties", "view.settings"]],
   help: [["help.commands"]],
 };
 
@@ -11993,6 +11994,53 @@ document.addEventListener("compositionend", async (e) => {
   await commitComposedText(e.data || "");
 });
 
+// ---- Smart quotes -----------------------------------------------------------
+// Word and Docs both replace the typewriter quotes as you type: `"` becomes “ or
+// ” and `'` becomes ‘ or ’, chosen from what precedes the caret. Documents from
+// either product therefore arrive full of curly quotes, and typing into one used
+// to introduce straight quotes beside them — visibly different glyphs in the same
+// sentence.
+//
+// The decision is purely local: a quote OPENS at the start of a paragraph or
+// after whitespace or an opening bracket, and CLOSES otherwise. Closing is the
+// right default for the ambiguous case because that is what makes "don't" and
+// "it's" correct, which is far more common in prose than a leading elision.
+//
+// Read through `copyText` of the single position before the caret rather than
+// any cached text, so it is the engine's own content that decides — including
+// after an undo, a paste, or a caret move the editor did not originate.
+const SMART_QUOTE_PREF = "opendoc.smartQuotes";
+let smartQuotesEnabled = localStorage.getItem(SMART_QUOTE_PREF) !== "off";
+
+/** Characters after which a quote is an OPENING quote. */
+const QUOTE_OPENERS = new Set(["(", "[", "{", "\u2018", "\u201C", "\u2014", "\u2013", "-", "/"]);
+
+function setSmartQuotes(enabled) {
+  smartQuotesEnabled = enabled;
+  localStorage.setItem(SMART_QUOTE_PREF, enabled ? "on" : "off");
+  setStatus(enabled ? "Smart quotes on" : "Smart quotes off");
+}
+
+/** The character to actually insert for `key` at `node`/`offset`. Returns `key`
+ *  unchanged for everything that is not a straight quote, and whenever the
+ *  preference is off — so the user can always type a literal quote for code. */
+function smartQuoteFor(key, node, offset) {
+  if (!smartQuotesEnabled || (key !== '"' && key !== "'")) return key;
+  if (!doc || !node) return key;
+  // Offset 0 is the start of the paragraph: nothing precedes, so it opens.
+  let previous = "";
+  if (offset > 0) {
+    try {
+      previous = doc.copyText(node, offset - 1, node, offset);
+    } catch {
+      return key; // an engine that cannot read the position gets the literal key
+    }
+  }
+  const opening = previous === "" || /\s/u.test(previous) || QUOTE_OPENERS.has(previous);
+  if (key === '"') return opening ? "\u201C" : "\u201D";
+  return opening ? "\u2018" : "\u2019";
+}
+
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
 
 document.addEventListener("keydown", async (e) => {
@@ -12354,6 +12402,14 @@ document.addEventListener("keydown", async (e) => {
   if ([...key].length === 1) {
     e.preventDefault();
     const session = typingSessionForKey();
+    // Straight quotes become typographic ones, decided from what precedes the
+    // insertion point — the start of the replaced range when there is a
+    // selection, since that is what the quote will actually follow.
+    const typed = smartQuoteFor(
+      key,
+      range ? (anchor.offset <= focus.offset ? anchor.node : focus.node) : focus.node,
+      range ? Math.min(anchor.offset, focus.offset) : focus.offset,
+    );
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       if (reviewMode === "suggesting" && anchor.node !== focus.node) {
@@ -12366,12 +12422,12 @@ document.addEventListener("keydown", async (e) => {
             anchor.node,
             Math.min(anchor.offset, focus.offset),
             Math.max(anchor.offset, focus.offset),
-            key,
+            typed,
             undefined,
             new Date().toISOString(),
             session,
           )
-          : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, key, session),
+          : doc.typeText(anchor.node, anchor.offset, focus.node, focus.offset, typed, session),
         { typing: true },
       );
     } else if (pendingFormat) {
@@ -12381,7 +12437,7 @@ document.addEventListener("keydown", async (e) => {
           ? doc.suggestStyledInsert(
             focus.node,
             focus.offset,
-            key,
+            typed,
             pf.bold,
             pf.italic,
             pf.underline,
@@ -12398,7 +12454,7 @@ document.addEventListener("keydown", async (e) => {
           : doc.typeStyledText(
               focus.node,
               focus.offset,
-              key,
+              typed,
               pf.bold,
               pf.italic,
               pf.underline,
@@ -12418,12 +12474,12 @@ document.addEventListener("keydown", async (e) => {
           ? doc.suggestInsert(
             focus.node,
             focus.offset,
-            key,
+            typed,
             undefined,
             new Date().toISOString(),
             session,
           )
-          : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, key, session),
+          : doc.typeText(focus.node, focus.offset, focus.node, focus.offset, typed, session),
         { typing: true },
       );
     }
