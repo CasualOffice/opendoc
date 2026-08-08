@@ -5725,8 +5725,10 @@ mod tests {
         let header_id = HeaderFooterId::new(n(970));
         let para_id = n(971);
         let mut definitions = Definitions::default();
-        let mut properties = ParagraphProperties::default();
-        properties.alignment = Some(casual_doc_model::v1::Alignment::End);
+        let properties = ParagraphProperties {
+            alignment: Some(casual_doc_model::v1::Alignment::End),
+            ..ParagraphProperties::default()
+        };
         definitions.headers.insert(
             header_id,
             casual_doc_model::v1::HeaderFooter {
