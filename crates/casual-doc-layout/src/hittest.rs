@@ -27,7 +27,7 @@ use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
-use crate::page::PaginatedLayout;
+use crate::page::{AnchorContent, PaginatedLayout};
 use crate::text::Line;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -499,6 +499,28 @@ impl<'a> LayoutSnapshot<'a> {
     /// resolved.
     fn text_box_line_boxes(&self, page_number: u32) -> Vec<LineBox<'a>> {
         let mut out = Vec::new();
+        // ANCHORED text boxes — floating ones, and every text box inside a shape
+        // group — are placed as `PlacedAnchor`s rather than hanging off a line,
+        // so the inline walk below never reaches them. A grouped box therefore
+        // rendered but had no caret geometry and no way to resolve a click.
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            for anchor in &page.anchored {
+                let AnchorContent::TextBox {
+                    blocks,
+                    content_layout,
+                    ..
+                } = &anchor.content
+                else {
+                    continue;
+                };
+                let left = anchor.rect.origin.x + content_layout.origin.x;
+                let mut top = anchor.rect.origin.y + content_layout.origin.y;
+                for block in blocks {
+                    collect_fragment(block, left, top, page.number, None, &mut out);
+                    top = top + block.height();
+                }
+            }
+        }
         let mut host = Vec::new();
         for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
             for placed in &page.placed {
