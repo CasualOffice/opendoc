@@ -779,8 +779,29 @@ pub fn apply(
             })
         }
         Operation::SplitParagraph { at, new_id } => {
+            // Word's `w:next` (`Style::next`): pressing Enter at the END of a
+            // paragraph starts the style that one is declared to be followed by —
+            // which is why a heading is followed by body text rather than another
+            // heading. Splitting in the MIDDLE keeps the style on both halves,
+            // because that is one paragraph becoming two, not a new one starting.
+            // Resolved before the mutable borrow of the body below.
+            let next_style = find_paragraph(doc.body(), at.node).and_then(|para| {
+                if at.offset != paragraph_text_len(para) {
+                    return None;
+                }
+                let current = para.properties.style_ref?;
+                let next = doc.definitions().styles.get(&current)?.next?;
+                // A style that follows itself (the common case for body styles)
+                // means "carry on", so there is nothing to change.
+                (next != current).then_some(next)
+            });
             if !split_paragraph(doc.body_mut(), at.node, at.offset, *new_id, ids)? {
                 return Err(EditError::NodeNotFound);
+            }
+            if let Some(next) = next_style
+                && let Some(para) = find_paragraph_mut(doc.body_mut(), *new_id)
+            {
+                para.properties.style_ref = Some(next);
             }
             Ok(Operation::JoinParagraphs {
                 first: at.node,
@@ -5301,6 +5322,140 @@ mod tests {
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(d.body().len(), 1);
         assert_eq!(text_of(&d, p), "HelloWorld");
+    }
+
+    /// Word's `w:next`: Enter at the END of a heading starts the style the
+    /// heading declares it is followed by, which is why typing a heading and
+    /// pressing Enter puts you in body text rather than in a second heading.
+    #[test]
+    fn split_at_end_starts_the_style_the_current_one_is_followed_by() {
+        let heading = StyleId::new(n(700));
+        let body = StyleId::new(n(701));
+        let mut definitions = Definitions::default();
+        let mut heading_style = paragraph_style("Heading 1", None);
+        heading_style.next = Some(body);
+        definitions.styles.insert(heading, heading_style);
+        definitions
+            .styles
+            .insert(body, paragraph_style("Body", None));
+
+        let p = n(2);
+        let new = n(50);
+        let mut block = para(2, vec![run(3, "Title")]);
+        let BlockNode::Paragraph(paragraph) = &mut block else {
+            unreachable!("para() builds a paragraph");
+        };
+        paragraph.properties.style_ref = Some(heading);
+        let mut d = Document::new(n(1000), vec![block], definitions).expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 5),
+                new_id: new,
+            },
+        )
+        .unwrap();
+
+        let original = find_paragraph(d.body(), p).expect("original paragraph");
+        let started = find_paragraph(d.body(), new).expect("new paragraph");
+        assert_eq!(
+            original.properties.style_ref.as_ref(),
+            Some(&heading),
+            "the heading itself is untouched"
+        );
+        assert_eq!(
+            started.properties.style_ref.as_ref(),
+            Some(&body),
+            "the paragraph Enter started takes the heading's next style"
+        );
+    }
+
+    /// Splitting in the MIDDLE is one paragraph becoming two, not a new one
+    /// starting, so both halves keep the style — as Word does.
+    #[test]
+    fn split_in_the_middle_keeps_the_style_on_both_halves() {
+        let heading = StyleId::new(n(700));
+        let body = StyleId::new(n(701));
+        let mut definitions = Definitions::default();
+        let mut heading_style = paragraph_style("Heading 1", None);
+        heading_style.next = Some(body);
+        definitions.styles.insert(heading, heading_style);
+        definitions
+            .styles
+            .insert(body, paragraph_style("Body", None));
+
+        let p = n(2);
+        let new = n(50);
+        let mut block = para(2, vec![run(3, "Title")]);
+        let BlockNode::Paragraph(paragraph) = &mut block else {
+            unreachable!("para() builds a paragraph");
+        };
+        paragraph.properties.style_ref = Some(heading);
+        let mut d = Document::new(n(1000), vec![block], definitions).expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 2),
+                new_id: new,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_paragraph(d.body(), new)
+                .expect("new paragraph")
+                .properties
+                .style_ref
+                .as_ref(),
+            Some(&heading),
+            "a mid-paragraph split keeps the style"
+        );
+    }
+
+    /// A style declared to be followed by itself — the common case for body
+    /// styles — means "carry on", so nothing changes.
+    #[test]
+    fn a_style_that_follows_itself_leaves_the_new_paragraph_alone() {
+        let body = StyleId::new(n(701));
+        let mut definitions = Definitions::default();
+        let mut body_style = paragraph_style("Body", None);
+        body_style.next = Some(body);
+        definitions.styles.insert(body, body_style);
+
+        let p = n(2);
+        let new = n(50);
+        let mut block = para(2, vec![run(3, "text")]);
+        let BlockNode::Paragraph(paragraph) = &mut block else {
+            unreachable!("para() builds a paragraph");
+        };
+        paragraph.properties.style_ref = Some(body);
+        let mut d = Document::new(n(1000), vec![block], definitions).expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(p, 4),
+                new_id: new,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            find_paragraph(d.body(), new)
+                .expect("new paragraph")
+                .properties
+                .style_ref
+                .as_ref(),
+            Some(&body),
+        );
     }
 
     #[test]
