@@ -13831,6 +13831,34 @@ fn split_table_cell(
     Ok(table)
 }
 
+/// The 0-based grid column at which the `col_index`-th cell of `row` starts:
+/// the sum of the grid spans of the cells before it. For a regular table this
+/// equals `col_index`, but with a horizontally merged cell earlier in the row
+/// the grid position runs ahead of the cell index.
+fn cell_grid_start(row: &TableRow, col_index: usize) -> usize {
+    row.cells[..col_index.min(row.cells.len())]
+        .iter()
+        .map(|cell| cell.properties.grid_span.unwrap_or(1).max(1) as usize)
+        .sum()
+}
+
+/// Splits the cell at (`row_index`, `col_index`) into a `requested_rows` x
+/// `requested_columns` grid within its own grid footprint (Word "Split Cells").
+/// `0, 0` unmerges a merged cell back to its component columns (see
+/// [`split_table_cell`]); otherwise both counts are at least 1 with at least one
+/// greater than 1.
+///
+/// Supported: an ordinary (unmerged) cell into any R x C; a horizontally merged
+/// cell into C >= its span columns and/or R rows. Splitting into more columns
+/// than the cell spans widens the shared grid, and the other rows' cells keep
+/// their coverage — a cell that contains the footprint gains grid span, while a
+/// row that already subdivides the footprint gains empty cells. Splitting into
+/// rows inserts new grid rows spanning only the split cell's columns; the other
+/// columns' cells become vertically merged across the new rows so the rest of
+/// the table is unchanged. Rejected (clean error, no mutation) so a valid table
+/// is always produced: a target that is itself vertically merged, fewer columns
+/// than the current span, and any cell whose geometry straddles the footprint
+/// boundary (an irregular grid the split cannot subdivide unambiguously).
 fn split_table_cell_counts(
     table: Table,
     row_index: usize,
@@ -13843,73 +13871,196 @@ fn split_table_cell_counts(
         return split_table_cell(table, row_index, col_index, ids);
     }
     let mut table = table;
-    let row = table
+    let rows = requested_rows.max(1);
+    let columns = requested_columns.max(1);
+    if rows == 1 && columns == 1 {
+        return Err("choose more than one row or column to split the cell".into());
+    }
+    if rows > 20 || columns > 20 {
+        return Err("split counts must be between 1 and 20".into());
+    }
+    let target_row = table
         .rows
         .get(row_index)
         .ok_or_else(|| "cell row is outside the table".to_owned())?;
-    let cell = row
+    let target = target_row
         .cells
         .get(col_index)
         .ok_or_else(|| "cell column is outside the table".to_owned())?;
-    if cell.properties.vertical_merge.is_some() {
-        return Err("custom split counts currently require a horizontal merged cell".into());
+    if target.properties.vertical_merge.is_some() {
+        return Err("splitting a vertically merged cell is not supported".into());
     }
-    let width = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
-    if width == 1 {
-        return Err("cell is not merged".into());
+    let width = target.properties.grid_span.unwrap_or(1).max(1) as usize;
+    if columns < width {
+        return Err("columns must be at least the cell's current column span".into());
     }
-    let columns = if requested_columns == 0 {
-        width
-    } else {
-        requested_columns
-    };
-    let rows = if requested_rows == 0 {
-        1
-    } else {
-        requested_rows
-    };
-    if rows != 1 || columns < width || columns > 20 {
-        return Err("custom split supports one row and at least the current column span".into());
+    let g0 = cell_grid_start(target_row, col_index);
+    if table.grid.len() < g0 + width {
+        return Err("the split cell extends past the table grid".into());
     }
-    let grid_widths = table
-        .grid
-        .get(col_index..col_index + width)
-        .ok_or_else(|| "merged cell is outside the table grid".to_owned())?
+    split_cell_columns_phase(&mut table, row_index, col_index, g0, width, columns, ids)?;
+    if rows > 1 {
+        split_cell_rows_phase(&mut table, row_index, col_index, columns, rows, ids)?;
+    }
+    Ok(table)
+}
+
+/// Subdivides the target cell's grid footprint `[g0, g0 + width)` into `columns`
+/// grid columns, reconstructing the target as `columns` cells (content kept in
+/// the first) and reconciling every other row so its cells still cover the grid.
+fn split_cell_columns_phase(
+    table: &mut Table,
+    row_index: usize,
+    col_index: usize,
+    g0: usize,
+    width: usize,
+    columns: usize,
+    ids: &mut IdGenerator,
+) -> Result<(), String> {
+    let footprint_end = g0 + width;
+    let grid_total = table.grid[g0..footprint_end]
         .iter()
         .map(|column| column.width_twips.unwrap_or(1))
         .sum::<i32>();
-    let widths = distribute_twips(i64::from(grid_widths), columns)
-        .map_err(|_| "merged cell width is outside the supported range".to_owned())?;
+    let widths = distribute_twips(i64::from(grid_total), columns)
+        .map_err(|_| "the cell is too small to split into that many columns".to_owned())?;
     table.grid.splice(
-        col_index..col_index + width,
+        g0..footprint_end,
         widths.iter().map(|width| GridColumn {
             width_twips: Some(*width),
         }),
     );
-    for row in &mut table.rows {
-        if row.cells.len() < col_index + 1 {
-            return Err("merged cell is outside the row".into());
+    let delta = columns as isize - width as isize;
+    for (ri, row) in table.rows.iter_mut().enumerate() {
+        // Grid range `[a, b)` of each cell in this row, from the prefix of spans.
+        let mut ranges = Vec::with_capacity(row.cells.len());
+        let mut start = 0usize;
+        for cell in &row.cells {
+            let span = cell.properties.grid_span.unwrap_or(1).max(1) as usize;
+            ranges.push((start, start + span));
+            start += span;
         }
-        let merged = row.cells[col_index].properties.grid_span.unwrap_or(1) > 1;
-        if merged {
-            let anchor = row.cells.remove(col_index);
-            let mut cells = Vec::with_capacity(columns);
-            let mut first = anchor;
-            first.properties.grid_span = None;
-            first.properties.width = Some(TableWidth::dxa(widths[0]));
-            cells.push(first);
-            for width in widths.iter().skip(1) {
-                cells.push(empty_table_cell(ids, Some(*width))?);
+        let overlapping: Vec<usize> = ranges
+            .iter()
+            .enumerate()
+            .filter(|(_, (a, b))| *a < footprint_end && *b > g0)
+            .map(|(ci, _)| ci)
+            .collect();
+        let Some(&first_ci) = overlapping.first() else {
+            return Err("a table row does not reach the split column".into());
+        };
+        let &last_ci = overlapping.last().expect("non-empty overlap");
+        let (first_a, _) = ranges[first_ci];
+        let (_, last_b) = ranges[last_ci];
+        if overlapping.len() == 1 && first_a <= g0 && last_b >= footprint_end {
+            // A single cell covers the whole footprint (the target, or a wider
+            // cell straddling it in another row).
+            if ri == row_index && first_ci == col_index {
+                let mut anchor = row.cells.remove(first_ci);
+                anchor.properties.grid_span = None;
+                anchor.properties.width = Some(TableWidth::dxa(widths[0]));
+                let mut cells = Vec::with_capacity(columns);
+                cells.push(anchor);
+                for width in widths.iter().skip(1) {
+                    cells.push(empty_table_cell(ids, Some(*width))?);
+                }
+                row.cells.splice(first_ci..first_ci, cells);
+            } else {
+                let span = (last_b - first_a) as isize + delta;
+                row.cells[first_ci].properties.grid_span = (span > 1).then_some(span as u32);
             }
-            row.cells.splice(col_index..col_index, cells);
         } else {
-            for width in widths.iter().skip(width) {
-                row.cells
-                    .insert(col_index + 1, empty_table_cell(ids, Some(*width))?);
+            // Several cells tile the footprint (e.g. the plain row under a
+            // merged one). They must align to the footprint's edges.
+            if first_a != g0 || last_b != footprint_end {
+                return Err("the cells around the split are not aligned to a regular grid".into());
             }
+            let existing = overlapping.len();
+            if columns < existing {
+                return Err("cannot split into fewer columns than the row already spans".into());
+            }
+            for (offset, &ci) in overlapping.iter().enumerate() {
+                row.cells[ci].properties.grid_span = None;
+                row.cells[ci].properties.width = Some(TableWidth::dxa(widths[offset]));
+            }
+            let mut extra = Vec::with_capacity(columns - existing);
+            for width in &widths[existing..columns] {
+                extra.push(empty_table_cell(ids, Some(*width))?);
+            }
+            row.cells.splice(last_ci + 1..last_ci + 1, extra);
         }
     }
-    Ok(table)
+    Ok(())
+}
+
+/// Splits the (already column-split) target into `rows` grid rows. The footprint
+/// is the `columns` cells starting at `col_index` in `row_index`; new rows carry
+/// fresh empty cells there and vertical-merge continuations elsewhere so the
+/// other columns are visually unchanged.
+fn split_cell_rows_phase(
+    table: &mut Table,
+    row_index: usize,
+    col_index: usize,
+    columns: usize,
+    rows: usize,
+    ids: &mut IdGenerator,
+) -> Result<(), String> {
+    let footprint = col_index..col_index + columns;
+    // A template of every cell in the target row: whether it is inside the
+    // footprint, and (for outside cells continued below) its span and width.
+    let template: Vec<(bool, Option<u32>, Option<i32>)> = {
+        let target_row = table
+            .rows
+            .get_mut(row_index)
+            .ok_or_else(|| "cell row is outside the table".to_owned())?;
+        target_row
+            .cells
+            .iter_mut()
+            .enumerate()
+            .map(|(ci, cell)| {
+                let inside = footprint.contains(&ci);
+                if !inside && cell.properties.vertical_merge.is_none() {
+                    // Anchor the vertical merge that the new rows continue.
+                    cell.properties.vertical_merge = Some(VerticalMerge::Restart);
+                }
+                (
+                    inside,
+                    cell.properties.grid_span,
+                    cell.properties.width.and_then(|w| w.dxa_twips()),
+                )
+            })
+            .collect()
+    };
+    let mut new_rows = Vec::with_capacity(rows - 1);
+    for _ in 1..rows {
+        let mut cells = Vec::with_capacity(template.len());
+        for &(inside, span, width) in &template {
+            if inside {
+                cells.push(empty_table_cell(ids, width)?);
+            } else {
+                let cell_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
+                cells.push(TableCell {
+                    id: cell_id,
+                    properties: TableCellProperties {
+                        grid_span: span,
+                        vertical_merge: Some(VerticalMerge::Continue),
+                        width: width.map(TableWidth::dxa),
+                        ..TableCellProperties::default()
+                    },
+                    blocks: vec![empty_paragraph_block(ids)?],
+                });
+            }
+        }
+        let row_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
+        new_rows.push(TableRow {
+            id: row_id,
+            properties: Default::default(),
+            cells,
+        });
+    }
+    let at = row_index + 1;
+    table.rows.splice(at..at, new_rows);
+    Ok(())
 }
 
 fn empty_table_cell(ids: &mut IdGenerator, width_twips: Option<i32>) -> Result<TableCell, String> {
@@ -18915,6 +19066,86 @@ mod tests {
         assert!(!d.table_info(&merged_node).regular());
         d.undo().expect("undo merge");
         assert!(d.table_info(&caret).regular());
+    }
+
+    #[test]
+    fn split_an_ordinary_cell_into_a_grid() {
+        // Word "Split Cells" on a plain (unmerged) cell into R x C — the case the
+        // old column-only split could not do.
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+        let res = d.insert_table(&body_para, 2, 3).expect("insert table");
+        let caret = res.node();
+        let cols0 = d.table_info(&caret).columns();
+
+        // Into 2 columns: the shared grid widens by one, and the model stays valid.
+        let c = d
+            .split_merged_cell(&caret, Some(1), Some(2))
+            .expect("split 1x2");
+        assert_eq!(d.table_info(&c.node()).columns(), cols0 + 1);
+        d.document
+            .validate()
+            .expect("model is valid after a column split");
+        d.undo().expect("undo the column split");
+        assert_eq!(d.table_info(&caret).columns(), cols0);
+
+        // Into 2 rows: a grid row is inserted; the model stays valid.
+        let cells0 = d.table_selection_rects(&caret, "table").len();
+        let r = d
+            .split_merged_cell(&caret, Some(2), Some(1))
+            .expect("split 2x1");
+        assert!(d.table_selection_rects(&r.node(), "table").len() > cells0);
+        d.document
+            .validate()
+            .expect("model is valid after a row split");
+        d.undo().expect("undo the row split");
+
+        // Into a 2x2 grid: valid, and one undo restores the original table.
+        let g = d
+            .split_merged_cell(&caret, Some(2), Some(2))
+            .expect("split 2x2");
+        d.document
+            .validate()
+            .expect("model is valid after a 2x2 split");
+        d.undo().expect("undo the 2x2 split");
+        assert_eq!(d.table_info(&g.node()).columns(), cols0);
+    }
+
+    #[test]
+    fn split_rejects_fewer_columns_than_the_cell_span() {
+        // Fewer columns than a merged cell's current span must be rejected so a
+        // split never produces an invalid grid. Tested at the helper (String
+        // error) rather than the binding (whose JsValue error path aborts under
+        // the native test harness).
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let body_para = nodes
+            .iter()
+            .find(|(id, _)| !d.in_table(&id.to_string()))
+            .map(|(id, _)| id.to_string())
+            .expect("body paragraph outside tables");
+        let res = d.insert_table(&body_para, 2, 3).expect("insert table");
+        let caret = res.node();
+        let merged = d
+            .merge_table_selection(&caret, "row")
+            .expect("merge selected row");
+        let node = node_id(&merged.node()).expect("merged node id");
+        let (table_id, row, _) = locate_table_row(&d.document, node).expect("row");
+        let (_, col) = locate_table_cell(&d.document, node).expect("cell");
+        let table = find_table(&d.document, table_id).expect("table").clone();
+        let mut ids = IdGenerator::new(0x99);
+        // The merged cell spans 3 columns; asking for 1 column is rejected.
+        assert!(
+            split_table_cell_counts(table, row as usize, col as usize, 2, 1, &mut ids).is_err(),
+            "columns fewer than the cell's span must be rejected"
+        );
     }
 
     #[test]

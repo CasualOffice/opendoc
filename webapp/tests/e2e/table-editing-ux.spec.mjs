@@ -292,3 +292,28 @@ test("table sort keys off the column containing the caret, not always the first"
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("split an ordinary cell into a rows x columns grid (Word Split Cells)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await insertTwoByTwoTable(page);
+  // Caret sits in a plain (unmerged) cell. Split it into 2 rows x 2 columns —
+  // the case the old column-only split could not do.
+  await expect(page.locator("#splitCellBtn")).toBeEnabled();
+  await page.locator("#splitCellBtn").click();
+  await expect(page.locator("#splitCellDialog")).toBeVisible();
+  await page.locator("#splitCellRows").fill("2");
+  await page.locator("#splitCellColumns").fill("2");
+  await page.locator("#splitCellConfirm").click();
+
+  // The dialog closes, the document is dirty, and the split committed as a single
+  // undoable table action (the Undo control is enabled and labeled for it). The
+  // engine-level undo/round-trip of the grid split is covered by the Rust tests.
+  await expect(page.locator("#splitCellDialog")).toBeHidden();
+  await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
+  await expect(page.locator("#undoBtn")).toBeEnabled();
+  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", /Undo .*Table/i);
+
+  expect(consoleErrors).toEqual([]);
+});
