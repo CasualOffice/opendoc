@@ -3009,6 +3009,16 @@ function anchorAt(page, event) {
   // the body walk, so the caret jumped into the body and text in the header
   // could not be selected at all. Outside the context the body walk still owns
   // margin clicks, which is what keeps entering a header deliberate.
+  // Editing a text box: a point inside it belongs to the box's text, so clicks
+  // and drags select within it instead of jumping out to the body.
+  if (objectSelection?.mode === "editing") {
+    const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
+    if (inBox) {
+      const anchor = { node: inBox.node, offset: inBox.offset };
+      inBox.free?.();
+      return anchor;
+    }
+  }
   if (runningEditBand) {
     const running = doc.runningHitTest(page.pageNumber, x, y);
     if (running) {
@@ -4246,14 +4256,49 @@ function cancelObjectMove() {
  *  has no edit mode — its primary context action is a later image slice. Placing
  *  a caret *inside* a text box's flowed body is the P1G-OBJ-TEXTBOX slice; here
  *  the grammar transitions state and the surrounding-text caret is shown. */
-function enterObjectEditMode() {
+function enterObjectEditMode(at = null) {
   if (!objectSelection) return;
   if (objectSelection.kind !== "textbox") {
     setStatus("Image selected — drag its handles to resize", "", { timeout: 3000 });
     return;
   }
   objectSelection = { ...objectSelection, mode: "editing" };
+  // Put the caret IN the box. Edit mode used to be a state flag and nothing
+  // else: the border changed, and there was no caret and nowhere for a keystroke
+  // to go, so "entering" a text box did not let you type in it. The box's
+  // content is ordinary block content in the same id space, so this is an
+  // ordinary caret position once the geometry can be resolved.
+  // Prefer the point the user actually clicked; fall back to probing the box
+  // when entry came from the keyboard (Enter on a selected box), which has no
+  // point of its own.
+  const caret = at ?? caretInsideObject(objectSelection.node);
+  if (caret) {
+    selection = { anchor: caret, focus: caret };
+    setStatus("Editing the text box — press Esc to select it, Esc again to leave");
+  } else {
+    setStatus("This text box has no editable content yet", "error");
+  }
   drawSelection();
+  updateToolbar();
+}
+
+/** A caret position inside object `node`'s text, found by probing its own
+ *  rectangle — the engine resolves a point to text-box content, and the object's
+ *  placed rect is the one region guaranteed to be inside it. */
+function caretInsideObject(node) {
+  const flat = doc?.objectRect(node);
+  if (!flat || flat.length < 5) return null;
+  const [pageNumber, x, y, w, h] = flat;
+  // Probe down the box's own left-to-middle band; the first line of content is
+  // near the top, but vertical anchoring can push it down.
+  for (let dy = 4; dy < h; dy += Math.max(20, Math.round(h / 12))) {
+    const hit = doc.textBoxHitTest(pageNumber, Math.round(x + Math.min(w / 2, 200)), Math.round(y + dy));
+    if (!hit) continue;
+    const at = { node: hit.node, offset: hit.offset };
+    hit.free?.();
+    return at;
+  }
+  return null;
 }
 
 /** Paints a clickable target over each checklist item's checkbox marker (docs/67
@@ -4923,7 +4968,13 @@ pagesEl.addEventListener("dblclick", (e) => {
     if (!objectSelection || objectSelection.node !== node) {
       selectObject(node, kind, anchorAt(page, e) || selection?.focus || null);
     }
-    enterObjectEditMode();
+    let clicked = null;
+    const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
+    if (inBox) {
+      clicked = { node: inBox.node, offset: inBox.offset };
+      inBox.free?.();
+    }
+    enterObjectEditMode(clicked);
     e.preventDefault();
     return;
   }

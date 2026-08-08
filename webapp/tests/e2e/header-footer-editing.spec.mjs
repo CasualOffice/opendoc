@@ -246,3 +246,31 @@ test("clicking the body leaves the header context", async ({ page, consoleErrors
 
   expect(consoleErrors).toEqual([]);
 });
+
+// The toolbar must report the paragraph the caret is actually in. A RIGHT-aligned
+// header paragraph reported itself as left-aligned, because every property read
+// walked the body alone, found nothing, and the caller fell back to its default.
+// A wrong answer is worse than none: it invites "fixing" an alignment that was
+// never wrong.
+test("the toolbar reflects the header paragraph's own alignment", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  // sample.docx's header is right-aligned; the demo fixture has no header.
+  await page.locator("#file").setInputFiles("sample.docx");
+  await expect
+    .poll(() => page.locator("#docTitle").inputValue(), { timeout: 30_000 })
+    .toContain("sample");
+  await expect(page.locator(".page-wrap").first()).toBeVisible();
+
+  const canvas = page.locator(".page-wrap .page").first();
+  const box = await canvas.boundingBox();
+  await page.mouse.dblclick(box.x + box.width * 0.72, box.y + 45);
+  await expect.poll(() => band(page)).toBe("header");
+
+  await expect(page.locator("#alignEnd")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#alignStart")).toHaveAttribute("aria-pressed", "false");
+
+  expect(consoleErrors).toEqual([]);
+});

@@ -839,7 +839,7 @@ pub fn apply(
             // heading. Splitting in the MIDDLE keeps the style on both halves,
             // because that is one paragraph becoming two, not a new one starting.
             // Resolved before the mutable borrow of the body below.
-            let next_style = find_paragraph(doc.body(), at.node).and_then(|para| {
+            let next_style = find_paragraph_any(doc, at.node).and_then(|para| {
                 if at.offset != paragraph_text_len(para) {
                     return None;
                 }
@@ -1335,7 +1335,7 @@ pub fn apply(
                 if paragraphs[..index]
                     .iter()
                     .any(|previous| previous.node == paragraph.node)
-                    || find_paragraph(doc.body(), paragraph.node).is_none()
+                    || find_paragraph_any(doc, paragraph.node).is_none()
                 {
                     return Err(EditError::NodeNotFound);
                 }
@@ -1473,13 +1473,13 @@ pub fn apply(
             });
             // Snapshot the affected paragraph(s) so any failure (a bad offset, a
             // failed re-validation) rolls back to exactly the prior state.
-            let start_snapshot = find_paragraph(doc.body(), start.node)
+            let start_snapshot = find_paragraph_any(doc, start.node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
             let end_snapshot = if end.node != start.node {
                 Some(
-                    find_paragraph(doc.body(), end.node)
+                    find_paragraph_any(doc, end.node)
                         .ok_or(EditError::NodeNotFound)?
                         .inlines
                         .clone(),
@@ -1522,16 +1522,18 @@ pub fn apply(
                 .ok_or(EditError::BookmarkNotFound)?
                 .name
                 .clone();
-            let (start_site, end_site) = locate_bookmark_markers(doc.body(), *bookmark)
+            let (start_site, end_site) = surface_block_lists(doc)
+                .into_iter()
+                .find_map(|blocks| locate_bookmark_markers(blocks, *bookmark))
                 .ok_or(EditError::BookmarkNotFound)?;
 
-            let start_snapshot = find_paragraph(doc.body(), start_site.node)
+            let start_snapshot = find_paragraph_any(doc, start_site.node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
             let end_snapshot = if end_site.node != start_site.node {
                 Some(
-                    find_paragraph(doc.body(), end_site.node)
+                    find_paragraph_any(doc, end_site.node)
                         .ok_or(EditError::NodeNotFound)?
                         .inlines
                         .clone(),
@@ -1604,7 +1606,7 @@ pub fn apply(
             // Snapshot the target paragraph so any failure (a bad offset, a field
             // the model rejects) rolls back to exactly the prior state; a field is
             // always inserted at paragraph top level, aligned to a run boundary.
-            let snapshot = find_paragraph(doc.body(), at.node)
+            let snapshot = find_paragraph_any(doc, at.node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
@@ -1623,7 +1625,7 @@ pub fn apply(
             // Snapshot the target paragraph so any failure (bad offset, a node the
             // model rejects) rolls back to exactly the prior state; the object is
             // inserted at paragraph top level, aligned to a run boundary.
-            let snapshot = find_paragraph(doc.body(), at.node)
+            let snapshot = find_paragraph_any(doc, at.node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
@@ -1639,9 +1641,11 @@ pub fn apply(
             Ok(Operation::RemoveInlineObject { object: node.id() })
         }
         Operation::RemoveInlineObject { object } => {
-            let (node, offset, removed) =
-                locate_inline_object(doc.body(), *object).ok_or(EditError::NodeNotFound)?;
-            let snapshot = find_paragraph(doc.body(), node)
+            let (node, offset, removed) = surface_block_lists(doc)
+                .into_iter()
+                .find_map(|blocks| locate_inline_object(blocks, *object))
+                .ok_or(EditError::NodeNotFound)?;
+            let snapshot = find_paragraph_any(doc, node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
@@ -1665,9 +1669,11 @@ pub fn apply(
             })
         }
         Operation::RemoveField { field } => {
-            let (node, offset, removed) =
-                locate_field(doc.body(), *field).ok_or(EditError::FieldNotFound)?;
-            let snapshot = find_paragraph(doc.body(), node)
+            let (node, offset, removed) = surface_block_lists(doc)
+                .into_iter()
+                .find_map(|blocks| locate_field(blocks, *field))
+                .ok_or(EditError::FieldNotFound)?;
+            let snapshot = find_paragraph_any(doc, node)
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
@@ -2736,7 +2742,9 @@ pub fn locate_cell(document: &Document, node: NodeId) -> Option<(NodeId, NodeId)
         }
         None
     }
-    walk(document.body(), node)
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, node))
 }
 
 /// A clone of the cell `cell`'s current properties (read-only), searching the body
@@ -2769,7 +2777,9 @@ pub fn cell_properties(document: &Document, cell: NodeId) -> Option<TableCellPro
         }
         None
     }
-    walk(document.body(), cell)
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, cell))
 }
 
 /// The table with id `table` (read-only), searching the body recursively — a host
@@ -2800,7 +2810,9 @@ pub fn find_table(document: &Document, table: NodeId) -> Option<&Table> {
         }
         None
     }
-    walk(document.body(), table)
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, table))
 }
 
 /// Locates the table row that (recursively) contains paragraph `node`: the table's
@@ -2834,7 +2846,9 @@ pub fn locate_table_row(document: &Document, node: NodeId) -> Option<(NodeId, u3
         }
         None
     }
-    walk(document.body(), node)
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, node))
 }
 
 /// Whether `node` is a paragraph directly in `blocks` (not descending into nested
@@ -2877,14 +2891,25 @@ pub fn locate_table_cell(document: &Document, node: NodeId) -> Option<(NodeId, u
         }
         None
     }
-    walk(document.body(), node)
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, node))
 }
 
 /// The properties of paragraph `node` (a clone), for a host to read the current
 /// alignment/spacing/… before computing a change. `None` if not a paragraph.
 #[must_use]
 pub fn paragraph_properties(document: &Document, node: NodeId) -> Option<ParagraphProperties> {
-    find_paragraph(document.body(), node).map(|p| p.properties.clone())
+    // Whichever surface owns the paragraph — the body, a header or footer, a
+    // note, or an inline text box. Reading only the body meant a caret in a
+    // header found nothing and every caller fell back to its default, so the
+    // toolbar reported a RIGHT-aligned header paragraph as left-aligned and its
+    // style and font as unset. A wrong answer is worse than no answer here: it
+    // invites the user to "fix" an alignment that was never wrong.
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| find_paragraph(blocks, node))
+        .map(|paragraph| paragraph.properties.clone())
 }
 
 /// Ensures a run boundary exists at byte `offset` by splitting the run that
@@ -3151,6 +3176,32 @@ pub enum Surface {
     Endnote(NoteId),
 }
 
+/// Every block surface in the document, body first.
+///
+/// The read helpers below all used to walk `document.body()` alone, so a caret
+/// in a header, footer, note or text box found nothing and each caller fell back
+/// to its default — that is how a RIGHT-aligned header paragraph reported itself
+/// as left-aligned. They are listed once here rather than each growing its own
+/// copy of the traversal, because the same omission was made independently four
+/// times.
+fn surface_block_lists(document: &Document) -> Vec<&[BlockNode]> {
+    let definitions = document.definitions();
+    let mut out: Vec<&[BlockNode]> = vec![document.body()];
+    for (_, header) in definitions.headers.iter() {
+        out.push(&header.blocks);
+    }
+    for (_, footer) in definitions.footers.iter() {
+        out.push(&footer.blocks);
+    }
+    for (_, note) in definitions.footnotes.iter() {
+        out.push(&note.blocks);
+    }
+    for (_, note) in definitions.endnotes.iter() {
+        out.push(&note.blocks);
+    }
+    out
+}
+
 /// Whether `blocks` (recursively) contains a paragraph or table with `id`.
 fn blocks_contain(blocks: &[BlockNode], id: NodeId) -> bool {
     if find_paragraph(blocks, id).is_some() {
@@ -3234,6 +3285,16 @@ fn surface_blocks_mut<'a>(
 
 /// The block list owning `id`, wherever it lives — the body-agnostic replacement
 /// for `doc.body_mut()` in ops that address a position by node.
+/// The paragraph `id`, wherever it lives — the immutable counterpart of
+/// [`blocks_owning_mut`], for the op arms that snapshot a paragraph before
+/// mutating it. Reading only the body meant those ops refused outright in a
+/// header, footer or note.
+fn find_paragraph_any(doc: &Document, id: NodeId) -> Option<&Paragraph> {
+    surface_block_lists(doc)
+        .into_iter()
+        .find_map(|blocks| find_paragraph(blocks, id))
+}
+
 fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNode>, EditError> {
     let surface = surface_of(doc, id).ok_or(EditError::NodeNotFound)?;
     surface_blocks_mut(doc, &surface).ok_or(EditError::NodeNotFound)
@@ -5654,6 +5715,44 @@ mod tests {
     /// Word's `w:next`: Enter at the END of a heading starts the style the
     /// heading declares it is followed by, which is why typing a heading and
     /// pressing Enter puts you in body text rather than in a second heading.
+    /// Reading a paragraph's properties must work wherever it lives. This is the
+    /// defect a user hit: a RIGHT-aligned header paragraph reported itself as
+    /// left-aligned, because the read walked the body alone, found nothing, and
+    /// the caller fell back to its default. A wrong answer is worse than none —
+    /// it invites "fixing" an alignment that was never wrong.
+    #[test]
+    fn paragraph_properties_are_read_from_whichever_surface_owns_them() {
+        let header_id = HeaderFooterId::new(n(970));
+        let para_id = n(971);
+        let mut definitions = Definitions::default();
+        let properties = ParagraphProperties {
+            alignment: Some(casual_doc_model::v1::Alignment::End),
+            ..ParagraphProperties::default()
+        };
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties,
+                    inlines: vec![run(972, "Right aligned")],
+                })],
+            },
+        );
+        let d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+
+        assert_eq!(
+            paragraph_properties(&d, para_id).and_then(|p| p.alignment),
+            Some(casual_doc_model::v1::Alignment::End),
+            "the header paragraph's own alignment, not a default"
+        );
+        // The body still reads correctly.
+        assert!(paragraph_properties(&d, n(2)).is_some());
+        // And an id no surface owns is still None.
+        assert!(paragraph_properties(&d, n(4242)).is_none());
+    }
+
     /// A paragraph inside an inline TEXT BOX is ordinary block content in the same
     /// id space too — `record_inline_ids` records it there — so an op that
     /// addresses it by `NodeId` should reach it. Resolution walked only block
