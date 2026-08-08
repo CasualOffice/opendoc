@@ -1198,6 +1198,110 @@ body.modal-open {
   font-weight: 450;
 }
 
+/* ---- Insert ▸ Symbol / Emoji pickers ------------------------------------- */
+.glyph-dialog {
+  width: min(520px, 100%);
+}
+
+.glyph-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.glyph-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--ink);
+  font: inherit;
+}
+
+.glyph-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.glyph-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.glyph-tab {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.glyph-tab:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+
+.glyph-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.glyph-tab.is-active {
+  background: var(--accent-soft, var(--bg-2));
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.glyph-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 4px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.glyph-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.glyph-grid-emoji .glyph-cell {
+  font-size: 24px;
+}
+
+.glyph-cell:hover {
+  background: var(--bg-2);
+  border-color: var(--line);
+}
+
+.glyph-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.glyph-empty {
+  margin: 0;
+  padding: 12px 4px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
 /* ---- Insert/edit link dialog --------------------------------------------- */
 .link-dialog {
   width: min(460px, 100%);
