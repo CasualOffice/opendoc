@@ -376,6 +376,12 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::DeleteBookmark { .. }
         | Operation::RenameBookmark { .. } => HistoryKind::BookmarkChange,
         Operation::InsertNote { .. } | Operation::RemoveNote { .. } => HistoryKind::NoteChange,
+        // Creating or linking a header/footer body is a structural change to the
+        // document's running content, not a text edit, so it never coalesces with
+        // typing either side of it.
+        Operation::CreateHeaderFooterBody { .. }
+        | Operation::RemoveHeaderFooterBody { .. }
+        | Operation::SetSectionRunningRef { .. } => HistoryKind::Edit,
     }
 }
 
@@ -14860,6 +14866,11 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
             .first()
             .map_or_else(|| Pos::new(doc_id, 0), first_pos_of_block),
         Operation::RemoveNote { .. } => Pos::new(doc_id, 0),
+        // Running-content structure carries no body caret of its own: the host
+        // places the caret when it enters the header, so leave it where it was.
+        Operation::CreateHeaderFooterBody { .. }
+        | Operation::RemoveHeaderFooterBody { .. }
+        | Operation::SetSectionRunningRef { .. } => Pos::new(doc_id, 0),
     }
 }
 
