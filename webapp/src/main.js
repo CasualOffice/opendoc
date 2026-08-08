@@ -2535,20 +2535,42 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // caller await the network font fetch below (which would leave a demo sitting
     // on the plain editor for seconds).
     if (typeof onOpened === "function") onOpened();
-    const fontWarnings = await provisionFonts(name);
+    // Paint from the target-bundled metric-compatible faces FIRST. The named web
+    // families are ~9.5 MB of variable fonts from a CDN, and awaiting them here
+    // meant the document stayed invisible until every one of them had landed —
+    // on top of the engine's own download, seconds of blank editor before a
+    // single glyph appeared. The bundled faces are metric-compatible substitutes,
+    // so this first pass is laid out on the right advance widths rather than
+    // being a throwaway approximation, and the upgrade below re-renders once the
+    // real faces register. Word and Docs both show the document before every
+    // font it references is resolved; so do browsers, for the same reason.
     await renderAll();
-    if (fontWarnings.length > 0) {
-      setStatus(
-        `Opened ${name}; unavailable web fonts: ${[...new Set(fontWarnings)].join(", ")}`,
-        "error",
-      );
-    }
     buildOutline();
     buildAccessibilityTree();
     drawSelection();
-    // Post-render demo hook (e.g. a gallery preset that needs laid-out geometry,
-    // like selecting text). Runs once the page is composed.
     if (typeof onRendered === "function") onRendered();
+
+    // Then upgrade in the background: fetch, register, and re-render. Not
+    // awaited, so the caller — and the user — are not held behind the network.
+    void provisionFonts(name).then(async (fontWarnings) => {
+      // A newer document may have been opened while these bytes were in flight;
+      // its own provisioning owns the screen, so this one must not repaint it.
+      if (currentName !== name || !doc) return;
+      await renderAll();
+      buildOutline();
+      buildAccessibilityTree();
+      drawSelection();
+      if (fontWarnings.length > 0) {
+        setStatus(
+          `Opened ${name}; unavailable web fonts: ${[...new Set(fontWarnings)].join(", ")}`,
+          "error",
+        );
+      }
+      // The signal that the document is now painted with its real faces. Tests
+      // wait on this so their geometry assertions are never racing an upgrade
+      // repaint; nothing in the product blocks on it.
+      document.body.dataset.fontsReady = "true";
+    });
   } catch (err) {
     console.error(err);
     setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
