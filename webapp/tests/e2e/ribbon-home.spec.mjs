@@ -147,9 +147,12 @@ test("ribbon tabs use roving focus and arrow-key activation", async ({ page, con
   await expect(page.locator("#tabHome")).toHaveAttribute("tabindex", "-1");
   await expect(page.locator("#panelInsert")).toBeVisible();
 
+  // End goes to the LAST tab, which is Review — Word's own tab order ends there
+  // too. This asserts the roving-focus contract, not a fixed roster, so it moves
+  // with the tab strip rather than pinning it.
   await page.keyboard.press("End");
-  await expect(page.locator("#tabView")).toBeFocused();
-  await expect(page.locator("#panelView")).toBeVisible();
+  await expect(page.locator("#tabReview")).toBeFocused();
+  await expect(page.locator("#panelReview")).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
