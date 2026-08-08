@@ -4754,6 +4754,11 @@ impl WasmDocument {
                 .iter()
                 .map(|(_, t)| t.split_whitespace().count() as u32)
                 .sum(),
+            characters: nodes
+                .iter()
+                .map(|(_, t)| t.chars().filter(|c| !c.is_whitespace()).count() as u32)
+                .sum(),
+            characters_with_spaces: nodes.iter().map(|(_, t)| t.chars().count() as u32).sum(),
             paragraphs: nodes.len() as u32,
             pages: self.layout.page_count() as u32,
         }
@@ -14912,6 +14917,8 @@ impl ParagraphFlags {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DocStats {
     words: u32,
+    characters: u32,
+    characters_with_spaces: u32,
     paragraphs: u32,
     pages: u32,
 }
@@ -14923,6 +14930,20 @@ impl DocStats {
     #[must_use]
     pub fn words(&self) -> u32 {
         self.words
+    }
+
+    /// Character count excluding whitespace (Word's "Characters (no spaces)").
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn characters(&self) -> u32 {
+        self.characters
+    }
+
+    /// Character count including spaces (Word's "Characters (with spaces)").
+    #[wasm_bindgen(getter = charactersWithSpaces)]
+    #[must_use]
+    pub fn characters_with_spaces(&self) -> u32 {
+        self.characters_with_spaces
     }
 
     /// Paragraph count (body + table cells + content controls).
@@ -15368,6 +15389,25 @@ mod tests {
             doc.document.definitions().endnotes.len(),
             endnotes_before,
             "undo removed the endnote definition"
+        );
+    }
+
+    #[test]
+    fn document_stats_counts_characters_with_and_without_spaces() {
+        // Two paragraphs: "Hello world" (10 non-space chars, 11 with the space)
+        // and "ab c" (3 non-space, 4 with). Unicode-correct char counting.
+        let doc = open_document(b"Hello world\nab c\n").expect("auto-detect plain text");
+        let s = doc.document_stats();
+        assert_eq!(s.words(), 4, "whitespace-delimited words");
+        assert_eq!(s.characters(), 13, "characters excluding whitespace");
+        assert_eq!(
+            s.characters_with_spaces(),
+            15,
+            "characters including in-paragraph spaces"
+        );
+        assert!(
+            s.characters_with_spaces() >= s.characters(),
+            "with-spaces is never below no-spaces"
         );
     }
 

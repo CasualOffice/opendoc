@@ -2095,6 +2095,7 @@ const documentStateEl = document.getElementById("documentState");
 const documentStateText = document.getElementById("documentStateText");
 const statsEl = document.getElementById("stats");
 const statWords = document.getElementById("statWords");
+const statChars = document.getElementById("statChars");
 const statParas = document.getElementById("statParas");
 const statPages = document.getElementById("statPages");
 
@@ -2291,9 +2292,14 @@ function updateStats() {
   }
   const s = doc.documentStats();
   const words = s.words;
+  const chars = s.charactersWithSpaces;
+  const charsNoSpaces = s.characters;
   const paras = s.paragraphs;
   s.free();
   statWords.textContent = `${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
+  statChars.textContent = `${chars.toLocaleString()} character${chars === 1 ? "" : "s"}`;
+  // Word distinguishes with- vs without-spaces; surface both on hover.
+  statChars.title = `${chars.toLocaleString()} characters (with spaces)\n${charsNoSpaces.toLocaleString()} characters (no spaces)`;
   statParas.textContent = `${paras.toLocaleString()} paragraph${paras === 1 ? "" : "s"}`;
   statsEl.hidden = false;
   statPages.hidden = false;
