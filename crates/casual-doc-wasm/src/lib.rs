@@ -4899,28 +4899,40 @@ impl WasmDocument {
         initials.or_else(|| self.active_author.as_ref().map(|a| a.initials.clone()))
     }
 
-    /// Creates a comment over a same-paragraph selection. The marker and
-    /// definition changes are one undoable review transaction.
+    /// Creates a comment over a selection that may span multiple paragraphs.
+    /// The `CommentRangeStart` marker lands in `start_node` at `start`, the
+    /// `CommentRangeEnd` marker and the `CommentReference` in `end_node` at
+    /// `end`, all keyed to the same [`CommentId`]; when `start_node == end_node`
+    /// this is a single-paragraph span and behaves exactly as before. The
+    /// endpoints are expected in document order (the editor's `selectionEdge`).
+    /// The marker and definition changes are one undoable review transaction.
     #[wasm_bindgen(js_name = addComment)]
     #[allow(clippy::too_many_arguments)]
     pub fn add_comment(
         &mut self,
-        node: &str,
+        start_node: &str,
         start: u32,
+        end_node: &str,
         end: u32,
         text: &str,
         author: Option<String>,
         initials: Option<String>,
         date: Option<String>,
     ) -> Result<EditResult, JsValue> {
-        if start >= end || text.is_empty() {
+        if text.is_empty() {
+            return Err(to_js(
+                "comment range and text must be non-empty".to_string(),
+            ));
+        }
+        let start_node = node_id(start_node)?;
+        let end_node = node_id(end_node)?;
+        if start_node == end_node && start >= end {
             return Err(to_js(
                 "comment range and text must be non-empty".to_string(),
             ));
         }
         let author = self.resolve_author(author);
         let initials = self.resolve_initials(initials);
-        let node = node_id(node)?;
         let next_id = |ids: &mut IdGenerator| {
             ids.next_id()
                 .map_err(|_| to_js("id space exhausted".to_string()))
@@ -4931,30 +4943,66 @@ impl WasmDocument {
         let reference_id = next_id(&mut self.edit_ids)?;
         let body_id = next_id(&mut self.edit_ids)?;
         let run_id = next_id(&mut self.edit_ids)?;
-        let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
-        if !insert_review_comment_markers(
-            &mut body,
-            node,
-            start,
-            end,
-            CommentRangeStart {
-                id: start_id,
-                comment,
-            },
-            CommentRangeEnd {
-                id: end_id,
-                comment,
-            },
-            CommentReference {
-                id: reference_id,
-                comment,
-            },
-            &mut self.edit_ids,
-        ) {
-            return Err(to_js(
-                "comment range must cover editable top-level text".to_string(),
-            ));
-        }
+        let range_start = CommentRangeStart {
+            id: start_id,
+            comment,
+        };
+        let range_end = CommentRangeEnd {
+            id: end_id,
+            comment,
+        };
+        let reference = CommentReference {
+            id: reference_id,
+            comment,
+        };
+        let (body, caret) = if start_node == end_node {
+            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
+            if !insert_review_comment_markers(
+                &mut body,
+                start_node,
+                start,
+                end,
+                range_start,
+                range_end,
+                reference,
+                &mut self.edit_ids,
+            ) {
+                return Err(to_js(
+                    "comment range must cover editable top-level text".to_string(),
+                ));
+            }
+            (body, Pos::new(start_node, end))
+        } else {
+            // Cross-paragraph span: the start marker is placed in `start_node`
+            // and the end marker plus reference in `end_node`. Both paragraphs
+            // ride in one body vec so the single review operation carries both
+            // changed paragraphs (its inverse removes both markers). The
+            // endpoints arrive in document order, so the markers are ordered
+            // correctly across the body.
+            let mut body = review_paragraph_body(&self.document, start_node).map_err(to_js)?;
+            body.extend(review_paragraph_body(&self.document, end_node).map_err(to_js)?);
+            if !insert_comment_markers_at(
+                &mut body,
+                start_node,
+                start,
+                &[InlineNode::CommentRangeStart(range_start)],
+                &mut self.edit_ids,
+            ) || !insert_comment_markers_at(
+                &mut body,
+                end_node,
+                end,
+                &[
+                    InlineNode::CommentRangeEnd(range_end),
+                    InlineNode::CommentReference(reference),
+                ],
+                &mut self.edit_ids,
+            ) {
+                return Err(to_js(
+                    "comment range must cover editable top-level text".to_string(),
+                ));
+            }
+            (body, Pos::new(end_node, end))
+        };
         let mut comments = self.document.definitions().comments.clone();
         let para_id = next_comment_para_id(&comments).map_err(to_js)?;
         comments.insert(
@@ -4981,7 +5029,7 @@ impl WasmDocument {
         );
         let operation =
             update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
-        self.apply_action_caret_as(vec![operation], Pos::new(node, end), HistoryKind::Review)
+        self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
             .map_err(to_js)
     }
 
@@ -9515,18 +9563,38 @@ fn collect_review_comment_anchors(
     blocks: &[BlockNode],
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
 ) {
+    // The pending-start map is threaded across paragraphs, not reset per
+    // paragraph, so a comment whose `CommentRangeEnd` lands in a later paragraph
+    // than its `CommentRangeStart` still resolves to an anchor (multi-paragraph
+    // comments). Each pending start records its node, offset, and its
+    // paragraph's projected text length so a cross-paragraph end can anchor to
+    // the start marker over the remainder of the start paragraph.
+    let mut starts = std::collections::BTreeMap::new();
+    collect_review_comment_anchors_inner(blocks, &mut starts, out);
+}
+
+fn collect_review_comment_anchors_inner(
+    blocks: &[BlockNode],
+    starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, (NodeId, u32, u32)>,
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                let para_len = paragraph
+                    .inlines
+                    .iter()
+                    .map(inline_anchor_len_for_review)
+                    .sum();
                 let mut offset = 0;
-                let mut starts = std::collections::BTreeMap::new();
                 for inline in &paragraph.inlines {
                     collect_review_comment_inline(
                         inline,
                         paragraph.id,
+                        para_len,
                         &mut offset,
                         true,
-                        &mut starts,
+                        starts,
                         out,
                     );
                 }
@@ -9534,11 +9602,13 @@ fn collect_review_comment_anchors(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_review_comment_anchors(&cell.blocks, out);
+                        collect_review_comment_anchors_inner(&cell.blocks, starts, out);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_review_comment_anchors(&sdt.blocks, out),
+            BlockNode::Sdt(sdt) => {
+                collect_review_comment_anchors_inner(&sdt.blocks, starts, out);
+            }
             BlockNode::AltChunk(_) => {}
         }
     }
@@ -9702,6 +9772,70 @@ fn insert_review_comment_markers(
                     reference,
                     ids,
                 ) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Inserts `markers` (in order) at `offset` within paragraph `node`, splitting
+/// the top-level run at the boundary first, and recursing into tables and
+/// structured-document tags so a paragraph in any block container is reachable.
+/// This is the cross-node building block for [`WasmDocument::add_comment`]: a
+/// multi-paragraph comment places its start marker in one paragraph and its end
+/// marker plus reference in another with two calls. Returns `false` when the
+/// node is absent or `offset` does not fall on a top-level run boundary — the
+/// same "editable top-level text" restriction as `insert_review_comment_markers`.
+fn insert_comment_markers_at(
+    blocks: &mut [BlockNode],
+    node: NodeId,
+    offset: u32,
+    markers: &[InlineNode],
+    ids: &mut IdGenerator,
+) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                if !review_split_top_level_run(&mut paragraph.inlines, offset, ids) {
+                    return false;
+                }
+                let mut cursor = 0;
+                let mut insert_at = None;
+                for (index, inline) in paragraph.inlines.iter().enumerate() {
+                    if cursor == offset {
+                        insert_at = Some(index);
+                        break;
+                    }
+                    if let InlineNode::Run(run) = inline {
+                        cursor = cursor.saturating_add(run.text.len() as u32);
+                    } else {
+                        return false;
+                    }
+                }
+                let Some(insert_at) =
+                    insert_at.or_else(|| (cursor == offset).then_some(paragraph.inlines.len()))
+                else {
+                    return false;
+                };
+                for (k, marker) in markers.iter().enumerate() {
+                    paragraph.inlines.insert(insert_at + k, marker.clone());
+                }
+                return true;
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if insert_comment_markers_at(&mut cell.blocks, node, offset, markers, ids) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if insert_comment_markers_at(&mut sdt.blocks, node, offset, markers, ids) {
                     return true;
                 }
             }
@@ -11464,23 +11598,35 @@ fn review_split_top_level_run(
 fn collect_review_comment_inline(
     inline: &InlineNode,
     node: NodeId,
+    para_len: u32,
     offset: &mut u32,
     projected: bool,
-    starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, u32>,
+    starts: &mut std::collections::BTreeMap<casual_doc_model::v1::CommentId, (NodeId, u32, u32)>,
     out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
 ) {
     match inline {
         InlineNode::CommentRangeStart(marker) => {
-            starts.insert(marker.comment, *offset);
+            starts.insert(marker.comment, (node, *offset, para_len));
         }
         InlineNode::CommentRangeEnd(marker) => {
-            if let Some(start) = starts.remove(&marker.comment) {
-                out.push((marker.comment, node, start, *offset));
+            if let Some((start_node, start, start_para_len)) = starts.remove(&marker.comment) {
+                if start_node == node {
+                    // Same paragraph: the anchor is the exact commented span.
+                    out.push((marker.comment, node, start, *offset));
+                } else {
+                    // Cross-paragraph: anchor to the start marker over the
+                    // remainder of its own paragraph. The sidebar anchors to the
+                    // comment's start and the highlight stays valid (a single-node
+                    // range the overlay can rect) rather than breaking.
+                    out.push((marker.comment, start_node, start, start_para_len));
+                }
             }
         }
         InlineNode::Hyperlink(link) => {
             for child in &link.inlines {
-                collect_review_comment_inline(child, node, offset, projected, starts, out);
+                collect_review_comment_inline(
+                    child, node, para_len, offset, projected, starts, out,
+                );
             }
         }
         InlineNode::Revision(revision) => {
@@ -11489,12 +11635,22 @@ fn collect_review_comment_inline(
                     .kind
                     .contributes_to(ReviewProjection::FinalWithMarkup);
             for child in &revision.inlines {
-                collect_review_comment_inline(child, node, offset, child_projected, starts, out);
+                collect_review_comment_inline(
+                    child,
+                    node,
+                    para_len,
+                    offset,
+                    child_projected,
+                    starts,
+                    out,
+                );
             }
         }
         InlineNode::Sdt(sdt) => {
             for child in &sdt.inlines {
-                collect_review_comment_inline(child, node, offset, projected, starts, out);
+                collect_review_comment_inline(
+                    child, node, para_len, offset, projected, starts, out,
+                );
             }
         }
         _ if projected => {
@@ -16311,6 +16467,7 @@ mod tests {
                 }),
             ],
         })];
+        let para_len = inlines.iter().map(inline_anchor_len_for_review).sum();
         let mut offset = 0;
         let mut starts = BTreeMap::new();
         let mut anchors = Vec::new();
@@ -16318,6 +16475,7 @@ mod tests {
             collect_review_comment_inline(
                 inline,
                 paragraph,
+                para_len,
                 &mut offset,
                 true,
                 &mut starts,
@@ -16759,6 +16917,7 @@ mod tests {
         d.add_comment(
             &node,
             0,
+            &node,
             marker.len() as u32,
             "Margin comment",
             Some("Tester".to_owned()),
@@ -16771,6 +16930,185 @@ mod tests {
         assert_eq!(summary["comments"][0]["text"], "Margin comment");
         assert_eq!(summary["comments"][0]["anchor"]["start"], 0);
         assert_eq!(summary["comments"][0]["anchor"]["end"], marker.len() as u64);
+    }
+
+    /// A comment whose selection spans two paragraphs places the
+    /// `CommentRangeStart` in the first paragraph and the `CommentRangeEnd`
+    /// plus `CommentReference` in the second, both keyed to one `CommentId`.
+    /// The document validates, survives a docx export/reopen with the span
+    /// still crossing two paragraphs, and its single inverse (undo) removes
+    /// both markers and the comment definition.
+    #[test]
+    fn comment_can_span_two_paragraphs_and_inverse_removes_both_markers() {
+        // The first two non-empty top-level body paragraphs; the marker is
+        // placed at run boundaries so `insert_comment_markers_at` succeeds.
+        fn top_level_text(paragraph: &Paragraph) -> String {
+            paragraph
+                .inlines
+                .iter()
+                .filter_map(|inline| match inline {
+                    InlineNode::Run(run) => Some(run.text.as_str()),
+                    _ => None,
+                })
+                .collect()
+        }
+        fn markers_for(document: &Document, node: NodeId) -> (usize, usize, usize) {
+            let paragraph = find_paragraph(document.body(), node).expect("paragraph present");
+            let mut starts = 0;
+            let mut ends = 0;
+            let mut refs = 0;
+            for inline in &paragraph.inlines {
+                match inline {
+                    InlineNode::CommentRangeStart(_) => starts += 1,
+                    InlineNode::CommentRangeEnd(_) => ends += 1,
+                    InlineNode::CommentReference(_) => refs += 1,
+                    _ => {}
+                }
+            }
+            (starts, ends, refs)
+        }
+
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let tops: Vec<(NodeId, String)> = d
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => {
+                    let text = top_level_text(paragraph);
+                    (!text.is_empty()).then_some((paragraph.id, text))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tops.len() >= 2,
+            "corpus needs two non-empty top-level paragraphs"
+        );
+        let start_node = tops[0].0;
+        let end_node = tops[1].0;
+        let end_offset = tops[1].1.len() as u32;
+        assert_ne!(start_node, end_node);
+
+        d.add_comment(
+            &start_node.to_string(),
+            0,
+            &end_node.to_string(),
+            end_offset,
+            "Cross-paragraph",
+            Some("Reviewer".to_owned()),
+            Some("R".to_owned()),
+            None,
+        )
+        .expect("add cross-paragraph comment");
+        assert!(
+            d.document.validate().is_ok(),
+            "a cross-paragraph comment must validate"
+        );
+
+        // One shared comment id: the start marker sits alone in the first
+        // paragraph, the end marker and the reference in the second.
+        let comment = d
+            .document
+            .definitions()
+            .comments
+            .iter()
+            .find_map(|(id, comment)| {
+                let mut blocks = Vec::new();
+                collect_block_text(&comment.blocks, &mut blocks);
+                blocks
+                    .iter()
+                    .any(|(_, text)| text == "Cross-paragraph")
+                    .then_some(*id)
+            })
+            .expect("comment definition");
+        assert_eq!(markers_for(&d.document, start_node), (1, 0, 0));
+        assert_eq!(markers_for(&d.document, end_node), (0, 1, 1));
+        let start_para = find_paragraph(d.document.body(), start_node).expect("start paragraph");
+        assert!(start_para.inlines.iter().any(|inline| matches!(
+            inline,
+            InlineNode::CommentRangeStart(marker) if marker.comment == comment
+        )));
+        let end_para = find_paragraph(d.document.body(), end_node).expect("end paragraph");
+        assert!(end_para.inlines.iter().any(|inline| matches!(
+            inline,
+            InlineNode::CommentRangeEnd(marker) if marker.comment == comment
+        )));
+        assert!(end_para.inlines.iter().any(|inline| matches!(
+            inline,
+            InlineNode::CommentReference(marker) if marker.comment == comment
+        )));
+
+        // The sidebar anchor resolves to the start marker's paragraph over the
+        // remainder of that paragraph — a cross-paragraph comment still yields a
+        // usable, single-node anchor rather than none.
+        let summary: serde_json::Value =
+            serde_json::from_str(&d.review_summary()).expect("review summary");
+        let anchored = summary["comments"]
+            .as_array()
+            .expect("comments array")
+            .iter()
+            .find(|entry| entry["text"] == "Cross-paragraph")
+            .expect("cross-paragraph comment entry");
+        assert_eq!(anchored["anchor"]["node"], start_node.to_string());
+        assert!(
+            anchored["anchor"]["end"].as_u64().unwrap()
+                > anchored["anchor"]["start"].as_u64().unwrap(),
+            "the cross-paragraph anchor covers a non-empty span"
+        );
+
+        // Round-trips through a docx export/reopen with the span still crossing
+        // two distinct paragraphs. `owner` returns the id of the first paragraph
+        // holding a marker of the requested kind (recursing into containers).
+        fn owner(blocks: &[BlockNode], want_start: bool) -> Option<NodeId> {
+            for block in blocks {
+                match block {
+                    BlockNode::Paragraph(paragraph) => {
+                        let has = paragraph.inlines.iter().any(|inline| {
+                            if want_start {
+                                matches!(inline, InlineNode::CommentRangeStart(_))
+                            } else {
+                                matches!(inline, InlineNode::CommentRangeEnd(_))
+                            }
+                        });
+                        if has {
+                            return Some(paragraph.id);
+                        }
+                    }
+                    BlockNode::Table(table) => {
+                        for row in &table.rows {
+                            for cell in &row.cells {
+                                if let Some(id) = owner(&cell.blocks, want_start) {
+                                    return Some(id);
+                                }
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(sdt) => {
+                        if let Some(id) = owner(&sdt.blocks, want_start) {
+                            return Some(id);
+                        }
+                    }
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+            None
+        }
+        let bytes = d.export_docx().expect("export cross-paragraph comment");
+        let reopened = open_document(&bytes).expect("reopen cross-paragraph comment");
+        let start_owner = owner(reopened.document.body(), true);
+        let end_owner = owner(reopened.document.body(), false);
+        assert!(start_owner.is_some() && end_owner.is_some());
+        assert_ne!(
+            start_owner, end_owner,
+            "the reopened span must still cross two paragraphs"
+        );
+
+        // Single inverse: undo removes both markers and the comment definition.
+        d.undo().expect("undo cross-paragraph comment");
+        assert_eq!(markers_for(&d.document, start_node), (0, 0, 0));
+        assert_eq!(markers_for(&d.document, end_node), (0, 0, 0));
+        assert!(!d.document.definitions().comments.contains_key(&comment));
     }
 
     #[test]
@@ -16786,6 +17124,7 @@ mod tests {
         d.add_comment(
             &node,
             0,
+            &node,
             1,
             "Thread root",
             Some("Reviewer".to_owned()),
@@ -16863,7 +17202,7 @@ mod tests {
             .map(|(id, _)| id.to_string())
             .expect("a non-empty paragraph");
         let baseline = d.document.definitions().comments.len();
-        d.add_comment(&node, 0, 1, "Root", None, None, None)
+        d.add_comment(&node, 0, &node, 1, "Root", None, None, None)
             .expect("add root");
         let root = *d
             .document
@@ -16906,6 +17245,7 @@ mod tests {
         d.add_comment(
             &node,
             0,
+            &node,
             1,
             "Root comment",
             Some("Reviewer".to_owned()),
@@ -16987,7 +17327,7 @@ mod tests {
             .find(|(_, text)| !text.is_empty())
             .map(|(id, _)| id.to_string())
             .expect("a non-empty paragraph");
-        d.add_comment(&node, 0, 1, "Root", None, None, None)
+        d.add_comment(&node, 0, &node, 1, "Root", None, None, None)
             .expect("add root");
         let root = *d
             .document
@@ -17066,7 +17406,7 @@ mod tests {
             .find(|(_, text)| text.len() >= 3)
             .map(|(id, _)| id.to_string())
             .expect("a paragraph with at least three bytes of text");
-        d.add_comment(&node, 0, 1, "Root", None, None, None)
+        d.add_comment(&node, 0, &node, 1, "Root", None, None, None)
             .expect("add root");
         let root = *d
             .document
@@ -17325,7 +17665,7 @@ mod tests {
         // A comment over the first three bytes, then a tracked insertion at
         // byte 1 (inside that comment's range) — the overlap case.
         assert!(
-            d.add_comment(&node, 0, 3, "Overlapping", None, None, None)
+            d.add_comment(&node, 0, &node, 3, "Overlapping", None, None, None)
                 .is_ok(),
             "add overlapping comment"
         );
@@ -17442,7 +17782,7 @@ mod tests {
 
         // An omitted author on both a comment and a suggestion now resolves
         // to the active host identity.
-        d.add_comment(&node, 0, 1, "hi", None, None, None)
+        d.add_comment(&node, 0, &node, 1, "hi", None, None, None)
             .expect("add comment defaults to active author");
         let comment = d
             .document

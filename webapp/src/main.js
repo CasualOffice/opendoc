@@ -1476,7 +1476,7 @@ function renderReviewMarginItems() {
         if (!text || !reviewComposerState?.range) return;
         const { start, end } = reviewComposerState.range;
         const metadata = currentReviewTimestamp();
-        await runEdit(() => doc.addComment(start.node, start.offset, end.offset, text, undefined, undefined, metadata.date));
+        await runEdit(() => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date));
         reviewComposerState = null;
         reviewSidebarPreference = true;
         announceReview("Comment added");
@@ -4815,10 +4815,8 @@ function buildContextCommands(context) {
       group: "annotate",
       icon: "comment",
       shortcut: "⌘⌥M",
-      enabled: context.sameParagraphRange,
-      disabledReason: context.hasRange
-        ? "Comments currently require one paragraph"
-        : "Select text to add a comment",
+      enabled: context.hasRange,
+      disabledReason: "Select text to add a comment",
       run: () => openReviewComposer(),
     });
   }
@@ -8675,13 +8673,24 @@ function openReviewComposer(parent = null) {
     scheduleReviewMarginRender();
     return;
   }
-  const forward = selection.anchor.node === selection.focus.node
-    && selection.anchor.offset <= selection.focus.offset;
-  const start = forward ? { ...selection.anchor } : { ...selection.focus };
-  const end = forward ? { ...selection.focus } : { ...selection.anchor };
-  if (start.node !== end.node) {
-    setStatus("Comments currently require a single-paragraph selection", "error");
-    return;
+  // A comment can span paragraphs (Word/Docs). Order the endpoints in document
+  // order: same node compares offsets directly; otherwise `selectionEdge`
+  // returns the earlier/later endpoint so the start marker lands in the start
+  // paragraph and the end marker in the end paragraph.
+  const { anchor, focus } = selection;
+  let start;
+  let end;
+  if (anchor.node === focus.node) {
+    const forward = anchor.offset <= focus.offset;
+    start = forward ? { ...anchor } : { ...focus };
+    end = forward ? { ...focus } : { ...anchor };
+  } else {
+    const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
+    const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
+    start = { node: s.node, offset: s.offset };
+    end = { node: e.node, offset: e.offset };
+    s.free();
+    e.free();
   }
   reviewComposerState = { range: { start, end } };
   activeReviewItemId = null;
