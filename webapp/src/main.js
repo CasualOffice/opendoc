@@ -3672,6 +3672,38 @@ function selectObject(node, kind, anchor, anchored = false) {
   drawSelection();
 }
 
+/** Moves the object selection `step` places through the document's objects, in
+ *  the engine's own paint order, wrapping at both ends so the gesture never
+ *  dead-ends. Reads the order fresh each time because an edit may have added or
+ *  removed an object since the last keystroke. */
+function traverseObjects(step) {
+  if (!doc || !objectSelection) return;
+  let objects;
+  try {
+    objects = JSON.parse(doc.objectOrder());
+  } catch {
+    return;
+  }
+  if (!Array.isArray(objects) || objects.length === 0) return;
+  const current = objects.findIndex((entry) => entry.node === objectSelection.node);
+  // An object that has vanished from the order (deleted, or scrolled out of a
+  // layout that no longer places it) restarts from whichever end we moved toward.
+  const next =
+    current < 0
+      ? step > 0
+        ? 0
+        : objects.length - 1
+      : (current + step + objects.length) % objects.length;
+  const target = objects[next];
+  selectObject(target.node, target.kind, null, target.anchored);
+  // `selectObject` repaints synchronously, so the outline it just drew is the
+  // marker to reveal — a traversal that lands off-screen would otherwise look
+  // like nothing happened.
+  scrollOverlayIntoView(pagesEl.querySelector(".overlay .object-outline"));
+  // Screen readers get no handles to look at, so the position is announced.
+  setStatus(`${target.kind === "textbox" ? "Text box" : "Picture"} ${next + 1} of ${objects.length}`);
+}
+
 /** The wrap-mode choices offered for a floating object (docs/85 §5.3 / §10). */
 const WRAP_MODES = [
   ["square", "Square"],
@@ -12113,6 +12145,19 @@ document.addEventListener("keydown", async (e) => {
       if (key === "Enter") {
         e.preventDefault();
         enterObjectEditMode(); // double-click's keyboard twin (§4.3)
+        return;
+      }
+      // Tab / Shift+Tab move to the next / previous object (docs/85 §8d, Q1).
+      // Word cycles floating objects with Tab once one is selected, and Word for
+      // the web moves between graphics the same way — so the gesture belongs to
+      // object-selected mode. From a text caret Tab keeps its indent /
+      // list-demote / next-cell meaning, which the handler further down still
+      // owns. This is the only way to reach an object without a pointer: nothing
+      // else selects one, so a keyboard user could not reach an image or text
+      // box at all.
+      if (key === "Tab" && !mod) {
+        e.preventDefault();
+        traverseObjects(e.shiftKey ? -1 : 1);
         return;
       }
       if (key === "Delete" || key === "Backspace") {
