@@ -2317,6 +2317,83 @@ fn standalone_shape_radial_gradient_round_trips() {
     assert_eq!(reexport.bytes, export.bytes);
 }
 
+/// A shape's synthesized `gr<hash>` graphic-style name must depend only on the
+/// style's own output-affecting fields, not on unrelated `OdtGraphicStyle` fields
+/// left at their default. Concretely: a solid-fill rectangle emits the SAME
+/// `draw:style-name` whether or not the document also contains a gradient shape
+/// (which populates the `fill_gradient` field on its OWN style). This guards the
+/// regression where `name()` hashed the whole `{self:?}` Debug string, so adding
+/// the `fill_gradient` field churned every graphic style's name across releases.
+#[test]
+fn solid_fill_style_name_is_independent_of_sibling_gradient() {
+    // Extracts the `style:name` of the `graphic` style whose properties carry the
+    // solid `#3366cc` fill, from an exported content.xml/styles.xml pair.
+    fn solid_style_name(part: &str) -> String {
+        let marker = r##"draw:fill="solid" draw:fill-color="#3366cc""##;
+        let at = part.find(marker).expect("solid graphic-properties present");
+        let before = &part[..at];
+        let key = "style:name=\"";
+        let name_at = before.rfind(key).expect("style:name before properties") + key.len();
+        let rest = &part[name_at..];
+        let end = rest.find('"').expect("closing quote");
+        rest[..end].to_string()
+    }
+
+    fn export_content(content: &[u8]) -> String {
+        let manifest = format!(
+            r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+        )
+        .into_bytes();
+        let bytes = package(&[
+            Entry {
+                name: MIMETYPE_PART,
+                bytes: ODT_MIME.as_bytes().to_vec(),
+                compression: CompressionMethod::Stored,
+                local_extra: false,
+            },
+            Entry {
+                name: MANIFEST_PART,
+                bytes: manifest,
+                compression: CompressionMethod::Deflated,
+                local_extra: false,
+            },
+            Entry {
+                name: CONTENT_PART,
+                bytes: content.to_vec(),
+                compression: CompressionMethod::Deflated,
+                local_extra: false,
+            },
+        ]);
+        let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+            .unwrap()
+            .import_document(OdfImportLimits::default())
+            .unwrap();
+        let retained = crate::OdfRetainedParts::default();
+        let export = write_odt_with_retained_parts(
+            &imported.document,
+            &retained,
+            OdfExportLimits::default(),
+        )
+        .unwrap();
+        let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+        String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap()
+    }
+
+    // A lone solid-fill rectangle.
+    let solid_only = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##;
+
+    // The same solid-fill rectangle plus a sibling gradient rectangle. The gradient
+    // populates `fill_gradient` on ITS style only; the solid style must be unaffected.
+    let solid_plus_gradient = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="solid" draw:fill-color="#3366cc"/></style:style><style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="G1"/></style:style><draw:gradient draw:name="G1" draw:style="linear" draw:start-color="#ff0000" draw:end-color="#0000ff" draw:angle="300"/></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/><draw:rect draw:style-name="gr2" text:anchor-type="paragraph" svg:x="9cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##;
+
+    let name_alone = solid_style_name(&export_content(solid_only));
+    let name_with_gradient = solid_style_name(&export_content(solid_plus_gradient));
+    assert_eq!(
+        name_alone, name_with_gradient,
+        "a sibling gradient must not change the solid style's synthesized name"
+    );
+}
+
 /// A floating `draw:ellipse` imports to an `Ellipse` `GroupShape` and re-exports
 /// as `draw:ellipse` (not `draw:rect`), a byte-exact fixed point.
 #[test]

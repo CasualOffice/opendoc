@@ -759,8 +759,63 @@ impl OdtGraphicStyle {
     /// from every other minted family and from a foreign producer's `fr…` names,
     /// which the writer never re-emits). Identical content hashes to one name, so
     /// the `BTreeSet` dedups shared styles.
+    ///
+    /// The hash key is built from only the *present* fields, each under a distinct
+    /// tag, rather than the whole `{self:?}` Debug string. This keeps the key
+    /// injective (no two distinct styles collide) while making it stable against
+    /// field additions: a newly added `Option` field left `None` contributes
+    /// nothing, so adding one field never churns the synthesized names of styles
+    /// that do not use it (e.g. a `fill_gradient` field must not perturb the name
+    /// of a solid-fill, no-fill, or image-frame style).
     fn name(&self) -> String {
-        format!("gr{:016x}", font_family_hash(&format!("{self:?}")))
+        use std::fmt::Write as _;
+        let mut key = String::new();
+        if let Some(v) = self.wrap {
+            let _ = write!(key, "wrap={v};");
+        }
+        if let Some(v) = self.run_through {
+            let _ = write!(key, "rt={v};");
+        }
+        if let Some(v) = self.margin_top {
+            let _ = write!(key, "mt={v};");
+        }
+        if let Some(v) = self.margin_bottom {
+            let _ = write!(key, "mb={v};");
+        }
+        if let Some(v) = self.margin_left {
+            let _ = write!(key, "ml={v};");
+        }
+        if let Some(v) = self.margin_right {
+            let _ = write!(key, "mr={v};");
+        }
+        if let Some((r, g, b)) = self.fill {
+            let _ = write!(key, "fill={r},{g},{b};");
+        }
+        if let Some(grad) = &self.fill_gradient {
+            let _ = write!(key, "grad={};", grad.name());
+        }
+        if self.fill_none {
+            key.push_str("fillnone;");
+        }
+        if let Some(((r, g, b), w)) = self.stroke {
+            let _ = write!(key, "stroke={r},{g},{b},{w};");
+        }
+        if self.stroke_none {
+            key.push_str("strokenone;");
+        }
+        if let Some(v) = self.horizontal_pos {
+            let _ = write!(key, "hpos={v};");
+        }
+        if let Some(v) = self.vertical_pos {
+            let _ = write!(key, "vpos={v};");
+        }
+        if let Some(v) = self.horizontal_rel {
+            let _ = write!(key, "hrel={v};");
+        }
+        if let Some(v) = self.vertical_rel {
+            let _ = write!(key, "vrel={v};");
+        }
+        format!("gr{:016x}", font_family_hash(&key))
     }
 }
 
