@@ -9,7 +9,7 @@
 // The document's own heading is the fixture: the assertion is about what the
 // paragraph Enter STARTS is, so it is read from the model-derived accessibility
 // tree (h1/h2/p), which is canvas-independent.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
 
 const blocks = (page) =>
   page.evaluate(() =>
@@ -21,18 +21,21 @@ const blocks = (page) =>
 test("Enter at the end of a heading starts a body paragraph", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
+  // Deterministic: the caret must be IN the opening heading for this to test
+  // anything. Clicking alone does not guarantee where it lands.
+  await moveCaretToDocStart(page);
 
   // The fixture opens on a level-1 heading.
-  await page.keyboard.press("Home");
   expect((await blocks(page))[0]).toMatch(/^H1:/);
 
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("body text");
 
-  const after = await blocks(page);
-  expect(after[0]).toMatch(/^H1:/); // the heading itself is untouched
-  expect(after[1]).toBe("P:body text"); // what Enter started is a paragraph
+  // Polled: the typed text arrives asynchronously, and reading the projection
+  // straight after `type` intermittently caught it a keystroke short.
+  await expect.poll(async () => (await blocks(page))[1]).toBe("P:body text");
+  expect((await blocks(page))[0]).toMatch(/^H1:/); // the heading itself is untouched
 
   expect(consoleErrors).toEqual([]);
 });
@@ -46,16 +49,17 @@ test("splitting a heading in the middle keeps both halves a heading", async ({
 
   // Mid-paragraph Enter is one paragraph becoming two, not a new one starting,
   // so the style carries — the same distinction Word draws.
-  await page.keyboard.press("Home");
+  await moveCaretToDocStart(page);
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Enter");
 
-  const after = await blocks(page);
-  expect(after[0]).toMatch(/^H1:/);
-  expect(after[1]).toMatch(/^H1:/);
+  // Polled: the projection is rebuilt after the edit applies, so reading it
+  // immediately after the keystroke intermittently saw the pre-split document.
+  await expect.poll(async () => (await blocks(page))[1]).toMatch(/^H1:/);
+  expect((await blocks(page))[0]).toMatch(/^H1:/);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -65,7 +69,7 @@ test("the style change undoes with the paragraph break", async ({ page, consoleE
   await clickIntoFirstPage(page);
   const before = await blocks(page);
 
-  await page.keyboard.press("Home");
+  await moveCaretToDocStart(page);
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   expect((await blocks(page))[1]).toMatch(/^P:/);

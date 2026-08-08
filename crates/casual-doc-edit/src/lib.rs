@@ -26,10 +26,10 @@ use casual_doc_model::v1::{
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
-use casual_doc_model::v1::HeaderFooterId;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
 /// A run-property change to apply over a range: each `Some(_)` field sets that
@@ -677,6 +677,58 @@ pub enum Operation {
         /// The body-side reference inline to remove.
         reference_id: NodeId,
     },
+    /// Mint an empty header or footer body in the matching definition map
+    /// (docs/85 §8.3 `CreateHeaderFooterBody`).
+    ///
+    /// Creating the body is separate from linking a section to it because the
+    /// two are independently useful: unlinking a section ("Link to Previous"
+    /// off) creates a body AND links it, while re-linking only removes a ref and
+    /// leaves the body to be collected on export. Refuses if the id is already
+    /// defined, so an existing body can never be silently orphaned.
+    /// Inverse: [`Operation::RemoveHeaderFooterBody`].
+    CreateHeaderFooterBody {
+        /// Whether the body belongs to the header or the footer map.
+        region: RunningRegion,
+        /// The new body's id (must not already be defined for `region`).
+        id: HeaderFooterId,
+        /// The body's block content, carried so the inverse restores it verbatim.
+        blocks: Vec<BlockNode>,
+    },
+    /// Remove a header or footer body. The inverse vehicle for
+    /// [`Operation::CreateHeaderFooterBody`]; it carries the removed blocks back
+    /// out so undo replays an exact create. Refuses when the body is absent.
+    RemoveHeaderFooterBody {
+        /// Which map the body lives in.
+        region: RunningRegion,
+        /// The body to remove.
+        id: HeaderFooterId,
+    },
+    /// Point a section's header/footer variant at a body, or remove the
+    /// reference (docs/85 §8.3 `SetSectionRunningRef`).
+    ///
+    /// `None` is how "Link to Previous" is expressed: OOXML models inheritance by
+    /// a section OMITTING a reference, so removing it makes the section inherit
+    /// the previous one's again (docs/85 §8.4, Q7). Self-inverse — the inverse is
+    /// the same op carrying the previous reference.
+    SetSectionRunningRef {
+        /// The section whose variant is being pointed.
+        section: SectionId,
+        /// Header or footer.
+        region: RunningRegion,
+        /// Which variant (default / first page / even page).
+        kind: HeaderFooterKind,
+        /// The body to link, or `None` to inherit from the previous section.
+        reference: Option<HeaderFooterId>,
+    },
+}
+
+/// Whether a running-content op addresses the header or the footer side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunningRegion {
+    /// The header map / a section's `headers`.
+    Header,
+    /// The footer map / a section's `footers`.
+    Footer,
 }
 
 /// Why an edit could not be applied. No partial mutation ever occurs: an op
@@ -1634,6 +1686,82 @@ pub fn apply(
             Ok(Operation::InsertField {
                 at: Pos::new(node, offset),
                 field: Box::new(removed),
+            })
+        }
+        Operation::CreateHeaderFooterBody { region, id, blocks } => {
+            // Refuse rather than overwrite: an existing body silently replaced
+            // would orphan whatever a section still points at.
+            let map = match region {
+                RunningRegion::Header => &doc.definitions().headers,
+                RunningRegion::Footer => &doc.definitions().footers,
+            };
+            if map.contains_key(id) {
+                return Err(EditError::Unsupported);
+            }
+            let body = HeaderFooter {
+                blocks: blocks.clone(),
+            };
+            match region {
+                RunningRegion::Header => doc.definitions_mut().headers.insert(*id, body),
+                RunningRegion::Footer => doc.definitions_mut().footers.insert(*id, body),
+            };
+            Ok(Operation::RemoveHeaderFooterBody {
+                region: *region,
+                id: *id,
+            })
+        }
+        Operation::RemoveHeaderFooterBody { region, id } => {
+            let removed = match region {
+                RunningRegion::Header => doc.definitions_mut().headers.remove(id),
+                RunningRegion::Footer => doc.definitions_mut().footers.remove(id),
+            }
+            .ok_or(EditError::NodeNotFound)?;
+            // Carry the blocks back out so undo replays an exact create.
+            Ok(Operation::CreateHeaderFooterBody {
+                region: *region,
+                id: *id,
+                blocks: removed.blocks,
+            })
+        }
+        Operation::SetSectionRunningRef {
+            section,
+            region,
+            kind,
+            reference,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let refs = match region {
+                RunningRegion::Header => &mut boundary.headers,
+                RunningRegion::Footer => &mut boundary.footers,
+            };
+            let existing = refs.iter().position(|entry| entry.kind == *kind);
+            let previous = existing.map(|index| refs[index].reference);
+            match (existing, reference) {
+                // Point the variant at a different body.
+                (Some(index), Some(id)) => refs[index].reference = *id,
+                // Add a variant this section did not declare.
+                (None, Some(id)) => refs.push(HeaderFooterRef {
+                    kind: *kind,
+                    reference: *id,
+                }),
+                // Remove it, so the section inherits the previous section's again
+                // — OOXML expresses "Link to Previous" as absence (docs/85 §8.4).
+                (Some(index), None) => {
+                    refs.remove(index);
+                }
+                (None, None) => {}
+            }
+            // Self-inverse: the same op carrying whatever was there before.
+            Ok(Operation::SetSectionRunningRef {
+                section: *section,
+                region: *region,
+                kind: *kind,
+                reference: previous,
             })
         }
         Operation::InsertNote {
@@ -5471,6 +5599,110 @@ mod tests {
     /// reach it. Resolution used to start at `doc.body_mut()` unconditionally, so
     /// every one of these positions answered `NodeNotFound` — the reason nothing
     /// outside the body could be typed into.
+    /// docs/85 §8.3: creating a header body and linking a section to it are
+    /// separate ops, and both retain exact inverses.
+    #[test]
+    fn creating_a_header_body_round_trips_through_its_inverse() {
+        let id = HeaderFooterId::new(n(920));
+        let mut d = doc(vec![para(2, vec![run(3, "body")])]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateHeaderFooterBody {
+                region: RunningRegion::Header,
+                id,
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: n(921),
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![run(922, "Running title")],
+                })],
+            },
+        )
+        .unwrap();
+        assert!(d.definitions().headers.get(&id).is_some());
+        assert_eq!(
+            inverse,
+            Operation::RemoveHeaderFooterBody {
+                region: RunningRegion::Header,
+                id
+            }
+        );
+
+        // Undo removes it, and its own inverse carries the content back.
+        let redo = apply(&mut d, &mut ids, &inverse).unwrap();
+        assert!(d.definitions().headers.get(&id).is_none());
+        let Operation::CreateHeaderFooterBody { blocks, .. } = &redo else {
+            panic!("the inverse of a remove is a create");
+        };
+        assert_eq!(blocks.len(), 1, "the removed body is carried back out");
+    }
+
+    /// Creating over an existing id is refused, so a body a section still points
+    /// at can never be silently orphaned.
+    #[test]
+    fn creating_a_header_body_twice_is_refused() {
+        let id = HeaderFooterId::new(n(930));
+        let mut d = doc(vec![para(2, vec![run(3, "body")])]);
+        let mut ids = IdGenerator::new(9);
+        let op = Operation::CreateHeaderFooterBody {
+            region: RunningRegion::Header,
+            id,
+            blocks: Vec::new(),
+        };
+        apply(&mut d, &mut ids, &op).unwrap();
+        assert_eq!(apply(&mut d, &mut ids, &op), Err(EditError::Unsupported));
+    }
+
+    /// "Link to Previous" is reference ABSENCE (docs/85 §8.4, Q7): removing a
+    /// section's ref makes it inherit again, and the op is self-inverse.
+    #[test]
+    fn pointing_and_unpointing_a_section_running_ref_is_self_inverse() {
+        let body = HeaderFooterId::new(n(940));
+        let section_num = 941_u64;
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            body,
+            casual_doc_model::v1::HeaderFooter { blocks: Vec::new() },
+        );
+        let mut boundary = section(section_num);
+        boundary.headers.clear();
+        let section_id = boundary.id;
+        definitions.sections.push(boundary);
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        let link = Operation::SetSectionRunningRef {
+            section: section_id,
+            region: RunningRegion::Header,
+            kind: HeaderFooterKind::Default,
+            reference: Some(body),
+        };
+        let inverse = apply(&mut d, &mut ids, &link).unwrap();
+        assert_eq!(
+            d.definitions().sections[0].headers.len(),
+            1,
+            "the section now declares its own header"
+        );
+        // The inverse removes it again — which is exactly "Link to Previous" on.
+        assert_eq!(
+            inverse,
+            Operation::SetSectionRunningRef {
+                section: section_id,
+                region: RunningRegion::Header,
+                kind: HeaderFooterKind::Default,
+                reference: None,
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert!(
+            d.definitions().sections[0].headers.is_empty(),
+            "removing the ref restores inheritance"
+        );
+    }
+
     #[test]
     fn text_ops_reach_a_paragraph_inside_a_header() {
         let header_id = HeaderFooterId::new(n(900));
