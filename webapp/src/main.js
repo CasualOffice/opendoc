@@ -8846,6 +8846,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: context.hasRange ?? hasRange(), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", run: () => openBookmarkManager() },
     { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: !!selection, disabledReason: "Place the caret before inserting a field", run: () => openFieldDialog() },
+    { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: !!selection, disabledReason: "Place the caret before inserting a picture", run: () => insertImageFromFile() },
     ...FIELD_KINDS.map((f) => ({
       id: `insert.field.${f.kind}`,
       label: `Insert field: ${f.label}`,
@@ -8950,7 +8951,7 @@ const APP_MENU_SECTIONS = {
     ["view.zoomIn", "view.zoomOut"],
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
   ],
-  insert: [["insert.table", "insert.link", "insert.bookmark", "insert.field"], ["review.comment"]],
+  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
@@ -9502,6 +9503,100 @@ async function insertFieldAtCaret(kind) {
   setDocumentState("edited");
   setStatus(`Inserted ${FIELD_LABELS.get(kind) ?? "field"}`);
   focusEditorSurface();
+}
+
+// ---- Insert picture ----------------------------------------------------------
+// The engine owns no image codec (docs/85 §Q8), so the host decodes the image to
+// bytes + natural pixel size and hands them to the `insertImage` op. One EMU is
+// 1/914400in; at 96dpi a CSS px is 9525 EMU. A wide image is scaled down to fit
+// the text column, preserving aspect.
+const EMU_PER_PX = 9525;
+const MAX_IMAGE_WIDTH_EMU = 6 * 914_400; // ~6in, a sane default display width
+
+const INSERTABLE_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/bmp",
+  "image/tiff",
+  "image/webp",
+]);
+
+/** Decodes a File/Blob to `{ bytes, widthPx, heightPx, mime }` via the browser. */
+async function decodeImageBlob(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const bitmap = await createImageBitmap(blob);
+  const widthPx = bitmap.width;
+  const heightPx = bitmap.height;
+  bitmap.close?.();
+  return { bytes, widthPx, heightPx, mime: blob.type };
+}
+
+/** Inserts an already-decoded image at the caret as one undoable action, gated
+ *  like the other object edits (read-only in Viewing, blocked in Suggesting). */
+async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
+  if (!doc || !selection) {
+    setStatus("Place the caret to insert a picture", "error");
+    focusEditorSurface();
+    return;
+  }
+  if (blockMutationInViewing()) return;
+  breakTypingSession();
+  if (blockUntrackedInSuggesting()) return;
+  let widthEmu = Math.max(1, Math.round(widthPx * EMU_PER_PX));
+  let heightEmu = Math.max(1, Math.round(heightPx * EMU_PER_PX));
+  if (widthEmu > MAX_IMAGE_WIDTH_EMU) {
+    heightEmu = Math.round((heightEmu * MAX_IMAGE_WIDTH_EMU) / widthEmu);
+    widthEmu = MAX_IMAGE_WIDTH_EMU;
+  }
+  const { node, offset } = selection.focus;
+  let res;
+  try {
+    res = doc.insertImage(node, offset, bytes, widthEmu, heightEmu, mime);
+  } catch (err) {
+    console.warn("insertImage ignored:", err?.message ?? err);
+    setStatus("This picture can’t be inserted here", "error");
+    focusEditorSurface();
+    return;
+  }
+  await applyEditResult(res);
+  setDocumentState("edited");
+  setStatus("Picture inserted");
+  focusEditorSurface();
+}
+
+/** Decodes a File/Blob (a picked file or a pasted image) and inserts it. */
+async function insertImageFromBlob(blob) {
+  if (!doc) return;
+  if (!INSERTABLE_IMAGE_TYPES.has((blob.type || "").toLowerCase())) {
+    setStatus("That image format isn’t supported", "error");
+    return;
+  }
+  try {
+    const decoded = await decodeImageBlob(blob);
+    await insertImageAtCaret(decoded.bytes, decoded.widthPx, decoded.heightPx, decoded.mime);
+  } catch (err) {
+    console.warn("image decode failed:", err);
+    setStatus("Could not read that image", "error");
+  }
+}
+
+/** Insert ▸ Picture: opens a file picker and inserts the chosen image. */
+function insertImageFromFile() {
+  if (!doc || !selection) {
+    setStatus("Place the caret to insert a picture", "error");
+    focusEditorSurface();
+    return;
+  }
+  if (blockMutationInViewing()) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = [...INSERTABLE_IMAGE_TYPES].join(",");
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (file) void insertImageFromBlob(file);
+  });
+  input.click();
 }
 
 const fieldDialog = document.getElementById("fieldDialog");
@@ -10741,6 +10836,16 @@ async function paste(event = null) {
   }
   if (event?.clipboardData) {
     event.preventDefault();
+    // A pasted image (a clipboard file item of an image type) is inserted as a
+    // picture, matching Word/Docs — before the text/HTML fallback.
+    const imageItem = [...(event.clipboardData.items ?? [])].find(
+      (it) => it.kind === "file" && it.type.startsWith("image/"),
+    );
+    if (imageItem) {
+      const file = imageItem.getAsFile();
+      if (file) await insertImageFromBlob(file);
+      return;
+    }
     const html = event.clipboardData.getData("text/html");
     const plain = event.clipboardData.getData("text/plain");
     if (await pasteHtml(html)) {

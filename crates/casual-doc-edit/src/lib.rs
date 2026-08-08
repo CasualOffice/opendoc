@@ -472,6 +472,26 @@ pub enum Operation {
         /// The object node to insert (its id must be the removed object's).
         node: Box<InlineNode>,
     },
+    /// Insert a fresh inline object node (e.g. a picture [`InlineNode::Drawing`])
+    /// at the caret `at`, splitting a straddling run so it lands exactly at the
+    /// offset (the same run-boundary alignment [`Operation::InsertField`] uses).
+    /// Inverse: [`Operation::DeleteObject`] of the node's id. Rejected (document
+    /// left unchanged) on an out-of-range offset or a result that does not
+    /// validate. Boxed to keep the enum small.
+    InsertInlineObject {
+        /// Where the object is inserted; a run boundary is created at `at.offset`.
+        at: Pos,
+        /// The inline object node to insert; its id and any nested ids must be fresh.
+        node: Box<InlineNode>,
+    },
+    /// Remove the inline object node `object`, coalescing any equal-property runs
+    /// it kept apart (so a run split by [`Operation::InsertInlineObject`] is
+    /// restored verbatim). The inverse vehicle for `InsertInlineObject`; its own
+    /// inverse re-inserts the removed node at its exact position.
+    RemoveInlineObject {
+        /// The inline object to remove.
+        object: NodeId,
+    },
     /// Replace a table cell's properties (shading, borders, vertical alignment,
     /// margins, span/merge, …). Its own inverse (carrying the previous properties).
     /// Boxed to keep the enum small.
@@ -1508,6 +1528,51 @@ pub fn apply(
                 return Err(err);
             }
             Ok(Operation::RemoveField { field: field.id })
+        }
+        Operation::InsertInlineObject { at, node } => {
+            // Snapshot the target paragraph so any failure (bad offset, a node the
+            // model rejects) rolls back to exactly the prior state; the object is
+            // inserted at paragraph top level, aligned to a run boundary.
+            let snapshot = find_paragraph(doc.body(), at.node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            let insertion = insert_inline_object_at(doc.body_mut(), *at, (**node).clone(), ids);
+            let outcome =
+                insertion.and_then(|()| doc.validate().map_err(|_| EditError::Unsupported));
+            if let Err(err) = outcome {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), at.node) {
+                    para.inlines = snapshot;
+                }
+                return Err(err);
+            }
+            Ok(Operation::RemoveInlineObject { object: node.id() })
+        }
+        Operation::RemoveInlineObject { object } => {
+            let (node, offset, removed) =
+                locate_inline_object(doc.body(), *object).ok_or(EditError::NodeNotFound)?;
+            let snapshot = find_paragraph(doc.body(), node)
+                .ok_or(EditError::NodeNotFound)?
+                .inlines
+                .clone();
+            if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                para.inlines
+                    .retain(|i| !(is_object_node(i) && i.id() == *object));
+                // Removing the object can leave the two equal-property runs it kept
+                // apart adjacent, which the model forbids; coalesce them back so the
+                // original run is restored verbatim.
+                coalesce_adjacent_runs(&mut para.inlines);
+            }
+            if doc.validate().is_err() {
+                if let Some(para) = find_paragraph_mut(doc.body_mut(), node) {
+                    para.inlines = snapshot;
+                }
+                return Err(EditError::Unsupported);
+            }
+            Ok(Operation::InsertInlineObject {
+                at: Pos::new(node, offset),
+                node: Box::new(removed),
+            })
         }
         Operation::RemoveField { field } => {
             let (node, offset, removed) =
@@ -3797,6 +3862,60 @@ fn insert_field_at(
     Ok(())
 }
 
+/// Inserts an arbitrary inline object node at `at`, splitting a straddling run so
+/// it lands exactly at the offset. [`Operation::InsertInlineObject`]'s mutation
+/// (the generic sibling of [`insert_field_at`]).
+fn insert_inline_object_at(
+    blocks: &mut [BlockNode],
+    at: Pos,
+    node: InlineNode,
+    ids: &mut dyn RunIds,
+) -> Result<(), EditError> {
+    let para = find_paragraph_mut(blocks, at.node).ok_or(EditError::NodeNotFound)?;
+    if at.offset > paragraph_text_len(para) {
+        return Err(EditError::OffsetOutOfRange);
+    }
+    insert_marker_at(&mut para.inlines, at.offset, node, ids)?;
+    Ok(())
+}
+
+/// Locates the top-level inline object node with id `object` among the body's
+/// paragraph inlines (descending into tables and block SDTs), returning its
+/// paragraph, its byte offset in that paragraph, and a clone of the node (for
+/// [`Operation::RemoveInlineObject`]'s inverse). The read-side sibling of
+/// [`locate_field`].
+fn locate_inline_object(blocks: &[BlockNode], object: NodeId) -> Option<(NodeId, u32, InlineNode)> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut offset = 0u32;
+                for inline in &paragraph.inlines {
+                    if is_object_node(inline) && inline.id() == object {
+                        return Some((paragraph.id, offset, inline.clone()));
+                    }
+                    offset = offset.saturating_add(inline_text_len(inline));
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(found) = locate_inline_object(&cell.blocks, object) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = locate_inline_object(&sdt.blocks, object) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
 /// Locates the top-level [`InlineNode::Field`] with id `field` among the body's
 /// paragraph inlines (descending into tables and block SDTs), returning its
 /// paragraph, its byte offset in that paragraph, and a clone of the field (for
@@ -4479,6 +4598,64 @@ mod tests {
         )
         .expect("valid document");
         assert_eq!(object_descr(&without_alt, drawing_id), None);
+    }
+
+    #[test]
+    fn insert_inline_object_splits_the_run_and_inverse_removes_the_drawing() {
+        use casual_doc_model::v1::MediaId;
+        let media = MediaId::new(NodeId::from_parts(7, 950).unwrap());
+        let drawing_id = n(60);
+        let mut d = Document::new(
+            n(1000),
+            vec![para(2, vec![run(3, "AB")])],
+            media_defs(media),
+        )
+        .expect("valid document with registered media");
+        let original = d.clone();
+        let mut ids = IdGenerator::new(30);
+
+        // Insert a picture mid-run (between A and B): the run splits and the
+        // drawing lands at the offset. The inverse is a DeleteObject of its id.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertInlineObject {
+                at: Pos::new(n(2), 1),
+                node: Box::new(drawing(60, media, None, None)),
+            },
+        )
+        .expect("insert the image");
+        assert!(
+            inlines_of(&d, n(2))
+                .iter()
+                .any(|i| matches!(i, InlineNode::Drawing(dr) if dr.id == drawing_id)),
+            "the drawing was inserted"
+        );
+        assert_eq!(
+            text_of(&d, n(2)),
+            "AB",
+            "the run's text is preserved across the split"
+        );
+        assert!(
+            matches!(inverse, Operation::RemoveInlineObject { object } if object == drawing_id)
+        );
+
+        // The inverse removes the drawing and coalesces the split run back: the
+        // paragraph is one run of "AB" again, with no drawing, and the document
+        // validates. (Run identity may differ after a split/coalesce round trip,
+        // which is not user-visible, so this checks structure, not raw id equality.)
+        apply(&mut d, &mut ids, &inverse).expect("remove the image (inverse)");
+        let restored = inlines_of(&d, n(2));
+        assert_eq!(restored.len(), 1, "the split run coalesced back to one run");
+        assert!(matches!(&restored[0], InlineNode::Run(_)));
+        assert_eq!(text_of(&d, n(2)), "AB");
+        assert!(
+            !restored.iter().any(|i| matches!(i, InlineNode::Drawing(_))),
+            "the drawing is gone"
+        );
+        d.validate()
+            .expect("the document is valid after the round trip");
+        let _ = original;
     }
 
     #[test]
