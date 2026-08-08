@@ -1366,6 +1366,255 @@ impl WasmDocument {
             .map_err(to_js)
     }
 
+    /// Editing-mode paste of **externally**-parsed structure (foreign HTML: an
+    /// Excel/Word/Google-Docs/web `<table>` or `<ul>`/`<ol>`), reconstructed as
+    /// real tables and bullet/numbered list paragraphs at a **collapsed caret in a
+    /// body paragraph**, as one undoable action. Distinct from
+    /// [`paste_structured`](Self::paste_structured) (the model-native round-trip of
+    /// an *internal* OpenDoc copy): the fragment is a small JS-built contract
+    /// (`ExternalFragment`) so the clipboard bridge never hand-writes model node
+    /// ids or numbering instances — run formatting rides the same `ClipboardRun`
+    /// the flat rich paste already uses, and each list paragraph names a
+    /// `{ ordered, level }` bound to a real numbering instance here via
+    /// `ensure_list`. Rejects a non-collapsed selection or a
+    /// caret outside a top-level body paragraph (the caller falls back to the flat
+    /// rich-run paste), matching `paste_structured`'s target contract. Text,
+    /// formatting, links, tables, and list levels survive; merged cells and deep
+    /// nesting degrade gracefully to a valid rectangular table / flat levels.
+    #[wasm_bindgen(js_name = pasteExternalStructured)]
+    pub fn paste_external_structured(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        fragment_json: String,
+    ) -> Result<EditResult, JsValue> {
+        let fragment: ExternalFragment = serde_json::from_str(&fragment_json)
+            .map_err(|e| to_js(format!("invalid external structured payload: {e}")))?;
+        if fragment.blocks.is_empty() {
+            return Err(to_js("nothing to paste".into()));
+        }
+        let (start, end) = self
+            .order_endpoints(start_node, start_offset, end_node, end_offset)
+            .map_err(to_js)?;
+        // Whole-block reconstruction only inserts at a collapsed caret; a range
+        // selection is left to the flat paste path (which handles the replacement).
+        if start != end {
+            return Err(to_js("structured paste needs a collapsed caret".into()));
+        }
+        // The caret must sit in a top-level body paragraph so the fragment inserts
+        // between whole body blocks.
+        let body = self.document.body();
+        let Some(block_index) = body.iter().position(|b| block_holds(b, start.node)) else {
+            return Err(to_js("paste target is not in the document body".into()));
+        };
+        let Some(BlockNode::Paragraph(caret_paragraph)) = body.get(block_index) else {
+            return Err(to_js("structured paste targets a body paragraph".into()));
+        };
+        if caret_paragraph.id != start.node {
+            return Err(to_js("structured paste targets a body paragraph".into()));
+        }
+        let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
+
+        // Build the real model blocks with fresh ids and resolved list instances.
+        let mut blocks = Vec::with_capacity(fragment.blocks.len());
+        for block in &fragment.blocks {
+            blocks.push(self.build_external_block(block).map_err(to_js)?);
+        }
+        if blocks.is_empty() {
+            return Err(to_js("nothing to paste".into()));
+        }
+        let caret = blocks
+            .first()
+            .map(first_pos_of_block)
+            .unwrap_or_else(|| Pos::new(start.node, 0));
+
+        // Position the insertion between whole body blocks: before the caret block
+        // (caret at its start), after it (caret at its end), or split it (mid-way) —
+        // the same placement `paste_structured` uses.
+        let mut ops = Vec::new();
+        let insert_index = if start.offset == 0 {
+            block_index as u32
+        } else if start.offset >= paragraph_len {
+            block_index as u32 + 1
+        } else {
+            let new_id = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| to_js("id space exhausted".into()))?;
+            ops.push(Operation::SplitParagraph { at: start, new_id });
+            block_index as u32 + 1
+        };
+        ops.push(Operation::InsertBlocks {
+            container: None,
+            index: insert_index,
+            blocks,
+        });
+        self.apply_action_caret_as(ops, caret, HistoryKind::Paste)
+            .map_err(to_js)
+    }
+
+    /// Builds one real body block from an [`ExternalBlock`]: a paragraph (its
+    /// [`ClipboardRun`] inline formatting, plus an optional resolved list instance)
+    /// or a table (rectangular grid, bordered like
+    /// [`insert_table`](Self::insert_table), each cell's blocks built recursively).
+    /// Every node receives a fresh id.
+    fn build_external_block(&mut self, block: &ExternalBlock) -> Result<BlockNode, String> {
+        let exhausted = || "id space exhausted".to_string();
+        match block {
+            ExternalBlock::Paragraph { runs, list } => {
+                let inlines = self.external_run_inlines(runs)?;
+                let mut properties = ParagraphProperties::default();
+                if let Some(list) = list {
+                    let instance = self.ensure_list(list.ordered)?;
+                    properties.numbering = Some(NumberingRef {
+                        instance,
+                        level: list.level.min(8),
+                    });
+                }
+                let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                Ok(BlockNode::Paragraph(Paragraph {
+                    id,
+                    properties,
+                    inlines,
+                }))
+            }
+            ExternalBlock::Table { rows } => self.build_external_table(rows),
+        }
+    }
+
+    /// Builds a real [`Table`] from the external fragment's rows. The grid is made
+    /// rectangular (`cols` = the widest row) so short rows — including the residue
+    /// of degraded merged cells — pad with empty cells rather than producing an
+    /// invalid grid; every cell holds recursively built blocks (at least one empty
+    /// paragraph). Column widths and an all-edges border mirror
+    /// [`insert_table`](Self::insert_table) so a pasted table looks native.
+    fn build_external_table(&mut self, rows: &[Vec<ExternalCell>]) -> Result<BlockNode, String> {
+        let exhausted = || "id space exhausted".to_string();
+        if rows.is_empty() {
+            return Err("table has no rows".into());
+        }
+        let cols = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
+        let c = &self.default_config;
+        let content_w =
+            (c.page_size.width.raw() - c.margin_start.raw() - c.margin_end.raw()).max(cols as i32);
+        let col_w = content_w / cols as i32;
+        let grid = (0..cols)
+            .map(|_| GridColumn {
+                width_twips: Some(col_w),
+            })
+            .collect();
+
+        let mut table_rows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut cells = Vec::with_capacity(cols);
+            for col in 0..cols {
+                let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                let mut blocks = Vec::new();
+                if let Some(cell) = row.get(col) {
+                    for inner in &cell.blocks {
+                        blocks.push(self.build_external_block(inner)?);
+                    }
+                }
+                if blocks.is_empty() {
+                    let pid = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                    blocks.push(BlockNode::Paragraph(Paragraph {
+                        id: pid,
+                        properties: ParagraphProperties::default(),
+                        inlines: Vec::new(),
+                    }));
+                }
+                cells.push(TableCell {
+                    id: cell_id,
+                    properties: TableCellProperties {
+                        width: Some(TableWidth::dxa(col_w)),
+                        ..TableCellProperties::default()
+                    },
+                    blocks,
+                });
+            }
+            let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            table_rows.push(TableRow {
+                id: row_id,
+                properties: Default::default(),
+                cells,
+            });
+        }
+
+        let mut properties = TableProperties::default();
+        set_table_borders_preset(&mut properties.borders, "all", || border_edge(0, 0, 0, 4));
+        let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        Ok(BlockNode::Table(Table {
+            id: table_id,
+            grid,
+            grid_change: None,
+            properties,
+            rows: table_rows,
+        }))
+    }
+
+    /// Rebuilds a paragraph's inline sequence from external [`ClipboardRun`]s: each
+    /// non-empty run becomes a real [`Run`] whose [`RunProperties`] carry the same
+    /// clipboard formatting the flat rich paste applies (via [`FormatDelta`]), and a
+    /// run with an `href` is wrapped in a [`Hyperlink`]. Empty and `paragraphBreak`
+    /// runs are dropped — a paragraph break separates *blocks* in this fragment, not
+    /// runs inside one.
+    fn external_run_inlines(&mut self, runs: &[ClipboardRun]) -> Result<Vec<InlineNode>, String> {
+        let exhausted = || "id space exhausted".to_string();
+        let mut out = Vec::new();
+        for run in runs {
+            if run.paragraph_break || run.text.is_empty() {
+                continue;
+            }
+            let delta = FormatDelta {
+                bold: run.bold,
+                italic: run.italic,
+                underline: run.underline,
+                strike: run.strike,
+                color: run.color.as_deref().and_then(parse_hex_color),
+                highlight: run.highlight.as_deref().map(parse_highlight),
+                size_half_points: run.size_half_points,
+                vertical_alignment: run.vert_align.as_deref().map(|v| match v {
+                    "super" => VerticalAlignment::Superscript,
+                    "sub" => VerticalAlignment::Subscript,
+                    _ => VerticalAlignment::Baseline,
+                }),
+                font: run.font.clone(),
+            };
+            let mut props = RunProperties::default();
+            delta.apply_to(&mut props);
+            let run_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+            let run_node = InlineNode::Run(Run {
+                id: run_id,
+                properties: props,
+                text: run.text.clone(),
+            });
+            if let Some(href) = &run.href {
+                let target = if let Some(anchor) = href.strip_prefix('#') {
+                    HyperlinkTarget::Internal(InternalTarget {
+                        anchor: anchor.to_owned(),
+                    })
+                } else {
+                    HyperlinkTarget::External(ExternalTarget {
+                        url: href.clone(),
+                        anchor: None,
+                    })
+                };
+                let hid = self.edit_ids.next_id().map_err(|_| exhausted())?;
+                out.push(InlineNode::Hyperlink(Hyperlink {
+                    id: hid,
+                    target,
+                    tooltip: None,
+                    inlines: vec![run_node],
+                }));
+            } else {
+                out.push(run_node);
+            }
+        }
+        Ok(out)
+    }
+
     /// Finds the next/previous literal text match from a model position. Matches
     /// are constrained to one text-bearing node; cross-paragraph phrases remain a
     /// later text-layer search increment.
@@ -8928,6 +9177,60 @@ struct ClipboardRun {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct StructuredClipboard {
     blocks: Vec<BlockNode>,
+}
+
+/// The externally-parsed structured-paste fragment consumed by
+/// [`paste_external_structured`](WasmDocument::paste_external_structured): a small,
+/// model-agnostic description of pasted blocks (tables and list/plain paragraphs)
+/// the clipboard bridge builds from *foreign* HTML (Excel/Word/Google-Docs/web).
+/// Deliberately distinct from the model-native [`StructuredClipboard`] so the
+/// webapp never hand-writes model node ids or numbering instances — run formatting
+/// rides the same [`ClipboardRun`] shape the flat rich paste uses, and list kind /
+/// level are resolved to real numbering instances on paste.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExternalFragment {
+    #[serde(default)]
+    blocks: Vec<ExternalBlock>,
+}
+
+/// One block in an [`ExternalFragment`]: a paragraph (its runs, plus an optional
+/// list annotation) or a table (rows of cells). `deny_unknown_fields` is omitted
+/// because it is unsupported on an internally-tagged enum.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ExternalBlock {
+    Paragraph {
+        #[serde(default)]
+        runs: Vec<ClipboardRun>,
+        #[serde(default)]
+        list: Option<ExternalList>,
+    },
+    Table {
+        #[serde(default)]
+        rows: Vec<Vec<ExternalCell>>,
+    },
+}
+
+/// A paragraph's list annotation in an [`ExternalFragment`]: the kind (`ordered`
+/// → numbered, else bullet) and a nesting `level` (0-based, clamped to the 9
+/// levels the editor's list definitions carry).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExternalList {
+    #[serde(default)]
+    ordered: bool,
+    #[serde(default)]
+    level: u8,
+}
+
+/// A table cell in an [`ExternalFragment`]: recursively built block content
+/// (commonly one or more paragraphs).
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExternalCell {
+    #[serde(default)]
+    blocks: Vec<ExternalBlock>,
 }
 
 fn paragraph_rich_runs(
@@ -20065,6 +20368,106 @@ mod tests {
             pasted_uses_instance,
             "pasted list keeps its numbering instance"
         );
+    }
+
+    #[test]
+    fn external_structured_paste_builds_a_real_table() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let anchor = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        let before = body_table_ids(&d);
+        // A 2x2 external table with a bold cell (the shape `htmlToStructured` emits).
+        let fragment = r#"{"blocks":[{"kind":"table","rows":[
+            [{"blocks":[{"kind":"paragraph","runs":[{"text":"a1"}]}]},
+             {"blocks":[{"kind":"paragraph","runs":[{"text":"b1","bold":true}]}]}],
+            [{"blocks":[{"kind":"paragraph","runs":[{"text":"a2"}]}]},
+             {"blocks":[{"kind":"paragraph","runs":[{"text":"b2"}]}]}]
+        ]}]}"#;
+        let anchor_len = d.paragraph_length(&anchor);
+        d.paste_external_structured(&anchor, anchor_len, &anchor, anchor_len, fragment.into())
+            .expect("external structured paste");
+
+        let after = body_table_ids(&d);
+        assert_eq!(after.len(), before.len() + 1, "one table added");
+        let pasted = *after
+            .iter()
+            .find(|id| !before.contains(id))
+            .expect("pasted table id");
+        let t = find_table(&d.document, pasted).expect("table exists");
+        assert_eq!(t.rows.len(), 2, "two rows");
+        assert!(t.rows.iter().all(|r| r.cells.len() == 2), "two cells/row");
+
+        // Cell text survived.
+        let cell_para = |r: usize, c: usize| match &t.rows[r].cells[c].blocks[0] {
+            BlockNode::Paragraph(p) => p,
+            _ => panic!("cell holds a paragraph"),
+        };
+        assert_eq!(node_plain_text(&cell_para(0, 0).inlines), "a1");
+        assert_eq!(node_plain_text(&cell_para(1, 1).inlines), "b2");
+        // Run formatting survived: the b1 cell is bold.
+        let bold = matches!(
+            cell_para(0, 1).inlines.first(),
+            Some(InlineNode::Run(r)) if r.properties.bold == Some(true)
+        );
+        assert!(bold, "the bold cell kept its formatting");
+
+        // One undoable action: undo removes the whole pasted table.
+        d.undo().expect("undo the external paste");
+        assert_eq!(body_table_ids(&d).len(), before.len());
+    }
+
+    #[test]
+    fn external_structured_paste_builds_list_paragraphs() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let anchor = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        let numbered = |d: &WasmDocument| {
+            d.document
+                .body()
+                .iter()
+                .filter(
+                    |b| matches!(b, BlockNode::Paragraph(p) if p.properties.numbering.is_some()),
+                )
+                .count()
+        };
+        let before = numbered(&d);
+        // A flat item and a one-level-nested item (bullet list).
+        let fragment = r#"{"blocks":[
+            {"kind":"paragraph","runs":[{"text":"one"}],"list":{"ordered":false,"level":0}},
+            {"kind":"paragraph","runs":[{"text":"two"}],"list":{"ordered":false,"level":1}}
+        ]}"#;
+        let anchor_len = d.paragraph_length(&anchor);
+        d.paste_external_structured(&anchor, anchor_len, &anchor, anchor_len, fragment.into())
+            .expect("external structured list paste");
+
+        assert_eq!(numbered(&d), before + 2, "two list paragraphs added");
+        // The nested item recorded level 1; the flat item level 0.
+        let level_of = |text: &str| {
+            d.document.body().iter().find_map(|b| match b {
+                BlockNode::Paragraph(p) if node_plain_text(&p.inlines) == text => {
+                    Some(p.properties.numbering.map(|n| n.level))
+                }
+                _ => None,
+            })
+        };
+        assert_eq!(level_of("one"), Some(Some(0)));
+        assert_eq!(level_of("two"), Some(Some(1)));
+
+        // One undoable action.
+        d.undo().expect("undo the external list paste");
+        assert_eq!(numbered(&d), before);
     }
 
     #[test]

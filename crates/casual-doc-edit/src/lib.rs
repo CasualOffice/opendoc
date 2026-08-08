@@ -57,7 +57,11 @@ pub struct FormatDelta {
 }
 
 impl FormatDelta {
-    fn apply_to(&self, props: &mut RunProperties) {
+    /// Applies this delta onto `props`: each `Some(_)` field sets the matching run
+    /// property, `None` leaves it untouched — the same mapping `FormatText` applies,
+    /// exposed so a freshly built run (e.g. an external structured paste) can carry
+    /// clipboard formatting without duplicating the property mapping.
+    pub fn apply_to(&self, props: &mut RunProperties) {
         if let Some(b) = self.bold {
             props.bold = Some(b);
         }
