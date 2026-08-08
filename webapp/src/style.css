@@ -5628,3 +5628,19 @@ body:not(.doc-loaded) .drop-title {
   background: var(--bg-2);
   color: var(--ink);
 }
+
+/* ---- Header / footer editing context ---------------------------------------- */
+/* Every reference editor de-emphasises the body while running content is being
+   edited, so it is obvious which layer the keystrokes are going to (docs/85
+   §10.2). The page itself is a canvas, so the cue is drawn on the shell rather
+   than composited into the raster: the pages dim, and the caret and selection
+   the engine paints on the overlay stay at full strength above them. */
+body.running-edit .page {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+body.running-edit #pages {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

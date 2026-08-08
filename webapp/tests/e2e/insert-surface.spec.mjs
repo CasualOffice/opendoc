@@ -73,6 +73,8 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertLinkBtn",
     "insertBookmarkBtn",
     "insertFieldBtn",
+    "insertHeaderBtn",
+    "insertFooterBtn",
     "insertSymbolBtn",
     "insertEmojiBtn",
   ]);
@@ -83,6 +85,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "Illustrations",
     "Links",
     "Text",
+    "Header & footer",
     "Symbols",
   ]);
 
@@ -95,6 +98,8 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertLinkBtn", "Add or edit link"],
     ["#insertBookmarkBtn", "Bookmark"],
     ["#insertFieldBtn", "Insert field"],
+    ["#insertHeaderBtn", "Edit header"],
+    ["#insertFooterBtn", "Edit footer"],
     ["#insertSymbolBtn", "Insert symbol"],
     ["#insertEmojiBtn", "Insert emoji"],
   ];
