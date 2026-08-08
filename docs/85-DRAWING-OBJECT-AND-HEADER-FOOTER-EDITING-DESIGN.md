@@ -576,19 +576,96 @@ Getting Started Guide 26.2, ch. 2; LibreOffice `SwNodes` class reference
 (docs.libreoffice.org/sw/html/classSwNodes.html) for the node-array ranges and
 their accessors.
 
+## 8d. Q1, Q6 and Q7 decided from the competitors (2026-08-09)
+
+Researched against Word, Google Docs, OnlyOffice and LibreOffice, then decided.
+Rationale and sources are recorded here so the decisions can be re-argued from
+evidence rather than re-litigated from memory. §9 is updated to match.
+
+### Q1 — Tab/Shift+Tab object traversal. DECIDED: traverse, but only while an object is already selected.
+
+Word cycles floating objects with Tab / Shift+Tab once an object is selected and
+its sizing handles are showing, and Word for the web uses Tab / Shift+Tab to move
+to the next/previous graphic. So the gesture is proven, but it belongs to
+*object-selected mode*, not to the text caret.
+
+From a text caret, Tab keeps the meaning it already has here and that every word
+processor shares — indent, demote a list item, or move to the next table cell.
+That behaviour is already implemented and was verified correct during the
+2026-08-09 editing audit, so this decision costs nothing and breaks nothing.
+
+The deciding argument is reachability rather than parity: floating objects are
+currently selectable **only with a pointer**. A keyboard user cannot reach an
+image or text box at all, and a screen reader cannot find a text box while
+reading body text because it floats above the text layer. Tab traversal from
+object-selected mode is the smallest gesture that fixes that.
+
+### Q6 — `title_page` / section running toggles. DECIDED: support both, as section-level flags.
+
+All three benchmark editors offer both a different-first-page and a
+different-odd/even variant — Word as ribbon toggles, OnlyOffice as section
+options, and Google Docs behind the header/footer **Options** menu. There is no
+divergence to weigh, so both ship as flags on the section, matching the OOXML
+`w:titlePg` / `w:evenAndOddHeaders` they already round-trip.
+
+(Researching this corrected §10, which had recorded odd/even as "not offered" in
+Google Docs. It is offered.)
+
+### Q7 — Link-to-previous semantics. DECIDED: inheritance you opt out of, per variant, linked by default; adopt Word's model, not LibreOffice's.
+
+Word links sections by default: a header created before a section break carries
+over, and turning **Link to Previous** off breaks the connection so a section can
+have its own. Header and footer link **independently**, and each variant links
+separately — a section with different-first-page enabled links to the *previous
+section's first-page header*, not to its main one. Google Docs exposes the same
+model once a document has section breaks.
+
+Adopted as-is, because it is exactly the shape §8 already proposed: linkage is
+`HeaderFooterRef` presence or absence, and "linked" means "this section declares
+no reference of its own, so it resolves the previous one's". Nothing new is
+needed in the model to express it.
+
+**Deliberately not adopted: LibreOffice's page-style model.** Writer attaches
+headers to *page styles* rather than to sections, so "different first page"
+becomes "a First Page page style". It is a coherent design, and it is the one
+place this project does not follow its own layout oracle — because this model is
+OOXML-native and section-based (`HeaderFooterRef` already lives on the section),
+so page styles would be a parallel concept to maintain and to reconcile on every
+round-trip, for no user-visible gain.
+
+### Also decided: adopt LibreOffice's header marker affordance.
+
+§8c.1 recorded that Writer raises a header marker with a `+` button rather than
+relying on Word's bare double-click. Adopt it, in addition to double-click.
+Double-click alone is invisible to anyone who has not been told about it, and an
+*absent* header has nothing to double-click on. That is the same one-surface-only
+reachability failure the command-surface audit kept finding (#450, #453, #454,
+#455), and it is cheaper to avoid than to fix later.
+
+**Sources.** Microsoft Support, "Create different headers or footers for odd and
+even pages", "Link to previous", "Configure headers and footers for different
+sections of a Word document", and "Keyboard shortcuts for working with shapes,
+text boxes, and WordArt"; Microsoft 365 Insider blog, "Navigate between graphics
+using only your keyboard in Word for the web"; Google Docs Editors Help, "Use
+headers, footers, page numbers & footnotes"; LibreOffice help, "About Headers and
+Footers"; LibreOffice `SwNodes` class reference.
+
 ## 9. Open questions for owner review
 
 Three questions are now **DECIDED** (recorded 2026-08-01) and folded into the
 phasing/ops/tracker above; kept here for the decision record. The rest remain
 open and gate implementation.
 
-- **Q1 — Object interaction grammar exact keys.** *(open)* Confirm the two-step
+- **Q1 — Object interaction grammar exact keys. DECIDED (2026-08-09; §8d):** the
+  two-step Escape is implemented and Tab/Shift+Tab traverses objects only while an
+  object is already selected. Original text: Confirm the two-step
   Escape (edit-mode → object-selected → text-caret) and whether Tab/Shift+Tab
   traverses objects on a page (§4). These set muscle-memory expectations. (§10
   shows all three reference editors use single-click→handles and double-click→
   enter-text; none has a strong Tab-traversal convention, so that part is a
   genuine choice.)
-- **Q2 — Context bar vs. contextual ribbon tab.** *(open)* Does object selection
+- **Q2 — Context bar vs. contextual ribbon tab. ANSWERED by the shipped
+  `object-context-bar` (§8b).** Original text: Does object selection
   surface a floating context bar (Google Docs), a contextual ribbon tab (Word
   "Picture Format" / OnlyOffice right sidebar), or both? doc 69 already chose
   "disable, don't hide" for contextual tabs — confirm the object case reuses
@@ -609,10 +686,15 @@ open and gate implementation.
   object op is blocked in Suggesting mode with the existing "cannot be tracked
   yet" status, matching `P1G-REVIEW-042`; object changes have no OOXML revision
   markup and are never applied silently untracked (§6).
-- **Q6 — `title_page` / section running toggles.** *(open)* Extend `SetSectionGeometry`
+- **Q6 — `title_page` / section running toggles. DECIDED (2026-08-09; §8d):**
+  support both different-first-page and different-odd/even as section flags.
+  Original text: Extend `SetSectionGeometry`
   (which today deliberately leaves headers/footers untouched) or add a dedicated
   section-running-properties op? A dedicated op is cleaner but adds surface.
-- **Q7 — Link-to-previous semantics.** Approve modelling linkage purely as
+- **Q7 — Link-to-previous semantics. DECIDED (2026-08-09; §8d):** Word's model —
+  inheritance you opt out of, per variant, linked by default, header and footer
+  independent; LibreOffice's page-style model deliberately not adopted.
+  Original text: Approve modelling linkage purely as
   `HeaderFooterRef` presence/absence (§8.4, recommended), or add an explicit
   `link_to_previous` field?
 - **Q8 — Where does a new image's bytes come from?** The engine owns no image
@@ -660,7 +742,7 @@ vocabularies are near-identical and map **directly onto our `WrapMode` enum**
 | **Enter** | Double-click the top/bottom page margin, or Insert → Header/Footer | Double-click the header/footer region, or Insert → Header/Footer → opens the "Header & Footer" contextual tab | Double-click the top/bottom of the page, or Insert → Headers & footers |
 | **Exit** | Click back in the body | **Close Header and Footer** button, or **Esc** | Click back in the body |
 | **First-page variant** | "Different first page" option | **Different First Page** toggle (Header & Footer tab) | **Different first page** checkbox |
-| **Odd/even variant** | Different odd/even | **Different Odd & Even Pages** toggle | (not offered) |
+| **Odd/even variant** | Different odd/even | **Different Odd & Even Pages** toggle | **Different odd and even** (header/footer → Options) — this table previously recorded it as not offered, which was wrong (verified 2026-08-09) |
 | **Section linkage** | Per-section headers with linking | **Link to Previous** toggle; requires a section break; each variant (first/odd/even) links separately | **Link to previous** checkbox, appears once the doc has section breaks |
 
 **All three** treat header/footer editing as an **editing-context switch** — a
