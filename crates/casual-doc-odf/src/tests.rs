@@ -1,8 +1,9 @@
 use std::io::{Cursor, Write};
 
 use casual_doc_model::v1::{
-    Alignment, BlockNode, Color, Fill, GroupChild, HorizontalAnchor, HorizontalPosition,
-    InlineNode, RgbColor, ShapeGeometry, StyleKind, VerticalAnchor, VerticalPosition, WrapMode,
+    Alignment, BlockNode, Color, Fill, GradientKind, GradientStop, GroupChild, HorizontalAnchor,
+    HorizontalPosition, InlineNode, RgbColor, ShapeGeometry, StyleKind, VerticalAnchor,
+    VerticalPosition, WrapMode,
 };
 use casual_doc_package::CancellationToken;
 use zip::CompressionMethod;
@@ -2133,6 +2134,187 @@ fn standalone_rectangle_shape_round_trips() {
             .iter()
             .any(|entry| entry.feature == "odt.export.shape_fill_opacity")
     );
+}
+
+/// A floating `draw:rect` whose graphic style references a linear two-color
+/// `<draw:gradient>` imports to `Fill::Gradient` (two stops + `Linear` angle) and
+/// re-exports through the preserving path — the gradient definition landing in
+/// `office:styles` (styles.xml) — as a byte-exact fixed point.
+#[test]
+fn standalone_shape_linear_gradient_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="G1"/></style:style><draw:gradient draw:name="G1" draw:style="linear" draw:start-color="#ff0000" draw:end-color="#0000ff" draw:start-intensity="100%" draw:end-intensity="100%" draw:angle="300" draw:border="0%"/></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="paragraph" svg:x="2cm" svg:y="1cm" svg:width="5cm" svg:height="3cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        panic!("one shape child")
+    };
+    // Two endpoint stops (0..100000) and a linear angle: ODF `draw:angle="300"`
+    // (1/10 degree) maps to the model's 60000ths (300 * 6000 = 1_800_000).
+    let Some(Fill::Gradient { stops, kind }) = &shape.fill else {
+        panic!("gradient fill")
+    };
+    assert_eq!(
+        stops,
+        &vec![
+            GradientStop {
+                position: 0,
+                color: casual_doc_model::v1::Rgba {
+                    r: 0xff,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            },
+            GradientStop {
+                position: 100_000,
+                color: casual_doc_model::v1::Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0xff,
+                    a: 255,
+                },
+            },
+        ]
+    );
+    assert_eq!(*kind, GradientKind::Linear { angle: 1_800_000 });
+
+    // The preserving writer re-emits the gradient fill on the graphic style and the
+    // `<draw:gradient>` definition into styles.xml (`office:styles`).
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let content_out = String::from_utf8(out.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(content_out.contains(r#"draw:fill="gradient" draw:fill-gradient-name="grad"#));
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(r#"<draw:gradient draw:name="grad"#));
+    assert!(styles_out.contains(r#"draw:style="linear""#));
+    assert!(styles_out.contains(r##"draw:start-color="#ff0000""##));
+    assert!(styles_out.contains(r##"draw:end-color="#0000ff""##));
+    assert!(styles_out.contains(r#"draw:angle="300""#));
+    assert!(
+        styles_out.contains(r#"xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0""#)
+    );
+
+    // Semantic + byte fixed point.
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
+
+    // The plain semantic path has no draw namespaces, so the shape degrades and no
+    // orphan `<draw:gradient>` definition is emitted.
+    let semantic = write_odt(&imported.document, OdfExportLimits::default()).unwrap();
+    let mut plain = OdtPackage::open(&semantic.bytes, OdfPackageLimits::default()).unwrap();
+    let plain_content = String::from_utf8(plain.read_part(CONTENT_PART).unwrap()).unwrap();
+    assert!(!plain_content.contains("draw:rect"));
+    assert!(!plain_content.contains("draw:gradient"));
+    if let Ok(part) = plain.read_part(STYLES_PART) {
+        assert!(!String::from_utf8(part).unwrap().contains("draw:gradient"));
+    }
+}
+
+/// A floating `draw:rect` with a radial `<draw:gradient>` imports to a
+/// `Fill::Gradient` with `GradientKind::Radial` (no angle) and re-exports as
+/// `draw:style="radial"`, a byte-exact fixed point.
+#[test]
+fn standalone_shape_radial_gradient_round_trips() {
+    let content = br##"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.4"><office:automatic-styles><style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="G2"/></style:style><draw:gradient draw:name="G2" draw:style="radial" draw:start-color="#112233" draw:end-color="#aabbcc" draw:angle="0"/></office:automatic-styles><office:body><office:text><text:p><draw:rect draw:style-name="gr1" text:anchor-type="page" svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="4cm"/></text:p></office:text></office:body></office:document-content>"##.to_vec();
+    let manifest = format!(
+        r#"<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" m:version="1.4"><m:file-entry m:full-path="/" m:media-type="{ODT_MIME}" m:version="1.4"/><m:file-entry m:full-path="content.xml" m:media-type="text/xml"/></m:manifest>"#
+    )
+    .into_bytes();
+    let bytes = package(&[
+        Entry {
+            name: MIMETYPE_PART,
+            bytes: ODT_MIME.as_bytes().to_vec(),
+            compression: CompressionMethod::Stored,
+            local_extra: false,
+        },
+        Entry {
+            name: MANIFEST_PART,
+            bytes: manifest,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+        Entry {
+            name: CONTENT_PART,
+            bytes: content,
+            compression: CompressionMethod::Deflated,
+            local_extra: false,
+        },
+    ]);
+    let imported = OdtPackage::open(&bytes, OdfPackageLimits::default())
+        .unwrap()
+        .import_document(OdfImportLimits::default())
+        .unwrap();
+
+    let BlockNode::Paragraph(paragraph) = &imported.document.body()[0] else {
+        panic!("paragraph")
+    };
+    let InlineNode::Group(group) = &paragraph.inlines[0] else {
+        panic!("group")
+    };
+    let [GroupChild::Shape(shape)] = group.children.as_slice() else {
+        panic!("one shape child")
+    };
+    let Some(Fill::Gradient { stops, kind }) = &shape.fill else {
+        panic!("gradient fill")
+    };
+    assert_eq!(stops.len(), 2);
+    assert_eq!(*kind, GradientKind::Radial);
+
+    let retained = crate::OdfRetainedParts::default();
+    let export =
+        write_odt_with_retained_parts(&imported.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    let mut out = OdtPackage::open(&export.bytes, OdfPackageLimits::default()).unwrap();
+    let styles_out = String::from_utf8(out.read_part(STYLES_PART).unwrap()).unwrap();
+    assert!(styles_out.contains(r#"draw:style="radial""#));
+    assert!(styles_out.contains(r##"draw:start-color="#112233""##));
+
+    let reopened = out.import_document(OdfImportLimits::default()).unwrap();
+    assert_eq!(reopened.document, imported.document);
+    let reexport =
+        write_odt_with_retained_parts(&reopened.document, &retained, OdfExportLimits::default())
+            .unwrap();
+    assert_eq!(reexport.bytes, export.bytes);
 }
 
 /// A floating `draw:ellipse` imports to an `Ellipse` `GroupShape` and re-exports
