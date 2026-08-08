@@ -2765,6 +2765,64 @@ fn comment_range_markers_bracket_a_span_and_round_trip() {
 }
 
 #[test]
+fn comment_range_markers_span_two_paragraphs_and_round_trip() {
+    // A comment anchored to a MULTI-PARAGRAPH span: the start marker lives in
+    // the first paragraph and the paired end marker plus reference in the
+    // second, all keyed to the one comment. The markers are inert leaves, so
+    // validation is per-inline and imposes no same-paragraph constraint — the
+    // cross-paragraph span validates and survives the strict JSON round-trip.
+    let comment = CommentId::new(tid(20));
+    let mut definitions = Definitions::default();
+    definitions.comments.insert(
+        comment,
+        Comment {
+            blocks: vec![paragraph_block(tid(30))],
+            ..Comment::default()
+        },
+    );
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: tid(1),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::CommentRangeStart(CommentRangeStart {
+                    id: tid(2),
+                    comment,
+                }),
+                InlineNode::Run(Run {
+                    id: tid(3),
+                    text: "first".to_owned(),
+                    properties: RunProperties::default(),
+                }),
+            ],
+        }),
+        BlockNode::Paragraph(Paragraph {
+            id: tid(4),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                InlineNode::Run(Run {
+                    id: tid(5),
+                    text: "second".to_owned(),
+                    properties: RunProperties::default(),
+                }),
+                InlineNode::CommentRangeEnd(CommentRangeEnd {
+                    id: tid(6),
+                    comment,
+                }),
+                InlineNode::CommentReference(CommentReference {
+                    id: tid(7),
+                    comment,
+                }),
+            ],
+        }),
+    ];
+    let document = Document::new(tid(99), body, definitions).unwrap();
+    let json = document.to_json().unwrap();
+    let reloaded = Document::from_json(&json, SnapshotLimits::default()).unwrap();
+    assert_eq!(document, reloaded);
+}
+
+#[test]
 fn comment_threading_and_identity_round_trip_through_json() {
     // A resolved root plus a reply, with a linked collaborator identity, survives
     // the strict JSON round-trip and validation.
