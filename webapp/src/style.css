@@ -4494,6 +4494,17 @@ body:not(.doc-loaded) .drop-title {
 }
 
 /* ---- Footer status bar ----------------------------------------------------- */
+/* Word and Docs both treat the status bar as a fixed-height strip that never
+   wraps, never scrolls and never gives the document a horizontal scrollbar: as
+   the window narrows they *shed* the lowest-value indicators. We reproduce that
+   with the `[data-status-priority]` ladder further down, so a new indicator
+   inherits the behaviour by declaring a number instead of by earning its own
+   breakpoint. `overflow-x: clip` is the backstop behind the ladder — an
+   unanticipated indicator degrades into clipped chrome instead of pushing
+   `documentElement.scrollWidth` past the viewport and scrolling the whole page
+   sideways (the failure this bar produced at 720px). It is not the fix:
+   `scrollWidth` still reports clipped content, so the shell-overflow spec keeps
+   catching a real regression rather than being silenced by it. */
 .footer {
   display: flex;
   align-items: center;
@@ -4506,6 +4517,8 @@ body:not(.doc-loaded) .drop-title {
   border-top: 1px solid var(--line);
   background: var(--bg-2);
   z-index: 2;
+  min-width: 0;
+  overflow-x: clip;
 }
 
 .foot-left,
@@ -4514,6 +4527,22 @@ body:not(.doc-loaded) .drop-title {
   align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+/* The two halves are deliberately asymmetric, mirroring `.document-chrome` /
+   `.controls` in the header. The left half is informational text, so it is the
+   one that yields and truncates; the right half is live controls (mode, page
+   position, zoom), and a half-clipped button is worse than no truncation at
+   all, so it keeps its intrinsic width. Without this split both halves shrank
+   below min-content and their `white-space: nowrap` contents painted outside
+   the footer box — shrinking the boxes moved the overflow, it never removed it. */
+.foot-left {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.foot-right {
+  flex: 0 0 auto;
 }
 
 .footer-mode {
@@ -4544,11 +4573,18 @@ body:not(.doc-loaded) .drop-title {
   display: none;
 }
 
+/* Inside the left half the transient engine message is the only thing allowed
+   to give way: it is prose that ellipsizes readably, whereas "12,483 words" is
+   worthless the moment a digit is cut. It is therefore the sole shrinkable
+   member of the row (`.stats` below is not), so a long "Opened <filename>"
+   message can never squeeze the counts. */
 .status {
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .status.error {
@@ -4562,6 +4598,9 @@ body:not(.doc-loaded) .drop-title {
   gap: 7px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .stats[hidden],
@@ -4569,7 +4608,13 @@ body:not(.doc-loaded) .drop-title {
   display: none;
 }
 
-.stats .dot {
+/* Separators are generated rather than authored so that shedding a count by
+   priority can never leave an orphaned "·" behind, and so adding a count is a
+   one-element change. Adjacency is DOM-based, so a hidden sibling carries its
+   own separator out of view with it. */
+.stats > * + *::before {
+  content: "·";
+  margin-inline-end: 7px;
   color: var(--faint);
 }
 
@@ -4625,6 +4670,51 @@ body:not(.doc-loaded) .drop-title {
 
 .footer .zoom select:hover {
   background: var(--bg-2);
+}
+
+/* ---- Status-bar progressive disclosure ------------------------------------- */
+/* Word's status bar sheds indicators as the window narrows (and lets the user
+   turn individual ones off); Docs keeps only the essentials and moves counts
+   into Tools ▸ Word count. Both keep the word count, the page position, the
+   editing-mode affordance and zoom visible at tablet widths — so those are what
+   survive here, and everything shed stays reachable from the `#stats` tooltip.
+   Priorities, not element names, drive the rungs: the highest number goes
+   first, and an indicator added later opts in by declaring a number rather than
+   by pushing the bar over the viewport edge again.
+     3 — paragraph count: not in Word's status bar at any width.
+     2 — character count, and the "Mode" caption the pressed segment already
+         conveys.
+     1 — word count and page position: last to go, only at phone widths.
+     none — engine status, the mode control and zoom: never shed. */
+@media (max-width: 1000px) {
+  .footer [data-status-priority="3"] {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .footer [data-status-priority="2"] {
+    display: none;
+  }
+}
+
+/* Condense before clipping: the same compaction the phone tier already used,
+   pulled one rung earlier so the segmented mode control keeps all three labels
+   at tablet widths instead of being traded away for room. */
+@media (max-width: 780px) {
+  .footer {
+    gap: 10px;
+  }
+
+  .foot-left,
+  .foot-right {
+    gap: 8px;
+  }
+
+  .footer .review-mode-seg {
+    padding-inline: 5px;
+    font-size: 10px;
+  }
 }
 
 /* The desktop editor remains the primary target, but the header must never
@@ -4688,9 +4778,11 @@ body:not(.doc-loaded) .drop-title {
     padding-inline: 6px;
   }
 
-  .footer .foot-left,
-  .footer-mode-label,
-  .footer .stat-pages {
+  /* Bottom rung of the same ladder: at phone widths only the mode control and
+     zoom fit, so the last counts go and the informational half goes with them.
+     Everything else the footer sheds is handled by priority above. */
+  .footer [data-status-priority="1"],
+  .footer .foot-left {
     display: none;
   }
 
@@ -4698,11 +4790,6 @@ body:not(.doc-loaded) .drop-title {
     width: 100%;
     justify-content: space-between;
     gap: 4px;
-  }
-
-  .footer .review-mode-seg {
-    padding-inline: 5px;
-    font-size: 10px;
   }
 
   .controls .btn {

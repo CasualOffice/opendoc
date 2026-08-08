@@ -2301,6 +2301,11 @@ function updateStats() {
   // Word distinguishes with- vs without-spaces; surface both on hover.
   statChars.title = `${chars.toLocaleString()} characters (with spaces)\n${charsNoSpaces.toLocaleString()} characters (no spaces)`;
   statParas.textContent = `${paras.toLocaleString()} paragraph${paras === 1 ? "" : "s"}`;
+  // Narrow windows shed the lower-priority counts from the bar (see the
+  // status-bar disclosure ladder in style.css). Word keeps the full set one
+  // gesture away in its Word Count dialog; until we have that dialog, the
+  // whole region carries every figure so nothing shed becomes unobtainable.
+  statsEl.title = `${words.toLocaleString()} words\n${chars.toLocaleString()} characters (with spaces)\n${charsNoSpaces.toLocaleString()} characters (no spaces)\n${paras.toLocaleString()} paragraphs`;
   statsEl.hidden = false;
   statPages.hidden = false;
   updatePageNumber();
