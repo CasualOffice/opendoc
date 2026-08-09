@@ -13,13 +13,15 @@
 //! boundary (doc 57 §3): `render_page(i, dpi)` rasterizes at `dpi`, where
 //! `device_px = twip / 1440 * dpi`.
 
+use casual_doc_edit::find_shape;
 use casual_doc_edit::object_descr;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
-    RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_paragraph,
-    find_table, locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
+    RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_table,
+    locate_cell, locate_table_cell, locate_table_row, paragraph_properties,
     run_properties_in_range,
 };
+use casual_doc_edit::{find_paragraph_any, surface_block_lists};
 use casual_doc_export::write_document;
 #[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -61,6 +63,7 @@ use casual_doc_model::v1::{
     VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{GroupChild, HeaderFooterId, HeaderFooterKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -226,7 +229,7 @@ struct RevisionIdAllocator {
 impl RevisionIdAllocator {
     fn from_document(document: &Document) -> Self {
         let mut values = Vec::new();
-        collect_review_revision_serial_ids(document.body(), &mut values);
+        collect_review_revision_serial_ids_all(document, &mut values);
         let used = values
             .into_iter()
             .filter_map(|value| value.parse::<u128>().ok())
@@ -385,6 +388,10 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
         | Operation::SetEvenAndOddHeaders { .. } => HistoryKind::Edit,
+        // Shape fill and outline are formatting, exactly as Word groups them.
+        Operation::SetShapeFill { .. } | Operation::SetShapeStroke { .. } => {
+            HistoryKind::Formatting
+        }
     }
 }
 
@@ -636,7 +643,7 @@ impl WasmDocument {
         if hit.zone != HitZone::Content {
             return None;
         }
-        let paragraph = find_paragraph(self.document.body(), hit.pos.node)?;
+        let paragraph = find_paragraph_any(&self.document, hit.pos.node)?;
         let links = paragraph_links(&self.document, paragraph);
         let link = links.into_iter().find(|candidate| {
             snapshot
@@ -1094,6 +1101,163 @@ impl WasmDocument {
             vec![Operation::InsertInlineObject {
                 at: Pos::new(owner, offset),
                 node: Box::new(InlineNode::Drawing(drawing)),
+            }],
+            HistoryKind::ObjectInsert,
+        )
+        .map_err(to_js)
+    }
+
+    /// Word's Insert ▸ Text Box: a floating, square-wrapped text box at the caret,
+    /// sized 3" × 1" with one empty paragraph, as one undoable action. The caret
+    /// is left in the new box's paragraph (the host enters it), which is where
+    /// Word leaves it too.
+    ///
+    /// Floating rather than inline because that is what both Word and this
+    /// editor's own object chrome expect: an anchored box can be dragged,
+    /// wrapped and resized, and there is no inline↔floating conversion.
+    #[wasm_bindgen(js_name = insertTextBox)]
+    pub fn insert_text_box(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        use casual_doc_model::v1::{Extent, TextBox, TextBoxBodyProperties};
+
+        let owner = node_id(node)?;
+        let exhausted = || to_js("id space exhausted".into());
+        let box_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let paragraph_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let extent = Extent {
+            width_emu: 2_743_200, // 3"
+            height_emu: 914_400,  // 1"
+        };
+        let text_box = TextBox {
+            id: box_id,
+            anchor: Some(new_object_anchor()),
+            relative_height: None,
+            extent: Some(extent),
+            // Word's default text box is white with a thin outline; an unfilled,
+            // unoutlined box would be invisible on the page until it had text.
+            fill: Some(Fill::Solid(Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            })),
+            border: Some(ShapeStroke {
+                color: Rgba {
+                    r: 0x2a,
+                    g: 0x2a,
+                    b: 0x2a,
+                    a: 255,
+                },
+                width_emu: 9_525,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            }),
+            body_properties: TextBoxBodyProperties::default(),
+            blocks: vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default(),
+                inlines: Vec::new(),
+            })],
+        };
+        self.apply_action_caret_as(
+            vec![Operation::InsertInlineObject {
+                at: Pos::new(owner, offset),
+                node: Box::new(InlineNode::TextBox(text_box)),
+            }],
+            Pos::new(paragraph_id, 0),
+            HistoryKind::ObjectInsert,
+        )
+        .map_err(to_js)
+    }
+
+    /// Word's Insert ▸ Shapes: a floating preset shape at the caret, filled and
+    /// outlined in the default accent, as one undoable action. `geometry` is one
+    /// of `rectangle`, `roundRectangle`, `ellipse`, `triangle`, `rightTriangle`,
+    /// `diamond`, `line`.
+    ///
+    /// The shape is wrapped in a group-of-one because that is the only shape a
+    /// shape takes in this model — a lone autoshape imports the same way.
+    #[wasm_bindgen(js_name = insertShape)]
+    pub fn insert_shape(
+        &mut self,
+        node: &str,
+        offset: u32,
+        geometry: &str,
+    ) -> Result<EditResult, JsValue> {
+        use casual_doc_model::v1::{
+            Extent, GroupChild, GroupShape, GroupTransform, PointEmu, ShapeGeometry,
+            WordprocessingGroup,
+        };
+
+        let geometry = match geometry {
+            "rectangle" => ShapeGeometry::Rectangle,
+            "roundRectangle" => ShapeGeometry::RoundRectangle,
+            "ellipse" => ShapeGeometry::Ellipse,
+            "triangle" => ShapeGeometry::Triangle,
+            "rightTriangle" => ShapeGeometry::RightTriangle,
+            "diamond" => ShapeGeometry::Diamond,
+            "line" => ShapeGeometry::Line,
+            other => return Err(to_js(format!("unknown shape {other:?}"))),
+        };
+        let owner = node_id(node)?;
+        let exhausted = || to_js("id space exhausted".into());
+        let group_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let shape_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
+        let extent = Extent {
+            width_emu: 1_828_800, // 2"
+            height_emu: 914_400,  // 1"
+        };
+        let shape = GroupShape {
+            id: shape_id,
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent,
+            geometry,
+            preset: None,
+            adjustments: Vec::new(),
+            // A line is a stroke, not a filled region; filling one would paint a
+            // rectangle behind a hairline.
+            fill: (geometry != ShapeGeometry::Line).then_some(Fill::Solid(Rgba {
+                r: 0xc9,
+                g: 0xd7,
+                b: 0xf0,
+                a: 255,
+            })),
+            stroke: Some(ShapeStroke {
+                color: Rgba {
+                    r: 0x2a,
+                    g: 0x4b,
+                    b: 0x8d,
+                    a: 255,
+                },
+                width_emu: 12_700,
+                dash: None,
+                head_end: None,
+                tail_end: None,
+            }),
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        };
+        let group = WordprocessingGroup {
+            id: group_id,
+            anchor: Some(new_object_anchor()),
+            relative_height: None,
+            extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            children: vec![GroupChild::Shape(shape)],
+        };
+        self.apply_action_as(
+            vec![Operation::InsertInlineObject {
+                at: Pos::new(owner, offset),
+                node: Box::new(InlineNode::Group(group)),
             }],
             HistoryKind::ObjectInsert,
         )
@@ -1727,7 +1891,7 @@ impl WasmDocument {
             return TextMatch::none();
         }
         let mut nodes = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
         if nodes.is_empty() {
             return TextMatch::none();
         }
@@ -1850,6 +2014,84 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = insertFootnote)]
     pub fn insert_footnote(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
         self.insert_note(NoteKind::Footnote, node, offset)
+    }
+
+    /// The selected shape's current fill and outline, so the host reflects what
+    /// the shape HAS rather than what was last applied: `{fill, outline,
+    /// outlineWidthEmu}`, each `#rrggbb` or null. A gradient reports its flat
+    /// color — the picker applies solids, and reporting null would read as "no
+    /// fill" on a shape that plainly has one. `null` if `shape` is not a shape.
+    #[wasm_bindgen(js_name = shapeFormat)]
+    pub fn shape_format(&self, shape: &str) -> Result<Option<ShapeFormat>, JsValue> {
+        let node = node_id(shape)?;
+        let Some(shape) = find_shape(&self.document, node) else {
+            return Ok(None);
+        };
+        Ok(Some(ShapeFormat {
+            fill: shape.fill.as_ref().map(|fill| hex_of(fill.flat_color())),
+            outline: shape.stroke.map(|stroke| hex_of(stroke.color)),
+            #[allow(clippy::cast_precision_loss)] // EMU widths are far below 2^53
+            outline_width_emu: shape.stroke.map(|stroke| stroke.width_emu as f64),
+        }))
+    }
+
+    /// Word's Shape Fill: sets a shape's fill to a solid colour, or clears it.
+    /// `rgba` is `#rrggbb`; `None` removes the fill.
+    #[wasm_bindgen(js_name = setShapeFill)]
+    pub fn set_shape_fill(
+        &mut self,
+        shape: &str,
+        rgba: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(shape)?;
+        let fill = match rgba {
+            Some(text) => Some(Fill::Solid(shape_rgba(&text)?)),
+            None => None,
+        };
+        self.apply_action_as(
+            vec![Operation::SetShapeFill { shape: node, fill }],
+            HistoryKind::Formatting,
+        )
+        .map_err(to_js)
+    }
+
+    /// Word's Shape Outline: sets a shape's outline colour and width (EMU), or
+    /// clears the outline entirely with `rgba = None`.
+    ///
+    /// Whatever the caller leaves out is INHERITED from the outline the shape
+    /// already has — colour, width, and equally the dash pattern and the
+    /// head/tail line ends, which no control exposes yet. Rebuilding the stroke
+    /// from scratch would silently straighten a dashed callout's leader the
+    /// moment someone recoloured it.
+    #[wasm_bindgen(js_name = setShapeOutline)]
+    pub fn set_shape_outline(
+        &mut self,
+        shape: &str,
+        rgba: Option<String>,
+        width_emu: Option<f64>,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(shape)?;
+        let current = find_shape(&self.document, node).and_then(|shape| shape.stroke);
+        let stroke = match rgba {
+            Some(text) => Some(ShapeStroke {
+                color: shape_rgba(&text)?,
+                ..stroke_base(current, width_emu)
+            }),
+            // A width with no colour changes only the weight — Word's Weight
+            // submenu, which never asks for a colour. Choosing a weight on an
+            // unoutlined shape gives it one, as Word does, rather than doing
+            // nothing.
+            None if width_emu.is_some() => Some(stroke_base(current, width_emu)),
+            None => None,
+        };
+        self.apply_action_as(
+            vec![Operation::SetShapeStroke {
+                shape: node,
+                stroke,
+            }],
+            HistoryKind::Formatting,
+        )
+        .map_err(to_js)
     }
 
     /// Whether the first page uses its own header/footer, and whether even pages
@@ -3177,7 +3419,7 @@ impl WasmDocument {
         // Checked state per checklist paragraph (from the model).
         let mut checked_by_node = std::collections::HashMap::new();
         let mut items = Vec::new();
-        collect_checklist_paragraphs(self.document.body(), self, &mut items);
+        collect_checklist_paragraphs_all(&self.document, self, &mut items);
         for (node, checked) in items {
             checked_by_node.insert(node, checked);
         }
@@ -5193,7 +5435,7 @@ impl WasmDocument {
     #[must_use]
     pub fn document_stats(&self) -> DocStats {
         let mut nodes = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
         DocStats {
             words: nodes
                 .iter()
@@ -5248,7 +5490,7 @@ impl WasmDocument {
     #[must_use]
     pub fn review_summary(&self) -> String {
         let mut anchors = Vec::new();
-        collect_review_comment_anchors(self.document.body(), &mut anchors);
+        collect_review_comment_anchors_all(&self.document, &mut anchors);
         let comments = self
             .document
             .definitions()
@@ -5279,10 +5521,10 @@ impl WasmDocument {
                 item
             })
             .collect::<Vec<_>>();
-        let move_pairs = collect_review_move_pairs(self.document.body());
+        let move_pairs = collect_review_move_pairs_all(&self.document);
         let move_links = review_move_links(&move_pairs);
         let mut revisions = Vec::new();
-        collect_review_revisions(self.document.body(), &move_links, &mut revisions);
+        collect_review_revisions_all(&self.document, &move_links, &mut revisions);
         serde_json::to_string(&serde_json::json!({
             "comments": comments,
             "revisions": revisions,
@@ -6317,7 +6559,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = decideRevision)]
     pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
         let id = node_id(revision)?;
-        if let Some((node, start, end)) = find_review_format_anchor(self.document.body(), id) {
+        if let Some((node, start, end)) = find_review_format_anchor_all(&self.document, id) {
             if find_review_format_change(self.document.body(), id)
                 .and_then(|change| change.editor_group)
                 .is_some()
@@ -6339,7 +6581,7 @@ impl WasmDocument {
                 )
                 .map_err(to_js);
         }
-        let Some((node, start, end, kind)) = find_review_revision_anchor(self.document.body(), id)
+        let Some((node, start, end, kind)) = find_review_revision_anchor_all(&self.document, id)
         else {
             return Err(to_js("revision not found".to_string()));
         };
@@ -6383,7 +6625,7 @@ impl WasmDocument {
     ) -> Result<EditResult, JsValue> {
         let from_start = node_id(from_start)?;
         let to_start = node_id(to_start)?;
-        let pairs = collect_review_move_pairs(self.document.body());
+        let pairs = collect_review_move_pairs_all(&self.document);
         let pair = pairs
             .iter()
             .find(|pair| pair.from.start == from_start && pair.to.start == to_start)
@@ -6399,7 +6641,7 @@ impl WasmDocument {
             ));
         };
         let Some((node, mut offset, _, _)) =
-            find_review_revision_anchor(self.document.body(), target)
+            find_review_revision_anchor_all(&self.document, target)
         else {
             return Err(to_js("tracked move pair anchor not found".to_string()));
         };
@@ -6410,7 +6652,7 @@ impl WasmDocument {
         };
         for id in removed_ids {
             if let Some((removed_node, start, end, _)) =
-                find_review_revision_anchor(self.document.body(), *id)
+                find_review_revision_anchor_all(&self.document, *id)
                 && removed_node == node
                 && start < offset
             {
@@ -6473,13 +6715,13 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = decideAllRevisions)]
     pub fn decide_all_revisions(&mut self, accept: bool) -> Result<EditResult, JsValue> {
         let mut ids = Vec::new();
-        collect_review_revision_ids(self.document.body(), &mut ids);
+        collect_review_revision_ids_all(&self.document, &mut ids);
         let mut format_ids = Vec::new();
-        collect_review_format_ids(self.document.body(), &mut format_ids);
+        collect_review_format_ids_all(&self.document, &mut format_ids);
         if ids.is_empty() && format_ids.is_empty() {
             return Err(to_js("no tracked revisions".to_string()));
         }
-        let pairs = collect_review_move_pairs(self.document.body());
+        let pairs = collect_review_move_pairs_all(&self.document);
         let paired_move_ids: BTreeSet<NodeId> = pairs
             .iter()
             .flat_map(|pair| {
@@ -6491,7 +6733,7 @@ impl WasmDocument {
             })
             .collect();
         for id in &ids {
-            if let Some((_, _, _, kind)) = find_review_revision_anchor(self.document.body(), *id)
+            if let Some((_, _, _, kind)) = find_review_revision_anchor_all(&self.document, *id)
                 && matches!(kind, RevisionKind::MoveFrom | RevisionKind::MoveTo)
                 && !paired_move_ids.contains(id)
             {
@@ -7165,7 +7407,7 @@ impl WasmDocument {
     #[must_use]
     pub fn document_outline(&self) -> Vec<String> {
         let mut nodes = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
         // Build the style cascade once; heading level comes from the *effective*
         // paragraph properties (a Heading/Title style's outlineLvl is inherited,
         // not written on the paragraph), so headings in real documents are found.
@@ -8081,7 +8323,7 @@ impl WasmDocument {
     /// used to resolve character boundaries for backspace/forward-delete.
     fn paragraph_text(&self, node: NodeId) -> String {
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
         nodes
             .into_iter()
             .find(|(id, _)| *id == node)
@@ -8093,7 +8335,7 @@ impl WasmDocument {
     /// the ordering caret navigation and cross-paragraph edits traverse.
     fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
         // Running content and notes are ordinary block content in the same id
         // space, and a caret can now be placed in them, so their paragraphs have
         // to be orderable too — `order_endpoints` resolves an endpoint by finding
@@ -8793,7 +9035,7 @@ impl WasmDocument {
     ) -> (Vec<(NodeId, Option<String>)>, Vec<NodeId>) {
         let mut images = Vec::new();
         let mut text_boxes = Vec::new();
-        if let Some(paragraph) = find_paragraph(self.document.body(), paragraph) {
+        if let Some(paragraph) = find_paragraph_any(&self.document, paragraph) {
             collect_para_objects(
                 &paragraph.inlines,
                 self.document.definitions(),
@@ -9211,7 +9453,7 @@ impl WasmDocument {
     fn copy_text_inner(&self, range: ModelRange) -> String {
         // Text-bearing nodes in document order — the order hit-testing traverses.
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
 
         let start = nodes.iter().position(|(id, _)| *id == range.start.node);
         let end = nodes.iter().position(|(id, _)| *id == range.end.node);
@@ -9239,7 +9481,7 @@ impl WasmDocument {
 
     fn copy_rich_runs_inner(&self, range: ModelRange) -> Vec<ClipboardRun> {
         let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text(self.document.body(), &mut nodes);
+        collect_block_text_all_surfaces(&self.document, &mut nodes);
 
         let start = nodes.iter().position(|(id, _)| *id == range.start.node);
         let end = nodes.iter().position(|(id, _)| *id == range.end.node);
@@ -9266,7 +9508,7 @@ impl WasmDocument {
             if lo >= hi {
                 continue;
             }
-            let Some(paragraph) = find_paragraph(self.document.body(), node) else {
+            let Some(paragraph) = find_paragraph_any(&self.document, node) else {
                 continue;
             };
             paragraph_rich_runs(&self.document, paragraph, lo as u32, hi as u32, &mut out);
@@ -9674,6 +9916,15 @@ fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>
     }
 }
 
+/// `collect_block_text` over EVERY block surface, not just the body. Word count,
+/// endpoint ordering and text extraction all stopped at the body edge, so header,
+/// footer and note text was invisible to them.
+fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, String)>) {
+    for blocks in surface_block_lists(document) {
+        collect_block_text(blocks, out);
+    }
+}
+
 fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     for block in blocks {
         match block {
@@ -9714,6 +9965,16 @@ struct ChecklistMarkerJson {
 
 /// Collects `(node, checked)` for every checklist item in document order,
 /// recursing into tables and block SDTs (mirrors [`collect_block_text`]).
+fn collect_checklist_paragraphs_all(
+    document: &Document,
+    doc: &WasmDocument,
+    out: &mut Vec<(NodeId, bool)>,
+) {
+    for blocks in surface_block_lists(document) {
+        collect_checklist_paragraphs(blocks, doc, out);
+    }
+}
+
 fn collect_checklist_paragraphs(
     blocks: &[BlockNode],
     doc: &WasmDocument,
@@ -9919,7 +10180,7 @@ fn build_review_comment_summary(
 /// typed data backing [`WasmDocument::list_comments`].
 fn build_review_comment_summaries(document: &Document) -> Vec<ReviewCommentSummaryJson> {
     let mut anchors = Vec::new();
-    collect_review_comment_anchors(document.body(), &mut anchors);
+    collect_review_comment_anchors_all(document, &mut anchors);
     document
         .definitions()
         .comments
@@ -9938,10 +10199,10 @@ fn build_review_comment_summaries(document: &Document) -> Vec<ReviewCommentSumma
 /// against the merged typed schema so a schema drift between the two call
 /// sites fails loudly instead of silently reaching JS untyped.
 fn build_review_revision_summaries(document: &Document) -> Vec<ReviewRevisionSummaryJson> {
-    let move_pairs = collect_review_move_pairs(document.body());
+    let move_pairs = collect_review_move_pairs_all(document);
     let move_links = review_move_links(&move_pairs);
     let mut revisions = Vec::new();
-    collect_review_revisions(document.body(), &move_links, &mut revisions);
+    collect_review_revisions_all(document, &move_links, &mut revisions);
     revisions
         .into_iter()
         .map(|value| {
@@ -10023,7 +10284,7 @@ fn build_review_comment_thread(
         }
     }
     let mut anchors = Vec::new();
-    collect_review_comment_anchors(document.body(), &mut anchors);
+    collect_review_comment_anchors_all(document, &mut anchors);
     members
         .into_iter()
         .filter_map(|id| {
@@ -10324,7 +10585,7 @@ fn collect_review_comment_anchors_inner(
 
 fn review_paragraph_body(document: &Document, node: NodeId) -> Result<Vec<BlockNode>, String> {
     let paragraph =
-        find_paragraph(document.body(), node).ok_or_else(|| "paragraph not found".to_owned())?;
+        find_paragraph_any(document, node).ok_or_else(|| "paragraph not found".to_owned())?;
     Ok(vec![BlockNode::Paragraph(paragraph.clone())])
 }
 
@@ -10336,7 +10597,7 @@ fn collect_changed_review_paragraphs(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                let previous = find_paragraph(document.body(), paragraph.id)
+                let previous = find_paragraph_any(document, paragraph.id)
                     .ok_or_else(|| "review command introduced an unknown paragraph".to_owned())?;
                 if previous.inlines != paragraph.inlines {
                     out.push(ReviewParagraphState {
@@ -12762,7 +13023,7 @@ fn effective_run_properties_in_range(
     start: u32,
     end: u32,
 ) -> Vec<RunProperties> {
-    let Some(paragraph) = find_paragraph(document.body(), node) else {
+    let Some(paragraph) = find_paragraph_any(document, node) else {
         return Vec::new();
     };
     let cascade = StyleCascade::new(document.definitions());
@@ -12786,7 +13047,7 @@ fn effective_caret_run_properties(
     node: NodeId,
     offset: u32,
 ) -> Option<RunProperties> {
-    let paragraph = find_paragraph(document.body(), node)?;
+    let paragraph = find_paragraph_any(document, node)?;
     let cascade = StyleCascade::new(document.definitions());
     let direct = caret_run_properties(document, node, offset)
         .cloned()
@@ -14080,6 +14341,84 @@ fn to_js(message: String) -> JsValue {
 /// Maps a highlight name (case-insensitive) to a [`HighlightColor`]; unknown
 /// names fall back to `Yellow`, `"none"`/`""` clear the highlight.
 /// Parses a `#rrggbb` (or `rrggbb`) hex color, or `None` if malformed.
+/// What [`shapeFormat`](WasmDocument::shape_format) reports to the host: the
+/// shape's own fill and outline, each `#rrggbb` or `undefined` for none.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone, Debug)]
+pub struct ShapeFormat {
+    /// The fill color, or `undefined` when the shape has no fill.
+    pub fill: Option<String>,
+    /// The outline color, or `undefined` when the shape has no outline.
+    pub outline: Option<String>,
+    /// The outline width in EMU, when the shape has an outline. `f64` rather than
+    /// `i64` so JS receives a plain number: a `BigInt` cannot be handed straight
+    /// back to `setShapeOutline`, which is exactly what the host does with it.
+    #[wasm_bindgen(js_name = outlineWidthEmu)]
+    pub outline_width_emu: Option<f64>,
+}
+
+/// `#rrggbb` for a shape colour, dropping alpha (the picker applies opaque).
+fn hex_of(color: Rgba) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
+}
+
+/// The stroke to write, starting from the one the shape already has: only the
+/// width is overridden here, so dash and line-end decorations survive an edit
+/// made through a control that cannot express them.
+fn stroke_base(current: Option<ShapeStroke>, width_emu: Option<f64>) -> ShapeStroke {
+    const HAIRLINE_EMU: i64 = 9525; // 0.75pt, Word's default outline weight
+    let base = current.unwrap_or(ShapeStroke {
+        color: Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        },
+        width_emu: HAIRLINE_EMU,
+        dash: None,
+        head_end: None,
+        tail_end: None,
+    });
+    ShapeStroke {
+        #[allow(clippy::cast_possible_truncation)] // clamped to a sane EMU range
+        width_emu: width_emu.map_or(base.width_emu, |w| w.clamp(0.0, MAX_EMU as f64) as i64),
+        ..base
+    }
+}
+
+/// The anchor a newly inserted floating object gets: square wrap, offset a little
+/// into the column from the paragraph it was inserted at, so it lands visibly
+/// near the caret instead of on top of the text.
+fn new_object_anchor() -> DrawingAnchor {
+    DrawingAnchor {
+        horizontal: AnchorHorizontal {
+            relative_from: HorizontalAnchor::Column,
+            position: HorizontalPosition::Offset(0),
+        },
+        vertical: AnchorVertical {
+            relative_from: VerticalAnchor::Paragraph,
+            position: VerticalPosition::Offset(0),
+        },
+        wrap: WrapMode::Square,
+        wrap_distances: casual_doc_model::v1::WrapDistances::default(),
+        behind_doc: false,
+        wrap_polygon: None,
+    }
+}
+
+/// A shape colour from the host: `#rrggbb`, opaque. Shapes carry [`Rgba`] rather
+/// than the run-level [`RgbColor`], so this lifts the shared hex parser.
+fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
+    let rgb =
+        parse_hex_color(hex).ok_or_else(|| JsValue::from_str(&format!("invalid color: {hex}")))?;
+    Ok(Rgba {
+        r: rgb.r,
+        g: rgb.g,
+        b: rgb.b,
+        a: 255,
+    })
+}
+
 fn parse_hex_color(hex: &str) -> Option<RgbColor> {
     let h = hex.strip_prefix('#').unwrap_or(hex);
     if h.len() != 6 {
@@ -15074,7 +15413,10 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         | Operation::RemoveHeaderFooterBody { .. }
         | Operation::SetSectionRunningRef { .. }
         | Operation::SetSectionTitlePage { .. }
-        | Operation::SetEvenAndOddHeaders { .. } => Pos::new(doc_id, 0),
+        | Operation::SetEvenAndOddHeaders { .. }
+        // The shape stays selected; there is no caret to move.
+        | Operation::SetShapeFill { .. }
+        | Operation::SetShapeStroke { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -15937,9 +16279,78 @@ fn dirty_pages(old: &PaginatedLayout, new: &PaginatedLayout) -> Vec<u32> {
         .collect()
 }
 
+// ---- Review projections across every surface ---------------------------------
+// A comment or tracked change on header, footer or note text exists in the model
+// but was invisible: these projections walked `document.body()` only, so the
+// sidebar had nothing to render and a change there could not be decided. Same
+// seam, review layer.
+fn collect_review_comment_anchors_all(
+    document: &Document,
+    out: &mut Vec<(casual_doc_model::v1::CommentId, NodeId, u32, u32)>,
+) {
+    for blocks in surface_block_lists(document) {
+        collect_review_comment_anchors(blocks, out);
+    }
+}
+
+fn collect_review_revisions_all(
+    document: &Document,
+    move_links: &BTreeMap<NodeId, ReviewMoveLink>,
+    out: &mut Vec<serde_json::Value>,
+) {
+    for blocks in surface_block_lists(document) {
+        collect_review_revisions(blocks, move_links, out);
+    }
+}
+
+fn collect_review_move_pairs_all(document: &Document) -> Vec<ReviewMovePair> {
+    let mut out = Vec::new();
+    for blocks in surface_block_lists(document) {
+        out.extend(collect_review_move_pairs(blocks));
+    }
+    out
+}
+
+fn find_review_revision_anchor_all(
+    document: &Document,
+    id: NodeId,
+) -> Option<(NodeId, u32, u32, RevisionKind)> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| find_review_revision_anchor(blocks, id))
+}
+
+fn find_review_format_anchor_all(
+    document: &Document,
+    run_id: NodeId,
+) -> Option<(NodeId, u32, u32)> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| find_review_format_anchor(blocks, run_id))
+}
+
+fn collect_review_revision_serial_ids_all(document: &Document, out: &mut Vec<String>) {
+    for blocks in surface_block_lists(document) {
+        collect_review_revision_serial_ids(blocks, out);
+    }
+}
+
+fn collect_review_revision_ids_all(document: &Document, out: &mut Vec<NodeId>) {
+    for blocks in surface_block_lists(document) {
+        collect_review_revision_ids(blocks, out);
+    }
+}
+
+fn collect_review_format_ids_all(document: &Document, out: &mut Vec<NodeId>) {
+    for blocks in surface_block_lists(document) {
+        collect_review_format_ids(blocks, out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casual_doc_edit::find_paragraph;
     use casual_doc_model::v1::TabLeader;
 
     const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
@@ -20973,6 +21384,173 @@ mod tests {
         // Sanity: it reopens with the float intact.
         let reopened = open_document(&bytes).expect("reopen the fixture");
         assert!(reopened.object_boxes().iter().any(|b| b.anchored));
+    }
+
+    /// A group-of-one holding a single shape, which is how EVERY drawing reaches
+    /// the model — a lone autoshape is normalised into one on import.
+    fn document_with_shape(stroke: Option<casual_doc_model::v1::ShapeStroke>) -> Document {
+        use casual_doc_model::v1::{
+            Definitions, GroupChild, GroupShape, GroupTransform, PointEmu, ShapeGeometry,
+            WordprocessingGroup,
+        };
+        let extent = Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        };
+        Document::new(
+            NodeId::from_parts(9, 1).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(9, 2).unwrap(),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Group(WordprocessingGroup {
+                    id: NodeId::from_parts(9, 3).unwrap(),
+                    anchor: None,
+                    relative_height: None,
+                    extent,
+                    transform: GroupTransform {
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        child_extent: extent,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    },
+                    children: vec![GroupChild::Shape(GroupShape {
+                        id: NodeId::from_parts(9, 4).unwrap(),
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        geometry: ShapeGeometry::Rectangle,
+                        preset: None,
+                        adjustments: Vec::new(),
+                        fill: None,
+                        stroke,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    })],
+                })],
+            })],
+            Definitions::default(),
+        )
+        .expect("valid shape document")
+    }
+
+    /// An object that cannot be written back is not really inserted. Both new
+    /// inserts go out through the real DOCX writer and come back as the same
+    /// objects — a text box holding its typed text, and a filled shape.
+    #[test]
+    fn an_inserted_text_box_and_shape_survive_export_and_reopen() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let paragraph = nodes.first().expect("a body paragraph").0.to_string();
+
+        let inserted = d.insert_text_box(&paragraph, 0).expect("insert a text box");
+        let inserted_node = inserted.node.clone();
+        // The caret lands in the new box's paragraph, so typing goes straight in.
+        d.insert_text(&inserted_node, inserted.offset, "ROUNDTRIP".to_owned())
+            .expect("type into the new box");
+        d.insert_shape(&paragraph, 0, "ellipse")
+            .expect("insert a shape");
+
+        let bytes = d.export_docx().expect("export");
+        let reopened = open_document(&bytes).expect("reopen");
+
+        let mut boxes = 0;
+        let mut shapes = 0;
+        let mut box_text = String::new();
+        for block in reopened.document.body() {
+            let BlockNode::Paragraph(paragraph) = block else {
+                continue;
+            };
+            for inline in &paragraph.inlines {
+                match inline {
+                    InlineNode::TextBox(text_box) => {
+                        boxes += 1;
+                        for block in &text_box.blocks {
+                            if let BlockNode::Paragraph(p) = block {
+                                for inline in &p.inlines {
+                                    if let InlineNode::Run(run) = inline {
+                                        box_text.push_str(&run.text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    InlineNode::Group(group) => {
+                        shapes += group
+                            .children
+                            .iter()
+                            .filter(|child| {
+                                matches!(child, casual_doc_model::v1::GroupChild::Shape(_))
+                            })
+                            .count();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(boxes, 1, "the text box came back");
+        assert_eq!(box_text, "ROUNDTRIP", "with the text typed into it");
+        assert_eq!(shapes, 1, "the shape came back");
+    }
+
+    /// Recolouring an outline must not straighten it. The Fill/Outline controls
+    /// cannot express a dash pattern or an arrowhead, so rebuilding the stroke
+    /// from what they DO know would silently discard both — a callout's dashed
+    /// leader would go solid the moment someone changed its colour.
+    #[test]
+    fn recolouring_an_outline_keeps_its_dash_and_line_ends() {
+        use casual_doc_model::v1::{DashStyle, ShapeStroke};
+
+        let dashed = ShapeStroke {
+            color: Rgba {
+                r: 0x2a,
+                g: 0x4b,
+                b: 0x8d,
+                a: 255,
+            },
+            width_emu: 12_700,
+            dash: Some(DashStyle::Dash),
+            head_end: None,
+            tail_end: None,
+        };
+        let mut d = wasm_document(document_with_shape(Some(dashed)));
+        let shape = NodeId::from_parts(9, 4).unwrap().to_string();
+
+        d.set_shape_outline(&shape, Some("#00ff00".to_owned()), None)
+            .expect("recolour the outline");
+        let after = find_shape(&d.document, NodeId::from_parts(9, 4).unwrap())
+            .and_then(|s| s.stroke)
+            .expect("the outline survived");
+        assert_eq!(after.color.r, 0x00);
+        assert_eq!(after.color.g, 0xff);
+        assert_eq!(after.dash, Some(DashStyle::Dash), "the dash must survive");
+        assert_eq!(after.width_emu, 12_700, "the width is inherited too");
+    }
+
+    /// Word's Weight submenu never asks for a colour: choosing one on a shape
+    /// with no outline gives it the default outline rather than doing nothing.
+    #[test]
+    fn a_weight_alone_outlines_an_unoutlined_shape() {
+        let mut d = wasm_document(document_with_shape(None));
+        let shape = NodeId::from_parts(9, 4).unwrap().to_string();
+
+        d.set_shape_outline(&shape, None, Some(38_100.0))
+            .expect("set the weight");
+        let after = find_shape(&d.document, NodeId::from_parts(9, 4).unwrap())
+            .and_then(|s| s.stroke)
+            .expect("a weight gives the shape an outline");
+        assert_eq!(after.width_emu, 38_100);
+
+        // And clearing means clearing: no colour, no width, no outline.
+        d.set_shape_outline(&shape, None, None).expect("clear it");
+        assert!(
+            find_shape(&d.document, NodeId::from_parts(9, 4).unwrap())
+                .and_then(|s| s.stroke)
+                .is_none()
+        );
     }
 
     #[test]

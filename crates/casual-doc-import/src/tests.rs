@@ -3823,6 +3823,69 @@ fn endnote_reference_and_body_are_modeled() {
 }
 
 #[test]
+fn generated_shapes_fixture_models_a_lone_shape_and_a_grouped_one() {
+    // The shape-editing work is built on this fixture, so it proves itself here:
+    // a lone `wps:wsp` normalises into a group-of-one, and a shape inside a real
+    // group keeps its fill and outline. Nothing downstream is trustworthy if this
+    // imports as something other than two filled, outlined shapes.
+    use casual_doc_model::v1::{Fill, GroupChild, Rgba, ShapeGeometry};
+
+    let bytes = include_bytes!("../../../fixtures/generated/shapes.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+
+    let mut shapes = Vec::new();
+    let mut text_boxes = 0;
+    for block in import.document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for inline in &paragraph.inlines {
+            let InlineNode::Group(group) = inline else {
+                continue;
+            };
+            for child in &group.children {
+                match child {
+                    GroupChild::Shape(shape) => shapes.push(shape),
+                    GroupChild::TextBox(_) => text_boxes += 1,
+                    GroupChild::Group(_) | GroupChild::Picture(_) => {}
+                }
+            }
+        }
+    }
+
+    assert_eq!(shapes.len(), 2, "a lone rectangle and a grouped ellipse");
+    assert_eq!(text_boxes, 1, "the group also holds a text box");
+
+    let rectangle = shapes[0];
+    assert_eq!(rectangle.geometry, ShapeGeometry::Rectangle);
+    assert_eq!(
+        rectangle.fill,
+        Some(Fill::Solid(Rgba {
+            r: 0xc9,
+            g: 0xd7,
+            b: 0xf0,
+            a: 255
+        }))
+    );
+    let stroke = rectangle.stroke.expect("the rectangle is outlined");
+    assert_eq!(
+        stroke.color,
+        Rgba {
+            r: 0x2a,
+            g: 0x4b,
+            b: 0x8d,
+            a: 255
+        }
+    );
+    assert_eq!(stroke.width_emu, 12700);
+
+    let ellipse = shapes[1];
+    assert_eq!(ellipse.geometry, ShapeGeometry::Ellipse);
+    assert!(ellipse.fill.is_some() && ellipse.stroke.is_some());
+}
+
+#[test]
 fn generated_note_reference_fixture_models_footnote_and_endnote() {
     let bytes = include_bytes!("../../../fixtures/generated/note-references.docx");
     let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();

@@ -26,10 +26,10 @@ use casual_doc_model::v1::{
     TableCellProperties, TableProperties, TableRow, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
-use casual_doc_model::v1::GroupChild;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
+use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
@@ -744,6 +744,23 @@ pub enum Operation {
         /// Whether even pages use their own header/footer variant.
         enabled: bool,
     },
+    /// Set or clear a shape's fill (`a:solidFill` / no fill) — Word's Shape Fill.
+    /// Self-inverse, carrying the previous value. Resolves the shape wherever it
+    /// lives, including inside a shape group.
+    SetShapeFill {
+        /// The shape to change.
+        shape: NodeId,
+        /// The fill to install, or `None` for no fill.
+        fill: Option<Fill>,
+    },
+    /// Set or clear a shape's outline (`a:ln`) — Word's Shape Outline.
+    /// Self-inverse, carrying the previous value.
+    SetShapeStroke {
+        /// The shape to change.
+        shape: NodeId,
+        /// The stroke to install, or `None` for no outline.
+        stroke: Option<ShapeStroke>,
+    },
 }
 
 /// Whether a running-content op addresses the header or the footer side.
@@ -1276,11 +1293,12 @@ pub fn apply(
                 return Err(EditError::ValueTooLarge);
             }
             let previous =
-                set_object_descr(doc.body_mut(), *object, descr).ok_or(EditError::NodeNotFound)?;
+                on_owning_surface_mut(doc, |blocks| set_object_descr(blocks, *object, descr))
+                    .ok_or(EditError::NodeNotFound)?;
             if let Err(_err) = doc.validate() {
                 // Roll back: any residual model rule (e.g. the anchored path's own
                 // bound) must not leave a partial mutation behind.
-                set_object_descr(doc.body_mut(), *object, &previous);
+                on_owning_surface_mut(doc, |blocks| set_object_descr(blocks, *object, &previous));
                 return Err(EditError::ValueTooLarge);
             }
             Ok(Operation::SetObjectDescr {
@@ -1290,11 +1308,16 @@ pub fn apply(
         }
         Operation::DeleteObject { object } => {
             let (owner, index, node) =
-                remove_object(doc.body_mut(), *object).ok_or(EditError::NodeNotFound)?;
+                on_owning_surface_mut(doc, |blocks| remove_object(blocks, *object))
+                    .ok_or(EditError::NodeNotFound)?;
             if let Err(_err) = doc.validate() {
                 // Roll back: removing the object emptied a container that must stay
                 // non-empty (a hyperlink / revision / inline SDT's sole child).
-                let _ = try_insert_object(doc.body_mut(), owner, index, &node);
+                on_owning_surface_mut(doc, |blocks| {
+                    try_insert_object(blocks, owner, index, &node)
+                        .ok()
+                        .filter(|inserted| *inserted)
+                });
                 return Err(EditError::Unsupported);
             }
             Ok(Operation::InsertObjectNode {
@@ -1304,7 +1327,23 @@ pub fn apply(
             })
         }
         Operation::InsertObjectNode { owner, index, node } => {
-            if !try_insert_object(doc.body_mut(), *owner, *index, node)? {
+            // An out-of-range index is an error, not a miss: it must not fall
+            // through to the next surface and be reported as "not found".
+            let mut failure = None;
+            let inserted = on_owning_surface_mut(doc, |blocks| {
+                match try_insert_object(blocks, *owner, *index, node) {
+                    Ok(true) => Some(()),
+                    Ok(false) => None,
+                    Err(err) => {
+                        failure = Some(err);
+                        Some(())
+                    }
+                }
+            });
+            if let Some(err) = failure {
+                return Err(err);
+            }
+            if inserted.is_none() {
                 return Err(EditError::NodeNotFound);
             }
             Ok(Operation::DeleteObject { object: node.id() })
@@ -1367,8 +1406,9 @@ pub fn apply(
 
             let mut previous_paragraphs = Vec::with_capacity(paragraphs.len());
             for replacement in paragraphs {
-                let paragraph = find_paragraph_mut(doc.body_mut(), replacement.node)
-                    .ok_or(EditError::NodeNotFound)?;
+                let paragraph =
+                    find_paragraph_mut(blocks_owning_mut(doc, replacement.node)?, replacement.node)
+                        .ok_or(EditError::NodeNotFound)?;
                 previous_paragraphs.push(ReviewParagraphState {
                     node: replacement.node,
                     inlines: std::mem::replace(&mut paragraph.inlines, replacement.inlines.clone()),
@@ -1379,8 +1419,9 @@ pub fn apply(
             });
             if doc.validate().is_err() {
                 for previous in &previous_paragraphs {
-                    let paragraph = find_paragraph_mut(doc.body_mut(), previous.node)
-                        .expect("review paragraph was prevalidated");
+                    let paragraph =
+                        find_paragraph_mut(blocks_owning_mut(doc, previous.node)?, previous.node)
+                            .expect("review paragraph was prevalidated");
                     paragraph.inlines = previous.inlines.clone();
                 }
                 if let Some(previous) = previous_comments {
@@ -1653,7 +1694,8 @@ pub fn apply(
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            let insertion = insert_inline_object_at(doc.body_mut(), *at, (**node).clone(), ids);
+            let insertion = blocks_owning_mut(doc, at.node)
+                .and_then(|blocks| insert_inline_object_at(blocks, *at, (**node).clone(), ids));
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::Unsupported));
             if let Err(err) = outcome {
@@ -1716,6 +1758,24 @@ pub fn apply(
             Ok(Operation::InsertField {
                 at: Pos::new(node, offset),
                 field: Box::new(removed),
+            })
+        }
+        Operation::SetShapeFill { shape, fill } => {
+            let target = find_shape_mut(doc, *shape).ok_or(EditError::NodeNotFound)?;
+            let previous = target.fill.clone();
+            target.fill = fill.clone();
+            Ok(Operation::SetShapeFill {
+                shape: *shape,
+                fill: previous,
+            })
+        }
+        Operation::SetShapeStroke { shape, stroke } => {
+            let target = find_shape_mut(doc, *shape).ok_or(EditError::NodeNotFound)?;
+            let previous = target.stroke;
+            target.stroke = *stroke;
+            Ok(Operation::SetShapeStroke {
+                shape: *shape,
+                stroke: previous,
             })
         }
         Operation::SetSectionTitlePage {
@@ -3231,22 +3291,79 @@ pub enum Surface {
 /// as left-aligned. They are listed once here rather than each growing its own
 /// copy of the traversal, because the same omission was made independently four
 /// times.
-fn surface_block_lists(document: &Document) -> Vec<&[BlockNode]> {
+pub fn surface_block_lists(document: &Document) -> Vec<&[BlockNode]> {
     let definitions = document.definitions();
     let mut out: Vec<&[BlockNode]> = vec![document.body()];
+    // Text-box content is block content too, but it hangs off an inline inside a
+    // paragraph rather than being its own surface, so a walk over these lists
+    // would step straight past it. Every collector that takes a block slice —
+    // review anchors, checklists, text extraction — needs it, so it is added
+    // here once instead of teaching each walk to descend.
+    let mut boxes: Vec<&[BlockNode]> = Vec::new();
+    collect_text_box_blocks(document.body(), &mut boxes);
     for (_, header) in definitions.headers.iter() {
         out.push(&header.blocks);
+        collect_text_box_blocks(&header.blocks, &mut boxes);
     }
     for (_, footer) in definitions.footers.iter() {
         out.push(&footer.blocks);
+        collect_text_box_blocks(&footer.blocks, &mut boxes);
     }
     for (_, note) in definitions.footnotes.iter() {
         out.push(&note.blocks);
+        collect_text_box_blocks(&note.blocks, &mut boxes);
     }
     for (_, note) in definitions.endnotes.iter() {
         out.push(&note.blocks);
+        collect_text_box_blocks(&note.blocks, &mut boxes);
     }
+    out.extend(boxes);
     out
+}
+
+/// Every text-box block list reachable from `blocks`, including boxes inside
+/// tables, content controls, shape groups, and boxes nested in other boxes.
+fn collect_text_box_blocks<'a>(blocks: &'a [BlockNode], out: &mut Vec<&'a [BlockNode]>) {
+    fn from_group<'a>(children: &'a [GroupChild], out: &mut Vec<&'a [BlockNode]>) {
+        for child in children {
+            match child {
+                GroupChild::TextBox(text_box) => {
+                    out.push(&text_box.blocks);
+                    collect_text_box_blocks(&text_box.blocks, out);
+                }
+                GroupChild::Group(nested) => from_group(&nested.children, out),
+                GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+            }
+        }
+    }
+    fn from_inlines<'a>(inlines: &'a [InlineNode], out: &mut Vec<&'a [BlockNode]>) {
+        for inline in inlines {
+            match inline {
+                InlineNode::TextBox(text_box) => {
+                    out.push(&text_box.blocks);
+                    collect_text_box_blocks(&text_box.blocks, out);
+                }
+                InlineNode::Group(group) => from_group(&group.children, out),
+                InlineNode::Hyperlink(link) => from_inlines(&link.inlines, out),
+                InlineNode::Field(field) => from_inlines(&field.inlines, out),
+                _ => {}
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => from_inlines(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_text_box_blocks(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_text_box_blocks(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
 }
 
 /// Whether `blocks` (recursively) contains a paragraph or table with `id`.
@@ -3330,18 +3447,70 @@ fn surface_blocks_mut<'a>(
     }
 }
 
-/// The block list owning `id`, wherever it lives — the body-agnostic replacement
-/// for `doc.body_mut()` in ops that address a position by node.
-/// The paragraph `id`, wherever it lives — the immutable counterpart of
-/// [`blocks_owning_mut`], for the op arms that snapshot a paragraph before
+/// The paragraph `id`, wherever it lives — the immutable counterpart of the
+/// owning-block-list lookup, for the op arms that snapshot a paragraph before
 /// mutating it. Reading only the body meant those ops refused outright in a
 /// header, footer or note.
-fn find_paragraph_any(doc: &Document, id: NodeId) -> Option<&Paragraph> {
+pub fn find_paragraph_any(doc: &Document, id: NodeId) -> Option<&Paragraph> {
     surface_block_lists(doc)
         .into_iter()
         .find_map(|blocks| find_paragraph(blocks, id))
 }
 
+/// Every surface, body first — the order the searches below try them in.
+fn all_surfaces(doc: &Document) -> Vec<Surface> {
+    let definitions = doc.definitions();
+    let mut out = vec![Surface::Body];
+    out.extend(
+        definitions
+            .headers
+            .iter()
+            .map(|(key, _)| Surface::Header(*key)),
+    );
+    out.extend(
+        definitions
+            .footers
+            .iter()
+            .map(|(key, _)| Surface::Footer(*key)),
+    );
+    out.extend(
+        definitions
+            .footnotes
+            .iter()
+            .map(|(key, _)| Surface::Footnote(*key)),
+    );
+    out.extend(
+        definitions
+            .endnotes
+            .iter()
+            .map(|(key, _)| Surface::Endnote(*key)),
+    );
+    out
+}
+
+/// Runs `f` over each surface's block list until one answers `Some`.
+///
+/// The object helpers take a `&[BlockNode]` slice, so they can only ever see one
+/// surface at a time; calling them on `doc.body_mut()` is what made deleting an
+/// image in a header, or inserting one there, fail with `NodeNotFound`. `f` must
+/// leave a surface untouched when it answers `None`, which every helper below
+/// does — they mutate only after they have found their target.
+fn on_owning_surface_mut<T>(
+    doc: &mut Document,
+    mut f: impl FnMut(&mut Vec<BlockNode>) -> Option<T>,
+) -> Option<T> {
+    for surface in all_surfaces(doc) {
+        if let Some(blocks) = surface_blocks_mut(doc, &surface)
+            && let Some(found) = f(blocks)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The block list owning `id`, wherever it lives — the body-agnostic replacement
+/// for `doc.body_mut()` in ops that address a position by node.
 fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNode>, EditError> {
     let surface = surface_of(doc, id).ok_or(EditError::NodeNotFound)?;
     surface_blocks_mut(doc, &surface).ok_or(EditError::NodeNotFound)
@@ -3350,6 +3519,171 @@ fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNod
 /// Searches an inline list for a paragraph inside a text box, recursing through
 /// the wrappers that can hold one: hyperlinks, fields, shape groups, and text
 /// boxes themselves (a text box may contain a table whose cells hold more).
+/// Every block list that can own a shape, one per surface. Text boxes are NOT
+/// listed separately: a box hangs off an inline inside one of these lists, and
+/// the walks below descend into it. A `Surface` is returned alongside so the
+/// mutable twin can re-borrow exactly the list the read found.
+fn shape_surfaces(doc: &Document) -> Vec<(Surface, &[BlockNode])> {
+    let definitions = doc.definitions();
+    let mut out: Vec<(Surface, &[BlockNode])> = vec![(Surface::Body, doc.body())];
+    for (key, header) in definitions.headers.iter() {
+        out.push((Surface::Header(*key), &header.blocks));
+    }
+    for (key, footer) in definitions.footers.iter() {
+        out.push((Surface::Footer(*key), &footer.blocks));
+    }
+    for (key, note) in definitions.footnotes.iter() {
+        out.push((Surface::Footnote(*key), &note.blocks));
+    }
+    for (key, note) in definitions.endnotes.iter() {
+        out.push((Surface::Endnote(*key), &note.blocks));
+    }
+    out
+}
+
+/// The shape `id` inside `blocks`, descending through groups (which nest), text
+/// boxes, tables, SDTs, hyperlinks and fields.
+fn shape_in_blocks(blocks: &[BlockNode], id: NodeId) -> Option<&GroupShape> {
+    fn in_children(children: &[GroupChild], id: NodeId) -> Option<&GroupShape> {
+        for child in children {
+            match child {
+                GroupChild::Shape(shape) if shape.id == id => return Some(shape),
+                GroupChild::Group(nested) => {
+                    if let Some(found) = in_children(&nested.children, id) {
+                        return Some(found);
+                    }
+                }
+                GroupChild::TextBox(text_box) => {
+                    if let Some(found) = shape_in_blocks(&text_box.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &[InlineNode], id: NodeId) -> Option<&GroupShape> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::Group(group) => in_children(&group.children, id),
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, id),
+                InlineNode::Field(field) => in_inlines(&field.inlines, id),
+                InlineNode::TextBox(text_box) => shape_in_blocks(&text_box.blocks, id),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    for block in blocks {
+        let found = match block {
+            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, id),
+            BlockNode::Table(table) => table
+                .rows
+                .iter()
+                .flat_map(|row| &row.cells)
+                .find_map(|cell| shape_in_blocks(&cell.blocks, id)),
+            BlockNode::Sdt(sdt) => shape_in_blocks(&sdt.blocks, id),
+            BlockNode::AltChunk(_) => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// The shape `id`, wherever it lives. Shapes only exist as group children, and
+/// groups nest, so this walks every surface's inlines into every group. A
+/// watermark is a header shape, so searching only the body would miss it — the
+/// same body-only seam that broke header typing, selection and formatting.
+#[must_use]
+pub fn find_shape(doc: &Document, id: NodeId) -> Option<&GroupShape> {
+    shape_surfaces(doc)
+        .into_iter()
+        .find_map(|(_, blocks)| shape_in_blocks(blocks, id))
+}
+
+/// The surface owning shape `id`. Split from the mutable lookup so the search
+/// and the mutable borrow never overlap.
+fn shape_surface_of(doc: &Document, id: NodeId) -> Option<Surface> {
+    shape_surfaces(doc)
+        .into_iter()
+        .find(|(_, blocks)| shape_in_blocks(blocks, id).is_some())
+        .map(|(surface, _)| surface)
+}
+
+/// The mutable twin of [`find_shape`].
+fn find_shape_mut(doc: &mut Document, id: NodeId) -> Option<&mut GroupShape> {
+    fn in_children(children: &mut [GroupChild], id: NodeId) -> Option<&mut GroupShape> {
+        // Two passes, so a returned borrow does not overlap the recursion.
+        if let Some(index) = children
+            .iter()
+            .position(|child| matches!(child, GroupChild::Shape(shape) if shape.id == id))
+        {
+            let GroupChild::Shape(shape) = &mut children[index] else {
+                unreachable!("the position matched a shape");
+            };
+            return Some(shape);
+        }
+        for child in children {
+            let found = match child {
+                GroupChild::Group(nested) => in_children(&mut nested.children, id),
+                GroupChild::TextBox(text_box) => in_blocks(&mut text_box.blocks, id),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &mut [InlineNode], id: NodeId) -> Option<&mut GroupShape> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::Group(group) => in_children(&mut group.children, id),
+                InlineNode::Hyperlink(link) => in_inlines(&mut link.inlines, id),
+                InlineNode::Field(field) => in_inlines(&mut field.inlines, id),
+                InlineNode::TextBox(text_box) => in_blocks(&mut text_box.blocks, id),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn in_blocks(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut GroupShape> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&mut paragraph.inlines, id),
+                BlockNode::Table(table) => {
+                    let mut hit = None;
+                    for row in &mut table.rows {
+                        for cell in &mut row.cells {
+                            if hit.is_none() {
+                                hit = in_blocks(&mut cell.blocks, id);
+                            }
+                        }
+                    }
+                    hit
+                }
+                BlockNode::Sdt(sdt) => in_blocks(&mut sdt.blocks, id),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    let surface = shape_surface_of(doc, id)?;
+    in_blocks(surface_blocks_mut(doc, &surface)?, id)
+}
+
 /// Searches a shape group's children (recursing into nested groups) for a
 /// paragraph inside one of their text boxes.
 fn find_paragraph_in_group(children: &[GroupChild], id: NodeId) -> Option<&Paragraph> {
@@ -5930,6 +6264,269 @@ mod tests {
 
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(d.definitions().sections[0].title_page, None);
+    }
+
+    /// A shape group holding one shape, wrapped in a paragraph — the shape of
+    /// every drawing in the model, since even a lone autoshape imports as a
+    /// group-of-one.
+    fn shape_paragraph(paragraph: u64, group: u64, shape: u64) -> BlockNode {
+        use casual_doc_model::v1::{GroupTransform, PointEmu, ShapeGeometry, WordprocessingGroup};
+
+        let extent = Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        };
+        BlockNode::Paragraph(Paragraph {
+            id: n(paragraph),
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::Group(WordprocessingGroup {
+                id: n(group),
+                anchor: None,
+                relative_height: None,
+                extent,
+                transform: GroupTransform {
+                    offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    extent,
+                    child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    child_extent: extent,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                },
+                children: vec![GroupChild::Shape(GroupShape {
+                    id: n(shape),
+                    offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    extent,
+                    geometry: ShapeGeometry::Rectangle,
+                    preset: None,
+                    adjustments: Vec::new(),
+                    fill: None,
+                    stroke: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                })],
+            })],
+        })
+    }
+
+    fn solid(r: u8, g: u8, b: u8) -> Fill {
+        Fill::Solid(casual_doc_model::v1::Rgba { r, g, b, a: 255 })
+    }
+
+    /// The object structural ops resolved through `doc.body_mut()`, so an image in
+    /// a header — the overwhelmingly common place for one, a logo — could not be
+    /// deleted, could not have its alt text changed, and nothing could be inserted
+    /// beside it. Each failed as `NodeNotFound` on a node the document plainly
+    /// holds.
+    #[test]
+    fn an_object_in_a_header_can_be_deleted_described_and_restored() {
+        use casual_doc_model::v1::MediaId;
+
+        let media = MediaId::new(NodeId::from_parts(7, 901).unwrap());
+        let header_id = HeaderFooterId::new(n(970));
+        let paragraph = n(971);
+        let image = n(972);
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            casual_doc_model::v1::MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/logo.png".to_owned(),
+            },
+        );
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: paragraph,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![drawing(972, media, None, None)],
+                })],
+            },
+        );
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        // Alt text on a header logo.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetObjectDescr {
+                object: image,
+                descr: Some("Company logo".to_owned()),
+            },
+        )
+        .expect("a header image is describable");
+
+        // Delete it, and undo puts it back verbatim — in the header, not the body.
+        let inverse = apply(&mut d, &mut ids, &Operation::DeleteObject { object: image })
+            .expect("a header image is deletable");
+        assert!(
+            d.definitions().headers.get(&header_id).unwrap().blocks[0]
+                == BlockNode::Paragraph(Paragraph {
+                    id: paragraph,
+                    properties: ParagraphProperties::default(),
+                    inlines: Vec::new(),
+                }),
+            "the header paragraph is left empty"
+        );
+        apply(&mut d, &mut ids, &inverse).expect("undo restores it");
+        let restored = &d.definitions().headers.get(&header_id).unwrap().blocks[0];
+        let BlockNode::Paragraph(restored) = restored else {
+            panic!("the header still holds its paragraph");
+        };
+        assert_eq!(
+            restored.inlines.len(),
+            1,
+            "the image came back to the header"
+        );
+        assert!(
+            d.body().iter().all(|block| match block {
+                BlockNode::Paragraph(p) => p.inlines.len() == 1,
+                _ => true,
+            }),
+            "and did not land in the body"
+        );
+    }
+
+    /// Word's Shape Fill: applying a fill and undoing it restores exactly what
+    /// was there, including "no fill at all".
+    #[test]
+    fn setting_a_shape_fill_is_self_inverse() {
+        let mut d = doc(vec![shape_paragraph(2, 3, 4)]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetShapeFill {
+                shape: n(4),
+                fill: Some(solid(0xc9, 0xd7, 0xf0)),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            find_shape(&d, n(4)).unwrap().fill,
+            Some(solid(0xc9, 0xd7, 0xf0))
+        );
+        assert_eq!(
+            inverse,
+            Operation::SetShapeFill {
+                shape: n(4),
+                fill: None,
+            },
+            "the inverse carries the fill that was there before — none"
+        );
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(find_shape(&d, n(4)).unwrap().fill, None);
+    }
+
+    /// Word's Shape Outline, same contract — and clearing an outline is an
+    /// ordinary application of `None`, not a separate op.
+    #[test]
+    fn setting_and_clearing_a_shape_outline_is_self_inverse() {
+        let mut d = doc(vec![shape_paragraph(2, 3, 4)]);
+        let mut ids = IdGenerator::new(9);
+        let stroke = ShapeStroke {
+            color: casual_doc_model::v1::Rgba {
+                r: 0x2a,
+                g: 0x4b,
+                b: 0x8d,
+                a: 255,
+            },
+            width_emu: 12_700,
+            dash: None,
+            head_end: None,
+            tail_end: None,
+        };
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetShapeStroke {
+                shape: n(4),
+                stroke: Some(stroke),
+            },
+        )
+        .unwrap();
+        assert_eq!(find_shape(&d, n(4)).unwrap().stroke, Some(stroke));
+
+        // Clearing it reports the outline it removed, so undo restores it.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetShapeStroke {
+                shape: n(4),
+                stroke: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(find_shape(&d, n(4)).unwrap().stroke, None);
+        assert_eq!(
+            inverse,
+            Operation::SetShapeStroke {
+                shape: n(4),
+                stroke: Some(stroke),
+            }
+        );
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(find_shape(&d, n(4)).unwrap().stroke, Some(stroke));
+    }
+
+    /// The seam that broke typing, selection, alignment and font reads in turn:
+    /// resolution that starts at the body. A watermark is a HEADER shape, and a
+    /// shape can also sit inside a text box inside a group. Both must resolve.
+    #[test]
+    fn a_shape_outside_the_body_can_still_be_filled() {
+        let header_id = HeaderFooterId::new(n(970));
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![shape_paragraph(971, 972, 973)],
+            },
+        );
+        let mut d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        assert!(
+            find_shape(&d, n(973)).is_some(),
+            "a header shape must be findable"
+        );
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetShapeFill {
+                shape: n(973),
+                fill: Some(solid(1, 2, 3)),
+            },
+        )
+        .expect("a header shape is editable");
+        assert_eq!(find_shape(&d, n(973)).unwrap().fill, Some(solid(1, 2, 3)));
+    }
+
+    /// A shape nobody owns is `NodeNotFound`, not a silent no-op: a fill that
+    /// quietly does nothing is exactly how a broken resolution hides.
+    #[test]
+    fn filling_an_unknown_shape_reports_not_found() {
+        let mut d = doc(vec![shape_paragraph(2, 3, 4)]);
+        let mut ids = IdGenerator::new(9);
+        assert_eq!(
+            apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetShapeFill {
+                    shape: n(99),
+                    fill: Some(solid(1, 2, 3)),
+                },
+            ),
+            Err(EditError::NodeNotFound)
+        );
     }
 
     /// Word's "Different Odd & Even Pages" is document-scoped, matching where

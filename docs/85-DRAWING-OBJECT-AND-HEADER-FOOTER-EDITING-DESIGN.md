@@ -350,6 +350,83 @@ position for `EmbeddedObject`, and group re-parenting / child add-remove. Each
 needs a model extension and is a later slice; naming them keeps "basic shapes"
 honest.
 
+### 5.9 Inserting a text box or a shape (IMPLEMENTED, 2026-08-09)
+
+§5.6 decided the "basic shapes" scope; this implements the insert half, and with
+it closes the oldest hole in the object story: every object operation existed
+except **creating** one. A document that did not already contain a drawing could
+never gain one.
+
+- `insertTextBox(node, offset)` and `insertShape(node, offset, geometry)` build a
+  fresh node and go through the existing `InsertInlineObject` op — no new
+  operation, so undo, gating and tracked-change refusal are inherited unchanged.
+- Both insert **floating** objects (`anchor: Some(..)`, square wrap). Word's
+  Insert ▸ Text Box and Insert ▸ Shapes both produce floating objects, and this
+  editor's own chrome only offers drag/wrap to an anchored object — an inline one
+  would be a second-class object with no conversion path.
+- A shape is wrapped in a group-of-one, the only shape a shape takes here.
+- The text box is **entered** on insert (Word puts the caret in it); the shape is
+  left **selected** (there is no text to type, and it puts Fill/Outline in reach).
+  Entry reuses the double-click path rather than a second implementation.
+- The gallery lists exactly the presets the renderer draws. A gallery entry that
+  inserts an invisible shape would be worse than a short gallery.
+- Reachable from the Insert ribbon, the Insert app menu and the command palette;
+  `insert-surface.spec.mjs` compares the ribbon's command set against the menu's,
+  so a future command reaching one surface and missing the other fails CI.
+
+**Also closed here — the same body-only seam, in the object structural ops.**
+`DeleteObject`, `InsertObjectNode`, `SetObjectDescr` and the mutation half of
+`InsertInlineObject` all resolved through `doc.body_mut()`. An image in a HEADER
+— a logo, the overwhelmingly common case — could not be deleted, could not have
+its alt text set, and nothing could be inserted beside it; each reported
+`NodeNotFound` for a node the document plainly held. They now run through
+`on_owning_surface_mut`, which tries each surface in turn.
+
+### 5.8 Shape appearance — Fill and Outline (IMPLEMENTED, 2026-08-09)
+
+The gap this closes: a shape rendered, was selectable, movable and resizable, and
+there was **no way to change what it looks like**. `GroupShape` has carried
+`fill: Option<Fill>` and `stroke: Option<ShapeStroke>` since the preset-shape work
+(docs/87), the renderer paints both, and the writer round-trips both — but the op
+set had nothing that wrote either, so the data was import-only.
+
+**Two operations, both self-inverse:**
+
+| Op | Word control | Inverse |
+| --- | --- | --- |
+| `SetShapeFill { shape, fill }` | Shape Format ▸ Shape Fill | the same op carrying the previous `Option<Fill>` |
+| `SetShapeStroke { shape, stroke }` | Shape Format ▸ Shape Outline | the same op carrying the previous `Option<ShapeStroke>` |
+
+"No fill" and "No outline" are ordinary applications of `None`, not separate ops,
+so clearing is undoable by the identical mechanism.
+
+**Resolution.** Shapes exist only as `GroupChild::Shape`, and groups nest — a lone
+autoshape is normalised into a group-of-one on import, so this is the only shape
+shape. `find_shape` / `find_shape_mut` therefore walk **every surface**, not the
+body: a watermark is a header shape. This is the same body-only seam that broke
+header typing, then selection, then alignment reads, then font reads; it is closed
+here at the point of introduction rather than after a user finds it.
+
+**Inheritance at the bridge, not the host.** `setShapeOutline` takes an optional
+colour and an optional width and inherits everything it is not given from the
+outline the shape already has — including the **dash pattern and the head/tail
+line ends that no control exposes**. A host that rebuilt the stroke from the two
+values it knows would silently straighten a dashed callout's leader the moment
+someone recoloured it. A weight with no colour outlines an unoutlined shape (Word's
+Weight submenu never asks for a colour); `rgba = None` with no width clears it.
+
+**Chrome is kind-aware.** The object bar previously called every non-text-box
+object an "Image", which also handed a shape the picture-only Crop button and the
+picture aspect-lock rule on corner resize. It now reads Image / Text box / Shape,
+and Fill/Outline appear only for a shape — reachable from both the bar and the
+object context menu, per the command-surface parity rule (docs/84).
+
+**Completeness artefact.** `webapp/tests/e2e/surface-editing-matrix.spec.mjs` —
+6 surfaces (body, header, footer, footnote, text box, grouped box) × 14 operations.
+Shape appearance is covered by `shape-editing.spec.mjs` against a new fixture,
+`fixtures/generated/shapes.docx`; no fixture had a shape before, which is why none
+of the above was visible.
+
 ## 6. Undo / transaction semantics and tracked changes
 
 - **Undo:** every new op returns an exact inverse via the same `apply` contract;

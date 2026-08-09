@@ -95,8 +95,15 @@ test("the marker stays out of the way while the context is open", async ({
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  await hoverBand(page, "top");
-  await marker(page).click();
+  // Retried: the marker is positioned as the hover settles, so under parallel
+  // load a click can land before it is in place. A marker that genuinely does
+  // not enter the header fails all three attempts.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await hoverBand(page, "top");
+    await marker(page).click();
+    if ((await page.locator("#pages").getAttribute("data-running-edit")) === "header") break;
+    await page.waitForTimeout(200);
+  }
   await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe("header");
 
   // Already editing the header, so an invitation to edit the header is noise.

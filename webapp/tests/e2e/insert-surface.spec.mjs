@@ -70,9 +70,13 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   expect(buttonIds).toEqual([
     "insertTableBtn",
     "insertPictureBtn",
+    "insertShapeBtn",
+    "insertTextBoxBtn",
     "insertLinkBtn",
     "insertBookmarkBtn",
     "insertFieldBtn",
+    "insertFootnoteBtn",
+    "insertEndnoteBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
     "insertSymbolBtn",
@@ -80,11 +84,16 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   ]);
 
   // Word's Insert tab order: Tables ▸ Illustrations ▸ Links ▸ Text ▸ Symbols.
+  // Notes sit between Text and Header & footer: Word files footnotes under
+  // References, but this editor has no References tab, and Google Docs — the
+  // other reference point — puts Footnote on Insert. Burying them in a tab that
+  // does not exist would make them unreachable.
   expect(await page.locator("#panelInsert .rgroup-label").allTextContents()).toEqual([
     "Table",
     "Illustrations",
     "Links",
     "Text",
+    "Notes",
     "Header & footer",
     "Symbols",
   ]);
@@ -95,9 +104,13 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   const expected = [
     ["#insertTableBtn", "Insert table"],
     ["#insertPictureBtn", "Insert picture"],
+    ["#insertShapeBtn", "Insert shape"],
+    ["#insertTextBoxBtn", "Insert text box"],
     ["#insertLinkBtn", "Add or edit link"],
     ["#insertBookmarkBtn", "Bookmark"],
     ["#insertFieldBtn", "Insert field"],
+    ["#insertFootnoteBtn", "Footnote"],
+    ["#insertEndnoteBtn", "Endnote"],
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertSymbolBtn", "Insert symbol"],
@@ -410,10 +423,23 @@ test("opening a document into an already-focused surface paints its caret immedi
   // Re-open a document while #pages still holds focus. `setInputFiles` drives the
   // real open path without moving focus, which is what a file drop also does.
   const status = page.locator("#status");
+  // The open path names the file while it works, then clears the strip. Polling
+  // for the first edge SAMPLES it, and a fast reopen can finish between two
+  // polls — the assertion then fails on a document that opened perfectly. So
+  // record every value the strip takes instead, and assert over the recording.
+  await page.evaluate(() => {
+    const el = document.getElementById("status");
+    window.__statusLog = [el.textContent ?? ""];
+    new MutationObserver(() => window.__statusLog.push(el.textContent ?? "")).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
   await page.locator("#file").setInputFiles("demo.docx");
-  // The open path names the file while it works, then clears the strip; waiting
-  // for both edges proves the reopen actually completed before we measure.
-  await expect(status).toContainText("demo.docx");
+  await expect
+    .poll(() => page.evaluate(() => window.__statusLog.some((v) => v.includes("demo.docx"))))
+    .toBe(true);
   await expect(status).not.toContainText("demo.docx");
 
   // Focused surface ⇒ the caret is real and painted, not implicit.
