@@ -31,8 +31,19 @@ async function openMultiPage(page) {
   await expect
     .poll(async () => page.locator("#viewport").evaluate((v) => v.scrollHeight))
     .toBeGreaterThan(onePage * 2);
-  await page.waitForTimeout(500);
-  return page.locator(".page-wrap").count();
+  // Wait for pagination to SETTLE, not merely to have started: page wraps are
+  // added as the layout converges, and clicking while the count is still moving
+  // aims at a page that is about to be somewhere else.
+  let last = -1;
+  await expect
+    .poll(async () => {
+      const now = await page.locator(".page-wrap").count();
+      const stable = now === last;
+      last = now;
+      return stable && now > 1;
+    }, { intervals: [250, 250, 250, 250, 250, 250, 250, 250] })
+    .toBe(true);
+  return last;
 }
 
 /** Scrolls the viewport to a later page and returns that page's box. */
@@ -266,7 +277,13 @@ test("[7] clicking the footer band while in the header moves to the footer", asy
   page,
   consoleErrors,
 }) => {
-  const box = await enterHeader(page);
+  await enterHeader(page);
+  // The page is taller than the viewport, so its FOOTER is off-screen until the
+  // page bottom is scrolled into view — clicking at the page's bottom edge
+  // without this lands outside the window entirely.
+  await page.locator(".page-wrap").first().evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await page.waitForTimeout(300);
+  const box = await page.locator(".page-wrap .page").first().boundingBox();
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height - 14);
   // Word switches stories rather than dropping you into the body.
   await expect(page.locator("#pages")).toHaveAttribute("data-running-edit", "footer");

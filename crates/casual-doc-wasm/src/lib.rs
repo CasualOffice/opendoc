@@ -18090,6 +18090,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
+            edit_context: EditContext::Body,
             document,
             layout,
             markup_layout: None,
@@ -18355,6 +18356,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            edit_context: EditContext::Body,
             document,
             layout,
             markup_layout: None,
@@ -21423,6 +21425,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
+            edit_context: EditContext::Body,
             document,
             layout,
             markup_layout: None,
@@ -22721,6 +22724,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
+            edit_context: EditContext::Body,
             document,
             layout,
             markup_layout: None,

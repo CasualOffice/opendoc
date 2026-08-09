@@ -520,7 +520,12 @@ impl<'a> LayoutSnapshot<'a> {
     /// host read that as "clicked outside", and the click threw the user out of
     /// the context they were typing in.
     #[must_use]
-    pub fn nearest_in_band(&self, page_number: u32, point: Point, band: RunningBand) -> Option<ModelPos> {
+    pub fn nearest_in_band(
+        &self,
+        page_number: u32,
+        point: Point,
+        band: RunningBand,
+    ) -> Option<ModelPos> {
         let lines = self.running_line_boxes(page_number, band);
         let y = point.y.raw();
         let chosen = lines
@@ -559,10 +564,7 @@ impl<'a> LayoutSnapshot<'a> {
             // They are page-unique, so they are never filtered.
             let repeated = page.header.iter().chain(page.footer.iter());
             let unique = page.footnotes.iter();
-            for placed in repeated
-                .filter(|_| running)
-                .chain(unique)
-            {
+            for placed in repeated.filter(|_| running).chain(unique) {
                 collect_fragment(
                     &placed.fragment,
                     placed.rect.origin.x,
