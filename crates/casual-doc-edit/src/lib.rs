@@ -3447,10 +3447,8 @@ fn surface_blocks_mut<'a>(
     }
 }
 
-/// The block list owning `id`, wherever it lives — the body-agnostic replacement
-/// for `doc.body_mut()` in ops that address a position by node.
-/// The paragraph `id`, wherever it lives — the immutable counterpart of
-/// [`blocks_owning_mut`], for the op arms that snapshot a paragraph before
+/// The paragraph `id`, wherever it lives — the immutable counterpart of the
+/// owning-block-list lookup, for the op arms that snapshot a paragraph before
 /// mutating it. Reading only the body meant those ops refused outright in a
 /// header, footer or note.
 pub fn find_paragraph_any(doc: &Document, id: NodeId) -> Option<&Paragraph> {
@@ -3511,6 +3509,8 @@ fn on_owning_surface_mut<T>(
     None
 }
 
+/// The block list owning `id`, wherever it lives — the body-agnostic replacement
+/// for `doc.body_mut()` in ops that address a position by node.
 fn blocks_owning_mut(doc: &mut Document, id: NodeId) -> Result<&mut Vec<BlockNode>, EditError> {
     let surface = surface_of(doc, id).ok_or(EditError::NodeNotFound)?;
     surface_blocks_mut(doc, &surface).ok_or(EditError::NodeNotFound)
