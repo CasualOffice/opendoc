@@ -41,6 +41,14 @@ Milestones landed here:
   Editing / Suggesting / Read-only modes. Insert → Symbol and Insert → Emoji add
   categorized glyph pickers; ⌘/Ctrl+P prints. Every mutation routes through the
   same gated, undoable path, so read-only fails closed and Suggesting is tracked.
+- **Sub-document and drawing editing**: headers, footers, footnote and endnote
+  bodies, text boxes (inline, floating, and inside a shape group) are full
+  editing surfaces, not read-only regions — each takes typing, selection,
+  character and paragraph formatting, clipboard, find and replace, comments, and
+  tracked changes. Insert → Shapes and Insert → Text box create new objects; a
+  shape's fill and outline are editable. Completeness is held by
+  `tests/e2e/surface-editing-matrix.spec.mjs`, an operation × surface matrix,
+  because spot-checks are what previously let partial fixes look finished.
 - **Status bar**: live word, character, paragraph, and page counts. The strip
   sheds its lowest-value indicators as the window narrows, in
   `data-status-priority` order, rather than giving the page a horizontal

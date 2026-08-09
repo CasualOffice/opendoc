@@ -20,10 +20,17 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   await expect(rowHeaders.filter({ hasText: "Math (OMML)" })).toHaveCount(1);
   await expect(rowHeaders.filter({ hasText: "Charts" })).toHaveCount(1);
 
-  // The Images row's Editable cell reads "Partial" (selection/resize/anchor
-  // land, but insert-image does not yet) — the page reflects the data file.
+  // The Images row's Editable cell reads "Partial": insert, crop, alt text,
+  // move/resize/wrap and delete land, but in-place replace, rotation and
+  // picture styling do not — the page reflects the data file.
   const imagesRow = table.locator("tbody tr", { has: page.getByRole("rowheader", { name: /Images & inline drawings/ }) });
   await expect(imagesRow.locator("td.cell").nth(2)).toContainText("Partial");
+
+  // Headers & footers are a FULL editing surface now. Pinning it here is what
+  // stops the page drifting back to "renders but is not editable", which is what
+  // it claimed for months after the capability shipped.
+  const runningRow = table.locator("tbody tr", { has: page.getByRole("rowheader", { name: /Headers & footers/ }) });
+  await expect(runningRow.locator("td.cell").nth(2)).toContainText("Full");
 
   // The honesty floor still renders: Math (OMML) stays a read-only "Not yet"
   // editable cell, so the ○ / Not-yet state is exercised on a real row.

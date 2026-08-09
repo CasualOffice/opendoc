@@ -118,8 +118,11 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // Images: select/resize/move/wrap/z-order editing ships (inline + body floats);
   // crop/alt-text/insert-image are follow-ups — so partial, not none (never full).
   assert.equal(by["Images & inline drawings"].editable, "partial");
-  // Headers/footers are not an editing surface yet.
-  assert.equal(by["Headers & footers"].editable, "none");
+  // Headers/footers ARE an editing surface: enter by double-click or the hover
+  // marker, type and format with the same pipeline as the body (including
+  // comments and tracked changes), create one where none exists, and toggle the
+  // first-page / odd-even variants.
+  assert.equal(by["Headers & footers"].editable, "full");
   // Text boxes/shapes: select/resize/move/wrap/z-order ships; box content + shape
   // authoring are follow-ups — partial, not none.
   assert.equal(by["Text boxes & shapes"].editable, "partial");
@@ -128,7 +131,10 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // retained-not-typed, so semantic-mode round-trip remains partial.
   assert.equal(by["Text boxes & shapes"].modeled, "full");
   assert.equal(by["Text boxes & shapes"].roundtrips, "partial");
-  assert.equal(by["Footnotes & endnotes"].editable, "none");
+  // Notes can be inserted and their bodies edited like any other surface;
+  // footnote/endnote conversion and number-format options are not there, so
+  // partial rather than full.
+  assert.equal(by["Footnotes & endnotes"].editable, "partial");
   assert.equal(by["Fields"].editable, "none");
   // Math is fully typed as of Layer 1 (all 20 OMML math elements mapped or
   // raw-retained), but rendering is a bounded subset and it stays read-only.
@@ -147,13 +153,16 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
-  // Nothing claims "full" editable for charts/smartart/math/images/headers.
+  // Nothing claims "full" editable for content the editor cannot author at all
+  // (charts, SmartArt, math) or can only partly author (images: no in-place
+  // replace, no rotation, no picture styling). Headers and footers are NOT on
+  // this list any more — they are a complete editing surface, held to that by
+  // the operation × surface matrix and the formatting-toggle audit.
   for (const family of [
     "Charts",
     "SmartArt",
     "Math (OMML)",
     "Images & inline drawings",
-    "Headers & footers",
   ]) {
     assert.notEqual(
       by[family].editable,
