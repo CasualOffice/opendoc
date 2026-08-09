@@ -3863,11 +3863,12 @@ function showRunningMarker(page, band) {
  *  place the band geometry is interpreted, so the marker, the double-click and
  *  the context all agree on where the header is. */
 function runningBandAt(page, yTwip) {
-  const bands = marginBandsOf();
-  if (!bands || !page) return null;
-  if (yTwip < bands.top) return "header";
-  if (yTwip > page.hTwip - bands.bottom) return "footer";
-  return null;
+  if (!doc || !page) return null;
+  // Asked of the engine, which owns page geometry. Deriving it here from the
+  // DOCUMENT's page setup was wrong the moment a document had two sections with
+  // different margins: the host and the engine then disagreed about where a
+  // page's header ends, and the same click meant two different things.
+  return doc.bandAt(page.pageNumber, 0, yTwip) || null;
 }
 
 /** Decides whether the pointer is in a margin band and shows/hides the marker.

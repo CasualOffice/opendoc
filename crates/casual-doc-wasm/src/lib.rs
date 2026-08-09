@@ -786,6 +786,23 @@ impl WasmDocument {
         };
     }
 
+    /// Which running band `(x, y)` is in on `page` — `"header"`, `"footer"`, or
+    /// `""` for the content area.
+    ///
+    /// The host asked this question from its own copy of the page setup, which
+    /// is document-level: in a document whose sections have different margins,
+    /// the host and the engine disagreed about where a page's header ends. One
+    /// rule, owned by the layout that defines it.
+    #[wasm_bindgen(js_name = bandAt)]
+    #[must_use]
+    pub fn band_at(&self, page: u32, x_twip: i32, y_twip: i32) -> String {
+        LayoutSnapshot::new(&self.layout)
+            .band_at(page, Point::new(Twip(x_twip), Twip(y_twip)))
+            .map(band_name)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
     /// Resolves a click at `(x, y)` on `page` to a caret AND the story it lands
     /// in, honouring the story currently open.
     ///
