@@ -226,11 +226,19 @@ function selectRibbonTab(name) {
   if (typeof updateRibbonOverflow === "function") updateRibbonOverflow();
 }
 for (const t of ribbonTabs) {
-  t.addEventListener("click", () => {
+  t.addEventListener("click", (event) => {
     if (t.disabled) return;
     selectRibbonTab(t.dataset.tab);
     // Clicking a tab while collapsed brings the ribbon back (Word behavior).
     if (ribbonViewCollapsed) setRibbonCollapsed(false);
+    // A tab is a VIEW switch, not an editing target. Clicking one left the
+    // button holding the keyboard, so the next thing typed went to the ribbon
+    // and vanished — including straight after an insert that had just put the
+    // caret in a new text box. Word and Docs never take the caret away for a
+    // tab change. Keyboard activation (`detail === 0`, and the arrow-key
+    // navigation below) deliberately keeps focus on the tab strip, because
+    // there the tabs ARE the thing being operated.
+    if (event.detail !== 0) focusEditorSurface();
   });
 }
 
@@ -3016,12 +3024,24 @@ function anchorAt(page, event) {
   // Editing a text box: a point inside it belongs to the box's text, so clicks
   // and drags select within it instead of jumping out to the body.
   if (objectSelection?.mode === "editing") {
-    const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
-    if (inBox) {
-      const anchor = { node: inBox.node, offset: inBox.offset };
-      inBox.free?.();
-      return anchor;
+    // Geometry decides the story, exactly as it does for a header band: the
+    // box's own rect says whether this point belongs to the box. `textBoxHitTest`
+    // snaps to the nearest line across the WHOLE page, so asking it first meant
+    // a click far down in the body still resolved inside the box — the caret
+    // moved into the box's text while the user was aiming at a paragraph, and
+    // there was no way to click out at all.
+    if (pointInsideObject(objectSelection.node, page, x, y)) {
+      const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
+      if (inBox) {
+        const anchor = { node: inBox.node, offset: inBox.offset };
+        inBox.free?.();
+        return anchor;
+      }
+      return null; // inside the box but it has no line to land on
     }
+    // Outside the box: leave it, then resolve as an ordinary body click — the
+    // same deliberate way out that leaving a header uses.
+    exitObjectEditMode();
   }
   if (runningEditBand) {
     // One rule, in the engine: geometry decides the story, content decides only
@@ -3059,6 +3079,32 @@ function anchorAt(page, event) {
   const anchor = { node: hit.node, offset: hit.offset };
   hit.free(); // release the WASM-owned payload; we copied out its fields
   return anchor;
+}
+
+/** Whether a page-local point falls inside `node`'s placed rectangle.
+ *
+ *  Asked of the engine's own geometry (`objectRect`), so the host never carries
+ *  a second opinion about where an object is. */
+function pointInsideObject(node, page, x, y) {
+  if (!doc || !node) return false;
+  let rect = [];
+  try {
+    rect = doc.objectRect(node); // [page, x, y, w, h] in twips
+  } catch {
+    return false;
+  }
+  if (rect.length < 5 || rect[0] !== page.pageNumber) return false;
+  return x >= rect[1] && x <= rect[1] + rect[3] && y >= rect[2] && y <= rect[2] + rect[4];
+}
+
+/** Leaves a text box's editing context, dropping the object selection with it —
+ *  a click in the body is a click in the body, not a half-exit that leaves the
+ *  box's chrome on screen. */
+function exitObjectEditMode() {
+  if (!objectSelection) return;
+  objectSelection = null;
+  updateObjectSelectionState();
+  updateObjectContextBar();
 }
 
 /** Clears every page's caret/selection layer. */
@@ -4746,7 +4792,14 @@ function onPointerDown(page, event) {
   // Object selection (docs/85 §3.1) takes precedence over a text caret: a click
   // on a drawing/image/text box selects it as a unit and shows its handles.
   const { x, y } = pointToTwip(page, event);
-  const object = doc.objectAt(page.pageNumber, x, y);
+  // An object you are INSIDE is a text surface, not a target. Selecting it as a
+  // unit here meant that while editing a text box, a click in its own empty
+  // space dropped you from editing back to "selected" — the box stopped being
+  // something you were typing in and became something you had picked up.
+  const editingHere =
+    objectSelection?.mode === "editing" &&
+    pointInsideObject(objectSelection.node, page, x, y);
+  const object = editingHere ? null : doc.objectAt(page.pageNumber, x, y);
   if (object) {
     const node = object.node;
     const kind = object.kind;
@@ -4764,9 +4817,23 @@ function onPointerDown(page, event) {
     return;
   }
   // A click that is not on an object deselects any selected object and proceeds
-  // with ordinary text hit-testing.
-  objectSelection = null;
-  clearObjectStatus();
+  // with ordinary text hit-testing. The chrome has to go with it: clearing the
+  // variable alone left the handles, the context bar and `data-object-mode` on
+  // screen, so a text box the user had clicked away from still looked — and to
+  // anything reading the state, still was — the thing being edited.
+  // ...unless the click is a caret placement INSIDE the object being edited, in
+  // which case there is nothing to deselect: the object is the surface, not the
+  // target. Clearing it here dropped the user out of the box on every click in
+  // its own empty space.
+  const wasSelected = objectSelection !== null;
+  if (!editingHere) {
+    objectSelection = null;
+    clearObjectStatus();
+    if (wasSelected) {
+      updateObjectSelectionState();
+      updateObjectContextBar();
+    }
+  }
   const anchor = anchorAt(page, event);
   if (!anchor) {
     updateObjectSelectionState();
