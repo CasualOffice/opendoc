@@ -54,10 +54,10 @@
           <div class="fid-panel-head">
             <span class="title">OpenDoc render</span>
             <span class="spacer"></span>
-            <span class="meta">tables-nested.docx · p.4</span>
+            <span class="meta">CPU raster · 150 dpi</span>
           </div>
           <div class="fid-panel-figure">
-            <span>engine PNG · 1275×1650</span>
+            <span>Comparison images are produced locally by tools/opendoc-fidelity</span>
           </div>
           <figcaption class="visually-hidden">A page rasterized by the OpenDoc CPU backend.</figcaption>
         </figure>
@@ -65,10 +65,10 @@
           <div class="fid-panel-head">
             <span class="title">Oracle diff</span>
             <span class="spacer"></span>
-            <span class="meta good">Δ 0.4% pixels</span>
+            <span class="meta">LibreOffice, same page</span>
           </div>
           <div class="fid-panel-figure">
-            <span>diff heatmap PNG</span>
+            <span>The corpus documents are not redistributable, so no image ships here</span>
           </div>
           <figcaption class="visually-hidden">Pixel difference against the LibreOffice-rendered oracle page.</figcaption>
         </figure>
@@ -78,52 +78,54 @@
         <div class="fid-fixtures">
           <div class="fid-fixtures-scroll">
             <div class="fid-frow head">
-              <div>Fixture</div>
+              <div>Document</div>
               <div>Pages</div>
               <div>Δ oracle</div>
               <div>Round-trip</div>
               <div>Known gap</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">tables-nested.docx</div>
-              <div class="fx-cell mono">14</div>
+              <div class="fx-name">Sample Document</div>
+              <div class="fx-cell mono">26</div>
               <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip byte">Byte-identical</span></div>
-              <div class="fx-cell">—</div>
-            </div>
-            <div class="fid-frow">
-              <div class="fx-name">toc-leaders.docx</div>
-              <div class="fx-cell mono">6</div>
-              <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip byte">Byte-identical</span></div>
-              <div class="fx-cell">—</div>
-            </div>
-            <div class="fid-frow">
-              <div class="fx-name">sections-mixed.docx</div>
-              <div class="fx-cell mono">11</div>
-              <div class="fx-cell mono">0</div>
-              <div class="fx-cell"><span class="fx-chip byte">Byte-identical</span></div>
-              <div class="fx-cell">—</div>
-            </div>
-            <div class="fid-frow">
-              <div class="fx-name">cjk-mixed.docx</div>
-              <div class="fx-cell mono">9</div>
-              <div class="fx-cell mono">+1</div>
               <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
-              <div class="fx-cell"><span class="fx-chip gap">Tall CJK fallback metrics</span></div>
+              <div class="fx-cell">—</div>
             </div>
             <div class="fid-frow">
-              <div class="fx-name">floats-wrap.docx</div>
+              <div class="fx-name">Class notes</div>
+              <div class="fx-cell mono">1</div>
+              <div class="fx-cell mono">0</div>
+              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
+              <div class="fx-cell">—</div>
+            </div>
+            <div class="fid-frow">
+              <div class="fx-name">Rich producer demo</div>
               <div class="fx-cell mono">8</div>
+              <div class="fx-cell mono">0</div>
+              <div class="fx-cell"><span class="fx-chip byte">Byte-identical</span></div>
+              <div class="fx-cell">—</div>
+            </div>
+            <div class="fid-frow">
+              <div class="fx-name">Chinese SDS</div>
+              <div class="fx-cell mono">17</div>
               <div class="fx-cell mono">+1</div>
               <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
-              <div class="fx-cell"><span class="fx-chip gap">No text wrap around floats</span></div>
+              <div class="fx-cell"><span class="fx-chip gap">Final-page column balancing</span></div>
+            </div>
+            <div class="fid-frow">
+              <div class="fx-name">Medical form</div>
+              <div class="fx-cell mono">3</div>
+              <div class="fx-cell mono">−1</div>
+              <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
+              <div class="fx-cell"><span class="fx-chip gap">Document-grid row heights</span></div>
             </div>
           </div>
         </div>
         <p class="fid-foot">
-          Numbers reflect the current pre-release corpus and move with every fidelity PR.
-          They are evidence, not a Word-grade claim.
+          Page counts are this engine's output against a LibreOffice oracle on the
+          five-document review corpus (<code>tools/opendoc-fidelity</code>); the documents
+          themselves are not redistributable, so only the measurements are published.
+          Numbers move with every fidelity PR. They are evidence, not a Word-grade claim.
         </p>
       </section>
 
@@ -140,7 +142,7 @@
             support a stage does not actually have.
           </p>
           <div class="fidelity-meta">
-            <span>Last reviewed: <b>2026&#8209;08&#8209;01</b></span>
+            <span>Last reviewed: <b>2026&#8209;08&#8209;09</b></span>
             <span>Source of truth:
               <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">docs/18 support matrix</a>,
               <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">execution tracker</a>,
@@ -192,14 +194,16 @@
         <section class="fidelity-notes" aria-label="Notes and explicit non-support">
           <h2>Notes, placeholders, and explicit non-support</h2>
           <ul>
-            <li><b>Editing is a developer test harness, not a product.</b> Most Phase&nbsp;1G editor rows are “in review”. The <b>Editable</b> column reflects what the current in-browser editor can actually change today.</li>
-            <li><b>Images are not insertable or editable yet.</b> Imported images render (and round-trip), but there is no insert-image or image-edit surface in the editor.</li>
-            <li><b>Headers, footers, footnotes/endnotes, text boxes, and shapes render but are not editing surfaces.</b> The editable body is paragraphs and table cells.</li>
-            <li><b>Math (OMML)</b> is imported as an opaque, namespace-guarded node and preserved for export, but it is not typeset as real math — it shows as a placeholder rather than laid-out equations.</li>
+            <li><b>Editing is a developer test harness, not a product.</b> The <b>Editable</b> column reflects what the current in-browser editor can actually change today, not a supported product surface.</li>
+            <li><b>Every editable surface takes every editing operation.</b> Body, header, footer, footnote/endnote body, text box, and a box inside a shape group each accept typing, selection, character and paragraph formatting, cut/copy/paste, find and replace, comments, and tracked changes. This is pinned by an operation&nbsp;×&nbsp;surface matrix in CI, not by sampling.</li>
+            <li><b>Not authorable yet:</b> shape rotation and flip (they render and round-trip, but there is no handle or control to set them), custom shape geometry, replacing an existing picture's bytes in place, text-box body properties (internal margins, vertical anchor, autofit), inserting or splitting a section, and creating or updating a named style.</li>
+            <li><b>Math (OMML)</b> is fully typed and round-trips; the common constructs typeset inline. Box/border-box rules and full Word-parity math typesetting are partial, and math is not editable — there is no equation editor.</li>
             <li><b>Charts and SmartArt</b> are modeled as first-class references and preserved byte-for-byte on export, but are not painted as live charts/diagrams — an embedded preview image shows if the file provides one, otherwise a text placeholder (⊟).</li>
-            <li><b>Non-PNG/JPEG images (EMF/WMF, SVG, GIF, BMP, TIFF), undecodable images, and <code>w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
-            <li><b>Color fonts and color emoji are not supported</b> — the CPU rasterizer paints monochrome glyph outlines, with no color glyph-table (COLR/CBDT/sbix) path.</li>
-            <li><b>Tracked changes</b> render as inline markup with per-author color; there is no Final / Original / simple-markup view toggle yet, and only inline (not structural) changes can be authored as suggestions.</li>
+            <li><b>Non-PNG/JPEG images (EMF/WMF, SVG on the browser build), undecodable images, and <code>w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
+            <li><b>Color fonts and color emoji are not supported.</b> Emoji render, but through a monochrome face — the CPU rasterizer paints glyph outlines and has no color glyph-table (COLR/CBDT/sbix) path.</li>
+            <li><b>No PDF export.</b> The design is written (<a href="https://github.com/CasualOffice/opendoc/blob/main/docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md">docs/98</a>, ADR-031) but not implemented; printing goes through the browser from engine-rendered pages.</li>
+            <li><b>Text wrap around floats</b> reserves shared flow for top-and-bottom and square wrapping, including inside table cells, headers and footers. Tight and through contour wrapping, and page-coupled reflow, remain partial.</li>
+            <li><b><code>.docm</code> macro-enabled files are rejected at open.</b> Strip-and-open versus explicit non-support is an undecided policy question, not an oversight.</li>
             <li><b>Round-trips means a semantic fixed point</b> (import&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen yields an equal model), not a byte-identical file. Byte-exact preservation applies to the retention/no-edit floor.</li>
             <li><b>No silent data loss:</b> anything not modeled is preserved verbatim via the retention floor and reported, per the <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/35-DISPOSITION-TAXONOMY.md">disposition taxonomy</a>.</li>
           </ul>

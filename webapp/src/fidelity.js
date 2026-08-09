@@ -26,7 +26,7 @@ const FIDELITY = [
   },
   {
     family: "Paragraph & named styles",
-    note: "Apply a paragraph style and reflect it; no style gallery or update-style-from-selection yet.",
+    note: "Apply a paragraph style from the ribbon gallery and reflect the caret\u2019s style. Updating a style from the selection, and creating a new named style, are not there.",
     modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {
@@ -41,23 +41,23 @@ const FIDELITY = [
   },
   {
     family: "Images & inline drawings",
-    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. A placed image can be selected, resized, moved, wrapped, and reordered (engine-drawn handles) for inline and body-floating images; crop, alt-text, insert-image, and replace-image are follow-ups.",
+    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. A picture can be inserted (from a file or the clipboard), selected, resized, moved, wrapped, reordered, cropped by dragging its handles, described (alt text), and deleted. Replacing an existing picture\u2019s bytes in place, authoring rotation/flip, and picture borders and effects are not there.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Text boxes & shapes",
-    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering now paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders (solid or dashed); text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Anchored shapes/text-boxes can be selected, resized, moved, wrapped, and reordered (engine-drawn handles); box content editing and shape authoring are follow-ups.",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders; text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Editing: a text box or preset shape can be inserted, selected, moved, resized, wrapped, reordered and deleted; box CONTENT edits with the full text pipeline (inline, floating, and inside a shape group); a shape\u2019s fill and outline colour/weight are editable. Rotation and flip authoring, custom geometry, and text-box body properties (internal margins, vertical anchor, autofit) are not.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "partial",
   },
   {
     family: "Headers & footers",
-    note: "Render with per-section widths, first/even/default inheritance, nested blocks, tables, images, and page fields. Not an editing surface yet.",
-    modeled: "full", rendered: "full", editable: "none", roundtrips: "full",
+    note: "Render with per-section widths, first/even/default inheritance, nested blocks, tables, images, and page fields. Fully editable: double-click the band (or the hover marker) to enter, type and format with the same pipeline as the body — including comments and tracked changes — create a header or footer where none exists, and toggle the different-first-page and different-odd-even variants. Link-to-previous is reference absence, per Word\u2019s model.",
+    modeled: "full", rendered: "full", editable: "full", roundtrips: "full",
   },
   {
     family: "Footnotes & endnotes",
-    note: "Reference markers, page-bottom note bands, the separator rule (short for a fresh note, full-width for a continuation), and the in-body auto-number glyph all render — with space reservation, per-column bands, cross-page continuation, and end-of-document endnote placement. Remaining gaps are pagination edge cases and full Word separator customization. Not editable.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "Reference markers, page-bottom note bands, the separator rule (short for a fresh note, full-width for a continuation), and the in-body auto-number glyph all render — with space reservation, per-column bands, cross-page continuation, and end-of-document endnote placement. A footnote or endnote can be inserted from the Insert tab, the menu or the palette, and its body edits like any other surface. Converting a footnote to an endnote, number-format and restart options, and separator customization are not there.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Sections, columns & page setup",
@@ -91,17 +91,17 @@ const FIDELITY = [
   },
   {
     family: "Comments",
-    note: "Editor sidebar with anchored highlights; add, reply, resolve/reopen, edit, delete; valid thread ids on export. Not Word/Docs parity — single-paragraph ranges only, no bulk accept/filter surface; not part of printed page output.",
+    note: "Editor sidebar with anchored highlights; add, reply, resolve/reopen, edit, delete; Open/Resolved/All filtering; valid thread ids on export. Comments can be added in any surface, including headers, footers, notes and text boxes. Not Word/Docs parity — single-paragraph ranges only, and comments are not part of printed page output.",
     modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {
     family: "Tracked changes",
-    note: "Inline markup with per-author color; suggesting mode, accept/reject single/group/all, round-trip with numeric ids. Not Word/Docs parity — no Final/Original/simple-markup view toggle, and only inline (not structural: paragraph/table/list) changes can be authored.",
+    note: "Inline markup with per-author color; suggesting mode, accept/reject single/group/all, a review sidebar with Open/Resolved/All filtering and next/previous navigation, and round-trip with numeric ids. Changes can be authored in any surface, including headers, footers, notes and text boxes. Not Word/Docs parity — the view control is a binary show/hide of markup rather than Word\u2019s Simple Markup / Original views, and only inline (not structural: paragraph/table/list) changes can be authored.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Bookmarks & hyperlinks",
-    note: "Links render, activate, and drive TOC navigation; insert/edit/remove a link. Bookmarks navigate only (no create/rename/delete).",
+    note: "Links render, activate, and drive TOC navigation; insert/edit/remove a link. Bookmarks have a manager surface — create, rename, delete, and go to.",
     modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {

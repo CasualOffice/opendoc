@@ -3024,15 +3024,35 @@ function anchorAt(page, event) {
     }
   }
   if (runningEditBand) {
-    const running = doc.runningHitTest(page.pageNumber, x, y);
-    if (running) {
-      const anchor = { node: running.node, offset: running.offset };
-      running.free?.();
+    // One rule, in the engine: geometry decides the story, content decides only
+    // the offset inside it. The host used to infer "the user left the header"
+    // from a hit-test finding no glyph, so clicking the empty space to the right
+    // of a header line — or below its last line, still inside the band — threw
+    // the user out of the context they were typing in.
+    const hit = doc.resolveClick(page.pageNumber, x, y);
+    if (!hit) return null;
+    const anchor = { node: hit.node, offset: hit.offset };
+    const band = hit.band;
+    hit.free?.();
+    if (band) {
+      // Still in running content: stay there, and follow the user if they moved
+      // to the other band or to another page's copy.
+      if (!anchor.node) {
+        // That band has no content on this page. Entering it is the ask — the
+        // same one the double-click makes — so probe it, and create it when the
+        // document has none, rather than letting the click do nothing.
+        void editRunningContent(band, page);
+        return null;
+      }
+      if (band !== runningEditBand || page.pageNumber !== runningEditPage) {
+        setRunningContext(band, page);
+      }
       return anchor;
     }
-    // A click outside the bands leaves the context, as it does in Word, Docs,
-    // OnlyOffice and LibreOffice — then resolves as an ordinary body click.
+    // A click in the body area leaves the context — the deliberate way back, as
+    // in Word, Docs, OnlyOffice and LibreOffice.
     exitRunningEdit();
+    return anchor;
   }
   const hit = doc.hitTest(page.pageNumber, x, y);
   if (!hit) return null;
@@ -3775,6 +3795,8 @@ function traverseObjects(step) {
 // different caret position. This state exists only to drive the chrome and to
 // know what Esc should do.
 let runningEditBand = null; // "header" | "footer" | null
+/** The 1-based page whose band is open — the other half of the editing context. */
+let runningEditPage = null;
 
 // ---- Header / footer markers -------------------------------------------------
 // LibreOffice Writer raises a marker with a `+` button when the pointer is in the
@@ -3951,16 +3973,25 @@ async function insertNote(kind) {
 /** Creates an empty header or footer and enters it. Gated like any other
  *  mutation: refused read-only in Viewing, and blocked in Suggesting because
  *  adding running content has no tracked-change representation. */
-async function createRunningContent(band) {
+async function createRunningContent(band, page = pageInView()) {
   if (blockMutationInViewing()) return;
   if (reviewMode === "suggesting") {
     setStatus(`Adding a ${band} cannot be tracked yet; switch to Editing`, "error");
     return;
   }
+  // The context is known BEFORE the edit — the user asked for this page's band —
+  // and the edit needs it: applying an edit places and scrolls to its caret, and
+  // a caret in running content has a placement on every page. Entering
+  // afterwards meant that scroll resolved without a context and landed on the
+  // last page's copy, throwing the user to the end of the document.
+  const previous = { band: runningEditBand, page: runningEditPage };
+  setRunningContext(band, page);
   let result;
   try {
     result = doc.createRunningContent(band);
   } catch (err) {
+    if (previous.band) setRunningContext(previous.band, { pageNumber: previous.page });
+    else exitRunningEdit();
     setStatus(`Could not add a ${band}: ${err.message ?? err}`, "error");
     return;
   }
@@ -3969,7 +4000,7 @@ async function createRunningContent(band) {
   await applyEditResult(result);
   // The new body is now laid out, so its paragraph has geometry to put a caret
   // on; entering after the render is what makes the caret visible.
-  enterRunningEdit(band, node, offset);
+  enterRunningEdit(band, node, offset, page);
 }
 
 /** Finds a caret position inside a page's header or footer by walking the band
@@ -4000,8 +4031,8 @@ function probeRunningBand(page, band) {
 
 /** Enters header/footer editing at `position`, an ordinary caret position that
  *  happens to live in running content. */
-function enterRunningEdit(band, node, offset) {
-  runningEditBand = band;
+function enterRunningEdit(band, node, offset, page) {
+  setRunningContext(band, page);
   objectSelection = null;
   tableSelection = null;
   selection = { anchor: { node, offset }, focus: { node, offset } };
@@ -4013,6 +4044,20 @@ function enterRunningEdit(band, node, offset) {
   focusEditorSurface();
   drawSelection();
   updateToolbar();
+}
+
+/** Records which page's band is open, on the host AND in the engine.
+ *
+ *  Running content is ONE body drawn on every page, so a caret in it has a
+ *  placement per page and "where is this caret" is unanswerable without naming
+ *  one. The engine holds the context so every geometry answer uses it; keeping
+ *  it only here is what put the caret on page 1's header while the user was
+ *  editing page 3's and scrolled the view there. */
+function setRunningContext(band, page) {
+  runningEditBand = band;
+  runningEditPage = page?.pageNumber ?? runningEditPage ?? 1;
+  pagesEl.dataset.runningEdit = band;
+  doc?.setEditContext(band, runningEditPage);
 }
 
 /** Marks the band being edited on every page: a dashed boundary at the edge of
@@ -4055,6 +4100,8 @@ function clearRunningBands() {
 function exitRunningEdit() {
   if (!runningEditBand) return false;
   runningEditBand = null;
+  runningEditPage = null;
+  doc?.setEditContext(undefined, undefined);
   delete pagesEl.dataset.runningEdit;
   document.body.classList.remove("running-edit");
   clearRunningBands();
@@ -4064,17 +4111,32 @@ function exitRunningEdit() {
   return true;
 }
 
+/** The page the user is looking at: the one covering the middle of the viewport,
+ *  falling back to the first. Entering a header from the ribbon or the palette
+ *  must act on THAT page — `pages[0]` sent the caret to page one and scrolled
+ *  the view off whatever the user was working on. */
+function pageInView() {
+  if (!pages.length) return null;
+  const viewport = document.getElementById("viewport");
+  if (!viewport) return pages[0];
+  const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
+  for (const page of pages) {
+    if (!page.wrap) continue;
+    const rect = page.wrap.getBoundingClientRect();
+    if (rect.top <= middle && rect.bottom >= middle) return page;
+  }
+  return pages[0];
+}
+
 /** Puts the caret in a page's header or footer, entering the context. Used by
  *  the double-click in the band and by the Insert menu / palette commands —
  *  a double-click alone is invisible to anyone who has not been told about it,
  *  and an ABSENT header has nothing to double-click on (docs/85 §8d). */
-function editRunningContent(band) {
-  if (!doc) return;
-  const page = pages[0];
-  if (!page) return;
+function editRunningContent(band, page = pageInView()) {
+  if (!doc || !page) return;
   const hit = probeRunningBand(page, band);
   if (hit) {
-    enterRunningEdit(hit.band, hit.node, hit.offset);
+    enterRunningEdit(hit.band, hit.node, hit.offset, page);
     return;
   }
   // Nothing placed in that band: make one. Word and Docs both create the
@@ -4082,7 +4144,7 @@ function editRunningContent(band) {
   // refusing — the ask IS the intent. One undoable action creates the body and
   // links the section to it, and the caret it returns is the new body's first
   // (empty) paragraph.
-  void createRunningContent(band);
+  void createRunningContent(band, page);
 }
 
 /** The wrap-mode choices offered for a floating object (docs/85 §5.3 / §10). */
@@ -5094,7 +5156,7 @@ pagesEl.addEventListener("dblclick", (e) => {
   const bandAtPoint = runningBandAt(page, y);
   if (bandAtPoint) {
     e.preventDefault();
-    void editRunningContent(bandAtPoint);
+    void editRunningContent(bandAtPoint, page);
     return;
   }
   selectWord(page, e);

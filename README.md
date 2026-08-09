@@ -60,8 +60,14 @@ other way around:
   `wasm32-unknown-unknown` drives a live editor — hit-testing, a custom
   engine-drawn caret and selection, incremental per-page repaint (sub-10 ms on a
   large document), text and run/paragraph formatting with type-in-format, lists,
-  and table structure editing, all through a closed operation set with group
-  undo/redo. See [Try it in your browser](#try-it-in-your-browser).
+  tables, pictures, drawings, comments and tracked changes, all through a closed
+  operation set with group undo/redo. See
+  [Try it in your browser](#try-it-in-your-browser).
+- **Every editable surface takes every editing operation**: the page body, headers,
+  footers, footnote and endnote bodies, text boxes, and objects nested inside a
+  shape group each accept typing, selection, formatting, clipboard, find and
+  replace, comments, and tracked changes — held to that by an operation × surface
+  matrix in CI rather than by spot-checks.
 
 ## Quickstart
 
@@ -153,17 +159,26 @@ byte-for-byte); a structurally strong **layout/render** path (style cascade,
 headers/footers, tables, floats with z-order, VML) that matches LibreOffice page
 counts exactly on 3/5 corpus docs and within ±1 on the rest; and an **in-browser
 editor** (WebAssembly) with hit-testing, a custom caret/selection, incremental
-repaint, text/format/list editing, table structure editing, undo/redo, and save.
+repaint, text/format/list/table editing, pictures and drawings, headers, footers
+and notes as full editing surfaces, comments and tracked changes, find and
+replace, print, undo/redo, and save.
 
-**Not yet** — the renderer is **not pixel-perfect Word-grade**: no text wrap
-around floats, slightly tall CJK fallback metrics, a couple of ±1 page-count gaps,
-some footer field-recompute edge cases. Footnote/endnote body placement, inline
-math (OMML), and multi-column layout aren't done. A GPU backend, the Tauri desktop
-shell, worker isolation, and a stable public SDK are not started.
+**Not yet** — the renderer is **not pixel-perfect Word-grade**. Tight/through
+contour wrapping around floats, document-grid row snapping, and full Word-parity
+math typesetting are partial; two of the five oracle documents sit ±1 page from
+LibreOffice. Charts and SmartArt are preserved and previewed, not drawn. There is
+**no PDF export** (designed in docs/98 / ADR-031, not built) — printing goes
+through the browser. Colour fonts and colour emoji are not rasterized. `.docm`
+files are rejected at open, pending a policy decision. Not authorable yet: shape
+rotation/flip, custom shape geometry, in-place picture replacement, picture
+borders and effects, text-box body properties, footnote↔endnote conversion and
+note number formats, section insert/split, and creating or updating a named
+style.
 
-The current focus is deeper DOCX fidelity. Internal format-neutral registry,
-normalized JSON, and plain-text adapters are implemented; stable public host
-surfaces, ODT and other office adapters, and native PDF export from the engine
+A GPU backend, the Tauri desktop shell, worker isolation, and a stable public SDK
+are not started. The current focus is deeper DOCX fidelity. Internal
+format-neutral registry, normalized JSON, plain-text and a bounded ODT adapter are
+implemented; stable public host surfaces and native PDF export from the engine
 display list remain future goals rather than shipped capabilities.
 
 Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
@@ -185,6 +200,7 @@ Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 | `casual-doc-io` | Format-neutral identities, capability descriptors, deterministic detection/dispatch, preservation envelopes, and built-in adapters |
 | `casual-doc-layout` | Geometry, text shaping (`parley`), style cascade, block/flow galley, pagination, and the backend-neutral display list |
 | `casual-doc-render` | CPU render backend: executes the display list on a `tiny-skia` pixmap, rasterizing glyphs from `skrifa` outlines |
+| `casual-doc-wasm` | WebAssembly bridge: the document session, edit operations, and page raster the in-browser editor drives |
 
 Supporting tooling lives outside `crates/`: `tools/opendoc-benchmark`
 (reproducible workloads and baselines), `tools/opendoc-fidelity` (LibreOffice
@@ -205,7 +221,7 @@ on design.
 | 1C | Typography and paragraph/block layout | Substantially implemented |
 | 1D | Pagination and backend-neutral display list | Substantially implemented |
 | 1E | CPU rendering; then WASM/GPU backends and hit testing | CPU rendering + hit testing implemented; GPU backend not started |
-| 1G | In-browser editor (Rust→WASM): viewer, editing, tables | In progress (developer harness in `webapp/`) |
+| 1G | In-browser editor (Rust→WASM): viewer, editing, tables, objects, sub-documents | In progress (developer harness in `webapp/`) |
 | 2 | Core editing SDK and DOCX save/reopen workflow | Planned |
 | 3 | Advanced office-document features | Planned |
 | 4 | Stable SDK surfaces and third-party embedding | Planned |

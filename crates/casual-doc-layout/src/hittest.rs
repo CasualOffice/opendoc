@@ -265,7 +265,15 @@ impl<'a> LayoutSnapshot<'a> {
     /// affinity.
     #[must_use]
     pub fn caret_rect(&self, pos: ModelPos) -> Option<(u32, Rect)> {
-        let lines = self.line_boxes_with_running();
+        self.caret_rect_on(pos, None)
+    }
+
+    /// [`Self::caret_rect`], answered for the copy of the running content that is
+    /// drawn on `on_page`. See [`Self::line_boxes_with_running`] for why a header
+    /// position needs a page to be a well-posed question.
+    #[must_use]
+    pub fn caret_rect_on(&self, pos: ModelPos, on_page: Option<u32>) -> Option<(u32, Rect)> {
+        let lines = self.line_boxes_with_running(on_page);
         let idx = caret_start_line(&lines, pos)?;
         let lb = &lines[idx];
         let stops = stops_for(lb.line, lb.left);
@@ -338,7 +346,14 @@ impl<'a> LayoutSnapshot<'a> {
     /// `range.end`. An empty or inverted range yields no rectangles.
     #[must_use]
     pub fn selection_rects(&self, range: ModelRange) -> Vec<(u32, Rect)> {
-        let lines = self.line_boxes_with_running();
+        self.selection_rects_on(range, None)
+    }
+
+    /// [`Self::selection_rects`], answered for the running content drawn on
+    /// `on_page`.
+    #[must_use]
+    pub fn selection_rects_on(&self, range: ModelRange, on_page: Option<u32>) -> Vec<(u32, Rect)> {
+        let lines = self.line_boxes_with_running(on_page);
         let Some(mut start_i) = caret_start_line(&lines, range.start) else {
             return Vec::new();
         };
@@ -469,20 +484,84 @@ impl<'a> LayoutSnapshot<'a> {
     /// so painted no caret — now has geometry. Feeding these to `hit_test`
     /// instead would change what a margin click means, which is why the walks
     /// stay separate.
-    fn line_boxes_with_running(&self) -> Vec<LineBox<'a>> {
+    /// Which running band `point` falls in on `page_number`, from the page's own
+    /// margin geometry — `None` for the content area.
+    ///
+    /// Geometry, not content: a page whose header is EMPTY still owns its top
+    /// band, so the band is where the margin is, whether or not anything is
+    /// drawn there. Deriving this from the host's copy of the page setup put the
+    /// rule in two places and let them disagree; it belongs with the layout that
+    /// defines it.
+    #[must_use]
+    pub fn band_at(&self, page_number: u32, point: Point) -> Option<RunningBand> {
+        let page = self
+            .layout
+            .pages
+            .iter()
+            .find(|page| page.number == page_number)?;
+        let y = point.y.raw();
+        if y < page.content_area.origin.y.raw() {
+            return Some(RunningBand::Header);
+        }
+        if y > page.content_area.bottom().raw() {
+            return Some(RunningBand::Footer);
+        }
+        None
+    }
+
+    /// The caret position nearest `point` inside `band` on `page_number`,
+    /// snapping from ANY point in the band.
+    ///
+    /// [`Self::hit_test_running`] answers "is the pointer over running content",
+    /// which is the right question for ENTERING a header. Once the header is
+    /// open the question changes: every point in the band belongs to the header,
+    /// including the empty space to the right of a short line and the gap below
+    /// the last line. Answering the entry question there returned nothing, the
+    /// host read that as "clicked outside", and the click threw the user out of
+    /// the context they were typing in.
+    #[must_use]
+    pub fn nearest_in_band(&self, page_number: u32, point: Point, band: RunningBand) -> Option<ModelPos> {
+        let lines = self.running_line_boxes(page_number, band);
+        let y = point.y.raw();
+        let chosen = lines
+            .iter()
+            .find(|lb| lb.contains_y(y))
+            .or_else(|| lines.iter().min_by_key(|lb| (lb.top.raw() - y).abs()))?;
+        let stops = stops_for(chosen.line, chosen.left);
+        let nearest = nearest_stop(&stops, point.x);
+        Some(ModelPos::new(chosen.line.range.start.node, nearest.offset))
+    }
+
+    /// Body line boxes, every text box's, every note body's, and the running
+    /// content of `on_page` — or of every page when `on_page` is `None`.
+    ///
+    /// Header and footer content is ONE body DRAWN ON EVERY PAGE, so a position
+    /// in it does not name a single place on the sheet: it names as many as
+    /// there are pages. Asking "where is this caret" without saying which page
+    /// is therefore an under-specified question, and the answer used to be
+    /// whichever placement the search reached first — which put the caret on
+    /// page 1 while the user was editing page 3's header, and scrolled there.
+    ///
+    /// `on_page` supplies the missing half of the question. It filters ONLY
+    /// header and footer content, because that is the only content that repeats:
+    /// a body paragraph, a text box, and a note body each exist on exactly one
+    /// page, so filtering them would lose geometry rather than disambiguate it.
+    fn line_boxes_with_running(&self, on_page: Option<u32>) -> Vec<LineBox<'a>> {
         let mut out = self.line_boxes();
         for page in &self.layout.pages {
             out.extend(self.text_box_line_boxes(page.number));
         }
         for page in &self.layout.pages {
+            let running = on_page.is_none_or(|number| page.number == number);
             // Footnote and endnote bodies are placed at the page bottom exactly as
             // running content is, so a caret in a note needs their lines too —
             // without them the note could be typed into but showed no cursor.
-            for placed in page
-                .header
-                .iter()
-                .chain(page.footer.iter())
-                .chain(page.footnotes.iter())
+            // They are page-unique, so they are never filtered.
+            let repeated = page.header.iter().chain(page.footer.iter());
+            let unique = page.footnotes.iter();
+            for placed in repeated
+                .filter(|_| running)
+                .chain(unique)
             {
                 collect_fragment(
                     &placed.fragment,

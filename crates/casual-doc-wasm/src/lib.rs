@@ -95,6 +95,28 @@ fn viewer_limits() -> PackageLimits {
 const MAX_HOST_FONT_FACES: usize = 16;
 const MAX_HOST_FONT_BYTES: usize = 32 * 1024 * 1024;
 
+/// The story the editor is editing in.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum EditContext {
+    /// The page body — the default, and the only context for most editing.
+    #[default]
+    Body,
+    /// One page's header or footer. The page is part of the context because the
+    /// same running body is drawn on every page.
+    Running { band: RunningBand, page: u32 },
+}
+
+impl EditContext {
+    /// The page whose running content this context names, if any. `None` for the
+    /// body, where a position already identifies exactly one place.
+    const fn running_page(self) -> Option<u32> {
+        match self {
+            Self::Body => None,
+            Self::Running { page, .. } => Some(page),
+        }
+    }
+}
+
 /// An open document: the imported model, its current pagination, and the shaper
 /// (and its font registry) that produced it, plus the media bytes rendering needs.
 ///
@@ -121,6 +143,14 @@ pub struct WasmDocument {
     /// resolves to no boundary (a document with no `w:sectPr` falls back to
     /// US-Letter here, exactly as [`document_page_config`] defines).
     default_config: PageConfig,
+    /// Which STORY the editor is in — the page body, or one page's header or
+    /// footer. Word calls these stories; LibreOffice, text frames. Naming the
+    /// context explicitly is what makes a position in running content
+    /// answerable: that content is one body drawn on every page, so "where is
+    /// this caret" has as many answers as there are pages until the context
+    /// says which one. Ad-hoc host booleans could not supply that, which is why
+    /// entering page 3's header put the caret on page 1 and scrolled there.
+    edit_context: EditContext,
     /// Mints run identities for edits, in a namespace distinct from the imported
     /// ids so new runs never collide with existing nodes.
     edit_ids: IdGenerator,
@@ -735,6 +765,115 @@ impl WasmDocument {
     /// `casual-doc-edit`), so nothing downstream needs a sub-document address.
     ///
     /// [`hit_test`]: WasmDocument::hit_test
+    /// Declares the story the editor is in: `band` is `"header"`/`"footer"` with
+    /// the page whose copy is open, or `None` for the page body.
+    ///
+    /// Held once, as the editing context it is, rather than threaded through
+    /// every geometry call — where a single missed argument silently restores
+    /// the caret-on-the-wrong-page defect.
+    #[wasm_bindgen(js_name = setEditContext)]
+    pub fn set_edit_context(&mut self, band: Option<String>, page: Option<u32>) {
+        self.edit_context = match (band.as_deref(), page) {
+            (Some("header"), Some(page)) => EditContext::Running {
+                band: RunningBand::Header,
+                page,
+            },
+            (Some("footer"), Some(page)) => EditContext::Running {
+                band: RunningBand::Footer,
+                page,
+            },
+            _ => EditContext::Body,
+        };
+    }
+
+    /// Resolves a click at `(x, y)` on `page` to a caret AND the story it lands
+    /// in, honouring the story currently open.
+    ///
+    /// This is the whole entry/exit rule in one place, which is why it exists:
+    /// the host used to infer "the user left the header" from a hit-test that
+    /// found no glyph, so clicking the empty right-hand end of a header line
+    /// threw the user out of the context they were typing in. Geometry decides
+    /// the story; content decides only the offset within it.
+    ///
+    /// Returns the caret plus `band` — `""` for the body — so the host applies
+    /// the answer instead of deriving it.
+    #[wasm_bindgen(js_name = resolveClick)]
+    #[must_use]
+    pub fn resolve_click(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<RunningHitPayload> {
+        let point = Point::new(Twip(x_twip), Twip(y_twip));
+        let snapshot = LayoutSnapshot::new(&self.layout);
+        // Which band, if any, the POINT is in — decided by the page's margin
+        // geometry, so a band with no content still owns its own area.
+        let band = snapshot.band_at(page, point);
+        match (self.edit_context, band) {
+            // Inside a band while a running story is open: stay in it (or move to
+            // the other band, as Word does), snapping anywhere in that band.
+            (EditContext::Running { .. }, Some(band)) => {
+                // An EMPTY band still belongs to that story: clicking the footer
+                // area while the header is open means "edit the footer", exactly
+                // as it does in Word, whether or not a footer exists yet. The
+                // band is reported with no position so the host enters it — and
+                // creates it if the document has none — instead of the click
+                // doing nothing at all.
+                let pos = snapshot.nearest_in_band(page, point, band);
+                Some(RunningHitPayload {
+                    node: pos.map(|pos| pos.node.to_string()).unwrap_or_default(),
+                    offset: pos.map_or(0, |pos| pos.offset),
+                    band: band_name(band).to_owned(),
+                })
+            }
+            // Outside every band while a running story is open: this is the
+            // deliberate way back to the body.
+            (EditContext::Running { .. }, None) => self.body_hit(page, point),
+            // In the body, a margin click stays a body click: entering a header
+            // is a double-click, never a stray single click.
+            (EditContext::Body, _) => self.body_hit(page, point),
+        }
+    }
+
+    fn body_hit(&self, page: u32, point: Point) -> Option<RunningHitPayload> {
+        let hit = LayoutSnapshot::new(&self.layout).hit_test(page, point)?;
+        Some(RunningHitPayload {
+            node: hit.pos.node.to_string(),
+            offset: hit.pos.offset,
+            band: String::new(),
+        })
+    }
+
+    /// The caret nearest `(x, y)` inside `band` on `page`, snapping from any
+    /// point in the band — the resolution to use while that band is open, where
+    /// empty space still belongs to the header. `None` if the band has no
+    /// content on that page.
+    #[wasm_bindgen(js_name = runningSnap)]
+    #[must_use]
+    pub fn running_snap(
+        &self,
+        page: u32,
+        x_twip: i32,
+        y_twip: i32,
+        band: &str,
+    ) -> Option<RunningHitPayload> {
+        let band = match band {
+            "header" => RunningBand::Header,
+            "footer" => RunningBand::Footer,
+            _ => return None,
+        };
+        let pos = LayoutSnapshot::new(&self.layout).nearest_in_band(
+            page,
+            Point::new(Twip(x_twip), Twip(y_twip)),
+            band,
+        )?;
+        Some(RunningHitPayload {
+            node: pos.node.to_string(),
+            offset: pos.offset,
+            band: match band {
+                RunningBand::Header => "header",
+                RunningBand::Footer => "footer",
+            }
+            .to_owned(),
+        })
+    }
+
     #[wasm_bindgen(js_name = runningHitTest)]
     #[must_use]
     pub fn running_hit_test(
@@ -1309,7 +1448,7 @@ impl WasmDocument {
             return Vec::new();
         };
         LayoutSnapshot::new(&self.layout)
-            .caret_rect(pos)
+            .caret_rect_on(pos, self.edit_context.running_page())
             .map(|(page, rect)| flat_rect(page, rect).to_vec())
             .unwrap_or_default()
     }
@@ -1336,7 +1475,9 @@ impl WasmDocument {
             ModelPos::new(end.node, end.offset),
         );
         let mut out = Vec::new();
-        for (page, rect) in LayoutSnapshot::new(&self.layout).selection_rects(range) {
+        for (page, rect) in LayoutSnapshot::new(&self.layout)
+            .selection_rects_on(range, self.edit_context.running_page())
+        {
             out.extend_from_slice(&flat_rect(page, rect));
         }
         out
@@ -14247,6 +14388,7 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
     let revision_ids = RevisionIdAllocator::from_document(&document);
 
     Ok(WasmDocument {
+        edit_context: EditContext::Body,
         document,
         layout,
         markup_layout: None,
@@ -14403,6 +14545,14 @@ fn new_object_anchor() -> DrawingAnchor {
         wrap_distances: casual_doc_model::v1::WrapDistances::default(),
         behind_doc: false,
         wrap_polygon: None,
+    }
+}
+
+/// The host-facing token for a running band.
+const fn band_name(band: RunningBand) -> &'static str {
+    match band {
+        RunningBand::Header => "header",
+        RunningBand::Footer => "footer",
     }
 }
 
@@ -17510,6 +17660,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            edit_context: EditContext::Body,
             document,
             layout,
             markup_layout: None,
