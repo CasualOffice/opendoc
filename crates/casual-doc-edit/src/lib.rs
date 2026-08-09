@@ -3223,7 +3223,12 @@ pub fn run_properties_in_range(document: &Document, range: Range) -> Vec<&RunPro
     if range.start.node != range.end.node || range.end.offset <= range.start.offset {
         return Vec::new();
     }
-    let Some(para) = find_paragraph(document.body(), range.start.node) else {
+    // Whichever surface owns the node: a run's formatting is a property of the
+    // run, not of the body. Reading only the body meant the toolbar reported
+    // every header, footer, note and text-box selection as unformatted — so a
+    // Bold that HAD been applied showed as off, and the button could never be
+    // used to take it back off again.
+    let Some(para) = find_paragraph_any(document, range.start.node) else {
         return Vec::new();
     };
     // Descend into final-with-markup-contributing wrappers so a selection that

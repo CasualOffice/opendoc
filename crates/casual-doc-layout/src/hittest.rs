@@ -269,8 +269,11 @@ impl<'a> LayoutSnapshot<'a> {
     }
 
     /// [`Self::caret_rect`], answered for the copy of the running content that is
-    /// drawn on `on_page`. See [`Self::line_boxes_with_running`] for why a header
-    /// position needs a page to be a well-posed question.
+    /// drawn on `on_page`.
+    ///
+    /// Header and footer content is one body drawn on EVERY page, so a position
+    /// in it names a place per page; `on_page` says which. `None` keeps the
+    /// historical behaviour of answering from whichever page matches first.
     #[must_use]
     pub fn caret_rect_on(&self, pos: ModelPos, on_page: Option<u32>) -> Option<(u32, Rect)> {
         let lines = self.line_boxes_with_running(on_page);

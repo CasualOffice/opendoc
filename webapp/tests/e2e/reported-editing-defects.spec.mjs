@@ -67,6 +67,22 @@ async function scrollToPage(page, index) {
   return box;
 }
 
+/** Double-clicks a page's header band, retried.
+ *
+ *  Under a loaded machine the two clicks of a synthetic double-click can fall
+ *  outside the platform's double-click interval and arrive as two single
+ *  clicks, which correctly do NOT enter the header. Retrying removes that
+ *  measurement artefact; a band that genuinely cannot be entered fails all
+ *  three attempts. */
+async function enterHeaderAt(page, box) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+    if ((await page.locator("#pages").getAttribute("data-running-edit")) === "header") break;
+    await page.waitForTimeout(200);
+  }
+  await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe("header");
+}
+
 /** Clicks into a page's text column and reports whether a caret landed. */
 async function clickIntoPage(page, box) {
   for (let fy = 0.18; fy < 0.8; fy += 0.06) {
@@ -183,8 +199,7 @@ test("[3] entering the header does not jump the view to another page", async ({
   const box = await scrollToPage(page, Math.min(2, pageCount - 1));
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
 
-  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
-  await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe("header");
+  await enterHeaderAt(page, box);
   await page.waitForTimeout(400);
 
   const after = await page.locator("#viewport").evaluate((v) => v.scrollTop);
@@ -201,8 +216,7 @@ test("[3b] typing in a header keeps the view on that header", async ({ page, con
   expect(pageCount).toBeGreaterThan(1);
 
   const box = await scrollToPage(page, Math.min(2, pageCount - 1));
-  await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
-  await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe("header");
+  await enterHeaderAt(page, box);
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
 
