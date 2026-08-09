@@ -44,9 +44,58 @@ async function intoHeader(page) {
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
 }
 
+/** Enters the first page's footer. */
+async function intoFooter(page) {
+  const wrap = page.locator(".page-wrap").first();
+  await wrap.evaluate((el) => el.scrollIntoView({ block: "end" }));
+  await page.waitForTimeout(300);
+  let box = null;
+  await expect
+    .poll(async () => {
+      box = await page.locator(".page-wrap .page").first().boundingBox();
+      return box?.width ?? 0;
+    })
+    .toBeGreaterThan(0);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.mouse.dblclick(box.x + box.width * 0.5, box.y + box.height - 14);
+    if ((await page.locator("#pages").getAttribute("data-running-edit")) === "footer") break;
+    await page.waitForTimeout(200);
+  }
+  await expect.poll(() => page.locator("#pages").getAttribute("data-running-edit")).toBe("footer");
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+}
+
+/** Inserts a footnote and leaves the caret in its body. */
+async function intoFootnote(page) {
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await page.locator("#cmdInput").fill("Footnote");
+  await page.locator("#cmdList .cmd-item", { hasText: "Footnote" }).first().click();
+  await expect(page.locator("#status")).toContainText("Footnote added");
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+}
+
+/** Inserts a text box and leaves the caret inside it. */
+async function intoTextBox(page) {
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+  // Through the palette, not the Insert ribbon tab: switching tabs is its own
+  // question (see `ribbon-focus-audit`), and mixing it in here would test that
+  // instead of the toggles.
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await page.locator("#cmdInput").fill("Text box");
+  await page.locator("#cmdList .cmd-item", { hasText: "Text box" }).first().click();
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+}
+
 const SURFACES = [
   ["body", intoBodyProse],
   ["header", intoHeader],
+  ["footer", intoFooter],
+  ["footnote", intoFootnote],
+  ["text box", intoTextBox],
 ];
 
 for (const [surface, enter] of SURFACES) {
