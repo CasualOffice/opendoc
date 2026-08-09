@@ -181,7 +181,8 @@ format-neutral registry, normalized JSON, plain-text and a bounded ODT adapter a
 implemented; stable public host surfaces and native PDF export from the engine
 display list remain future goals rather than shipped capabilities.
 
-Details: [fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
+Details: [what is still missing](docs/99-REMAINING-WORK-AUDIT.md) ·
+[fidelity gap analysis](docs/46-RENDERING-FIDELITY-GAP-ANALYSIS.md) ·
 [support matrix](docs/18-SUPPORT-MATRIX.md).
 
 ## Workspace
