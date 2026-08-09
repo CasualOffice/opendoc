@@ -475,7 +475,15 @@ impl<'a> LayoutSnapshot<'a> {
             out.extend(self.text_box_line_boxes(page.number));
         }
         for page in &self.layout.pages {
-            for placed in page.header.iter().chain(page.footer.iter()) {
+            // Footnote and endnote bodies are placed at the page bottom exactly as
+            // running content is, so a caret in a note needs their lines too —
+            // without them the note could be typed into but showed no cursor.
+            for placed in page
+                .header
+                .iter()
+                .chain(page.footer.iter())
+                .chain(page.footnotes.iter())
+            {
                 collect_fragment(
                     &placed.fragment,
                     placed.rect.origin.x,

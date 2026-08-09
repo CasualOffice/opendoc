@@ -362,6 +362,8 @@
           <div class="rgroup" data-group="illustrations" data-ribbon-pinned>
             <div class="rgroup-ctl">
               <button id="insertPictureBtn" type="button" class="fmt fmt-big" title="Insert a picture from a file" aria-label="Insert picture" disabled><span class="ms" aria-hidden="true">image</span><span class="fmt-big-label">Picture</span></button>
+              <button id="insertShapeBtn" type="button" class="fmt fmt-big" title="Insert a shape" aria-label="Insert shape" aria-haspopup="menu" aria-expanded="false" aria-controls="shapeGalleryMenu" disabled><span class="ms" aria-hidden="true">interests</span><span class="fmt-big-label">Shapes</span></button>
+              <button id="insertTextBoxBtn" type="button" class="fmt fmt-big" title="Insert a text box" aria-label="Insert text box" disabled><span class="ms" aria-hidden="true">text_fields</span><span class="fmt-big-label">Text box</span></button>
             </div>
             <span class="rgroup-label">Illustrations</span>
           </div>
@@ -377,6 +379,13 @@
               <button id="insertFieldBtn" type="button" class="fmt" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span></button>
             </div>
             <span class="rgroup-label">Text</span>
+          </div>
+          <div class="rgroup" data-group="insert-notes">
+            <div class="rgroup-ctl">
+              <button id="insertFootnoteBtn" type="button" class="fmt" title="Insert a footnote" aria-label="Footnote" disabled><span class="ms" aria-hidden="true">superscript</span></button>
+              <button id="insertEndnoteBtn" type="button" class="fmt" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span></button>
+            </div>
+            <span class="rgroup-label">Notes</span>
           </div>
           <div class="rgroup" data-group="insert-running">
             <div class="rgroup-ctl">
@@ -676,6 +685,15 @@
     <div id="textColorMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Text color"></div>
     <div id="highlightMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Highlight color"></div>
     <input id="textColorCustom" type="color" value="#000000" class="visually-offscreen" tabindex="-1" aria-hidden="true" />
+
+    <!-- Shape Fill / Shape Outline pickers (Word's Shape Format tab), anchored to
+         the floating object context bar when a shape is selected. -->
+    <!-- Insert ▸ Shapes gallery: one entry per preset the engine models AND the
+         renderer draws, so nothing in it can insert an invisible shape. -->
+    <div id="shapeGalleryMenu" class="context-menu" hidden role="menu" aria-label="Shapes"></div>
+
+    <div id="shapeFillMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Shape fill"></div>
+    <div id="shapeOutlineMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Shape outline"></div>
 
     <!-- Floating selection-toolbar pickers: the same swatch menus as the ribbon,
          anchored near the selection instead of the ribbon color carets. -->

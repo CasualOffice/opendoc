@@ -18,6 +18,23 @@ export const test = base.extend({
 
 export { expect, MOD, WORD_MOD };
 
+/** A laid-out element's box, retried until it is real.
+ *
+ *  `boundingBox()` returns null while an element is mid-re-render, so a spec that
+ *  polls for a non-zero width and then calls it AGAIN can still get null — under
+ *  parallel load that surfaced as `Cannot read properties of null (reading 'x')`,
+ *  a flake that reads exactly like a broken canvas. */
+export async function stableBox(locator) {
+  let box = null;
+  await expect
+    .poll(async () => {
+      box = await locator.boundingBox();
+      return box?.width ?? 0;
+    })
+    .toBeGreaterThan(0);
+  return box;
+}
+
 // Navigates to the demo document and waits for the WASM engine to boot, the
 // sample to open, and every page to finish its first render (mirrors the
 // manual "headless browser smoke" checks previously narrated in

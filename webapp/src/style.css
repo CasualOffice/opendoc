@@ -5309,6 +5309,88 @@ body:not(.doc-loaded) .drop-title {
   background: linear-gradient(135deg, var(--muted) 0 45%, transparent 45% 55%, var(--muted) 55%);
 }
 
+/* ---- Insert ▸ Shapes gallery ----------------------------------------------
+   Each row previews its own geometry, so the list reads as shapes rather than
+   as a column of words. Drawn in CSS (no icon font has these seven). */
+.shape-choice {
+  grid-template-columns: 22px minmax(0, 1fr);
+}
+
+.shape-choice-preview {
+  width: 18px;
+  height: 12px;
+  background: var(--accent-soft, rgba(51, 85, 196, 0.18));
+  border: 1px solid var(--accent, #3355c4);
+  justify-self: center;
+}
+
+.shape-preview-roundRectangle {
+  border-radius: 4px;
+}
+
+.shape-preview-ellipse {
+  border-radius: 50%;
+}
+
+.shape-preview-triangle {
+  background: var(--accent, #3355c4);
+  border: none;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.shape-preview-rightTriangle {
+  background: var(--accent, #3355c4);
+  border: none;
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+
+.shape-preview-diamond {
+  background: var(--accent, #3355c4);
+  border: none;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.shape-preview-line {
+  height: 0;
+  background: none;
+  border: none;
+  border-top: 2px solid var(--accent, #3355c4);
+  align-self: center;
+}
+
+/* ---- Shape Fill / Shape Outline (object context bar) ----------------------- */
+/* The bar's two color buttons carry the shape's own color as an underline bar,
+ * so the control reads what the shape HAS before it is opened. */
+.object-bar-color {
+  padding-right: 8px;
+}
+
+.object-bar-color .color-apply-bar {
+  width: 14px;
+  margin-left: 2px;
+}
+
+/* Word's Shape Outline > Weight list: each row previews its own thickness. */
+.shape-weight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.shape-weight-rule {
+  display: block;
+  width: 34px;
+  height: var(--w, 1px);
+  background: var(--ink);
+  border-radius: 1px;
+  flex: none;
+}
+
+.shape-weight.is-active {
+  background: var(--surface-alt);
+  font-weight: 600;
+}
+
 /* ---- Color picker menu ----------------------------------------------------- */
 .color-menu {
   min-width: 0;

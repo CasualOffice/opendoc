@@ -8,7 +8,7 @@
 //
 // No fixture had a group or a floating text box, which is why this went
 // unverified. Both are built for these tests.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
 
 const GROUPED = "../fixtures/generated/grouped-text-boxes.docx";
 const FLOATING = "../fixtures/generated/floating-text-box.docx";
@@ -19,10 +19,10 @@ async function open(page, file) {
   await page.locator("#file").setInputFiles(file);
   const canvas = page.locator(".page-wrap .page").first();
   await expect(canvas).toBeVisible();
-  await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeGreaterThan(0);
+  const box = await stableBox(canvas);
   // The imported document has replaced the fixture's content.
   await expect(page.locator("#a11yDocument")).toContainText("Body before");
-  return canvas.boundingBox();
+  return box;
 }
 
 // Finds a selectable object by scanning, rather than hard-coding a point that
@@ -61,6 +61,7 @@ test("a grouped text box can be entered and edited, leaving the body alone", asy
 
   await page.mouse.dblclick(found.x, found.y);
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
+  // Entering re-renders; a key pressed mid-render is dropped.
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
 
   await page.keyboard.type("NESTED");

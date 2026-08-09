@@ -8,6 +8,52 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### Sub-document and drawing editing — 2026-08-09
+
+Every editable surface now accepts every editing operation, and a drawing's own
+appearance became editable for the first time. Driven by an operation × surface
+matrix (`webapp/tests/e2e/surface-editing-matrix.spec.mjs`, 6 surfaces × 14
+operations) rather than spot-checks: the recurring defect was resolution that
+started at `document.body()`, which each partial fix closed at one layer and left
+open at the next.
+
+- **Notes are insertable and editable**: Insert ▸ Notes adds a footnote or an
+  endnote, the caret lands in the note body, and the note body accepts the same
+  operations as the page body.
+- **Reads follow the caret's surface**: the font, size, alignment and run-format
+  reads that feed the toolbar, plus review projections (comments and tracked
+  changes), now resolve through whichever surface owns the position instead of
+  the body alone. A right-aligned header used to report itself as left-aligned,
+  and a comment made in a header was silently dropped.
+- **Shape Fill and Shape Outline (new)**: a shape's fill and outline are editable
+  from the object context bar and the object menu, with Word's weight list, "No
+  fill"/"No outline", and per-shape reflection (the swatch shows what the selected
+  shape has, not what was last applied). Two new operations, `SetShapeFill` and
+  `SetShapeStroke`, each self-inverse. Resolution finds a shape in any surface and
+  at any group depth — a watermark is a header shape.
+- **A shape is a Shape**: the object chrome called every non-text-box object an
+  "Image", offered it Crop (which a shape has no source rectangle for), and
+  applied the picture aspect-lock rule to it.
+- **Insert ▸ Shapes and Insert ▸ Text Box (new)**: the editor could select,
+  move, resize, edit and delete a drawing but had no way to *create* one, so a
+  document that did not already contain a text box or a shape could never gain
+  either. Both now insert a floating, square-wrapped object at the caret — the
+  text box entered for typing, the shape left selected — from the Insert ribbon,
+  the Insert menu and the command palette. The shapes gallery lists only presets
+  the renderer actually draws.
+- **Object edits reach every surface**: deleting an object, changing its alt
+  text, and inserting one all resolved through the document body, so an image in
+  a header — a logo, the common case — could not be deleted or described, and
+  nothing could be inserted beside it. Each failed as "not found" on a node the
+  document plainly held.
+- **A removed object no longer leaves its chrome behind**: undoing an insert (or
+  any edit that removes the selected object) left the selection handles and the
+  context bar pointing at a node the model no longer held.
+- **New fixture**: `fixtures/generated/shapes.docx` — a lone autoshape (which
+  imports as a group-of-one, as Word's Insert ▸ Shapes produces) and an ellipse
+  inside a group beside a text box. No fixture had a shape, which is why none of
+  the above was visible.
+
 ### OpenDocument Text (ODT) fidelity — 2026-08-05
 
 The bounded ODT adapter (`casual-doc-odf`, `casual-doc-io::OdtAdapter`) gained

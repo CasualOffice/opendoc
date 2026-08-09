@@ -164,9 +164,13 @@ const tableFormula = document.getElementById("tableFormula");
 const tableFormulaApply = document.getElementById("tableFormulaApply");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
+const insertShapeBtn = document.getElementById("insertShapeBtn");
+const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
+const insertFootnoteBtn = document.getElementById("insertFootnoteBtn");
+const insertEndnoteBtn = document.getElementById("insertEndnoteBtn");
 const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
@@ -3551,7 +3555,7 @@ function updateObjectResize(event) {
   // locks. Either way the constraint drives both edges from the axis that moved
   // more, so the object keeps its proportions.
   const isCorner = fw !== 0 && fh !== 0;
-  const isImage = objectSelection?.kind !== "textbox";
+  const isImage = objectSelection?.kind === "image";
   const lockAspect = isCorner && (isImage ? !event.shiftKey : event.shiftKey);
   if (lockAspect) {
     if (Math.abs(newW - drag.startW) >= Math.abs(newH - drag.startH)) {
@@ -3600,6 +3604,25 @@ function updateObjectSelectionState() {
     delete pagesEl.dataset.objectKind;
     delete pagesEl.dataset.objectMode;
   }
+  reflectShapeFormatState();
+}
+
+/** Reflects a selected shape's own fill and outline onto `#pages`, the same way
+ *  the selection grammar is reflected. It is what the Fill/Outline swatches
+ *  paint from, so what a test reads here is what the user sees on the control —
+ *  `none` when the shape has no fill or no outline. */
+function reflectShapeFormatState() {
+  const format = objectSelection?.kind === "shape" ? selectedShapeFormat() : null;
+  if (!format) {
+    delete pagesEl.dataset.shapeFill;
+    delete pagesEl.dataset.shapeOutline;
+    delete pagesEl.dataset.shapeOutlineWidth;
+    return;
+  }
+  pagesEl.dataset.shapeFill = format.fill ?? "none";
+  pagesEl.dataset.shapeOutline = format.outline ?? "none";
+  pagesEl.dataset.shapeOutlineWidth =
+    format.outlineWidthEmu == null ? "none" : String(format.outlineWidthEmu);
 }
 
 /** The lazily-created placeholder object context bar (docs/85 §4.1). */
@@ -3626,7 +3649,7 @@ function updateObjectContextBar() {
     return;
   }
   const { rect: pageRect, sx, sy } = scaleOf(page);
-  const label = objectSelection.kind === "textbox" ? "Text box" : "Image";
+  const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
   objectContextBarEl.replaceChildren();
   const strong = document.createElement("strong");
   strong.textContent = label;
@@ -3664,7 +3687,15 @@ function updateObjectContextBar() {
   const actions = document.createElement("div");
   actions.className = "object-bar-actions";
   actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
-  if (objectSelection.kind !== "textbox") {
+  if (objectSelection.kind === "shape") {
+    // Word's Shape Format tab reduces to its two live controls: Shape Fill and
+    // Shape Outline. The buttons are module-level so their popovers stay
+    // registered across the bar's re-renders.
+    actions.appendChild(shapeFillBtn);
+    actions.appendChild(shapeOutlineBtn);
+    reflectShapeSwatches();
+  }
+  if (objectSelection.kind === "image") {
     // Crop is a picture-only operation; a text box has no source rectangle.
     // Direct-manipulation crop (drag handles) is the primary gesture; while a
     // crop session is live the button becomes "Apply" and reads as active.
@@ -3879,6 +3910,42 @@ async function toggleRunningVariant(which) {
       ? `Different first page ${next ? "on" : "off"}`
       : `Different odd & even pages ${next ? "on" : "off"}`,
   );
+}
+
+/** Inserts a footnote or endnote at the caret and puts the caret IN the new
+ *  note's body, which is where Word and Docs both leave it.
+ *
+ *  The engine ops existed but nothing called them, precisely because a note body
+ *  could not be typed into: inserting one would have created a note the user
+ *  could not fill in. That is fixed — a note body is an ordinary block surface
+ *  now — so the command can finally ship. */
+async function insertNote(kind) {
+  if (!doc || !selection) return;
+  if (blockMutationInViewing()) return;
+  if (reviewMode === "suggesting") {
+    setStatus(`Inserting a ${kind} cannot be tracked yet; switch to Editing`, "error");
+    return;
+  }
+  let result;
+  try {
+    result =
+      kind === "footnote"
+        ? doc.insertFootnote(selection.focus.node, selection.focus.offset)
+        : doc.insertEndnote(selection.focus.node, selection.focus.offset);
+  } catch (err) {
+    setStatus(`Could not insert the ${kind}: ${err.message ?? err}`, "error");
+    return;
+  }
+  const node = result.node;
+  const offset = result.offset;
+  await applyEditResult(result);
+  // `applyEditResult` already left the caret on the note's first paragraph; make
+  // that explicit and tell the user where they now are.
+  selection = { anchor: { node, offset }, focus: { node, offset } };
+  drawSelection();
+  updateToolbar();
+  setStatus(`${kind === "footnote" ? "Footnote" : "Endnote"} added — type the note text`);
+  focusEditorSurface();
 }
 
 /** Creates an empty header or footer and enters it. Gated like any other
@@ -5762,7 +5829,7 @@ function buildContextCommands(context) {
 // mirroring how the text menu greys its structural rows; the underlying
 // functions still gate fail-closed, so the menu can never bypass a review mode.
 function buildObjectContextCommands(context) {
-  const isPicture = context.kind !== "textbox";
+  const isPicture = context.kind === "image";
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
   const mutationEnabled = reviewMode === "editing";
@@ -5803,6 +5870,60 @@ function buildObjectContextCommands(context) {
     disabledReason: mutationReason,
     run: () => openAltTextDialog(),
   });
+
+  // Shape Fill / Shape Outline — the two live controls of Word's Shape Format
+  // tab, reachable from the menu as well as the bar so neither surface is the
+  // only way in.
+  if (context.kind === "shape") {
+    const swatch = (hex) => ({
+      id: `object.fill.${hex}`,
+      label: hex.toUpperCase(),
+      group: "swatch",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+    });
+    commands.push({
+      id: "object.fill",
+      label: "Shape fill",
+      group: "arrange",
+      icon: "format",
+      submenu: [
+        {
+          id: "object.fill.none",
+          label: "No fill",
+          group: "reset",
+          enabled: mutationEnabled,
+          disabledReason: mutationReason,
+          run: () => applyShapeFill(null),
+        },
+        ...SHAPE_MENU_COLORS.map((hex) => ({
+          ...swatch(hex),
+          run: () => applyShapeFill(hex),
+        })),
+      ],
+    });
+    commands.push({
+      id: "object.outline",
+      label: "Shape outline",
+      group: "arrange",
+      icon: "format",
+      submenu: [
+        {
+          id: "object.outline.none",
+          label: "No outline",
+          group: "reset",
+          enabled: mutationEnabled,
+          disabledReason: mutationReason,
+          run: () => applyShapeOutline({ color: null }),
+        },
+        ...SHAPE_MENU_COLORS.map((hex) => ({
+          ...swatch(hex),
+          id: `object.outline.${hex}`,
+          run: () => applyShapeOutline({ color: hex }),
+        })),
+      ],
+    });
+  }
 
   // Crop — picture-only; a text box has no source rectangle to crop.
   if (isPicture) {
@@ -6528,9 +6649,16 @@ const INSERT_SURFACE = [
   // selected text. A cross-paragraph range still enables the button and is
   // answered by `editSelectionLink`'s "Links must stay within one paragraph",
   // which is more useful than a silently dead control.
+  // The gallery popover registers its own toggle on this button (like the list
+  // galleries), so wiring `activate` here too would open it on mousedown and
+  // immediately close it again.
+  { command: "insert.shape", button: insertShapeBtn, requires: "doc", activate: null },
+  { command: "insert.textbox", button: insertTextBoxBtn, requires: "doc", activate: () => void insertTextBoxObject() },
   { command: "insert.link", button: insertLinkBtn, requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", button: insertBookmarkBtn, requires: "doc", activate: () => openBookmarkManager() },
   { command: "insert.field", button: insertFieldBtn, requires: "doc", activate: () => openFieldDialog() },
+  { command: "insert.footnote", button: insertFootnoteBtn, requires: "doc", activate: () => insertNote("footnote") },
+  { command: "insert.endnote", button: insertEndnoteBtn, requires: "doc", activate: () => insertNote("endnote") },
   { command: "insert.header", button: insertHeaderBtn, requires: "doc", activate: () => editRunningContent("header") },
   { command: "insert.footer", button: insertFooterBtn, requires: "doc", activate: () => editRunningContent("footer") },
   { command: "insert.symbol", button: insertSymbolBtn, requires: "doc", activate: () => openSymbolPicker() },
@@ -6655,6 +6783,7 @@ async function applyEditResult(res) {
   // positions coincide.
   implicitCaretAt = null;
   selection = { anchor: { node, offset }, focus: { node, offset } };
+  dropVanishedObjectSelection();
   if (newCount !== pages.length) {
     await renderAll(); // structural change (page added/removed): rebuild the list
   } else {
@@ -6671,6 +6800,28 @@ async function applyEditResult(res) {
   // returns nothing in the overwhelmingly common case, and the fetch only
   // happens when a bucket is genuinely absent, so this stays off the hot path.
   void ensureGlyphCoverage("this edit");
+}
+
+/** Drops an object selection whose object is no longer in the document.
+ *
+ *  Undoing an insert (or any edit that removes the selected object) left the
+ *  selection, its handles and its context bar pointing at a node the model no
+ *  longer holds — chrome hovering over nothing, and a Fill button that would
+ *  fail. `deleteSelectedObject` clears the selection itself; every other path
+ *  that can remove an object needed this. */
+function dropVanishedObjectSelection() {
+  if (!doc || !objectSelection) return;
+  let rect = [];
+  try {
+    rect = doc.objectRect(objectSelection.node);
+  } catch {
+    rect = [];
+  }
+  if (rect.length >= 5) return;
+  objectSelection = null;
+  objectCropSession = null;
+  updateObjectSelectionState();
+  updateObjectContextBar();
 }
 
 /** Ends the current typing gesture. The next printable key receives a fresh
@@ -7463,7 +7614,9 @@ const TWIPS_PER_POINT = 20;
 const popovers = [];
 
 function openPopover(p) {
-  if (!selection) return;
+  // An object can be selected with no text caret behind it (clicking a float
+  // first thing), and its Fill/Outline pickers must still open.
+  if (!selection && !objectSelection) return;
   for (const q of popovers) if (q !== p) closePopover(q);
   const r = p.btn.getBoundingClientRect();
   p.menu.hidden = false;
@@ -7757,6 +7910,192 @@ const selHighlightPopover = registerPopover(selHighlightBtn, selHighlightMenu, (
 selTextColorMenu.addEventListener("click", (e) => handleTextColorMenuClick(e, selTextColorPopover));
 selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, selHighlightPopover));
 
+// --- Shape Fill / Shape Outline (Word's Shape Format tab) --------------------
+// A drawing was renderable, selectable, movable and resizable but had no way to
+// change what it LOOKS like: the model carried `fill` and `stroke` and nothing
+// could write either. These are the two controls Word's Shape Format tab is
+// built around, on the same palette as the text pickers.
+
+/** What the context bar calls each kind of object. A shape used to read
+ *  "Image", which also handed it a Crop button it has no source rectangle for. */
+const OBJECT_LABELS = { image: "Image", textbox: "Text box", shape: "Shape" };
+
+/** The preset shapes Insert ▸ Shapes offers — every geometry the engine models
+ *  and the renderer draws. Naming them here keeps the menu honest: a gallery of
+ *  shapes that do not render would be worse than a short one that does. */
+const SHAPE_CHOICES = [
+  ["rectangle", "Rectangle"],
+  ["roundRectangle", "Rounded rectangle"],
+  ["ellipse", "Ellipse"],
+  ["triangle", "Triangle"],
+  ["rightTriangle", "Right triangle"],
+  ["diamond", "Diamond"],
+  ["line", "Line"],
+];
+const SHAPE_LABELS = Object.fromEntries(SHAPE_CHOICES);
+
+const EMU_PER_POINT = 12700;
+/** The short palette the right-click submenu offers; the bar's picker has the
+ *  full grid. A menu is a list, so it gets the colors people actually reach for. */
+const SHAPE_MENU_COLORS = ["#000000", "#ffffff", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#4a86e8", "#9900ff"];
+/** Word's Shape Outline > Weight list, in points. */
+const OUTLINE_WEIGHTS = [0.25, 0.5, 1, 1.5, 2.25, 3, 4.5, 6];
+
+const shapeFillMenu = document.getElementById("shapeFillMenu");
+const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
+
+/** The selected shape's current fill/outline, or an empty record when there is
+ *  no shape selected. Read from the model, never remembered from the last
+ *  apply — the swatch must describe THIS shape. */
+function selectedShapeFormat() {
+  if (!doc || !objectSelection || objectSelection.kind !== "shape") return {};
+  try {
+    return doc.shapeFormat(objectSelection.node) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Paints each bar button's underline bar with the shape's own color (or the
+ *  none-hatch when it has none), so the control reads before it is opened. */
+function reflectShapeSwatches() {
+  reflectShapeFormatState();
+  const format = selectedShapeFormat();
+  for (const [btn, color] of [
+    [shapeFillBtn, format.fill],
+    [shapeOutlineBtn, format.outline],
+  ]) {
+    const bar = btn.querySelector(".color-apply-bar");
+    if (!bar) continue;
+    bar.style.background = color || "transparent";
+    bar.classList.toggle("is-none", !color);
+  }
+}
+
+/** A bar button carrying a color bar, matching the ribbon's split controls. */
+function makeShapeBarButton(icon, label, title) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "object-bar-btn object-bar-color";
+  btn.title = title;
+  btn.setAttribute("aria-label", title);
+  btn.setAttribute("aria-haspopup", "dialog");
+  btn.setAttribute("aria-expanded", "false");
+  btn.innerHTML =
+    `<span class="ms" aria-hidden="true">${icon}</span><span>${label}</span>` +
+    `<span class="color-apply-bar" aria-hidden="true"></span>`;
+  // The other bar buttons cancel `pointerdown` to keep the selection, but these
+  // open popovers, and cancelling pointerdown suppresses the compatibility
+  // `mousedown` the popover manager opens on — the button would do nothing at
+  // all. `onButton` cancels that mousedown itself, preserving the selection.
+  return btn;
+}
+
+const shapeFillBtn = makeShapeBarButton("format_color_fill", "Fill", "Shape fill");
+const shapeOutlineBtn = makeShapeBarButton("border_color", "Outline", "Shape outline");
+
+/** Renders a shape color menu: the reset row Word leads with ("No fill" /
+ *  "No outline"), the standard palette, and — for the outline — its weights. */
+function renderShapeMenu(kind) {
+  const menu = kind === "fill" ? shapeFillMenu : shapeOutlineMenu;
+  const format = selectedShapeFormat();
+  const active = (kind === "fill" ? format.fill : format.outline)?.toLowerCase() ?? null;
+  menu.replaceChildren();
+
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "color-row-action";
+  reset.dataset.shapeNone = "1";
+  reset.innerHTML =
+    '<span class="color-chip color-chip-none"></span>' +
+    `<span>${kind === "fill" ? "No fill" : "No outline"}</span>`;
+  menu.appendChild(reset);
+
+  menu.appendChild(makeMenuHeading("Standard colors"));
+  menu.appendChild(
+    makeSwatchGrid(
+      TEXT_STANDARD_COLORS.map((hex) => {
+        const cell = makeSwatchCell("text", hex, hex, hex.toUpperCase(), hex.toLowerCase() === active);
+        // The grid helper tags cells for the TEXT handler; retag so a shape click
+        // cannot be mistaken for a text-color one.
+        delete cell.dataset.color;
+        cell.dataset.shapeColor = hex;
+        return cell;
+      }),
+    ),
+  );
+
+  if (kind === "outline") {
+    const current = format.outlineWidthEmu ?? null;
+    menu.appendChild(makeMenuHeading("Weight"));
+    const list = document.createElement("div");
+    list.className = "shape-weight-list";
+    for (const points of OUTLINE_WEIGHTS) {
+      const emu = Math.round(points * EMU_PER_POINT);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "color-row-action shape-weight";
+      row.dataset.shapeWeight = String(emu);
+      if (current === emu) row.classList.add("is-active");
+      row.innerHTML =
+        `<span class="shape-weight-rule" style="--w:${Math.max(1, points)}px" aria-hidden="true"></span>` +
+        `<span>${points} pt</span>`;
+      list.appendChild(row);
+    }
+    menu.appendChild(list);
+  }
+}
+
+const shapeFillPopover = registerPopover(shapeFillBtn, shapeFillMenu, () => renderShapeMenu("fill"));
+const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, () =>
+  renderShapeMenu("outline"),
+);
+
+/** Applies a fill to the selected shape (`null` clears it). One undoable action,
+ *  through the same gate every object edit uses. */
+function applyShapeFill(hex) {
+  if (!objectSelection || objectSelection.kind !== "shape") return;
+  const node = objectSelection.node;
+  runEdit(() => doc.setShapeFill(node, hex ?? undefined), { gate: true });
+  reflectShapeSwatches();
+}
+
+/** Applies an outline color and/or weight. Setting a weight on an unoutlined
+ *  shape gives it Word's default black outline, so the weight is never a no-op. */
+function applyShapeOutline({ color, widthEmu }) {
+  if (!objectSelection || objectSelection.kind !== "shape") return;
+  const node = objectSelection.node;
+  // Pass only what was chosen. The engine inherits the rest from the outline the
+  // shape already has — including the dash pattern and line ends no control here
+  // can express, which a locally-rebuilt stroke would quietly discard.
+  runEdit(() => doc.setShapeOutline(node, color ?? undefined, widthEmu ?? undefined), {
+    gate: true,
+  });
+  reflectShapeSwatches();
+}
+
+function handleShapeMenuClick(event, kind, popover) {
+  const none = event.target.closest("[data-shape-none]");
+  const cell = event.target.closest("[data-shape-color]");
+  const weight = event.target.closest("[data-shape-weight]");
+  if (!none && !cell && !weight) return;
+  if (kind === "fill") {
+    applyShapeFill(none ? null : cell.dataset.shapeColor);
+  } else if (none) {
+    applyShapeOutline({ color: null });
+  } else if (weight) {
+    applyShapeOutline({ widthEmu: Number(weight.dataset.shapeWeight) });
+  } else {
+    applyShapeOutline({ color: cell.dataset.shapeColor });
+  }
+  closePopover(popover);
+}
+
+shapeFillMenu.addEventListener("click", (e) => handleShapeMenuClick(e, "fill", shapeFillPopover));
+shapeOutlineMenu.addEventListener("click", (e) =>
+  handleShapeMenuClick(e, "outline", shapeOutlinePopover),
+);
+
 // Split-button apply halves reapply the last-used swatch (Word/Docs behavior).
 onButton(textColorApplyBtn, () => {
   applyTextColor(lastTextColor);
@@ -7963,6 +8302,45 @@ function reflectListGallery(menu) {
     cell.setAttribute("aria-checked", String(cell.dataset.spec === current));
   }
 }
+// --- Insert ▸ Shapes gallery -------------------------------------------------
+const shapeGalleryMenu = document.getElementById("shapeGalleryMenu");
+
+/** Renders one row per preset the engine models AND the renderer draws, each
+ *  previewing its own outline so the list reads as shapes, not words. */
+function renderShapeGallery() {
+  shapeGalleryMenu.replaceChildren();
+  for (const [geometry, label] of SHAPE_CHOICES) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "menu-item shape-choice";
+    row.setAttribute("role", "menuitem");
+    row.dataset.shapeGeometry = geometry;
+    const preview = document.createElement("span");
+    preview.className = `shape-choice-preview shape-preview-${geometry}`;
+    preview.setAttribute("aria-hidden", "true");
+    row.appendChild(preview);
+    const text = document.createElement("span");
+    text.textContent = label;
+    row.appendChild(text);
+    shapeGalleryMenu.appendChild(row);
+  }
+}
+
+const shapeGalleryPopover = registerPopover(insertShapeBtn, shapeGalleryMenu, renderShapeGallery);
+
+/** Opens the gallery, wherever the command came from (ribbon button or palette). */
+function openShapeGallery() {
+  if (!doc) return;
+  if (shapeGalleryMenu.hidden) openPopover(shapeGalleryPopover);
+}
+
+shapeGalleryMenu.addEventListener("click", (event) => {
+  const choice = event.target.closest("[data-shape-geometry]");
+  if (!choice) return;
+  closePopover(shapeGalleryPopover);
+  void insertShapeObject(choice.dataset.shapeGeometry);
+});
+
 const bulletGalleryPopover = registerPopover(bulletListMenuBtn, bulletGalleryMenu, () =>
   reflectListGallery(bulletGalleryMenu),
 );
@@ -9666,11 +10044,15 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "layout.firstPageVariant", label: `Different first page: ${runningVariantState().firstPage ? "on" : "off"}`, group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("firstPage") },
     { id: "layout.evenOddVariant", label: `Different odd & even pages: ${runningVariantState().evenOdd ? "on" : "off"}`, group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("evenOdd") },
+    { id: "insert.footnote", label: "Footnote", group: "Insert", kw: "footnote note reference citation bottom of page", enabled: !!selection, disabledReason: "Place the caret where the note belongs", run: () => insertNote("footnote") },
+    { id: "insert.endnote", label: "Endnote", group: "Insert", kw: "endnote note reference citation end of document", enabled: !!selection, disabledReason: "Place the caret where the note belongs", run: () => insertNote("endnote") },
     { id: "insert.header", label: "Edit header", group: "Insert", kw: "header running title page top margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("header") },
     { id: "insert.footer", label: "Edit footer", group: "Insert", kw: "footer running page number bottom margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("footer") },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
     { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: insertCommandEnabled("insert.field"), run: () => openFieldDialog() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
+    { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
+    { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
     { id: "insert.symbol", label: "Symbol…", group: "Insert", kw: "symbol special character glyph currency math greek arrow fraction diacritic omega degree unicode", enabled: insertCommandEnabled("insert.symbol"), run: () => openSymbolPicker() },
     { id: "insert.emoji", label: "Emoji…", group: "Insert", kw: "emoji emoticon smiley face reaction sticker unicode", enabled: insertCommandEnabled("insert.emoji"), run: () => openEmojiPicker() },
     // The per-kind field shortcuts share Field…'s precondition; they are the
@@ -9855,7 +10237,7 @@ const APP_MENU_SECTIONS = {
     ["review.acceptNext", "review.rejectNext"],
     ["review.acceptAll", "review.rejectAll"],
   ],
-  insert: [["insert.table", "insert.image", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
+  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
@@ -10485,6 +10867,85 @@ async function insertImageFromBlob(blob) {
 /** Insert ▸ Picture: opens a file picker and inserts the chosen image at the
  *  insertion point — the caret if the user placed one, otherwise the start of
  *  the body, exactly as Word and Google Docs do. */
+/** Word's Insert ▸ Text Box. Inserts a floating box at the caret and enters it,
+ *  so the user types where they just clicked instead of hunting for the box. */
+async function insertTextBoxObject() {
+  if (!doc || !selection) return;
+  if (blockMutationInViewing()) return;
+  if (reviewMode === "suggesting") {
+    setStatus("Inserting a text box cannot be tracked yet; switch to Editing", "error");
+    return;
+  }
+  const before = placedObjectIds();
+  let result;
+  try {
+    result = doc.insertTextBox(selection.focus.node, selection.focus.offset);
+  } catch (err) {
+    setStatus(`Could not insert the text box: ${err.message ?? err}`, "error");
+    return;
+  }
+  await applyEditResult(result);
+  // Land INSIDE the box through the SAME path a double-click uses, so entry can
+  // never diverge between the two ways of getting there.
+  const box = newestObject(before, "textbox");
+  if (box) {
+    selectObject(box.node, box.kind, null, box.anchored);
+    enterObjectEditMode();
+  }
+  setStatus("Text box added — type its text");
+  focusEditorSurface();
+}
+
+/** The object that appeared since `before` (a set of node ids), optionally of a
+ *  given kind. Diffing the placed-object order is how a freshly inserted object
+ *  is identified: the engine reports the caret, not the object it created. */
+function newestObject(before, kind) {
+  let objects;
+  try {
+    objects = JSON.parse(doc.objectOrder());
+  } catch {
+    return null;
+  }
+  return (
+    objects.find((entry) => !before.has(entry.node) && (!kind || entry.kind === kind)) ?? null
+  );
+}
+
+/** The node ids of every placed object right now — the "before" side of the diff. */
+function placedObjectIds() {
+  try {
+    return new Set(JSON.parse(doc.objectOrder()).map((entry) => entry.node));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Word's Insert ▸ Shapes. Inserts a floating preset shape at the caret and
+ *  leaves it SELECTED (not entered) — a shape has no text to type. */
+async function insertShapeObject(geometry) {
+  if (!doc || !selection) return;
+  if (blockMutationInViewing()) return;
+  if (reviewMode === "suggesting") {
+    setStatus("Inserting a shape cannot be tracked yet; switch to Editing", "error");
+    return;
+  }
+  const before = placedObjectIds();
+  let result;
+  try {
+    result = doc.insertShape(selection.focus.node, selection.focus.offset, geometry);
+  } catch (err) {
+    setStatus(`Could not insert the shape: ${err.message ?? err}`, "error");
+    return;
+  }
+  await applyEditResult(result);
+  // Word leaves a new shape SELECTED, not entered — a shape has no text — which
+  // also puts Fill and Outline within reach straight away.
+  const shape = newestObject(before, "shape");
+  if (shape) selectObject(shape.node, shape.kind, null, shape.anchored);
+  setStatus(`${SHAPE_LABELS[geometry] ?? "Shape"} added`);
+  focusEditorSurface();
+}
+
 function insertImageFromFile() {
   if (!doc || !selection) return;
   if (blockMutationInViewing()) return;
