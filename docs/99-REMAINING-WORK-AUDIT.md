@@ -22,6 +22,31 @@ areas: `14-EXECUTION-TRACKER.md` (per-slice status), `18-SUPPORT-MATRIX.md`
 `46`/`55`/`60` (rendering fidelity), `67-EDITOR-UX-GAP-ANALYSIS.md` (editor UX),
 `85` §5.7/§5.9 (object-editing scope), `98` (PDF).
 
+## Owner priority decision — editor first
+
+As of 2026-08-11, execution is ordered around document editing. This supersedes
+the apparent priority implied by older phase numbering; it does not erase or
+overstate the deferred work.
+
+| Order | Active outcome | Exit gate |
+| --- | --- | --- |
+| 1 | Document safety and DOCX fidelity | No silent loss; unsupported content is preserved or reported; the oracle, visual, table, float/wrap, and font-fallback gates are materially closed |
+| 2 | Editing experience and interaction reliability | The editing-surface continuity contract in doc 58 passes across body, running content, notes, text boxes/groups, and table cells |
+| 3 | Authoring-model completeness | Sections, styles, note options, fields, drawing geometry, picture content/effects, text-box body properties, and typed run properties are represented deterministically and mutate only through commands/transactions |
+| 4 | Missing editing parity | The high-value authoring controls in §2 ship against the completed model rather than as host-only state |
+| 5 | Stable public SDK | The editor-proven commands and errors become a consolidated, versioned embedding boundary |
+| 6 | OT/CRDT | Collaboration is designed over stable commands, transactions, identities, and selection semantics |
+
+PDF, GPU rendering, Tauri, worker threading, plugin ABI, canonical CBOR, and
+collaboration are not active editor-milestone work. The current SDK receives
+only compatibility maintenance needed to keep editor development testable.
+
+The quality bar for every active outcome is production/enterprise, not MVP:
+deterministic model-owned behavior, bounded resource use, no silent data loss or
+cross-surface mutation, explicit unsupported results, a regression for every
+fixed defect, and the complete relevant gate set before a tracker row becomes
+`Done`.
+
 ---
 
 ## 1. The open defect class — context and interaction
@@ -33,15 +58,15 @@ headers (PR #475) and for text boxes and the ribbon (PR #476) each uncovered mor
 of it, which is the signature of a class rather than a bug.
 
 The class is **not exhausted**. Untested, in the order the next defect is most
-likely to be found:
+likely to be found. The status is maintained as each bounded test slice lands:
 
-| # | Context / gesture | Why it is suspect |
-| --- | --- | --- |
-| 1 | Grouped box and nested objects — click inside, click away, Escape | Formatting toggles are covered; the click/exit rules are not, and they are the exact rules that were wrong for the header and the text box |
-| 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Never exercised. Entry/exit is now decided per click; a drag crosses the boundary mid-gesture |
-| 3 | Zoom change while inside a context | Caret geometry is now page-scoped; nothing proves it survives a zoom or a re-render |
-| 4 | Table cells as a context | The one editing context never examined in this sweep |
-| 5 | Scroll while a band is open | The band chrome is drawn per page; scrolling to a page whose band is not mounted is untested |
+| # | Context / gesture | Status | Why it is suspect / evidence |
+| --- | --- | --- | --- |
+| 1 | Grouped box and nested objects — click inside, click away, Escape | Covered 2026-08-11 | `nested-object-editing.spec.mjs` derives the grouped child's bounds from its selection outline and proves inside-empty-space retention, body click-away, and the two-step Escape grammar |
+| 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Fixed 2026-08-11 | Both reproductions initially failed: pointer-move reused click-away resolution and exited the starting story. Pointer-down now retains the owning running band/text box and clips later moves at that boundary; `surface-boundary-selection.spec.mjs` proves context and subsequent typing stay in the starting story |
+| 3 | Zoom change while inside a context | Open | Caret geometry is now page-scoped; nothing proves it survives a zoom or a re-render |
+| 4 | Table cells as a context | Open | The one editing context never examined in this sweep |
+| 5 | Scroll while a band is open | Open | The band chrome is drawn per page; scrolling to a page whose band is not mounted is untested |
 
 **Recommendation:** finish this sweep before adding capability. It is the same
 class that produced every symptom the owner hit.

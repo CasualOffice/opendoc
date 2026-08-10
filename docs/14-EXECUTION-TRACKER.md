@@ -70,8 +70,22 @@ Blocked · In review · Done
 
 Design references point at `38-SCHEMA-V1-DESIGN-REFERENCE.md` (anchor).
 
+> **Current owner priority (2026-08-11): editor first.** Execute document safety
+> and DOCX fidelity, then editing interaction reliability, authoring-model
+> completeness, and missing editing parity. Stable SDK work follows those
+> outcomes; OT/CRDT follows a stable SDK and command vocabulary. PDF, GPU,
+> Tauri, worker threading, plugin ABI, and canonical CBOR remain deferred. The
+> ordered outcome gates live in `99-REMAINING-WORK-AUDIT.md`; the normative
+> editing-surface rules live in doc 58.
+
 | ID | Title | Owner | Status | Notes |
 | --- | --- | --- | --- | --- |
+| EDITOR-001 | Editor-first execution program | Codex | In progress | Owner-approved order: safety/DOCX fidelity → interaction reliability → authoring-model completeness → missing editing parity → stable SDK → OT/CRDT. First increment is the five-case editing-context sweep from doc 99, governed by doc 58's editing-surface continuity contract. |
+| P1G-CONTEXT-01 | Grouped/nested object entry and exit grammar | Codex | Done | `nested-object-editing.spec.mjs` derives the grouped child's bounds from the product's selection outline and proves empty inside clicks retain editing, a body click exits and receives typing, and Escape follows editing → selected → surrounding text. Five focused Chromium specs pass. |
+| P1G-CONTEXT-02 | Cross-surface drag-selection | Codex | Done | New header→body and text-box→body browser reproductions both failed before the fix: pointer-move reused click-away resolution and exited the starting story. The pointer gesture now retains the running band or edited text-box node from pointer-down and ignores incompatible cross-story endpoints, so the selection clips at the boundary and subsequent typing remains in the original story. Both regressions, the 22-spec related header/text-box/nested-object suite, 39 frontend unit tests, and the full 437-spec Chromium suite pass. |
+| P1G-CONTEXT-03 | Zoom while editing a non-body surface | — | Not started | Prove zoom/re-render preserves the model selection, editing context, caret geometry, and next keystroke for running content and text boxes. |
+| P1G-CONTEXT-04 | Table-cell editing context | — | Not started | Apply the same entry, empty-hit, command, selection, and exit contract to text in ordinary and merged cells. |
+| P1G-CONTEXT-05 | Scroll/virtualize while a running band is open | — | Not started | Prove page mount/unmount and scroll preserve running-content context and reconstruct band/caret chrome from model state. |
 | SDK-001 | OpenDoc SDK & Embedding Runtime Execution Plan | Antigravity | Done | Phase-wise execution plan & architecture blueprint for `@casualoffice/document-runtime` SDK; `83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md`. |
 | MFIO-001 | Multi-format import/export architecture | Codex | Done | Owner accepted doc 94 decisions D1–D4 on 2026-08-04: extensible format IDs, byte-first detection, tagged sidecar preservation, and contract/DOCX → JSON/TXT → ODT delivery order. |
 | MFIO-002 | Slice A — contracts, deterministic registry, and DOCX regression lock | Codex | Done | Added `casual-doc-io`: strict format IDs/descriptors, deterministic auto/explicit detection, stable ambiguity handling, format-neutral artifacts/reports/resources, opaque source envelopes, and a built-in DOCX adapter over the unchanged package/import/export pipeline. Eight focused tests cover IDs, registration, detection/hints/ambiguity, invalid ZIP refusal, import→preserving export→reopen model identity, and exact unchanged bytes. Full workspace tests, strict Clippy, rustdoc, Rust 1.88, WASM check, formatting, and diff checks pass. |

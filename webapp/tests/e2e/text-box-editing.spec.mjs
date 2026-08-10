@@ -10,7 +10,7 @@
 // No fixture in the repo contained a text box, which is why this went unverified
 // for so long. `fixtures/generated/inline-text-box.docx` is a minimal document
 // with one VML text box, built for exactly this.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
 
 const FIXTURE = "../fixtures/generated/inline-text-box.docx";
 
@@ -27,9 +27,10 @@ async function openFixture(page) {
     .toContain("inline-text-box");
   const canvas = page.locator(".page-wrap .page").first();
   await expect(canvas).toBeVisible();
-  // Poll for a laid-out box: the canvas can be attached before it has geometry.
-  await expect.poll(async () => (await canvas.boundingBox())?.width ?? 0).toBeGreaterThan(0);
-  return canvas.boundingBox();
+  // The canvas can be attached before it has geometry and can detach again
+  // during a font/repaint pass. Keep the exact successful measurement instead
+  // of polling once and racing a second `boundingBox()` read.
+  return stableBox(canvas);
 }
 
 const at = (box, spot) => [box.x + box.width * spot.fx, box.y + box.height * spot.fy];

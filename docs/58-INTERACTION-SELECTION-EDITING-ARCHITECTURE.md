@@ -23,6 +23,44 @@ it and every editing action is an *additive* extension — never a rework.
 > the `HitTarget` / `Selection` / `Command` enums; they do **not** add new
 > pipelines.
 
+### Editing-surface continuity contract
+
+This contract is normative for every editable story/container: the document
+body, a header or footer, a footnote or endnote, a text-box body (including a
+box nested in a group), and text inside a table cell.
+
+1. **The model selection owns the context.** The active surface is derived from
+   the node that owns the caret/range, never inferred from `pages[0]`, a DOM
+   element, a missing glyph hit, or host-maintained duplicate state.
+2. **Entry is deliberate.** A pointer-down in another editable surface, the
+   documented double-click/Enter gesture for a container, or an explicit command
+   may change context. Repaint, virtualization, zoom, scrolling, ribbon/panel
+   use, and focus restoration may not.
+3. **Empty space is still inside its container.** A point inside the placed
+   bounds of the active text box, running-content band, note, or cell remains in
+   that surface even when glyph hit-testing returns no text target. It resolves
+   to the nearest valid position in that surface.
+4. **Pointer-down owns a drag.** A selection drag is resolved in the surface in
+   which it began. Crossing into an incompatible surface clips the moving end to
+   the nearest valid position in the starting surface; it never creates a
+   cross-story range or silently retargets the gesture. A new pointer-down may
+   enter the other surface.
+5. **Geometry changes preserve semantic state.** Zoom, device-pixel-ratio
+   changes, pagination repaint, and page mount/unmount retain the same model
+   selection and editing context, then recompute only its visual geometry.
+6. **Exit is predictable.** Escape and click-away follow the grammar of the
+   active surface. Text-box editing exits to object selection, then to the
+   surrounding text; running content exits to the document body; a direct click
+   into another surface enters that surface exactly once.
+7. **Commands are surface-neutral or explicit.** A command available for body
+   text must use the owning surface for reads and mutation. If a surface cannot
+   support it, the command returns an explicit unsupported result; it must not
+   fall back to the body or report success without changing the intended node.
+
+The browser regression matrix must exercise this contract with real pointer and
+keyboard gestures. Test points come from engine/overlay geometry, not guessed
+page fractions, whenever the product exposes that geometry.
+
 ## The pipeline
 
 ```

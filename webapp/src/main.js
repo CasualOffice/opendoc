@@ -4851,6 +4851,11 @@ function onPointerDown(page, event) {
     lastClientY: event.clientY,
     moved: false,
     shift: event.shiftKey,
+    // A drag cannot construct a range across WordprocessingML stories. Retain
+    // the surface that owned pointer-down so pointer-move can clip at its edge
+    // instead of reusing click-away behavior and silently entering the body.
+    runningBand: runningEditBand,
+    objectNode: editingHere ? objectSelection.node : null,
   };
   // Shift+Click extends the current selection to the click (keeps the anchor).
   selection =
@@ -4974,6 +4979,27 @@ function updateDragSelection(event) {
   }
   const page = pageFromClientPoint(event.clientX, event.clientY);
   if (!page) return;
+  const { x, y } = pointToTwip(page, event);
+  // Click-away is an entry/exit gesture; crossing a boundary while the button
+  // is already down is not. Keep the last valid endpoint when the pointer leaves
+  // the text-box story that owned pointer-down.
+  if (
+    pointerGesture.objectNode &&
+    !pointInsideObject(pointerGesture.objectNode, page, x, y)
+  ) {
+    return;
+  }
+  // `anchorAt` deliberately exits running-content editing for an ordinary body
+  // click. Do not call that mutating path until the moving point is proven to be
+  // in the same running story as pointer-down. Holding the last valid endpoint
+  // clips the range at the story boundary and keeps the model selection valid.
+  if (pointerGesture.runningBand) {
+    const hit = doc.resolveClick(page.pageNumber, x, y);
+    if (!hit) return;
+    const sameStory = hit.band === pointerGesture.runningBand && !!hit.node;
+    hit.free?.();
+    if (!sameStory) return;
+  }
   const focus = anchorAt(page, event);
   if (!focus) return;
   selection = { anchor: selection.anchor, focus };
