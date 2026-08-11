@@ -3590,7 +3590,7 @@ mod semantic_tests {
             <w:hyphenationZone w:val="425"/>
             <w:doNotHyphenateCaps/>
             <w:evenAndOddHeaders/>
-            <w:compat><w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/></w:compat>
+            <w:compat><w:adjustLineHeightInTable/><w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/></w:compat>
         </w:settings>"#;
         let source = zip_named(&[
             ("[Content_Types].xml", content_types),
@@ -3615,6 +3615,7 @@ mod semantic_tests {
         assert!(s.update_fields);
         assert_eq!(s.default_tab_stop, Some(708));
         assert_eq!(s.compat.len(), 1);
+        assert!(s.adjust_line_height_in_table);
         // The hyphenation group and the background-shape flag are modeled.
         assert!(s.auto_hyphenation);
         assert_eq!(s.consecutive_hyphen_limit, Some(2));

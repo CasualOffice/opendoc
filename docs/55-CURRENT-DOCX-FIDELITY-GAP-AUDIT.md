@@ -621,8 +621,10 @@ proves a smaller safe combination.
 1. **Corpus pagination convergence**
    - implement deterministic final-page column balancing and true per-column
      reflow before tuning line metrics;
-   - close table style/row-height gaps that account for the Medical form's
-     remaining page-distribution delta;
+   - ~~close the Medical form's page-distribution delta~~ done by applying its
+     section `w:docGrid` line pitch with paragraph/exact/table precedence
+     (`P1F-DOCGRID-LINES`, design doc 100); the previous 3-page output now
+     renders as 4 pages, matching the LibreOffice oracle;
    - keep per-document visual/page-placement evidence so a matching total alone
      is never accepted as proof.
 2. ~~**Inline visibility floor**~~ done (`P1F-INLINE-FLOOR`)

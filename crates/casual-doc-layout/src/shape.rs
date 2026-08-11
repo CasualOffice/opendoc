@@ -456,11 +456,22 @@ pub(crate) fn apply_line_rule(
         let ascent = ascent.raw().clamp(0, height);
         return (Twip(ascent), Twip((height - ascent).max(0)), Twip(height));
     }
-    if let Some(at_least) = constraints.line_at_least
-        && at_least.raw() > natural.raw()
-    {
-        let extra = at_least.raw() - natural.raw();
-        return (ascent, Twip(descent.raw() + extra), at_least);
+    let required = constraints
+        .line_at_least
+        .filter(|at_least| at_least.raw() > natural.raw())
+        .unwrap_or(natural);
+    let height = match constraints.line_grid_pitch {
+        Some(pitch) if pitch.raw() > 0 => {
+            let required = i64::from(required.raw().max(0));
+            let pitch = i64::from(pitch.raw());
+            let units = required.saturating_add(pitch - 1) / pitch;
+            Twip(units.saturating_mul(pitch).clamp(0, i64::from(i32::MAX)) as i32)
+        }
+        _ => required,
+    };
+    if height.raw() > natural.raw() {
+        let extra = height.raw() - natural.raw();
+        return (ascent, Twip(descent.raw().saturating_add(extra)), height);
     }
     (ascent, descent, natural)
 }
@@ -1695,6 +1706,42 @@ mod tests {
                 (top..=bottom).contains(&baseline)
             }));
         }
+    }
+
+    #[test]
+    fn document_grid_rounds_required_height_and_exact_still_wins() {
+        let natural = Twip(250);
+        let ascent = Twip(180);
+        let descent = Twip(70);
+
+        let one_unit = LineConstraints {
+            line_grid_pitch: Some(Twip(360)),
+            ..LineConstraints::default()
+        };
+        assert_eq!(
+            apply_line_rule(ascent, descent, natural, &one_unit),
+            (Twip(180), Twip(180), Twip(360))
+        );
+
+        let two_units = LineConstraints {
+            line_at_least: Some(Twip(370)),
+            line_grid_pitch: Some(Twip(360)),
+            ..LineConstraints::default()
+        };
+        assert_eq!(
+            apply_line_rule(ascent, descent, natural, &two_units),
+            (Twip(180), Twip(540), Twip(720))
+        );
+
+        let exact = LineConstraints {
+            line_exact: Some(Twip(200)),
+            line_grid_pitch: Some(Twip(360)),
+            ..LineConstraints::default()
+        };
+        assert_eq!(
+            apply_line_rule(ascent, descent, natural, &exact),
+            (Twip(180), Twip(20), Twip(200))
+        );
     }
 
     #[test]

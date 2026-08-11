@@ -2004,9 +2004,13 @@ fn settings_xml(settings: &DocumentSettings) -> Result<Vec<u8>, ExportError> {
     }
     write_section_note_props(&mut w, "w:footnotePr", &settings.footnote_props)?;
     write_section_note_props(&mut w, "w:endnotePr", &settings.endnote_props)?;
-    if !settings.compat.is_empty() {
+    if settings.adjust_line_height_in_table || !settings.compat.is_empty() {
         w.write_event(Event::Start(start("w:compat")))
             .map_err(pkg)?;
+        if settings.adjust_line_height_in_table {
+            w.write_event(Event::Empty(start("w:adjustLineHeightInTable")))
+                .map_err(pkg)?;
+        }
         for setting in &settings.compat {
             let mut el = start("w:compatSetting");
             el.push_attribute(("w:name", setting.name.as_str()));

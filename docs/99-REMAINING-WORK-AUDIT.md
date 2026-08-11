@@ -114,7 +114,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 | Charts, SmartArt | Modeled as first-class references, preserved byte-for-byte, **not drawn** — an embedded preview if the file has one, else a placeholder |
 | Colour fonts / colour emoji | Not rasterized. Emoji render through a monochrome face; no COLR/CBDT/sbix path |
 | Text wrap around floats | Top-and-bottom and square reserve shared flow, including in cells, headers and footers. **Tight and through contour wrapping, and page-coupled reflow, remain partial** |
-| Oracle page parity | 3 of 5 corpus documents exact; SDS +1 (final-page column balancing), Medical −1 (document-grid row heights) |
+| Oracle page parity | 4 of 5 corpus documents exact; SDS +1 (final-page column balancing). Medical now matches its four-page oracle after section document-grid line pitch reached layout (`P1F-DOCGRID-LINES`) |
 | Typed underline style/colour | **Implemented** (`P1F-38`/`P1F-38b`) — typed style and independent RGB colour round-trip, render (including words-only Unicode-whitespace gaps), edit, reflect mixed state, support armed typing, and survive the internal rich clipboard. Remaining: Suggesting mode rejects style/colour edits until tracked-format deltas support them |
 | `.docm` macro files | **Rejected at open.** Strip-and-open versus explicit non-support is an undecided policy question, not an oversight |
 | Long tail (docs 44 Tier 4) | `latentStyles`, glossary/AutoText **semantics**, ruby annotation, ink (`w:contentPart`), generic `w:framePr` layout, `w:background`, vertical text, distribute alignment, kashida justification. Preserved opaque where possible; not semantically modeled |

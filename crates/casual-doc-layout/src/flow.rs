@@ -21,9 +21,9 @@ use std::hash::{Hash, Hasher};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     Alignment, AltChunk, BlockNode, BorderEdge, BreakKind, Color, ColorScheme, DefinitionMap,
-    Definitions, Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode, EmbeddedKind,
-    EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor, HorizontalAlign,
-    HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
+    Definitions, DocGridType, Document, Drawing, DrawingAnchor, DropCapFrame, DropCapMode,
+    EmbeddedKind, EmbeddedObject, Extent, FontScheme, FrameWrap, HeightRule, HighlightColor,
+    HorizontalAlign, HorizontalAnchor, HorizontalPosition, HorizontalRule as ModelHorizontalRule,
     HorizontalRuleAlign, Indentation, InlineNode, InlineSdt, LevelSuffix, LineRule, MathExpression,
     MediaId, MediaReference, NoteKind, NoteReference, Paragraph, ParagraphProperties,
     ReviewProjection, RevisionKind, Rgba, RunFontHint, RunProperties, SchemeColor, SdtControlData,
@@ -199,6 +199,11 @@ struct FlowCtx<'a> {
     /// `a:normAutofit@lnSpcReduction`, in per-100000 units, scoped to the current
     /// text body.
     line_spacing_reduction: u32,
+    /// The active section line grid. `None` outside a grid-enabled body section.
+    line_grid: Option<LineGrid>,
+    /// Recursive table-cell depth. A section grid is suppressed while this is
+    /// non-zero unless the document's compatibility settings opt table lines in.
+    table_depth: u16,
     /// Page-derived exclusions from body floats that intersect top-level body
     /// paragraphs. `None` on the initial pagination and in running content.
     paragraph_float_exclusions: Option<&'a ParagraphFloatExclusions>,
@@ -207,6 +212,42 @@ struct FlowCtx<'a> {
     /// (matching the reference marker). `None` outside a note body — the mark then
     /// stays inert, exactly as before.
     note_number: Option<usize>,
+}
+
+/// The resolved, layout-relevant portion of one section's document grid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LineGrid {
+    pitch: Twip,
+    adjust_line_height_in_table: bool,
+}
+
+/// Resolves a section document grid into an active line pitch. Word commonly
+/// omits `w:type` while writing a positive `w:linePitch`; that producer form is
+/// a line grid. Explicit `default` and character-only `snapToChars` are inert.
+#[must_use]
+pub(crate) fn line_grid_for_section(
+    section: &SectionBoundary,
+    adjust_line_height_in_table: bool,
+) -> Option<LineGrid> {
+    let enabled = matches!(
+        section.doc_grid.grid_type,
+        None | Some(DocGridType::Lines | DocGridType::LinesAndChars)
+    );
+    let pitch = section.doc_grid.line_pitch.filter(|pitch| *pitch > 0)?;
+    enabled.then_some(LineGrid {
+        pitch: Twip(pitch),
+        adjust_line_height_in_table,
+    })
+}
+
+fn single_section_line_grid(document: &Document) -> Option<LineGrid> {
+    let [section] = document.definitions().sections.as_slice() else {
+        return None;
+    };
+    line_grid_for_section(
+        section,
+        document.definitions().settings.adjust_line_height_in_table,
+    )
 }
 
 /// Builds a galley of block fragments from a document's body, shaped to fit
@@ -285,6 +326,8 @@ pub fn build_galley_with_report_view(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        line_grid: single_section_line_grid(document),
+        table_depth: 0,
         paragraph_float_exclusions: None,
         note_number: None,
     };
@@ -316,6 +359,7 @@ pub fn build_galley_for_blocks(
         None,
         ReviewView::Editing,
         None,
+        single_section_line_grid(document),
     )
 }
 
@@ -339,9 +383,11 @@ pub(crate) fn build_galley_for_note_blocks(
         None,
         ReviewView::Editing,
         Some(note_number),
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_galley_for_blocks_inner(
     document: &Document,
     shaper: &dyn LineShaper,
@@ -350,6 +396,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
     note_number: Option<usize>,
+    line_grid: Option<LineGrid>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -374,6 +421,8 @@ pub(crate) fn build_galley_for_blocks_inner(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        line_grid,
+        table_depth: 0,
         paragraph_float_exclusions: exclusions,
         note_number,
     };
@@ -437,6 +486,8 @@ fn flow_running_blocks(
         numbering: NumberingState::new(),
         text_scale,
         line_spacing_reduction,
+        line_grid: None,
+        table_depth: 0,
         paragraph_float_exclusions: None,
         note_number: None,
     };
@@ -503,6 +554,8 @@ pub fn build_galley_cached(
         numbering: NumberingState::new(),
         text_scale: 100_000,
         line_spacing_reduction: 0,
+        line_grid: single_section_line_grid(document),
+        table_depth: 0,
         paragraph_float_exclusions: None,
         note_number: None,
     };
@@ -841,6 +894,7 @@ fn paragraph_hash(
     constraints.line_height_percent.hash(&mut hasher);
     constraints.line_at_least.map(|t| t.0).hash(&mut hasher);
     constraints.line_exact.map(|t| t.0).hash(&mut hasher);
+    constraints.line_grid_pitch.map(|t| t.0).hash(&mut hasher);
     constraints.first_line_indent.0.hash(&mut hasher);
     box_metrics.space_before.0.hash(&mut hasher);
     box_metrics.space_after.0.hash(&mut hasher);
@@ -1364,7 +1418,11 @@ fn flow_table(
             let (blocks, cell_float_floor) = if matches!(merge_role, VerticalMergeRole::Continue) {
                 (Vec::new(), Twip::ZERO)
             } else {
-                flow_blocks(&cell.blocks, shaper, inner_width, ctx)
+                let outer_table_depth = ctx.table_depth;
+                ctx.table_depth = ctx.table_depth.saturating_add(1);
+                let flowed = flow_blocks(&cell.blocks, shaper, inner_width, ctx);
+                ctx.table_depth = outer_table_depth;
+                flowed
             };
             ctx.table_style = outer_table_style;
             cell_floors.push(cell_float_floor);
@@ -2145,6 +2203,8 @@ fn block_intrinsic(
         numbering: NumberingState::default(),
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
+        line_grid: ctx.line_grid,
+        table_depth: ctx.table_depth,
         paragraph_float_exclusions: None,
         note_number: None,
     };
@@ -6033,14 +6093,24 @@ fn prepare_list_marker(
 ) -> (LineConstraints, Option<PreparedMarker>) {
     let Some(reference) = props.numbering else {
         return (
-            line_constraints(props, width, ctx.line_spacing_reduction),
+            line_constraints(
+                props,
+                width,
+                ctx.line_spacing_reduction,
+                active_line_grid_pitch(props, ctx),
+            ),
             None,
         );
     };
     let Some(resolved) = ctx.numbering.resolve(ctx.definitions, &reference) else {
         // A dangling numbering reference: flow the paragraph with no marker.
         return (
-            line_constraints(props, width, ctx.line_spacing_reduction),
+            line_constraints(
+                props,
+                width,
+                ctx.line_spacing_reduction,
+                active_line_grid_pitch(props, ctx),
+            ),
             None,
         );
     };
@@ -6059,7 +6129,12 @@ fn prepare_list_marker(
         tabs.extend(resolved.level_tabs.iter().cloned());
         tabs
     };
-    let mut constraints = line_constraints(props, width, ctx.line_spacing_reduction);
+    let mut constraints = line_constraints(
+        props,
+        width,
+        ctx.line_spacing_reduction,
+        active_line_grid_pitch(props, ctx),
+    );
     // The marker's left edge is the first-line indent: negative for a hanging indent
     // (the marker protrudes left of the body, into the hanging space).
     let marker_x = constraints.first_line_indent;
@@ -6162,6 +6237,7 @@ fn line_constraints(
     properties: &ParagraphProperties,
     width: Twip,
     line_spacing_reduction: u32,
+    line_grid_pitch: Option<Twip>,
 ) -> LineConstraints {
     let spacing = properties.spacing.as_ref();
     let metrics = box_metrics(properties);
@@ -6215,8 +6291,22 @@ fn line_constraints(
         line_height_percent,
         line_at_least,
         line_exact,
+        line_grid_pitch,
         first_line_indent,
     }
+}
+
+/// The section pitch effective for this paragraph after style-cascaded
+/// `snapToGrid` and the table compatibility gate are applied.
+fn active_line_grid_pitch(properties: &ParagraphProperties, ctx: &FlowCtx<'_>) -> Option<Twip> {
+    if properties.snap_to_grid == Some(false) {
+        return None;
+    }
+    let grid = ctx.line_grid?;
+    if ctx.table_depth > 0 && !grid.adjust_line_height_in_table {
+        return None;
+    }
+    Some(grid.pitch)
 }
 
 /// Ensures a paragraph occupies at least one line box. `parley` yields no line for
@@ -6296,7 +6386,12 @@ fn ensure_nonempty_paragraph(
     let styled = styled_run(" ", &mark, ctx);
     let probe = shaper.shape_paragraph(
         &[styled],
-        line_constraints(props, width, ctx.line_spacing_reduction),
+        line_constraints(
+            props,
+            width,
+            ctx.line_spacing_reduction,
+            active_line_grid_pitch(props, ctx),
+        ),
         range,
     );
     if let Some(mut line) = probe.lines.into_iter().next() {
@@ -6429,7 +6524,12 @@ fn alt_chunk_fragment(
     let range = ModelRange::new(ModelPos::new(chunk.id, 0), ModelPos::new(chunk.id, 0));
     let run = styled_run(ALT_CHUNK_PLACEHOLDER_TEXT, &RunProperties::default(), ctx);
     let props = ParagraphProperties::default();
-    let constraints = line_constraints(&props, width, ctx.line_spacing_reduction);
+    let constraints = line_constraints(
+        &props,
+        width,
+        ctx.line_spacing_reduction,
+        active_line_grid_pitch(&props, ctx),
+    );
     let lines = shaper.shape_paragraph(&[run], constraints, range);
     BlockFragment::Paragraph {
         id: chunk.id,
@@ -6621,6 +6721,8 @@ mod tests {
             numbering: NumberingState::new(),
             text_scale: 100_000,
             line_spacing_reduction: 0,
+            line_grid: None,
+            table_depth: 0,
             paragraph_float_exclusions: None,
             note_number: None,
         };
@@ -6675,6 +6777,8 @@ mod tests {
             numbering: NumberingState::new(),
             text_scale: 100_000,
             line_spacing_reduction: 0,
+            line_grid: None,
+            table_depth: 0,
             paragraph_float_exclusions: None,
             note_number: None,
         };
@@ -6705,7 +6809,7 @@ mod tests {
         let width = Twip::from_points(400);
 
         // A default (LTR) paragraph stays left-to-right.
-        let ltr = line_constraints(&ParagraphProperties::default(), width, 0);
+        let ltr = line_constraints(&ParagraphProperties::default(), width, 0, None);
         assert!(!ltr.rtl, "a paragraph without w:bidi is left-to-right");
 
         // A `w:bidi` paragraph is right-to-left.
@@ -6713,7 +6817,7 @@ mod tests {
             bidi: Some(true),
             ..ParagraphProperties::default()
         };
-        let rtl = line_constraints(&rtl_props, width, 0);
+        let rtl = line_constraints(&rtl_props, width, 0, None);
         assert!(rtl.rtl, "a w:bidi paragraph is right-to-left");
 
         // An explicit `w:bidi w:val="0"` (off) stays left-to-right.
@@ -6721,7 +6825,7 @@ mod tests {
             bidi: Some(false),
             ..ParagraphProperties::default()
         };
-        let off = line_constraints(&off_props, width, 0);
+        let off = line_constraints(&off_props, width, 0, None);
         assert!(
             !off.rtl,
             "an explicit w:bidi=off paragraph is left-to-right"
@@ -9911,6 +10015,8 @@ mod tests {
                 numbering: NumberingState::new(),
                 text_scale: 100_000,
                 line_spacing_reduction: 0,
+                line_grid: None,
+                table_depth: 0,
                 paragraph_float_exclusions: None,
                 note_number: None,
             };

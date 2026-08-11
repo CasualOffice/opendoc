@@ -550,6 +550,10 @@ pub struct LineConstraints {
     /// `w:spacing@lineRule="exact"`: the line box is exactly this many twips tall
     /// regardless of content (content may clip). `None` unless the rule is exact.
     pub line_exact: Option<Twip>,
+    /// Active section document-grid line pitch. The concrete shaper rounds the
+    /// resolved natural/at-least box upward to an integral number of these grid
+    /// units; exact line spacing takes precedence.
+    pub line_grid_pitch: Option<Twip>,
     /// First-line indent applied to the paragraph's first line only, relative to
     /// the (already start-indented) column: positive out-dents the body to the
     /// right (`w:ind@firstLine`), negative protrudes the first line to the left
@@ -568,6 +572,7 @@ impl Default for LineConstraints {
             line_height_percent: None,
             line_at_least: None,
             line_exact: None,
+            line_grid_pitch: None,
             first_line_indent: Twip::ZERO,
         }
     }

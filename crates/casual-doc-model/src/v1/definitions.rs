@@ -1072,6 +1072,11 @@ pub struct DocumentSettings {
     /// in document order. Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compat: Vec<CompatSetting>,
+    /// `w:compat/w:adjustLineHeightInTable` — apply a section document grid's
+    /// line pitch inside table cells. OOXML defaults this compatibility switch
+    /// off, so table text normally ignores the section line grid.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub adjust_line_height_in_table: bool,
     /// `w:autoHyphenation` — automatically hyphenate the document.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub auto_hyphenation: bool,
