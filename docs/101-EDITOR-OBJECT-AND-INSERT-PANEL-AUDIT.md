@@ -10,6 +10,14 @@ explicitly outside this work.
 **Depends on:** docs 52, 58, 63, 64, 67, 69, 84, 85, 86 (typed OMML), 87, and
 99.
 
+**Implementation record:** `UXOBJ-001/006` began on 2026-08-12. The first
+bounded slice makes the existing selected identity truthful: WASM reports
+structural capability bits and every host affordance consumes them, so group
+children no longer inherit dead geometry/structure/accessibility actions from
+their floating paint box. Root/subject/path remapping (`UXOBJ-002`) remains the
+next slice; this first correction deliberately fails closed instead of guessing
+the owning group.
+
 ## 1. Executive conclusion
 
 The current drawing-object experience is not production-ready. The first

@@ -67,6 +67,40 @@ test("Insert ▸ Shapes offers every preset and inserts the chosen one, selected
   expect(consoleErrors).toEqual([]);
 });
 
+test("an inserted group-child shape exposes only commands its selected id can apply", async ({
+  page,
+  consoleErrors,
+}) => {
+  await open(page);
+  await openInsertTab(page);
+  await page.locator("#insertShapeBtn").click();
+  await page.locator('#shapeGalleryMenu [data-shape-geometry="rectangle"]').click();
+
+  const pages = page.locator("#pages");
+  await expect(pages).toHaveAttribute("data-object-kind", "shape");
+  await expect(pages).toHaveAttribute("data-object-capabilities", "canFill,canStroke");
+
+  // The layout identifies the GroupChild::Shape. Fill/Stroke have recursive
+  // child resolvers; extent/anchor/delete/alt-text do not. The UI must derive
+  // from that exact target rather than inheriting every "floating shape"
+  // affordance and failing only after the gesture.
+  await expect(page.locator(".overlay .object-handle")).toHaveCount(0);
+  const bar = page.locator(".object-context-bar");
+  await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Shape outline" })).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Edit alt text" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Delete object" })).toHaveCount(0);
+  await expect(page.locator(".object-wrap-menu")).toHaveCount(0);
+
+  // The keyboard path also fails closed with a visible reason rather than
+  // invoking DeleteObject against an incompatible child id.
+  await page.keyboard.press("Delete");
+  await expect(page.locator("#status")).toContainText("cannot be deleted separately yet");
+  await expect(pages).toHaveAttribute("data-object-kind", "shape");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("an inserted shape is undoable in one step", async ({ page, consoleErrors }) => {
   await open(page);
   await openInsertTab(page);

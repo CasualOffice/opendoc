@@ -927,11 +927,13 @@ impl WasmDocument {
                 page: obj.page,
                 rect: flat_rect(obj.page, obj.rect),
                 anchored: obj.anchored,
+                capabilities: obj.capabilities,
             })
     }
 
-    /// Every selectable object in the document, in paint order, as JSON
-    /// `[{ node, kind, page, anchored }]`.
+    /// Every selectable object in the document, in paint order, as JSON. Each
+    /// entry carries `node`, `kind`, `page`, legacy `anchored`, and the explicit
+    /// structural capability bits consumed by the host (docs/101 UXOBJ-001).
     ///
     /// Floating objects are otherwise reachable only by pointing at them:
     /// `objectAt` needs a coordinate, so a keyboard user cannot select an image
@@ -951,6 +953,15 @@ impl WasmDocument {
                 kind: obj.kind.to_owned(),
                 page: obj.page,
                 anchored: obj.anchored,
+                can_resize: obj.capabilities.can_resize,
+                can_move: obj.capabilities.can_move,
+                can_wrap: obj.capabilities.can_wrap,
+                can_delete: obj.capabilities.can_delete,
+                can_alt_text: obj.capabilities.can_alt_text,
+                can_crop: obj.capabilities.can_crop,
+                can_fill: obj.capabilities.can_fill,
+                can_stroke: obj.capabilities.can_stroke,
+                can_edit_text: obj.capabilities.can_edit_text,
             })
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
@@ -978,7 +989,8 @@ impl WasmDocument {
     /// `objectHandles`), in the order NW, N, NE, E, SE, S, SW, W (`kind` = that
     /// index). The frontend paints a fixed screen-size grip centered at each —
     /// engine-drawn chrome from the object's placed rect, so it matches the
-    /// raster with zero drift (docs/58). Empty if `node` is not placed.
+    /// raster with zero drift (docs/58). Empty if `node` is not placed or its
+    /// exact selected identity has no compatible resize command.
     ///
     /// Grips are painted this slice but not yet draggable; drag-resize/move is
     /// the next slice (`P1G-OBJ-GEOMETRY`).
@@ -991,6 +1003,9 @@ impl WasmDocument {
         let Some(obj) = self.object_boxes().into_iter().find(|obj| obj.node == nid) else {
             return Vec::new();
         };
+        if !obj.capabilities.can_resize {
+            return Vec::new();
+        }
         let r = obj.rect;
         let (l, t) = (r.origin.x.raw(), r.origin.y.raw());
         let (w, h) = (r.size.width.raw(), r.size.height.raw());
@@ -9340,6 +9355,7 @@ impl WasmDocument {
                                 page: page.number,
                                 rect,
                                 anchored: false,
+                                capabilities: ObjectCapabilities::inline_image(),
                             });
                         }
                     }
@@ -9359,6 +9375,7 @@ impl WasmDocument {
                                 page: page.number,
                                 rect,
                                 anchored: false,
+                                capabilities: ObjectCapabilities::inline_text_box(),
                             });
                         }
                     }
@@ -9377,9 +9394,9 @@ impl WasmDocument {
                 // in the running-content part, so the geometry ops cannot resolve
                 // it. A group CHILD is not itself an anchor — the group is — so it
                 // is admitted by finding it in a group instead.
-                if object_anchor(self.document.body(), node).is_none()
-                    && !body_contains_group_child(self.document.body(), node)
-                {
+                let has_anchor = object_anchor(self.document.body(), node).is_some();
+                let is_group_child = body_contains_group_child(self.document.body(), node);
+                if !has_anchor && !is_group_child {
                     continue;
                 }
                 let kind = match &placed.content {
@@ -9396,7 +9413,15 @@ impl WasmDocument {
                     kind,
                     page: page.number,
                     rect: placed.rect,
-                    anchored: true,
+                    // A placed group child inherits its root group's anchor, but
+                    // the child's NodeId is not itself a SetAnchor target. Do not
+                    // describe it as movable/wrappable merely because it floats.
+                    anchored: has_anchor,
+                    capabilities: if is_group_child {
+                        ObjectCapabilities::group_child(kind)
+                    } else {
+                        ObjectCapabilities::floating(kind)
+                    },
                 });
             }
         }
@@ -10542,6 +10567,15 @@ struct ObjectOrderEntryJson {
     kind: String,
     page: u32,
     anchored: bool,
+    can_resize: bool,
+    can_move: bool,
+    can_wrap: bool,
+    can_delete: bool,
+    can_alt_text: bool,
+    can_crop: bool,
+    can_fill: bool,
+    can_stroke: bool,
+    can_edit_text: bool,
 }
 
 /// A resolved `[start, end)` UTF-8 byte range anchoring a comment or revision
@@ -14065,6 +14099,86 @@ struct ObjectBox {
     /// Whether this is a floating/anchored object (movable + wrappable) vs an
     /// inline object (resizable only).
     anchored: bool,
+    /// The exact structural mutations supported by this selected model node.
+    /// The host must render from this payload instead of inferring from paint
+    /// kind or floating placement (docs/101 UXOBJ-001/006).
+    capabilities: ObjectCapabilities,
+}
+
+/// Structural capabilities of one exact selectable object identity. Review-mode
+/// and host-policy availability remain host concerns; these bits answer whether
+/// the model node has a compatible read/command/inverse path at all.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ObjectCapabilities {
+    can_resize: bool,
+    can_move: bool,
+    can_wrap: bool,
+    can_delete: bool,
+    can_alt_text: bool,
+    can_crop: bool,
+    can_fill: bool,
+    can_stroke: bool,
+    can_edit_text: bool,
+}
+
+impl ObjectCapabilities {
+    const fn inline_image() -> Self {
+        Self {
+            can_resize: true,
+            can_delete: true,
+            can_alt_text: true,
+            can_crop: true,
+            ..Self::empty()
+        }
+    }
+
+    const fn inline_text_box() -> Self {
+        Self {
+            can_resize: true,
+            can_delete: true,
+            can_edit_text: true,
+            ..Self::empty()
+        }
+    }
+
+    fn floating(kind: &str) -> Self {
+        Self {
+            can_resize: true,
+            can_move: true,
+            can_wrap: true,
+            can_delete: true,
+            can_alt_text: kind == "image",
+            can_crop: kind == "image",
+            can_edit_text: kind == "textbox",
+            ..Self::empty()
+        }
+    }
+
+    fn group_child(kind: &str) -> Self {
+        // Shape appearance has a dedicated recursive group-child resolver.
+        // Geometry, anchor, structure, crop, and alt-text commands do not: those
+        // target top-level InlineNodes/drawings. Expose only what can commit.
+        Self {
+            can_fill: kind == "shape",
+            can_stroke: kind == "shape",
+            can_edit_text: kind == "textbox",
+            ..Self::empty()
+        }
+    }
+
+    const fn empty() -> Self {
+        Self {
+            can_resize: false,
+            can_move: false,
+            can_wrap: false,
+            can_delete: false,
+            can_alt_text: false,
+            can_crop: false,
+            can_fill: false,
+            can_stroke: false,
+            can_edit_text: false,
+        }
+    }
 }
 
 /// Collects a paragraph's inline drawing nodes (with each drawing's resolved
@@ -14235,8 +14349,8 @@ fn collect_para_objects(
 }
 
 /// A selectable object resolved at a page-local point (docs/85 §3.1): its model
-/// `NodeId` (32-hex), an `ObjectKind`-style tag (`"image"`/`"textbox"`), the
-/// 1-based page, and its placed rect `[page, x, y, w, h]` in twips.
+/// `NodeId` (32-hex), an `ObjectKind`-style tag, the 1-based page, placed rect
+/// `[page, x, y, w, h]` in twips, and structural capability truth.
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
 pub struct ObjectHitPayload {
@@ -14245,6 +14359,7 @@ pub struct ObjectHitPayload {
     page: u32,
     rect: [i32; 5],
     anchored: bool,
+    capabilities: ObjectCapabilities,
 }
 
 #[wasm_bindgen]
@@ -14277,12 +14392,75 @@ impl ObjectHitPayload {
         self.rect.to_vec()
     }
 
-    /// Whether this is a floating/anchored object — movable and wrappable
-    /// (`setObjectAnchor`/`setObjectWrap`). Inline objects are resize-only.
+    /// Whether the selected node itself owns a floating anchor. A group child
+    /// may paint inside an anchored group without itself being movable.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn anchored(&self) -> bool {
         self.anchored
+    }
+
+    /// Whether this exact node supports an extent mutation.
+    #[wasm_bindgen(getter, js_name = canResize)]
+    #[must_use]
+    pub fn can_resize(&self) -> bool {
+        self.capabilities.can_resize
+    }
+
+    /// Whether this exact node owns a movable anchor position.
+    #[wasm_bindgen(getter, js_name = canMove)]
+    #[must_use]
+    pub fn can_move(&self) -> bool {
+        self.capabilities.can_move
+    }
+
+    /// Whether this exact node owns a mutable text-wrapping mode.
+    #[wasm_bindgen(getter, js_name = canWrap)]
+    #[must_use]
+    pub fn can_wrap(&self) -> bool {
+        self.capabilities.can_wrap
+    }
+
+    /// Whether this exact node can be deleted without remapping its identity.
+    #[wasm_bindgen(getter, js_name = canDelete)]
+    #[must_use]
+    pub fn can_delete(&self) -> bool {
+        self.capabilities.can_delete
+    }
+
+    /// Whether this exact node owns mutable alternative-text metadata.
+    #[wasm_bindgen(getter, js_name = canAltText)]
+    #[must_use]
+    pub fn can_alt_text(&self) -> bool {
+        self.capabilities.can_alt_text
+    }
+
+    /// Whether this exact node owns a mutable picture crop rectangle.
+    #[wasm_bindgen(getter, js_name = canCrop)]
+    #[must_use]
+    pub fn can_crop(&self) -> bool {
+        self.capabilities.can_crop
+    }
+
+    /// Whether this exact node owns mutable shape fill properties.
+    #[wasm_bindgen(getter, js_name = canFill)]
+    #[must_use]
+    pub fn can_fill(&self) -> bool {
+        self.capabilities.can_fill
+    }
+
+    /// Whether this exact node owns mutable shape stroke properties.
+    #[wasm_bindgen(getter, js_name = canStroke)]
+    #[must_use]
+    pub fn can_stroke(&self) -> bool {
+        self.capabilities.can_stroke
+    }
+
+    /// Whether this exact node contains an editable text-box surface.
+    #[wasm_bindgen(getter, js_name = canEditText)]
+    #[must_use]
+    pub fn can_edit_text(&self) -> bool {
+        self.capabilities.can_edit_text
     }
 }
 
@@ -22212,6 +22390,62 @@ mod tests {
     }
 
     #[test]
+    fn group_child_shape_capabilities_expose_only_supported_mutations() {
+        let mut document = document_with_shape(None);
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("shape fixture paragraph");
+        };
+        let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+            panic!("shape fixture group");
+        };
+        group.anchor = Some(page_offset_anchor());
+        group.relative_height = Some(1);
+
+        let d = wasm_document(document);
+        let shape = d
+            .object_boxes()
+            .into_iter()
+            .find(|object| object.kind == "shape")
+            .expect("placed group-child shape");
+        assert!(!shape.anchored, "a child id is not itself an anchor target");
+        assert_eq!(
+            shape.capabilities,
+            ObjectCapabilities {
+                can_fill: true,
+                can_stroke: true,
+                ..ObjectCapabilities::empty()
+            }
+        );
+        assert!(
+            d.object_handles(&shape.node.to_string()).is_empty(),
+            "an unresizable child must not advertise resize handles"
+        );
+
+        let cx = shape.rect.origin.x.raw() + shape.rect.size.width.raw() / 2;
+        let cy = shape.rect.origin.y.raw() + shape.rect.size.height.raw() / 2;
+        let hit = d
+            .object_at(shape.page, cx, cy)
+            .expect("hit the group-child shape");
+        assert!(hit.can_fill());
+        assert!(hit.can_stroke());
+        assert!(!hit.can_resize());
+        assert!(!hit.can_move());
+        assert!(!hit.can_wrap());
+        assert!(!hit.can_delete());
+        assert!(!hit.can_alt_text());
+        assert!(!hit.can_crop());
+
+        let order: Vec<ObjectOrderEntryJson> =
+            serde_json::from_str(&d.object_order()).expect("object order JSON");
+        let entry = order
+            .iter()
+            .find(|entry| entry.node == shape.node.to_string())
+            .expect("shape order entry");
+        assert!(entry.can_fill && entry.can_stroke);
+        assert!(!entry.can_resize && !entry.can_delete && !entry.can_wrap);
+    }
+
+    #[test]
     fn floating_object_selection_move_wrap_resize_and_round_trip() {
         let mut d = wasm_document(document_with_floating_image(page_offset_anchor()));
 
@@ -22228,6 +22462,12 @@ mod tests {
         let hit = d.object_at(float.page, cx, cy).expect("hit the float");
         assert_eq!(hit.node, node);
         assert!(hit.anchored, "objectAt reports it as anchored/movable");
+        assert!(hit.can_resize());
+        assert!(hit.can_move());
+        assert!(hit.can_wrap());
+        assert!(hit.can_delete());
+        assert!(hit.can_alt_text());
+        assert!(hit.can_crop());
 
         // Move it to a new absolute page position (one undoable SetAnchor).
         let before_rect = d.object_rect(&node);
