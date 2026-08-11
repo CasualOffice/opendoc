@@ -51,16 +51,17 @@ use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
     BookmarkId, BorderEdge, Break, CellMargins, CellVerticalAlignment, Color, Comment, CommentId,
     CommentRangeEnd, CommentRangeStart, CommentReference, DefinitionMap, Document, DrawingAnchor,
-    Extent, ExternalTarget, FontName, FontRef, HeightRule, HighlightColor, HorizontalAnchor,
-    HorizontalPosition, Hyperlink, HyperlinkTarget, Indentation, InlineNode, InternalTarget,
-    LevelJustification, LevelSuffix, MAX_EMU, MoveKind, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef, PageMargins,
-    PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders, ParagraphProperties,
-    PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
-    RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, Style, StyleId,
-    StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, TableWidth, UnderlineStyle, VerticalAlignment,
-    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
+    Extent, ExternalTarget, FontName, FontRef, GroupTransform, HeightRule, HighlightColor,
+    HorizontalAnchor, HorizontalPosition, Hyperlink, HyperlinkTarget, Indentation, InlineNode,
+    InternalTarget, LevelJustification, LevelSuffix, MAX_EMU, MoveKind, NumberFormat,
+    NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingOverride, NumberingRef,
+    PageMargins, PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders,
+    ParagraphProperties, PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
+    RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
+    Style, StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth, TextBoxAutoFit,
+    UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
+    WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
@@ -388,7 +389,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::DeleteTable { .. }
         | Operation::InsertTable { .. } => HistoryKind::TableStructure,
         Operation::InsertBlocks { .. } | Operation::DeleteBlocks { .. } => HistoryKind::Paste,
-        Operation::SetExtent { .. } => HistoryKind::ObjectResize,
+        Operation::SetExtent { .. } | Operation::SetGroupGeometry { .. } => {
+            HistoryKind::ObjectResize
+        }
         Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
@@ -1017,16 +1020,15 @@ impl WasmDocument {
             .unwrap_or_default()
     }
 
-    /// The eight resize/move handle centers of the selected object `node`, as a
+    /// The supported resize-handle centers of the selected object `node`, as a
     /// flat `[page, cxTwip, cyTwip, kind]` per handle (docs/85 §3.3
     /// `objectHandles`), in the order NW, N, NE, E, SE, S, SW, W (`kind` = that
-    /// index). The frontend paints a fixed screen-size grip centered at each —
-    /// engine-drawn chrome from the object's placed rect, so it matches the
-    /// raster with zero drift (docs/58). Empty if `node` is not placed or its
-    /// selected reference has no compatible exact-inverse resize command.
-    ///
-    /// Grips are painted this slice but not yet draggable; drag-resize/move is
-    /// the next slice (`P1G-OBJ-GEOMETRY`).
+    /// index). A carrier-specific mask may omit entries: inline objects expose
+    /// E/SE/S only because their flow anchor cannot move, while eligible floats
+    /// and groups expose all eight. The frontend paints a fixed screen-size grip
+    /// centered at each — engine-drawn chrome from the object's placed rect, so
+    /// it matches the raster with zero drift (docs/58). Empty if `node` is not
+    /// placed or its reference has no compatible exact-inverse resize command.
     #[wasm_bindgen(js_name = objectHandles)]
     #[must_use]
     pub fn object_handles(&self, node: &str) -> Vec<i32> {
@@ -1057,6 +1059,9 @@ impl WasmDocument {
         ];
         let mut out = Vec::with_capacity(centers.len() * 4);
         for (i, (hx, hy)) in centers.into_iter().enumerate() {
+            if obj.capabilities.resize_handles & (1 << i) == 0 {
+                continue;
+            }
             out.extend_from_slice(&[obj.page as i32, hx, hy, i as i32]);
         }
         out
@@ -1091,6 +1096,117 @@ impl WasmDocument {
             HistoryKind::ObjectResize,
         )
         .map_err(to_js)
+    }
+
+    /// Commits the final page-local rectangle of one handle drag as a single
+    /// exact-inverse history action (`UXOBJ-003`, doc 101 §7.3). Inline objects
+    /// replace extent only and therefore accept rectangles whose top-left did
+    /// not move. Floating drawings/text boxes replace extent plus a canonical
+    /// page-relative anchor. Eligible groups additionally scale their outer
+    /// `wp:extent` and the scale-bearing `a:xfrm` fields while retaining child
+    /// coordinates. The host previews freely but calls this exactly once on
+    /// pointer-up.
+    #[wasm_bindgen(js_name = resizeObject)]
+    pub fn resize_object(
+        &mut self,
+        root: &str,
+        left_emu: f64,
+        top_emu: f64,
+        width_emu: f64,
+        height_emu: f64,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(root)?;
+        let placed = self
+            .object_boxes()
+            .into_iter()
+            .find(|candidate| candidate.root == object)
+            .ok_or_else(|| to_js("object is not currently placed".into()))?;
+        let left = bounded_emu(left_emu, -MAX_EMU, MAX_EMU, "object left")?;
+        let top = bounded_emu(top_emu, -MAX_EMU, MAX_EMU, "object top")?;
+        let width = bounded_emu(width_emu, MIN_OBJECT_EMU, MAX_EMU, "object width")?;
+        let height = bounded_emu(height_emu, MIN_OBJECT_EMU, MAX_EMU, "object height")?;
+        let mut operations = Vec::with_capacity(2);
+
+        if let Some(group) = object_group(self.document.body(), object) {
+            if !group_resize_supported(group) {
+                return Err(to_js("group geometry cannot be resized exactly".into()));
+            }
+            let placed_width = i64::from(placed.rect.size.width.raw()) * EMU_PER_TWIP_I64;
+            let placed_height = i64::from(placed.rect.size.height.raw()) * EMU_PER_TWIP_I64;
+            if placed_width <= 0 || placed_height <= 0 {
+                return Err(to_js("group has a degenerate placed rectangle".into()));
+            }
+            let scale_x = width as f64 / placed_width as f64;
+            let scale_y = height as f64 / placed_height as f64;
+            let extent = Extent {
+                width_emu: scale_positive_emu(group.extent.width_emu, scale_x)?,
+                height_emu: scale_positive_emu(group.extent.height_emu, scale_y)?,
+            };
+            let mut transform = group.transform;
+            transform.offset.x_emu = scale_signed_emu(transform.offset.x_emu, scale_x)?;
+            transform.offset.y_emu = scale_signed_emu(transform.offset.y_emu, scale_y)?;
+            transform.extent.width_emu = scale_positive_emu(transform.extent.width_emu, scale_x)?;
+            transform.extent.height_emu = scale_positive_emu(transform.extent.height_emu, scale_y)?;
+            let bounds = group_content_bounds(group, transform)
+                .ok_or_else(|| to_js("group has no bounded child geometry".into()))?;
+            let anchor = page_anchor_at(
+                group
+                    .anchor
+                    .clone()
+                    .ok_or_else(|| to_js("group is not floating".into()))?,
+                checked_page_offset(left as f64 - bounds.left, "group left")?,
+                checked_page_offset(top as f64 - bounds.top, "group top")?,
+            );
+            operations.push(Operation::SetGroupGeometry {
+                object,
+                extent,
+                transform,
+            });
+            operations.push(Operation::SetAnchor {
+                object,
+                anchor: Box::new(anchor),
+            });
+        } else if let Some(anchor) = object_anchor(self.document.body(), object) {
+            if object_resize_handles(self.document.body(), object) != FLOAT_RESIZE_HANDLES {
+                return Err(to_js(
+                    "floating object geometry cannot be resized exactly".into(),
+                ));
+            }
+            operations.push(Operation::SetExtent {
+                object,
+                extent: Some(Extent {
+                    width_emu: width,
+                    height_emu: height,
+                }),
+            });
+            operations.push(Operation::SetAnchor {
+                object,
+                anchor: Box::new(page_anchor_at(anchor, left, top)),
+            });
+        } else {
+            if object_resize_handles(self.document.body(), object) != INLINE_RESIZE_HANDLES {
+                return Err(to_js(
+                    "inline object geometry cannot be resized exactly".into(),
+                ));
+            }
+            let current_left = i64::from(placed.rect.origin.x.raw()) * EMU_PER_TWIP_I64;
+            let current_top = i64::from(placed.rect.origin.y.raw()) * EMU_PER_TWIP_I64;
+            if (left - current_left).abs() > EMU_PER_TWIP_I64
+                || (top - current_top).abs() > EMU_PER_TWIP_I64
+            {
+                return Err(to_js("inline resize cannot move its flow anchor".into()));
+            }
+            operations.push(Operation::SetExtent {
+                object,
+                extent: Some(Extent {
+                    width_emu: width,
+                    height_emu: height,
+                }),
+            });
+        }
+
+        self.apply_action_caret_as(operations, Pos::new(object, 0), HistoryKind::ObjectResize)
+            .map_err(to_js)
     }
 
     /// The current authored extent of the object `node` as `[widthEmu, heightEmu]`
@@ -9411,7 +9527,9 @@ impl WasmDocument {
                                 page: page.number,
                                 rect,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_image(),
+                                capabilities: ObjectCapabilities::inline_image(
+                                    object_resize_handles(self.document.body(), img_nodes[i].0),
+                                ),
                             });
                         }
                     }
@@ -9433,7 +9551,9 @@ impl WasmDocument {
                                 page: page.number,
                                 rect,
                                 anchored: false,
-                                capabilities: ObjectCapabilities::inline_text_box(),
+                                capabilities: ObjectCapabilities::inline_text_box(
+                                    object_resize_handles(self.document.body(), tb_nodes[i]),
+                                ),
                             });
                         }
                     }
@@ -9468,6 +9588,8 @@ impl WasmDocument {
                     | AnchorContent::Line { .. } => "shape",
                 };
                 if let Some(reference) = group_ref {
+                    let resize_handles =
+                        object_resize_handles(self.document.body(), reference.root);
                     if reference.leaf_count == 1 || include_group_children {
                         out.push(ObjectBox {
                             root: reference.root,
@@ -9477,7 +9599,7 @@ impl WasmDocument {
                             page: page.number,
                             rect: placed.rect,
                             anchored: true,
-                            capabilities: ObjectCapabilities::group_child(kind),
+                            capabilities: ObjectCapabilities::group_child(kind, resize_handles),
                         });
                     } else if let Some(index) = grouped.get(&reference.root).copied() {
                         out[index].rect = union_rect(out[index].rect, placed.rect);
@@ -9491,7 +9613,7 @@ impl WasmDocument {
                             page: page.number,
                             rect: placed.rect,
                             anchored: true,
-                            capabilities: ObjectCapabilities::group_root(),
+                            capabilities: ObjectCapabilities::group_root(resize_handles),
                         });
                     }
                 } else {
@@ -9503,7 +9625,10 @@ impl WasmDocument {
                         page: page.number,
                         rect: placed.rect,
                         anchored: true,
-                        capabilities: ObjectCapabilities::floating(kind),
+                        capabilities: ObjectCapabilities::floating(
+                            kind,
+                            object_resize_handles(self.document.body(), node),
+                        ),
                     });
                 }
             }
@@ -14312,6 +14437,10 @@ struct ObjectBox {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ObjectCapabilities {
     can_resize: bool,
+    /// One bit per handle in NW,N,NE,E,SE,S,SW,W order. `can_resize` is the
+    /// compatibility summary; this mask is the exact carrier contract consumed
+    /// by `objectHandles`.
+    resize_handles: u8,
     can_move: bool,
     can_wrap: bool,
     can_delete: bool,
@@ -14323,9 +14452,10 @@ struct ObjectCapabilities {
 }
 
 impl ObjectCapabilities {
-    const fn inline_image() -> Self {
+    const fn inline_image(resize_handles: u8) -> Self {
         Self {
-            can_resize: true,
+            can_resize: resize_handles != 0,
+            resize_handles,
             can_delete: true,
             can_alt_text: true,
             can_crop: true,
@@ -14333,18 +14463,20 @@ impl ObjectCapabilities {
         }
     }
 
-    const fn inline_text_box() -> Self {
+    const fn inline_text_box(resize_handles: u8) -> Self {
         Self {
-            can_resize: true,
+            can_resize: resize_handles != 0,
+            resize_handles,
             can_delete: true,
             can_edit_text: true,
             ..Self::empty()
         }
     }
 
-    fn floating(kind: &str) -> Self {
+    fn floating(kind: &str, resize_handles: u8) -> Self {
         Self {
-            can_resize: true,
+            can_resize: resize_handles != 0,
+            resize_handles,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -14355,11 +14487,12 @@ impl ObjectCapabilities {
         }
     }
 
-    fn group_child(kind: &str) -> Self {
-        // A single-child group's root is the anchor/delete target while its leaf
-        // remains the appearance/text subject. Group extent needs a separate
-        // exact-inverse geometry op, so resize stays unavailable in this slice.
+    fn group_child(kind: &str, resize_handles: u8) -> Self {
+        // A single-child group's root owns geometry while its leaf remains the
+        // appearance/text subject.
         Self {
+            can_resize: resize_handles != 0,
+            resize_handles,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -14370,8 +14503,10 @@ impl ObjectCapabilities {
         }
     }
 
-    const fn group_root() -> Self {
+    const fn group_root(resize_handles: u8) -> Self {
         Self {
+            can_resize: resize_handles != 0,
+            resize_handles,
             can_move: true,
             can_wrap: true,
             can_delete: true,
@@ -14382,6 +14517,7 @@ impl ObjectCapabilities {
     const fn empty() -> Self {
         Self {
             can_resize: false,
+            resize_handles: 0,
             can_move: false,
             can_wrap: false,
             can_delete: false,
@@ -14401,6 +14537,330 @@ impl ObjectCapabilities {
 /// EMU per twip (914,400 EMU/inch ÷ 1,440 twip/inch). Object extents are authored
 /// in EMU; the layout/selection geometry is in twips.
 const EMU_PER_TWIP: f64 = 635.0;
+const EMU_PER_TWIP_I64: i64 = 635;
+const MIN_OBJECT_EMU: i64 = 144 * EMU_PER_TWIP_I64;
+
+// Handle bits in the public NW,N,NE,E,SE,S,SW,W order. Inline objects cannot
+// move their character anchor, so only handles whose opposite top/left edge is
+// already fixed are truthful. Eligible floats/groups can update anchor + size
+// atomically and therefore expose the complete set.
+const INLINE_RESIZE_HANDLES: u8 = (1 << 3) | (1 << 4) | (1 << 5);
+const FLOAT_RESIZE_HANDLES: u8 = u8::MAX;
+
+fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
+    if !value.is_finite() {
+        return Err(to_js(format!("{label} must be finite")));
+    }
+    let rounded = value.round();
+    if rounded < min as f64 || rounded > max as f64 {
+        return Err(to_js(format!("{label} is out of bounds")));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    Ok(rounded as i64)
+}
+
+fn scale_positive_emu(value: i64, scale: f64) -> Result<i64, JsValue> {
+    bounded_emu(value as f64 * scale, 1, MAX_EMU, "scaled extent")
+}
+
+fn scale_signed_emu(value: i64, scale: f64) -> Result<i64, JsValue> {
+    bounded_emu(value as f64 * scale, -MAX_EMU, MAX_EMU, "scaled offset")
+}
+
+fn checked_page_offset(value: f64, label: &str) -> Result<i64, JsValue> {
+    bounded_emu(value, -MAX_EMU, MAX_EMU, label)
+}
+
+fn page_anchor_at(mut anchor: DrawingAnchor, left_emu: i64, top_emu: i64) -> DrawingAnchor {
+    anchor.horizontal = AnchorHorizontal {
+        relative_from: HorizontalAnchor::Page,
+        position: HorizontalPosition::Offset(left_emu),
+    };
+    anchor.vertical = AnchorVertical {
+        relative_from: VerticalAnchor::Page,
+        position: VerticalPosition::Offset(top_emu),
+    };
+    anchor
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EmuBounds {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+impl EmuBounds {
+    fn from_rect(left: f64, top: f64, width: f64, height: f64) -> Self {
+        Self {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            top: self.top.min(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GroupAffine {
+    scale_x: f64,
+    scale_y: f64,
+    tx: f64,
+    ty: f64,
+}
+
+impl GroupAffine {
+    fn from_transform(transform: GroupTransform) -> Self {
+        let scale_x = transform.extent.width_emu as f64 / transform.child_extent.width_emu as f64;
+        let scale_y = transform.extent.height_emu as f64 / transform.child_extent.height_emu as f64;
+        Self {
+            scale_x,
+            scale_y,
+            tx: transform.offset.x_emu as f64 - transform.child_offset.x_emu as f64 * scale_x,
+            ty: transform.offset.y_emu as f64 - transform.child_offset.y_emu as f64 * scale_y,
+        }
+    }
+
+    fn compose(self, transform: GroupTransform) -> Self {
+        let inner = Self::from_transform(transform);
+        Self {
+            scale_x: self.scale_x * inner.scale_x,
+            scale_y: self.scale_y * inner.scale_y,
+            tx: self.scale_x * inner.tx + self.tx,
+            ty: self.scale_y * inner.ty + self.ty,
+        }
+    }
+
+    fn rect(self, offset: casual_doc_model::v1::PointEmu, extent: Extent) -> EmuBounds {
+        EmuBounds::from_rect(
+            self.scale_x * offset.x_emu as f64 + self.tx,
+            self.scale_y * offset.y_emu as f64 + self.ty,
+            self.scale_x * extent.width_emu as f64,
+            self.scale_y * extent.height_emu as f64,
+        )
+    }
+}
+
+fn group_content_bounds(
+    group: &WordprocessingGroup,
+    transform: GroupTransform,
+) -> Option<EmuBounds> {
+    group_content_bounds_with_mapper(group, GroupAffine::from_transform(transform))
+}
+
+fn group_content_bounds_with_mapper(
+    group: &WordprocessingGroup,
+    mapper: GroupAffine,
+) -> Option<EmuBounds> {
+    let mut bounds = None;
+    for child in &group.children {
+        let child_bounds = match child {
+            GroupChild::Picture(picture) => mapper.rect(picture.offset, picture.extent),
+            GroupChild::TextBox(text_box) => mapper.rect(text_box.offset, text_box.extent),
+            GroupChild::Shape(shape) => mapper.rect(shape.offset, shape.extent),
+            GroupChild::Group(nested) => {
+                let nested_mapper = mapper.compose(nested.transform);
+                let Some(nested_bounds) = group_content_bounds_with_mapper(nested, nested_mapper)
+                else {
+                    continue;
+                };
+                nested_bounds
+            }
+        };
+        bounds = Some(bounds.map_or(child_bounds, |current: EmuBounds| {
+            current.union(child_bounds)
+        }));
+    }
+    bounds
+}
+
+/// Exact handle support for one model carrier. This deliberately rejects
+/// rotated/flipped paint bounds and flow-dependent group text boxes: their
+/// axis-aligned selection rectangles do not yet have an exact model inverse.
+fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> u8 {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(handles) = object_resize_handles_in_inlines(&paragraph.inlines, object)
+                {
+                    return handles;
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        let handles = object_resize_handles(&cell.blocks, object);
+                        if handles != 0 {
+                            return handles;
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                let handles = object_resize_handles(&sdt.blocks, object);
+                if handles != 0 {
+                    return handles;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    0
+}
+
+fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<u8> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Drawing(drawing) if drawing.id == object => {
+                return Some(
+                    if drawing.rotation.is_none() && !drawing.flip_h && !drawing.flip_v {
+                        INLINE_RESIZE_HANDLES
+                    } else {
+                        0
+                    },
+                );
+            }
+            InlineNode::AnchoredDrawing(drawing) if drawing.id == object => {
+                return Some(
+                    if drawing.rotation.is_none() && !drawing.flip_h && !drawing.flip_v {
+                        FLOAT_RESIZE_HANDLES
+                    } else {
+                        0
+                    },
+                );
+            }
+            InlineNode::TextBox(text_box) => {
+                if text_box.id == object {
+                    return Some(if text_box.anchor.is_some() {
+                        FLOAT_RESIZE_HANDLES
+                    } else {
+                        INLINE_RESIZE_HANDLES
+                    });
+                }
+                if let Some(handles) = object_resize_handles_nested(&text_box.blocks, object) {
+                    return Some(handles);
+                }
+            }
+            InlineNode::Group(group) if group.id == object => {
+                return Some(if group_resize_supported(group) {
+                    FLOAT_RESIZE_HANDLES
+                } else {
+                    0
+                });
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(handles) = object_resize_handles_in_inlines(&hyperlink.inlines, object)
+                {
+                    return Some(handles);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(handles) = object_resize_handles_in_inlines(&revision.inlines, object) {
+                    return Some(handles);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn object_resize_handles_nested(blocks: &[BlockNode], object: NodeId) -> Option<u8> {
+    let handles = object_resize_handles(blocks, object);
+    (handles != 0).then_some(handles)
+}
+
+fn positive_extent(extent: Extent) -> bool {
+    extent.width_emu > 0 && extent.height_emu > 0
+}
+
+fn group_resize_supported(group: &WordprocessingGroup) -> bool {
+    group.anchor.is_some()
+        && positive_extent(group.extent)
+        && positive_extent(group.transform.extent)
+        && positive_extent(group.transform.child_extent)
+        && !group.transform.flip_h
+        && !group.transform.flip_v
+        && group.transform.rotation.is_none()
+        && !group.children.is_empty()
+        && group.children.iter().all(|child| match child {
+            GroupChild::Picture(picture) => {
+                positive_extent(picture.extent)
+                    && !picture.flip_h
+                    && !picture.flip_v
+                    && picture.rotation.is_none()
+            }
+            GroupChild::TextBox(text_box) => {
+                positive_extent(text_box.extent)
+                    && text_box.body_properties.auto_fit != TextBoxAutoFit::Shape
+                    && !text_box.flip_h
+                    && !text_box.flip_v
+                    && text_box.rotation.is_none()
+            }
+            GroupChild::Shape(shape) => {
+                positive_extent(shape.extent)
+                    && !shape.flip_h
+                    && !shape.flip_v
+                    && shape.rotation.is_none()
+            }
+            GroupChild::Group(nested) => {
+                nested.anchor.is_none()
+                    && positive_extent(nested.extent)
+                    && positive_extent(nested.transform.extent)
+                    && positive_extent(nested.transform.child_extent)
+                    && !nested.transform.flip_h
+                    && !nested.transform.flip_v
+                    && nested.transform.rotation.is_none()
+                    && !nested.children.is_empty()
+                    && nested.children.iter().all(group_child_resize_supported)
+            }
+        })
+}
+
+fn group_child_resize_supported(child: &GroupChild) -> bool {
+    match child {
+        GroupChild::Picture(picture) => {
+            positive_extent(picture.extent)
+                && !picture.flip_h
+                && !picture.flip_v
+                && picture.rotation.is_none()
+        }
+        GroupChild::TextBox(text_box) => {
+            positive_extent(text_box.extent)
+                && text_box.body_properties.auto_fit != TextBoxAutoFit::Shape
+                && !text_box.flip_h
+                && !text_box.flip_v
+                && text_box.rotation.is_none()
+        }
+        GroupChild::Shape(shape) => {
+            positive_extent(shape.extent)
+                && !shape.flip_h
+                && !shape.flip_v
+                && shape.rotation.is_none()
+        }
+        GroupChild::Group(nested) => {
+            nested.anchor.is_none()
+                && positive_extent(nested.extent)
+                && positive_extent(nested.transform.extent)
+                && positive_extent(nested.transform.child_extent)
+                && !nested.transform.flip_h
+                && !nested.transform.flip_v
+                && nested.transform.rotation.is_none()
+                && !nested.children.is_empty()
+                && nested.children.iter().all(group_child_resize_supported)
+        }
+    }
+}
 
 /// The authored extent of the inline drawing / text box `object`, searched across
 /// body paragraphs (through hyperlink/revision wrappers), table cells, block SDTs,
@@ -14527,6 +14987,87 @@ fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Dr
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+/// Resolves a DrawingML group carrier through the same bounded body traversal
+/// used by the geometry reads. Nested groups are included so the retained
+/// geometry helper has one model lookup contract even though initial selection
+/// currently addresses the top-level root.
+fn object_group(blocks: &[BlockNode], object: NodeId) -> Option<&WordprocessingGroup> {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(group) = object_group_in_inlines(&paragraph.inlines, object) {
+                    return Some(group);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(group) = object_group(&cell.blocks, object) {
+                            return Some(group);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(group) = object_group(&sdt.blocks, object) {
+                    return Some(group);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn object_group_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<&WordprocessingGroup> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Group(group) => {
+                if group.id == object {
+                    return Some(group);
+                }
+                if let Some(group) = object_group_in_children(&group.children, object) {
+                    return Some(group);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(group) = object_group(&text_box.blocks, object) {
+                    return Some(group);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(group) = object_group_in_inlines(&hyperlink.inlines, object) {
+                    return Some(group);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(group) = object_group_in_inlines(&revision.inlines, object) {
+                    return Some(group);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn object_group_in_children(
+    children: &[GroupChild],
+    object: NodeId,
+) -> Option<&WordprocessingGroup> {
+    for child in children {
+        if let GroupChild::Group(group) = child {
+            if group.id == object {
+                return Some(group);
+            }
+            if let Some(group) = object_group_in_children(&group.children, object) {
+                return Some(group);
+            }
         }
     }
     None
@@ -16284,6 +16825,7 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // re-draws the object chrome, not a text caret); this arm keeps the match
         // exhaustive.
         Operation::SetExtent { object, .. }
+        | Operation::SetGroupGeometry { object, .. }
         | Operation::SetAnchor { object, .. }
         | Operation::SetImageCrop { object, .. }
         | Operation::SetObjectDescr { object, .. } => Pos::new(*object, 0),
@@ -22662,6 +23204,8 @@ mod tests {
         assert_eq!(
             shape.capabilities,
             ObjectCapabilities {
+                can_resize: true,
+                resize_handles: FLOAT_RESIZE_HANDLES,
                 can_move: true,
                 can_wrap: true,
                 can_delete: true,
@@ -22670,10 +23214,7 @@ mod tests {
                 ..ObjectCapabilities::empty()
             }
         );
-        assert!(
-            d.object_handles(&subject.to_string()).is_empty(),
-            "group resize remains unavailable until it has an exact inverse"
-        );
+        assert_eq!(d.object_handles(&subject.to_string()).len(), 8 * 4);
 
         let cx = shape.rect.origin.x.raw() + shape.rect.size.width.raw() / 2;
         let cy = shape.rect.origin.y.raw() + shape.rect.size.height.raw() / 2;
@@ -22687,7 +23228,7 @@ mod tests {
         assert_eq!(hit.path(), vec![0]);
         assert!(hit.can_fill());
         assert!(hit.can_stroke());
-        assert!(!hit.can_resize());
+        assert!(hit.can_resize());
         assert!(hit.can_move());
         assert!(hit.can_wrap());
         assert!(hit.can_delete());
@@ -22706,7 +23247,61 @@ mod tests {
         assert_eq!(entry.path, vec![0]);
         assert!(entry.can_fill && entry.can_stroke);
         assert!(entry.can_move && entry.can_wrap && entry.can_delete);
-        assert!(!entry.can_resize && !entry.can_alt_text && !entry.can_crop);
+        assert!(entry.can_resize);
+        assert!(!entry.can_alt_text && !entry.can_crop);
+
+        // A NW resize changes the previewed left/top and size together while
+        // preserving the opposite corner. Group wp:extent, transform, and
+        // anchor are one history action whose inverse restores every value.
+        let before_rect = d.object_rect(&subject.to_string());
+        let before_geometry = object_group(d.document.body(), root)
+            .map(|group| (group.extent, group.transform, group.anchor.clone()))
+            .expect("group geometry");
+        let final_rect = [
+            before_rect[1] - 240,
+            before_rect[2] - 120,
+            before_rect[3] + 240,
+            before_rect[4] + 120,
+        ];
+        d.resize_object(
+            &root.to_string(),
+            f64::from(final_rect[0]) * EMU_PER_TWIP,
+            f64::from(final_rect[1]) * EMU_PER_TWIP,
+            f64::from(final_rect[2]) * EMU_PER_TWIP,
+            f64::from(final_rect[3]) * EMU_PER_TWIP,
+        )
+        .expect("resize the group root");
+        let resized = d.object_rect(&subject.to_string());
+        assert!((resized[1] - final_rect[0]).abs() <= 1);
+        assert!((resized[2] - final_rect[1]).abs() <= 1);
+        assert!((resized[3] - final_rect[2]).abs() <= 1);
+        assert!((resized[4] - final_rect[3]).abs() <= 1);
+        assert!((resized[1] + resized[3] - before_rect[1] - before_rect[3]).abs() <= 1);
+        assert!((resized[2] + resized[4] - before_rect[2] - before_rect[4]).abs() <= 1);
+        d.undo().expect("undo the group resize");
+        assert_eq!(d.object_rect(&subject.to_string()), before_rect);
+        let restored_geometry = object_group(d.document.body(), root)
+            .map(|group| (group.extent, group.transform, group.anchor.clone()))
+            .expect("restored group geometry");
+        assert_eq!(restored_geometry, before_geometry);
+        d.resize_object(
+            &root.to_string(),
+            f64::from(final_rect[0]) * EMU_PER_TWIP,
+            f64::from(final_rect[1]) * EMU_PER_TWIP,
+            f64::from(final_rect[2]) * EMU_PER_TWIP,
+            f64::from(final_rect[3]) * EMU_PER_TWIP,
+        )
+        .expect("re-resize for export");
+        let exported = d.export_docx().expect("export resized group");
+        let reopened = open_document(&exported).expect("reopen resized group");
+        let reopened_shape = reopened
+            .object_boxes()
+            .into_iter()
+            .find(|object| object.kind == "shape")
+            .expect("resized group shape survives export");
+        assert!((reopened_shape.rect.size.width.raw() - final_rect[2]).abs() <= 1);
+        assert!((reopened_shape.rect.size.height.raw() - final_rect[3]).abs() <= 1);
+        d.undo().expect("restore after export proof");
 
         // Geometry is read from the subject's placed leaf, but anchor mutations
         // target the root and remain one exactly undoable action.
@@ -22770,7 +23365,10 @@ mod tests {
         assert_eq!(selected.subject, root);
         assert!(selected.path.is_empty());
         assert!(selected.anchored);
-        assert_eq!(selected.capabilities, ObjectCapabilities::group_root());
+        assert_eq!(
+            selected.capabilities,
+            ObjectCapabilities::group_root(FLOAT_RESIZE_HANDLES)
+        );
         assert!(selected.rect.size.width.raw() > 1_440);
 
         let cx = selected.rect.origin.x.raw() + selected.rect.size.width.raw() / 2;
@@ -22783,7 +23381,8 @@ mod tests {
         assert!(hit.path().is_empty());
         assert_eq!(hit.kind(), "group");
         assert!(hit.can_move() && hit.can_wrap() && hit.can_delete());
-        assert!(!hit.can_resize() && !hit.can_fill() && !hit.can_stroke());
+        assert!(hit.can_resize());
+        assert!(!hit.can_fill() && !hit.can_stroke());
 
         let children = d.object_boxes_including_group_children();
         assert_eq!(children.len(), 2);
@@ -22814,6 +23413,29 @@ mod tests {
         assert_eq!(descendants.len(), 2);
         assert_eq!(descendants[0].path, vec![0]);
         assert_eq!(descendants[1].path, vec![1]);
+    }
+
+    #[test]
+    fn rotated_group_resize_fails_closed_without_handles() {
+        let mut document = document_with_shape(None);
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("shape fixture paragraph");
+        };
+        let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+            panic!("shape fixture group");
+        };
+        let root = group.id;
+        group.anchor = Some(page_offset_anchor());
+        group.transform.rotation = Some(60_000);
+
+        let d = wasm_document(document);
+        let selected = d
+            .object_boxes()
+            .into_iter()
+            .find(|object| object.root == root)
+            .expect("rotated group remains selectable");
+        assert!(!selected.capabilities.can_resize);
+        assert!(d.object_handles(&selected.subject.to_string()).is_empty());
     }
 
     #[test]
@@ -22855,10 +23477,38 @@ mod tests {
             .expect("re-wrap behind text");
         assert_eq!(d.object_wrap(&node), "behind");
 
-        // Resize a floating object (SetExtent applies to floats now).
-        d.set_object_extent(&node, 2_400_000.0, 1_200_000.0)
-            .expect("resize the float");
-        assert_eq!(d.object_extent(&node), vec![2_400_000.0, 1_200_000.0]);
+        // A W-handle rectangle replaces extent + anchor atomically and keeps
+        // the opposite edge fixed. One undo restores both fields exactly.
+        let before_resize = d.object_rect(&node);
+        let before_anchor = object_anchor(d.document.body(), float.subject).expect("float anchor");
+        let final_left = before_resize[1] - 300;
+        let final_width = before_resize[3] + 300;
+        d.resize_object(
+            &node,
+            f64::from(final_left) * EMU_PER_TWIP,
+            f64::from(before_resize[2]) * EMU_PER_TWIP,
+            f64::from(final_width) * EMU_PER_TWIP,
+            f64::from(before_resize[4]) * EMU_PER_TWIP,
+        )
+        .expect("resize the float from the west");
+        let resized = d.object_rect(&node);
+        assert!((resized[1] - final_left).abs() <= 1);
+        assert!((resized[1] + resized[3] - before_resize[1] - before_resize[3]).abs() <= 1);
+        let resized_extent = d.object_extent(&node);
+        d.undo().expect("undo extent plus anchor");
+        assert_eq!(d.object_rect(&node), before_resize);
+        assert_eq!(
+            object_anchor(d.document.body(), float.subject),
+            Some(before_anchor)
+        );
+        d.resize_object(
+            &node,
+            f64::from(final_left) * EMU_PER_TWIP,
+            f64::from(before_resize[2]) * EMU_PER_TWIP,
+            f64::from(final_width) * EMU_PER_TWIP,
+            f64::from(before_resize[4]) * EMU_PER_TWIP,
+        )
+        .expect("re-resize for round trip");
 
         // Round-trip through DOCX: move + wrap + resize survive export + reopen.
         d.set_object_anchor_position(&node, 3_500_000.0, 2_500_000.0)
@@ -22875,7 +23525,7 @@ mod tests {
         assert_eq!(reopened.object_wrap(&reopened_float), "behind");
         assert_eq!(
             reopened.object_extent(&reopened_float),
-            vec![2_400_000.0, 1_200_000.0],
+            resized_extent,
             "the resized extent round-trips"
         );
     }
@@ -22949,20 +23599,21 @@ mod tests {
         assert_eq!(hit.kind, "image");
         assert_eq!(hit.rect[0], image.page as i32);
 
-        // objectRect round-trips the placed rect; objectHandles yields 8 grips
-        // (NW,N,NE,E,SE,S,SW,W), each `[page, cx, cy, kind]`.
+        // objectRect round-trips the placed rect. An inline object's flow anchor
+        // cannot move, so only E/SE/S are offered; north/west handles would lie
+        // about preserving their opposite edge.
         let rect = d.object_rect(&image.subject.to_string());
         assert_eq!(rect.len(), 5, "objectRect is [page,x,y,w,h]");
         assert_eq!(rect[3], image.rect.size.width.raw());
         let handles = d.object_handles(&image.subject.to_string());
-        assert_eq!(handles.len(), 8 * 4, "eight [page,cx,cy,kind] handles");
-        // The NW handle sits at the object's top-left corner.
-        assert_eq!(handles[1], image.rect.origin.x.raw());
-        assert_eq!(handles[2], image.rect.origin.y.raw());
-        // The kind indices run 0..8 in order.
-        for i in 0..8 {
-            assert_eq!(handles[i * 4 + 3], i as i32);
-        }
+        assert_eq!(handles.len(), 3 * 4, "three exact inline resize handles");
+        assert_eq!(
+            handles
+                .chunks_exact(4)
+                .map(|handle| handle[3])
+                .collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
 
         // A point in the far top-left margin hits no object.
         assert!(d.object_at(image.page, 1, 1).is_none());

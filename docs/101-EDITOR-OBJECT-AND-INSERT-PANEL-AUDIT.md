@@ -17,9 +17,10 @@ them. The follow-on `UXOBJ-002` slice introduces the engine-owned
 format/text subject while move, wrap, and delete route to the owning group root;
 a true multi-child group initially selects one root union, while double-click or
 keyboard Enter uses an engine-returned child reference to descend without
-making leaf formatting unreachable. Group resize remains fail-closed because
-its extent and transform extent do not yet have one atomic, exact-inverse
-geometry operation (`UXOBJ-003`).
+making leaf formatting unreachable. The `UXOBJ-003` follow-on adds one final-
+rectangle resize entry point and a retained `SetGroupGeometry` inverse: eligible
+unrotated groups now resize `wp:extent`, group transform, and anchor atomically;
+unsupported rotated/flip/autofit cases remain fail-closed.
 
 ## 1. Executive conclusion
 
@@ -27,10 +28,12 @@ The drawing-object experience is not yet production-ready. The audit's first
 finding was not visual polish: **the host offered mutations that the engine
 could not perform for the selected model node**. A newly inserted shape exposed
 that defect because it is a `WordprocessingGroup` containing a
-`GroupChild::Shape`. PR #481 corrected capability truth, and the current
-`UXOBJ-002` slice resolves the root/subject identity split. The remaining
-release blockers are atomic resize semantics, surface-complete resolution, crop
-preservation, and the missing inspector/panel architecture.
+`GroupChild::Shape`. PR #481 corrected capability truth, merged PR #482
+resolved the root/subject identity split, and `UXOBJ-003` now makes every
+offered resize handle exact and inverse-tested. The remaining
+release blockers are residual rotated/flow-dependent resize semantics,
+surface-complete resolution, crop preservation, and the missing inspector/panel
+architecture.
 
 The second problem is interaction architecture. A large floating context bar
 places all six wrap modes plus object actions over the page; symbol, emoji, and
@@ -96,13 +99,13 @@ actually descends into them.
 
 | Selected model identity | Select | Resize | Move / wrap | Delete | Alt text | Kind properties |
 | --- | --- | --- | --- | --- | --- | --- |
-| Top-level body inline `Drawing` | Yes | Yes | N/A | Yes | Yes | Crop, but current-crop read is absent |
-| Top-level body `AnchoredDrawing` | Yes | Yes | Yes | Yes | Yes | Crop, but current-crop read is absent |
-| Body inline `TextBox` | Yes | Yes | N/A | Yes | N/A and omitted | Content editing yes; body properties absent |
-| Body floating `TextBox` | Yes | Yes | Yes | Yes | N/A and omitted | Content editing yes; body properties absent |
-| Body anchored group root | Yes as a unit for a multi-child group | **No and no handles** | Yes | Yes | No | Root selection only; inspector absent |
-| Lone `GroupChild::Shape` | Yes as `subject` under its group `root` | **No and no handles** | Yes, through root | Yes, through root | No and omitted | Fill and stroke through subject |
-| Lone `GroupChild::Picture` | Yes as `subject` under its group `root` | **No and no handles** | Yes, through root | Yes, through root | **No and omitted** | Crop unsupported and omitted |
+| Top-level body inline `Drawing` | Yes | E/S/SE only; flow anchor fixed | N/A | Yes | Yes | Crop, but current-crop read is absent |
+| Top-level body `AnchoredDrawing` | Yes | Eight handles when unrotated/unflipped | Yes | Yes | Yes | Crop, but current-crop read is absent |
+| Body inline `TextBox` | Yes | E/S/SE only; flow anchor fixed | N/A | Yes | N/A and omitted | Content editing yes; body properties absent |
+| Body floating `TextBox` | Yes | Eight handles | Yes | Yes | N/A and omitted | Content editing yes; body properties absent |
+| Body anchored group root | Yes as a unit for a multi-child group | Eight handles when transform/children have an exact fixed-extent inverse | Yes | Yes | No | Root selection; rotated/flip/shape-autofit cases omit resize |
+| Lone `GroupChild::Shape` | Yes as `subject` under its group `root` | Through eligible root geometry | Yes, through root | Yes, through root | No and omitted | Fill and stroke through subject |
+| Lone `GroupChild::Picture` | Yes as `subject` under its group `root` | Through eligible root geometry | Yes, through root | Yes, through root | **No and omitted** | Crop unsupported and omitted |
 | Header/footer drawing | Float selection deliberately filtered; inline correlation incomplete | Body-only | Body-only | Structural delete can resolve owning surface | Setter resolves; getter is body-only | Inconsistent |
 | Object in a table-cell fragment | Model resolver may descend | Mutation may descend within body | Mutation may descend within body | Mutation may descend within body | Mutation may descend within body | Selection correlation does not cover the nested placed-fragment shape |
 
@@ -142,8 +145,9 @@ groups coalesce their child paint boxes into one root selection; explicit
 double-click/Enter descent asks the engine for a bounded leaf reference, keeping
 existing child formatting reachable. Engine tests cover root move/wrap/delete
 with undo, root/subject/path restoration, group union, and child descent; browser
-regressions cover an inserted shape and pointer/keyboard group descent. Non-body
-surfaces and exact group resize remain open in `UXOBJ-003/004`.
+regressions cover an inserted shape and pointer/keyboard group descent. Eligible
+group resize is now exact-inverse and root-routed in `UXOBJ-003`;
+rotated/flip/autofit geometry and non-body surfaces remain open boundaries.
 
 ### 4.2 P0 — four resize handles have incorrect geometry semantics
 
@@ -168,6 +172,19 @@ recipe. Every offered handle must keep its opposite edge/corner invariant after
 commit. For floats, N/W handles require one atomic anchor-plus-extent action. If
 an inline or nested object cannot honor a handle, that handle is not a declared
 capability and must not be painted.
+
+**Current correction:** `objectHandles` now emits a carrier-specific subset.
+Inline drawings/text boxes offer E/S/SE only. Eligible unrotated floats and
+groups offer all eight; final pointer geometry is committed through one
+`resizeObject` call. Floating N/W gestures batch extent plus a canonical page
+anchor, while group gestures batch `SetGroupGeometry` plus `SetAnchor` in one
+rollback-safe history action. The group inverse retains the previous outer
+extent and complete transform verbatim. Engine regressions cover group/float
+undo and DOCX export/reopen; browser regressions cover all eight floating
+handles, opposite-edge invariants, minimum-size crossing, cancellation, inline
+handle omission, group-of-one, and a real multi-child group. Rotated/flipped
+paint bounds and shape-autofit grouped text boxes intentionally expose no
+resize handles.
 
 ### 4.3 P0 — object operations are not surface-complete
 
@@ -258,9 +275,9 @@ returns to the selected object; F6 cycles workspace regions. Destructive and
 temporarily unavailable actions remain present with a discoverable reason;
 structurally inapplicable actions are omitted.
 
-## 5. Why the current tests remained green
+## 5. Why the pre-correction tests remained green
 
-The current suites verify narrow successful carriers:
+At audit time, the suites verified narrow successful carriers:
 
 - `object-geometry.spec.mjs` resizes a top-level picture from SE and E;
 - `object-anchor.spec.mjs` moves/wraps/resizes one top-level floating picture;
@@ -272,8 +289,13 @@ The current suites verify narrow successful carriers:
 - crop tests do not begin with a non-identity imported crop.
 
 The tests match implementation slices rather than the end-user capability
-claim. Future gates must use the capability matrix in §11 so a new carrier
-cannot inherit controls without inheriting their regressions.
+claim. `UXOBJ-003` closes the resize-specific part of that gap: engine tests now
+cover exact float/group inverse and export/reopen behavior, while browser tests
+cover all eight eligible floating handles, opposite-edge/corner invariants,
+minimum-size crossing, cancellation, inline handle omission, group-of-one, and
+a real multi-child group. The complete 454-test browser suite also passes.
+Future gates must still use the capability matrix in §11 so a new carrier or
+surface cannot inherit controls without inheriting their regressions.
 
 ## 6. Competitive analysis and adopted lessons
 
@@ -376,6 +398,20 @@ Required invariants:
 - pointer-up creates exactly one undo entry;
 - undo restores position, size, crop/transform dependencies, selection, and
   export semantics.
+
+**Bounded `UXOBJ-003` implementation decision.** The host owns only the live
+preview and sends the final page-local rectangle to one engine entry point. The
+engine resolves the root carrier and commits one history transaction: inline
+objects change extent only; floating drawings/text boxes change extent plus a
+page-relative anchor when the dragged edge moves; groups change `wp:extent`,
+the scaling fields of `GroupTransform`, and the anchor together. The inverse
+retains every replaced model value verbatim. Inline objects expose only E, S,
+and SE because their character position cannot preserve a moved north/west
+edge. Unrotated floating carriers may expose all eight handles. A group exposes
+handles only when its transform is bounded and nondegenerate and its placed
+children have fixed extents; rotated/flipped groups and shape-autofit text boxes
+remain fail-closed until their painted bounds have an exact inverse. The 144
+twip minimum is applied to the final rectangle before any model mutation.
 
 ### 7.4 One contextual Properties inspector
 

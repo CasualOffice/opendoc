@@ -87,20 +87,54 @@ test("an inserted group-child shape routes root commands and subject formatting"
   expect(root).not.toBe(subject);
   await expect(pages).toHaveAttribute(
     "data-object-capabilities",
-    "canMove,canWrap,canDelete,canFill,canStroke",
+    "canResize,canMove,canWrap,canDelete,canFill,canStroke",
   );
 
-  // The subject owns Fill/Stroke while the stable reference's root owns move,
-  // wrap, and delete. Resize remains absent until the group extent + transform
-  // can be changed atomically with an exact inverse.
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(0);
+  // The subject owns Fill/Stroke while the stable reference's root owns resize,
+  // move, wrap, and delete. Every group handle commits root extent + transform +
+  // anchor through one exact-inverse engine transaction.
+  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
   const bar = page.locator(".object-context-bar");
-  await expect(bar).toContainText("Drag to move");
+  await expect(bar).toContainText("handles to resize");
   await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Shape outline" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Edit alt text" })).toHaveCount(0);
   await expect(bar.getByRole("button", { name: "Delete object" })).toBeVisible();
   await expect(page.locator(".object-wrap-btn")).toHaveCount(6);
+
+  const beforeResize = await page
+    .locator(".overlay .object-outline")
+    .first()
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    });
+  const nw = page.locator('.overlay .object-handle[data-handle="0"]').first();
+  const nwBox = await nw.boundingBox();
+  await page.mouse.move(nwBox.x + nwBox.width / 2, nwBox.y + nwBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(nwBox.x - 50, nwBox.y - 30, { steps: 6 });
+  await page.mouse.up();
+  const resized = await page
+    .locator(".overlay .object-outline")
+    .first()
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    });
+  expect(resized.left).toBeLessThan(beforeResize.left - 10);
+  expect(resized.top).toBeLessThan(beforeResize.top - 10);
+  expect(Math.abs(resized.right - beforeResize.right)).toBeLessThanOrEqual(3);
+  expect(Math.abs(resized.bottom - beforeResize.bottom)).toBeLessThanOrEqual(3);
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(() =>
+      page
+        .locator(".overlay .object-outline")
+        .first()
+        .evaluate((element) => Math.round(element.getBoundingClientRect().left)),
+    )
+    .toBe(Math.round(beforeResize.left));
 
   // Keyboard geometry reads the subject rectangle and commits SetAnchor to the
   // root. This used to invoke a command against the incompatible child id.

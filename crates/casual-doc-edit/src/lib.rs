@@ -20,10 +20,11 @@
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     BlockNode, Color, Comment, CommentId, CoreProperties, DefinitionMap, Document, DrawingAnchor,
-    Extent, FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
-    PageMargins, PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection,
-    RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, UnderlineStyle, VerticalAlignment,
+    Extent, FontName, FontRef, GridColumn, GroupTransform, HighlightColor, Hyperlink,
+    HyperlinkTarget, InlineNode, PageMargins, PageOrientation, PageSize, Paragraph,
+    ParagraphProperties, ReviewProjection, RgbColor, Run, RunProperties, SectionColumns, SectionId,
+    Style, StyleId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+    UnderlineStyle, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -430,6 +431,19 @@ pub enum Operation {
         object: NodeId,
         /// The new authored extent (`None` = defer to content-derived sizing).
         extent: Option<Extent>,
+    },
+    /// Replace the two scale-bearing geometry values of a DrawingML group as
+    /// one exact-inverse operation. A group resize must update both the outer
+    /// `wp:extent` and the full `a:xfrm`; retaining the whole previous transform
+    /// preserves offsets, child coordinates, flips, and rotation exactly on
+    /// undo rather than attempting to reconstruct them from the new size.
+    SetGroupGeometry {
+        /// The top-level or nested group carrier to resize.
+        object: NodeId,
+        /// The new outer anchor extent (`wp:extent`).
+        extent: Extent,
+        /// The new complete DrawingML group transform (`a:xfrm`).
+        transform: GroupTransform,
     },
     /// Move / re-wrap / re-order a **floating** object: replace the whole
     /// [`DrawingAnchor`] of an `AnchoredDrawing` or floating `TextBox` (docs/85
@@ -1276,6 +1290,20 @@ pub fn apply(
             Ok(Operation::SetExtent {
                 object: *object,
                 extent: previous,
+            })
+        }
+        Operation::SetGroupGeometry {
+            object,
+            extent,
+            transform,
+        } => {
+            let (previous_extent, previous_transform) =
+                set_group_geometry(doc.body_mut(), *object, *extent, *transform)
+                    .ok_or(EditError::NodeNotFound)?;
+            Ok(Operation::SetGroupGeometry {
+                object: *object,
+                extent: previous_extent,
+                transform: previous_transform,
             })
         }
         Operation::SetAnchor { object, anchor } => {
@@ -2230,6 +2258,121 @@ fn set_object_extent_in_inlines(
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+/// Replaces a group's outer extent and complete transform together. The
+/// resolver mirrors [`set_object_extent`] across body blocks, wrappers, table
+/// cells, SDTs, and text-box bodies. The returned pair is the exact retained
+/// inverse; no transform field is synthesized during undo.
+fn set_group_geometry(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    extent: Extent,
+    transform: GroupTransform,
+) -> Option<(Extent, GroupTransform)> {
+    for block in blocks.iter_mut() {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(previous) =
+                    set_group_geometry_in_inlines(&mut paragraph.inlines, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(previous) =
+                            set_group_geometry(&mut cell.blocks, object, extent, transform)
+                        {
+                            return Some(previous);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(previous) =
+                    set_group_geometry(&mut sdt.blocks, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+fn set_group_geometry_in_inlines(
+    inlines: &mut [InlineNode],
+    object: NodeId,
+    extent: Extent,
+    transform: GroupTransform,
+) -> Option<(Extent, GroupTransform)> {
+    for inline in inlines.iter_mut() {
+        match inline {
+            InlineNode::Group(group) => {
+                if group.id == object {
+                    let previous = (group.extent, group.transform);
+                    group.extent = extent;
+                    group.transform = transform;
+                    return Some(previous);
+                }
+                if let Some(previous) =
+                    set_group_geometry_in_children(&mut group.children, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            InlineNode::TextBox(text_box) => {
+                if let Some(previous) =
+                    set_group_geometry(&mut text_box.blocks, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            InlineNode::Hyperlink(hyperlink) => {
+                if let Some(previous) =
+                    set_group_geometry_in_inlines(&mut hyperlink.inlines, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            InlineNode::Revision(revision) => {
+                if let Some(previous) =
+                    set_group_geometry_in_inlines(&mut revision.inlines, object, extent, transform)
+                {
+                    return Some(previous);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn set_group_geometry_in_children(
+    children: &mut [GroupChild],
+    object: NodeId,
+    extent: Extent,
+    transform: GroupTransform,
+) -> Option<(Extent, GroupTransform)> {
+    for child in children {
+        if let GroupChild::Group(group) = child {
+            if group.id == object {
+                let previous = (group.extent, group.transform);
+                group.extent = extent;
+                group.transform = transform;
+                return Some(previous);
+            }
+            if let Some(previous) =
+                set_group_geometry_in_children(&mut group.children, object, extent, transform)
+            {
+                return Some(previous);
+            }
         }
     }
     None
@@ -5053,6 +5196,58 @@ mod tests {
             ),
             Err(EditError::NodeNotFound)
         ));
+    }
+
+    #[test]
+    fn set_group_geometry_retains_the_complete_exact_inverse() {
+        let group_id = n(70);
+        let mut d = doc(vec![shape_paragraph(2, 70, 71)]);
+        let mut ids = IdGenerator::new(9);
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            unreachable!()
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("shape group");
+        };
+        let original_extent = group.extent;
+        let original_transform = group.transform;
+        let extent = Extent {
+            width_emu: 1_828_800,
+            height_emu: 1_371_600,
+        };
+        let mut transform = original_transform;
+        transform.offset.x_emu = 123_400;
+        transform.offset.y_emu = -56_700;
+        transform.extent = extent;
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetGroupGeometry {
+                object: group_id,
+                extent,
+                transform,
+            },
+        )
+        .expect("replace the group geometry");
+        assert_eq!(
+            inverse,
+            Operation::SetGroupGeometry {
+                object: group_id,
+                extent: original_extent,
+                transform: original_transform,
+            }
+        );
+
+        apply(&mut d, &mut ids, &inverse).expect("restore the group geometry");
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            unreachable!()
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("shape group survived");
+        };
+        assert_eq!(group.extent, original_extent);
+        assert_eq!(group.transform, original_transform);
     }
 
     #[test]

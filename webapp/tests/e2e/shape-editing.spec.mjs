@@ -9,7 +9,7 @@
 // is built for these tests: a lone autoshape (which imports as a group-of-one,
 // exactly as Word's Insert > Shapes does) and an ellipse inside a real group
 // beside a text box.
-import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
+import { test, expect, gotoEditor, stableBox, MOD } from "./fixtures.mjs";
 
 const SHAPES = "../fixtures/generated/shapes.docx";
 
@@ -238,8 +238,35 @@ test("a multi-child group selects as a unit and Enter descends with a stable ref
   await expect(pages).toHaveAttribute("data-object-path", "");
   await expect(pages).toHaveAttribute(
     "data-object-capabilities",
-    "canMove,canWrap,canDelete",
+    "canResize,canMove,canWrap,canDelete",
   );
+  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+
+  const before = await page.locator(".overlay .object-outline").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, width: rect.width };
+  });
+  const west = page.locator('.overlay .object-handle[data-handle="7"]').first();
+  const westBox = await west.boundingBox();
+  await page.mouse.move(westBox.x + westBox.width / 2, westBox.y + westBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(westBox.x - 45, westBox.y + westBox.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const resized = await page.locator(".overlay .object-outline").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, width: rect.width };
+  });
+  expect(resized.left).toBeLessThan(before.left - 10);
+  expect(resized.width).toBeGreaterThan(before.width + 10);
+  expect(Math.abs(resized.right - before.right)).toBeLessThanOrEqual(3);
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(() =>
+      page
+        .locator(".overlay .object-outline")
+        .evaluate((element) => Math.round(element.getBoundingClientRect().left)),
+    )
+    .toBe(Math.round(before.left));
 
   await page.keyboard.press("Enter");
   await expect(pages).toHaveAttribute("data-object-kind", "shape");
