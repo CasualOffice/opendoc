@@ -1019,6 +1019,7 @@ mod tests {
                     id: 1,
                     advance: Twip(ADV),
                     cluster: start + i,
+                    is_whitespace: false,
                 })
                 .collect();
             let run = GlyphRun {
@@ -1077,6 +1078,7 @@ mod tests {
                 id: 1,
                 advance: Twip(ADV),
                 cluster: n - 1 - visual,
+                is_whitespace: false,
             })
             .collect();
         let run = GlyphRun {
@@ -1787,6 +1789,7 @@ mod tests {
                     id: 1,
                     advance: Twip(ADV),
                     cluster: i,
+                    is_whitespace: false,
                 })
                 .collect(),
         };
@@ -1809,6 +1812,7 @@ mod tests {
                     id: 2,
                     advance: Twip(ADV),
                     cluster: 0,
+                    is_whitespace: false,
                 })
                 .collect(),
         };

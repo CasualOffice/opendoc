@@ -406,9 +406,9 @@ metrics rather than the Latin slot.
 Other modeled run effects that are not painted include double strike, emphasis
 marks, kerning threshold policy, outline, shadow, emboss, imprint, and run
 border. Typed and independently colored underlines now survive import/edit/save
-and paint as single/double/thick/dotted/dashed/dot-dash/wavy. `words` remains a
-paint-only limitation: its semantic value survives, but the line currently
-continues through spaces. Run theme tint/shade factors are not modeled.
+and paint as single/double/thick/dotted/dashed/dot-dash/wavy/words. Words-only
+decoration skips source-classified Unicode whitespace clusters rather than
+guessing from font glyph ids. Run theme tint/shade factors are not modeled.
 
 Paragraph properties such as mirror indents, East Asian auto-spacing, kinsoku,
 punctuation overflow, grid snapping, and vertical/text alignment require
@@ -578,8 +578,6 @@ Known deliberate or bounded degradations include:
 
 - ruby base text survives while phonetic annotation text is reported and
   dropped;
-- words-only underline is preserved semantically but paints continuously across
-  spaces; typed underline style and RGB color otherwise round-trip and render;
 - some theme effects and color modifiers are flattened;
 - `mc:AlternateContent` selects a supported branch rather than retaining the
   complete source branching structure semantically;

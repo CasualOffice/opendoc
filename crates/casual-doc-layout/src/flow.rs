@@ -4823,6 +4823,7 @@ pub(crate) fn shape_field_run(
                     id: g.id,
                     advance: g.advance,
                     cluster: 0,
+                    is_whitespace: g.is_whitespace,
                 });
             }
         }
@@ -6834,6 +6835,7 @@ mod tests {
                     id: 1,
                     advance: Twip(50),
                     cluster: 0,
+                    is_whitespace: false,
                 }],
             }],
             ascent: Twip(80),

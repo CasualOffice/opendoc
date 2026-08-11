@@ -34,6 +34,11 @@ pub struct Glyph {
     /// this glyph belongs to — the anchor for caret placement and hit-testing
     /// (`crate::hittest`).
     pub cluster: u32,
+    /// Whether the glyph's complete source cluster consists of Unicode
+    /// whitespace. This is source-derived shaping metadata, not a glyph-id
+    /// heuristic; renderers use it for `w:u@val="words"` decoration gaps.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_whitespace: bool,
 }
 
 /// Text decoration flags applied to a glyph run.
@@ -747,6 +752,7 @@ mod tests {
                 id: 5,
                 advance: Twip(120),
                 cluster: 0,
+                is_whitespace: false,
             }],
         };
         let json = serde_json::to_string(&run).unwrap();

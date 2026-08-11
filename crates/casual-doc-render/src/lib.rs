@@ -644,6 +644,8 @@ fn render_glyph_run(
                     thickness,
                     underline_color,
                     run.decoration.underline_style,
+                    &run.glyphs,
+                    dpi,
                 );
             }
             if run.decoration.strikethrough || run.decoration.double_strike {
@@ -708,8 +710,8 @@ fn draw_decoration(
 
 /// Draws an underline in its `w:u@val` line style. Single/double/thick are drawn
 /// exactly; dotted/dashed/dot-dash as patterned segments; wave is a real sine
-/// squiggle. `words` (underline words only, not the spaces) keeps its `single`
-/// base line — the per-word gapping is a separate follow-up.
+/// squiggle. `words` draws a single line over each contiguous non-whitespace
+/// glyph span, using the source-cluster classification carried by the shaper.
 #[allow(clippy::too_many_arguments)]
 fn draw_underline(
     surface: &mut Surface,
@@ -720,6 +722,8 @@ fn draw_underline(
     thickness: f32,
     color: [u8; 4],
     style: casual_doc_model::v1::UnderlineStyle,
+    glyphs: &[casual_doc_layout::text::Glyph],
+    dpi: f32,
 ) {
     use casual_doc_model::v1::UnderlineStyle;
     let line = |surface: &mut Surface, x: f32, w: f32, y: f32, t: f32| {
@@ -737,9 +741,12 @@ fn draw_underline(
         }
     };
     match style {
-        UnderlineStyle::Single | UnderlineStyle::Words => {
+        UnderlineStyle::Single => {
             line(surface, x, advance, y_center, thickness);
         }
+        UnderlineStyle::Words => visit_word_underline_segments(glyphs, dpi, |offset, width| {
+            line(surface, x + offset, width, y_center, thickness);
+        }),
         UnderlineStyle::Wavy => {
             // A true squiggle: a sine wave along the run's advance at the
             // underline offset, its amplitude and period scaled to the decoration
@@ -805,6 +812,38 @@ fn draw_underline(
                 base += period;
             }
         }
+    }
+}
+
+/// Visits each contiguous non-whitespace advance span in visual glyph order.
+///
+/// Whitespace is classified from the Unicode source cluster during shaping;
+/// font-specific glyph ids are deliberately not interpreted here. The visitor
+/// form keeps the render hot path allocation-free, while preserving zero-advance
+/// marks inside their surrounding word segment.
+fn visit_word_underline_segments(
+    glyphs: &[casual_doc_layout::text::Glyph],
+    dpi: f32,
+    mut visit: impl FnMut(f32, f32),
+) {
+    let mut cursor = 0.0_f32;
+    let mut word_start = None;
+    for glyph in glyphs {
+        if glyph.is_whitespace {
+            if let Some(start) = word_start.take()
+                && cursor > start
+            {
+                visit(start, cursor - start);
+            }
+        } else if word_start.is_none() {
+            word_start = Some(cursor);
+        }
+        cursor += glyph.advance.to_device_px(dpi);
+    }
+    if let Some(start) = word_start
+        && cursor > start
+    {
+        visit(start, cursor - start);
     }
 }
 
@@ -1506,6 +1545,7 @@ mod tests {
                 id: 5,
                 advance: Twip::from_points(6),
                 cluster: 0,
+                is_whitespace: false,
             }],
             is_marker: false,
             is_leader: false,
@@ -1770,12 +1810,23 @@ mod tests {
     /// decoration and returns the surface together with the glyph baseline row (in
     /// device pixels — parley's baseline sits an ascent below the paragraph top).
     fn render_decorated(decoration: Decoration) -> (Surface, usize) {
+        let (surface, baseline, _) = render_decorated_text("Hello", decoration);
+        (surface, baseline)
+    }
+
+    /// Decoration renderer that also reports the device-pixel spans occupied by
+    /// shaped whitespace clusters. Used to assert the raster output at geometry
+    /// derived from the shaper rather than a guessed screenshot coordinate.
+    fn render_decorated_text(
+        text: &str,
+        decoration: Decoration,
+    ) -> (Surface, usize, Vec<(usize, usize)>) {
         let shaper = ParleyShaper::new();
         let node = NodeId::from_parts(1, 1).unwrap();
         let origin = Point::new(Twip::from_points(6), Twip::from_points(20));
         let layout = shaper.shape_paragraph(
             &[StyledRun {
-                text: "Hello".into(),
+                text: text.into(),
                 requested_family: None,
                 font: FontId(0),
                 size: Twip::from_points(24),
@@ -1798,6 +1849,26 @@ mod tests {
         let baseline_twips = origin.y + layout.lines[0].runs[0].origin.y;
         let baseline_px = baseline_twips.to_device_px(96.0).round() as usize;
         let list = compose_paragraph(&layout, origin);
+        let whitespace_spans = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Glyphs { run } => Some(run),
+                _ => None,
+            })
+            .flat_map(|run| {
+                let mut cursor = run.origin.x.to_device_px(96.0);
+                run.glyphs.iter().filter_map(move |glyph| {
+                    let start = cursor;
+                    cursor += glyph.advance.to_device_px(96.0);
+                    glyph.is_whitespace.then_some((
+                        start.ceil().max(0.0) as usize,
+                        cursor.floor().max(0.0) as usize,
+                    ))
+                })
+            })
+            .filter(|(start, end)| end > start)
+            .collect();
         let mut surface = Surface::new(DECO_W, DECO_H).unwrap();
         render(
             &list,
@@ -1806,7 +1877,7 @@ mod tests {
             &SingleFontSource::new(ROBOTO_REGULAR),
             &NoMediaSource,
         );
-        (surface, baseline_px)
+        (surface, baseline_px, whitespace_spans)
     }
 
     /// The number of dark pixels in the horizontal band `[y0, y1)`.
@@ -1969,6 +2040,47 @@ mod tests {
         assert!(
             band_dark(&wavy, baseline + 1, baseline + 20) > 20,
             "the wavy underline still paints a visible line below the baseline"
+        );
+    }
+
+    #[test]
+    fn words_only_underline_leaves_the_shaped_space_advance_unpainted() {
+        use casual_doc_model::v1::UnderlineStyle;
+
+        let single_decoration = Decoration {
+            underline: true,
+            underline_style: UnderlineStyle::Single,
+            ..Decoration::default()
+        };
+        let words_decoration = Decoration {
+            underline: true,
+            underline_style: UnderlineStyle::Words,
+            ..Decoration::default()
+        };
+        let (single, baseline, _) = render_decorated_text("Hello world", single_decoration);
+        let (words, _, gaps) = render_decorated_text("Hello world", words_decoration);
+        let &(gap_start, gap_end) = gaps
+            .iter()
+            .max_by_key(|(start, end)| end - start)
+            .expect("the shaper reports the source space span");
+        let gap_x = gap_start + (gap_end - gap_start) / 2;
+        let underline_y = (baseline + 1..baseline + 20)
+            .max_by_key(|&y| band_dark(&single, y, y + 1))
+            .expect("a densest underline row");
+
+        let single_gap = pixel_at(&single, DECO_W as usize, gap_x, underline_y);
+        let words_gap = pixel_at(&words, DECO_W as usize, gap_x, underline_y);
+        assert!(
+            single_gap[0] < 80 && single_gap[1] < 80 && single_gap[2] < 80,
+            "a single underline paints through the space: {single_gap:?}"
+        );
+        assert!(
+            words_gap[0] > 240 && words_gap[1] > 240 && words_gap[2] > 240,
+            "words-only underline leaves the shaped space white: {words_gap:?}"
+        );
+        assert!(
+            band_dark(&words, baseline + 1, baseline + 20) > 20,
+            "the two surrounding words remain visibly underlined"
         );
     }
 

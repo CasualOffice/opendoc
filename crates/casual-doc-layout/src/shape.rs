@@ -935,6 +935,11 @@ impl ParleyShaper {
             // is a full-width CJK scalar, so a fallback-shaped ideograph's advance can
             // be normalized to the em (Word's fixed one-em cell).
             let mut run_cjk: Vec<bool> = Vec::new();
+            // Per-glyph flag (parallel to `run_offsets`): whether the complete
+            // source cluster is Unicode whitespace. The renderer cannot recover
+            // this safely from a font-specific glyph id, so shaping carries it
+            // explicitly for words-only underline gaps.
+            let mut run_whitespace: Vec<bool> = Vec::new();
             let mut run_range: Option<std::ops::Range<usize>> = None;
             let mut cursor = 0usize;
             // Advance shaved from earlier (LTR) CJK runs on this line by the one-em
@@ -1047,15 +1052,20 @@ impl ParleyShaper {
                     // cursor at the run's first glyph.
                     run_offsets.clear();
                     run_cjk.clear();
+                    run_whitespace.clear();
                     for cluster in glyph_run.run().visual_clusters() {
                         let offset = to_offset(cluster.text_range().start);
-                        let is_cjk = text
-                            .get(cluster.text_range())
+                        let cluster_text = text.get(cluster.text_range());
+                        let is_cjk = cluster_text
                             .and_then(|slice| slice.chars().next())
                             .is_some_and(is_full_width_cjk);
+                        let is_whitespace = cluster_text.is_some_and(|slice| {
+                            !slice.is_empty() && slice.chars().all(char::is_whitespace)
+                        });
                         for _ in cluster.glyphs() {
                             run_offsets.push(offset);
                             run_cjk.push(is_cjk);
+                            run_whitespace.push(is_whitespace);
                         }
                     }
                     run_range = Some(this_range);
@@ -1074,6 +1084,7 @@ impl ParleyShaper {
                 let mut glyphs: Vec<Glyph> = Vec::new();
                 for glyph in glyph_run.glyphs() {
                     let cluster = run_offsets.get(cursor).copied().unwrap_or(base);
+                    let is_whitespace = run_whitespace.get(cursor).copied().unwrap_or(false);
                     let native = glyph.advance.round() as i32;
                     let advance = if is_fallback && !is_rtl {
                         full_width_cjk_advance(
@@ -1090,6 +1101,7 @@ impl ParleyShaper {
                         id: glyph.id,
                         advance: Twip(advance),
                         cluster,
+                        is_whitespace,
                     });
                 }
                 // Later LTR runs on this line start `this_run_trim` further left.
@@ -1298,6 +1310,7 @@ mod tests {
                     id: 1,
                     advance,
                     cluster: start,
+                    is_whitespace: false,
                 }],
             }],
             ascent: Twip(180),
@@ -1716,6 +1729,38 @@ mod tests {
             "run color round-trips through parley"
         );
         assert!(run.decoration.underline, "underline round-trips");
+    }
+
+    #[test]
+    fn glyphs_carry_unicode_whitespace_cluster_classification() {
+        let shaper = ParleyShaper::new();
+        // ASCII space and NBSP are distinct UTF-8 clusters; both must be marked
+        // from source text so a renderer never guesses from font glyph ids.
+        let layout = shaper.shape_paragraph(&[run("A \u{00a0}B")], constraints(500), para_range());
+        let glyphs: Vec<_> = layout.lines[0]
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .collect();
+
+        for offset in [1, 2] {
+            let cluster: Vec<_> = glyphs
+                .iter()
+                .filter(|glyph| glyph.cluster == offset)
+                .collect();
+            assert!(!cluster.is_empty(), "cluster {offset} is shaped");
+            assert!(
+                cluster.iter().all(|glyph| glyph.is_whitespace),
+                "cluster {offset} is classified as Unicode whitespace"
+            );
+        }
+        assert!(
+            glyphs
+                .iter()
+                .filter(|glyph| glyph.cluster == 0 || glyph.cluster == 4)
+                .all(|glyph| !glyph.is_whitespace),
+            "word glyphs are not classified as whitespace"
+        );
     }
 
     #[test]
