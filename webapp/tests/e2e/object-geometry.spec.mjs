@@ -49,7 +49,7 @@ test("dragging a corner handle resizes the object, and one undo reverts it", asy
   expect(after.w).toBeGreaterThan(before.w + 10);
   expect(after.h).toBeGreaterThan(before.h + 10);
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "selected");
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  await expect(page.locator(".overlay .object-handle")).toHaveCount(3);
 
   // One undo reverts the resize to the original size.
   await page.keyboard.press(`${MOD}+z`);
@@ -102,6 +102,50 @@ test("an edge handle resizes only its axis", async ({ page, consoleErrors }) => 
   expect(after.w).toBeGreaterThan(before.w + 10);
   expect(Math.abs(after.h - before.h)).toBeLessThanOrEqual(3);
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("an inline object omits handles that would have to move its flow anchor", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await selectImage(page);
+  const handles = page.locator(".overlay .object-handle");
+  expect(await handles.evaluateAll((nodes) => nodes.map((node) => node.dataset.handle))).toEqual([
+    "3",
+    "4",
+    "5",
+  ]);
+  await expect(page.locator('.overlay .object-handle[data-handle="7"]')).toHaveCount(0);
+  await expect(page.locator('.overlay .object-handle[data-handle="1"]')).toHaveCount(0);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("pointer cancellation discards the resize preview without creating history", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await selectImage(page);
+  const before = await outlineSize(page);
+  const undoLabel = await page.locator("#undoBtn").getAttribute("aria-label");
+  const se = page.locator('.overlay .object-handle[data-handle="4"]').first();
+  const box = await se.boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 80, cy + 50, { steps: 4 });
+  await page.evaluate(() => window.dispatchEvent(new PointerEvent("pointercancel")));
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+
+  const after = await outlineSize(page);
+  expect(Math.abs(after.w - before.w)).toBeLessThanOrEqual(3);
+  expect(Math.abs(after.h - before.h)).toBeLessThanOrEqual(3);
+  await expect(page.locator(".object-resize-preview")).toHaveCount(0);
+  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", undoLabel);
   expect(consoleErrors).toEqual([]);
 });
 

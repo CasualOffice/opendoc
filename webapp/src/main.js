@@ -3349,9 +3349,10 @@ function paintTableResizeHandles(focus) {
   }
 }
 
-/** Paints the selected object's outline + eight resize/move handles from engine
+/** Paints the selected object's outline + exact supported resize handles from engine
  *  geometry (docs/85 §3.3), the same overlay mechanism as the caret/highlight so
- *  the chrome matches the raster exactly. Handles are display-only this slice. */
+ *  the chrome matches the raster exactly. Unsupported carrier/edge combinations
+ *  are omitted by the engine. */
 function paintObjectSelection() {
   const { node } = objectSelection;
   // In crop mode the image shows crop chrome (dimmed cut region + crop handles)
@@ -3361,7 +3362,7 @@ function paintObjectSelection() {
     return;
   }
   place(doc.objectRect(node), "object-outline");
-  const handles = doc.objectHandles(node); // [page, cx, cy, kind] * 8
+  const handles = doc.objectHandles(node); // [page, cx, cy, kind] * supported handle count
   for (let i = 0; i + 3 < handles.length; i += 4) {
     const [pageNumber, cx, cy, kind] = handles.slice(i, i + 4);
     const page = pages[pageNumber - 1];
@@ -3594,6 +3595,7 @@ function startObjectResize(event, page, node, handleKind) {
   page.overlay.appendChild(preview);
   objectResizeDrag = {
     node,
+    root: objectSelection.ref.root,
     handleKind,
     page,
     startClientX: event.clientX,
@@ -3602,6 +3604,8 @@ function startObjectResize(event, page, node, handleKind) {
     startY: y,
     startW: w,
     startH: h,
+    lastX: x,
+    lastY: y,
     lastW: w,
     lastH: h,
     aspect: h > 0 ? w / h : 1,
@@ -3643,27 +3647,46 @@ function updateObjectResize(event) {
       newW = Math.max(MIN_OBJECT_TWIP, Math.round(newH * drag.aspect));
     }
   }
+  const newX = fw < 0 ? drag.startX + drag.startW - newW : drag.startX;
+  const newY = fh < 0 ? drag.startY + drag.startH - newH : drag.startY;
+  drag.lastX = newX;
+  drag.lastY = newY;
   drag.lastW = newW;
   drag.lastH = newH;
+  drag.preview.style.left = `${newX * sx}px`;
+  drag.preview.style.top = `${newY * sy}px`;
   drag.preview.style.width = `${newW * sx}px`;
   drag.preview.style.height = `${newH * sy}px`;
   event.preventDefault();
 }
 
-/** Commits (or cancels) the resize on release: one `SetExtent` op, converting the
- *  final placed size (twips) to authored EMU. Returns whether a drag was active. */
+/** Commits (or cancels) the resize on release through one engine geometry
+ * transaction, converting the final page-local rectangle from twips to EMU.
+ * Returns whether a drag was active. */
 function finishObjectResize(event) {
   if (!objectResizeDrag) return false;
   const drag = objectResizeDrag;
   objectResizeDrag = null;
   drag.preview.remove();
   event.preventDefault();
-  const changed = Math.abs(drag.lastW - drag.startW) >= 8 || Math.abs(drag.lastH - drag.startH) >= 8;
+  const changed =
+    Math.abs(drag.lastX - drag.startX) >= 8 ||
+    Math.abs(drag.lastY - drag.startY) >= 8 ||
+    Math.abs(drag.lastW - drag.startW) >= 8 ||
+    Math.abs(drag.lastH - drag.startH) >= 8;
   if (changed) {
     const EMU_PER_TWIP = 635;
-    runEdit(() => doc.setObjectExtent(drag.node, drag.lastW * EMU_PER_TWIP, drag.lastH * EMU_PER_TWIP), {
-      gate: true,
-    });
+    runEdit(
+      () =>
+        doc.resizeObject(
+          drag.root,
+          drag.lastX * EMU_PER_TWIP,
+          drag.lastY * EMU_PER_TWIP,
+          drag.lastW * EMU_PER_TWIP,
+          drag.lastH * EMU_PER_TWIP,
+        ),
+      { gate: true },
+    );
   } else {
     drawSelection();
   }

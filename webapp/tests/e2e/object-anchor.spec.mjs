@@ -112,23 +112,90 @@ test("changing wrap mode re-lays-out and reflects the active mode", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("a floating object resizes from its handles too", async ({ page, consoleErrors }) => {
+test("all floating handles preserve their opposite edge and undo position plus size", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoFloat(page);
+  await selectFloat(page);
+  const gestures = [
+    { handle: 0, fx: -1, fy: -1, dx: -48, dy: -32 },
+    { handle: 1, fx: 0, fy: -1, dx: 0, dy: -32 },
+    { handle: 2, fx: 1, fy: -1, dx: 48, dy: -32 },
+    { handle: 3, fx: 1, fy: 0, dx: 48, dy: 0 },
+    { handle: 4, fx: 1, fy: 1, dx: 48, dy: 32 },
+    { handle: 5, fx: 0, fy: 1, dx: 0, dy: 32 },
+    { handle: 6, fx: -1, fy: 1, dx: -48, dy: 32 },
+    { handle: 7, fx: -1, fy: 0, dx: -48, dy: 0 },
+  ];
+
+  for (const gesture of gestures) {
+    const before = await outlineBox(page);
+    const handle = page
+      .locator(`.overlay .object-handle[data-handle="${gesture.handle}"]`)
+      .first();
+    const b = await handle.boundingBox();
+    const cx = b.x + b.width / 2;
+    const cy = b.y + b.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + gesture.dx, cy + gesture.dy, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(80);
+
+    const after = await outlineBox(page);
+    if (gesture.fx < 0) {
+      expect(Math.abs(after.x + after.w - (before.x + before.w))).toBeLessThanOrEqual(3);
+    } else {
+      expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(3);
+    }
+    if (gesture.fx === 0) expect(Math.abs(after.w - before.w)).toBeLessThanOrEqual(3);
+    if (gesture.fy < 0) {
+      expect(Math.abs(after.y + after.h - (before.y + before.h))).toBeLessThanOrEqual(3);
+    } else {
+      expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(3);
+    }
+    if (gesture.fy === 0) expect(Math.abs(after.h - before.h)).toBeLessThanOrEqual(3);
+
+    await page.keyboard.press(`${MOD}+z`);
+    await page.waitForTimeout(80);
+    const undone = await outlineBox(page);
+    expect(Math.abs(undone.x - before.x)).toBeLessThanOrEqual(3);
+    expect(Math.abs(undone.y - before.y)).toBeLessThanOrEqual(3);
+    expect(Math.abs(undone.w - before.w)).toBeLessThanOrEqual(3);
+    expect(Math.abs(undone.h - before.h)).toBeLessThanOrEqual(3);
+  }
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a handle crossing its opposite edge clamps to the deterministic minimum", async ({
+  page,
+  consoleErrors,
+}) => {
   await gotoFloat(page);
   await selectFloat(page);
   const before = await outlineBox(page);
-
-  const se = page.locator('.overlay .object-handle[data-handle="4"]').first();
-  const b = await se.boundingBox();
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  const west = page.locator('.overlay .object-handle[data-handle="7"]').first();
+  const b = await west.boundingBox();
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height / 2;
+  await page.mouse.move(cx, cy);
   await page.mouse.down();
-  await page.mouse.move(b.x + 60, b.y + 60, { steps: 6 });
+  await page.mouse.move(cx + before.w * 2, cy, { steps: 6 });
   await page.mouse.up();
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(100);
 
-  const after = await outlineBox(page);
-  expect(after.w).toBeGreaterThan(before.w + 10);
-  expect(after.h).toBeGreaterThan(before.h + 10);
+  const clamped = await outlineBox(page);
+  expect(clamped.w).toBeGreaterThanOrEqual(7);
+  expect(clamped.w).toBeLessThan(20);
+  expect(Math.abs(clamped.x + clamped.w - (before.x + before.w))).toBeLessThanOrEqual(3);
 
+  await page.keyboard.press(`${MOD}+z`);
+  await page.waitForTimeout(100);
+  const undone = await outlineBox(page);
+  expect(Math.abs(undone.x - before.x)).toBeLessThanOrEqual(3);
+  expect(Math.abs(undone.w - before.w)).toBeLessThanOrEqual(3);
   expect(consoleErrors).toEqual([]);
 });
 

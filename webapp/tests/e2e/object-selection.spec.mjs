@@ -1,8 +1,7 @@
 // docs/85 Phase A / Slice 2 (P1G-OBJ-SELECT + the §4 grammar): clicking a
 // drawing selects it as an OBJECT (distinct from a text caret), the engine draws
-// its outline + eight resize/move handles, and the interaction grammar's Escape
-// two-step returns to a text caret. Move/resize mutation is a later slice — the
-// handles are visible but not yet draggable.
+// its outline + engine-declared resize handles, and the interaction grammar's
+// Escape two-step returns to a text caret.
 import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
 
 // The rich producer fixture places an inline image near the top of page 1;
@@ -23,7 +22,7 @@ async function clickBodyText(page) {
   await canvas.click({ position: { x: box.width * 0.2, y: box.height * 0.55 } });
 }
 
-test("clicking an inline image selects it as an object and draws eight handles", async ({
+test("an inline image exposes only handles its flow anchor can honor", async ({
   page,
   consoleErrors,
 }) => {
@@ -37,10 +36,16 @@ test("clicking an inline image selects it as an object and draws eight handles",
   const node = await pages.getAttribute("data-object-selected");
   expect(node).toBeTruthy();
 
-  // Engine-drawn selection chrome: one outline + eight resize/move handles
-  // (corners + edge midpoints), painted on the overlay.
+  // Inline objects cannot move their character anchor, so N/W handles are
+  // deliberately absent. E, SE, and S preserve the fixed top-left.
   await expect(page.locator(".overlay .object-outline")).toHaveCount(1);
-  await expect(page.locator(".overlay .object-handle")).toHaveCount(8);
+  const handles = page.locator(".overlay .object-handle");
+  await expect(handles).toHaveCount(3);
+  expect(await handles.evaluateAll((nodes) => nodes.map((node) => node.dataset.handle))).toEqual([
+    "3",
+    "4",
+    "5",
+  ]);
   await expect(page.locator(".object-context-bar")).toBeVisible();
   await expect(page.locator(".object-context-bar")).toContainText("Drag handles to resize");
   await expect(page.locator(".object-context-bar")).not.toContainText(/coming soon|later editing slice/i);
