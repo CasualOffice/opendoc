@@ -23,7 +23,7 @@ use casual_doc_model::v1::{
     Extent, FontName, FontRef, GridColumn, HighlightColor, Hyperlink, HyperlinkTarget, InlineNode,
     PageMargins, PageOrientation, PageSize, Paragraph, ParagraphProperties, ReviewProjection,
     RgbColor, Run, RunProperties, SectionColumns, SectionId, Style, StyleId, Table, TableCell,
-    TableCellProperties, TableProperties, TableRow, VerticalAlignment,
+    TableCellProperties, TableProperties, TableRow, UnderlineStyle, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -44,6 +44,14 @@ pub struct FormatDelta {
     pub italic: Option<bool>,
     /// Set underline on/off.
     pub underline: Option<bool>,
+    /// Set or clear the explicit underline color (`w:u@color`). The outer
+    /// `Option` is the delta state; `Some(None)` clears the direct color so the
+    /// underline follows the text color again.
+    pub underline_color: Option<Option<RgbColor>>,
+    /// Set or clear the typed underline line style (`w:u@val`). The outer
+    /// `Option` is the delta state; `Some(None)` restores the canonical single
+    /// line rather than writing an explicit `single` value.
+    pub underline_style: Option<Option<UnderlineStyle>>,
     /// Set strike-through on/off.
     pub strike: Option<bool>,
     /// Set the text color (`w:color`) to an explicit RGB.
@@ -72,6 +80,12 @@ impl FormatDelta {
         }
         if let Some(u) = self.underline {
             props.underline = Some(u);
+        }
+        if let Some(color) = self.underline_color {
+            props.underline_color = color;
+        }
+        if let Some(style) = self.underline_style {
+            props.underline_style = style;
         }
         if let Some(s) = self.strike {
             props.strike = Some(s);
@@ -6063,6 +6077,94 @@ mod tests {
         // The inverse restores the original single, unformatted run.
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(runs_of(&d, p), vec![("HelloWorld".to_string(), None)]);
+    }
+
+    #[test]
+    fn typed_underline_format_sets_clears_and_undoes_exactly() {
+        let p = n(2);
+        let original = para(2, vec![run(3, "abcd")]);
+        let mut d = doc(vec![original.clone()]);
+        let mut ids = IdGenerator::new(9);
+        let red = RgbColor {
+            r: 0xcc,
+            g: 0x11,
+            b: 0x22,
+        };
+
+        let undo_set = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 3),
+                },
+                delta: FormatDelta {
+                    underline: Some(true),
+                    underline_style: Some(Some(UnderlineStyle::Double)),
+                    underline_color: Some(Some(red)),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("set a typed underline");
+
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        assert_eq!(paragraph.inlines.len(), 3, "range boundaries split exactly");
+        let InlineNode::Run(underlined) = &paragraph.inlines[1] else {
+            panic!("middle run");
+        };
+        assert_eq!(underlined.text, "bc");
+        assert_eq!(underlined.properties.underline, Some(true));
+        assert_eq!(
+            underlined.properties.underline_style,
+            Some(UnderlineStyle::Double)
+        );
+        assert_eq!(underlined.properties.underline_color, Some(red));
+
+        let undo_clear = apply(
+            &mut d,
+            &mut ids,
+            &Operation::FormatText {
+                range: Range {
+                    start: Pos::new(p, 1),
+                    end: Pos::new(p, 3),
+                },
+                delta: FormatDelta {
+                    underline_style: Some(None),
+                    underline_color: Some(None),
+                    ..FormatDelta::default()
+                },
+            },
+        )
+        .expect("clear direct underline details");
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        let InlineNode::Run(underlined) = &paragraph.inlines[1] else {
+            panic!("middle run");
+        };
+        assert_eq!(underlined.properties.underline, Some(true));
+        assert_eq!(underlined.properties.underline_style, None);
+        assert_eq!(underlined.properties.underline_color, None);
+
+        apply(&mut d, &mut ids, &undo_clear).expect("undo clear");
+        let BlockNode::Paragraph(paragraph) = &d.body()[0] else {
+            panic!("paragraph");
+        };
+        let InlineNode::Run(underlined) = &paragraph.inlines[1] else {
+            panic!("middle run");
+        };
+        assert_eq!(
+            underlined.properties.underline_style,
+            Some(UnderlineStyle::Double)
+        );
+        assert_eq!(underlined.properties.underline_color, Some(red));
+
+        apply(&mut d, &mut ids, &undo_set).expect("undo set");
+        assert_eq!(d.body(), &[original]);
     }
 
     #[test]

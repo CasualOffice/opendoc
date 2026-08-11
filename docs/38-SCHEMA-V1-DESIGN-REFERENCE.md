@@ -971,7 +971,7 @@ finding: `font_ref` (and the `FontRef`/`FontName`/`ThemeFont`/`ThemeFontRef`
 types) already existed and were validated, but `apply_run_property` never
 populated them, so `w:rFonts` was reported-only despite the field existing.
 
-### Scope (shipped: A + D + B)
+### Scope (shipped: A + D + B + typed underline)
 
 - **A — toggle marks** (`w:caps`, `w:smallCaps`, `w:vanish`, `w:webHidden`,
   `w:dstrike`): additive `Option<bool>` fields `all_caps`, `small_caps`,
@@ -984,6 +984,17 @@ populated them, so `w:rFonts` was reported-only despite the field existing.
   reported — **no silent loss**.
 - **B — named vocabularies** (`w:vertAlign`, `w:highlight`, `w:em`): closed enums
   `VerticalAlignment`, `HighlightColor`, `EmphasisMark`; unknown `@val` reported.
+- **Typed underline** (`w:u@val`/`@color`, tracker P1F-38): the on/off bit
+  remains `underline: Option<bool>` while `underline_style:
+  Option<UnderlineStyle>` carries the closed single/double/thick/dotted/dashed/
+  dot-dash/wavy/words vocabulary and `underline_color: Option<RgbColor>` carries
+  an independent sRGB color. `None` is canonical single-line/automatic color;
+  unrecognized producer styles degrade visibly to single and are reported.
+  Import/export, cascade, layout, paint, editor commands, selection/caret mixed
+  state, armed typing, and the internal rich clipboard all consume these fields.
+  Editor set/clear uses nested delta options so "leave unchanged" cannot be
+  confused with "clear direct style/color". Suggesting mode rejects typed
+  underline edits until tracked-format authoring can carry the fields.
 
 ### Validation / compat
 
@@ -997,8 +1008,7 @@ unchanged.
 
 **Deferred (design captured, lower priority):** C — typographic metrics
 (`w:spacing` char / `w:kern` / `w:position`); E — language (`w:lang`).
-**Stays reported-only (no silent loss):** underline style/color (`w:u@val`/
-`@color` — the bool stays), run shading (`w:shd`), text effects
+**Stays reported-only (no silent loss):** text effects
 (`w:outline`/`emboss`/`imprint`/`shadow`/`effect`), color theme tint/shade,
 `w:rtl`, `w:bdr`, `w:fitText`.
 

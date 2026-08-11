@@ -141,9 +141,9 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Math (OMML)"].modeled, "full");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
-  // Character rendering stays partial only until the wavy-underline squiggle
-  // merges (it is currently drawn as a flat line); emphasis/outline/shadow
-  // effects also stay unpainted. Paragraphs and Lists now render their common
+  // Character rendering stays partial because words-only underline still paints
+  // through spaces and emphasis/outline/shadow effects stay unpainted. Wavy
+  // underline itself is a real squiggle. Paragraphs and Lists render their common
   // surface in full — the remainders (docGrid/autospace on paragraphs, unknown
   // numFmt on lists) are niche/bounded, not common gaps.
   assert.equal(by["Character / run formatting"].rendered, "partial");

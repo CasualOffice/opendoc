@@ -5,8 +5,8 @@
 //
 // The WASM engine (`doc.copyRichRuns`/`doc.pasteRichRuns`) is the single
 // source of truth for the run shape: `{ text, bold?, italic?, underline?,
-// strike?, sizeHalfPoints?, color?, highlight?, vertAlign?, font?, href?,
-// paragraphBreak? }`. This module only builds/parses HTML around that shape
+// underlineStyle?, underlineColor?, strike?, sizeHalfPoints?, color?,
+// highlight?, vertAlign?, font?, href?, paragraphBreak? }`. This module only builds/parses HTML around that shape
 // — it never invents new fields.
 
 const MARKER_PREFIX = "opendoc-clipboard-runs:";
@@ -26,6 +26,22 @@ function styleAttr(run) {
   if (run.font) decls.push(`font-family:${run.font.replaceAll('"', "'")}`);
   if (run.highlight && run.highlight !== "none") {
     decls.push(`background-color:${run.highlight}`);
+  }
+  if (run.underline && (run.underlineStyle || run.underlineColor)) {
+    decls.push("text-decoration-line:underline");
+    const cssStyle = {
+      single: "solid",
+      double: "double",
+      thick: "solid",
+      dotted: "dotted",
+      dashed: "dashed",
+      dotDash: "dashed",
+      wavy: "wavy",
+      words: "solid",
+    }[run.underlineStyle || "single"];
+    decls.push(`text-decoration-style:${cssStyle || "solid"}`);
+    if (run.underlineStyle === "thick") decls.push("text-decoration-thickness:3px");
+    if (run.underlineColor) decls.push(`text-decoration-color:${run.underlineColor}`);
   }
   return decls.length ? ` style="${decls.join(";")}"` : "";
 }
@@ -55,7 +71,7 @@ function runToHtml(run) {
   let html = escapeHtml(run.text).replaceAll("\n", "<br>");
   if (run.bold) html = `<b>${html}</b>`;
   if (run.italic) html = `<i>${html}</i>`;
-  if (run.underline) html = `<u>${html}</u>`;
+  if (run.underline && !run.underlineStyle && !run.underlineColor) html = `<u>${html}</u>`;
   if (run.strike) html = `<s>${html}</s>`;
   if (run.vertAlign === "super") html = `<sup>${html}</sup>`;
   if (run.vertAlign === "sub") html = `<sub>${html}</sub>`;
@@ -280,7 +296,19 @@ function applyInlineStyle(format, style) {
   }
   const decoration = decls["text-decoration-line"] || decls["text-decoration"];
   if (decoration) {
-    if (/\bunderline\b/.test(decoration)) format.underline = true;
+    if (/\bunderline\b/.test(decoration)) {
+      format.underline = true;
+      const cssStyle = decls["text-decoration-style"] || decoration;
+      if (/\bdouble\b/.test(cssStyle)) format.underlineStyle = "double";
+      else if (/\bdotted\b/.test(cssStyle)) format.underlineStyle = "dotted";
+      else if (/\bdashed\b/.test(cssStyle)) format.underlineStyle = "dashed";
+      else if (/\bwavy\b/.test(cssStyle)) format.underlineStyle = "wavy";
+      else if (decls["text-decoration-thickness"] && decls["text-decoration-thickness"] !== "auto") {
+        format.underlineStyle = "thick";
+      }
+      const underlineColor = parseCssColor(decls["text-decoration-color"]);
+      if (underlineColor) format.underlineColor = underlineColor;
+    }
     if (/\bline-through\b/.test(decoration)) format.strike = true;
   }
   const vAlign = decls["vertical-align"];

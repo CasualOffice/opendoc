@@ -59,8 +59,8 @@ use casual_doc_model::v1::{
     PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind, RevisionKind,
     RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing, Style, StyleId,
     StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell, TableCellProperties,
-    TableLayout, TableProperties, TableRow, TableWidth, VerticalAlignment, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WrapMode,
+    TableLayout, TableProperties, TableRow, TableWidth, UnderlineStyle, VerticalAlignment,
+    VerticalAnchor, VerticalMerge, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
@@ -1592,10 +1592,28 @@ impl WasmDocument {
                 at: insert_start,
                 text: run.text.clone(),
             });
+            let underline_style = run
+                .underline_style
+                .as_deref()
+                .map(parse_underline_style)
+                .transpose()
+                .map_err(to_js)?;
+            let underline_color = run
+                .underline_color
+                .as_deref()
+                .map(|color| {
+                    parse_hex_color(color)
+                        .ok_or_else(|| format!("invalid clipboard underline color: {color}"))
+                })
+                .transpose()
+                .map_err(to_js)?
+                .map(Some);
             let delta = FormatDelta {
                 bold: run.bold,
                 italic: run.italic,
                 underline: run.underline,
+                underline_style,
+                underline_color,
                 strike: run.strike,
                 color: run.color.as_deref().and_then(parse_hex_color),
                 highlight: run.highlight.as_deref().map(parse_highlight),
@@ -1984,10 +2002,26 @@ impl WasmDocument {
             if run.paragraph_break || run.text.is_empty() {
                 continue;
             }
+            let underline_style = run
+                .underline_style
+                .as_deref()
+                .map(parse_underline_style)
+                .transpose()?;
+            let underline_color = run
+                .underline_color
+                .as_deref()
+                .map(|color| {
+                    parse_hex_color(color)
+                        .ok_or_else(|| format!("invalid clipboard underline color: {color}"))
+                })
+                .transpose()?
+                .map(Some);
             let delta = FormatDelta {
                 bold: run.bold,
                 italic: run.italic,
                 underline: run.underline,
+                underline_style,
+                underline_color,
                 strike: run.strike,
                 color: run.color.as_deref().and_then(parse_hex_color),
                 highlight: run.highlight.as_deref().map(parse_highlight),
@@ -3074,6 +3108,51 @@ impl WasmDocument {
             vert_align,
             font,
             None,
+            None,
+            None,
+        )
+        .map_err(to_js)
+    }
+
+    /// Additive typed-underline counterpart of [`insert_styled_text`](Self::insert_styled_text).
+    /// The extra optional tokens preserve an armed underline style/color without
+    /// changing the established host signature.
+    #[wasm_bindgen(js_name = insertStyledTextWithUnderline)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_styled_text_with_underline(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
+        underline_style: Option<String>,
+        underline_color: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        self.styled_text_action(
+            nid,
+            offset,
+            text,
+            bold,
+            italic,
+            underline,
+            strike,
+            size_half_points,
+            color,
+            highlight,
+            vert_align,
+            font,
+            underline_style,
+            underline_color,
+            None,
         )
         .map_err(to_js)
     }
@@ -3113,6 +3192,51 @@ impl WasmDocument {
             highlight,
             vert_align,
             font,
+            None,
+            None,
+            Some(session),
+        )
+        .map_err(to_js)
+    }
+
+    /// Additive typed-underline counterpart of [`type_styled_text`](Self::type_styled_text),
+    /// retaining the same gesture-grouped undo behavior.
+    #[wasm_bindgen(js_name = typeStyledTextWithUnderline)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn type_styled_text_with_underline(
+        &mut self,
+        node: &str,
+        offset: u32,
+        text: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        size_half_points: Option<u32>,
+        color: Option<String>,
+        highlight: Option<String>,
+        vert_align: Option<String>,
+        font: Option<String>,
+        session: u32,
+        underline_style: Option<String>,
+        underline_color: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        self.styled_text_action(
+            nid,
+            offset,
+            text,
+            bold,
+            italic,
+            underline,
+            strike,
+            size_half_points,
+            color,
+            highlight,
+            vert_align,
+            font,
+            underline_style,
+            underline_color,
             Some(session),
         )
         .map_err(to_js)
@@ -3215,6 +3339,71 @@ impl WasmDocument {
             end_offset,
             FormatDelta {
                 color: Some(RgbColor { r, g, b }),
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets the underline line style over the selection. `"none"` removes the
+    /// underline and its direct style/color; the remaining canonical tokens turn
+    /// underline on. `"single"` clears the direct style because a single line is
+    /// the model default.
+    #[wasm_bindgen(js_name = setUnderlineStyle)]
+    pub fn set_underline_style(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        style: &str,
+    ) -> Result<EditResult, JsValue> {
+        let (underline, underline_style, underline_color) = if style == "none" {
+            (Some(false), Some(None), Some(None))
+        } else {
+            let parsed = parse_underline_style(style).map_err(to_js)?;
+            (Some(true), Some(parsed), None)
+        };
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                underline,
+                underline_style,
+                underline_color,
+                ..FormatDelta::default()
+            },
+        )
+    }
+
+    /// Sets an explicit underline RGB color over the selection. Empty/`"auto"`
+    /// clears the direct color so the underline follows the text color. Choosing
+    /// an explicit color also turns underline on.
+    #[wasm_bindgen(js_name = setUnderlineColor)]
+    pub fn set_underline_color(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        color: &str,
+    ) -> Result<EditResult, JsValue> {
+        let (underline, color) = if color.is_empty() || color.eq_ignore_ascii_case("auto") {
+            (None, None)
+        } else {
+            let color = parse_hex_color(color)
+                .ok_or_else(|| to_js(format!("invalid underline color: {color}")))?;
+            (Some(true), Some(color))
+        };
+        self.apply_run_format(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            FormatDelta {
+                underline,
+                underline_color: Some(color),
                 ..FormatDelta::default()
             },
         )
@@ -8181,6 +8370,8 @@ impl WasmDocument {
         highlight: Option<String>,
         vert_align: Option<String>,
         font: Option<String>,
+        underline_style: Option<String>,
+        underline_color: Option<String>,
         typing_session: Option<u32>,
     ) -> Result<EditResult, String> {
         if text.is_empty() {
@@ -8191,10 +8382,25 @@ impl WasmDocument {
         let end = offset
             .checked_add(text_len)
             .ok_or_else(|| "text offset overflow".to_owned())?;
+        let underline_style = underline_style
+            .as_deref()
+            .map(parse_underline_style)
+            .transpose()?;
+        let underline_color = match underline_color.as_deref() {
+            None => None,
+            Some("") | Some("auto") => Some(None),
+            Some(color) => {
+                Some(Some(parse_hex_color(color).ok_or_else(|| {
+                    format!("invalid underline color: {color}")
+                })?))
+            }
+        };
         let delta = FormatDelta {
             bold,
             italic,
             underline,
+            underline_style,
+            underline_color,
             strike,
             color: color.as_deref().and_then(parse_hex_color),
             highlight: highlight.as_deref().map(parse_highlight),
@@ -9798,6 +10004,13 @@ struct ClipboardRun {
     italic: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     underline: Option<bool>,
+    /// A canonical [`underline_style_name`] token. Absent means the default
+    /// single line when underline is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    underline_style: Option<String>,
+    /// Explicit underline color as `#rrggbb`; absent means text/automatic color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    underline_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     strike: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -9989,6 +10202,10 @@ fn clipboard_run_from(run: &Run, href: Option<&str>, text: String) -> ClipboardR
         bold: props.bold,
         italic: props.italic,
         underline: props.underline,
+        underline_style: props.underline_style.map(underline_style_name),
+        underline_color: props
+            .underline_color
+            .map(|c| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)),
         strike: props.strike,
         size_half_points: props.size_half_points,
         color: match &props.color {
@@ -11721,37 +11938,7 @@ fn apply_review_format_change(
 }
 
 fn apply_review_delta_to_properties(properties: &mut RunProperties, delta: &FormatDelta) {
-    if let Some(value) = delta.bold {
-        properties.bold = Some(value);
-    }
-    if let Some(value) = delta.italic {
-        properties.italic = Some(value);
-    }
-    if let Some(value) = delta.underline {
-        properties.underline = Some(value);
-    }
-    if let Some(value) = delta.strike {
-        properties.strike = Some(value);
-    }
-    if let Some(value) = delta.color {
-        properties.color = Some(Color::Rgb(value));
-    }
-    if let Some(value) = delta.highlight {
-        properties.highlight = Some(value);
-    }
-    if let Some(value) = delta.size_half_points {
-        properties.size_half_points = Some(value);
-    }
-    if let Some(value) = delta.vertical_alignment {
-        properties.vertical_alignment = Some(value);
-    }
-    if let Some(family) = &delta.font {
-        let font = FontRef::Named(FontName {
-            name: family.clone(),
-        });
-        properties.font_ref = Some(font.clone());
-        properties.font_ref_h_ansi = Some(font);
-    }
+    delta.apply_to(properties);
 }
 
 fn apply_review_delta(inlines: &mut [InlineNode], delta: &FormatDelta) {
@@ -13374,6 +13561,8 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
             .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned())
     });
     let highlight = uniform_value(properties, |p| p.highlight);
+    let underline_style = uniform_value(properties, |p| p.underline_style.unwrap_or_default());
+    let underline_color = uniform_value(properties, |p| p.underline_color);
     let vertical_alignment = uniform_value(properties, |p| {
         p.vertical_alignment.unwrap_or(VerticalAlignment::Baseline)
     });
@@ -13381,6 +13570,8 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
     let color_mixed = color.is_none();
     let font_mixed = font.is_none();
     let highlight_mixed = highlight.is_none();
+    let underline_style_mixed = underline_style.is_none();
+    let underline_color_mixed = underline_color.is_none();
     let vertical_align_mixed = vertical_alignment.is_none();
     let vertical_align = vertical_alignment.map_or_else(String::new, |alignment| match alignment {
         VerticalAlignment::Superscript => "super".to_owned(),
@@ -13407,6 +13598,12 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
             value.map_or_else(|| "none".to_owned(), highlight_name)
         }),
         highlight_mixed,
+        underline_style: underline_style.map_or_else(String::new, underline_style_name),
+        underline_style_mixed,
+        underline_color: underline_color.flatten().map_or_else(String::new, |c| {
+            format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
+        }),
+        underline_color_mixed,
         superscript: vertical_align == "super",
         subscript: vertical_align == "sub",
         vertical_align,
@@ -14718,6 +14915,34 @@ fn parse_hex_color(hex: &str) -> Option<RgbColor> {
     })
 }
 
+fn parse_underline_style(style: &str) -> Result<Option<UnderlineStyle>, String> {
+    match style {
+        "single" => Ok(None),
+        "double" => Ok(Some(UnderlineStyle::Double)),
+        "thick" => Ok(Some(UnderlineStyle::Thick)),
+        "dotted" => Ok(Some(UnderlineStyle::Dotted)),
+        "dashed" => Ok(Some(UnderlineStyle::Dashed)),
+        "dotDash" => Ok(Some(UnderlineStyle::DotDash)),
+        "wavy" => Ok(Some(UnderlineStyle::Wavy)),
+        "words" => Ok(Some(UnderlineStyle::Words)),
+        _ => Err(format!("unknown underline style: {style}")),
+    }
+}
+
+fn underline_style_name(style: UnderlineStyle) -> String {
+    match style {
+        UnderlineStyle::Single => "single",
+        UnderlineStyle::Double => "double",
+        UnderlineStyle::Thick => "thick",
+        UnderlineStyle::Dotted => "dotted",
+        UnderlineStyle::Dashed => "dashed",
+        UnderlineStyle::DotDash => "dotDash",
+        UnderlineStyle::Wavy => "wavy",
+        UnderlineStyle::Words => "words",
+    }
+    .to_owned()
+}
+
 fn parse_highlight(name: &str) -> HighlightColor {
     match name.to_ascii_lowercase().as_str() {
         "none" | "" => HighlightColor::None,
@@ -14750,6 +14975,8 @@ fn review_format_delta(
         bold,
         italic,
         underline,
+        underline_style: None,
+        underline_color: None,
         strike,
         color: color.as_deref().and_then(parse_hex_color),
         highlight: highlight.as_deref().map(parse_highlight),
@@ -16339,6 +16566,10 @@ pub struct RunStyle {
     font_mixed: bool,
     highlight: String,
     highlight_mixed: bool,
+    underline_style: String,
+    underline_style_mixed: bool,
+    underline_color: String,
+    underline_color_mixed: bool,
     superscript: bool,
     subscript: bool,
     vertical_align: String,
@@ -16401,6 +16632,37 @@ impl RunStyle {
     #[must_use]
     pub fn highlight_mixed(&self) -> bool {
         self.highlight_mixed
+    }
+
+    /// Common underline line style (`single`, `double`, `thick`, `dotted`,
+    /// `dashed`, `dotDash`, `wavy`, or `words`), or empty when mixed/unset.
+    #[wasm_bindgen(getter, js_name = underlineStyle)]
+    #[must_use]
+    pub fn underline_style(&self) -> String {
+        self.underline_style.clone()
+    }
+
+    /// Whether the selection contains more than one effective underline style.
+    #[wasm_bindgen(getter, js_name = underlineStyleMixed)]
+    #[must_use]
+    pub fn underline_style_mixed(&self) -> bool {
+        self.underline_style_mixed
+    }
+
+    /// Common explicit underline color as `#rrggbb`; empty means automatic/text
+    /// color, or mixed when [`underline_color_mixed`](Self::underline_color_mixed)
+    /// is true.
+    #[wasm_bindgen(getter, js_name = underlineColor)]
+    #[must_use]
+    pub fn underline_color(&self) -> String {
+        self.underline_color.clone()
+    }
+
+    /// Whether the selection contains more than one effective underline color.
+    #[wasm_bindgen(getter, js_name = underlineColorMixed)]
+    #[must_use]
+    pub fn underline_color_mixed(&self) -> bool {
+        self.underline_color_mixed
     }
 
     /// Every covered run is superscript.
@@ -22721,6 +22983,105 @@ mod tests {
         assert_eq!(baseline.vertical_align(), "baseline");
         assert!(!baseline.superscript());
         assert!(!baseline.subscript());
+    }
+
+    #[test]
+    fn typed_underline_applies_reflects_copies_and_round_trips() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(id, text)| {
+                text.is_ascii()
+                    && text.len() >= 4
+                    && !d
+                        .selection_format(&id.to_string(), 0, &id.to_string(), 4)
+                        .underline()
+            })
+            .map(|(id, _)| id.to_string())
+            .expect("four non-underlined ASCII bytes");
+
+        d.set_underline_style(&node, 0, &node, 2, "double")
+            .expect("double underline");
+        d.set_underline_color(&node, 0, &node, 2, "#cc1122")
+            .expect("red underline");
+        let styled = d.selection_run_style(&node, 0, &node, 2);
+        assert_eq!(styled.underline_style(), "double");
+        assert!(!styled.underline_style_mixed());
+        assert_eq!(styled.underline_color(), "#cc1122");
+        assert!(!styled.underline_color_mixed());
+        assert!(d.selection_format(&node, 0, &node, 2).underline());
+
+        let mixed = d.selection_run_style(&node, 0, &node, 4);
+        assert!(mixed.underline_style_mixed());
+        assert!(mixed.underline_color_mixed());
+        assert_eq!(d.selection_format(&node, 0, &node, 4).underline_state(), 2);
+
+        let copied: Vec<ClipboardRun> = serde_json::from_str(&d.copy_rich_runs(&node, 0, &node, 2))
+            .expect("typed underline clipboard payload");
+        assert_eq!(copied.len(), 1);
+        assert_eq!(copied[0].underline_style.as_deref(), Some("double"));
+        assert_eq!(copied[0].underline_color.as_deref(), Some("#cc1122"));
+
+        let bytes = d.export_docx().expect("export typed underline");
+        let reopened = open_document(&bytes).expect("reopen typed underline");
+        let round_trip = reopened.selection_run_style(&node, 0, &node, 2);
+        assert_eq!(round_trip.underline_style(), "double");
+        assert_eq!(round_trip.underline_color(), "#cc1122");
+
+        d.undo().expect("undo color");
+        let automatic = d.selection_run_style(&node, 0, &node, 2);
+        assert_eq!(automatic.underline_style(), "double");
+        assert_eq!(automatic.underline_color(), "");
+        d.undo().expect("undo style");
+        assert!(!d.selection_format(&node, 0, &node, 2).underline());
+    }
+
+    #[test]
+    fn typed_underline_armed_typing_is_one_atomic_action() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, original) = nodes
+            .iter()
+            .find(|(_, text)| !text.is_empty())
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+
+        d.type_styled_text_with_underline(
+            &node,
+            0,
+            "A".to_owned(),
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            91,
+            Some("wavy".to_owned()),
+            Some("#00aa44".to_owned()),
+        )
+        .expect("type a styled underline");
+        let style = d.selection_run_style(&node, 0, &node, 1);
+        assert_eq!(style.underline_style(), "wavy");
+        assert_eq!(style.underline_color(), "#00aa44");
+        assert_eq!(
+            d.undo.len(),
+            1,
+            "insert and formatting share one history entry"
+        );
+
+        d.undo().expect("undo armed typing");
+        assert_eq!(
+            d.copy_text(&node, 0, &node, original.len() as u32),
+            original
+        );
     }
 
     #[test]

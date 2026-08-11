@@ -80,6 +80,9 @@ const textColorApplyBtn = document.getElementById("textColorApply");
 const textColorBar = document.getElementById("textColorBar");
 const textColorInput = document.getElementById("textColorCustom");
 const textColorMenu = document.getElementById("textColorMenu");
+const underlineMenuBtn = document.getElementById("underlineMenuBtn");
+const underlineMenu = document.getElementById("underlineMenu");
+const underlineColorInput = document.getElementById("underlineColorCustom");
 const highlightCaret = document.getElementById("highlight");
 const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
@@ -2093,6 +2096,7 @@ const runControls = [
   fontSizeSel,
   textColorCaret,
   textColorApplyBtn,
+  underlineMenuBtn,
   highlightCaret,
   highlightApplyBtn,
   fontFamilyBtn,
@@ -7223,6 +7227,36 @@ function reflectFontFamily(family) {
   fontFamilyBtn.title = family ? `Font: ${family}` : "Font";
 }
 
+const UNDERLINE_STYLE_LABELS = new Map([
+  ["none", "None"],
+  ["single", "Single"],
+  ["double", "Double"],
+  ["thick", "Thick"],
+  ["dotted", "Dotted"],
+  ["dashed", "Dashed"],
+  ["dotDash", "Dot-dash"],
+  ["wavy", "Wavy"],
+  ["words", "Words only"],
+]);
+let currentUnderlineStyle = "single";
+let currentUnderlineColor = "";
+let currentUnderlineMixed = false;
+
+/** Reflect the effective typed underline without writing renderer fallback data
+ *  back into the document. Empty color is the model's automatic/text-color state. */
+function reflectUnderlineControl(style, color, mixed = false) {
+  const canonical = style || "single";
+  currentUnderlineStyle = canonical;
+  currentUnderlineColor = color || "";
+  currentUnderlineMixed = mixed;
+  fmtButtons.underline.dataset.underlineStyle = canonical;
+  fmtButtons.underline.style.setProperty("--underline-color", color || "currentColor");
+  underlineMenuBtn.closest(".underline-split")?.classList.toggle("is-mixed", mixed);
+  underlineMenuBtn.title = mixed
+    ? "Underline style and color: Mixed"
+    : `Underline: ${UNDERLINE_STYLE_LABELS.get(canonical) || canonical}${color ? ` · ${color.toUpperCase()}` : " · Automatic color"}`;
+}
+
 /** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
  *  formats the selection; at a collapsed caret it arms the format for typing
  *  (premium editors: press Bold, then type — the text comes out bold). */
@@ -7301,6 +7335,10 @@ function updateToolbar() {
   let colorMixed = false;
   let highlight = "none";
   let highlightMixed = false;
+  let underlineStyle = "single";
+  let underlineColor = "";
+  let underlineStyleMixed = false;
+  let underlineColorMixed = false;
   let verticalAlignMixed = false;
   if (doc && hasSel) {
     const rs = range
@@ -7319,6 +7357,10 @@ function updateToolbar() {
     colorMixed = rs.colorMixed;
     highlight = rs.highlight || "none";
     highlightMixed = rs.highlightMixed;
+    underlineStyle = rs.underlineStyle || "single";
+    underlineStyleMixed = rs.underlineStyleMixed;
+    underlineColor = rs.underlineColor || "";
+    underlineColorMixed = rs.underlineColorMixed;
     sup = rs.superscript;
     sub = rs.subscript;
     verticalAlignMixed = rs.verticalAlignMixed;
@@ -7330,6 +7372,8 @@ function updateToolbar() {
     if (pendingFormat.font != null) font = pendingFormat.font;
     if (pendingFormat.color) textColorInput.value = pendingFormat.color;
     if (pendingFormat.highlight != null) highlight = pendingFormat.highlight;
+    if (pendingFormat.underlineStyle != null) underlineStyle = pendingFormat.underlineStyle;
+    if (pendingFormat.underlineColor != null) underlineColor = pendingFormat.underlineColor;
     if (pendingFormat.vertAlign != null) {
       sup = pendingFormat.vertAlign === "super";
       sub = pendingFormat.vertAlign === "sub";
@@ -7338,6 +7382,8 @@ function updateToolbar() {
     fontMixed = false;
     colorMixed = false;
     highlightMixed = false;
+    underlineStyleMixed = false;
+    underlineColorMixed = false;
     verticalAlignMixed = false;
   }
   fontSizeSel.value = size;
@@ -7349,6 +7395,13 @@ function updateToolbar() {
   reflectTextColorSwatch(colorMixed ? null : (textColorInput.value || null));
   highlightCaret.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
   reflectHighlightSwatch(highlightMixed ? null : highlight);
+  const underlineToggleMixed = fmtButtons.underline.getAttribute("aria-pressed") === "mixed";
+  const underlineOn = fmtButtons.underline.getAttribute("aria-pressed") === "true";
+  reflectUnderlineControl(
+    underlineStyleMixed ? "" : (underlineOn ? underlineStyle : "none"),
+    underlineColorMixed ? "" : underlineColor,
+    underlineToggleMixed || underlineStyleMixed || underlineColorMixed,
+  );
   superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
   subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
@@ -7595,6 +7648,10 @@ function captureFormatForPainter() {
   if (!rs.colorMixed && rs.color) fmt.color = rs.color; // skip automatic/theme (empty)
   if (!rs.highlightMixed && rs.highlight) fmt.highlight = rs.highlight; // includes "none"
   if (!rs.verticalAlignMixed && rs.verticalAlign) fmt.vertAlign = rs.verticalAlign;
+  if (fmt.underline && !rs.underlineStyleMixed && rs.underlineStyle) {
+    fmt.underlineStyle = rs.underlineStyle;
+  }
+  if (fmt.underline && !rs.underlineColorMixed) fmt.underlineColor = rs.underlineColor;
   rs.free();
   // Paragraph formatting reachable through absolute getter/setter pairs. Indent
   // and paragraph spacing lack absolute copy ops today (relative-only), so they
@@ -7623,6 +7680,12 @@ async function applyPaintedFormat() {
   await runToolbarEdit((a, b, c, d) =>
     doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
   );
+  if (fmt.underlineStyle) {
+    await runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, fmt.underlineStyle));
+  }
+  if (fmt.underlineColor != null) {
+    await runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, fmt.underlineColor));
+  }
   if (fmt.sizePoints != null) await runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, fmt.sizePoints));
   if (fmt.font) await runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, fmt.font));
   if (fmt.color) {
@@ -7944,6 +8007,7 @@ function highlightHex(name) {
 // Session-remembered recently-used swatches (most-recent first, deduped, capped).
 const recentTextColors = [];
 const recentHighlights = [];
+const recentUnderlineColors = [];
 function recordRecent(list, value) {
   const i = list.indexOf(value);
   if (i !== -1) list.splice(i, 1);
@@ -8056,8 +8120,134 @@ function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highligh
   }
 }
 
+function makeUnderlineStyleOption(style, label) {
+  const option = document.createElement("button");
+  option.type = "button";
+  option.className = "color-row-action underline-style-option";
+  option.dataset.underlineStyle = style;
+  option.setAttribute("role", "radio");
+  option.setAttribute(
+    "aria-checked",
+    String(!currentUnderlineMixed && style === currentUnderlineStyle),
+  );
+  const preview = document.createElement("span");
+  preview.className = `underline-style-preview underline-style-${style}`;
+  preview.textContent = style === "none" ? "ab" : "Sample";
+  option.append(preview, document.createTextNode(label));
+  return option;
+}
+
+/** Builds the combined underline style/color menu from canonical engine tokens.
+ *  The explicit Automatic row maps to `Some(None)` in the edit delta. */
+function renderUnderlineMenu() {
+  underlineMenu.replaceChildren();
+  underlineMenu.appendChild(makeMenuHeading("Underline style"));
+  const styleGroup = document.createElement("div");
+  styleGroup.setAttribute("role", "radiogroup");
+  styleGroup.setAttribute("aria-label", "Underline style");
+  for (const [style, label] of UNDERLINE_STYLE_LABELS) {
+    styleGroup.appendChild(makeUnderlineStyleOption(style, label));
+  }
+  underlineMenu.appendChild(styleGroup);
+
+  underlineMenu.appendChild(makeMenuHeading("Underline color"));
+  const automatic = document.createElement("button");
+  automatic.type = "button";
+  automatic.className = "color-row-action";
+  automatic.dataset.underlineAuto = "1";
+  automatic.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic (text color)</span>';
+  automatic.classList.toggle("is-active", !currentUnderlineMixed && !currentUnderlineColor);
+  underlineMenu.appendChild(automatic);
+  underlineMenu.appendChild(makeSwatchGrid(
+    TEXT_STANDARD_COLORS.map((hex) =>
+      makeSwatchCell(
+        "text",
+        hex,
+        hex,
+        `Underline ${hex.toUpperCase()}`,
+        !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
+      )),
+  ));
+  if (recentUnderlineColors.length) {
+    underlineMenu.appendChild(makeMenuHeading("Recent"));
+    underlineMenu.appendChild(makeSwatchGrid(
+      recentUnderlineColors.map((hex) =>
+        makeSwatchCell(
+          "text",
+          hex,
+          hex,
+          `Underline ${hex.toUpperCase()}`,
+          !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
+        )),
+    ));
+  }
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "color-row-action color-more";
+  more.dataset.underlineMore = "1";
+  more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
+  underlineMenu.appendChild(more);
+}
+
 const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
 const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
+const underlinePopover = registerPopover(underlineMenuBtn, underlineMenu, renderUnderlineMenu);
+
+function underlineEditBlockedByReview() {
+  if (reviewMode !== "suggesting") return false;
+  setStatus(
+    "Underline style and color are not tracked yet; switch to Editing to apply them",
+    "error",
+  );
+  return true;
+}
+
+function applyUnderlineStyle(style) {
+  if (underlineEditBlockedByReview()) return;
+  const patch = style === "none"
+    ? { underline: false, underlineStyle: "single", underlineColor: "" }
+    : { underline: true, underlineStyle: style };
+  armOrApplyRun(patch, () =>
+    runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, style)),
+  );
+}
+
+function applyUnderlineColor(color) {
+  if (underlineEditBlockedByReview()) return;
+  const patch = color ? { underline: true, underlineColor: color } : { underlineColor: "" };
+  armOrApplyRun(patch, () =>
+    runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, color)),
+  );
+}
+
+underlineMenu.addEventListener("click", (e) => {
+  const style = e.target.closest("[data-underline-style]")?.dataset.underlineStyle;
+  if (style) {
+    applyUnderlineStyle(style);
+    closePopover(underlinePopover);
+    focusEditorSurface();
+    return;
+  }
+  if (e.target.closest("[data-underline-more]")) {
+    underlineColorInput.value = currentUnderlineColor || "#000000";
+    underlineColorInput.click();
+    return;
+  }
+  const colorCell = e.target.closest("[data-color], [data-underline-auto]");
+  if (!colorCell) return;
+  const color = colorCell.dataset.underlineAuto ? "" : colorCell.dataset.color;
+  applyUnderlineColor(color);
+  if (color) recordRecent(recentUnderlineColors, color);
+  closePopover(underlinePopover);
+  focusEditorSurface();
+});
+underlineColorInput.addEventListener("change", () => {
+  const color = underlineColorInput.value;
+  applyUnderlineColor(color);
+  recordRecent(recentUnderlineColors, color);
+  closePopover(underlinePopover);
+  focusEditorSurface();
+});
 
 // One text-color menu-click handler, shared by the ribbon menu and the floating
 // selection-toolbar menu. `popover` is the popover to close after applying; the
@@ -13587,6 +13777,16 @@ document.addEventListener("keydown", async (e) => {
       );
     } else if (pendingFormat) {
       const pf = pendingFormat; // armed format persists across consecutive typing
+      if (
+        reviewMode === "suggesting" &&
+        (pf.underlineStyle != null || pf.underlineColor != null)
+      ) {
+        setStatus(
+          "Underline style and color are not tracked yet; switch to Editing to type with them",
+          "error",
+        );
+        return;
+      }
       await runEdit(
         () => reviewMode === "suggesting"
           ? doc.suggestStyledInsert(
@@ -13606,21 +13806,39 @@ document.addEventListener("keydown", async (e) => {
             new Date().toISOString(),
             session,
           )
-          : doc.typeStyledText(
-              focus.node,
-              focus.offset,
-              typed,
-              pf.bold,
-              pf.italic,
-              pf.underline,
-              pf.strike,
-              pf.sizeHalfPoints,
-              pf.color,
-              pf.highlight,
-              pf.vertAlign,
-              pf.font,
-              session,
-            ),
+          : (pf.underlineStyle != null || pf.underlineColor != null)
+            ? doc.typeStyledTextWithUnderline(
+                focus.node,
+                focus.offset,
+                typed,
+                pf.bold,
+                pf.italic,
+                pf.underline,
+                pf.strike,
+                pf.sizeHalfPoints,
+                pf.color,
+                pf.highlight,
+                pf.vertAlign,
+                pf.font,
+                session,
+                pf.underlineStyle,
+                pf.underlineColor,
+              )
+            : doc.typeStyledText(
+                focus.node,
+                focus.offset,
+                typed,
+                pf.bold,
+                pf.italic,
+                pf.underline,
+                pf.strike,
+                pf.sizeHalfPoints,
+                pf.color,
+                pf.highlight,
+                pf.vertAlign,
+                pf.font,
+                session,
+              ),
         { typing: true },
       );
     } else {
