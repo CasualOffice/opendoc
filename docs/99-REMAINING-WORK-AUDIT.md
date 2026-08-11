@@ -86,7 +86,37 @@ product's own geometry.
 
 ---
 
-## 2. Editing capability not yet authorable
+## 2. Object-editing correctness and UX — reopened
+
+The bounded object slices in the tracker are not complete object support. The
+current implementation exposes group-child shapes/pictures as selectable
+anchored objects while resize, anchor/wrap, delete, crop, and alt-text commands
+target a different set of model carriers. Newly inserted shapes are a
+group-of-one and select the child, so the normal Insert path produces dead
+handles and actions. In addition, north/west resize handles change extent
+without changing origin, geometry/crop operations remain body-rooted, and crop
+mode cannot read an imported crop before replacing it.
+
+`101-EDITOR-OBJECT-AND-INSERT-PANEL-AUDIT.md` is the corrective design and
+priority record. Its order is binding for this work:
+
+| Priority | Required outcome | Why first |
+| --- | --- | --- |
+| P0 | Stable root/subject `ObjectRef` and engine-declared capabilities | The host must not advertise a mutation that cannot target the selected carrier |
+| P0 | Correct all offered resize handles, surface resolution, and crop-state preservation | These are document-safety and command-truth defects, not polish |
+| P1 | One contextual right-side object Properties inspector and compact quick bar | Exact size/position/wrap/kind properties need a persistent, non-obscuring surface |
+| P1 | Nonmodal Insert panel for symbols, emoji, shapes, and text boxes | Repeated insertion should preserve document visibility and a model-owned caret target |
+| P1 design gate | Equation authority/operation ADR, then bounded Equation Tools panel | Raw OMML is currently authoritative; UI-only synthesis could silently replace unsupported math |
+| P2 | Selection/layer pane, multi-select/grouping, arrangement, snapping/guides | These depend on stable identity and capability semantics |
+
+Symbol and emoji insertion already uses the tracked, undoable text path; the
+defect is its modal, document-obscuring host surface. Equation insertion does
+not exist and must not be treated as an equivalent UI migration: doc 86
+explicitly excludes equation editing and OMML synthesis.
+
+---
+
+## 3. Editing capability not yet authorable
 
 These render and round-trip; the editor cannot create or change them. Graded from
 the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pin.
@@ -106,7 +136,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 
 ---
 
-## 3. Engine and rendering
+## 4. Engine and rendering
 
 | Area | State |
 | --- | --- |
@@ -121,7 +151,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 
 ---
 
-## 4. Not started
+## 5. Not started
 
 | Area | Note |
 | --- | --- |
@@ -140,7 +170,7 @@ ADR-031 (PDF), and the `.docm` policy.
 
 ---
 
-## 5. Process debt
+## 6. Process debt
 
 - **The execution tracker is stale.** Rows including `P1G-HF-CONTEXT`,
   `P1G-HF-CONTENT`, `P1G-HF-VARIANTS`, `P1G-HF-LINK` and `P1G-OBJ-STRUCTURE` read

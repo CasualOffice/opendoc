@@ -106,6 +106,10 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 94. `94-MULTI-FORMAT-IMPORT-EXPORT-ARCHITECTURE.md` — accepted format-neutral detection, adapter registry, preservation sidecar, package substrate, and SDK/WASM migration for DOCX, ODT, normalized JSON, plain text, and later trusted format adapters.
 95. `95-ODT-IMPORT-PROFILE.md` — bounded ODF package admission and staged ODT-to-schema-v1 semantic mapping, preservation, compatibility, and security rules.
 96. `96-ODT-EXPORT-PROFILE.md` — deterministic bounded ODF 1.4 package writing, partial semantic mapping, exact-unchanged recovery, loss reporting, and export gates.
+97. `97-ODT-EDIT-TOLERANT-PRESERVATION.md` — tolerant preservation and export behavior after ODT edits.
+98. `98-PDF-EXPORT-AND-PRINT-DESIGN.md` — PDF writer, font-subsetting, print, accessibility, and release-gate design.
+99. `99-REMAINING-WORK-AUDIT.md` — current prioritized repository state, incomplete editing/model/fidelity areas, and deferred SDK/collaboration work.
+101. `101-EDITOR-OBJECT-AND-INSERT-PANEL-AUDIT.md` — deep object-editing correctness/UX audit, competitive analysis, contextual Properties/Insert panel design, equation-authoring gate, and prioritized delivery matrix.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
