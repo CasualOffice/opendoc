@@ -67,7 +67,7 @@ test("Insert ▸ Shapes offers every preset and inserts the chosen one, selected
   expect(consoleErrors).toEqual([]);
 });
 
-test("an inserted group-child shape exposes only commands its selected id can apply", async ({
+test("an inserted group-child shape routes root commands and subject formatting", async ({
   page,
   consoleErrors,
 }) => {
@@ -78,25 +78,52 @@ test("an inserted group-child shape exposes only commands its selected id can ap
 
   const pages = page.locator("#pages");
   await expect(pages).toHaveAttribute("data-object-kind", "shape");
-  await expect(pages).toHaveAttribute("data-object-capabilities", "canFill,canStroke");
+  await expect(pages).toHaveAttribute("data-object-surface", "body");
+  await expect(pages).toHaveAttribute("data-object-path", "0");
+  const root = await pages.getAttribute("data-object-root");
+  const subject = await pages.getAttribute("data-object-subject");
+  expect(root).toMatch(/^[0-9a-f]{32}$/);
+  expect(subject).toMatch(/^[0-9a-f]{32}$/);
+  expect(root).not.toBe(subject);
+  await expect(pages).toHaveAttribute(
+    "data-object-capabilities",
+    "canMove,canWrap,canDelete,canFill,canStroke",
+  );
 
-  // The layout identifies the GroupChild::Shape. Fill/Stroke have recursive
-  // child resolvers; extent/anchor/delete/alt-text do not. The UI must derive
-  // from that exact target rather than inheriting every "floating shape"
-  // affordance and failing only after the gesture.
+  // The subject owns Fill/Stroke while the stable reference's root owns move,
+  // wrap, and delete. Resize remains absent until the group extent + transform
+  // can be changed atomically with an exact inverse.
   await expect(page.locator(".overlay .object-handle")).toHaveCount(0);
   const bar = page.locator(".object-context-bar");
+  await expect(bar).toContainText("Drag to move");
   await expect(bar.getByRole("button", { name: "Shape fill" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Shape outline" })).toBeVisible();
   await expect(bar.getByRole("button", { name: "Edit alt text" })).toHaveCount(0);
-  await expect(bar.getByRole("button", { name: "Delete object" })).toHaveCount(0);
-  await expect(page.locator(".object-wrap-menu")).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Delete object" })).toBeVisible();
+  await expect(page.locator(".object-wrap-btn")).toHaveCount(6);
 
-  // The keyboard path also fails closed with a visible reason rather than
-  // invoking DeleteObject against an incompatible child id.
-  await page.keyboard.press("Delete");
-  await expect(page.locator("#status")).toContainText("cannot be deleted separately yet");
-  await expect(pages).toHaveAttribute("data-object-kind", "shape");
+  // Keyboard geometry reads the subject rectangle and commits SetAnchor to the
+  // root. This used to invoke a command against the incompatible child id.
+  const beforeX = await page
+    .locator(".overlay .object-outline")
+    .first()
+    .evaluate((element) => element.getBoundingClientRect().left);
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(() =>
+      page
+        .locator(".overlay .object-outline")
+        .first()
+        .evaluate((element) => element.getBoundingClientRect().left),
+    )
+    .toBeGreaterThan(beforeX);
+
+  const behind = bar.getByRole("button", { name: "Behind text" });
+  await behind.click();
+  await expect(behind).toHaveAttribute("aria-pressed", "true");
+
+  await bar.getByRole("button", { name: "Delete object" }).click();
+  await expect(pages).not.toHaveAttribute("data-object-kind", "shape");
 
   expect(consoleErrors).toEqual([]);
 });

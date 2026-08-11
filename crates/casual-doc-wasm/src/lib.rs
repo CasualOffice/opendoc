@@ -922,7 +922,9 @@ impl WasmDocument {
             .rev()
             .find(|obj| obj.page == page && obj.rect.contains(point))
             .map(|obj| ObjectHitPayload {
-                node: obj.node.to_string(),
+                root: obj.root.to_string(),
+                subject: obj.subject.to_string(),
+                path: obj.path,
                 kind: obj.kind,
                 page: obj.page,
                 rect: flat_rect(obj.page, obj.rect),
@@ -931,9 +933,56 @@ impl WasmDocument {
             })
     }
 
+    /// Resolves the deepest painted descendant of multi-child group `root` at a
+    /// page-local point. Ordinary `objectAt` deliberately returns the group root
+    /// so initial selection is a unit; double-click uses this bounded second
+    /// query to descend without the host reconstructing group geometry.
+    #[wasm_bindgen(js_name = objectDescendantAt)]
+    #[must_use]
+    pub fn object_descendant_at(
+        &self,
+        root: &str,
+        page: u32,
+        x_twip: i32,
+        y_twip: i32,
+    ) -> Option<ObjectHitPayload> {
+        let root = NodeId::from_str(root).ok()?;
+        let point = Point::new(Twip(x_twip), Twip(y_twip));
+        self.object_boxes_including_group_children()
+            .into_iter()
+            .rev()
+            .find(|object| {
+                object.root == root
+                    && object.subject != root
+                    && object.page == page
+                    && object.rect.contains(point)
+            })
+            .map(object_hit_payload)
+    }
+
+    /// The paint-ordered leaf references inside multi-child group `root`, as
+    /// JSON entries with the same identity/capability schema as `objectOrder`.
+    /// Keyboard Enter uses the first entry to descend into a selected group.
+    #[wasm_bindgen(js_name = objectDescendants)]
+    #[must_use]
+    pub fn object_descendants(&self, root: &str) -> String {
+        let Ok(root) = NodeId::from_str(root) else {
+            return "[]".to_owned();
+        };
+        let objects: Vec<ObjectOrderEntryJson> = self
+            .object_boxes_including_group_children()
+            .into_iter()
+            .filter(|object| object.root == root && object.subject != root)
+            .map(object_order_entry)
+            .collect();
+        serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
+    }
+
     /// Every selectable object in the document, in paint order, as JSON. Each
-    /// entry carries `node`, `kind`, `page`, legacy `anchored`, and the explicit
-    /// structural capability bits consumed by the host (docs/101 UXOBJ-001).
+    /// entry carries the stable `{surface, root, subject, path}` reference,
+    /// compatibility alias `node = subject`, `kind`, `page`, legacy `anchored`,
+    /// and the explicit structural capability bits consumed by the host
+    /// (docs/101 UXOBJ-001/002).
     ///
     /// Floating objects are otherwise reachable only by pointing at them:
     /// `objectAt` needs a coordinate, so a keyboard user cannot select an image
@@ -948,21 +997,7 @@ impl WasmDocument {
         let objects: Vec<ObjectOrderEntryJson> = self
             .object_boxes()
             .into_iter()
-            .map(|obj| ObjectOrderEntryJson {
-                node: obj.node.to_string(),
-                kind: obj.kind.to_owned(),
-                page: obj.page,
-                anchored: obj.anchored,
-                can_resize: obj.capabilities.can_resize,
-                can_move: obj.capabilities.can_move,
-                can_wrap: obj.capabilities.can_wrap,
-                can_delete: obj.capabilities.can_delete,
-                can_alt_text: obj.capabilities.can_alt_text,
-                can_crop: obj.capabilities.can_crop,
-                can_fill: obj.capabilities.can_fill,
-                can_stroke: obj.capabilities.can_stroke,
-                can_edit_text: obj.capabilities.can_edit_text,
-            })
+            .map(object_order_entry)
             .collect();
         serde_json::to_string(&objects).unwrap_or_else(|_| "[]".to_owned())
     }
@@ -977,9 +1012,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return Vec::new();
         };
-        self.object_boxes()
-            .into_iter()
-            .find(|obj| obj.node == nid)
+        self.object_box_for_subject(nid)
             .map(|obj| flat_rect(obj.page, obj.rect).to_vec())
             .unwrap_or_default()
     }
@@ -990,7 +1023,7 @@ impl WasmDocument {
     /// index). The frontend paints a fixed screen-size grip centered at each —
     /// engine-drawn chrome from the object's placed rect, so it matches the
     /// raster with zero drift (docs/58). Empty if `node` is not placed or its
-    /// exact selected identity has no compatible resize command.
+    /// selected reference has no compatible exact-inverse resize command.
     ///
     /// Grips are painted this slice but not yet draggable; drag-resize/move is
     /// the next slice (`P1G-OBJ-GEOMETRY`).
@@ -1000,7 +1033,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return Vec::new();
         };
-        let Some(obj) = self.object_boxes().into_iter().find(|obj| obj.node == nid) else {
+        let Some(obj) = self.object_box_for_subject(nid) else {
             return Vec::new();
         };
         if !obj.capabilities.can_resize {
@@ -1074,9 +1107,7 @@ impl WasmDocument {
         if let Some(extent) = object_authored_extent(self.document.body(), nid) {
             return vec![extent.width_emu as f64, extent.height_emu as f64];
         }
-        self.object_boxes()
-            .into_iter()
-            .find(|obj| obj.node == nid)
+        self.object_box_for_subject(nid)
             .map(|obj| {
                 vec![
                     f64::from(obj.rect.size.width.raw()) * EMU_PER_TWIP,
@@ -9310,7 +9341,30 @@ impl WasmDocument {
     /// each placed box back to its model drawing/text-box node. Header/footer,
     /// table-cell, and anchored/floating objects are out of this slice's scope.
     fn object_boxes(&self) -> Vec<ObjectBox> {
+        self.resolve_object_boxes(false)
+    }
+
+    /// The same placement correlation with multi-child group leaves retained.
+    /// It backs explicit group descent and subject geometry, never initial hit
+    /// testing or top-level traversal.
+    fn object_boxes_including_group_children(&self) -> Vec<ObjectBox> {
+        self.resolve_object_boxes(true)
+    }
+
+    fn object_box_for_subject(&self, subject: NodeId) -> Option<ObjectBox> {
+        self.object_boxes()
+            .into_iter()
+            .find(|object| object.subject == subject)
+            .or_else(|| {
+                self.object_boxes_including_group_children()
+                    .into_iter()
+                    .find(|object| object.subject == subject)
+            })
+    }
+
+    fn resolve_object_boxes(&self, include_group_children: bool) -> Vec<ObjectBox> {
         let mut out = Vec::new();
+        let mut grouped: HashMap<NodeId, usize> = HashMap::new();
         // Per-paragraph claimed flags, so a paragraph split across pages still maps
         // each placed box to a distinct model node (media match first, order next).
         let mut claimed: HashMap<NodeId, (Vec<bool>, Vec<bool>)> = HashMap::new();
@@ -9350,7 +9404,9 @@ impl WasmDocument {
                         if let Some(i) = pick {
                             entry.0[i] = true;
                             out.push(ObjectBox {
-                                node: img_nodes[i].0,
+                                root: img_nodes[i].0,
+                                subject: img_nodes[i].0,
+                                path: Vec::new(),
                                 kind: "image",
                                 page: page.number,
                                 rect,
@@ -9370,7 +9426,9 @@ impl WasmDocument {
                         if let Some(i) = entry.1.iter().position(|used| !used) {
                             entry.1[i] = true;
                             out.push(ObjectBox {
-                                node: tb_nodes[i],
+                                root: tb_nodes[i],
+                                subject: tb_nodes[i],
+                                path: Vec::new(),
                                 kind: "textbox",
                                 page: page.number,
                                 rect,
@@ -9392,11 +9450,12 @@ impl WasmDocument {
                 };
                 // Only body objects are offered: a header/footer float's node lives
                 // in the running-content part, so the geometry ops cannot resolve
-                // it. A group CHILD is not itself an anchor — the group is — so it
-                // is admitted by finding it in a group instead.
+                // it. A group child is admitted by resolving its top-level root,
+                // because the child paints the subject while the group owns the
+                // anchor/delete commands.
                 let has_anchor = object_anchor(self.document.body(), node).is_some();
-                let is_group_child = body_contains_group_child(self.document.body(), node);
-                if !has_anchor && !is_group_child {
+                let group_ref = body_group_object_ref(self.document.body(), node);
+                if !has_anchor && group_ref.is_none() {
                     continue;
                 }
                 let kind = match &placed.content {
@@ -9408,21 +9467,45 @@ impl WasmDocument {
                     | AnchorContent::Polygon { .. }
                     | AnchorContent::Line { .. } => "shape",
                 };
-                out.push(ObjectBox {
-                    node,
-                    kind,
-                    page: page.number,
-                    rect: placed.rect,
-                    // A placed group child inherits its root group's anchor, but
-                    // the child's NodeId is not itself a SetAnchor target. Do not
-                    // describe it as movable/wrappable merely because it floats.
-                    anchored: has_anchor,
-                    capabilities: if is_group_child {
-                        ObjectCapabilities::group_child(kind)
+                if let Some(reference) = group_ref {
+                    if reference.leaf_count == 1 || include_group_children {
+                        out.push(ObjectBox {
+                            root: reference.root,
+                            subject: node,
+                            path: reference.path,
+                            kind,
+                            page: page.number,
+                            rect: placed.rect,
+                            anchored: true,
+                            capabilities: ObjectCapabilities::group_child(kind),
+                        });
+                    } else if let Some(index) = grouped.get(&reference.root).copied() {
+                        out[index].rect = union_rect(out[index].rect, placed.rect);
                     } else {
-                        ObjectCapabilities::floating(kind)
-                    },
-                });
+                        grouped.insert(reference.root, out.len());
+                        out.push(ObjectBox {
+                            root: reference.root,
+                            subject: reference.root,
+                            path: Vec::new(),
+                            kind: "group",
+                            page: page.number,
+                            rect: placed.rect,
+                            anchored: true,
+                            capabilities: ObjectCapabilities::group_root(),
+                        });
+                    }
+                } else {
+                    out.push(ObjectBox {
+                        root: node,
+                        subject: node,
+                        path: Vec::new(),
+                        kind,
+                        page: page.number,
+                        rect: placed.rect,
+                        anchored: true,
+                        capabilities: ObjectCapabilities::floating(kind),
+                    });
+                }
             }
         }
         out
@@ -10289,38 +10372,100 @@ fn highlight_name(color: HighlightColor) -> String {
 /// hyperlink and field wrappers) so they are orderable like body paragraphs.
 /// Collects the paragraphs of text boxes inside a shape group, recursing into
 /// nested groups, so positions in them are orderable like body paragraphs.
-/// Whether `node` is a child of some shape group in `blocks` (recursing into
-/// nested groups). A group child is selectable in its own right, but it is not a
-/// top-level anchor, so `object_anchor` never finds it.
-fn body_contains_group_child(blocks: &[BlockNode], node: NodeId) -> bool {
-    fn in_children(children: &[GroupChild], node: NodeId) -> bool {
-        children.iter().any(|child| match child {
-            GroupChild::Picture(picture) => picture.id == node,
-            GroupChild::TextBox(text_box) => text_box.id == node,
-            GroupChild::Shape(shape) => shape.id == node,
-            GroupChild::Group(nested) => nested.id == node || in_children(&nested.children, node),
-        })
+/// Stable structural identity for one placed group descendant. `root` is the
+/// top-level inline group whose anchor/delete commands are valid; `path` is the
+/// bounded sequence of child indices to the exact placed subject. `leaf_count`
+/// decides whether initial selection may safely expose that leaf or must select
+/// the group as a unit (docs/101 UXOBJ-002).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GroupObjectRef {
+    root: NodeId,
+    path: Vec<u32>,
+    leaf_count: usize,
+}
+
+/// Resolves `node` inside a body-owned top-level group, recursing through every
+/// structural wrapper supported by body editing. The model bounds group depth
+/// and child counts, so the returned path is bounded by validation.
+fn body_group_object_ref(blocks: &[BlockNode], node: NodeId) -> Option<GroupObjectRef> {
+    fn leaf_count(children: &[GroupChild]) -> usize {
+        children
+            .iter()
+            .map(|child| match child {
+                GroupChild::Group(group) => leaf_count(&group.children),
+                GroupChild::Picture(_) | GroupChild::TextBox(_) | GroupChild::Shape(_) => 1,
+            })
+            .sum()
     }
-    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
-        inlines.iter().any(|inline| match inline {
-            InlineNode::Group(group) => in_children(&group.children, node),
-            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
-            InlineNode::Field(field) => in_inlines(&field.inlines, node),
-            InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, node),
-            _ => false,
-        })
+
+    fn child_path(children: &[GroupChild], node: NodeId, path: &mut Vec<u32>) -> bool {
+        for (index, child) in children.iter().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                return false;
+            };
+            path.push(index);
+            let found = match child {
+                GroupChild::Picture(picture) => picture.id == node,
+                GroupChild::TextBox(text_box) => text_box.id == node,
+                GroupChild::Shape(shape) => shape.id == node,
+                GroupChild::Group(group) => {
+                    group.id == node || child_path(&group.children, node, path)
+                }
+            };
+            if found {
+                return true;
+            }
+            path.pop();
+        }
+        false
     }
-    fn in_blocks(blocks: &[BlockNode], node: NodeId) -> bool {
-        blocks.iter().any(|block| match block {
-            BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, node),
-            BlockNode::Table(table) => table
-                .rows
-                .iter()
-                .any(|row| row.cells.iter().any(|cell| in_blocks(&cell.blocks, node))),
-            BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, node),
-            BlockNode::AltChunk(_) => false,
-        })
+
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> Option<GroupObjectRef> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::Group(group) => {
+                    let mut path = Vec::new();
+                    (group.id == node || child_path(&group.children, node, &mut path)).then(|| {
+                        GroupObjectRef {
+                            root: group.id,
+                            path,
+                            leaf_count: leaf_count(&group.children),
+                        }
+                    })
+                }
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+                InlineNode::Field(field) => in_inlines(&field.inlines, node),
+                InlineNode::Revision(revision) => in_inlines(&revision.inlines, node),
+                InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
+                InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, node),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
     }
+
+    fn in_blocks(blocks: &[BlockNode], node: NodeId) -> Option<GroupObjectRef> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, node),
+                BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                    row.cells
+                        .iter()
+                        .find_map(|cell| in_blocks(&cell.blocks, node))
+                }),
+                BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, node),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
     in_blocks(blocks, node)
 }
 
@@ -10564,6 +10709,10 @@ enum A11yBlockJson {
 #[serde(rename_all = "camelCase")]
 struct ObjectOrderEntryJson {
     node: String,
+    surface: String,
+    root: String,
+    subject: String,
+    path: Vec<u32>,
     kind: String,
     page: u32,
     anchored: bool,
@@ -13718,6 +13867,53 @@ fn flat_rect(page: u32, rect: Rect) -> [i32; 5] {
     ]
 }
 
+fn object_hit_payload(object: ObjectBox) -> ObjectHitPayload {
+    ObjectHitPayload {
+        root: object.root.to_string(),
+        subject: object.subject.to_string(),
+        path: object.path,
+        kind: object.kind,
+        page: object.page,
+        rect: flat_rect(object.page, object.rect),
+        anchored: object.anchored,
+        capabilities: object.capabilities,
+    }
+}
+
+fn object_order_entry(object: ObjectBox) -> ObjectOrderEntryJson {
+    ObjectOrderEntryJson {
+        node: object.subject.to_string(),
+        surface: "body".to_owned(),
+        root: object.root.to_string(),
+        subject: object.subject.to_string(),
+        path: object.path,
+        kind: object.kind.to_owned(),
+        page: object.page,
+        anchored: object.anchored,
+        can_resize: object.capabilities.can_resize,
+        can_move: object.capabilities.can_move,
+        can_wrap: object.capabilities.can_wrap,
+        can_delete: object.capabilities.can_delete,
+        can_alt_text: object.capabilities.can_alt_text,
+        can_crop: object.capabilities.can_crop,
+        can_fill: object.capabilities.can_fill,
+        can_stroke: object.capabilities.can_stroke,
+        can_edit_text: object.capabilities.can_edit_text,
+    }
+}
+
+/// The smallest page-local rectangle containing both inputs.
+fn union_rect(a: Rect, b: Rect) -> Rect {
+    let left = a.origin.x.raw().min(b.origin.x.raw());
+    let top = a.origin.y.raw().min(b.origin.y.raw());
+    let right = a.right().raw().max(b.right().raw());
+    let bottom = a.bottom().raw().max(b.bottom().raw());
+    Rect::new(
+        Point::new(Twip(left), Twip(top)),
+        Size::new(Twip(right - left), Twip(bottom - top)),
+    )
+}
+
 /// The heading level (1-based; 1 = top) implied by a style `name` — `Title` or
 /// `Heading N` (case- and whitespace-insensitive), else `None`.
 fn heading_level_from_name(name: Option<&str>) -> Option<u8> {
@@ -14089,25 +14285,30 @@ fn resolve_bookmark(document: &Document, anchor: &str) -> Option<ModelPos> {
     blocks_pos(document, document.body(), bookmark)
 }
 
-/// A placed selectable object resolved from the layout: its model node, kind,
-/// page, and absolute page rect. Internal to [`WasmDocument::object_boxes`].
+/// A placed selectable object resolved from the layout: its stable root/subject
+/// identity, bounded group path, kind, page, and absolute page rect. Internal to
+/// [`WasmDocument::object_boxes`].
 struct ObjectBox {
-    node: NodeId,
+    /// Removable/movable top-level object carrier.
+    root: NodeId,
+    /// Exact leaf whose kind-specific properties or text are edited.
+    subject: NodeId,
+    /// Child indices from `root` to `subject`; empty when both ids are equal.
+    path: Vec<u32>,
     kind: &'static str,
     page: u32,
     rect: Rect,
-    /// Whether this is a floating/anchored object (movable + wrappable) vs an
-    /// inline object (resizable only).
+    /// Whether this reference's root is floating/anchored.
     anchored: bool,
-    /// The exact structural mutations supported by this selected model node.
+    /// Structural mutations supported by this root/subject pairing.
     /// The host must render from this payload instead of inferring from paint
     /// kind or floating placement (docs/101 UXOBJ-001/006).
     capabilities: ObjectCapabilities,
 }
 
-/// Structural capabilities of one exact selectable object identity. Review-mode
+/// Structural capabilities of one stable selectable object reference. Review-mode
 /// and host-policy availability remain host concerns; these bits answer whether
-/// the model node has a compatible read/command/inverse path at all.
+/// its root/subject pair has a compatible read/command/inverse path at all.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ObjectCapabilities {
     can_resize: bool,
@@ -14155,13 +14356,25 @@ impl ObjectCapabilities {
     }
 
     fn group_child(kind: &str) -> Self {
-        // Shape appearance has a dedicated recursive group-child resolver.
-        // Geometry, anchor, structure, crop, and alt-text commands do not: those
-        // target top-level InlineNodes/drawings. Expose only what can commit.
+        // A single-child group's root is the anchor/delete target while its leaf
+        // remains the appearance/text subject. Group extent needs a separate
+        // exact-inverse geometry op, so resize stays unavailable in this slice.
         Self {
+            can_move: true,
+            can_wrap: true,
+            can_delete: true,
             can_fill: kind == "shape",
             can_stroke: kind == "shape",
             can_edit_text: kind == "textbox",
+            ..Self::empty()
+        }
+    }
+
+    const fn group_root() -> Self {
+        Self {
+            can_move: true,
+            can_wrap: true,
+            can_delete: true,
             ..Self::empty()
         }
     }
@@ -14354,7 +14567,9 @@ fn collect_para_objects(
 #[wasm_bindgen]
 #[derive(Clone, Debug)]
 pub struct ObjectHitPayload {
-    node: String,
+    root: String,
+    subject: String,
+    path: Vec<u32>,
     kind: &'static str,
     page: u32,
     rect: [i32; 5],
@@ -14364,11 +14579,39 @@ pub struct ObjectHitPayload {
 
 #[wasm_bindgen]
 impl ObjectHitPayload {
-    /// The object node id (32-hex string).
+    /// Compatibility alias for [`subject`](Self::subject).
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn node(&self) -> String {
-        self.node.clone()
+        self.subject.clone()
+    }
+
+    /// The removable/movable top-level object carrier (32-hex string).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn root(&self) -> String {
+        self.root.clone()
+    }
+
+    /// The exact leaf whose kind-specific properties or text are edited.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn subject(&self) -> String {
+        self.subject.clone()
+    }
+
+    /// The bounded child-index path from `root` to `subject`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn path(&self) -> Vec<u32> {
+        self.path.clone()
+    }
+
+    /// The owning document story. Object selection is body-only in this slice.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn surface(&self) -> String {
+        "body".to_owned()
     }
 
     /// The object kind: `"image"`, `"textbox"`, or `"shape"` (docs/85 `ObjectKind`).
@@ -14392,36 +14635,36 @@ impl ObjectHitPayload {
         self.rect.to_vec()
     }
 
-    /// Whether the selected node itself owns a floating anchor. A group child
-    /// may paint inside an anchored group without itself being movable.
+    /// Whether this reference's root owns a floating anchor. For a group-of-one,
+    /// `subject` remains the leaf while movement and wrapping target `root`.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn anchored(&self) -> bool {
         self.anchored
     }
 
-    /// Whether this exact node supports an extent mutation.
+    /// Whether this reference supports an exact, undoable extent mutation.
     #[wasm_bindgen(getter, js_name = canResize)]
     #[must_use]
     pub fn can_resize(&self) -> bool {
         self.capabilities.can_resize
     }
 
-    /// Whether this exact node owns a movable anchor position.
+    /// Whether this reference's root owns a movable anchor position.
     #[wasm_bindgen(getter, js_name = canMove)]
     #[must_use]
     pub fn can_move(&self) -> bool {
         self.capabilities.can_move
     }
 
-    /// Whether this exact node owns a mutable text-wrapping mode.
+    /// Whether this reference's root owns a mutable text-wrapping mode.
     #[wasm_bindgen(getter, js_name = canWrap)]
     #[must_use]
     pub fn can_wrap(&self) -> bool {
         self.capabilities.can_wrap
     }
 
-    /// Whether this exact node can be deleted without remapping its identity.
+    /// Whether this reference's root can be deleted with an exact inverse.
     #[wasm_bindgen(getter, js_name = canDelete)]
     #[must_use]
     pub fn can_delete(&self) -> bool {
@@ -22390,7 +22633,7 @@ mod tests {
     }
 
     #[test]
-    fn group_child_shape_capabilities_expose_only_supported_mutations() {
+    fn group_of_one_routes_root_commands_and_subject_formatting() {
         let mut document = document_with_shape(None);
         let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
             panic!("shape fixture paragraph");
@@ -22398,27 +22641,38 @@ mod tests {
         let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
             panic!("shape fixture group");
         };
+        let root = group.id;
+        let GroupChild::Shape(child) = &group.children[0] else {
+            panic!("shape fixture child");
+        };
+        let subject = child.id;
         group.anchor = Some(page_offset_anchor());
         group.relative_height = Some(1);
 
-        let d = wasm_document(document);
+        let mut d = wasm_document(document);
         let shape = d
             .object_boxes()
             .into_iter()
             .find(|object| object.kind == "shape")
             .expect("placed group-child shape");
-        assert!(!shape.anchored, "a child id is not itself an anchor target");
+        assert_eq!(shape.root, root);
+        assert_eq!(shape.subject, subject);
+        assert_eq!(shape.path, vec![0]);
+        assert!(shape.anchored, "the reference root owns the anchor");
         assert_eq!(
             shape.capabilities,
             ObjectCapabilities {
+                can_move: true,
+                can_wrap: true,
+                can_delete: true,
                 can_fill: true,
                 can_stroke: true,
                 ..ObjectCapabilities::empty()
             }
         );
         assert!(
-            d.object_handles(&shape.node.to_string()).is_empty(),
-            "an unresizable child must not advertise resize handles"
+            d.object_handles(&subject.to_string()).is_empty(),
+            "group resize remains unavailable until it has an exact inverse"
         );
 
         let cx = shape.rect.origin.x.raw() + shape.rect.size.width.raw() / 2;
@@ -22426,12 +22680,17 @@ mod tests {
         let hit = d
             .object_at(shape.page, cx, cy)
             .expect("hit the group-child shape");
+        assert_eq!(hit.surface(), "body");
+        assert_eq!(hit.root(), root.to_string());
+        assert_eq!(hit.subject(), subject.to_string());
+        assert_eq!(hit.node(), subject.to_string(), "node aliases subject");
+        assert_eq!(hit.path(), vec![0]);
         assert!(hit.can_fill());
         assert!(hit.can_stroke());
         assert!(!hit.can_resize());
-        assert!(!hit.can_move());
-        assert!(!hit.can_wrap());
-        assert!(!hit.can_delete());
+        assert!(hit.can_move());
+        assert!(hit.can_wrap());
+        assert!(hit.can_delete());
         assert!(!hit.can_alt_text());
         assert!(!hit.can_crop());
 
@@ -22439,10 +22698,122 @@ mod tests {
             serde_json::from_str(&d.object_order()).expect("object order JSON");
         let entry = order
             .iter()
-            .find(|entry| entry.node == shape.node.to_string())
+            .find(|entry| entry.subject == subject.to_string())
             .expect("shape order entry");
+        assert_eq!(entry.surface, "body");
+        assert_eq!(entry.node, subject.to_string());
+        assert_eq!(entry.root, root.to_string());
+        assert_eq!(entry.path, vec![0]);
         assert!(entry.can_fill && entry.can_stroke);
-        assert!(!entry.can_resize && !entry.can_delete && !entry.can_wrap);
+        assert!(entry.can_move && entry.can_wrap && entry.can_delete);
+        assert!(!entry.can_resize && !entry.can_alt_text && !entry.can_crop);
+
+        // Geometry is read from the subject's placed leaf, but anchor mutations
+        // target the root and remain one exactly undoable action.
+        let before_rect = d.object_rect(&subject.to_string());
+        d.set_object_anchor_position(&root.to_string(), 3_000_000.0, 2_000_000.0)
+            .expect("move the group root");
+        assert_ne!(d.object_rect(&subject.to_string()), before_rect);
+        d.undo().expect("undo the group move");
+        assert_eq!(d.object_rect(&subject.to_string()), before_rect);
+
+        assert_eq!(d.object_wrap(&root.to_string()), "square");
+        d.set_object_wrap(&root.to_string(), "behind")
+            .expect("wrap the group root behind text");
+        assert_eq!(d.object_wrap(&root.to_string()), "behind");
+        d.undo().expect("undo the group wrap");
+        assert_eq!(d.object_wrap(&root.to_string()), "square");
+
+        d.delete_object(&root.to_string())
+            .expect("delete the complete group");
+        assert!(d.object_boxes().is_empty());
+        d.undo().expect("undo the group delete");
+        let restored = d
+            .object_boxes()
+            .into_iter()
+            .find(|object| object.subject == subject)
+            .expect("the complete object reference is restored");
+        assert_eq!(restored.root, root);
+        assert_eq!(restored.path, vec![0]);
+    }
+
+    #[test]
+    fn multi_child_group_is_selected_as_one_root_object() {
+        let mut document = document_with_shape(None);
+        let BlockNode::Paragraph(paragraph) = &mut document.body_mut()[0] else {
+            panic!("shape fixture paragraph");
+        };
+        let InlineNode::Group(group) = &mut paragraph.inlines[0] else {
+            panic!("shape fixture group");
+        };
+        let root = group.id;
+        group.anchor = Some(page_offset_anchor());
+        group.relative_height = Some(1);
+        let GroupChild::Shape(first) = &group.children[0] else {
+            panic!("shape fixture child");
+        };
+        let mut second = first.clone();
+        second.id = NodeId::from_parts(9, 5).unwrap();
+        second.offset.x_emu = 457_200;
+        group.children.push(GroupChild::Shape(second));
+
+        let d = wasm_document(document);
+        let boxes = d.object_boxes();
+        assert_eq!(
+            boxes.len(),
+            1,
+            "children are not exposed as competing selections"
+        );
+        let selected = &boxes[0];
+        assert_eq!(selected.kind, "group");
+        assert_eq!(selected.root, root);
+        assert_eq!(selected.subject, root);
+        assert!(selected.path.is_empty());
+        assert!(selected.anchored);
+        assert_eq!(selected.capabilities, ObjectCapabilities::group_root());
+        assert!(selected.rect.size.width.raw() > 1_440);
+
+        let cx = selected.rect.origin.x.raw() + selected.rect.size.width.raw() / 2;
+        let cy = selected.rect.origin.y.raw() + selected.rect.size.height.raw() / 2;
+        let hit = d
+            .object_at(selected.page, cx, cy)
+            .expect("hit the group union rectangle");
+        assert_eq!(hit.root(), root.to_string());
+        assert_eq!(hit.subject(), root.to_string());
+        assert!(hit.path().is_empty());
+        assert_eq!(hit.kind(), "group");
+        assert!(hit.can_move() && hit.can_wrap() && hit.can_delete());
+        assert!(!hit.can_resize() && !hit.can_fill() && !hit.can_stroke());
+
+        let children = d.object_boxes_including_group_children();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].root, root);
+        assert_eq!(children[0].path, vec![0]);
+        assert_eq!(children[1].path, vec![1]);
+        let child_x = children[1].rect.origin.x.raw() + children[1].rect.size.width.raw() / 2;
+        let child_y = children[1].rect.origin.y.raw() + children[1].rect.size.height.raw() / 2;
+        let descendant = d
+            .object_descendant_at(&root.to_string(), children[1].page, child_x, child_y)
+            .expect("explicit descent resolves the painted child");
+        assert_eq!(descendant.root(), root.to_string());
+        assert_eq!(
+            descendant.subject(),
+            NodeId::from_parts(9, 5).unwrap().to_string()
+        );
+        assert_eq!(descendant.path(), vec![1]);
+        assert_eq!(descendant.kind(), "shape");
+        assert!(descendant.can_fill() && descendant.can_stroke());
+        assert_eq!(
+            d.object_rect(&descendant.subject()),
+            flat_rect(children[1].page, children[1].rect)
+        );
+
+        let descendants: Vec<ObjectOrderEntryJson> =
+            serde_json::from_str(&d.object_descendants(&root.to_string()))
+                .expect("descendant order JSON");
+        assert_eq!(descendants.len(), 2);
+        assert_eq!(descendants[0].path, vec![0]);
+        assert_eq!(descendants[1].path, vec![1]);
     }
 
     #[test]
@@ -22455,12 +22826,12 @@ mod tests {
             .into_iter()
             .find(|b| b.anchored)
             .expect("a floating object");
-        let node = float.node.to_string();
+        let node = float.subject.to_string();
         assert_eq!(float.kind, "image");
         let cx = float.rect.origin.x.raw() + float.rect.size.width.raw() / 2;
         let cy = float.rect.origin.y.raw() + float.rect.size.height.raw() / 2;
         let hit = d.object_at(float.page, cx, cy).expect("hit the float");
-        assert_eq!(hit.node, node);
+        assert_eq!(hit.subject, node);
         assert!(hit.anchored, "objectAt reports it as anchored/movable");
         assert!(hit.can_resize());
         assert!(hit.can_move());
@@ -22499,7 +22870,7 @@ mod tests {
             .into_iter()
             .find(|b| b.anchored)
             .expect("the float survives the round trip")
-            .node
+            .subject
             .to_string();
         assert_eq!(reopened.object_wrap(&reopened_float), "behind");
         assert_eq!(
@@ -22517,7 +22888,7 @@ mod tests {
             .into_iter()
             .find(|b| b.kind == "image")
             .expect("an inline image object")
-            .node
+            .subject
             .to_string();
 
         let before = d.object_extent(&image_node);
@@ -22549,7 +22920,7 @@ mod tests {
             .into_iter()
             .find(|b| b.kind == "image")
             .expect("the image survives the round trip")
-            .node
+            .subject
             .to_string();
         assert_eq!(
             reopened.object_extent(&reopened_image),
@@ -22574,16 +22945,16 @@ mod tests {
         let hit = d
             .object_at(image.page, cx, cy)
             .expect("object hit at the image center");
-        assert_eq!(hit.node, image.node.to_string());
+        assert_eq!(hit.subject, image.subject.to_string());
         assert_eq!(hit.kind, "image");
         assert_eq!(hit.rect[0], image.page as i32);
 
         // objectRect round-trips the placed rect; objectHandles yields 8 grips
         // (NW,N,NE,E,SE,S,SW,W), each `[page, cx, cy, kind]`.
-        let rect = d.object_rect(&image.node.to_string());
+        let rect = d.object_rect(&image.subject.to_string());
         assert_eq!(rect.len(), 5, "objectRect is [page,x,y,w,h]");
         assert_eq!(rect[3], image.rect.size.width.raw());
-        let handles = d.object_handles(&image.node.to_string());
+        let handles = d.object_handles(&image.subject.to_string());
         assert_eq!(handles.len(), 8 * 4, "eight [page,cx,cy,kind] handles");
         // The NW handle sits at the object's top-left corner.
         assert_eq!(handles[1], image.rect.origin.x.raw());

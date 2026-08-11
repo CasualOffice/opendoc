@@ -38,14 +38,28 @@ async function findObject(page, box) {
   return null;
 }
 
-test("a text box inside a group is selectable", async ({ page, consoleErrors }) => {
+test("a text box inside a group is reachable through explicit descent", async ({
+  page,
+  consoleErrors,
+}) => {
   const box = await open(page, GROUPED);
+  const pages = page.locator("#pages");
 
-  // Group children carried no identity in the layout, so this found nothing at
-  // all — the content was visible and completely inert.
+  // The first click selects the group as one structural object. Enter then
+  // descends to its first paint-order child without losing the stable root.
   const found = await findObject(page, box);
   expect(found, "a grouped object should be selectable").not.toBeNull();
-  expect(found.kind).toBe("textbox");
+  expect(found.kind).toBe("group");
+  const root = await pages.getAttribute("data-object-root");
+  expect(root).toMatch(/^[0-9a-f]{32}$/);
+  await expect(pages).toHaveAttribute("data-object-subject", root);
+  await expect(pages).toHaveAttribute("data-object-path", "");
+
+  await page.keyboard.press("Enter");
+  await expect(pages).toHaveAttribute("data-object-kind", "textbox");
+  await expect(pages).toHaveAttribute("data-object-root", root);
+  await expect(pages).not.toHaveAttribute("data-object-subject", root);
+  await expect(pages).toHaveAttribute("data-object-path", /\d+(\.\d+)*/);
 
   expect(consoleErrors).toEqual([]);
 });
