@@ -259,7 +259,10 @@
                 <div class="fmt-row-line">
                   <button id="bold" type="button" class="fmt" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
                   <button id="italic" type="button" class="fmt" title="Italic (⌘I)" aria-label="Italic" aria-pressed="false"><span class="format-glyph italic-glyph" aria-hidden="true">I</span></button>
-                  <button id="underline" type="button" class="fmt" title="Underline (⌘U)" aria-label="Underline" aria-pressed="false"><span class="format-glyph underline-glyph" aria-hidden="true">U</span></button>
+                  <span class="list-split underline-split">
+                    <button id="underline" type="button" class="fmt list-split-main" title="Underline (⌘U)" aria-label="Underline" aria-pressed="false"><span class="format-glyph underline-glyph" aria-hidden="true">U</span></button>
+                    <button id="underlineMenuBtn" type="button" class="fmt list-caret" title="Underline style and color" aria-label="Underline style and color" aria-haspopup="dialog" aria-controls="underlineMenu" aria-expanded="false"><span class="ms" aria-hidden="true">arrow_drop_down</span></button>
+                  </span>
                   <button id="strike" type="button" class="fmt" title="Strikethrough" aria-label="Strikethrough" aria-pressed="false"><span class="format-glyph strike-glyph" aria-hidden="true">S</span></button>
                   <button id="subscript" type="button" class="fmt" title="Subscript" aria-label="Subscript"><span class="ms" aria-hidden="true">subscript</span></button>
                   <button id="superscript" type="button" class="fmt" title="Superscript" aria-label="Superscript"><span class="ms" aria-hidden="true">superscript</span></button>
@@ -684,7 +687,9 @@
          Automatic/None, More colors → OS input as the custom fallback). -->
     <div id="textColorMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Text color"></div>
     <div id="highlightMenu" class="context-menu color-menu" hidden role="dialog" aria-label="Highlight color"></div>
+    <div id="underlineMenu" class="context-menu color-menu underline-menu" hidden role="dialog" aria-label="Underline style and color"></div>
     <input id="textColorCustom" type="color" value="#000000" class="visually-offscreen" tabindex="-1" aria-hidden="true" />
+    <input id="underlineColorCustom" type="color" value="#000000" class="visually-offscreen" tabindex="-1" aria-hidden="true" />
 
     <!-- Shape Fill / Shape Outline pickers (Word's Shape Format tab), anchored to
          the floating object context bar when a shape is selected. -->

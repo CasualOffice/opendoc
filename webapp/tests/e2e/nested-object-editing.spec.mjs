@@ -72,6 +72,113 @@ test("a grouped text box can be entered and edited, leaving the body alone", asy
   expect(consoleErrors).toEqual([]);
 });
 
+test("a grouped text box keeps inside clicks and follows the two-step Escape grammar", async ({
+  page,
+  consoleErrors,
+}) => {
+  const box = await open(page, GROUPED);
+  const found = await findObject(page, box);
+  expect(found).not.toBeNull();
+  const bodyBefore = await page.locator("#a11yDocument").textContent();
+
+  await page.mouse.dblclick(found.x, found.y);
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+
+  // Resolve the grouped child's extent from the editor's own selection chrome,
+  // not a guessed page fraction. Escape once selects the object and exposes the
+  // exact outline used by the product.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "selected",
+  );
+  const outline = page.locator(".overlay .object-outline");
+  await expect(outline).toBeVisible();
+  const rect = await outline.boundingBox();
+  expect(rect).not.toBeNull();
+
+  // Re-enter near the text, then click the empty far side. A missing glyph hit
+  // inside the placed box must resolve within the active box, not eject the
+  // caret to the document body.
+  await page.mouse.dblclick(
+    rect.x + rect.width * 0.15,
+    rect.y + rect.height * 0.5,
+  );
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
+  await page.mouse.click(
+    rect.x + rect.width * 0.85,
+    rect.y + rect.height * 0.75,
+  );
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
+  await page.keyboard.type("INSIDE");
+  await expect(page.locator("#undoBtn")).toHaveAttribute(
+    "aria-label",
+    "Undo Typing",
+  );
+  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "selected",
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).not.toHaveAttribute(
+    "data-object-mode",
+    /.*/,
+  );
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("clicking the body exits a grouped text box and sends typing to the body", async ({
+  page,
+  consoleErrors,
+}) => {
+  const box = await open(page, GROUPED);
+  const found = await findObject(page, box);
+  expect(found).not.toBeNull();
+
+  await page.mouse.dblclick(found.x, found.y);
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
+  await expect(page.locator(".overlay .caret")).toHaveCount(1);
+
+  // The grouped fixture keeps its objects in the upper part of the page. This
+  // target is derived from the live page rectangle and is below that object
+  // search region, in ordinary body content.
+  const target = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.55 };
+  expect(
+    await page.evaluate(
+      (point) => document.elementFromPoint(point.x, point.y) !== null,
+      target,
+    ),
+    "the click-away point must be inside the browser viewport",
+  ).toBe(true);
+  await page.mouse.click(target.x, target.y);
+  await expect(page.locator("#pages")).not.toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
+
+  await page.keyboard.type("BODYEXIT");
+  await expect(page.locator("#a11yDocument")).toContainText("BODYEXIT");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("a floating text box can be entered and edited", async ({ page, consoleErrors }) => {
   const box = await open(page, FLOATING);
   const found = await findObject(page, box);

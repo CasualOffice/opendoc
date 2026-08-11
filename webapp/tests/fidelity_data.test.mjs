@@ -141,11 +141,11 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   assert.equal(by["Math (OMML)"].modeled, "full");
   assert.equal(by["Math (OMML)"].rendered, "partial");
   assert.equal(by["Math (OMML)"].editable, "none");
-  // Character rendering stays partial only until the wavy-underline squiggle
-  // merges (it is currently drawn as a flat line); emphasis/outline/shadow
-  // effects also stay unpainted. Paragraphs and Lists now render their common
-  // surface in full — the remainders (docGrid/autospace on paragraphs, unknown
-  // numFmt on lists) are niche/bounded, not common gaps.
+  // Character rendering stays partial because emphasis/outline/shadow effects
+  // remain unpainted. Typed underline styles, including wavy and words-only,
+  // render. Paragraphs and Lists render their common surface in full — the
+  // remainders (docGrid/autospace on paragraphs, unknown numFmt on lists) are
+  // niche/bounded, not common gaps.
   assert.equal(by["Character / run formatting"].rendered, "partial");
   // Numbering is fully modeled as of Layer 1 (overrides/indirection/restart/
   // numFmt vocabulary all typed + round-trip) and now renders in full.

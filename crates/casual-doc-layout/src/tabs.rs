@@ -955,6 +955,7 @@ fn leader_run(
             id: glyph.id,
             advance: Twip(advance),
             cluster: block.start_offset,
+            is_whitespace: false,
         })
         .collect();
     Some(GlyphRun {

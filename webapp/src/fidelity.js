@@ -21,7 +21,7 @@ const FIDELITY = [
   },
   {
     family: "Character / run formatting",
-    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript, small-caps, and run-level shading (w:shd) render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash) render; wavy and words-only underlines are currently drawn as a single flat line. Rare effects (emphasis marks, outline/shadow/emboss, run border) are preserved for export but not painted.",
+    note: "Bold, italic, underline, strike, color, highlight, size, font, super/subscript, small-caps, and run-level shading (w:shd) render and edit. Colored underlines and typed underline styles (double/thick/dotted/dashed/dot-dash/wavy/words-only) render and can be authored. Rare effects (emphasis marks, outline/shadow/emboss, run border) are preserved for export but not painted.",
     modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {

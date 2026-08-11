@@ -22,6 +22,31 @@ areas: `14-EXECUTION-TRACKER.md` (per-slice status), `18-SUPPORT-MATRIX.md`
 `46`/`55`/`60` (rendering fidelity), `67-EDITOR-UX-GAP-ANALYSIS.md` (editor UX),
 `85` §5.7/§5.9 (object-editing scope), `98` (PDF).
 
+## Owner priority decision — editor first
+
+As of 2026-08-11, execution is ordered around document editing. This supersedes
+the apparent priority implied by older phase numbering; it does not erase or
+overstate the deferred work.
+
+| Order | Active outcome | Exit gate |
+| --- | --- | --- |
+| 1 | Document safety and DOCX fidelity | No silent loss; unsupported content is preserved or reported; the oracle, visual, table, float/wrap, and font-fallback gates are materially closed |
+| 2 | Editing experience and interaction reliability | The editing-surface continuity contract in doc 58 passes across body, running content, notes, text boxes/groups, and table cells |
+| 3 | Authoring-model completeness | Sections, styles, note options, fields, drawing geometry, picture content/effects, text-box body properties, and typed run properties are represented deterministically and mutate only through commands/transactions |
+| 4 | Missing editing parity | The high-value authoring controls in §2 ship against the completed model rather than as host-only state |
+| 5 | Stable public SDK | The editor-proven commands and errors become a consolidated, versioned embedding boundary |
+| 6 | OT/CRDT | Collaboration is designed over stable commands, transactions, identities, and selection semantics |
+
+PDF, GPU rendering, Tauri, worker threading, plugin ABI, canonical CBOR, and
+collaboration are not active editor-milestone work. The current SDK receives
+only compatibility maintenance needed to keep editor development testable.
+
+The quality bar for every active outcome is production/enterprise, not MVP:
+deterministic model-owned behavior, bounded resource use, no silent data loss or
+cross-surface mutation, explicit unsupported results, a regression for every
+fixed defect, and the complete relevant gate set before a tracker row becomes
+`Done`.
+
 ---
 
 ## 1. The open defect class — context and interaction
@@ -32,19 +57,21 @@ from `pages[0]`, from the host's own copy of the page setup. Closing it for
 headers (PR #475) and for text boxes and the ribbon (PR #476) each uncovered more
 of it, which is the signature of a class rather than a bug.
 
-The class is **not exhausted**. Untested, in the order the next defect is most
-likely to be found:
+The initial five-case sweep is now exhausted. The status and evidence for each
+bounded slice are retained here so later surfaces inherit the same contract
+instead of reopening the defect class:
 
-| # | Context / gesture | Why it is suspect |
-| --- | --- | --- |
-| 1 | Grouped box and nested objects — click inside, click away, Escape | Formatting toggles are covered; the click/exit rules are not, and they are the exact rules that were wrong for the header and the text box |
-| 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Never exercised. Entry/exit is now decided per click; a drag crosses the boundary mid-gesture |
-| 3 | Zoom change while inside a context | Caret geometry is now page-scoped; nothing proves it survives a zoom or a re-render |
-| 4 | Table cells as a context | The one editing context never examined in this sweep |
-| 5 | Scroll while a band is open | The band chrome is drawn per page; scrolling to a page whose band is not mounted is untested |
+| # | Context / gesture | Status | Why it is suspect / evidence |
+| --- | --- | --- | --- |
+| 1 | Grouped box and nested objects — click inside, click away, Escape | Covered 2026-08-11 | `nested-object-editing.spec.mjs` derives the grouped child's bounds from its selection outline and proves inside-empty-space retention, body click-away, and the two-step Escape grammar |
+| 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Fixed 2026-08-11 | Both reproductions initially failed: pointer-move reused click-away resolution and exited the starting story. Pointer-down now retains the owning running band/text box and clips later moves at that boundary; `surface-boundary-selection.spec.mjs` proves context and subsequent typing stay in the starting story |
+| 3 | Zoom change while inside a context | Fixed 2026-08-11 | Fixed-percentage and fit-width regressions prove header and text-box context, model caret, running-band chrome, changed geometry, and the next typed edit survive a full page-set rebuild without touching body text; the ordinary-speed full 444-test gate passed |
+| 4 | Table cells as a context | Fixed 2026-08-11 | Model-owned innermost-cell bounds now scope the first Select All and replacement; ordinary/merged empty hits, explicit repeated escalation, and body exit are covered without adjacent-cell loss |
+| 5 | Scroll while a band is open | Fixed 2026-08-12 | Header and footer regressions force a distant page raster to mount while page 1 unmounts, then prove the model story, band chrome, viewport-local caret, typing destination, and scroll position survive; projection follows only pages where the same focus node is placed |
 
-**Recommendation:** finish this sweep before adding capability. It is the same
-class that produced every symptom the owner hit.
+**Outcome:** this sweep is complete. New editor capability must continue using
+the same model-owned continuity contract and add its surface/gesture regression
+before the tracker row can become `Done`.
 
 ### Standing lesson
 
@@ -88,7 +115,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 | Colour fonts / colour emoji | Not rasterized. Emoji render through a monochrome face; no COLR/CBDT/sbix path |
 | Text wrap around floats | Top-and-bottom and square reserve shared flow, including in cells, headers and footers. **Tight and through contour wrapping, and page-coupled reflow, remain partial** |
 | Oracle page parity | 3 of 5 corpus documents exact; SDS +1 (final-page column balancing), Medical −1 (document-grid row heights) |
-| Typed underline style/colour | `P1F-38` — the boolean underline draws; the typed style/colour is not modeled. Still open |
+| Typed underline style/colour | **Implemented** (`P1F-38`/`P1F-38b`) — typed style and independent RGB colour round-trip, render (including words-only Unicode-whitespace gaps), edit, reflect mixed state, support armed typing, and survive the internal rich clipboard. Remaining: Suggesting mode rejects style/colour edits until tracked-format deltas support them |
 | `.docm` macro files | **Rejected at open.** Strip-and-open versus explicit non-support is an undecided policy question, not an oversight |
 | Long tail (docs 44 Tier 4) | `latentStyles`, glossary/AutoText **semantics**, ruby annotation, ink (`w:contentPart`), generic `w:framePr` layout, `w:background`, vertical text, distribute alignment, kashida justification. Preserved opaque where possible; not semantically modeled |
 

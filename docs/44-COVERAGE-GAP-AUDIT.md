@@ -143,7 +143,7 @@ open as a PR at the time of writing. The **Status** column reflects the current 
 | P1F-35 | Comment range markers (`commentRangeStart`/`End`) → anchor becomes a point | `import/body.rs:925-932` | Model range markers like bookmarks | **Done** (P1F-35) |
 | P1F-36 | Section long tail: `pgBorders`, `lnNumType`, per-section note props, `textDirection`/`bidi`, per-column widths | `import/body.rs:1094-1233` | Extend `SectionBoundary` | **Done** (P1F-36) |
 | P1F-37 | Complex-script run props `bCs`/`iCs`/`szCs` | `properties.rs:21-136` | Add CS toggles + `size_cs` to `RunProperties` | **Done** (P1F-37) |
-| P1F-38 | Underline style/color flattens to bool without report | `properties.rs:24` | Typed underline style + color | **Not started** — P1F-15 draws the boolean underline decoration only; the typed underline style/color is not yet modeled. Still open. |
+| P1F-38 | Underline style/color flattens to bool without report | `properties.rs:24` | Typed underline style + color | **Done** — closed typed model, DOCX import/export, cascade/layout, independent color, single/double/thick/dotted/dashed/dot-dash/wavy/words paint, command-routed editor authoring, mixed-state reflection, armed typing, clipboard preservation, exact undo, and reopen tests. Words-only paint gaps are source-cluster-driven (P1F-38b), including Unicode whitespace. Suggesting-mode authoring rejects explicitly until tracked-format deltas carry style/color. |
 | P1F-39 | `w:altChunk`, NB/soft hyphen, `w:ptab` | catch-all | Model chunk ref + hyphen glyphs + abs tab | **Done** (P1F-39 model/import/export; P1F-39b layout placeholder — embedded-chunk *content* flow still open) |
 
 ### Tier 4 — Long tail / low priority / policy
@@ -194,5 +194,5 @@ edit-survivable. Tier-0 correctness bugs are small and should land immediately r
 **Update (2026-08-01):** this sequencing was followed — P1F-1 and P1F-2 are both Done, the
 Tier-0 bugs (P1F-C1/C2/C3) landed, and the individual part/construct families were then modeled
 on top. The remaining work is the residual list above: P1F-7 (docProps writer, in progress),
-P1F-20 (line rule, needs verification), P1F-22 (footnote placement, in progress), P1F-38
-(typed underline, not started), and the Tier-4 long tail incl. the `.docm` policy decision.
+P1F-20 (line rule, needs verification), P1F-22 (footnote placement, in progress),
+and the Tier-4 long tail incl. the `.docm` policy decision.

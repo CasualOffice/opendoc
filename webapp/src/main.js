@@ -80,6 +80,9 @@ const textColorApplyBtn = document.getElementById("textColorApply");
 const textColorBar = document.getElementById("textColorBar");
 const textColorInput = document.getElementById("textColorCustom");
 const textColorMenu = document.getElementById("textColorMenu");
+const underlineMenuBtn = document.getElementById("underlineMenuBtn");
+const underlineMenu = document.getElementById("underlineMenu");
+const underlineColorInput = document.getElementById("underlineColorCustom");
 const highlightCaret = document.getElementById("highlight");
 const highlightApplyBtn = document.getElementById("highlightApply");
 const highlightBar = document.getElementById("highlightBar");
@@ -2093,6 +2096,7 @@ const runControls = [
   fontSizeSel,
   textColorCaret,
   textColorApplyBtn,
+  underlineMenuBtn,
   highlightCaret,
   highlightApplyBtn,
   fontFamilyBtn,
@@ -2980,6 +2984,10 @@ async function renderAll() {
   buildRuler();
   observePages(); // wire the viewport observer to the new wraps
   paintPagesInView(); // paint what is on screen now; the observer handles scroll
+  // The page set was replaced, so host chrome attached to the old wraps no
+  // longer exists. Running-content identity remains model-owned; reconstruct
+  // only its visual band from that retained context at the new geometry.
+  if (runningEditBand) drawRunningBands(runningEditBand);
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
     // A command may have reported a more important status while this async
@@ -3843,6 +3851,8 @@ function traverseObjects(step) {
 let runningEditBand = null; // "header" | "footer" | null
 /** The 1-based page whose band is open — the other half of the editing context. */
 let runningEditPage = null;
+/** One viewport-driven projection update per animation frame. */
+let runningContextScrollFrame = 0;
 
 // ---- Header / footer markers -------------------------------------------------
 // LibreOffice Writer raises a marker with a `+` button when the pointer is in the
@@ -4159,21 +4169,67 @@ function exitRunningEdit() {
 }
 
 /** The page the user is looking at: the one covering the middle of the viewport,
- *  falling back to the first. Entering a header from the ribbon or the palette
- *  must act on THAT page — `pages[0]` sent the caret to page one and scrolled
- *  the view off whatever the user was working on. */
+ *  or the nearest page when the midpoint is in a sheet gap. Entering a header
+ *  from the ribbon or the palette must act on THAT page — `pages[0]` sent the
+ *  caret to page one and scrolled the view off whatever the user was working on. */
 function pageInView() {
   if (!pages.length) return null;
   const viewport = document.getElementById("viewport");
   if (!viewport) return pages[0];
   const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
+  let nearest = pages[0];
+  let nearestDistance = Number.POSITIVE_INFINITY;
   for (const page of pages) {
     if (!page.wrap) continue;
     const rect = page.wrap.getBoundingClientRect();
     if (rect.top <= middle && rect.bottom >= middle) return page;
+    const distance = rect.bottom < middle ? middle - rect.bottom : rect.top - middle;
+    if (distance < nearestDistance) {
+      nearest = page;
+      nearestDistance = distance;
+    }
   }
-  return pages[0];
+  return nearest;
 }
+
+/** Re-project a repeated running-content caret onto the page now in view.
+ *
+ * The selection's model node/offset and owning story do not change. Only the
+ * page copy used for geometry changes, through the engine's edit-context API.
+ * Throttling to one animation frame keeps wheel/touch scrolling bounded and
+ * prevents overlay churn for every raw scroll event. */
+function syncRunningContextToViewport() {
+  runningContextScrollFrame = 0;
+  if (!runningEditBand || !selection) return;
+  const visiblePage = pageInView();
+  if (!visiblePage || visiblePage.pageNumber === runningEditPage) return;
+  // Different-first/even/odd sections can put a different running story on the
+  // visible page. Ask the engine whether the current model focus is actually
+  // placed there before changing projection; scrolling must never retarget the
+  // selection into an unrelated header/footer body.
+  let projected = [];
+  try {
+    doc.setEditContext(runningEditBand, visiblePage.pageNumber);
+    projected = doc.caretRect(selection.focus.node, selection.focus.offset);
+  } catch {
+    return;
+  } finally {
+    doc.setEditContext(runningEditBand, runningEditPage);
+  }
+  if (projected.length < 5 || projected[0] !== visiblePage.pageNumber) return;
+  breakTypingSession();
+  setRunningContext(runningEditBand, visiblePage);
+  drawSelection();
+}
+
+viewportEl.addEventListener(
+  "scroll",
+  () => {
+    if (!runningEditBand || runningContextScrollFrame) return;
+    runningContextScrollFrame = requestAnimationFrame(syncRunningContextToViewport);
+  },
+  { passive: true },
+);
 
 /** Puts the caret in a page's header or footer, entering the context. Used by
  *  the double-click in the band and by the Insert menu / palette commands —
@@ -4851,6 +4907,11 @@ function onPointerDown(page, event) {
     lastClientY: event.clientY,
     moved: false,
     shift: event.shiftKey,
+    // A drag cannot construct a range across WordprocessingML stories. Retain
+    // the surface that owned pointer-down so pointer-move can clip at its edge
+    // instead of reusing click-away behavior and silently entering the body.
+    runningBand: runningEditBand,
+    objectNode: editingHere ? objectSelection.node : null,
   };
   // Shift+Click extends the current selection to the click (keeps the anchor).
   selection =
@@ -4974,6 +5035,27 @@ function updateDragSelection(event) {
   }
   const page = pageFromClientPoint(event.clientX, event.clientY);
   if (!page) return;
+  const { x, y } = pointToTwip(page, event);
+  // Click-away is an entry/exit gesture; crossing a boundary while the button
+  // is already down is not. Keep the last valid endpoint when the pointer leaves
+  // the text-box story that owned pointer-down.
+  if (
+    pointerGesture.objectNode &&
+    !pointInsideObject(pointerGesture.objectNode, page, x, y)
+  ) {
+    return;
+  }
+  // `anchorAt` deliberately exits running-content editing for an ordinary body
+  // click. Do not call that mutating path until the moving point is proven to be
+  // in the same running story as pointer-down. Holding the last valid endpoint
+  // clips the range at the story boundary and keeps the model selection valid.
+  if (pointerGesture.runningBand) {
+    const hit = doc.resolveClick(page.pageNumber, x, y);
+    if (!hit) return;
+    const sameStory = hit.band === pointerGesture.runningBand && !!hit.node;
+    hit.free?.();
+    if (!sameStory) return;
+  }
   const focus = anchorAt(page, event);
   if (!focus) return;
   selection = { anchor: selection.anchor, focus };
@@ -7145,6 +7227,36 @@ function reflectFontFamily(family) {
   fontFamilyBtn.title = family ? `Font: ${family}` : "Font";
 }
 
+const UNDERLINE_STYLE_LABELS = new Map([
+  ["none", "None"],
+  ["single", "Single"],
+  ["double", "Double"],
+  ["thick", "Thick"],
+  ["dotted", "Dotted"],
+  ["dashed", "Dashed"],
+  ["dotDash", "Dot-dash"],
+  ["wavy", "Wavy"],
+  ["words", "Words only"],
+]);
+let currentUnderlineStyle = "single";
+let currentUnderlineColor = "";
+let currentUnderlineMixed = false;
+
+/** Reflect the effective typed underline without writing renderer fallback data
+ *  back into the document. Empty color is the model's automatic/text-color state. */
+function reflectUnderlineControl(style, color, mixed = false) {
+  const canonical = style || "single";
+  currentUnderlineStyle = canonical;
+  currentUnderlineColor = color || "";
+  currentUnderlineMixed = mixed;
+  fmtButtons.underline.dataset.underlineStyle = canonical;
+  fmtButtons.underline.style.setProperty("--underline-color", color || "currentColor");
+  underlineMenuBtn.closest(".underline-split")?.classList.toggle("is-mixed", mixed);
+  underlineMenuBtn.title = mixed
+    ? "Underline style and color: Mixed"
+    : `Underline: ${UNDERLINE_STYLE_LABELS.get(canonical) || canonical}${color ? ` · ${color.toUpperCase()}` : " · Automatic color"}`;
+}
+
 /** Toggles a run toggle (`bold`/`italic`/`underline`/`strike`). With a range it
  *  formats the selection; at a collapsed caret it arms the format for typing
  *  (premium editors: press Bold, then type — the text comes out bold). */
@@ -7223,6 +7335,10 @@ function updateToolbar() {
   let colorMixed = false;
   let highlight = "none";
   let highlightMixed = false;
+  let underlineStyle = "single";
+  let underlineColor = "";
+  let underlineStyleMixed = false;
+  let underlineColorMixed = false;
   let verticalAlignMixed = false;
   if (doc && hasSel) {
     const rs = range
@@ -7241,6 +7357,10 @@ function updateToolbar() {
     colorMixed = rs.colorMixed;
     highlight = rs.highlight || "none";
     highlightMixed = rs.highlightMixed;
+    underlineStyle = rs.underlineStyle || "single";
+    underlineStyleMixed = rs.underlineStyleMixed;
+    underlineColor = rs.underlineColor || "";
+    underlineColorMixed = rs.underlineColorMixed;
     sup = rs.superscript;
     sub = rs.subscript;
     verticalAlignMixed = rs.verticalAlignMixed;
@@ -7252,6 +7372,8 @@ function updateToolbar() {
     if (pendingFormat.font != null) font = pendingFormat.font;
     if (pendingFormat.color) textColorInput.value = pendingFormat.color;
     if (pendingFormat.highlight != null) highlight = pendingFormat.highlight;
+    if (pendingFormat.underlineStyle != null) underlineStyle = pendingFormat.underlineStyle;
+    if (pendingFormat.underlineColor != null) underlineColor = pendingFormat.underlineColor;
     if (pendingFormat.vertAlign != null) {
       sup = pendingFormat.vertAlign === "super";
       sub = pendingFormat.vertAlign === "sub";
@@ -7260,6 +7382,8 @@ function updateToolbar() {
     fontMixed = false;
     colorMixed = false;
     highlightMixed = false;
+    underlineStyleMixed = false;
+    underlineColorMixed = false;
     verticalAlignMixed = false;
   }
   fontSizeSel.value = size;
@@ -7271,6 +7395,13 @@ function updateToolbar() {
   reflectTextColorSwatch(colorMixed ? null : (textColorInput.value || null));
   highlightCaret.closest(".ctl")?.classList.toggle("is-mixed", highlightMixed);
   reflectHighlightSwatch(highlightMixed ? null : highlight);
+  const underlineToggleMixed = fmtButtons.underline.getAttribute("aria-pressed") === "mixed";
+  const underlineOn = fmtButtons.underline.getAttribute("aria-pressed") === "true";
+  reflectUnderlineControl(
+    underlineStyleMixed ? "" : (underlineOn ? underlineStyle : "none"),
+    underlineColorMixed ? "" : underlineColor,
+    underlineToggleMixed || underlineStyleMixed || underlineColorMixed,
+  );
   superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
   subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
@@ -7517,6 +7648,10 @@ function captureFormatForPainter() {
   if (!rs.colorMixed && rs.color) fmt.color = rs.color; // skip automatic/theme (empty)
   if (!rs.highlightMixed && rs.highlight) fmt.highlight = rs.highlight; // includes "none"
   if (!rs.verticalAlignMixed && rs.verticalAlign) fmt.vertAlign = rs.verticalAlign;
+  if (fmt.underline && !rs.underlineStyleMixed && rs.underlineStyle) {
+    fmt.underlineStyle = rs.underlineStyle;
+  }
+  if (fmt.underline && !rs.underlineColorMixed) fmt.underlineColor = rs.underlineColor;
   rs.free();
   // Paragraph formatting reachable through absolute getter/setter pairs. Indent
   // and paragraph spacing lack absolute copy ops today (relative-only), so they
@@ -7545,6 +7680,12 @@ async function applyPaintedFormat() {
   await runToolbarEdit((a, b, c, d) =>
     doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
   );
+  if (fmt.underlineStyle) {
+    await runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, fmt.underlineStyle));
+  }
+  if (fmt.underlineColor != null) {
+    await runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, fmt.underlineColor));
+  }
   if (fmt.sizePoints != null) await runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, fmt.sizePoints));
   if (fmt.font) await runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, fmt.font));
   if (fmt.color) {
@@ -7866,6 +8007,7 @@ function highlightHex(name) {
 // Session-remembered recently-used swatches (most-recent first, deduped, capped).
 const recentTextColors = [];
 const recentHighlights = [];
+const recentUnderlineColors = [];
 function recordRecent(list, value) {
   const i = list.indexOf(value);
   if (i !== -1) list.splice(i, 1);
@@ -7978,8 +8120,134 @@ function renderColorMenu(kind, menu = kind === "text" ? textColorMenu : highligh
   }
 }
 
+function makeUnderlineStyleOption(style, label) {
+  const option = document.createElement("button");
+  option.type = "button";
+  option.className = "color-row-action underline-style-option";
+  option.dataset.underlineStyle = style;
+  option.setAttribute("role", "radio");
+  option.setAttribute(
+    "aria-checked",
+    String(!currentUnderlineMixed && style === currentUnderlineStyle),
+  );
+  const preview = document.createElement("span");
+  preview.className = `underline-style-preview underline-style-${style}`;
+  preview.textContent = style === "none" ? "ab" : "Sample";
+  option.append(preview, document.createTextNode(label));
+  return option;
+}
+
+/** Builds the combined underline style/color menu from canonical engine tokens.
+ *  The explicit Automatic row maps to `Some(None)` in the edit delta. */
+function renderUnderlineMenu() {
+  underlineMenu.replaceChildren();
+  underlineMenu.appendChild(makeMenuHeading("Underline style"));
+  const styleGroup = document.createElement("div");
+  styleGroup.setAttribute("role", "radiogroup");
+  styleGroup.setAttribute("aria-label", "Underline style");
+  for (const [style, label] of UNDERLINE_STYLE_LABELS) {
+    styleGroup.appendChild(makeUnderlineStyleOption(style, label));
+  }
+  underlineMenu.appendChild(styleGroup);
+
+  underlineMenu.appendChild(makeMenuHeading("Underline color"));
+  const automatic = document.createElement("button");
+  automatic.type = "button";
+  automatic.className = "color-row-action";
+  automatic.dataset.underlineAuto = "1";
+  automatic.innerHTML = '<span class="color-chip" style="--sw:#000000"></span><span>Automatic (text color)</span>';
+  automatic.classList.toggle("is-active", !currentUnderlineMixed && !currentUnderlineColor);
+  underlineMenu.appendChild(automatic);
+  underlineMenu.appendChild(makeSwatchGrid(
+    TEXT_STANDARD_COLORS.map((hex) =>
+      makeSwatchCell(
+        "text",
+        hex,
+        hex,
+        `Underline ${hex.toUpperCase()}`,
+        !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
+      )),
+  ));
+  if (recentUnderlineColors.length) {
+    underlineMenu.appendChild(makeMenuHeading("Recent"));
+    underlineMenu.appendChild(makeSwatchGrid(
+      recentUnderlineColors.map((hex) =>
+        makeSwatchCell(
+          "text",
+          hex,
+          hex,
+          `Underline ${hex.toUpperCase()}`,
+          !currentUnderlineMixed && hex.toLowerCase() === currentUnderlineColor.toLowerCase(),
+        )),
+    ));
+  }
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "color-row-action color-more";
+  more.dataset.underlineMore = "1";
+  more.innerHTML = '<span class="ms" aria-hidden="true">colorize</span><span>More colors…</span>';
+  underlineMenu.appendChild(more);
+}
+
 const textColorPopover = registerPopover(textColorCaret, textColorMenu, () => renderColorMenu("text"));
 const highlightPopover = registerPopover(highlightCaret, highlightMenu, () => renderColorMenu("highlight"));
+const underlinePopover = registerPopover(underlineMenuBtn, underlineMenu, renderUnderlineMenu);
+
+function underlineEditBlockedByReview() {
+  if (reviewMode !== "suggesting") return false;
+  setStatus(
+    "Underline style and color are not tracked yet; switch to Editing to apply them",
+    "error",
+  );
+  return true;
+}
+
+function applyUnderlineStyle(style) {
+  if (underlineEditBlockedByReview()) return;
+  const patch = style === "none"
+    ? { underline: false, underlineStyle: "single", underlineColor: "" }
+    : { underline: true, underlineStyle: style };
+  armOrApplyRun(patch, () =>
+    runToolbarEdit((a, b, c, d) => doc.setUnderlineStyle(a, b, c, d, style)),
+  );
+}
+
+function applyUnderlineColor(color) {
+  if (underlineEditBlockedByReview()) return;
+  const patch = color ? { underline: true, underlineColor: color } : { underlineColor: "" };
+  armOrApplyRun(patch, () =>
+    runToolbarEdit((a, b, c, d) => doc.setUnderlineColor(a, b, c, d, color)),
+  );
+}
+
+underlineMenu.addEventListener("click", (e) => {
+  const style = e.target.closest("[data-underline-style]")?.dataset.underlineStyle;
+  if (style) {
+    applyUnderlineStyle(style);
+    closePopover(underlinePopover);
+    focusEditorSurface();
+    return;
+  }
+  if (e.target.closest("[data-underline-more]")) {
+    underlineColorInput.value = currentUnderlineColor || "#000000";
+    underlineColorInput.click();
+    return;
+  }
+  const colorCell = e.target.closest("[data-color], [data-underline-auto]");
+  if (!colorCell) return;
+  const color = colorCell.dataset.underlineAuto ? "" : colorCell.dataset.color;
+  applyUnderlineColor(color);
+  if (color) recordRecent(recentUnderlineColors, color);
+  closePopover(underlinePopover);
+  focusEditorSurface();
+});
+underlineColorInput.addEventListener("change", () => {
+  const color = underlineColorInput.value;
+  applyUnderlineColor(color);
+  recordRecent(recentUnderlineColors, color);
+  closePopover(underlinePopover);
+  focusEditorSurface();
+});
 
 // One text-color menu-click handler, shared by the ribbon menu and the floating
 // selection-toolbar menu. `popover` is the popover to close after applying; the
@@ -12536,12 +12804,50 @@ function navByViewport(dir, extend) {
   scrollCaretIntoView();
 }
 
-/** Selects the whole document (⌘A). */
+function sameModelPosition(left, right) {
+  return left.node === right.node && left.offset === right.offset;
+}
+
+function selectionMatchesRange(current, start, end) {
+  return (
+    (sameModelPosition(current.anchor, start) && sameModelPosition(current.focus, end)) ||
+    (sameModelPosition(current.anchor, end) && sameModelPosition(current.focus, start))
+  );
+}
+
+/** Selects the active cell first, then the whole document on a repeated ⌘A. */
 function selectAll() {
   if (!doc) return;
   breakTypingSession();
+
+  if (selection && doc.inTable(selection.focus.node)) {
+    const range = doc.cellTextRange(selection.focus.node);
+    try {
+      if (!range.found) {
+        setStatus(
+          "Select All is unavailable because this cell crosses another editing surface",
+          "error",
+        );
+        return;
+      }
+      const start = { node: range.startNode, offset: range.startOffset };
+      const end = { node: range.endNode, offset: range.endOffset };
+      if (!selectionMatchesRange(selection, start, end)) {
+        tableSelection = null;
+        selection = { anchor: start, focus: end };
+        drawSelection();
+        focusEditorSurface();
+        setStatus("Cell contents selected — choose Select All again to select the document");
+        return;
+      }
+    } finally {
+      range.free();
+    }
+  }
+
   const a = doc.firstPosition();
   const b = doc.lastPosition();
+  tableSelection = null;
   selection = {
     anchor: { node: a.node, offset: a.offset },
     focus: { node: b.node, offset: b.offset },
@@ -12550,6 +12856,7 @@ function selectAll() {
   b.free();
   drawSelection();
   focusEditorSurface();
+  setStatus("Document selected");
 }
 
 function editorClipboardEvent(event) {
@@ -13470,6 +13777,16 @@ document.addEventListener("keydown", async (e) => {
       );
     } else if (pendingFormat) {
       const pf = pendingFormat; // armed format persists across consecutive typing
+      if (
+        reviewMode === "suggesting" &&
+        (pf.underlineStyle != null || pf.underlineColor != null)
+      ) {
+        setStatus(
+          "Underline style and color are not tracked yet; switch to Editing to type with them",
+          "error",
+        );
+        return;
+      }
       await runEdit(
         () => reviewMode === "suggesting"
           ? doc.suggestStyledInsert(
@@ -13489,21 +13806,39 @@ document.addEventListener("keydown", async (e) => {
             new Date().toISOString(),
             session,
           )
-          : doc.typeStyledText(
-              focus.node,
-              focus.offset,
-              typed,
-              pf.bold,
-              pf.italic,
-              pf.underline,
-              pf.strike,
-              pf.sizeHalfPoints,
-              pf.color,
-              pf.highlight,
-              pf.vertAlign,
-              pf.font,
-              session,
-            ),
+          : (pf.underlineStyle != null || pf.underlineColor != null)
+            ? doc.typeStyledTextWithUnderline(
+                focus.node,
+                focus.offset,
+                typed,
+                pf.bold,
+                pf.italic,
+                pf.underline,
+                pf.strike,
+                pf.sizeHalfPoints,
+                pf.color,
+                pf.highlight,
+                pf.vertAlign,
+                pf.font,
+                session,
+                pf.underlineStyle,
+                pf.underlineColor,
+              )
+            : doc.typeStyledText(
+                focus.node,
+                focus.offset,
+                typed,
+                pf.bold,
+                pf.italic,
+                pf.underline,
+                pf.strike,
+                pf.sizeHalfPoints,
+                pf.color,
+                pf.highlight,
+                pf.vertAlign,
+                pf.font,
+                session,
+              ),
         { typing: true },
       );
     } else {
@@ -13575,16 +13910,20 @@ function updateZoomDisplay() {
   }
 }
 
-/** Sets a fixed zoom factor (exits any fit mode) and re-renders. */
-function setZoom(factor) {
+/** Sets a fixed zoom factor (exits any fit mode) and re-renders. A deliberate
+ * zoom command restores the editor; a native input `change` caused by focusing
+ * some other control does not steal focus back from that control. */
+function setZoom(factor, restoreFocus = true) {
   zoomMode = "custom";
   zoomFactor = clampZoom(factor);
   renderAll();
+  if (restoreFocus) focusEditorSurface();
 }
 /** Enters a fit mode; the factor is computed at render time. */
-function setZoomMode(mode) {
+function setZoomMode(mode, restoreFocus = true) {
   zoomMode = mode;
   renderAll();
+  if (restoreFocus) focusEditorSurface();
 }
 function stepZoom(dir) {
   const steps = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
@@ -13597,23 +13936,24 @@ function stepZoom(dir) {
 
 /** Commit the typed zoom value: a number (with optional %) sets a fixed zoom;
  *  "fit width"/"fit page" enter the matching fit mode; anything else reverts. */
-function commitZoomInput() {
+function commitZoomInput({ restoreFocus = false } = {}) {
   const raw = zoomEl.value.trim().toLowerCase();
-  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width");
-  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page");
+  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width", restoreFocus);
+  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page", restoreFocus);
   const pct = parseFloat(raw.replace("%", ""));
-  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100);
+  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100, restoreFocus);
   else updateZoomDisplay(); // reject: restore the last valid display
 }
-zoomEl.addEventListener("change", commitZoomInput);
+zoomEl.addEventListener("change", () => commitZoomInput());
 zoomEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
-    commitZoomInput();
+    commitZoomInput({ restoreFocus: true });
     zoomEl.blur();
   } else if (e.key === "Escape") {
     updateZoomDisplay();
     zoomEl.blur();
+    focusEditorSurface();
   }
 });
 zoomEl.addEventListener("focus", () => zoomEl.select());

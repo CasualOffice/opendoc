@@ -1296,6 +1296,7 @@ mod tests {
                 id: 1,
                 advance,
                 cluster: 0,
+                is_whitespace: false,
             }],
         };
         LineLayout {

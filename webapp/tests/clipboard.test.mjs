@@ -57,6 +57,42 @@ test("runsToHtml carries size/color/highlight/vertAlign", () => {
   );
 });
 
+test("typed underline style/color survive visible HTML and external CSS parsing", () => {
+  const html = runsToHtml([
+    {
+      text: "typed",
+      underline: true,
+      underlineStyle: "wavy",
+      underlineColor: "#cc1122",
+    },
+  ]);
+  assert.equal(
+    html,
+    '<p><span style="text-decoration-line:underline;text-decoration-style:wavy;text-decoration-color:#cc1122">typed</span></p>',
+  );
+
+  const runs = htmlToRuns(
+    root(
+      el(
+        "span",
+        {
+          style:
+            "text-decoration-line:underline;text-decoration-style:double;text-decoration-color:rgb(204, 17, 34)",
+        },
+        txt("typed"),
+      ),
+    ),
+  );
+  assert.deepEqual(runs, [
+    {
+      text: "typed",
+      underline: true,
+      underlineStyle: "double",
+      underlineColor: "#cc1122",
+    },
+  ]);
+});
+
 test("embedMarker/extractMarker round-trip arbitrary JSON, including non-ASCII text", () => {
   const runsJson = JSON.stringify([{ text: "café ☕" }, { paragraphBreak: true }]);
   const html = `${embedMarker(runsJson)}<p>café ☕</p>`;

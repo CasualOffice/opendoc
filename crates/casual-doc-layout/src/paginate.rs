@@ -1708,6 +1708,7 @@ mod tests {
                             id: 1,
                             advance: line_h,
                             cluster: 0,
+                            is_whitespace: false,
                         }],
                     }],
                     ascent: line_h,
@@ -1786,6 +1787,7 @@ mod tests {
                 id: 1,
                 advance: Twip(50),
                 cluster: 0,
+                is_whitespace: false,
             }],
         });
         second.images.push(InlineImage {

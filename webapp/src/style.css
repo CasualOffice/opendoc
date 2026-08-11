@@ -5243,6 +5243,35 @@ body:not(.doc-loaded) .drop-title {
   color: var(--accent);
 }
 
+.underline-split.is-mixed .list-caret {
+  color: var(--accent);
+}
+
+#underline .underline-glyph {
+  text-decoration-color: var(--underline-color, currentColor);
+}
+
+#underline[data-underline-style="double"] .underline-glyph {
+  text-decoration-style: double;
+}
+
+#underline[data-underline-style="thick"] .underline-glyph {
+  text-decoration-thickness: 3px;
+}
+
+#underline[data-underline-style="dotted"] .underline-glyph {
+  text-decoration-style: dotted;
+}
+
+#underline[data-underline-style="dashed"] .underline-glyph,
+#underline[data-underline-style="dotDash"] .underline-glyph {
+  text-decoration-style: dashed;
+}
+
+#underline[data-underline-style="wavy"] .underline-glyph {
+  text-decoration-style: wavy;
+}
+
 /* Marker-format gallery: a compact grid of preview cells. */
 .list-gallery-menu {
   display: grid;
@@ -5396,6 +5425,66 @@ body:not(.doc-loaded) .drop-title {
   min-width: 0;
   width: max-content;
   padding: 8px;
+}
+
+.underline-menu {
+  width: 226px;
+  max-height: min(520px, calc(100vh - 24px));
+  overflow-y: auto;
+}
+
+.underline-style-option {
+  justify-content: space-between;
+}
+
+.underline-style-option[aria-checked="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.underline-menu .color-row-action.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.underline-style-preview {
+  display: inline-block;
+  width: 74px;
+  color: var(--ink);
+  text-align: center;
+  text-decoration-line: underline;
+  text-underline-offset: 3px;
+}
+
+.underline-style-none {
+  text-decoration: none;
+}
+
+.underline-style-double {
+  text-decoration-style: double;
+}
+
+.underline-style-thick {
+  text-decoration-thickness: 3px;
+}
+
+.underline-style-dotted {
+  text-decoration-style: dotted;
+}
+
+.underline-style-dashed,
+.underline-style-dotDash {
+  text-decoration-style: dashed;
+}
+
+.underline-style-wavy {
+  text-decoration-style: wavy;
+}
+
+.underline-style-words {
+  text-decoration-style: solid;
+  word-spacing: 5px;
 }
 
 .color-row-action {
