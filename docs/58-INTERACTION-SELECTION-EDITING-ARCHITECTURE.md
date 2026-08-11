@@ -223,6 +223,15 @@ commands to the engine. Ctrl and Command are not aliases:
 | one viewport upward/downward | Page Up/Down | Page Up/Down | host hit-tests one viewport-height away |
 | delete previous/next word | Option+Backspace/Delete | Ctrl+Backspace/Delete | `deleteWordBackward` / `deleteWordForward` |
 
+Select All is scoped to the active editing surface. In a table cell, the first
+invocation selects the innermost cell's structural text flow using model-owned
+cell bounds; invoking it again while that exact range remains selected escalates
+to the whole document and reports that escalation in the editor status. A cell
+whose contiguous range would cross an embedded text-box story returns an
+explicit unsupported result instead of selecting across surfaces. This staged
+rule prevents an ordinary replacement gesture from clearing neighboring cells
+or unrelated document content.
+
 Shift extends every navigation action from the existing model anchor. Plain
 horizontal movement collapses a range to its ordered start/end before moving;
 vertical, paragraph, page, and document movement moves the focus normally.

@@ -2909,6 +2909,37 @@ impl WasmDocument {
         )
     }
 
+    /// The ordered text bounds of the innermost table cell containing `node`.
+    ///
+    /// Cell ownership is model state: the browser must not infer these bounds
+    /// from canvas geometry or the accessibility mirror. A cell containing an
+    /// embedded text-box story deliberately returns `found = false`; such a
+    /// story is a separate editing surface and a single contiguous model range
+    /// would cross that boundary.
+    #[wasm_bindgen(js_name = cellTextRange)]
+    #[must_use]
+    pub fn cell_text_range(&self, node: &str) -> CellTextRange {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return CellTextRange::none();
+        };
+        let Some(cell) = surface_block_lists(&self.document)
+            .into_iter()
+            .find_map(|blocks| innermost_cell_containing(blocks, nid))
+        else {
+            return CellTextRange::none();
+        };
+        if blocks_contain_text_box_story(&cell.blocks) {
+            return CellTextRange::none();
+        }
+        let mut paragraphs = Vec::new();
+        collect_cell_flow_text(&cell.blocks, &mut paragraphs);
+        let (Some((start, _)), Some((end, end_len))) = (paragraphs.first(), paragraphs.last())
+        else {
+            return CellTextRange::none();
+        };
+        CellTextRange::new(*start, *end, *end_len)
+    }
+
     /// The byte range `[start, end]` of the word at `offset` (double-click select),
     /// as `[start, end]`; empty if the offset is not within a word.
     #[wasm_bindgen(js_name = wordAt)]
@@ -10108,6 +10139,95 @@ fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     }
 }
 
+/// The innermost table cell whose ordinary block flow owns `node`.
+///
+/// Inline text-box paragraphs are intentionally absent: a text box is its own
+/// editing surface even when its anchor paragraph lives inside a cell.
+fn innermost_cell_containing(
+    blocks: &[BlockNode],
+    node: NodeId,
+) -> Option<&casual_doc_model::v1::TableCell> {
+    for block in blocks {
+        match block {
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(inner) = innermost_cell_containing(&cell.blocks, node) {
+                            return Some(inner);
+                        }
+                        let mut paragraphs = Vec::new();
+                        collect_cell_flow_text(&cell.blocks, &mut paragraphs);
+                        if paragraphs.iter().any(|(id, _)| *id == node) {
+                            return Some(cell);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(cell) = innermost_cell_containing(&sdt.blocks, node) {
+                    return Some(cell);
+                }
+            }
+            BlockNode::Paragraph(_) | BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Text-bearing paragraphs in a cell's structural flow, excluding inline text
+/// boxes because their paragraphs belong to a different editing surface.
+fn collect_cell_flow_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, u32)>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => out.push((
+                paragraph.id,
+                node_plain_text(&paragraph.inlines).len() as u32,
+            )),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_cell_flow_text(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_cell_flow_text(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// Whether a block flow contains a separate inline text-box story. Selecting a
+/// contiguous range across one would violate the editing-surface contract.
+fn blocks_contain_text_box_story(blocks: &[BlockNode]) -> bool {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let mut text_box_paragraphs = Vec::new();
+                collect_text_box_text(&paragraph.inlines, &mut text_box_paragraphs);
+                if !text_box_paragraphs.is_empty() {
+                    return true;
+                }
+            }
+            BlockNode::Table(table) => {
+                if table.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| blocks_contain_text_box_story(&cell.blocks))
+                }) {
+                    return true;
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if blocks_contain_text_box_story(&sdt.blocks) {
+                    return true;
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    false
+}
+
 /// The checkbox marker for one checklist item — the node + checked state — the
 /// host paints a clickable target for.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -16405,6 +16525,72 @@ impl Caret {
     }
 }
 
+/// A model-owned contiguous text range for one table cell.
+#[wasm_bindgen]
+#[derive(Clone, Debug)]
+pub struct CellTextRange {
+    found: bool,
+    start_node: String,
+    start_offset: u32,
+    end_node: String,
+    end_offset: u32,
+}
+
+impl CellTextRange {
+    fn none() -> Self {
+        Self {
+            found: false,
+            start_node: String::new(),
+            start_offset: 0,
+            end_node: String::new(),
+            end_offset: 0,
+        }
+    }
+
+    fn new(start_node: NodeId, end_node: NodeId, end_offset: u32) -> Self {
+        Self {
+            found: true,
+            start_node: start_node.to_string(),
+            start_offset: 0,
+            end_node: end_node.to_string(),
+            end_offset,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl CellTextRange {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn found(&self) -> bool {
+        self.found
+    }
+
+    #[wasm_bindgen(getter, js_name = startNode)]
+    #[must_use]
+    pub fn start_node(&self) -> String {
+        self.start_node.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = startOffset)]
+    #[must_use]
+    pub fn start_offset(&self) -> u32 {
+        self.start_offset
+    }
+
+    #[wasm_bindgen(getter, js_name = endNode)]
+    #[must_use]
+    pub fn end_node(&self) -> String {
+        self.end_node.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = endOffset)]
+    #[must_use]
+    pub fn end_offset(&self) -> u32 {
+        self.end_offset
+    }
+}
+
 /// The byte range `[start, end)` of the Unicode word containing (or ending at)
 /// `offset`, or `None` if the offset is not within a word (e.g. whitespace).
 fn word_bounds(text: &str, offset: usize) -> Option<(usize, usize)> {
@@ -20143,6 +20329,45 @@ mod tests {
         assert!(d.format_at(&node, 0, 1).bold(), "cell text is bold");
         d.delete_range(&node, 0, 1).expect("delete in cell");
         assert_eq!(d.copy_text(&node, 0, &node, text.len() as u32), text);
+    }
+
+    /// Select-all scope is derived from the innermost owning cell and expands to
+    /// every paragraph in that cell after a split, never the surrounding table.
+    #[test]
+    fn table_cell_text_range_is_model_owned_and_multi_paragraph() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (cell_id, text) = nodes
+            .iter()
+            .find(|(_, text)| text == "Nested A")
+            .map(|(id, text)| (*id, text.clone()))
+            .expect("the first nested-table cell paragraph");
+        let node = cell_id.to_string();
+
+        let initial = d.cell_text_range(&node);
+        assert!(initial.found());
+        assert_eq!(initial.start_node(), node);
+        assert_eq!(initial.start_offset(), 0);
+        assert_eq!(initial.end_node(), node);
+        assert_eq!(initial.end_offset(), text.len() as u32);
+
+        let second = d
+            .split_paragraph(&node, text.len() as u32)
+            .expect("split inside the active cell")
+            .node();
+        d.insert_text(&second, 0, "More".into())
+            .expect("type into the second cell paragraph");
+
+        let expanded = d.cell_text_range(&second);
+        assert!(expanded.found());
+        assert_eq!(expanded.start_node(), node);
+        assert_eq!(expanded.start_offset(), 0);
+        assert_eq!(expanded.end_node(), second);
+        assert_eq!(expanded.end_offset(), 4);
+
+        let body = d.first_position();
+        assert!(!d.cell_text_range(&body.node()).found());
     }
 
     /// Insert / delete a table row: the row count changes, the new row is editable,

@@ -12566,12 +12566,50 @@ function navByViewport(dir, extend) {
   scrollCaretIntoView();
 }
 
-/** Selects the whole document (⌘A). */
+function sameModelPosition(left, right) {
+  return left.node === right.node && left.offset === right.offset;
+}
+
+function selectionMatchesRange(current, start, end) {
+  return (
+    (sameModelPosition(current.anchor, start) && sameModelPosition(current.focus, end)) ||
+    (sameModelPosition(current.anchor, end) && sameModelPosition(current.focus, start))
+  );
+}
+
+/** Selects the active cell first, then the whole document on a repeated ⌘A. */
 function selectAll() {
   if (!doc) return;
   breakTypingSession();
+
+  if (selection && doc.inTable(selection.focus.node)) {
+    const range = doc.cellTextRange(selection.focus.node);
+    try {
+      if (!range.found) {
+        setStatus(
+          "Select All is unavailable because this cell crosses another editing surface",
+          "error",
+        );
+        return;
+      }
+      const start = { node: range.startNode, offset: range.startOffset };
+      const end = { node: range.endNode, offset: range.endOffset };
+      if (!selectionMatchesRange(selection, start, end)) {
+        tableSelection = null;
+        selection = { anchor: start, focus: end };
+        drawSelection();
+        focusEditorSurface();
+        setStatus("Cell contents selected — choose Select All again to select the document");
+        return;
+      }
+    } finally {
+      range.free();
+    }
+  }
+
   const a = doc.firstPosition();
   const b = doc.lastPosition();
+  tableSelection = null;
   selection = {
     anchor: { node: a.node, offset: a.offset },
     focus: { node: b.node, offset: b.offset },
@@ -12580,6 +12618,7 @@ function selectAll() {
   b.free();
   drawSelection();
   focusEditorSurface();
+  setStatus("Document selected");
 }
 
 function editorClipboardEvent(event) {
