@@ -2980,6 +2980,10 @@ async function renderAll() {
   buildRuler();
   observePages(); // wire the viewport observer to the new wraps
   paintPagesInView(); // paint what is on screen now; the observer handles scroll
+  // The page set was replaced, so host chrome attached to the old wraps no
+  // longer exists. Running-content identity remains model-owned; reconstruct
+  // only its visual band from that retained context at the new geometry.
+  if (runningEditBand) drawRunningBands(runningEditBand);
   drawSelection(); // re-place any existing selection at the new zoom
   if (token === renderToken) {
     // A command may have reported a more important status while this async
@@ -13601,16 +13605,20 @@ function updateZoomDisplay() {
   }
 }
 
-/** Sets a fixed zoom factor (exits any fit mode) and re-renders. */
-function setZoom(factor) {
+/** Sets a fixed zoom factor (exits any fit mode) and re-renders. A deliberate
+ * zoom command restores the editor; a native input `change` caused by focusing
+ * some other control does not steal focus back from that control. */
+function setZoom(factor, restoreFocus = true) {
   zoomMode = "custom";
   zoomFactor = clampZoom(factor);
   renderAll();
+  if (restoreFocus) focusEditorSurface();
 }
 /** Enters a fit mode; the factor is computed at render time. */
-function setZoomMode(mode) {
+function setZoomMode(mode, restoreFocus = true) {
   zoomMode = mode;
   renderAll();
+  if (restoreFocus) focusEditorSurface();
 }
 function stepZoom(dir) {
   const steps = [0.5, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
@@ -13623,23 +13631,24 @@ function stepZoom(dir) {
 
 /** Commit the typed zoom value: a number (with optional %) sets a fixed zoom;
  *  "fit width"/"fit page" enter the matching fit mode; anything else reverts. */
-function commitZoomInput() {
+function commitZoomInput({ restoreFocus = false } = {}) {
   const raw = zoomEl.value.trim().toLowerCase();
-  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width");
-  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page");
+  if (raw.startsWith("fit w") || raw === "width") return setZoomMode("fit-width", restoreFocus);
+  if (raw.startsWith("fit p") || raw === "page") return setZoomMode("fit-page", restoreFocus);
   const pct = parseFloat(raw.replace("%", ""));
-  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100);
+  if (Number.isFinite(pct) && pct > 0) setZoom(pct / 100, restoreFocus);
   else updateZoomDisplay(); // reject: restore the last valid display
 }
-zoomEl.addEventListener("change", commitZoomInput);
+zoomEl.addEventListener("change", () => commitZoomInput());
 zoomEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
-    commitZoomInput();
+    commitZoomInput({ restoreFocus: true });
     zoomEl.blur();
   } else if (e.key === "Escape") {
     updateZoomDisplay();
     zoomEl.blur();
+    focusEditorSurface();
   }
 });
 zoomEl.addEventListener("focus", () => zoomEl.select());

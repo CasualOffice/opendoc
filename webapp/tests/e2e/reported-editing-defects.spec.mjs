@@ -46,7 +46,7 @@ async function openMultiPage(page) {
   return last;
 }
 
-/** Scrolls the viewport to a later page and returns that page's box. */
+/** Scrolls the viewport to a later page and returns its stable wrapper. */
 async function scrollToPage(page, index) {
   // Every page keeps a lightweight `.page-wrap`; only nearby ones mount a canvas
   // (virtualization), so scrolling one into view is what makes it paintable.
@@ -64,7 +64,7 @@ async function scrollToPage(page, index) {
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);
-  return box;
+  return target;
 }
 
 /** Double-clicks a page's header band, retried.
@@ -74,9 +74,15 @@ async function scrollToPage(page, index) {
  *  clicks, which correctly do NOT enter the header. Retrying removes that
  *  measurement artefact; a band that genuinely cannot be entered fails all
  *  three attempts. */
-async function enterHeaderAt(page, box) {
+async function enterHeaderAt(page, target) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    await page.mouse.dblclick(box.x + box.width * 0.5, box.y + 12);
+    // Resolve geometry at the moment of every attempt. A virtualized canvas can
+    // detach/repaint after `scrollToPage`; replaying an old viewport coordinate
+    // then double-clicks empty space and turns a harness race into a product
+    // failure. The lightweight page wrapper is stable across those repaints.
+    const box = await target.boundingBox();
+    if (!box) continue;
+    await target.dblclick({ position: { x: box.width * 0.5, y: 12 } });
     if ((await page.locator("#pages").getAttribute("data-running-edit")) === "header") break;
     await page.waitForTimeout(200);
   }
@@ -84,9 +90,11 @@ async function enterHeaderAt(page, box) {
 }
 
 /** Clicks into a page's text column and reports whether a caret landed. */
-async function clickIntoPage(page, box) {
+async function clickIntoPage(page, target) {
   for (let fy = 0.18; fy < 0.8; fy += 0.06) {
-    await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * fy);
+    const box = await target.boundingBox();
+    if (!box) continue;
+    await target.click({ position: { x: box.width * 0.45, y: box.height * fy } });
     if ((await page.locator(".overlay .caret").count()) === 1) return true;
   }
   return false;
@@ -96,8 +104,8 @@ test("[1] typing works on a later page, not only page one", async ({ page, conso
   const pageCount = await openMultiPage(page);
   expect(pageCount, "the corpus document must be multi-page").toBeGreaterThan(1);
 
-  const box = await scrollToPage(page, Math.min(2, pageCount - 1));
-  expect(await clickIntoPage(page, box), "a click on a later page must place a caret").toBe(true);
+  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  expect(await clickIntoPage(page, target), "a click on a later page must place a caret").toBe(true);
 
   await page.keyboard.type("LATERPAGE");
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
@@ -112,8 +120,8 @@ test("[1b] the caret stays on the page that was clicked", async ({ page, console
   const pageCount = await openMultiPage(page);
   expect(pageCount).toBeGreaterThan(1);
 
-  const box = await scrollToPage(page, Math.min(2, pageCount - 1));
-  expect(await clickIntoPage(page, box)).toBe(true);
+  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  expect(await clickIntoPage(page, target)).toBe(true);
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
   expect(before, "the viewport is scrolled away from page one").toBeGreaterThan(100);
 
@@ -196,10 +204,10 @@ test("[3] entering the header does not jump the view to another page", async ({
   expect(pageCount).toBeGreaterThan(1);
 
   // Work on a later page, as a user editing a long document would be.
-  const box = await scrollToPage(page, Math.min(2, pageCount - 1));
+  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
 
-  await enterHeaderAt(page, box);
+  await enterHeaderAt(page, target);
   await page.waitForTimeout(400);
 
   const after = await page.locator("#viewport").evaluate((v) => v.scrollTop);
@@ -215,8 +223,8 @@ test("[3b] typing in a header keeps the view on that header", async ({ page, con
   const pageCount = await openMultiPage(page);
   expect(pageCount).toBeGreaterThan(1);
 
-  const box = await scrollToPage(page, Math.min(2, pageCount - 1));
-  await enterHeaderAt(page, box);
+  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  await enterHeaderAt(page, target);
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
 

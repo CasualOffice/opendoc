@@ -64,7 +64,7 @@ likely to be found. The status is maintained as each bounded test slice lands:
 | --- | --- | --- | --- |
 | 1 | Grouped box and nested objects — click inside, click away, Escape | Covered 2026-08-11 | `nested-object-editing.spec.mjs` derives the grouped child's bounds from its selection outline and proves inside-empty-space retention, body click-away, and the two-step Escape grammar |
 | 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Fixed 2026-08-11 | Both reproductions initially failed: pointer-move reused click-away resolution and exited the starting story. Pointer-down now retains the owning running band/text box and clips later moves at that boundary; `surface-boundary-selection.spec.mjs` proves context and subsequent typing stay in the starting story |
-| 3 | Zoom change while inside a context | Open | Caret geometry is now page-scoped; nothing proves it survives a zoom or a re-render |
+| 3 | Zoom change while inside a context | Fixed; full gate pending | Fixed-percentage and fit-width regressions prove header and text-box context, model caret, running-band chrome, changed geometry, and the next typed edit survive a full page-set rebuild without touching body text. Focused and stress checks pass; the post-repair aggregate gate must be rerun on an unthrottled host before the tracker row becomes `Done` |
 | 4 | Table cells as a context | Open | The one editing context never examined in this sweep |
 | 5 | Scroll while a band is open | Open | The band chrome is drawn per page; scrolling to a page whose band is not mounted is untested |
 
