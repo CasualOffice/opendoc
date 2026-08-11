@@ -61,6 +61,13 @@ The browser regression matrix must exercise this contract with real pointer and
 keyboard gestures. Test points come from engine/overlay geometry, not guessed
 page fractions, whenever the product exposes that geometry.
 
+For repeated running content, the active model node and offset remain unchanged
+while scrolling. The visible caret projection follows the page nearest the
+viewport midpoint, with updates bounded to one animation frame and geometry
+recomputed by the engine. A projection may move only when that exact model focus
+is placed on the candidate page; different-first/even/odd variants therefore do
+not silently retarget the selection into another header or footer story.
+
 ## The pipeline
 
 ```

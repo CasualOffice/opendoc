@@ -57,19 +57,21 @@ from `pages[0]`, from the host's own copy of the page setup. Closing it for
 headers (PR #475) and for text boxes and the ribbon (PR #476) each uncovered more
 of it, which is the signature of a class rather than a bug.
 
-The class is **not exhausted**. Untested, in the order the next defect is most
-likely to be found. The status is maintained as each bounded test slice lands:
+The initial five-case sweep is now exhausted. The status and evidence for each
+bounded slice are retained here so later surfaces inherit the same contract
+instead of reopening the defect class:
 
 | # | Context / gesture | Status | Why it is suspect / evidence |
 | --- | --- | --- | --- |
 | 1 | Grouped box and nested objects — click inside, click away, Escape | Covered 2026-08-11 | `nested-object-editing.spec.mjs` derives the grouped child's bounds from its selection outline and proves inside-empty-space retention, body click-away, and the two-step Escape grammar |
 | 2 | Drag-selection ACROSS a context boundary (header→body, box→body) | Fixed 2026-08-11 | Both reproductions initially failed: pointer-move reused click-away resolution and exited the starting story. Pointer-down now retains the owning running band/text box and clips later moves at that boundary; `surface-boundary-selection.spec.mjs` proves context and subsequent typing stay in the starting story |
-| 3 | Zoom change while inside a context | Fixed; full gate pending | Fixed-percentage and fit-width regressions prove header and text-box context, model caret, running-band chrome, changed geometry, and the next typed edit survive a full page-set rebuild without touching body text. Focused and stress checks pass; the post-repair aggregate gate must be rerun on an unthrottled host before the tracker row becomes `Done` |
-| 4 | Table cells as a context | Open | The one editing context never examined in this sweep |
-| 5 | Scroll while a band is open | Open | The band chrome is drawn per page; scrolling to a page whose band is not mounted is untested |
+| 3 | Zoom change while inside a context | Fixed 2026-08-11 | Fixed-percentage and fit-width regressions prove header and text-box context, model caret, running-band chrome, changed geometry, and the next typed edit survive a full page-set rebuild without touching body text; the ordinary-speed full 444-test gate passed |
+| 4 | Table cells as a context | Fixed 2026-08-11 | Model-owned innermost-cell bounds now scope the first Select All and replacement; ordinary/merged empty hits, explicit repeated escalation, and body exit are covered without adjacent-cell loss |
+| 5 | Scroll while a band is open | Fixed 2026-08-12 | Header and footer regressions force a distant page raster to mount while page 1 unmounts, then prove the model story, band chrome, viewport-local caret, typing destination, and scroll position survive; projection follows only pages where the same focus node is placed |
 
-**Recommendation:** finish this sweep before adding capability. It is the same
-class that produced every symptom the owner hit.
+**Outcome:** this sweep is complete. New editor capability must continue using
+the same model-owned continuity contract and add its surface/gesture regression
+before the tracker row can become `Done`.
 
 ### Standing lesson
 

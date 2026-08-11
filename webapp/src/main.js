@@ -3847,6 +3847,8 @@ function traverseObjects(step) {
 let runningEditBand = null; // "header" | "footer" | null
 /** The 1-based page whose band is open — the other half of the editing context. */
 let runningEditPage = null;
+/** One viewport-driven projection update per animation frame. */
+let runningContextScrollFrame = 0;
 
 // ---- Header / footer markers -------------------------------------------------
 // LibreOffice Writer raises a marker with a `+` button when the pointer is in the
@@ -4163,21 +4165,67 @@ function exitRunningEdit() {
 }
 
 /** The page the user is looking at: the one covering the middle of the viewport,
- *  falling back to the first. Entering a header from the ribbon or the palette
- *  must act on THAT page — `pages[0]` sent the caret to page one and scrolled
- *  the view off whatever the user was working on. */
+ *  or the nearest page when the midpoint is in a sheet gap. Entering a header
+ *  from the ribbon or the palette must act on THAT page — `pages[0]` sent the
+ *  caret to page one and scrolled the view off whatever the user was working on. */
 function pageInView() {
   if (!pages.length) return null;
   const viewport = document.getElementById("viewport");
   if (!viewport) return pages[0];
   const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
+  let nearest = pages[0];
+  let nearestDistance = Number.POSITIVE_INFINITY;
   for (const page of pages) {
     if (!page.wrap) continue;
     const rect = page.wrap.getBoundingClientRect();
     if (rect.top <= middle && rect.bottom >= middle) return page;
+    const distance = rect.bottom < middle ? middle - rect.bottom : rect.top - middle;
+    if (distance < nearestDistance) {
+      nearest = page;
+      nearestDistance = distance;
+    }
   }
-  return pages[0];
+  return nearest;
 }
+
+/** Re-project a repeated running-content caret onto the page now in view.
+ *
+ * The selection's model node/offset and owning story do not change. Only the
+ * page copy used for geometry changes, through the engine's edit-context API.
+ * Throttling to one animation frame keeps wheel/touch scrolling bounded and
+ * prevents overlay churn for every raw scroll event. */
+function syncRunningContextToViewport() {
+  runningContextScrollFrame = 0;
+  if (!runningEditBand || !selection) return;
+  const visiblePage = pageInView();
+  if (!visiblePage || visiblePage.pageNumber === runningEditPage) return;
+  // Different-first/even/odd sections can put a different running story on the
+  // visible page. Ask the engine whether the current model focus is actually
+  // placed there before changing projection; scrolling must never retarget the
+  // selection into an unrelated header/footer body.
+  let projected = [];
+  try {
+    doc.setEditContext(runningEditBand, visiblePage.pageNumber);
+    projected = doc.caretRect(selection.focus.node, selection.focus.offset);
+  } catch {
+    return;
+  } finally {
+    doc.setEditContext(runningEditBand, runningEditPage);
+  }
+  if (projected.length < 5 || projected[0] !== visiblePage.pageNumber) return;
+  breakTypingSession();
+  setRunningContext(runningEditBand, visiblePage);
+  drawSelection();
+}
+
+viewportEl.addEventListener(
+  "scroll",
+  () => {
+    if (!runningEditBand || runningContextScrollFrame) return;
+    runningContextScrollFrame = requestAnimationFrame(syncRunningContextToViewport);
+  },
+  { passive: true },
+);
 
 /** Puts the caret in a page's header or footer, entering the context. Used by
  *  the double-click in the band and by the Insert menu / palette commands —
