@@ -30,7 +30,9 @@ async function selectShape(page, box) {
   for (let fy = 0.04; fy < 0.5; fy += 0.02) {
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
       const p = { x: box.x + box.width * fx, y: box.y + box.height * fy };
-      await page.mouse.click(p.x, p.y);
+      // A true multi-child group is selected as a unit on first click;
+      // double-click explicitly descends to the painted child.
+      await page.mouse.dblclick(p.x, p.y);
       if ((await page.locator("#pages").getAttribute("data-object-kind")) === "shape") return p;
     }
   }
@@ -169,7 +171,7 @@ test("the picker reflects the shape it is on, not the last color used", async ({
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
       const p = { x: box.x + box.width * fx, y: box.y + box.height * fy };
       if (Math.abs(p.x - first.x) < 20 && Math.abs(p.y - first.y) < 20) continue;
-      await page.mouse.click(p.x, p.y);
+      await page.mouse.dblclick(p.x, p.y);
       const kind = await page.locator("#pages").getAttribute("data-object-kind");
       const node = await page.locator("#pages").getAttribute("data-object-selected");
       if (kind === "shape" && node && node !== firstNode) {
@@ -197,7 +199,7 @@ test("a shape inside a group can be filled", async ({ page, consoleErrors }) => 
   let filled = false;
   for (let fy = 0.04; fy < 0.6 && !filled; fy += 0.02) {
     for (let fx = 0.08; fx < 0.85; fx += 0.04) {
-      await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+      await page.mouse.dblclick(box.x + box.width * fx, box.y + box.height * fy);
       if ((await page.locator("#pages").getAttribute("data-object-kind")) !== "shape") continue;
       const node = await page.locator("#pages").getAttribute("data-object-selected");
       if (seen.has(node)) continue;
@@ -211,6 +213,42 @@ test("a shape inside a group can be filled", async ({ page, consoleErrors }) => 
     }
   }
   expect(filled, "the grouped shape must be reachable and fillable").toBe(true);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a multi-child group selects as a unit and Enter descends with a stable reference", async ({
+  page,
+  consoleErrors,
+}) => {
+  const box = await open(page);
+  const pages = page.locator("#pages");
+  let found = false;
+  for (let fy = 0.04; fy < 0.6 && !found; fy += 0.02) {
+    for (let fx = 0.08; fx < 0.85; fx += 0.04) {
+      await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+      found = (await pages.getAttribute("data-object-kind")) === "group";
+      if (found) break;
+    }
+  }
+  expect(found, "the real group is reachable as one initial selection").toBe(true);
+  const root = await pages.getAttribute("data-object-root");
+  expect(root).toMatch(/^[0-9a-f]{32}$/);
+  await expect(pages).toHaveAttribute("data-object-subject", root);
+  await expect(pages).toHaveAttribute("data-object-path", "");
+  await expect(pages).toHaveAttribute(
+    "data-object-capabilities",
+    "canMove,canWrap,canDelete",
+  );
+
+  await page.keyboard.press("Enter");
+  await expect(pages).toHaveAttribute("data-object-kind", "shape");
+  await expect(pages).toHaveAttribute("data-object-root", root);
+  await expect(pages).not.toHaveAttribute("data-object-subject", root);
+  await expect(pages).toHaveAttribute("data-object-path", /\d+(\.\d+)*/);
+  await expect(
+    page.locator(".object-context-bar").getByRole("button", { name: "Shape fill" }),
+  ).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
 });

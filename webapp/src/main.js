@@ -3676,6 +3676,10 @@ function finishObjectResize(event) {
 function updateObjectSelectionState() {
   if (objectSelection) {
     pagesEl.dataset.objectSelected = objectSelection.node;
+    pagesEl.dataset.objectSurface = objectSelection.ref.surface;
+    pagesEl.dataset.objectRoot = objectSelection.ref.root;
+    pagesEl.dataset.objectSubject = objectSelection.ref.subject;
+    pagesEl.dataset.objectPath = objectSelection.ref.path.join(".");
     pagesEl.dataset.objectKind = objectSelection.kind;
     pagesEl.dataset.objectMode = objectSelection.mode;
     pagesEl.dataset.objectCapabilities = OBJECT_CAPABILITY_KEYS
@@ -3683,6 +3687,10 @@ function updateObjectSelectionState() {
       .join(",");
   } else {
     delete pagesEl.dataset.objectSelected;
+    delete pagesEl.dataset.objectSurface;
+    delete pagesEl.dataset.objectRoot;
+    delete pagesEl.dataset.objectSubject;
+    delete pagesEl.dataset.objectPath;
     delete pagesEl.dataset.objectKind;
     delete pagesEl.dataset.objectMode;
     delete pagesEl.dataset.objectCapabilities;
@@ -3739,7 +3747,7 @@ function updateObjectContextBar() {
   objectContextBarEl.appendChild(strong);
   if (objectSelection.canWrap) {
     // A floating object exposes a live Wrap control; move + resize are drags.
-    const active = doc.objectWrap(objectSelection.node);
+    const active = doc.objectWrap(objectSelection.ref.root);
     const wrap = document.createElement("div");
     wrap.className = "object-wrap-menu";
     for (const [value, text] of WRAP_MODES) {
@@ -3755,7 +3763,9 @@ function updateObjectContextBar() {
     }
     objectContextBarEl.appendChild(wrap);
     const hint = document.createElement("small");
-    hint.textContent = "Drag to move · handles to resize";
+    hint.textContent = objectSelection.canResize
+      ? "Drag to move · handles to resize"
+      : "Drag to move";
     objectContextBarEl.appendChild(hint);
   } else if (objectSelection.canResize) {
     const hint = document.createElement("small");
@@ -3835,14 +3845,30 @@ function objectCapabilities(source) {
   return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, false]));
 }
 
-function selectObject(node, kind, anchor, anchored = false, capabilities = null) {
+/** Copies the engine-owned object identity before a wasm payload is freed.
+ *  `node` remains the subject compatibility alias; root owns structural and
+ *  anchor commands while subject owns kind-specific properties/text. */
+function objectReference(source, node) {
+  const value = source?.ref ?? source;
+  const subject = value?.subject || value?.node || node;
+  return {
+    surface: value?.surface || "body",
+    root: value?.root || subject,
+    subject,
+    path: Array.from(value?.path ?? []),
+  };
+}
+
+function selectObject(node, kind, anchor, anchored = false, descriptor = null) {
   if (anchor) selection = { anchor, focus: anchor };
+  const ref = objectReference(descriptor, node);
   objectSelection = {
-    node,
+    node: ref.subject,
+    ref,
     kind,
     mode: "selected",
     anchored,
-    ...objectCapabilities(capabilities),
+    ...objectCapabilities(descriptor),
   };
   pendingFormat = null;
   tableSelection = null;
@@ -3879,6 +3905,24 @@ function traverseObjects(step) {
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .object-outline"));
   // Screen readers get no handles to look at, so the position is announced.
   setStatus(`${OBJECT_LABELS[target.kind] ?? "Object"} ${next + 1} of ${objects.length}`);
+}
+
+/** Descends a selected multi-child group to its first paint-ordered leaf. The
+ *  engine returns the complete root/subject/path reference and capabilities;
+ *  the host never reconstructs group structure from canvas geometry. */
+function descendSelectedGroup() {
+  if (!doc || objectSelection?.kind !== "group") return false;
+  let descendants;
+  try {
+    descendants = JSON.parse(doc.objectDescendants(objectSelection.ref.root));
+  } catch {
+    return false;
+  }
+  const target = Array.isArray(descendants) ? descendants[0] : null;
+  if (!target) return false;
+  selectObject(target.node, target.kind, null, target.anchored, target);
+  setStatus(`${OBJECT_LABELS[target.kind] ?? "Object"} inside group selected`);
+  return true;
 }
 
 // ---- Header / footer editing -----------------------------------------------
@@ -4308,7 +4352,7 @@ const WRAP_MODES = [
  *  Blocked fail-closed in Suggesting/Viewing mode by `runEdit`'s gate. */
 function setObjectWrap(mode) {
   if (!objectSelection?.canWrap) return;
-  runEdit(() => doc.setObjectWrap(objectSelection.node, mode), { gate: true });
+  runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
 }
 
 /** Builds one object-context-bar action button (icon + label). Mirrors the wrap
@@ -4334,10 +4378,10 @@ function objectBarButton(icon, label, title, onClick, danger = false) {
  *  `EditResult` points at (the object's former surrounding-text anchor). */
 function deleteSelectedObject() {
   if (!objectSelection || objectSelection.mode !== "selected" || !objectSelection.canDelete) return;
-  const node = objectSelection.node;
+  const root = objectSelection.ref.root;
   runEdit(
     () => {
-      const res = doc.deleteObject(node);
+      const res = doc.deleteObject(root);
       objectSelection = null;
       clearObjectStatus();
       return res;
@@ -4491,6 +4535,7 @@ function startObjectMove(event, page, node) {
   page.overlay.appendChild(preview);
   objectMoveDrag = {
     node,
+    root: objectSelection.ref.root,
     page,
     startClientX: event.clientX,
     startClientY: event.clientY,
@@ -4530,7 +4575,7 @@ function finishObjectMove(event) {
   if (drag.moved) {
     const EMU_PER_TWIP = 635;
     runEdit(
-      () => doc.setObjectAnchorPosition(drag.node, drag.lastX * EMU_PER_TWIP, drag.lastY * EMU_PER_TWIP),
+      () => doc.setObjectAnchorPosition(drag.root, drag.lastX * EMU_PER_TWIP, drag.lastY * EMU_PER_TWIP),
       { gate: true },
     );
   } else {
@@ -4548,14 +4593,15 @@ const NUDGE_TWIP_LARGE = 180;
  *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
 function nudgeSelectedObject(dx, dy, large) {
   if (!doc || !objectSelection?.canMove) return;
-  const node = objectSelection.node;
-  const rect = doc.objectRect(node); // [page, x, y, w, h] twips
+  const subject = objectSelection.node;
+  const root = objectSelection.ref.root;
+  const rect = doc.objectRect(subject); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
   const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
   const nx = Math.max(0, rect[1] + dx * step);
   const ny = Math.max(0, rect[2] + dy * step);
   const EMU_PER_TWIP = 635;
-  runEdit(() => doc.setObjectAnchorPosition(node, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
+  runEdit(() => doc.setObjectAnchorPosition(root, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
     gate: true,
   });
 }
@@ -4574,6 +4620,7 @@ function cancelObjectMove() {
  *  the grammar transitions state and the surrounding-text caret is shown. */
 function enterObjectEditMode(at = null) {
   if (!objectSelection) return;
+  if (objectSelection.kind === "group" && descendSelectedGroup()) return;
   if (!objectSelection.canEditText) {
     const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
     const hint = objectSelection.canResize ? " — drag its handles to resize" : "";
@@ -4906,15 +4953,18 @@ function onPointerDown(page, event) {
     const node = object.node;
     const kind = object.kind;
     const anchored = object.anchored;
-    const capabilities = objectCapabilities(object);
+    const descriptor = {
+      ...objectCapabilities(object),
+      ...objectReference(object, node),
+    };
     object.free?.();
     // A caret at the nearest text slot is the object's surrounding-text anchor
     // (for the two-step Escape); fall back to the current caret.
     const anchor = anchorAt(page, event) || selection?.focus || null;
-    selectObject(node, kind, anchor, anchored, capabilities);
+    selectObject(node, kind, anchor, anchored, descriptor);
     // A floating object is movable: the same gesture that selects it can drag it
     // (a bare click commits nothing). Inline objects flow with the text.
-    if (capabilities.canMove) startObjectMove(event, page, node);
+    if (descriptor.canMove) startObjectMove(event, page, node);
     else startSelectionAutoScroll();
     event.preventDefault();
     return;
@@ -5327,10 +5377,29 @@ pagesEl.addEventListener("dblclick", (e) => {
   const { x, y } = pointToTwip(page, e);
   const object = doc?.objectAt(page.pageNumber, x, y);
   if (object) {
-    const node = object.node;
-    const kind = object.kind;
-    const anchored = object.anchored;
-    const capabilities = objectCapabilities(object);
+    let node = object.node;
+    let kind = object.kind;
+    let anchored = object.anchored;
+    let descriptor = {
+      ...objectCapabilities(object),
+      ...objectReference(object, node),
+    };
+    // Initial hit testing selects a true multi-child group as one unit. A
+    // double-click is the explicit descent gesture: ask the engine which leaf
+    // owns this painted point and retain its root for structural commands.
+    if (kind === "group") {
+      const descendant = doc.objectDescendantAt(descriptor.root, page.pageNumber, x, y);
+      if (descendant) {
+        node = descendant.node;
+        kind = descendant.kind;
+        anchored = descendant.anchored;
+        descriptor = {
+          ...objectCapabilities(descendant),
+          ...objectReference(descendant, node),
+        };
+        descendant.free?.();
+      }
+    }
     object.free?.();
     focusEditorSurface();
     if (!objectSelection || objectSelection.node !== node) {
@@ -5339,7 +5408,7 @@ pagesEl.addEventListener("dblclick", (e) => {
         kind,
         anchorAt(page, e) || selection?.focus || null,
         anchored,
-        capabilities,
+        descriptor,
       );
     }
     let clicked = null;
@@ -6108,7 +6177,7 @@ function buildObjectContextCommands(context) {
   // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
   // exactly like the context bar. The active mode is checked on the right.
   if (context.canWrap) {
-    const active = doc.objectWrap(context.node);
+    const active = doc.objectWrap(context.ref.root);
     commands.push({
       id: "object.wrap",
       label: "Wrap text",
@@ -6235,9 +6304,11 @@ function objectContextAtEvent(page, event) {
   const object = doc.objectAt(page.pageNumber, x, y);
   if (object) {
     const capabilities = objectCapabilities(object);
+    const ref = objectReference(object, object.node);
     const ctx = {
       surface: "object",
       node: object.node,
+      ref,
       kind: object.kind,
       anchored: object.anchored,
       ...capabilities,
@@ -6259,6 +6330,7 @@ function objectContextAtEvent(page, event) {
       return {
         surface: "object",
         node: objectSelection.node,
+        ref: objectSelection.ref,
         kind: objectSelection.kind,
         anchored: objectSelection.anchored,
         ...Object.fromEntries(
@@ -6630,6 +6702,7 @@ document.addEventListener("keydown", (event) => {
       showContextMenu(pageRect.left + rect[1] * sx, pageRect.top + rect[2] * sy, {
         surface: "object",
         node: objectSelection.node,
+        ref: objectSelection.ref,
         kind: objectSelection.kind,
         anchored: objectSelection.anchored,
         ...Object.fromEntries(
@@ -8396,7 +8469,7 @@ selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, se
 
 /** What the context bar calls each kind of object. A shape used to read
  *  "Image", which also handed it a Crop button it has no source rectangle for. */
-const OBJECT_LABELS = { image: "Image", textbox: "Text box", shape: "Shape" };
+const OBJECT_LABELS = { image: "Image", textbox: "Text box", shape: "Shape", group: "Group" };
 
 /** The preset shapes Insert ▸ Shapes offers — every geometry the engine models
  *  and the renderer draws. Naming them here keeps the menu honest: a gallery of

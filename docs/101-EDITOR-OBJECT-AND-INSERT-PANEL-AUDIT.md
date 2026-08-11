@@ -1,6 +1,6 @@
 # 101 — Editor Object and Insert-Panel Audit
 
-**Status:** Proposed design for owner review; documentation-only audit.
+**Status:** Accepted direction; Phase 0 implementation in progress.
 
 **Date:** 2026-08-12
 
@@ -10,25 +10,27 @@ explicitly outside this work.
 **Depends on:** docs 52, 58, 63, 64, 67, 69, 84, 85, 86 (typed OMML), 87, and
 99.
 
-**Implementation record:** `UXOBJ-001/006` began on 2026-08-12. The first
-bounded slice makes the existing selected identity truthful: WASM reports
-structural capability bits and every host affordance consumes them, so group
-children no longer inherit dead geometry/structure/accessibility actions from
-their floating paint box. Root/subject/path remapping (`UXOBJ-002`) remains the
-next slice; this first correction deliberately fails closed instead of guessing
-the owning group.
+**Implementation record:** `UXOBJ-001/006` shipped in PR #481 on 2026-08-12.
+WASM now reports structural capability bits and every host affordance consumes
+them. The follow-on `UXOBJ-002` slice introduces the engine-owned
+`{surface, root, subject, path}` reference: a group-of-one keeps the leaf as its
+format/text subject while move, wrap, and delete route to the owning group root;
+a true multi-child group initially selects one root union, while double-click or
+keyboard Enter uses an engine-returned child reference to descend without
+making leaf formatting unreachable. Group resize remains fail-closed because
+its extent and transform extent do not yet have one atomic, exact-inverse
+geometry operation (`UXOBJ-003`).
 
 ## 1. Executive conclusion
 
-The current drawing-object experience is not production-ready. The first
-problem is not missing visual polish: **the host offers mutations that the
-engine cannot perform for the selected model node**. A newly inserted shape is
-the clearest example. It is represented as a `WordprocessingGroup` containing a
-`GroupChild::Shape`, but the layout exposes the child id as the selected object.
-Fill and outline can target that child; resize, move, wrap, delete, crop, and alt
-text cannot. The UI nevertheless displays handles, wrap choices, Alt text, and
-Delete. A user can therefore perform a valid-looking gesture that fails after
-the fact.
+The drawing-object experience is not yet production-ready. The audit's first
+finding was not visual polish: **the host offered mutations that the engine
+could not perform for the selected model node**. A newly inserted shape exposed
+that defect because it is a `WordprocessingGroup` containing a
+`GroupChild::Shape`. PR #481 corrected capability truth, and the current
+`UXOBJ-002` slice resolves the root/subject identity split. The remaining
+release blockers are atomic resize semantics, surface-complete resolution, crop
+preservation, and the missing inspector/panel architecture.
 
 The second problem is interaction architecture. A large floating context bar
 places all six wrap modes plus object actions over the page; symbol, emoji, and
@@ -96,11 +98,11 @@ actually descends into them.
 | --- | --- | --- | --- | --- | --- | --- |
 | Top-level body inline `Drawing` | Yes | Yes | N/A | Yes | Yes | Crop, but current-crop read is absent |
 | Top-level body `AnchoredDrawing` | Yes | Yes | Yes | Yes | Yes | Crop, but current-crop read is absent |
-| Body inline `TextBox` | Yes | Yes | N/A | Yes | **No, but shown** | Content editing yes; body properties absent |
-| Body floating `TextBox` | Yes | Yes | Yes | Yes | **No, but shown** | Content editing yes; body properties absent |
-| Body anchored group root | Layout may expose children instead | Group extent path incomplete | Root anchor exists | Root can be deleted | No | No root inspector contract |
-| `GroupChild::Shape` | Yes | **No, handles shown** | **No, wrap/move shown** | **No, shown** | **No, shown** | Fill and stroke only |
-| `GroupChild::Picture` | Yes when layout supplies child id | **No, handles shown** | **No, wrap/move shown** | **No, shown** | **No, shown** | **Crop shown but unsupported** |
+| Body inline `TextBox` | Yes | Yes | N/A | Yes | N/A and omitted | Content editing yes; body properties absent |
+| Body floating `TextBox` | Yes | Yes | Yes | Yes | N/A and omitted | Content editing yes; body properties absent |
+| Body anchored group root | Yes as a unit for a multi-child group | **No and no handles** | Yes | Yes | No | Root selection only; inspector absent |
+| Lone `GroupChild::Shape` | Yes as `subject` under its group `root` | **No and no handles** | Yes, through root | Yes, through root | No and omitted | Fill and stroke through subject |
+| Lone `GroupChild::Picture` | Yes as `subject` under its group `root` | **No and no handles** | Yes, through root | Yes, through root | **No and omitted** | Crop unsupported and omitted |
 | Header/footer drawing | Float selection deliberately filtered; inline correlation incomplete | Body-only | Body-only | Structural delete can resolve owning surface | Setter resolves; getter is body-only | Inconsistent |
 | Object in a table-cell fragment | Model resolver may descend | Mutation may descend within body | Mutation may descend within body | Mutation may descend within body | Mutation may descend within body | Selection correlation does not cover the nested placed-fragment shape |
 
@@ -111,12 +113,12 @@ root/child identity, owning surface, model fields, and command support.
 
 ## 4. Defect catalogue
 
-### 4.1 P0 — controls can target an unmutable object
+### 4.1 P0 — controls can target an unmutable object (corrected for body groups)
 
-`object_boxes()` now admits a placed group child when
-`body_contains_group_child()` finds its id. The returned object is marked
-`anchored: true`. The host therefore paints eight handles, makes the body
-draggable, shows all wrap choices, and adds Alt text and Delete.
+The audit found that `object_boxes()` admitted a placed group child as though
+its child id owned every floating-object operation. The host therefore painted
+eight handles, made the child draggable, showed all wrap choices, and added Alt
+text and Delete.
 
 The corresponding command resolvers have a different target set:
 
@@ -129,14 +131,19 @@ The corresponding command resolvers have a different target set:
   `GroupShape`;
 - only the shape fill/stroke resolver intentionally traverses group children.
 
-Inserted shapes reliably enter this state: insertion creates a group-of-one and
-the host selects the new child id from `objectOrder()`. This is a release-blocking
-capability-truth defect because a normal first-party creation flow produces it.
+Inserted shapes reliably entered this state because insertion creates a
+group-of-one and the host selected the new child id from `objectOrder()`.
 
-**Required correction:** introduce the target/capability contract in §7 before
-adding any new object command. Until then, unsupported controls must not be
-interactive. A temporary fail-closed UI is acceptable; a gesture that appears
-to succeed and later warns is not.
+**Current correction:** `objectAt` and `objectOrder` return the stable reference
+from §7 plus capabilities. The host reads leaf geometry and kind properties from
+`subject`, while anchor/wrap/delete commands use `root`. Resize, alt text, and
+crop stay absent where no exact command/read/inverse path exists. Multi-child
+groups coalesce their child paint boxes into one root selection; explicit
+double-click/Enter descent asks the engine for a bounded leaf reference, keeping
+existing child formatting reachable. Engine tests cover root move/wrap/delete
+with undo, root/subject/path restoration, group union, and child descent; browser
+regressions cover an inserted shape and pointer/keyboard group descent. Non-body
+surfaces and exact group resize remain open in `UXOBJ-003/004`.
 
 ### 4.2 P0 — four resize handles have incorrect geometry semantics
 
