@@ -2316,7 +2316,7 @@ function setDocumentState(state) {
 }
 
 function clearObjectStatus() {
-  if (/^Image selected/.test(statusEl.textContent)) setStatus("");
+  if (/^(Image|Shape|Text box|Object) selected/.test(statusEl.textContent)) setStatus("");
 }
 
 // Concise polite announcements for review events (comment added, change
@@ -3393,7 +3393,7 @@ function paintObjectSelection() {
 
 /** Enters crop mode on the selected image (or, if already cropping, commits). */
 function enterCropMode() {
-  if (!doc || !objectSelection || objectSelection.kind === "textbox") return;
+  if (!doc || !objectSelection || !objectSelection.canCrop) return;
   if (objectCropSession) {
     commitCrop();
     return;
@@ -3562,7 +3562,12 @@ function cancelCrop() {
  *  release. Object geometry is not trackable, so a resize is blocked in
  *  Suggesting/Viewing mode. */
 function startObjectResize(event, page, node, handleKind) {
-  if (!doc || !objectSelection || objectSelection.node !== node) return;
+  if (
+    !doc ||
+    !objectSelection ||
+    objectSelection.node !== node ||
+    !objectSelection.canResize
+  ) return;
   event.preventDefault();
   event.stopPropagation(); // do not let the page pointerdown re-hit-test
   if (reviewMode === "viewing") {
@@ -3673,10 +3678,14 @@ function updateObjectSelectionState() {
     pagesEl.dataset.objectSelected = objectSelection.node;
     pagesEl.dataset.objectKind = objectSelection.kind;
     pagesEl.dataset.objectMode = objectSelection.mode;
+    pagesEl.dataset.objectCapabilities = OBJECT_CAPABILITY_KEYS
+      .filter((key) => objectSelection[key])
+      .join(",");
   } else {
     delete pagesEl.dataset.objectSelected;
     delete pagesEl.dataset.objectKind;
     delete pagesEl.dataset.objectMode;
+    delete pagesEl.dataset.objectCapabilities;
   }
   reflectShapeFormatState();
 }
@@ -3728,7 +3737,7 @@ function updateObjectContextBar() {
   const strong = document.createElement("strong");
   strong.textContent = label;
   objectContextBarEl.appendChild(strong);
-  if (objectSelection.anchored) {
+  if (objectSelection.canWrap) {
     // A floating object exposes a live Wrap control; move + resize are drags.
     const active = doc.objectWrap(objectSelection.node);
     const wrap = document.createElement("div");
@@ -3748,7 +3757,7 @@ function updateObjectContextBar() {
     const hint = document.createElement("small");
     hint.textContent = "Drag to move · handles to resize";
     objectContextBarEl.appendChild(hint);
-  } else {
+  } else if (objectSelection.canResize) {
     const hint = document.createElement("small");
     hint.textContent = "Drag handles to resize";
     objectContextBarEl.appendChild(hint);
@@ -3757,19 +3766,20 @@ function updateObjectContextBar() {
   // on pointerdown (like the wrap buttons) and opens its dialog / runs its op.
   const divider = document.createElement("span");
   divider.className = "object-bar-divider";
-  objectContextBarEl.appendChild(divider);
   const actions = document.createElement("div");
   actions.className = "object-bar-actions";
-  actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
-  if (objectSelection.kind === "shape") {
+  if (objectSelection.canAltText) {
+    actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
+  }
+  if (objectSelection.kind === "shape" && (objectSelection.canFill || objectSelection.canStroke)) {
     // Word's Shape Format tab reduces to its two live controls: Shape Fill and
     // Shape Outline. The buttons are module-level so their popovers stay
     // registered across the bar's re-renders.
-    actions.appendChild(shapeFillBtn);
-    actions.appendChild(shapeOutlineBtn);
+    if (objectSelection.canFill) actions.appendChild(shapeFillBtn);
+    if (objectSelection.canStroke) actions.appendChild(shapeOutlineBtn);
     reflectShapeSwatches();
   }
-  if (objectSelection.kind === "image") {
+  if (objectSelection.canCrop) {
     // Crop is a picture-only operation; a text box has no source rectangle.
     // Direct-manipulation crop (drag handles) is the primary gesture; while a
     // crop session is live the button becomes "Apply" and reads as active.
@@ -3783,8 +3793,13 @@ function updateObjectContextBar() {
     if (cropping) cropBtn.classList.add("is-active");
     actions.appendChild(cropBtn);
   }
-  actions.appendChild(objectBarButton("delete", "Delete", "Delete object", deleteSelectedObject, true));
-  objectContextBarEl.appendChild(actions);
+  if (objectSelection.canDelete) {
+    actions.appendChild(objectBarButton("delete", "Delete", "Delete object", deleteSelectedObject, true));
+  }
+  if (actions.childElementCount > 0) {
+    objectContextBarEl.appendChild(divider);
+    objectContextBarEl.appendChild(actions);
+  }
   objectContextBarEl.hidden = false;
   // Position just above the object's top-left, clamped into the viewport.
   const left = pageRect.left + rect[1] * sx;
@@ -3795,11 +3810,40 @@ function updateObjectContextBar() {
 
 /** Selects an object as a unit (docs/85 §4.1). Keeps `selection` as a caret at
  *  the object's surrounding-text anchor so the two-step Escape can return to it.
- *  `anchored` marks a floating object (movable + wrappable); inline objects are
- *  resize-only. */
-function selectObject(node, kind, anchor, anchored = false) {
+ *  `anchored` records placement only; the engine-owned capability bits below
+ *  are the authority for every exposed operation. */
+const OBJECT_CAPABILITY_KEYS = [
+  "canResize",
+  "canMove",
+  "canWrap",
+  "canDelete",
+  "canAltText",
+  "canCrop",
+  "canFill",
+  "canStroke",
+  "canEditText",
+];
+
+/** Copies the engine-declared structural capabilities before a wasm hit payload
+ *  is freed. JSON object-order entries use the same camelCase field names. */
+function objectCapabilities(source) {
+  if (source && OBJECT_CAPABILITY_KEYS.some((key) => key in source)) {
+    return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, source[key] === true]));
+  }
+  // A missing or stale engine payload must never make an unsupported mutation
+  // appear safe. A correctly built production bridge always supplies the bits.
+  return Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, false]));
+}
+
+function selectObject(node, kind, anchor, anchored = false, capabilities = null) {
   if (anchor) selection = { anchor, focus: anchor };
-  objectSelection = { node, kind, mode: "selected", anchored };
+  objectSelection = {
+    node,
+    kind,
+    mode: "selected",
+    anchored,
+    ...objectCapabilities(capabilities),
+  };
   pendingFormat = null;
   tableSelection = null;
   drawSelection();
@@ -3828,13 +3872,13 @@ function traverseObjects(step) {
         : objects.length - 1
       : (current + step + objects.length) % objects.length;
   const target = objects[next];
-  selectObject(target.node, target.kind, null, target.anchored);
+  selectObject(target.node, target.kind, null, target.anchored, target);
   // `selectObject` repaints synchronously, so the outline it just drew is the
   // marker to reveal — a traversal that lands off-screen would otherwise look
   // like nothing happened.
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .object-outline"));
   // Screen readers get no handles to look at, so the position is announced.
-  setStatus(`${target.kind === "textbox" ? "Text box" : "Picture"} ${next + 1} of ${objects.length}`);
+  setStatus(`${OBJECT_LABELS[target.kind] ?? "Object"} ${next + 1} of ${objects.length}`);
 }
 
 // ---- Header / footer editing -----------------------------------------------
@@ -4263,7 +4307,7 @@ const WRAP_MODES = [
 /** Changes a floating object's text-wrap mode (docs/85 §5.3), as one undoable op.
  *  Blocked fail-closed in Suggesting/Viewing mode by `runEdit`'s gate. */
 function setObjectWrap(mode) {
-  if (!objectSelection || !objectSelection.anchored) return;
+  if (!objectSelection?.canWrap) return;
   runEdit(() => doc.setObjectWrap(objectSelection.node, mode), { gate: true });
 }
 
@@ -4289,7 +4333,7 @@ function objectBarButton(icon, label, title, onClick, danger = false) {
  *  passes — so `applyEditResult` repaints with the plain text caret the
  *  `EditResult` points at (the object's former surrounding-text anchor). */
 function deleteSelectedObject() {
-  if (!objectSelection || objectSelection.mode !== "selected") return;
+  if (!objectSelection || objectSelection.mode !== "selected" || !objectSelection.canDelete) return;
   const node = objectSelection.node;
   runEdit(
     () => {
@@ -4332,7 +4376,7 @@ function setAltTextNote(message, isError) {
 }
 
 function openAltTextDialog() {
-  if (!doc || !objectSelection || !altTextDialog) return;
+  if (!doc || !objectSelection?.canAltText || !altTextDialog) return;
   objectDialogNode = objectSelection.node;
   objectDialogReturnFocus = document.activeElement;
   // Prefill the current alt text so the user refines it rather than blind-
@@ -4429,7 +4473,7 @@ const MOVE_THRESHOLD_TWIP = 40;
 /** Begins a floating-object move drag (docs/85 §5.3): previews an outline that
  *  follows the pointer; the model is untouched until release. */
 function startObjectMove(event, page, node) {
-  if (!doc) return;
+  if (!doc || !objectSelection?.canMove || objectSelection.node !== node) return;
   if (reviewMode === "viewing" || reviewMode === "suggesting") {
     // Selection still happened; a move is simply not offered in these modes.
     return;
@@ -4503,7 +4547,7 @@ const NUDGE_TWIP_LARGE = 180;
 /** Nudges the selected floating object by one step in the given direction, as a
  *  single `SetAnchor` op (gated in Viewing/Suggesting like a drag-move). */
 function nudgeSelectedObject(dx, dy, large) {
-  if (!doc || !objectSelection || !objectSelection.anchored) return;
+  if (!doc || !objectSelection?.canMove) return;
   const node = objectSelection.node;
   const rect = doc.objectRect(node); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
@@ -4530,8 +4574,10 @@ function cancelObjectMove() {
  *  the grammar transitions state and the surrounding-text caret is shown. */
 function enterObjectEditMode(at = null) {
   if (!objectSelection) return;
-  if (objectSelection.kind !== "textbox") {
-    setStatus("Image selected — drag its handles to resize", "", { timeout: 3000 });
+  if (!objectSelection.canEditText) {
+    const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
+    const hint = objectSelection.canResize ? " — drag its handles to resize" : "";
+    setStatus(`${label} selected${hint}`, "", { timeout: 3000 });
     return;
   }
   objectSelection = { ...objectSelection, mode: "editing" };
@@ -4860,14 +4906,15 @@ function onPointerDown(page, event) {
     const node = object.node;
     const kind = object.kind;
     const anchored = object.anchored;
+    const capabilities = objectCapabilities(object);
     object.free?.();
     // A caret at the nearest text slot is the object's surrounding-text anchor
     // (for the two-step Escape); fall back to the current caret.
     const anchor = anchorAt(page, event) || selection?.focus || null;
-    selectObject(node, kind, anchor, anchored);
+    selectObject(node, kind, anchor, anchored, capabilities);
     // A floating object is movable: the same gesture that selects it can drag it
     // (a bare click commits nothing). Inline objects flow with the text.
-    if (anchored) startObjectMove(event, page, node);
+    if (capabilities.canMove) startObjectMove(event, page, node);
     else startSelectionAutoScroll();
     event.preventDefault();
     return;
@@ -5282,10 +5329,18 @@ pagesEl.addEventListener("dblclick", (e) => {
   if (object) {
     const node = object.node;
     const kind = object.kind;
+    const anchored = object.anchored;
+    const capabilities = objectCapabilities(object);
     object.free?.();
     focusEditorSurface();
     if (!objectSelection || objectSelection.node !== node) {
-      selectObject(node, kind, anchorAt(page, e) || selection?.focus || null);
+      selectObject(
+        node,
+        kind,
+        anchorAt(page, e) || selection?.focus || null,
+        anchored,
+        capabilities,
+      );
     }
     let clicked = null;
     const inBox = doc.textBoxHitTest(page.pageNumber, x, y);
@@ -6041,7 +6096,6 @@ function buildContextCommands(context) {
 // mirroring how the text menu greys its structural rows; the underlying
 // functions still gate fail-closed, so the menu can never bypass a review mode.
 function buildObjectContextCommands(context) {
-  const isPicture = context.kind === "image";
   // Object edits are untrackable, so they are read-only in Viewing and blocked
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
   const mutationEnabled = reviewMode === "editing";
@@ -6053,7 +6107,7 @@ function buildObjectContextCommands(context) {
 
   // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
   // exactly like the context bar. The active mode is checked on the right.
-  if (context.anchored) {
+  if (context.canWrap) {
     const active = doc.objectWrap(context.node);
     commands.push({
       id: "object.wrap",
@@ -6073,20 +6127,22 @@ function buildObjectContextCommands(context) {
   }
 
   // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).
-  commands.push({
-    id: "object.altText",
-    label: "Alt text…",
-    group: "arrange",
-    icon: "altText",
-    enabled: mutationEnabled,
-    disabledReason: mutationReason,
-    run: () => openAltTextDialog(),
-  });
+  if (context.canAltText) {
+    commands.push({
+      id: "object.altText",
+      label: "Alt text…",
+      group: "arrange",
+      icon: "altText",
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => openAltTextDialog(),
+    });
+  }
 
   // Shape Fill / Shape Outline — the two live controls of Word's Shape Format
   // tab, reachable from the menu as well as the bar so neither surface is the
   // only way in.
-  if (context.kind === "shape") {
+  if (context.kind === "shape" && (context.canFill || context.canStroke)) {
     const swatch = (hex) => ({
       id: `object.fill.${hex}`,
       label: hex.toUpperCase(),
@@ -6094,51 +6150,55 @@ function buildObjectContextCommands(context) {
       enabled: mutationEnabled,
       disabledReason: mutationReason,
     });
-    commands.push({
-      id: "object.fill",
-      label: "Shape fill",
-      group: "arrange",
-      icon: "format",
-      submenu: [
-        {
-          id: "object.fill.none",
-          label: "No fill",
-          group: "reset",
-          enabled: mutationEnabled,
-          disabledReason: mutationReason,
-          run: () => applyShapeFill(null),
-        },
-        ...SHAPE_MENU_COLORS.map((hex) => ({
-          ...swatch(hex),
-          run: () => applyShapeFill(hex),
-        })),
-      ],
-    });
-    commands.push({
-      id: "object.outline",
-      label: "Shape outline",
-      group: "arrange",
-      icon: "format",
-      submenu: [
-        {
-          id: "object.outline.none",
-          label: "No outline",
-          group: "reset",
-          enabled: mutationEnabled,
-          disabledReason: mutationReason,
-          run: () => applyShapeOutline({ color: null }),
-        },
-        ...SHAPE_MENU_COLORS.map((hex) => ({
-          ...swatch(hex),
-          id: `object.outline.${hex}`,
-          run: () => applyShapeOutline({ color: hex }),
-        })),
-      ],
-    });
+    if (context.canFill) {
+      commands.push({
+        id: "object.fill",
+        label: "Shape fill",
+        group: "arrange",
+        icon: "format",
+        submenu: [
+          {
+            id: "object.fill.none",
+            label: "No fill",
+            group: "reset",
+            enabled: mutationEnabled,
+            disabledReason: mutationReason,
+            run: () => applyShapeFill(null),
+          },
+          ...SHAPE_MENU_COLORS.map((hex) => ({
+            ...swatch(hex),
+            run: () => applyShapeFill(hex),
+          })),
+        ],
+      });
+    }
+    if (context.canStroke) {
+      commands.push({
+        id: "object.outline",
+        label: "Shape outline",
+        group: "arrange",
+        icon: "format",
+        submenu: [
+          {
+            id: "object.outline.none",
+            label: "No outline",
+            group: "reset",
+            enabled: mutationEnabled,
+            disabledReason: mutationReason,
+            run: () => applyShapeOutline({ color: null }),
+          },
+          ...SHAPE_MENU_COLORS.map((hex) => ({
+            ...swatch(hex),
+            id: `object.outline.${hex}`,
+            run: () => applyShapeOutline({ color: hex }),
+          })),
+        ],
+      });
+    }
   }
 
   // Crop — picture-only; a text box has no source rectangle to crop.
-  if (isPicture) {
+  if (context.canCrop) {
     commands.push({
       id: "object.crop",
       label: "Crop image",
@@ -6151,16 +6211,18 @@ function buildObjectContextCommands(context) {
   }
 
   // Delete — the destructive action, kept in its own trailing group.
-  commands.push({
-    id: "object.delete",
-    label: "Delete",
-    group: "delete",
-    icon: "delete",
-    danger: true,
-    enabled: mutationEnabled,
-    disabledReason: mutationReason,
-    run: () => deleteSelectedObject(),
-  });
+  if (context.canDelete) {
+    commands.push({
+      id: "object.delete",
+      label: "Delete",
+      group: "delete",
+      icon: "delete",
+      danger: true,
+      enabled: mutationEnabled,
+      disabledReason: mutationReason,
+      run: () => deleteSelectedObject(),
+    });
+  }
   return commands;
 }
 
@@ -6172,11 +6234,13 @@ function objectContextAtEvent(page, event) {
   const { x, y } = pointToTwip(page, event);
   const object = doc.objectAt(page.pageNumber, x, y);
   if (object) {
+    const capabilities = objectCapabilities(object);
     const ctx = {
       surface: "object",
       node: object.node,
       kind: object.kind,
       anchored: object.anchored,
+      ...capabilities,
     };
     object.free?.();
     return ctx;
@@ -6197,6 +6261,9 @@ function objectContextAtEvent(page, event) {
         node: objectSelection.node,
         kind: objectSelection.kind,
         anchored: objectSelection.anchored,
+        ...Object.fromEntries(
+          OBJECT_CAPABILITY_KEYS.map((key) => [key, objectSelection[key] === true]),
+        ),
       };
     }
   }
@@ -6420,6 +6487,14 @@ function showContextMenu(clientX, clientY, context) {
   contextMenuReturnFocus =
     document.activeElement instanceof HTMLElement ? document.activeElement : pagesEl;
   const entries = normalizeMenuEntries(buildContextCommands(context));
+  if (entries.length === 0) {
+    contextMenuReturnFocus = null;
+    if (context.surface === "object") {
+      const label = (OBJECT_LABELS[context.kind] ?? "Object").toLowerCase();
+      setStatus(`No editable properties are available for this nested ${label} yet`);
+    }
+    return false;
+  }
   editorContextMenu.hidden = false;
   renderMenuLevel(editorContextMenu, entries, 0);
   const position = clampContextMenuPosition(
@@ -6435,6 +6510,7 @@ function showContextMenu(clientX, clientY, context) {
   menuLevels = [{ el: editorContextMenu, entries, index: -1, parentButton: null }];
   keyboardLevelIndex = 0;
   focusMenuIndex(menuLevels[0], moveMenuIndex(entries, -1, 1));
+  return true;
 }
 
 function keyboardContextMenuPoint() {
@@ -6466,6 +6542,7 @@ pagesEl.addEventListener("contextmenu", (event) => {
       objectContext.kind,
       anchorAt(page, event) || selection?.focus || null,
       objectContext.anchored,
+      objectContext,
     );
     showContextMenu(event.clientX, event.clientY, objectContext);
     return;
@@ -6555,6 +6632,9 @@ document.addEventListener("keydown", (event) => {
         node: objectSelection.node,
         kind: objectSelection.kind,
         anchored: objectSelection.anchored,
+        ...Object.fromEntries(
+          OBJECT_CAPABILITY_KEYS.map((key) => [key, objectSelection[key] === true]),
+        ),
       });
       return;
     }
@@ -8346,7 +8426,12 @@ const shapeOutlineMenu = document.getElementById("shapeOutlineMenu");
  *  no shape selected. Read from the model, never remembered from the last
  *  apply — the swatch must describe THIS shape. */
 function selectedShapeFormat() {
-  if (!doc || !objectSelection || objectSelection.kind !== "shape") return {};
+  if (
+    !doc ||
+    !objectSelection ||
+    objectSelection.kind !== "shape" ||
+    (!objectSelection.canFill && !objectSelection.canStroke)
+  ) return {};
   try {
     return doc.shapeFormat(objectSelection.node) ?? {};
   } catch {
@@ -8452,7 +8537,7 @@ const shapeOutlinePopover = registerPopover(shapeOutlineBtn, shapeOutlineMenu, (
 /** Applies a fill to the selected shape (`null` clears it). One undoable action,
  *  through the same gate every object edit uses. */
 function applyShapeFill(hex) {
-  if (!objectSelection || objectSelection.kind !== "shape") return;
+  if (!objectSelection?.canFill || objectSelection.kind !== "shape") return;
   const node = objectSelection.node;
   runEdit(() => doc.setShapeFill(node, hex ?? undefined), { gate: true });
   reflectShapeSwatches();
@@ -8461,7 +8546,7 @@ function applyShapeFill(hex) {
 /** Applies an outline color and/or weight. Setting a weight on an unoutlined
  *  shape gives it Word's default black outline, so the weight is never a no-op. */
 function applyShapeOutline({ color, widthEmu }) {
-  if (!objectSelection || objectSelection.kind !== "shape") return;
+  if (!objectSelection?.canStroke || objectSelection.kind !== "shape") return;
   const node = objectSelection.node;
   // Pass only what was chosen. The engine inherits the rest from the outline the
   // shape already has — including the dash pattern and line ends no control here
@@ -11287,7 +11372,7 @@ async function insertTextBoxObject() {
   // never diverge between the two ways of getting there.
   const box = newestObject(before, "textbox");
   if (box) {
-    selectObject(box.node, box.kind, null, box.anchored);
+    selectObject(box.node, box.kind, null, box.anchored, box);
     enterObjectEditMode();
   }
   setStatus("Text box added — type its text");
@@ -11339,7 +11424,7 @@ async function insertShapeObject(geometry) {
   // Word leaves a new shape SELECTED, not entered — a shape has no text — which
   // also puts Fill and Outline within reach straight away.
   const shape = newestObject(before, "shape");
-  if (shape) selectObject(shape.node, shape.kind, null, shape.anchored);
+  if (shape) selectObject(shape.node, shape.kind, null, shape.anchored, shape);
   setStatus(`${SHAPE_LABELS[geometry] ?? "Shape"} added`);
   focusEditorSurface();
 }
@@ -13443,14 +13528,18 @@ document.addEventListener("keydown", async (e) => {
       }
       if (key === "Delete" || key === "Backspace") {
         e.preventDefault();
-        deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
+        if (objectSelection.canDelete) {
+          deleteSelectedObject(); // one undoable delete; gated in Viewing/Suggesting
+        } else {
+          setStatus("This nested object cannot be deleted separately yet", "error");
+        }
         return;
       }
       // Arrow keys nudge a FLOATING object's position (Word/Docs); Shift takes a
       // larger step. Only anchored objects have a position — an inline image has
       // none, so its arrows still fall through to move the caret off it.
       const nudge = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[key];
-      if (nudge && objectSelection.anchored && !mod) {
+      if (nudge && objectSelection.canMove && !mod) {
         e.preventDefault();
         nudgeSelectedObject(nudge[0], nudge[1], e.shiftKey);
         return;
