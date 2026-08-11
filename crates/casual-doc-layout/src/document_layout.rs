@@ -50,7 +50,7 @@ use crate::columns::{
 };
 use crate::flow::{
     ParagraphFloatExclusion, ParagraphFloatExclusions, ReviewView, build_galley_cached,
-    build_galley_for_blocks_inner, flow_header_footer,
+    build_galley_for_blocks_inner, flow_header_footer, line_grid_for_section,
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
@@ -303,6 +303,7 @@ fn build_section_runs_inner(
             layout.flow_width(),
             exclusions,
             review_view,
+            None,
         );
         return vec![SectionRun {
             config,
@@ -522,13 +523,28 @@ fn push_section_run(
         layout.flow_width(),
         exclusions,
         review_view,
+        line_grid_for_section(
+            boundary,
+            document.definitions().settings.adjust_line_height_in_table,
+        ),
     );
     let column_galleys = if layout.has_unequal_widths() {
         layout
             .flow_widths()
             .into_iter()
             .map(|width| {
-                build_body_galley(document, shaper, blocks, width, exclusions, review_view)
+                build_body_galley(
+                    document,
+                    shaper,
+                    blocks,
+                    width,
+                    exclusions,
+                    review_view,
+                    line_grid_for_section(
+                        boundary,
+                        document.definitions().settings.adjust_line_height_in_table,
+                    ),
+                )
             })
             .collect()
     } else {
@@ -550,6 +566,7 @@ fn build_body_galley(
     width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
+    line_grid: Option<crate::flow::LineGrid>,
 ) -> Vec<BlockFragment> {
     build_galley_for_blocks_inner(
         document,
@@ -559,6 +576,7 @@ fn build_body_galley(
         exclusions,
         review_view,
         None,
+        line_grid,
     )
 }
 

@@ -62,7 +62,7 @@ leaders, line boxes, images, or table placement.
 | Probe | Initial OpenDoc | Post-fix OpenDoc | LibreOffice | Current result |
 | --- | ---: | ---: | ---: | --- |
 | Class notes | 1 | 1 | 1 | Strong one-page control remains stable |
-| Medical form | 3 | 3 | 4 | Styled checkbox glyphs and row containment fixed; row/pagination parity remains |
+| Medical form | 3 | 4 | 4 | Section document-grid line pitch now reaches layout with exact/paragraph/table precedence; page parity reached |
 | Chinese SDS | 17 | 18 | 16 | Overpaint/box escape fixed; conservative readable line containment exposes residual balancing drift |
 | Sample Document | 26 | 26 | 26 | Mixed geometry, TOC, furniture, inline images, and square wrap verified |
 | demo | 8 | 8 | 8 | Count remains stable; mixed-object behavior remains incomplete |
@@ -362,8 +362,9 @@ fixture images remain local evidence and are not committed.
 
 1. **Corpus collision diagnostics** — report glyph ink, line/row clips, and float
    intersections by page/node.
-2. **Residual pagination** — medical form row/grid parity and SDS font/grid/final
-   balancing without global margin or font-size tuning.
+2. **Residual pagination** — Medical form row/grid parity is closed by
+   `P1F-DOCGRID-LINES` (3 -> 4 pages, matching the oracle); SDS font/grid/final
+   balancing remains, without global margin or font-size tuning.
 3. **Cross-paragraph float reflow** — page-relative exclusions/convergence and
    table-cell descent are implemented (`P1F-FLOAT-CROSS-PARAGRAPH`,
    `P1F-FLOAT-SQUARE-2`); descent into floating text boxes and header/footer

@@ -120,12 +120,16 @@ fn on_setting(
     let local = element.local_name();
     let local = local.as_ref();
     if in_compat && level == 2 {
-        if local == b"compatSetting" {
-            if !push_compat_setting(element, settings) {
-                reporter.report(local);
+        match local {
+            b"adjustLineHeightInTable" => {
+                settings.adjust_line_height_in_table = on_off(element);
             }
-        } else {
-            reporter.report(local);
+            b"compatSetting" => {
+                if !push_compat_setting(element, settings) {
+                    reporter.report(local);
+                }
+            }
+            _ => reporter.report(local),
         }
         return;
     }

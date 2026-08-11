@@ -20,7 +20,8 @@ use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_view,
 };
 use casual_doc_layout::flow::ReviewView;
-use casual_doc_layout::flow::{build_galley, flow_header_footer};
+use casual_doc_layout::flow::{build_galley, build_galley_cached, flow_header_footer};
+use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::page::PaginatedLayout;
 use casual_doc_layout::paginate::{paginate, resolve_fields};
 use casual_doc_layout::running::{HeaderFooter, RunningContent, place_running_content};
@@ -29,11 +30,13 @@ use casual_doc_layout::units::{Point, Size, Twip};
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
     AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, DefinitionMap, Definitions,
-    Document, DocumentSettings, Drawing, DrawingAnchor, Extent, HeaderFooter as ModelHeaderFooter,
-    HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HorizontalAlign, HorizontalAnchor,
-    HorizontalPosition, InlineNode, MediaId, MediaReference, PageMargins, PageSize, Paragraph,
-    ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
-    SectionType, VerticalAlign, VerticalAnchor, VerticalPosition, WrapMode,
+    DocGrid, DocGridType, Document, DocumentSettings, Drawing, DrawingAnchor, Extent, GridColumn,
+    HeaderFooter as ModelHeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef,
+    HorizontalAlign, HorizontalAnchor, HorizontalPosition, InlineNode, LineRule, MediaId,
+    MediaReference, PageMargins, PageSize, Paragraph, ParagraphProperties, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, SectionType, Spacing, Table, TableCell,
+    TableCellProperties, TableProperties, TableRow, TableRowProperties, VerticalAlign,
+    VerticalAnchor, VerticalPosition, WrapMode,
 };
 use casual_doc_model::v1::{
     BorderEdge, PageBorderDisplay, PageBorderOffset, PageBorders, PageVerticalAlignment, RgbColor,
@@ -210,6 +213,51 @@ fn href(kind: HeaderFooterKind, id: u64) -> HeaderFooterRef {
 /// US-Letter content width (page 12240 − 2×1440 margins) for a sanity contrast.
 const LETTER_CONTENT_W: i32 = 12_240 - 2 * 1_440;
 
+fn first_line_height(layout: &PaginatedLayout, paragraph: NodeId) -> Twip {
+    layout
+        .pages
+        .iter()
+        .flat_map(|page| &page.placed)
+        .find_map(|placed| match &placed.fragment {
+            BlockFragment::Paragraph { id, lines, .. } if *id == paragraph => {
+                lines.lines.first().map(|line| line.height)
+            }
+            _ => None,
+        })
+        .expect("paragraph has a placed line")
+}
+
+fn table_cell_first_line_height(layout: &PaginatedLayout) -> Twip {
+    layout
+        .pages
+        .iter()
+        .flat_map(|page| &page.placed)
+        .find_map(|placed| match &placed.fragment {
+            BlockFragment::TableRow { cells, .. } => cells.first().and_then(|cell| {
+                cell.blocks.first().and_then(|block| match block {
+                    BlockFragment::Paragraph { lines, .. } => {
+                        lines.lines.first().map(|line| line.height)
+                    }
+                    BlockFragment::TableRow { .. } => None,
+                })
+            }),
+            BlockFragment::Paragraph { .. } => None,
+        })
+        .expect("table cell has a placed paragraph line")
+}
+
+fn galley_first_line_height(galley: &[BlockFragment], paragraph: NodeId) -> Twip {
+    galley
+        .iter()
+        .find_map(|fragment| match fragment {
+            BlockFragment::Paragraph { id, lines, .. } if *id == paragraph => {
+                lines.lines.first().map(|line| line.height)
+            }
+            _ => None,
+        })
+        .expect("paragraph has a galley line")
+}
+
 #[test]
 fn a_distinct_page_size_paginates_at_that_size_not_us_letter() {
     let shaper = ParleyShaper::new();
@@ -255,6 +303,189 @@ fn a_distinct_page_size_paginates_at_that_size_not_us_letter() {
     // The derived config agrees with the page geometry.
     let config = document_page_config(&doc);
     assert_eq!(config.page_size, Size::new(Twip(w), Twip(h)));
+}
+
+#[test]
+fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
+    let shaper = ParleyShaper::new();
+    let layout_for = |grid_type: Option<DocGridType>| {
+        let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        boundary.doc_grid = DocGrid {
+            grid_type,
+            line_pitch: Some(360),
+            char_space: None,
+        };
+        let body = vec![
+            paragraph(100, vec![run(101, "grid")]),
+            BlockNode::Paragraph(Paragraph {
+                id: node(110),
+                properties: ParagraphProperties {
+                    snap_to_grid: Some(false),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![run(111, "off")],
+            }),
+            BlockNode::Paragraph(Paragraph {
+                id: node(120),
+                properties: ParagraphProperties {
+                    spacing: Some(Spacing {
+                        line_rule: Some(LineRule::Exact),
+                        line_twips: Some(200),
+                        ..Spacing::default()
+                    }),
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![run(121, "exact")],
+            }),
+        ];
+        let document = Document::new(
+            node(1),
+            body,
+            Definitions {
+                sections: vec![boundary],
+                ..Definitions::default()
+            },
+        )
+        .unwrap();
+        paginate_document(&document, &shaper)
+    };
+
+    for grid_type in [
+        None,
+        Some(DocGridType::Lines),
+        Some(DocGridType::LinesAndChars),
+    ] {
+        let layout = layout_for(grid_type);
+        assert_eq!(first_line_height(&layout, node(100)), Twip(360));
+        assert!(first_line_height(&layout, node(110)).raw() < 360);
+        assert_eq!(first_line_height(&layout, node(120)), Twip(200));
+    }
+
+    for grid_type in [Some(DocGridType::Default), Some(DocGridType::SnapToChars)] {
+        let layout = layout_for(grid_type);
+        assert!(first_line_height(&layout, node(100)).raw() < 360);
+    }
+}
+
+#[test]
+fn document_grid_pitch_is_isolated_per_section() {
+    let shaper = ParleyShaper::new();
+    let mut first = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+    first.doc_grid.line_pitch = Some(360);
+    let mut second = section(10, (12_240, 15_840), 1_440, vec![], vec![], false);
+    second.doc_grid.line_pitch = Some(480);
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(100),
+            properties: ParagraphProperties {
+                section_break: Some(first.id),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(101, "first section")],
+        }),
+        paragraph(110, vec![run(111, "second section")]),
+    ];
+    let document = Document::new(
+        node(1),
+        body,
+        Definitions {
+            sections: vec![first, second],
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&document, &shaper);
+    assert_eq!(first_line_height(&layout, node(100)), Twip(360));
+    assert_eq!(first_line_height(&layout, node(110)), Twip(480));
+}
+
+#[test]
+fn document_grid_pitch_invalidates_cached_paragraph_geometry() {
+    let shaper = ParleyShaper::new();
+    let document_for = |pitch| {
+        let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        boundary.doc_grid.line_pitch = Some(pitch);
+        Document::new(
+            node(1),
+            vec![paragraph(100, vec![run(101, "cached grid")])],
+            Definitions {
+                sections: vec![boundary],
+                ..Definitions::default()
+            },
+        )
+        .unwrap()
+    };
+    let mut cache = GalleyCache::new();
+    let width = Twip(9_360);
+
+    let first = build_galley_cached(
+        &document_for(360),
+        &shaper,
+        width,
+        &mut cache,
+        &DirtySet::everything(),
+    );
+    assert_eq!(galley_first_line_height(&first, node(100)), Twip(360));
+
+    let second = build_galley_cached(
+        &document_for(480),
+        &shaper,
+        width,
+        &mut cache,
+        &DirtySet::new(),
+    );
+    assert_eq!(galley_first_line_height(&second, node(100)), Twip(480));
+    assert_eq!(
+        cache.shaped_last_build(),
+        1,
+        "a grid-pitch change must not reuse stale paragraph geometry"
+    );
+}
+
+#[test]
+fn table_cells_join_the_document_grid_only_with_the_compatibility_switch() {
+    let shaper = ParleyShaper::new();
+    let layout_for = |adjust_line_height_in_table: bool| {
+        let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        boundary.doc_grid.line_pitch = Some(360);
+        let table = BlockNode::Table(Table {
+            id: node(200),
+            grid: vec![GridColumn {
+                width_twips: Some(4_000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: node(201),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: node(202),
+                    properties: TableCellProperties::default(),
+                    blocks: vec![paragraph(203, vec![run(204, "cell")])],
+                }],
+            }],
+        });
+        let document = Document::new(
+            node(1),
+            vec![table],
+            Definitions {
+                sections: vec![boundary],
+                settings: DocumentSettings {
+                    adjust_line_height_in_table,
+                    ..DocumentSettings::default()
+                },
+                ..Definitions::default()
+            },
+        )
+        .unwrap();
+        paginate_document(&document, &shaper)
+    };
+
+    let default_layout = layout_for(false);
+    assert!(table_cell_first_line_height(&default_layout).raw() < 360);
+    let compatible_layout = layout_for(true);
+    assert_eq!(table_cell_first_line_height(&compatible_layout), Twip(360));
 }
 
 #[test]

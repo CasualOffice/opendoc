@@ -2082,6 +2082,7 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
         <w:hideSpellingErrors/>
         <w:compat>
             <w:compatSetting w:name="compatibilityMode" w:uri="urn:x" w:val="15"/>
+            <w:adjustLineHeightInTable/>
             <w:doNotExpandShiftReturn/>
         </w:compat>
     </w:settings>"#;
@@ -2104,11 +2105,13 @@ fn modeled_settings_are_captured_and_unmodeled_settings_are_reported() {
     assert!(s.write_protection.as_ref().is_some_and(|p| p.recommended));
     assert_eq!(s.compat.len(), 1);
     assert_eq!(s.compat[0].name, "compatibilityMode");
+    assert!(s.adjust_line_height_in_table);
     // The unmodeled top-level setting and the unmodeled compat child are reported.
     assert!(features(&import).contains(&"hideSpellingErrors"));
     assert!(features(&import).contains(&"doNotExpandShiftReturn"));
     // The modeled compatSetting is NOT reported (it is retained as a triple).
     assert!(!features(&import).contains(&"compatSetting"));
+    assert!(!features(&import).contains(&"adjustLineHeightInTable"));
 }
 
 #[test]
