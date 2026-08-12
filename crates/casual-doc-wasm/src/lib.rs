@@ -1390,6 +1390,29 @@ impl WasmDocument {
         object_descr(&self.document, object)
     }
 
+    /// Returns the current source crop as normalized edge fractions. A zero
+    /// vector means the whole source is visible; `None` means the identity is
+    /// not a croppable picture. The lookup walks every supported document
+    /// surface so the host never resets an imported crop just because the
+    /// picture lives in a table, text box, header, or footer.
+    #[wasm_bindgen(js_name = objectCrop)]
+    #[must_use]
+    pub fn object_crop(&self, node: &str) -> Option<Vec<f64>> {
+        let object = node_id(node).ok()?;
+        for blocks in surface_block_lists(&self.document) {
+            if let Some(crop) = object_crop_for_blocks(blocks, object) {
+                let crop = crop.unwrap_or_default();
+                return Some(vec![
+                    f64::from(crop.left) / f64::from(CROP_FULL),
+                    f64::from(crop.top) / f64::from(CROP_FULL),
+                    f64::from(crop.right) / f64::from(CROP_FULL),
+                    f64::from(crop.bottom) / f64::from(CROP_FULL),
+                ]);
+            }
+        }
+        None
+    }
+
     #[wasm_bindgen(js_name = setObjectDescr)]
     pub fn set_object_descr(
         &mut self,
@@ -16050,6 +16073,75 @@ fn first_pos_of_block(block: &BlockNode) -> Pos {
     }
 }
 
+fn object_crop_for_blocks(blocks: &[BlockNode], id: NodeId) -> Option<Option<CropRect>> {
+    fn inlines(items: &[InlineNode], id: NodeId) -> Option<Option<CropRect>> {
+        for inline in items {
+            match inline {
+                InlineNode::Drawing(drawing) if drawing.id == id => return Some(drawing.crop),
+                InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
+                    return Some(drawing.crop);
+                }
+                InlineNode::Hyperlink(link) => {
+                    if let Some(found) = inlines(&link.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                InlineNode::Revision(revision) => {
+                    if let Some(found) = inlines(&revision.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                InlineNode::Group(group) => {
+                    if let Some(found) = group_crop(&group.children, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn group_crop(children: &[GroupChild], id: NodeId) -> Option<Option<CropRect>> {
+        for child in children {
+            match child {
+                GroupChild::Picture(picture) if picture.id == id => return Some(picture.crop),
+                GroupChild::Group(group) => {
+                    if let Some(found) = group_crop(&group.children, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) = inlines(&paragraph.inlines, id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(found) = object_crop_for_blocks(&cell.blocks, id) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = object_crop_for_blocks(&sdt.blocks, id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
 fn first_pos_of_blocks(blocks: &[BlockNode]) -> Option<Pos> {
     blocks.first().map(first_pos_of_block)
 }
@@ -18701,6 +18793,25 @@ mod tests {
             inlines: &[InlineNode],
             id: NodeId,
         ) -> Option<(Option<CropRect>, Option<String>)> {
+            fn in_group(
+                children: &[GroupChild],
+                id: NodeId,
+            ) -> Option<(Option<CropRect>, Option<String>)> {
+                for child in children {
+                    match child {
+                        GroupChild::Picture(picture) if picture.id == id => {
+                            return Some((picture.crop, picture.descr.clone()));
+                        }
+                        GroupChild::Group(group) => {
+                            if let Some(found) = in_group(&group.children, id) {
+                                return Some(found);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
             for inline in inlines {
                 match inline {
                     InlineNode::Drawing(drawing) if drawing.id == id => {
@@ -18708,6 +18819,11 @@ mod tests {
                     }
                     InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
                         return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::Group(group) => {
+                        if let Some(found) = in_group(&group.children, id) {
+                            return Some(found);
+                        }
                     }
                     InlineNode::Hyperlink(hyperlink) => {
                         if let Some(found) = in_inlines(&hyperlink.inlines, id) {
@@ -18763,10 +18879,13 @@ mod tests {
             bottom: 15_000,
         };
 
+        assert_eq!(d.object_crop(&node), Some(vec![0.0, 0.0, 0.0, 0.0]));
+
         // Crop then alt-text the image through the wasm bindings; each is its own
         // labeled undo step and lands on the model.
         d.set_image_crop(&node, Some(vec![0.1, 0.2, 0.05, 0.15]))
             .expect("crop the image");
+        assert_eq!(d.object_crop(&node), Some(vec![0.1, 0.2, 0.05, 0.15]));
         assert_eq!(d.undo_label(), "Crop");
         d.set_object_descr(&node, Some("Quarterly chart".to_owned()))
             .expect("set the alt text");

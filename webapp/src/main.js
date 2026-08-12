@@ -3387,10 +3387,8 @@ function paintObjectSelection() {
 // so it is blocked in Suggesting/Viewing.
 //
 // Model note: `setImageCrop` insets are fractions of the SOURCE image and there
-// is no engine getter for the current crop, so — like the previous numeric
-// dialog — entering crop treats the displayed box as the full frame and a commit
-// REPLACES any existing crop. (Outward re-crop of an already-cropped image needs
-// an engine crop-getter + source-bytes binding; tracked as a follow-up.)
+// The engine returns the authored source crop, so entering crop is a refinement
+// of the current intent rather than a blind replacement.
 
 /** Enters crop mode on the selected image (or, if already cropping, commits). */
 function enterCropMode() {
@@ -3410,10 +3408,14 @@ function enterCropMode() {
   const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
   const [, x, y, w, h] = rect;
+  const authoredCrop = doc.objectCrop?.(objectSelection.node);
+  const cropValues = authoredCrop && authoredCrop.length === 4
+    ? authoredCrop
+    : [0, 0, 0, 0];
   objectCropSession = {
     node: objectSelection.node,
     box: [x, y, w, h],
-    crop: { l: 0, t: 0, r: 0, b: 0 },
+    crop: { l: cropValues[0], t: cropValues[1], r: cropValues[2], b: cropValues[3] },
     handleDrag: null,
   };
   focusEditorSurface();

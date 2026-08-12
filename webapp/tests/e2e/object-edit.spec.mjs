@@ -142,6 +142,12 @@ test("dragging a crop handle crops the image as one undoable action (Word/Docs s
   await expect(page.locator("#undoBtn")).toBeEnabled();
   await expect(page.locator("#status")).toContainText("cropped");
 
+  // Re-entering crop must preserve the authored source crop instead of
+  // silently resetting the session to the full image.
+  await cropBtn(page).click();
+  await expect(page.locator(".object-crop-dim").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+
   // One Undo reverts the crop (it becomes redoable).
   await page.locator("#undoBtn").click();
   await expect(page.locator("#redoBtn")).toBeEnabled();
