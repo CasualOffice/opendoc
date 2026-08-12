@@ -4353,6 +4353,17 @@ function editRunningContent(band, page = pageInView()) {
     enterRunningEdit(hit.band, hit.node, hit.offset, page);
     return;
   }
+  // Geometry can miss an existing story when its content is outside the
+  // narrow probe band. Resolve the model's existing body before considering
+  // creation; creating here would relink the section and orphan the real
+  // header/footer.
+  const existing = doc.runningContentCaret?.(band);
+  if (existing) {
+    const position = { node: existing.node, offset: existing.offset };
+    existing.free?.();
+    enterRunningEdit(band, position.node, position.offset, page);
+    return;
+  }
   // Nothing placed in that band: make one. Word and Docs both create the
   // header the moment you ask to edit a document that has none, rather than
   // refusing — the ask IS the intent. One undoable action creates the body and
@@ -4674,6 +4685,12 @@ function enterObjectEditMode(at = null) {
  *  rectangle — the engine resolves a point to text-box content, and the object's
  *  placed rect is the one region guaranteed to be inside it. */
 function caretInsideObject(node) {
+  const modelCaret = doc?.textBoxCaret?.(node);
+  if (modelCaret) {
+    const at = { node: modelCaret.node, offset: modelCaret.offset };
+    modelCaret.free?.();
+    return at;
+  }
   const flat = doc?.objectRect(node);
   if (!flat || flat.length < 5) return null;
   const [pageNumber, x, y, w, h] = flat;
@@ -11993,16 +12010,11 @@ function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeI
     else focusEditorSurface();
   }
 
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) close();
-  });
   dialog.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       close();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, dialog);
     }
   });
   closeBtn?.addEventListener("click", () => close());

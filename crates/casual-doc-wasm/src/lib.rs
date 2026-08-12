@@ -753,6 +753,22 @@ impl WasmDocument {
         })
     }
 
+    /// Returns a text-box's first model caret without requiring a shaped line
+    /// box. This keeps entry into empty/newly-created boxes deterministic.
+    #[wasm_bindgen(js_name = textBoxCaret)]
+    #[must_use]
+    pub fn text_box_caret(&self, node: &str) -> Option<HitPayload> {
+        let node = NodeId::from_str(node).ok()?;
+        let pos = surface_block_lists(&self.document)
+            .into_iter()
+            .find_map(|blocks| first_pos_of_text_box(blocks, node))?;
+        Some(HitPayload {
+            node: pos.node.to_string(),
+            offset: pos.offset,
+            zone: "content",
+        })
+    }
+
     /// Resolves a page-local point inside a page's HEADER or FOOTER content, as
     /// `{ node, offset, band }`, or `None` if the point is in neither band.
     ///
@@ -912,6 +928,44 @@ impl WasmDocument {
                 RunningBand::Footer => "footer",
             }
             .to_owned(),
+        })
+    }
+
+    /// Resolves the first caret in the existing default header/footer body.
+    /// This is deliberately model-based: a missed geometry probe must never be
+    /// interpreted as permission to replace an existing running story.
+    #[wasm_bindgen(js_name = runningContentCaret)]
+    #[must_use]
+    pub fn running_content_caret(&self, region: &str) -> Option<HitPayload> {
+        let section = self.document.definitions().sections.first()?;
+        let body = match region {
+            "header" => section
+                .headers
+                .iter()
+                .find(|reference| reference.kind == HeaderFooterKind::Default)
+                .and_then(|reference| {
+                    self.document
+                        .definitions()
+                        .headers
+                        .get(&reference.reference)
+                }),
+            "footer" => section
+                .footers
+                .iter()
+                .find(|reference| reference.kind == HeaderFooterKind::Default)
+                .and_then(|reference| {
+                    self.document
+                        .definitions()
+                        .footers
+                        .get(&reference.reference)
+                }),
+            _ => None,
+        }?;
+        let pos = first_pos_of_blocks(&body.blocks)?;
+        Some(HitPayload {
+            node: pos.node.to_string(),
+            offset: pos.offset,
+            zone: "content",
         })
     }
 
@@ -15994,6 +16048,71 @@ fn first_pos_of_block(block: &BlockNode) -> Pos {
             .unwrap_or_else(|| Pos::new(s.id, 0)),
         BlockNode::AltChunk(a) => Pos::new(a.id, 0),
     }
+}
+
+fn first_pos_of_blocks(blocks: &[BlockNode]) -> Option<Pos> {
+    blocks.first().map(first_pos_of_block)
+}
+
+fn first_pos_of_text_box(blocks: &[BlockNode], node: NodeId) -> Option<Pos> {
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> Option<Pos> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::TextBox(text_box) if text_box.id == node => {
+                    first_pos_of_blocks(&text_box.blocks)
+                }
+                InlineNode::TextBox(text_box) => in_blocks(&text_box.blocks, node),
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+                InlineNode::Field(field) => in_inlines(&field.inlines, node),
+                InlineNode::Revision(revision) => in_inlines(&revision.inlines, node),
+                InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
+                InlineNode::Group(group) => in_group(&group.children, node),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    fn in_group(children: &[GroupChild], node: NodeId) -> Option<Pos> {
+        for child in children {
+            let found = match child {
+                GroupChild::TextBox(text_box) if text_box.id == node => {
+                    first_pos_of_blocks(&text_box.blocks)
+                }
+                GroupChild::TextBox(text_box) => in_blocks(&text_box.blocks, node),
+                GroupChild::Group(group) => in_group(&group.children, node),
+                GroupChild::Picture(_) | GroupChild::Shape(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    fn in_blocks(blocks: &[BlockNode], node: NodeId) -> Option<Pos> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, node),
+                BlockNode::Table(table) => table.rows.iter().find_map(|row| {
+                    row.cells
+                        .iter()
+                        .find_map(|cell| in_blocks(&cell.blocks, node))
+                }),
+                BlockNode::Sdt(sdt) => in_blocks(&sdt.blocks, node),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    in_blocks(blocks, node)
 }
 
 /// The id of a cell's first paragraph, if it has one.
