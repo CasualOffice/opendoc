@@ -1431,13 +1431,13 @@ impl WasmDocument {
 
     /// Returns authored text-box body properties from any document surface.
     #[wasm_bindgen(js_name = textBoxBodyProperties)]
-    pub fn text_box_body_properties(&self, node: &str) -> JsValue {
+    pub fn text_box_body_properties(&self, node: &str) -> String {
         let Some(object) = NodeId::from_str(node).ok() else {
-            return JsValue::NULL;
+            return String::new();
         };
         text_box_body_properties(&self.document, object)
-            .map(|properties| serde_wasm_bindgen::to_value(&properties).unwrap_or(JsValue::NULL))
-            .unwrap_or(JsValue::NULL)
+            .and_then(|properties| serde_json::to_string(&properties).ok())
+            .unwrap_or_default()
     }
 
     /// Replaces a text box's complete body-property record in one undoable edit.
@@ -1445,10 +1445,10 @@ impl WasmDocument {
     pub fn set_text_box_body_properties(
         &mut self,
         node: &str,
-        properties: JsValue,
+        properties: String,
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let properties: TextBoxBodyProperties = serde_wasm_bindgen::from_value(properties)
+        let properties: TextBoxBodyProperties = serde_json::from_str(&properties)
             .map_err(|err| to_js(format!("invalid text-box body properties: {err}")))?;
         self.apply_action_caret_as(
             vec![Operation::SetTextBoxBody { object, properties }],
@@ -17160,7 +17160,8 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         | Operation::SetEvenAndOddHeaders { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
-        | Operation::SetShapeStroke { .. } => Pos::new(doc_id, 0),
+        | Operation::SetShapeStroke { .. }
+        | Operation::SetTextBoxBody { .. } => Pos::new(doc_id, 0),
     }
 }
 
