@@ -610,6 +610,7 @@ fn render_glyph_run(
                 origin_x: pen_x,
                 baseline_y,
                 scale_x,
+                transform: None,
             };
             let settings = DrawSettings::unhinted(Size::new(size_px), LocationRef::default());
             if outline.draw(settings, &mut pen).is_ok() {
@@ -775,6 +776,8 @@ fn render_colr_glyph(
         clip,
         current_glyph: None,
         painted: false,
+        transform: Default::default(),
+        transform_stack: Vec::new(),
     };
     color_glyph
         .paint(LocationRef::default(), &mut painter)
@@ -793,12 +796,35 @@ struct ColrPainter<'a> {
     clip: Option<&'a Mask>,
     current_glyph: Option<GlyphId>,
     painted: bool,
+    transform: skrifa::color::Transform,
+    transform_stack: Vec<skrifa::color::Transform>,
+}
+
+fn concat_font_transform(
+    outer: skrifa::color::Transform,
+    inner: skrifa::color::Transform,
+) -> skrifa::color::Transform {
+    skrifa::color::Transform {
+        xx: outer.xx * inner.xx + outer.xy * inner.yx,
+        xy: outer.xx * inner.xy + outer.xy * inner.yy,
+        yx: outer.yx * inner.xx + outer.yy * inner.yx,
+        yy: outer.yx * inner.xy + outer.yy * inner.yy,
+        dx: outer.xx * inner.dx + outer.xy * inner.dy + outer.dx,
+        dy: outer.yx * inner.dx + outer.yy * inner.dy + outer.dy,
+    }
 }
 
 impl ColorPainter for ColrPainter<'_> {
-    fn push_transform(&mut self, _transform: skrifa::color::Transform) {}
+    fn push_transform(&mut self, transform: skrifa::color::Transform) {
+        self.transform_stack.push(self.transform);
+        self.transform = concat_font_transform(self.transform, transform);
+    }
 
-    fn pop_transform(&mut self) {}
+    fn pop_transform(&mut self) {
+        if let Some(transform) = self.transform_stack.pop() {
+            self.transform = transform;
+        }
+    }
 
     fn push_clip_glyph(&mut self, glyph_id: GlyphId) {
         self.current_glyph = Some(glyph_id);
@@ -833,6 +859,7 @@ impl ColorPainter for ColrPainter<'_> {
             origin_x: self.origin_x,
             baseline_y: self.baseline_y,
             scale_x: self.scale_x,
+            transform: Some(self.transform),
         };
         let settings = DrawSettings::unhinted(Size::new(self.size_px), LocationRef::default());
         if outline.draw(settings, &mut pen).is_err() {
@@ -1049,10 +1076,15 @@ struct GlyphPen<'a> {
     origin_x: f32,
     baseline_y: f32,
     scale_x: f32,
+    transform: Option<skrifa::color::Transform>,
 }
 
 impl GlyphPen<'_> {
     fn map(&self, x: f32, y: f32) -> (f32, f32) {
+        let (x, y) = self
+            .transform
+            .map(|t| (t.xx * x + t.xy * y + t.dx, t.yx * x + t.yy * y + t.dy))
+            .unwrap_or((x, y));
         (self.origin_x + x * self.scale_x, self.baseline_y - y)
     }
 }
