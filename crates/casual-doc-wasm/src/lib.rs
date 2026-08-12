@@ -14,7 +14,6 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::find_shape;
-use casual_doc_edit::object_descr;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
     RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_table,
@@ -22,6 +21,7 @@ use casual_doc_edit::{
     run_properties_in_range,
 };
 use casual_doc_edit::{find_paragraph_any, surface_block_lists};
+use casual_doc_edit::{object_descr, text_box_body_properties};
 use casual_doc_export::write_document;
 #[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -60,8 +60,8 @@ use casual_doc_model::v1::{
     RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
     Style, StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
     TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth, TextBoxAutoFit,
-    UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WordprocessingGroup, WrapMode,
+    TextBoxBodyProperties, UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
@@ -395,6 +395,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
+        Operation::SetTextBoxBody { .. } => HistoryKind::ObjectResize,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
         }
@@ -1181,7 +1182,7 @@ impl WasmDocument {
         let height = bounded_emu(height_emu, MIN_OBJECT_EMU, MAX_EMU, "object height")?;
         let mut operations = Vec::with_capacity(2);
 
-        if let Some(group) = object_group(self.document.body(), object) {
+        if let Some(group) = object_group_any_surface(&self.document, object) {
             if !group_resize_supported(group) {
                 return Err(to_js("group geometry cannot be resized exactly".into()));
             }
@@ -1220,8 +1221,8 @@ impl WasmDocument {
                 object,
                 anchor: Box::new(anchor),
             });
-        } else if let Some(anchor) = object_anchor(self.document.body(), object) {
-            if object_resize_handles(self.document.body(), object) != FLOAT_RESIZE_HANDLES {
+        } else if let Some(anchor) = object_anchor_any_surface(&self.document, object) {
+            if object_resize_handles_any_surface(&self.document, object) != FLOAT_RESIZE_HANDLES {
                 return Err(to_js(
                     "floating object geometry cannot be resized exactly".into(),
                 ));
@@ -1238,7 +1239,7 @@ impl WasmDocument {
                 anchor: Box::new(page_anchor_at(anchor, left, top)),
             });
         } else {
-            if object_resize_handles(self.document.body(), object) != INLINE_RESIZE_HANDLES {
+            if object_resize_handles_any_surface(&self.document, object) != INLINE_RESIZE_HANDLES {
                 return Err(to_js(
                     "inline object geometry cannot be resized exactly".into(),
                 ));
@@ -1274,7 +1275,7 @@ impl WasmDocument {
             return Vec::new();
         };
         // Prefer the authored extent; fall back to the placed rect (twips → EMU).
-        if let Some(extent) = object_authored_extent(self.document.body(), nid) {
+        if let Some(extent) = object_authored_extent_any_surface(&self.document, nid) {
             return vec![extent.width_emu as f64, extent.height_emu as f64];
         }
         self.object_box_for_subject(nid)
@@ -1302,7 +1303,7 @@ impl WasmDocument {
         top_emu: f64,
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let mut anchor = object_anchor(self.document.body(), object)
+        let mut anchor = object_anchor_any_surface(&self.document, object)
             .ok_or_else(|| to_js("not a movable floating object".into()))?;
         anchor.horizontal = AnchorHorizontal {
             relative_from: HorizontalAnchor::Page,
@@ -1325,7 +1326,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = setObjectWrap)]
     pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let mut anchor = object_anchor(self.document.body(), object)
+        let mut anchor = object_anchor_any_surface(&self.document, object)
             .ok_or_else(|| to_js("not a floating object".into()))?;
         match mode {
             "square" => anchor.wrap = WrapMode::Square,
@@ -1390,6 +1391,29 @@ impl WasmDocument {
         object_descr(&self.document, object)
     }
 
+    /// Returns the current source crop as normalized edge fractions. A zero
+    /// vector means the whole source is visible; `None` means the identity is
+    /// not a croppable picture. The lookup walks every supported document
+    /// surface so the host never resets an imported crop just because the
+    /// picture lives in a table, text box, header, or footer.
+    #[wasm_bindgen(js_name = objectCrop)]
+    #[must_use]
+    pub fn object_crop(&self, node: &str) -> Option<Vec<f64>> {
+        let object = node_id(node).ok()?;
+        for blocks in surface_block_lists(&self.document) {
+            if let Some(crop) = object_crop_for_blocks(blocks, object) {
+                let crop = crop.unwrap_or_default();
+                return Some(vec![
+                    f64::from(crop.left) / f64::from(CROP_FULL),
+                    f64::from(crop.top) / f64::from(CROP_FULL),
+                    f64::from(crop.right) / f64::from(CROP_FULL),
+                    f64::from(crop.bottom) / f64::from(CROP_FULL),
+                ]);
+            }
+        }
+        None
+    }
+
     #[wasm_bindgen(js_name = setObjectDescr)]
     pub fn set_object_descr(
         &mut self,
@@ -1401,6 +1425,35 @@ impl WasmDocument {
             vec![Operation::SetObjectDescr { object, descr }],
             Pos::new(object, 0),
             HistoryKind::ObjectAltText,
+        )
+        .map_err(to_js)
+    }
+
+    /// Returns authored text-box body properties from any document surface.
+    #[wasm_bindgen(js_name = textBoxBodyProperties)]
+    pub fn text_box_body_properties(&self, node: &str) -> String {
+        let Some(object) = NodeId::from_str(node).ok() else {
+            return String::new();
+        };
+        text_box_body_properties(&self.document, object)
+            .and_then(|properties| serde_json::to_string(&properties).ok())
+            .unwrap_or_default()
+    }
+
+    /// Replaces a text box's complete body-property record in one undoable edit.
+    #[wasm_bindgen(js_name = setTextBoxBodyProperties)]
+    pub fn set_text_box_body_properties(
+        &mut self,
+        node: &str,
+        properties: String,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let properties: TextBoxBodyProperties = serde_json::from_str(&properties)
+            .map_err(|err| to_js(format!("invalid text-box body properties: {err}")))?;
+        self.apply_action_caret_as(
+            vec![Operation::SetTextBoxBody { object, properties }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectResize,
         )
         .map_err(to_js)
     }
@@ -1657,7 +1710,7 @@ impl WasmDocument {
         let Ok(object) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(anchor) = object_anchor(self.document.body(), object) else {
+        let Some(anchor) = object_anchor_any_surface(&self.document, object) else {
             return String::new();
         };
         match anchor.wrap {
@@ -9627,7 +9680,7 @@ impl WasmDocument {
                 // it. A group child is admitted by resolving its top-level root,
                 // because the child paints the subject while the group owns the
                 // anchor/delete commands.
-                let has_anchor = object_anchor(self.document.body(), node).is_some();
+                let has_anchor = object_anchor_any_surface(&self.document, node).is_some();
                 let group_ref = body_group_object_ref(self.document.body(), node);
                 if !has_anchor && group_ref.is_none() {
                     continue;
@@ -14772,6 +14825,14 @@ fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> u8 {
     0
 }
 
+fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> u8 {
+    surface_block_lists(document)
+        .into_iter()
+        .map(|blocks| object_resize_handles(blocks, object))
+        .find(|handles| *handles != 0)
+        .unwrap_or(0)
+}
+
 fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<u8> {
     for inline in inlines {
         match inline {
@@ -14949,6 +15010,12 @@ fn object_authored_extent(blocks: &[BlockNode], object: NodeId) -> Option<Extent
     None
 }
 
+fn object_authored_extent_any_surface(document: &Document, object: NodeId) -> Option<Extent> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_authored_extent(blocks, object))
+}
+
 /// The authored extent of `object` within an inline sequence, descending into
 /// hyperlink/revision wrappers and a text box's own blocks.
 fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Extent> {
@@ -15013,6 +15080,12 @@ fn object_anchor(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> 
         }
     }
     None
+}
+
+fn object_anchor_any_surface(document: &Document, object: NodeId) -> Option<DrawingAnchor> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_anchor(blocks, object))
 }
 
 fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAnchor> {
@@ -15125,6 +15198,12 @@ fn object_group_in_children(
         }
     }
     None
+}
+
+fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&WordprocessingGroup> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_group(blocks, object))
 }
 
 fn collect_para_objects(
@@ -16048,6 +16127,75 @@ fn first_pos_of_block(block: &BlockNode) -> Pos {
             .unwrap_or_else(|| Pos::new(s.id, 0)),
         BlockNode::AltChunk(a) => Pos::new(a.id, 0),
     }
+}
+
+fn object_crop_for_blocks(blocks: &[BlockNode], id: NodeId) -> Option<Option<CropRect>> {
+    fn inlines(items: &[InlineNode], id: NodeId) -> Option<Option<CropRect>> {
+        for inline in items {
+            match inline {
+                InlineNode::Drawing(drawing) if drawing.id == id => return Some(drawing.crop),
+                InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
+                    return Some(drawing.crop);
+                }
+                InlineNode::Hyperlink(link) => {
+                    if let Some(found) = inlines(&link.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                InlineNode::Revision(revision) => {
+                    if let Some(found) = inlines(&revision.inlines, id) {
+                        return Some(found);
+                    }
+                }
+                InlineNode::Group(group) => {
+                    if let Some(found) = group_crop(&group.children, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    fn group_crop(children: &[GroupChild], id: NodeId) -> Option<Option<CropRect>> {
+        for child in children {
+            match child {
+                GroupChild::Picture(picture) if picture.id == id => return Some(picture.crop),
+                GroupChild::Group(group) => {
+                    if let Some(found) = group_crop(&group.children, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(found) = inlines(&paragraph.inlines, id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        if let Some(found) = object_crop_for_blocks(&cell.blocks, id) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(found) = object_crop_for_blocks(&sdt.blocks, id) {
+                    return Some(found);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
 }
 
 fn first_pos_of_blocks(blocks: &[BlockNode]) -> Option<Pos> {
@@ -17012,7 +17160,8 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         | Operation::SetEvenAndOddHeaders { .. }
         // The shape stays selected; there is no caret to move.
         | Operation::SetShapeFill { .. }
-        | Operation::SetShapeStroke { .. } => Pos::new(doc_id, 0),
+        | Operation::SetShapeStroke { .. }
+        | Operation::SetTextBoxBody { .. } => Pos::new(doc_id, 0),
     }
 }
 
@@ -18701,6 +18850,25 @@ mod tests {
             inlines: &[InlineNode],
             id: NodeId,
         ) -> Option<(Option<CropRect>, Option<String>)> {
+            fn in_group(
+                children: &[GroupChild],
+                id: NodeId,
+            ) -> Option<(Option<CropRect>, Option<String>)> {
+                for child in children {
+                    match child {
+                        GroupChild::Picture(picture) if picture.id == id => {
+                            return Some((picture.crop, picture.descr.clone()));
+                        }
+                        GroupChild::Group(group) => {
+                            if let Some(found) = in_group(&group.children, id) {
+                                return Some(found);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
             for inline in inlines {
                 match inline {
                     InlineNode::Drawing(drawing) if drawing.id == id => {
@@ -18708,6 +18876,11 @@ mod tests {
                     }
                     InlineNode::AnchoredDrawing(drawing) if drawing.id == id => {
                         return Some((drawing.crop, drawing.descr.clone()));
+                    }
+                    InlineNode::Group(group) => {
+                        if let Some(found) = in_group(&group.children, id) {
+                            return Some(found);
+                        }
                     }
                     InlineNode::Hyperlink(hyperlink) => {
                         if let Some(found) = in_inlines(&hyperlink.inlines, id) {
@@ -18763,10 +18936,13 @@ mod tests {
             bottom: 15_000,
         };
 
+        assert_eq!(d.object_crop(&node), Some(vec![0.0, 0.0, 0.0, 0.0]));
+
         // Crop then alt-text the image through the wasm bindings; each is its own
         // labeled undo step and lands on the model.
         d.set_image_crop(&node, Some(vec![0.1, 0.2, 0.05, 0.15]))
             .expect("crop the image");
+        assert_eq!(d.object_crop(&node), Some(vec![0.1, 0.2, 0.05, 0.15]));
         assert_eq!(d.undo_label(), "Crop");
         d.set_object_descr(&node, Some("Quarterly chart".to_owned()))
             .expect("set the alt text");

@@ -65,6 +65,20 @@ test("setting alt text applies as one undoable action and Undo reverts it", asyn
   expect(consoleErrors).toEqual([]);
 });
 
+test("selected objects expose a nonmodal properties inspector with exact size", async ({ page, consoleErrors }) => {
+  await gotoFloat(page);
+  await selectFloat(page);
+  await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
+  const panel = page.locator(".object-inspector");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-object-prop=width]")).toHaveValue(/\d/);
+  await expect(panel.locator("[data-object-prop=height]")).toHaveValue(/\d/);
+  await expect(panel.locator("[data-object-inspector-wrap-select]")).toBeVisible();
+  await expect(panel.locator("[data-object-inspector-alt-input]")).toBeVisible();
+  await expect(page.locator("canvas.page").first()).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the alt-text dialog prefills the existing description instead of blank", async ({
   page,
   consoleErrors,
@@ -141,6 +155,12 @@ test("dragging a crop handle crops the image as one undoable action (Word/Docs s
   await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
   await expect(page.locator("#undoBtn")).toBeEnabled();
   await expect(page.locator("#status")).toContainText("cropped");
+
+  // Re-entering crop must preserve the authored source crop instead of
+  // silently resetting the session to the full image.
+  await cropBtn(page).click();
+  await expect(page.locator(".object-crop-dim").first()).toBeVisible();
+  await page.keyboard.press("Escape");
 
   // One Undo reverts the crop (it becomes redoable).
   await page.locator("#undoBtn").click();

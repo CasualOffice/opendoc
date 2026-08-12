@@ -3387,10 +3387,8 @@ function paintObjectSelection() {
 // so it is blocked in Suggesting/Viewing.
 //
 // Model note: `setImageCrop` insets are fractions of the SOURCE image and there
-// is no engine getter for the current crop, so — like the previous numeric
-// dialog — entering crop treats the displayed box as the full frame and a commit
-// REPLACES any existing crop. (Outward re-crop of an already-cropped image needs
-// an engine crop-getter + source-bytes binding; tracked as a follow-up.)
+// The engine returns the authored source crop, so entering crop is a refinement
+// of the current intent rather than a blind replacement.
 
 /** Enters crop mode on the selected image (or, if already cropping, commits). */
 function enterCropMode() {
@@ -3410,10 +3408,14 @@ function enterCropMode() {
   const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
   const [, x, y, w, h] = rect;
+  const authoredCrop = doc.objectCrop?.(objectSelection.node);
+  const cropValues = authoredCrop && authoredCrop.length === 4
+    ? authoredCrop
+    : [0, 0, 0, 0];
   objectCropSession = {
     node: objectSelection.node,
     box: [x, y, w, h],
-    crop: { l: 0, t: 0, r: 0, b: 0 },
+    crop: { l: cropValues[0], t: cropValues[1], r: cropValues[2], b: cropValues[3] },
     handleDrag: null,
   };
   focusEditorSurface();
@@ -3741,11 +3743,75 @@ function reflectShapeFormatState() {
 
 /** The lazily-created placeholder object context bar (docs/85 §4.1). */
 let objectContextBarEl = null;
+let objectInspectorEl = null;
+
+function toggleObjectInspector(open) {
+  if (!objectInspectorEl) return;
+  const show = open ?? objectInspectorEl.hidden;
+  if (show && objectSelection && doc) {
+    const rect = doc.objectRect(objectSelection.node);
+    if (rect.length >= 5) {
+      objectInspectorEl.querySelector("[data-object-prop=width]").value = String(Math.round(rect[3] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=height]").value = String(Math.round(rect[4] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=left]").value = String(Math.round(rect[1] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=top]").value = String(Math.round(rect[2] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
+      const altField = objectInspectorEl.querySelector("[data-object-inspector-alt]");
+      altField.hidden = !objectSelection.canAltText;
+      if (objectSelection.canAltText) altField.querySelector("input").value = doc.objectDescr(objectSelection.node) ?? "";
+      const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
+      wrapField.hidden = !objectSelection.canWrap;
+      if (objectSelection.canWrap) wrapField.querySelector("select").value = doc.objectWrap(objectSelection.ref.root) || "square";
+      const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
+      appearance.hidden = objectSelection.kind !== "shape" || (!objectSelection.canFill && !objectSelection.canStroke);
+      appearance.querySelector("[data-object-inspector-fill]").hidden = !objectSelection.canFill;
+      appearance.querySelector("[data-object-inspector-stroke]").hidden = !objectSelection.canStroke;
+    }
+  }
+  objectInspectorEl.hidden = !show;
+}
+
+function ensureObjectInspector() {
+  if (objectInspectorEl) return objectInspectorEl;
+  objectInspectorEl = document.createElement("aside");
+  objectInspectorEl.className = "object-inspector side-panel";
+  objectInspectorEl.hidden = true;
+  objectInspectorEl.setAttribute("aria-label", "Object properties");
+  objectInspectorEl.innerHTML = `
+    <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
+    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
+  objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
+  objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
+    if (!doc || !objectSelection?.canResize) return;
+    const rect = doc.objectRect(objectSelection.node);
+    const width = Number(objectInspectorEl.querySelector("[data-object-prop=width]").value);
+    const height = Number(objectInspectorEl.querySelector("[data-object-prop=height]").value);
+    const left = Number(objectInspectorEl.querySelector("[data-object-prop=left]").value);
+    const top = Number(objectInspectorEl.querySelector("[data-object-prop=top]").value);
+    if (rect.length < 5 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return;
+    runEdit(() => doc.resizeObject(objectSelection.ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
+  });
+  objectInspectorEl.querySelector("[data-object-inspector-wrap-apply]").addEventListener("click", () => {
+    if (!doc || !objectSelection?.canWrap) return;
+    const mode = objectInspectorEl.querySelector("[data-object-inspector-wrap-select]").value;
+    runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
+  });
+  objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
+    if (!doc || !objectSelection?.canAltText) return;
+    const value = objectInspectorEl.querySelector("[data-object-inspector-alt-input]").value.trim();
+    runEdit(() => doc.setObjectDescr(objectSelection.node, value || null), { gate: true });
+  });
+  objectInspectorEl.querySelector("[data-object-inspector-fill]").addEventListener("click", () => shapeFillBtn.click());
+  objectInspectorEl.querySelector("[data-object-inspector-stroke]").addEventListener("click", () => shapeOutlineBtn.click());
+  document.body.appendChild(objectInspectorEl);
+  return objectInspectorEl;
+}
 
 /** Shows/positions a context bar above a selected object. It describes only
  *  interactions that work in the current build; deferred actions never appear
  *  as product placeholders. */
 function updateObjectContextBar() {
+  ensureObjectInspector();
   if (!objectContextBarEl) {
     objectContextBarEl = document.createElement("div");
     objectContextBarEl.className = "object-context-bar";
@@ -3754,6 +3820,7 @@ function updateObjectContextBar() {
   }
   if (!objectSelection || objectSelection.mode !== "selected") {
     objectContextBarEl.hidden = true;
+    toggleObjectInspector(false);
     return;
   }
   const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
@@ -3803,6 +3870,9 @@ function updateObjectContextBar() {
   actions.className = "object-bar-actions";
   if (objectSelection.canAltText) {
     actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
+  }
+  if (objectSelection.canResize) {
+    actions.appendChild(objectBarButton("tune", "Properties", "Open object properties", () => toggleObjectInspector(true)));
   }
   if (objectSelection.kind === "shape" && (objectSelection.canFill || objectSelection.canStroke)) {
     // Word's Shape Format tab reduces to its two live controls: Shape Fill and
