@@ -843,49 +843,6 @@
         <footer class="dialog-foot"><span class="dialog-note">One undoable action.</span><div class="dialog-actions"><button id="fieldCancel" type="button" class="dialog-button">Cancel</button></div></footer>
       </section>
     </div>
-    <aside id="symbolDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="symbolTitle" aria-describedby="symbolDescription">
-      <section class="dialog-card glyph-dialog">
-        <header class="dialog-head">
-          <div class="dialog-heading">
-            <span class="ms dialog-heading-icon" aria-hidden="true">functions</span>
-            <div>
-              <h2 id="symbolTitle">Insert symbol</h2>
-              <p id="symbolDescription">Click a symbol to insert it at the cursor. The picker stays open so you can add several.</p>
-            </div>
-          </div>
-          <button id="symbolClose" type="button" class="dialog-close" title="Close" aria-label="Close insert symbol"><span class="ms" aria-hidden="true">close</span></button>
-        </header>
-        <div class="dialog-body glyph-body">
-          <input id="symbolSearch" type="search" class="glyph-search" placeholder="Search symbols by name…" aria-label="Search symbols by name" autocomplete="off" spellcheck="false" />
-          <div id="symbolTabs" class="glyph-tabs" role="tablist" aria-label="Symbol categories"></div>
-          <div id="symbolGrid" class="glyph-grid" role="group" aria-label="Symbols"></div>
-          <p id="symbolEmpty" class="glyph-empty" hidden>No symbols match your search.</p>
-        </div>
-        <footer class="dialog-foot"><span class="dialog-note">Each insertion is one undoable action.</span><div class="dialog-actions"><button id="symbolDone" type="button" class="dialog-button">Done</button></div></footer>
-      </section>
-    </aside>
-    <aside id="emojiDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="emojiTitle" aria-describedby="emojiDescription">
-      <section class="dialog-card glyph-dialog">
-        <header class="dialog-head">
-          <div class="dialog-heading">
-            <span class="ms dialog-heading-icon" aria-hidden="true">mood</span>
-            <div>
-              <h2 id="emojiTitle">Insert emoji</h2>
-              <p id="emojiDescription">Click an emoji to insert it at the cursor. The picker stays open so you can add several.</p>
-            </div>
-          </div>
-          <button id="emojiClose" type="button" class="dialog-close" title="Close" aria-label="Close insert emoji"><span class="ms" aria-hidden="true">close</span></button>
-        </header>
-        <div class="dialog-body glyph-body">
-          <input id="emojiSearch" type="search" class="glyph-search" placeholder="Search emoji by name…" aria-label="Search emoji by name" autocomplete="off" spellcheck="false" />
-          <div id="emojiTabs" class="glyph-tabs" role="tablist" aria-label="Emoji categories"></div>
-          <div id="emojiGrid" class="glyph-grid glyph-grid-emoji" role="group" aria-label="Emoji"></div>
-          <p id="emojiEmpty" class="glyph-empty" hidden>No emoji match your search.</p>
-        </div>
-        <footer class="dialog-foot"><span class="dialog-note">Each insertion is one undoable action.</span><div class="dialog-actions"><button id="emojiDone" type="button" class="dialog-button">Done</button></div></footer>
-      </section>
-    </aside>
-
     <div id="linkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="linkDialogTitle" aria-describedby="linkDialogDescription">
       <section class="dialog-card link-dialog">
         <header class="dialog-head">
@@ -1068,6 +1025,42 @@
           <button id="pagesClose" type="button" class="panel-close" title="Close pages" aria-label="Close pages"><span class="ms" aria-hidden="true">close</span></button>
         </div>
         <div id="pagesBody" class="panel-body pages-grid"></div>
+      </aside>
+      <aside id="symbolDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="symbolTitle" aria-describedby="symbolDescription">
+        <section class="dialog-card glyph-dialog">
+          <header class="dialog-head">
+            <div class="dialog-heading">
+              <span class="ms dialog-heading-icon" aria-hidden="true">functions</span>
+              <div><h2 id="symbolTitle">Insert symbol</h2><p id="symbolDescription">Click a symbol to insert it at the cursor. The picker stays open so you can add several.</p></div>
+            </div>
+            <button id="symbolClose" type="button" class="dialog-close" title="Close" aria-label="Close insert symbol"><span class="ms" aria-hidden="true">close</span></button>
+          </header>
+          <div class="dialog-body glyph-body">
+            <input id="symbolSearch" type="search" class="glyph-search" placeholder="Search symbols by name…" aria-label="Search symbols by name" autocomplete="off" spellcheck="false" />
+            <div id="symbolTabs" class="glyph-tabs" role="tablist" aria-label="Symbol categories"></div>
+            <div id="symbolGrid" class="glyph-grid" role="group" aria-label="Symbols"></div>
+            <p id="symbolEmpty" class="glyph-empty" hidden>No symbols match your search.</p>
+          </div>
+          <footer class="dialog-foot"><span class="dialog-note">Each insertion is one undoable action.</span><div class="dialog-actions"><button id="symbolDone" type="button" class="dialog-button">Done</button></div></footer>
+        </section>
+      </aside>
+      <aside id="emojiDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="emojiTitle" aria-describedby="emojiDescription">
+        <section class="dialog-card glyph-dialog">
+          <header class="dialog-head">
+            <div class="dialog-heading">
+              <span class="ms dialog-heading-icon" aria-hidden="true">mood</span>
+              <div><h2 id="emojiTitle">Insert emoji</h2><p id="emojiDescription">Click an emoji to insert it at the cursor. The picker stays open so you can add several.</p></div>
+            </div>
+            <button id="emojiClose" type="button" class="dialog-close" title="Close" aria-label="Close insert emoji"><span class="ms" aria-hidden="true">close</span></button>
+          </header>
+          <div class="dialog-body glyph-body">
+            <input id="emojiSearch" type="search" class="glyph-search" placeholder="Search emoji by name…" aria-label="Search emoji by name" autocomplete="off" spellcheck="false" />
+            <div id="emojiTabs" class="glyph-tabs" role="tablist" aria-label="Emoji categories"></div>
+            <div id="emojiGrid" class="glyph-grid glyph-grid-emoji" role="group" aria-label="Emoji"></div>
+            <p id="emojiEmpty" class="glyph-empty" hidden>No emoji match your search.</p>
+          </div>
+          <footer class="dialog-foot"><span class="dialog-note">Each insertion is one undoable action.</span><div class="dialog-actions"><button id="emojiDone" type="button" class="dialog-button">Done</button></div></footer>
+        </section>
       </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
