@@ -397,13 +397,13 @@
             </div>
             <span class="rgroup-label">Header &amp; footer</span>
           </div>
-          <!-- Symbols is Word's right-most Insert group. Both buttons reuse the
-               glyph that heads the dialog they open (editor.html #symbolDialog /
-               #emojiDialog), so the ribbon control visually predicts its dialog. -->
+          <!-- Symbols is Word's right-most Insert group. Both controls open a
+               persistent side panel so the document remains visible while
+               repeated glyph insertions happen. -->
           <div class="rgroup" data-group="insert-symbols">
             <div class="rgroup-ctl">
-              <button id="insertSymbolBtn" type="button" class="fmt" title="Insert a special character" aria-label="Insert symbol" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">functions</span></button>
-              <button id="insertEmojiBtn" type="button" class="fmt" title="Insert an emoji" aria-label="Insert emoji" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">mood</span></button>
+              <button id="insertSymbolBtn" type="button" class="fmt" title="Insert a special character" aria-label="Insert symbol" aria-haspopup="region" aria-expanded="false" disabled><span class="ms" aria-hidden="true">functions</span></button>
+              <button id="insertEmojiBtn" type="button" class="fmt" title="Insert an emoji" aria-label="Insert emoji" aria-haspopup="region" aria-expanded="false" disabled><span class="ms" aria-hidden="true">mood</span></button>
             </div>
             <span class="rgroup-label">Symbols</span>
           </div>

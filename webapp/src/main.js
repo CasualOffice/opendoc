@@ -12120,6 +12120,8 @@ function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeI
   function close() {
     if (dialog.hidden) return;
     dialog.hidden = true;
+    const trigger = tabsAreEmoji ? insertEmojiBtn : insertSymbolBtn;
+    trigger?.setAttribute("aria-expanded", "false");
     const to = returnFocus;
     returnFocus = null;
     if (to && typeof to.focus === "function" && document.contains(to)) to.focus({ preventScroll: true });
@@ -12148,6 +12150,8 @@ function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeI
     search.value = "";
     selectGroup(0);
     dialog.hidden = false;
+    const trigger = tabsAreEmoji ? insertEmojiBtn : insertSymbolBtn;
+    trigger?.setAttribute("aria-expanded", "true");
     queueMicrotask(() => search.focus());
   }
 
