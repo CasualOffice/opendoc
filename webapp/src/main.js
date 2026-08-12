@@ -3753,6 +3753,8 @@ function toggleObjectInspector(open) {
     if (rect.length >= 5) {
       objectInspectorEl.querySelector("[data-object-prop=width]").value = String(Math.round(rect[3] / TWIPS_PER_INCH * 100) / 100);
       objectInspectorEl.querySelector("[data-object-prop=height]").value = String(Math.round(rect[4] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=left]").value = String(Math.round(rect[1] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=top]").value = String(Math.round(rect[2] / TWIPS_PER_INCH * 100) / 100);
       objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
     }
   }
@@ -3767,15 +3769,17 @@ function ensureObjectInspector() {
   objectInspectorEl.setAttribute("aria-label", "Object properties");
   objectInspectorEl.innerHTML = `
     <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
-    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply size</button></fieldset></div>`;
+    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset></div>`;
   objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
   objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
     if (!doc || !objectSelection?.canResize) return;
     const rect = doc.objectRect(objectSelection.node);
     const width = Number(objectInspectorEl.querySelector("[data-object-prop=width]").value);
     const height = Number(objectInspectorEl.querySelector("[data-object-prop=height]").value);
-    if (rect.length < 5 || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-    runEdit(() => doc.resizeObject(objectSelection.ref.root, rect[1] * 635, rect[2] * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
+    const left = Number(objectInspectorEl.querySelector("[data-object-prop=left]").value);
+    const top = Number(objectInspectorEl.querySelector("[data-object-prop=top]").value);
+    if (rect.length < 5 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return;
+    runEdit(() => doc.resizeObject(objectSelection.ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
   });
   document.body.appendChild(objectInspectorEl);
   return objectInspectorEl;
