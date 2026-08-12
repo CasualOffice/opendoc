@@ -3743,11 +3743,49 @@ function reflectShapeFormatState() {
 
 /** The lazily-created placeholder object context bar (docs/85 §4.1). */
 let objectContextBarEl = null;
+let objectInspectorEl = null;
+
+function toggleObjectInspector(open) {
+  if (!objectInspectorEl) return;
+  const show = open ?? objectInspectorEl.hidden;
+  if (show && objectSelection && doc) {
+    const rect = doc.objectRect(objectSelection.node);
+    if (rect.length >= 5) {
+      objectInspectorEl.querySelector("[data-object-prop=width]").value = String(Math.round(rect[3] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-prop=height]").value = String(Math.round(rect[4] / TWIPS_PER_INCH * 100) / 100);
+      objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
+    }
+  }
+  objectInspectorEl.hidden = !show;
+}
+
+function ensureObjectInspector() {
+  if (objectInspectorEl) return objectInspectorEl;
+  objectInspectorEl = document.createElement("aside");
+  objectInspectorEl.className = "object-inspector side-panel";
+  objectInspectorEl.hidden = true;
+  objectInspectorEl.setAttribute("aria-label", "Object properties");
+  objectInspectorEl.innerHTML = `
+    <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
+    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply size</button></fieldset></div>`;
+  objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
+  objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
+    if (!doc || !objectSelection?.canResize) return;
+    const rect = doc.objectRect(objectSelection.node);
+    const width = Number(objectInspectorEl.querySelector("[data-object-prop=width]").value);
+    const height = Number(objectInspectorEl.querySelector("[data-object-prop=height]").value);
+    if (rect.length < 5 || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+    runEdit(() => doc.resizeObject(objectSelection.ref.root, rect[1] * 635, rect[2] * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
+  });
+  document.body.appendChild(objectInspectorEl);
+  return objectInspectorEl;
+}
 
 /** Shows/positions a context bar above a selected object. It describes only
  *  interactions that work in the current build; deferred actions never appear
  *  as product placeholders. */
 function updateObjectContextBar() {
+  ensureObjectInspector();
   if (!objectContextBarEl) {
     objectContextBarEl = document.createElement("div");
     objectContextBarEl.className = "object-context-bar";
@@ -3756,6 +3794,7 @@ function updateObjectContextBar() {
   }
   if (!objectSelection || objectSelection.mode !== "selected") {
     objectContextBarEl.hidden = true;
+    toggleObjectInspector(false);
     return;
   }
   const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h]
@@ -3805,6 +3844,9 @@ function updateObjectContextBar() {
   actions.className = "object-bar-actions";
   if (objectSelection.canAltText) {
     actions.appendChild(objectBarButton("description", "Alt text", "Edit alt text", openAltTextDialog));
+  }
+  if (objectSelection.canResize) {
+    actions.appendChild(objectBarButton("tune", "Properties", "Open object properties", () => toggleObjectInspector(true)));
   }
   if (objectSelection.kind === "shape" && (objectSelection.canFill || objectSelection.canStroke)) {
     // Word's Shape Format tab reduces to its two live controls: Shape Fill and

@@ -3429,6 +3429,17 @@ body.is-format-painting .page-wrap * {
   display: none;
 }
 
+.object-inspector {
+  position: fixed;
+  z-index: 65;
+  top: 86px;
+  right: 8px;
+  bottom: 8px;
+  width: 280px;
+  max-width: min(280px, calc(100vw - 16px));
+  margin: 0;
+}
+
 /* Symbols and emoji are persistent document-side tools, not blocking dialogs.
    Keep the page visible while repeated glyph insertions happen. */
 .glyph-panel {

@@ -65,6 +65,18 @@ test("setting alt text applies as one undoable action and Undo reverts it", asyn
   expect(consoleErrors).toEqual([]);
 });
 
+test("selected objects expose a nonmodal properties inspector with exact size", async ({ page, consoleErrors }) => {
+  await gotoFloat(page);
+  await selectFloat(page);
+  await page.locator('.object-bar-btn[aria-label="Open object properties"]').click();
+  const panel = page.locator(".object-inspector");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-object-prop=width]")).toHaveValue(/\d/);
+  await expect(panel.locator("[data-object-prop=height]")).toHaveValue(/\d/);
+  await expect(page.locator("canvas.page").first()).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the alt-text dialog prefills the existing description instead of blank", async ({
   page,
   consoleErrors,
