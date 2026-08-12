@@ -1181,7 +1181,7 @@ impl WasmDocument {
         let height = bounded_emu(height_emu, MIN_OBJECT_EMU, MAX_EMU, "object height")?;
         let mut operations = Vec::with_capacity(2);
 
-        if let Some(group) = object_group(self.document.body(), object) {
+        if let Some(group) = object_group_any_surface(&self.document, object) {
             if !group_resize_supported(group) {
                 return Err(to_js("group geometry cannot be resized exactly".into()));
             }
@@ -1220,8 +1220,8 @@ impl WasmDocument {
                 object,
                 anchor: Box::new(anchor),
             });
-        } else if let Some(anchor) = object_anchor(self.document.body(), object) {
-            if object_resize_handles(self.document.body(), object) != FLOAT_RESIZE_HANDLES {
+        } else if let Some(anchor) = object_anchor_any_surface(&self.document, object) {
+            if object_resize_handles_any_surface(&self.document, object) != FLOAT_RESIZE_HANDLES {
                 return Err(to_js(
                     "floating object geometry cannot be resized exactly".into(),
                 ));
@@ -1238,7 +1238,7 @@ impl WasmDocument {
                 anchor: Box::new(page_anchor_at(anchor, left, top)),
             });
         } else {
-            if object_resize_handles(self.document.body(), object) != INLINE_RESIZE_HANDLES {
+            if object_resize_handles_any_surface(&self.document, object) != INLINE_RESIZE_HANDLES {
                 return Err(to_js(
                     "inline object geometry cannot be resized exactly".into(),
                 ));
@@ -1274,7 +1274,7 @@ impl WasmDocument {
             return Vec::new();
         };
         // Prefer the authored extent; fall back to the placed rect (twips → EMU).
-        if let Some(extent) = object_authored_extent(self.document.body(), nid) {
+        if let Some(extent) = object_authored_extent_any_surface(&self.document, nid) {
             return vec![extent.width_emu as f64, extent.height_emu as f64];
         }
         self.object_box_for_subject(nid)
@@ -1302,7 +1302,7 @@ impl WasmDocument {
         top_emu: f64,
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let mut anchor = object_anchor(self.document.body(), object)
+        let mut anchor = object_anchor_any_surface(&self.document, object)
             .ok_or_else(|| to_js("not a movable floating object".into()))?;
         anchor.horizontal = AnchorHorizontal {
             relative_from: HorizontalAnchor::Page,
@@ -1325,7 +1325,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = setObjectWrap)]
     pub fn set_object_wrap(&mut self, node: &str, mode: &str) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let mut anchor = object_anchor(self.document.body(), object)
+        let mut anchor = object_anchor_any_surface(&self.document, object)
             .ok_or_else(|| to_js("not a floating object".into()))?;
         match mode {
             "square" => anchor.wrap = WrapMode::Square,
@@ -1680,7 +1680,7 @@ impl WasmDocument {
         let Ok(object) = NodeId::from_str(node) else {
             return String::new();
         };
-        let Some(anchor) = object_anchor(self.document.body(), object) else {
+        let Some(anchor) = object_anchor_any_surface(&self.document, object) else {
             return String::new();
         };
         match anchor.wrap {
@@ -9650,7 +9650,7 @@ impl WasmDocument {
                 // it. A group child is admitted by resolving its top-level root,
                 // because the child paints the subject while the group owns the
                 // anchor/delete commands.
-                let has_anchor = object_anchor(self.document.body(), node).is_some();
+                let has_anchor = object_anchor_any_surface(&self.document, node).is_some();
                 let group_ref = body_group_object_ref(self.document.body(), node);
                 if !has_anchor && group_ref.is_none() {
                     continue;
@@ -14795,6 +14795,14 @@ fn object_resize_handles(blocks: &[BlockNode], object: NodeId) -> u8 {
     0
 }
 
+fn object_resize_handles_any_surface(document: &Document, object: NodeId) -> u8 {
+    surface_block_lists(document)
+        .into_iter()
+        .map(|blocks| object_resize_handles(blocks, object))
+        .find(|handles| *handles != 0)
+        .unwrap_or(0)
+}
+
 fn object_resize_handles_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<u8> {
     for inline in inlines {
         match inline {
@@ -14972,6 +14980,12 @@ fn object_authored_extent(blocks: &[BlockNode], object: NodeId) -> Option<Extent
     None
 }
 
+fn object_authored_extent_any_surface(document: &Document, object: NodeId) -> Option<Extent> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_authored_extent(blocks, object))
+}
+
 /// The authored extent of `object` within an inline sequence, descending into
 /// hyperlink/revision wrappers and a text box's own blocks.
 fn object_authored_extent_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<Extent> {
@@ -15036,6 +15050,12 @@ fn object_anchor(blocks: &[BlockNode], object: NodeId) -> Option<DrawingAnchor> 
         }
     }
     None
+}
+
+fn object_anchor_any_surface(document: &Document, object: NodeId) -> Option<DrawingAnchor> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_anchor(blocks, object))
 }
 
 fn object_anchor_in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<DrawingAnchor> {
@@ -15148,6 +15168,12 @@ fn object_group_in_children(
         }
     }
     None
+}
+
+fn object_group_any_surface(document: &Document, object: NodeId) -> Option<&WordprocessingGroup> {
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_group(blocks, object))
 }
 
 fn collect_para_objects(
