@@ -12146,6 +12146,12 @@ function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeI
     // so the picker never opens onto a dead insert. Suggesting is allowed — the
     // insert routes through the tracked suggestion path.
     if (blockMutationInViewing()) return;
+    // Keep insert tools mutually exclusive in the document-side column. A
+    // second picker must replace the first, never stack over the canvas or
+    // recreate the old modal-overlay experience.
+    const siblingId = tabsAreEmoji ? "symbolDialog" : "emojiDialog";
+    const sibling = document.getElementById(siblingId);
+    if (sibling && !sibling.hidden) sibling.hidden = true;
     returnFocus = document.activeElement;
     search.value = "";
     selectGroup(0);
