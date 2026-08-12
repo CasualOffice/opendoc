@@ -33,6 +33,7 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
+use skrifa::bitmap::BitmapData;
 use skrifa::instance::{LocationRef, Size};
 use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -588,6 +589,13 @@ fn render_glyph_run(
     let mut builder = PathBuilder::new();
     let mut wrote_any = false;
     for glyph in &run.glyphs {
+        if render_bitmap_glyph(
+            &font, glyph.id, pen_x, baseline_y, size_px, scale_x, surface, clip,
+        ) {
+            wrote_any = true;
+            pen_x += glyph.advance.to_device_px(dpi);
+            continue;
+        }
         if let Some(outline) = outlines.get(GlyphId::new(glyph.id)) {
             let mut pen = GlyphPen {
                 builder: &mut builder,
@@ -674,6 +682,56 @@ fn render_glyph_run(
             }
         }
     }
+}
+
+/// Paints an embedded PNG color glyph from an `sbix`/`CBDT` strike when one is
+/// available. Fonts without bitmap data, unsupported bitmap encodings, and
+/// malformed images return `false` so the caller keeps the outline fallback.
+// The renderer needs the glyph placement inputs plus the active surface/clip;
+// keeping this helper explicit avoids hiding paint state in a mutable context.
+#[allow(clippy::too_many_arguments)]
+fn render_bitmap_glyph(
+    font: &FontRef<'_>,
+    glyph_id: u32,
+    pen_x: f32,
+    baseline_y: f32,
+    size_px: f32,
+    scale_x: f32,
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+) -> bool {
+    let Some(glyph) = font
+        .bitmap_strikes()
+        .glyph_for_size(Size::new(size_px), GlyphId::new(glyph_id))
+    else {
+        return false;
+    };
+    let BitmapData::Png(bytes) = glyph.data else {
+        return false;
+    };
+    let Some(pixmap) = decode_to_pixmap(bytes) else {
+        return false;
+    };
+    let scale = size_px / glyph.ppem_y.max(1.0);
+    let x = pen_x + glyph.inner_bearing_x * scale * scale_x;
+    let y = match glyph.placement_origin {
+        // `sbix` reports the image origin at its bottom-left corner; tiny-skia
+        // needs the top-left destination, so account for the decoded height.
+        skrifa::bitmap::Origin::BottomLeft => {
+            baseline_y - glyph.inner_bearing_y * scale - pixmap.height() as f32 * scale
+        }
+        // `CBDT`/`EBDT` metrics report the top-left bearing directly.
+        skrifa::bitmap::Origin::TopLeft => baseline_y - glyph.inner_bearing_y * scale,
+    };
+    surface.pixmap.draw_pixmap(
+        x.round() as i32,
+        y.round() as i32,
+        pixmap.as_ref(),
+        &PixmapPaint::default(),
+        Transform::from_scale(scale * scale_x, scale),
+        clip,
+    );
+    true
 }
 
 /// Fills a thin horizontal decoration line (underline/strikethrough): a rect from
