@@ -3429,6 +3429,24 @@ body.is-format-painting .page-wrap * {
   display: none;
 }
 
+/* Symbols and emoji are persistent document-side tools, not blocking dialogs.
+   Keep the page visible while repeated glyph insertions happen. */
+.glyph-panel {
+  flex-basis: 360px;
+  width: 360px;
+  max-width: min(360px, calc(100vw - 52px));
+  margin-left: 0;
+}
+
+.glyph-panel .glyph-dialog {
+  width: 100%;
+  max-height: none;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* The legacy left-side review inventory is retained only as compatibility
    wiring. The active review surface is the dedicated right column below. */
 #reviewPanel { display: none !important; }

@@ -33,6 +33,9 @@ test("a document containing emoji provisions the emoji face", async ({ page, con
   await page.locator('.app-menu-button[data-menu="insert"]').click();
   await page.locator('#appMenuPopover .app-menu-item[data-command="insert.emoji"]').click();
   await expect(page.locator("#emojiDialog")).toBeVisible();
+  await expect(page.locator("#emojiDialog")).toHaveClass(/glyph-panel/);
+  await expect(page.locator("#emojiDialog")).not.toHaveAttribute("aria-modal");
+  await expect(page.locator("canvas.page").first()).toBeVisible();
   await page.locator('#emojiGrid .glyph-cell[data-glyph="\u{1F600}"]').click();
   await page.keyboard.press("Escape");
   await expect(page.locator("#a11yDocument")).toContainText("\u{1F600}");
