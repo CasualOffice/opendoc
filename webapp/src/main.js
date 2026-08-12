@@ -3766,6 +3766,27 @@ function toggleObjectInspector(open) {
       appearance.hidden = objectSelection.kind !== "shape" || (!objectSelection.canFill && !objectSelection.canStroke);
       appearance.querySelector("[data-object-inspector-fill]").hidden = !objectSelection.canFill;
       appearance.querySelector("[data-object-inspector-stroke]").hidden = !objectSelection.canStroke;
+      const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
+      bodyField.hidden = objectSelection.kind !== "textbox";
+      if (objectSelection.kind === "textbox" && typeof doc.textBoxBodyProperties === "function") {
+        try {
+          const raw = doc.textBoxBodyProperties(objectSelection.node);
+          const props = raw ? JSON.parse(raw) : null;
+          if (props) {
+            const insets = props.insets ?? {};
+            for (const side of ["left", "top", "right", "bottom"]) {
+              const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
+              if (input) input.value = String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100);
+            }
+            bodyField.querySelector("[data-object-textbox-anchor]").value = props.vertical_anchor ?? "top";
+            bodyField.querySelector("[data-object-textbox-h-overflow]").value = props.horizontal_overflow ?? "overflow";
+            bodyField.querySelector("[data-object-textbox-v-overflow]").value = props.vertical_overflow ?? "overflow";
+            bodyField.querySelector("[data-object-textbox-autofit]").value = props.auto_fit?.mode ?? "none";
+          }
+        } catch {
+          // A malformed/unsupported payload fails closed; authored data is not overwritten.
+        }
+      }
     }
   }
   objectInspectorEl.hidden = !show;
@@ -3779,7 +3800,7 @@ function ensureObjectInspector() {
   objectInspectorEl.setAttribute("aria-label", "Object properties");
   objectInspectorEl.innerHTML = `
     <header class="panel-head properties-panel-head"><div class="properties-panel-heading"><span class="ms properties-panel-icon" aria-hidden="true">tune</span><span><strong class="panel-title">Object properties</strong><small data-object-inspector-kind></small></span></div><button type="button" class="panel-close" aria-label="Close object properties"><span class="ms" aria-hidden="true">close</span></button></header>
-    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
+    <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-textbox hidden><legend>Text box body</legend><div class="property-grid-2"><label class="dialog-field">Left inset<span class="number-control"><input data-object-textbox-inset="left" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Right inset<span class="number-control"><input data-object-textbox-inset="right" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top inset<span class="number-control"><input data-object-textbox-inset="top" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Bottom inset<span class="number-control"><input data-object-textbox-inset="bottom" type="number" min="0" step="0.01" /><span>in</span></span></label></div><label class="dialog-field">Vertical alignment<select data-object-textbox-anchor><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label><label class="dialog-field">Horizontal overflow<select data-object-textbox-h-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option></select></label><label class="dialog-field">Vertical overflow<select data-object-textbox-v-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option><option value="ellipsis">Ellipsis</option></select></label><label class="dialog-field">Autofit<select data-object-textbox-autofit><option value="none">Fixed shape</option><option value="shape">Grow shape to fit</option><option value="normal">Scale text</option></select></label><button type="button" class="dialog-button" data-object-inspector-textbox-apply>Apply text box body</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
   objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
   objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
     if (!doc || !objectSelection?.canResize) return;
@@ -3795,6 +3816,31 @@ function ensureObjectInspector() {
     if (!doc || !objectSelection?.canWrap) return;
     const mode = objectInspectorEl.querySelector("[data-object-inspector-wrap-select]").value;
     runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
+  });
+  objectInspectorEl.querySelector("[data-object-inspector-textbox-apply]").addEventListener("click", () => {
+    if (!doc || objectSelection?.kind !== "textbox" || typeof doc.textBoxBodyProperties !== "function" || typeof doc.setTextBoxBodyProperties !== "function") return;
+    let props;
+    try { props = JSON.parse(doc.textBoxBodyProperties(objectSelection.node)); } catch { return; }
+    if (!props?.insets) return;
+    for (const side of ["left", "top", "right", "bottom"]) {
+      const inches = Number(objectInspectorEl.querySelector(`[data-object-textbox-inset=${side}]`).value);
+      if (!Number.isFinite(inches) || inches < 0) return;
+      props.insets[`${side}Emu`] = Math.round(inches * 914400);
+    }
+    props.vertical_anchor = objectInspectorEl.querySelector("[data-object-textbox-anchor]").value;
+    props.horizontal_overflow = objectInspectorEl.querySelector("[data-object-textbox-h-overflow]").value;
+    props.vertical_overflow = objectInspectorEl.querySelector("[data-object-textbox-v-overflow]").value;
+    const autofitMode = objectInspectorEl.querySelector("[data-object-textbox-autofit]").value;
+    // Keep the authored scale/reduction values for normal autofit. The compact
+    // inspector changes the mode only; it must never erase unsupported detail.
+    if (autofitMode === "normal") {
+      props.auto_fit = props.auto_fit?.mode === "normal"
+        ? props.auto_fit
+        : { mode: "normal", font_scale: 100000, line_spacing_reduction: 0 };
+    } else {
+      props.auto_fit = { mode: autofitMode };
+    }
+    runEdit(() => doc.setTextBoxBodyProperties(objectSelection.node, JSON.stringify(props)), { gate: true });
   });
   objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
     if (!doc || !objectSelection?.canAltText) return;
