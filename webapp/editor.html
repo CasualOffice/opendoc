@@ -1026,42 +1026,6 @@
         </div>
         <div id="pagesBody" class="panel-body pages-grid"></div>
       </aside>
-      <aside id="symbolDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="symbolTitle" aria-describedby="symbolDescription">
-        <div class="glyph-panel-content">
-          <header class="panel-head">
-            <div class="dialog-heading">
-              <span class="ms dialog-heading-icon" aria-hidden="true">functions</span>
-              <div><strong id="symbolTitle" class="panel-title">Insert symbol</strong><small id="symbolDescription">Choose a glyph to insert at the caret.</small></div>
-            </div>
-            <button id="symbolClose" type="button" class="dialog-close" title="Close" aria-label="Close insert symbol"><span class="ms" aria-hidden="true">close</span></button>
-          </header>
-          <div class="panel-body glyph-body">
-            <input id="symbolSearch" type="search" class="glyph-search" placeholder="Search symbols by name…" aria-label="Search symbols by name" autocomplete="off" spellcheck="false" />
-            <div id="symbolTabs" class="glyph-tabs" role="tablist" aria-label="Symbol categories"></div>
-            <div id="symbolGrid" class="glyph-grid" role="group" aria-label="Symbols"></div>
-            <p id="symbolEmpty" class="glyph-empty" hidden>No symbols match your search.</p>
-          </div>
-          <footer class="glyph-panel-foot"><span>Repeated insertion stays active.</span><button id="symbolDone" type="button" class="dialog-button">Done</button></footer>
-        </div>
-      </aside>
-      <aside id="emojiDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="emojiTitle" aria-describedby="emojiDescription">
-        <div class="glyph-panel-content">
-          <header class="panel-head">
-            <div class="dialog-heading">
-              <span class="ms dialog-heading-icon" aria-hidden="true">mood</span>
-              <div><strong id="emojiTitle" class="panel-title">Insert emoji</strong><small id="emojiDescription">Choose a glyph to insert at the caret.</small></div>
-            </div>
-            <button id="emojiClose" type="button" class="dialog-close" title="Close" aria-label="Close insert emoji"><span class="ms" aria-hidden="true">close</span></button>
-          </header>
-          <div class="panel-body glyph-body">
-            <input id="emojiSearch" type="search" class="glyph-search" placeholder="Search emoji by name…" aria-label="Search emoji by name" autocomplete="off" spellcheck="false" />
-            <div id="emojiTabs" class="glyph-tabs" role="tablist" aria-label="Emoji categories"></div>
-            <div id="emojiGrid" class="glyph-grid glyph-grid-emoji" role="group" aria-label="Emoji"></div>
-            <p id="emojiEmpty" class="glyph-empty" hidden>No emoji match your search.</p>
-          </div>
-          <footer class="glyph-panel-foot"><span>Repeated insertion stays active.</span><button id="emojiDone" type="button" class="dialog-button">Done</button></footer>
-        </div>
-      </aside>
       <main id="viewport" class="viewport">
         <div id="drop" class="drop">
           <div class="drop-card">
@@ -1108,6 +1072,33 @@
           <div id="reviewSidebarBody" class="review-sidebar-body"></div>
         </aside>
       </main>
+
+      <aside id="symbolDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="symbolTitle" aria-describedby="symbolDescription">
+        <div class="glyph-panel-content">
+          <header class="panel-head">
+            <div class="dialog-heading"><span class="ms dialog-heading-icon" aria-hidden="true">functions</span><div><strong id="symbolTitle" class="panel-title">Insert symbol</strong><small id="symbolDescription">Choose a glyph to insert at the caret.</small></div></div>
+            <button id="symbolClose" type="button" class="panel-close" title="Close" aria-label="Close insert symbol"><span class="ms" aria-hidden="true">close</span></button>
+          </header>
+          <div class="panel-body glyph-body">
+            <input id="symbolSearch" type="search" class="glyph-search" placeholder="Search symbols by name…" aria-label="Search symbols by name" autocomplete="off" spellcheck="false" />
+            <div id="symbolTabs" class="glyph-tabs" role="tablist" aria-label="Symbol categories"></div><div id="symbolGrid" class="glyph-grid" role="group" aria-label="Symbols"></div><p id="symbolEmpty" class="glyph-empty" hidden>No symbols match your search.</p>
+          </div>
+          <footer class="glyph-panel-foot"><span>Repeated insertion stays active.</span><button id="symbolDone" type="button" class="dialog-button">Done</button></footer>
+        </div>
+      </aside>
+      <aside id="emojiDialog" class="side-panel glyph-panel" hidden role="region" aria-labelledby="emojiTitle" aria-describedby="emojiDescription">
+        <div class="glyph-panel-content">
+          <header class="panel-head">
+            <div class="dialog-heading"><span class="ms dialog-heading-icon" aria-hidden="true">mood</span><div><strong id="emojiTitle" class="panel-title">Insert emoji</strong><small id="emojiDescription">Choose a glyph to insert at the caret.</small></div></div>
+            <button id="emojiClose" type="button" class="panel-close" title="Close" aria-label="Close insert emoji"><span class="ms" aria-hidden="true">close</span></button>
+          </header>
+          <div class="panel-body glyph-body">
+            <input id="emojiSearch" type="search" class="glyph-search" placeholder="Search emoji by name…" aria-label="Search emoji by name" autocomplete="off" spellcheck="false" />
+            <div id="emojiTabs" class="glyph-tabs" role="tablist" aria-label="Emoji categories"></div><div id="emojiGrid" class="glyph-grid glyph-grid-emoji" role="group" aria-label="Emoji"></div><p id="emojiEmpty" class="glyph-empty" hidden>No emoji match your search.</p>
+          </div>
+          <footer class="glyph-panel-foot"><span>Repeated insertion stays active.</span><button id="emojiDone" type="button" class="dialog-button">Done</button></footer>
+        </div>
+      </aside>
 
       <aside id="paragraphPropertiesPanel" class="side-panel properties-panel paragraph-properties-panel" hidden aria-labelledby="paragraphPropertiesTitle" aria-describedby="paragraphPropertiesDescription">
         <header class="panel-head properties-panel-head">
