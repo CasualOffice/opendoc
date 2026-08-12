@@ -49,6 +49,13 @@ test("insert symbol: a glyph lands at the caret as one undoable action, the pick
   await expect(undoBtn).toBeDisabled(); // a fresh document has nothing to undo
 
   await openPickerViaMenu(page, "symbol");
+  await expect(page.locator("#symbolDialog .panel-head")).toBeVisible();
+  await expect(page.locator("#symbolDialog .panel-body")).toBeVisible();
+  await expect(page.locator("#symbolDialog .dialog-card")).toHaveCount(0);
+  expect(await page.locator("#viewport").evaluate((viewport) => {
+    const panel = document.querySelector("#symbolDialog");
+    return !!panel && viewport.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING;
+  })).toBe(true);
   const startX = await caretX(page);
 
   // The default (Currency) category leads with the Euro sign; clicking it

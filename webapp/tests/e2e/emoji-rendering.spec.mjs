@@ -6,8 +6,8 @@
 // emoji resolved to NO font and rasterized as tofu — an import-fidelity bug that
 // had nothing to do with how the character got into the document.
 //
-// The fix is the coverage-driven `emoji` bucket (monochrome Noto Emoji, an
-// ordinary outline face, so it needs no colour-glyph support in the engine).
+// The fix is the coverage-driven `emoji` bucket using the official Noto Color
+// Emoji compatibility font (CBDT/CBLC bitmaps consumed by the engine).
 // This spec asserts the provisioning actually happens against real content,
 // because a unit test over `fontKeyForCodePoint` alone would still pass if the
 // fetch/register path never asked for the new bucket.

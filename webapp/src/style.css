@@ -1199,8 +1199,43 @@ body.modal-open {
 }
 
 /* ---- Insert ▸ Symbol / Emoji pickers ------------------------------------- */
-.glyph-dialog {
-  width: min(520px, 100%);
+.glyph-panel-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.glyph-panel .panel-head {
+  height: auto;
+  min-height: 58px;
+  padding: 9px 8px 9px 12px;
+  align-items: flex-start;
+}
+
+.glyph-panel .panel-head .dialog-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.glyph-panel .panel-head small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: 1.3;
+}
+
+.glyph-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-caption);
 }
 
 .glyph-body {
@@ -3449,19 +3484,16 @@ body.is-format-painting .page-wrap * {
 /* Symbols and emoji are persistent document-side tools, not blocking dialogs.
    Keep the page visible while repeated glyph insertions happen. */
 .glyph-panel {
+  /* Contextual tools belong in the right-hand inspector column, never between
+     the navigation rail and the document canvas. */
+  order: 3;
   flex-basis: 360px;
   width: 360px;
   max-width: min(360px, calc(100vw - 52px));
-  margin-left: 0;
 }
 
-.glyph-panel .glyph-dialog {
-  width: 100%;
-  max-height: none;
-  flex: 1;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+.glyph-panel .panel-body.glyph-body {
+  padding: 10px;
 }
 
 /* The legacy left-side review inventory is retained only as compatibility
@@ -4902,6 +4934,18 @@ body:not(.doc-loaded) .drop-title {
     right: 8px;
     bottom: calc(var(--h-footer) + 8px);
     width: min(340px, calc(100vw - 42px));
+    max-width: none;
+    margin: 0;
+    box-shadow: var(--shadow-popover);
+  }
+
+  .side-panel.glyph-panel {
+    position: fixed;
+    z-index: 45;
+    top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
+    right: 8px;
+    bottom: calc(var(--h-footer) + 8px);
+    width: min(360px, calc(100vw - 42px));
     max-width: none;
     margin: 0;
     box-shadow: var(--shadow-popover);

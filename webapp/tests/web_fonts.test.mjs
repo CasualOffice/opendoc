@@ -83,7 +83,7 @@ test("checkbox/dingbat symbols outside Noto Sans's coverage fall back too", () =
 // else can carry 😀 in a heading — so they must resolve to a covering face like
 // any other script. Before the `emoji` bucket existed every one of these scalars
 // mapped to no font and painted as a notdef box, whatever produced the document.
-test("pictographic emoji fall back to the monochrome emoji face", () => {
+test("pictographic emoji use the pinned color emoji face", () => {
   assert.deepEqual(
     fallbackKeysFor([
       0x1f600, // 😀 GRINNING FACE — Emoticons
@@ -96,6 +96,7 @@ test("pictographic emoji fall back to the monochrome emoji face", () => {
     ["emoji"],
   );
   assert.deepEqual(SCRIPT_FALLBACK_FONTS.emoji.scripts, ["Zyyy", "Latn"]);
+  assert.match(SCRIPT_FALLBACK_FONTS.emoji.url, /NotoColorEmoji-emojicompat\.ttf$/);
 });
 
 // The monochrome symbol blocks must keep resolving to Noto Sans Symbols 2 rather
@@ -108,11 +109,11 @@ test("monochrome symbol blocks still resolve to the symbols face, not emoji", ()
 test("every script fallback font resolves to a pinned, immutable upstream URL", () => {
   for (const [key, font] of Object.entries(SCRIPT_FALLBACK_FONTS)) {
     assert.ok(font.scripts.length > 0, `${key} declares no scripts`);
-    // notofonts hosts the script fallbacks; google/fonts hosts Noto Emoji, which
-    // is not published in the notofonts distribution. Both are commit-pinned.
+    // notofonts hosts script fallbacks; google/fonts hosts named faces; the
+    // official googlefonts/noto-emoji repository hosts the color emoji face.
     assert.match(
       font.url,
-      /^https:\/\/cdn\.jsdelivr\.net\/gh\/(notofonts|google\/fonts)/,
+      /^https:\/\/cdn\.jsdelivr\.net\/gh\/(notofonts|google\/fonts|googlefonts\/noto-emoji)/,
       `${key} is not served from a pinned upstream`,
     );
     assert.match(font.url, /@[0-9a-f]{40}\//);

@@ -5,11 +5,13 @@
 // Rust and therefore cannot become part of the WASM binary.
 
 export const GOOGLE_FONTS_REVISION = "7ff85c87f93ea6cca5f41c69f2e4edcb90240f26";
+export const NOTO_EMOJI_REVISION = "8998f5dd683424a73e2314a8c1f1e359c19e8742";
 export const NOTO_CJK_REVISION = "f8d157532fbfaeda587e826d4cd5b21a49186f7c";
 export const NOTO_DISTRIBUTION_REVISION =
   "eaa1a5cf8cb83ea73941197e492d659e51bb11dd";
 
 const GOOGLE_FONTS = `https://cdn.jsdelivr.net/gh/google/fonts@${GOOGLE_FONTS_REVISION}/ofl`;
+const NOTO_EMOJI = `https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@${NOTO_EMOJI_REVISION}/fonts`;
 const NOTO_CJK = `https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@${NOTO_CJK_REVISION}/Sans/OTF`;
 const NOTO = `https://cdn.jsdelivr.net/gh/notofonts/notofonts.github.io@${NOTO_DISTRIBUTION_REVISION}/fonts`;
 
@@ -129,17 +131,16 @@ export const SCRIPT_FALLBACK_FONTS = Object.freeze({
   // else can contain 😀 in a heading — and without a covering face every one of
   // them painted as tofu, whatever produced it.
   //
-  // This is the MONOCHROME Noto Emoji, deliberately: it is an ordinary outline
-  // font, so it shapes and rasterizes through the existing glyph pipeline with
-  // no colour-glyph (COLR/CBDT/sbix) support in the engine. Colour emoji remain
-  // a separate, much larger piece of work; black-and-white emoji that are
-  // legible and correctly spaced beat notdef boxes in the meantime.
+  // This is the official Noto Color Emoji compatibility font. It carries
+  // embedded CBDT/CBLC color bitmaps, which the shared renderer paints before
+  // the monochrome outline fallback. Do not replace this with NotoEmoji.ttf:
+  // that Google Fonts asset is an outline-only face and makes emoji monochrome.
   //
   // Like every bucket here it is coverage-driven: `missingCoverage()` only asks
   // for it when the open document actually contains these scalars, so documents
   // without emoji never pay the ~2 MB.
   emoji: Object.freeze({
-    url: `${GOOGLE_FONTS}/notoemoji/NotoEmoji%5Bwght%5D.ttf`,
+    url: `${NOTO_EMOJI}/NotoColorEmoji-emojicompat.ttf`,
     scripts: Object.freeze(["Zyyy", "Latn"]),
   }),
 });
