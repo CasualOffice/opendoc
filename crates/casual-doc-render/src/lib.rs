@@ -837,17 +837,7 @@ impl ColorPainter for ColrPainter<'_> {
     }
 
     fn fill(&mut self, brush: Brush<'_>) {
-        let Brush::Solid {
-            palette_index,
-            alpha,
-        } = brush
-        else {
-            return;
-        };
         let Some(glyph_id) = self.current_glyph else {
-            return;
-        };
-        let Some(color) = self.palette.get(usize::from(palette_index)) else {
             return;
         };
         let Some(outline) = self.outlines.get(glyph_id) else {
@@ -869,13 +859,57 @@ impl ColorPainter for ColrPainter<'_> {
             return;
         };
         let mut paint = Paint::default();
-        let alpha = (f32::from(color.alpha()) / 255.0 * alpha).clamp(0.0, 1.0);
-        paint.set_color_rgba8(
-            color.red(),
-            color.green(),
-            color.blue(),
-            (alpha * 255.0).round() as u8,
-        );
+        match brush {
+            Brush::Solid {
+                palette_index,
+                alpha,
+            } => {
+                let Some(color) = self.palette.get(usize::from(palette_index)) else {
+                    return;
+                };
+                let alpha = (f32::from(color.alpha()) / 255.0 * alpha).clamp(0.0, 1.0);
+                paint.set_color_rgba8(
+                    color.red(),
+                    color.green(),
+                    color.blue(),
+                    (alpha * 255.0).round() as u8,
+                );
+            }
+            Brush::LinearGradient {
+                p0,
+                p1,
+                color_stops,
+                extend,
+            } => {
+                let Some(shader) = self.gradient_shader(
+                    color_stops,
+                    self.map_color_point(p0),
+                    self.map_color_point(p1),
+                    extend,
+                ) else {
+                    return;
+                };
+                paint.shader = shader;
+            }
+            Brush::RadialGradient {
+                c0,
+                r0: _,
+                c1,
+                r1,
+                color_stops,
+                extend,
+            } => {
+                let center = self.map_color_point(c0);
+                let focal = self.map_color_point(c1);
+                let radius = (r1 * self.size_px / 1000.0).abs().max(0.01);
+                let Some(shader) = self.radial_shader(color_stops, center, focal, radius, extend)
+                else {
+                    return;
+                };
+                paint.shader = shader;
+            }
+            Brush::SweepGradient { .. } => return,
+        }
         paint.anti_alias = true;
         self.surface.pixmap.fill_path(
             &path,
@@ -887,6 +921,54 @@ impl ColorPainter for ColrPainter<'_> {
         self.painted = true;
     }
 
+    /* helpers are defined in the inherent impl below */
+    /*
+    fn map_color_point(&self, point: skrifa::raw::types::Point<f32>) -> SkPoint {
+        let (x, y) = (
+            self.transform.xx * point.x + self.transform.xy * point.y + self.transform.dx,
+            self.transform.yx * point.x + self.transform.yy * point.y + self.transform.dy,
+        );
+        SkPoint::from_xy(self.origin_x + x * self.scale_x, self.baseline_y - y)
+    }
+
+    fn gradient_shader(
+        &self,
+        color_stops: &[skrifa::color::ColorStop],
+        start: SkPoint,
+        end: SkPoint,
+        extend: skrifa::color::Extend,
+    ) -> Option<Shader<'static>> {
+        if color_stops.is_empty() || color_stops.len() > 64 {
+            return None;
+        }
+        let stops = color_stops
+            .iter()
+            .filter_map(|stop| {
+                let color = self.palette.get(usize::from(stop.palette_index))?;
+                let alpha = (f32::from(color.alpha()) / 255.0 * stop.alpha).clamp(0.0, 1.0);
+                Some(SkGradientStop::new(
+                    stop.offset.clamp(0.0, 1.0),
+                    Color::from_rgba8(
+                        color.red(),
+                        color.green(),
+                        color.blue(),
+                        (alpha * 255.0).round() as u8,
+                    ),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if stops.is_empty() {
+            return None;
+        }
+        let spread = match extend {
+            skrifa::color::Extend::Repeat => SpreadMode::Repeat,
+            skrifa::color::Extend::Reflect => SpreadMode::Reflect,
+            _ => SpreadMode::Pad,
+        };
+        LinearGradient::new(start, end, stops, spread, Transform::identity())
+    }
+    */
+
     fn paint_cached_color_glyph(
         &mut self,
         _glyph: GlyphId,
@@ -895,6 +977,88 @@ impl ColorPainter for ColrPainter<'_> {
     }
 
     fn push_layer(&mut self, _composite_mode: skrifa::color::CompositeMode) {}
+}
+
+impl ColrPainter<'_> {
+    fn map_color_point(&self, point: skrifa::raw::types::Point<f32>) -> SkPoint {
+        let (x, y) = (
+            self.transform.xx * point.x + self.transform.xy * point.y + self.transform.dx,
+            self.transform.yx * point.x + self.transform.yy * point.y + self.transform.dy,
+        );
+        SkPoint::from_xy(self.origin_x + x * self.scale_x, self.baseline_y - y)
+    }
+
+    fn gradient_shader(
+        &self,
+        color_stops: &[skrifa::color::ColorStop],
+        start: SkPoint,
+        end: SkPoint,
+        extend: skrifa::color::Extend,
+    ) -> Option<Shader<'static>> {
+        if color_stops.is_empty() || color_stops.len() > 64 {
+            return None;
+        }
+        let stops = color_stops
+            .iter()
+            .filter_map(|stop| {
+                let color = self.palette.get(usize::from(stop.palette_index))?;
+                let alpha = (f32::from(color.alpha()) / 255.0 * stop.alpha).clamp(0.0, 1.0);
+                Some(SkGradientStop::new(
+                    stop.offset.clamp(0.0, 1.0),
+                    Color::from_rgba8(
+                        color.red(),
+                        color.green(),
+                        color.blue(),
+                        (alpha * 255.0).round() as u8,
+                    ),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if stops.is_empty() {
+            return None;
+        }
+        let spread = match extend {
+            skrifa::color::Extend::Repeat => SpreadMode::Repeat,
+            skrifa::color::Extend::Reflect => SpreadMode::Reflect,
+            _ => SpreadMode::Pad,
+        };
+        LinearGradient::new(start, end, stops, spread, Transform::identity())
+    }
+
+    fn radial_shader(
+        &self,
+        color_stops: &[skrifa::color::ColorStop],
+        center: SkPoint,
+        focal: SkPoint,
+        radius: f32,
+        extend: skrifa::color::Extend,
+    ) -> Option<Shader<'static>> {
+        if color_stops.is_empty() || color_stops.len() > 64 {
+            return None;
+        }
+        let stops = color_stops
+            .iter()
+            .filter_map(|stop| {
+                let color = self.palette.get(usize::from(stop.palette_index))?;
+                let alpha = (f32::from(color.alpha()) / 255.0 * stop.alpha).clamp(0.0, 1.0);
+                Some(SkGradientStop::new(
+                    stop.offset.clamp(0.0, 1.0),
+                    Color::from_rgba8(
+                        color.red(),
+                        color.green(),
+                        color.blue(),
+                        (alpha * 255.0).round() as u8,
+                    ),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let spread = match extend {
+            skrifa::color::Extend::Repeat => SpreadMode::Repeat,
+            skrifa::color::Extend::Reflect => SpreadMode::Reflect,
+            _ => SpreadMode::Pad,
+        };
+        RadialGradient::new(center, focal, radius, stops, spread, Transform::identity())
+    }
 }
 
 /// Fills a thin horizontal decoration line (underline/strikethrough): a rect from
