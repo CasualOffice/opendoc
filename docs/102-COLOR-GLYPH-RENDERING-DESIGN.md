@@ -37,7 +37,8 @@ The renderer now probes `COLR/CPAL` and embedded `CBDT/CBLC`/`SBIX` PNG strikes
 before the monochrome outline path. Solid COLR layers are painted in palette
 order on the shared surface; bitmap strikes use metrics-derived placement.
 Nested COLRv1 affine transforms are composed and applied to layer outlines.
-COLR gradient brushes remain an explicit follow-up and safely fall back to
+Linear and radial COLRv1 gradient brushes now map to bounded tiny-skia shaders;
+sweep gradients remain an explicit follow-up and safely fall back to
 monochrome outlines.
 
 ## Acceptance gates
