@@ -27,6 +27,7 @@ use casual_doc_model::v1::{
     UnderlineStyle, VerticalAlignment,
 };
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
+use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
@@ -788,6 +789,14 @@ pub enum Operation {
         shape: NodeId,
         /// The stroke to install, or `None` for no outline.
         stroke: Option<ShapeStroke>,
+    },
+    /// Replace a text box's DrawingML body properties as one exact-inverse edit.
+    /// This covers internal margins, vertical anchoring, overflow, and autofit.
+    SetTextBoxBody {
+        /// The inline or grouped text-box node to update.
+        object: NodeId,
+        /// The complete replacement body-property value.
+        properties: TextBoxBodyProperties,
     },
 }
 
@@ -1824,6 +1833,16 @@ pub fn apply(
                 stroke: previous,
             })
         }
+        Operation::SetTextBoxBody { object, properties } => {
+            let previous = on_owning_surface_mut(doc, |blocks| {
+                set_text_box_body(blocks, *object, *properties)
+            })
+            .ok_or(EditError::NodeNotFound)?;
+            Ok(Operation::SetTextBoxBody {
+                object: *object,
+                properties: previous,
+            })
+        }
         Operation::SetSectionTitlePage {
             section,
             title_page,
@@ -2212,6 +2231,115 @@ fn set_object_extent(
             BlockNode::Sdt(sdt) => {
                 if let Some(prev) = set_object_extent(&mut sdt.blocks, object, extent) {
                     return Some(prev);
+                }
+            }
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+    None
+}
+
+/// Replaces the complete body-property record of an inline or grouped text box,
+/// descending through wrappers, tables, SDTs, nested boxes, and group children.
+/// Returning the previous record makes the operation exactly self-inverse.
+fn set_text_box_body(
+    blocks: &mut [BlockNode],
+    object: NodeId,
+    properties: TextBoxBodyProperties,
+) -> Option<TextBoxBodyProperties> {
+    fn in_children(
+        children: &mut [GroupChild],
+        object: NodeId,
+        properties: TextBoxBodyProperties,
+    ) -> Option<TextBoxBodyProperties> {
+        for child in children {
+            match child {
+                GroupChild::TextBox(text_box) if text_box.id == object => {
+                    return Some(core::mem::replace(
+                        &mut text_box.body_properties,
+                        properties,
+                    ));
+                }
+                GroupChild::Group(group) => {
+                    if let Some(previous) = in_children(&mut group.children, object, properties) {
+                        return Some(previous);
+                    }
+                }
+                GroupChild::TextBox(text_box) => {
+                    if let Some(previous) =
+                        set_text_box_body(&mut text_box.blocks, object, properties)
+                    {
+                        return Some(previous);
+                    }
+                }
+                GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+            }
+        }
+        None
+    }
+
+    fn in_inlines(
+        inlines: &mut [InlineNode],
+        object: NodeId,
+        properties: TextBoxBodyProperties,
+    ) -> Option<TextBoxBodyProperties> {
+        for inline in inlines {
+            match inline {
+                InlineNode::TextBox(text_box) if text_box.id == object => {
+                    return Some(core::mem::replace(
+                        &mut text_box.body_properties,
+                        properties,
+                    ));
+                }
+                InlineNode::TextBox(text_box) => {
+                    if let Some(previous) =
+                        set_text_box_body(&mut text_box.blocks, object, properties)
+                    {
+                        return Some(previous);
+                    }
+                }
+                InlineNode::Group(group) => {
+                    if let Some(previous) = in_children(&mut group.children, object, properties) {
+                        return Some(previous);
+                    }
+                }
+                InlineNode::Hyperlink(link) => {
+                    if let Some(previous) = in_inlines(&mut link.inlines, object, properties) {
+                        return Some(previous);
+                    }
+                }
+                InlineNode::Revision(revision) => {
+                    if let Some(previous) = in_inlines(&mut revision.inlines, object, properties) {
+                        return Some(previous);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                if let Some(previous) = in_inlines(&mut paragraph.inlines, object, properties) {
+                    return Some(previous);
+                }
+            }
+            BlockNode::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        if let Some(previous) =
+                            set_text_box_body(&mut cell.blocks, object, properties)
+                        {
+                            return Some(previous);
+                        }
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => {
+                if let Some(previous) = set_text_box_body(&mut sdt.blocks, object, properties) {
+                    return Some(previous);
                 }
             }
             BlockNode::AltChunk(_) => {}
@@ -2629,6 +2757,77 @@ pub fn object_descr(document: &Document, object: NodeId) -> Option<String> {
     surface_block_lists(document)
         .into_iter()
         .find_map(|blocks| object_descr_in_blocks(blocks, object))
+}
+
+/// Returns authored text-box body properties from any document surface.
+#[must_use]
+pub fn text_box_body_properties(
+    document: &Document,
+    object: NodeId,
+) -> Option<TextBoxBodyProperties> {
+    fn in_children(children: &[GroupChild], object: NodeId) -> Option<TextBoxBodyProperties> {
+        for child in children {
+            match child {
+                GroupChild::TextBox(text_box) if text_box.id == object => {
+                    return Some(text_box.body_properties);
+                }
+                GroupChild::Group(group) => {
+                    if let Some(found) = in_children(&group.children, object) {
+                        return Some(found);
+                    }
+                }
+                GroupChild::TextBox(text_box) => {
+                    if let Some(found) = text_box_body_in_blocks(&text_box.blocks, object) {
+                        return Some(found);
+                    }
+                }
+                GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &[InlineNode], object: NodeId) -> Option<TextBoxBodyProperties> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::TextBox(text_box) if text_box.id == object => {
+                    Some(text_box.body_properties)
+                }
+                InlineNode::TextBox(text_box) => text_box_body_in_blocks(&text_box.blocks, object),
+                InlineNode::Group(group) => in_children(&group.children, object),
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, object),
+                InlineNode::Revision(revision) => in_inlines(&revision.inlines, object),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn text_box_body_in_blocks(
+        blocks: &[BlockNode],
+        object: NodeId,
+    ) -> Option<TextBoxBodyProperties> {
+        for block in blocks {
+            let found = match block {
+                BlockNode::Paragraph(paragraph) => in_inlines(&paragraph.inlines, object),
+                BlockNode::Table(table) => table
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.cells)
+                    .find_map(|cell| text_box_body_in_blocks(&cell.blocks, object)),
+                BlockNode::Sdt(sdt) => text_box_body_in_blocks(&sdt.blocks, object),
+                BlockNode::AltChunk(_) => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| text_box_body_in_blocks(blocks, object))
 }
 
 fn object_descr_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<String> {

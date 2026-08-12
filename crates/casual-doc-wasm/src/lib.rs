@@ -14,7 +14,6 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::find_shape;
-use casual_doc_edit::object_descr;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
     RunningRegion, apply as apply_edit, caret_run_properties, cell_properties, find_table,
@@ -22,6 +21,7 @@ use casual_doc_edit::{
     run_properties_in_range,
 };
 use casual_doc_edit::{find_paragraph_any, surface_block_lists};
+use casual_doc_edit::{object_descr, text_box_body_properties};
 use casual_doc_export::write_document;
 #[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
@@ -60,8 +60,8 @@ use casual_doc_model::v1::{
     RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
     Style, StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
     TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth, TextBoxAutoFit,
-    UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
-    WordprocessingGroup, WrapMode,
+    TextBoxBodyProperties, UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
@@ -395,6 +395,7 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::SetAnchor { .. } => HistoryKind::ObjectMove,
         Operation::SetImageCrop { .. } => HistoryKind::ObjectCrop,
         Operation::SetObjectDescr { .. } => HistoryKind::ObjectAltText,
+        Operation::SetTextBoxBody { .. } => HistoryKind::ObjectResize,
         Operation::DeleteObject { .. } | Operation::InsertObjectNode { .. } => {
             HistoryKind::ObjectDelete
         }
@@ -1424,6 +1425,35 @@ impl WasmDocument {
             vec![Operation::SetObjectDescr { object, descr }],
             Pos::new(object, 0),
             HistoryKind::ObjectAltText,
+        )
+        .map_err(to_js)
+    }
+
+    /// Returns authored text-box body properties from any document surface.
+    #[wasm_bindgen(js_name = textBoxBodyProperties)]
+    pub fn text_box_body_properties(&self, node: &str) -> JsValue {
+        let Some(object) = NodeId::from_str(node).ok() else {
+            return JsValue::NULL;
+        };
+        text_box_body_properties(&self.document, object)
+            .map(|properties| serde_wasm_bindgen::to_value(&properties).unwrap_or(JsValue::NULL))
+            .unwrap_or(JsValue::NULL)
+    }
+
+    /// Replaces a text box's complete body-property record in one undoable edit.
+    #[wasm_bindgen(js_name = setTextBoxBodyProperties)]
+    pub fn set_text_box_body_properties(
+        &mut self,
+        node: &str,
+        properties: JsValue,
+    ) -> Result<EditResult, JsValue> {
+        let object = node_id(node)?;
+        let properties: TextBoxBodyProperties = serde_wasm_bindgen::from_value(properties)
+            .map_err(|err| to_js(format!("invalid text-box body properties: {err}")))?;
+        self.apply_action_caret_as(
+            vec![Operation::SetTextBoxBody { object, properties }],
+            Pos::new(object, 0),
+            HistoryKind::ObjectResize,
         )
         .map_err(to_js)
     }
