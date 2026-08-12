@@ -1319,7 +1319,8 @@ pub fn apply(
             // model's round-trippable range before it is stored.
             let crop = crop.map(CropRect::clamped).filter(|c| !c.is_identity());
             let previous =
-                set_object_crop(doc.body_mut(), *object, crop).ok_or(EditError::NodeNotFound)?;
+                on_owning_surface_mut(doc, |blocks| set_object_crop(blocks, *object, crop))
+                    .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetImageCrop {
                 object: *object,
                 crop: previous,
