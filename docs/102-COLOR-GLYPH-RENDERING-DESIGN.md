@@ -36,8 +36,9 @@ glyph, pixel, and document limits.
 The renderer now probes `COLR/CPAL` and embedded `CBDT/CBLC`/`SBIX` PNG strikes
 before the monochrome outline path. Solid COLR layers are painted in palette
 order on the shared surface; bitmap strikes use metrics-derived placement.
-COLR gradient brushes and complex paint transforms remain explicit follow-up
-work and safely fall back to monochrome outlines.
+Nested COLRv1 affine transforms are composed and applied to layer outlines.
+COLR gradient brushes remain an explicit follow-up and safely fall back to
+monochrome outlines.
 
 ## Acceptance gates
 
