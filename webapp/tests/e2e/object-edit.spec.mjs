@@ -73,6 +73,7 @@ test("selected objects expose a nonmodal properties inspector with exact size", 
   await expect(panel).toBeVisible();
   await expect(panel.locator("[data-object-prop=width]")).toHaveValue(/\d/);
   await expect(panel.locator("[data-object-prop=height]")).toHaveValue(/\d/);
+  await expect(panel.locator("[data-object-inspector-wrap-select]")).toBeVisible();
   await expect(page.locator("canvas.page").first()).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
