@@ -18,11 +18,10 @@ character or abort the document.
 
 ## Display-list contract
 
-Shaping already owns Unicode segmentation and glyph positioning. Each glyph run
-therefore carries a bounded source-scalar mapping sufficient to associate a
-color glyph with its original scalar sequence. This metadata does not alter
-advances, hit testing, selection offsets, or export bytes. A missing mapping is
-safe: the renderer uses the existing monochrome path.
+Shaping already owns Unicode segmentation and glyph positioning. Color lookup is
+performed by shaped glyph ID, so no new source-scalar metadata is required for
+the renderer path. This does not alter advances, hit testing, selection offsets,
+or export bytes.
 
 ## Renderer contract
 
@@ -34,10 +33,11 @@ glyph, pixel, and document limits.
 
 ## Implementation status
 
-The renderer now probes `CBDT/CBLC` and `SBIX` PNG strikes before the outline
-path. This is additive and safe, but does not yet make the current variable
-Noto Emoji fallback colorful because that font uses `COLR`; the layered-outline
-path remains the next implementation step.
+The renderer now probes `COLR/CPAL` and embedded `CBDT/CBLC`/`SBIX` PNG strikes
+before the monochrome outline path. Solid COLR layers are painted in palette
+order on the shared surface; bitmap strikes use metrics-derived placement.
+COLR gradient brushes and complex paint transforms remain explicit follow-up
+work and safely fall back to monochrome outlines.
 
 ## Acceptance gates
 

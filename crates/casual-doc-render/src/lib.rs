@@ -34,6 +34,7 @@ use casual_doc_model::v1::{CROP_FULL, CropRect};
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
 use skrifa::bitmap::BitmapData;
+use skrifa::color::{Brush, ColorPainter, PaintCachedColorGlyph, PaintError};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -596,6 +597,13 @@ fn render_glyph_run(
             pen_x += glyph.advance.to_device_px(dpi);
             continue;
         }
+        if render_colr_glyph(
+            &font, glyph.id, pen_x, baseline_y, size_px, scale_x, surface, clip,
+        ) {
+            wrote_any = true;
+            pen_x += glyph.advance.to_device_px(dpi);
+            continue;
+        }
         if let Some(outline) = outlines.get(GlyphId::new(glyph.id)) {
             let mut pen = GlyphPen {
                 builder: &mut builder,
@@ -732,6 +740,134 @@ fn render_bitmap_glyph(
         clip,
     );
     true
+}
+
+/// Paints a COLR glyph using the font's default CPAL palette. The color API
+/// decomposes both COLRv0 layer lists and COLRv1 paint graphs into callbacks;
+/// solid fills are rendered immediately, while unsupported gradient brushes
+/// safely fall back to the normal monochrome outline path.
+#[allow(clippy::too_many_arguments)]
+fn render_colr_glyph(
+    font: &FontRef<'_>,
+    glyph_id: u32,
+    origin_x: f32,
+    baseline_y: f32,
+    size_px: f32,
+    scale_x: f32,
+    surface: &mut Surface,
+    clip: Option<&Mask>,
+) -> bool {
+    let Some(color_glyph) = font.color_glyphs().get(GlyphId::new(glyph_id)) else {
+        return false;
+    };
+    let palettes = font.color_palettes();
+    let Some(palette) = palettes.get(0) else {
+        return false;
+    };
+    let mut painter = ColrPainter {
+        outlines: &font.outline_glyphs(),
+        palette: palette.colors(),
+        origin_x,
+        baseline_y,
+        size_px,
+        scale_x,
+        surface,
+        clip,
+        current_glyph: None,
+        painted: false,
+    };
+    color_glyph
+        .paint(LocationRef::default(), &mut painter)
+        .is_ok()
+        && painter.painted
+}
+
+struct ColrPainter<'a> {
+    outlines: &'a skrifa::outline::OutlineGlyphCollection<'a>,
+    palette: &'a [skrifa::color::Color],
+    origin_x: f32,
+    baseline_y: f32,
+    size_px: f32,
+    scale_x: f32,
+    surface: &'a mut Surface,
+    clip: Option<&'a Mask>,
+    current_glyph: Option<GlyphId>,
+    painted: bool,
+}
+
+impl ColorPainter for ColrPainter<'_> {
+    fn push_transform(&mut self, _transform: skrifa::color::Transform) {}
+
+    fn pop_transform(&mut self) {}
+
+    fn push_clip_glyph(&mut self, glyph_id: GlyphId) {
+        self.current_glyph = Some(glyph_id);
+    }
+
+    fn push_clip_box(&mut self, _clip_box: skrifa::raw::types::BoundingBox<f32>) {}
+
+    fn pop_clip(&mut self) {
+        self.current_glyph = None;
+    }
+
+    fn fill(&mut self, brush: Brush<'_>) {
+        let Brush::Solid {
+            palette_index,
+            alpha,
+        } = brush
+        else {
+            return;
+        };
+        let Some(glyph_id) = self.current_glyph else {
+            return;
+        };
+        let Some(color) = self.palette.get(usize::from(palette_index)) else {
+            return;
+        };
+        let Some(outline) = self.outlines.get(glyph_id) else {
+            return;
+        };
+        let mut builder = PathBuilder::new();
+        let mut pen = GlyphPen {
+            builder: &mut builder,
+            origin_x: self.origin_x,
+            baseline_y: self.baseline_y,
+            scale_x: self.scale_x,
+        };
+        let settings = DrawSettings::unhinted(Size::new(self.size_px), LocationRef::default());
+        if outline.draw(settings, &mut pen).is_err() {
+            return;
+        }
+        let Some(path) = builder.finish() else {
+            return;
+        };
+        let mut paint = Paint::default();
+        let alpha = (f32::from(color.alpha()) / 255.0 * alpha).clamp(0.0, 1.0);
+        paint.set_color_rgba8(
+            color.red(),
+            color.green(),
+            color.blue(),
+            (alpha * 255.0).round() as u8,
+        );
+        paint.anti_alias = true;
+        self.surface.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            self.clip,
+        );
+        self.painted = true;
+    }
+
+    fn paint_cached_color_glyph(
+        &mut self,
+        _glyph: GlyphId,
+    ) -> Result<PaintCachedColorGlyph, PaintError> {
+        Ok(PaintCachedColorGlyph::Unimplemented)
+    }
+
+    fn push_layer(&mut self, _composite_mode: skrifa::color::CompositeMode) {}
 }
 
 /// Fills a thin horizontal decoration line (underline/strikethrough): a rect from
