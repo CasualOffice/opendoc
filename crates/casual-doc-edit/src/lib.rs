@@ -1285,8 +1285,9 @@ pub fn apply(
             })
         }
         Operation::SetExtent { object, extent } => {
-            let previous = set_object_extent(doc.body_mut(), *object, *extent)
-                .ok_or(EditError::NodeNotFound)?;
+            let previous =
+                on_owning_surface_mut(doc, |blocks| set_object_extent(blocks, *object, *extent))
+                    .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetExtent {
                 object: *object,
                 extent: previous,
@@ -1297,9 +1298,10 @@ pub fn apply(
             extent,
             transform,
         } => {
-            let (previous_extent, previous_transform) =
-                set_group_geometry(doc.body_mut(), *object, *extent, *transform)
-                    .ok_or(EditError::NodeNotFound)?;
+            let (previous_extent, previous_transform) = on_owning_surface_mut(doc, |blocks| {
+                set_group_geometry(blocks, *object, *extent, *transform)
+            })
+            .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetGroupGeometry {
                 object: *object,
                 extent: previous_extent,
@@ -1307,8 +1309,9 @@ pub fn apply(
             })
         }
         Operation::SetAnchor { object, anchor } => {
-            let previous = set_object_anchor(doc.body_mut(), *object, anchor)
-                .ok_or(EditError::NodeNotFound)?;
+            let previous =
+                on_owning_surface_mut(doc, |blocks| set_object_anchor(blocks, *object, anchor))
+                    .ok_or(EditError::NodeNotFound)?;
             Ok(Operation::SetAnchor {
                 object: *object,
                 anchor: Box::new(previous),
