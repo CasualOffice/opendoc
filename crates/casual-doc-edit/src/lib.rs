@@ -2622,7 +2622,13 @@ fn set_object_descr_in_inlines(
 /// blind-overwriting it.
 #[must_use]
 pub fn object_descr(document: &Document, object: NodeId) -> Option<String> {
-    object_descr_in_blocks(document.body(), object)
+    // Object metadata is document-wide: headers, footers, notes, and text-box
+    // stories share the same node id space as the body.  Reading only the body
+    // made the inspector appear blank for an otherwise correctly authored
+    // description on a running-band or floating text-box object.
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| object_descr_in_blocks(blocks, object))
 }
 
 fn object_descr_in_blocks(blocks: &[BlockNode], object: NodeId) -> Option<String> {
