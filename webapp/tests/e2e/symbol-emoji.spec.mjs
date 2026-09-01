@@ -54,7 +54,13 @@ test("insert symbol: a glyph lands at the caret as one undoable action, the pick
   await expect(page.locator("#symbolDialog .dialog-card")).toHaveCount(0);
   expect(await page.locator("#viewport").evaluate((viewport) => {
     const panel = document.querySelector("#symbolDialog");
-    return !!panel && viewport.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING;
+    // `&` binds tighter than `&&`, so this expression is a BITMASK, not a
+    // boolean: it evaluated to 4 (DOCUMENT_POSITION_FOLLOWING) and `toBe(true)`
+    // could never pass. Coerce, so the assertion tests document order rather
+    // than the truthiness of a number.
+    return Boolean(
+      panel && viewport.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   })).toBe(true);
   const startX = await caretX(page);
 

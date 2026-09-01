@@ -2248,7 +2248,6 @@ let currentName = "document.docx";
 let currentSourceFormat = "org.openxmlformats.wordprocessingml.document";
 /** Honest local-file lifecycle shown beside the title. OpenDoc does not claim
  * cloud persistence: a mutation is Edited until the user downloads a copy. */
-let documentState = "opened";
 /** True while an IME composition is active on the canvas editor surface. */
 let composingText = false;
 /** Host gesture identity for history coalescing. The engine also validates exact
@@ -2308,8 +2307,10 @@ function setDocumentState(state) {
     downloaded: { icon: "download_done", text: "Downloaded" },
   };
   const next = states[state] ?? states.opened;
-  documentState = state in states ? state : "opened";
-  documentStateEl.dataset.state = documentState;
+  // The pill is display only. Whether work would be lost is answered by
+  // `documentIsDirty()` from the engine revision watermark — deliberately not
+  // by this string, which is what let the old flag sit here with no readers.
+  documentStateEl.dataset.state = state in states ? state : "opened";
   documentStateEl.querySelector(".ms").textContent = next.icon;
   documentStateText.textContent = next.text;
   documentStateEl.title = next.text;
@@ -2394,6 +2395,22 @@ function updatePageNumber() {
 }
 
 async function boot() {
+  // Armed before the engine loads, because the hole it closes is open from the
+  // first keystroke. The document lives in the wasm heap and nowhere else —
+  // there is no server, no autosave and no local copy — so closing the tab,
+  // reloading, or pressing Back discarded every edit without a word.
+  //
+  // A document that has been saved does not warn, because the user has the
+  // bytes; `documentIsDirty` decides that from the revision watermark rather
+  // than from the state pill, so a save between two edits clears it correctly.
+  // Everything past `preventDefault` is legacy the browsers still want, and the
+  // wording is the browser's own — a page cannot choose it.
+  window.addEventListener("beforeunload", (e) => {
+    if (!documentIsDirty()) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+
   try {
     await init();
     setStatus("Ready — open a .docx, .odt, .json, or .txt");
@@ -2490,11 +2507,20 @@ async function loadStartupDocument(url, name, onOpened, onRendered) {
 async function openBytes(bytes, name, onOpened, onRendered) {
   try {
     setStatus(`Opening ${name}…`);
+    // Parse BEFORE anything on screen is touched. Freeing the open document
+    // first and parsing second meant any file the engine rejected — a corrupt
+    // .docx, an unsupported .odt, the wrong file picked by mistake — destroyed
+    // the document the user was editing: its pages stayed painted and every
+    // control stayed enabled, but `doc` held a freed wrapper, so the next
+    // keystroke, click or Save threw "null pointer passed to rust" and there was
+    // no way back. Only a successful parse replaces what is on screen; a failed
+    // one leaves the previous document open, because the previous document is
+    // what the user still has.
+    const next = open(bytes);
     hideLinkChip();
     clearLinkHover();
-    // A previous document's memory is freed when it is dropped; replace it.
     if (doc) doc.free();
-    doc = open(bytes);
+    doc = next;
     currentSourceFormat = doc.sourceFormat;
     applyActiveAuthorToDocument();
     // Word/Docs: an open document always has an insertion point, so Insert ▸
@@ -2542,6 +2568,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     currentName = name;
     docTitleEl.value = name;
     documentChrome.hidden = false;
+    resetDirtyTracking(currentName);
     setDocumentState("opened");
     saveBtn.disabled = false;
     populateSaveFormats();
@@ -2602,7 +2629,12 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     });
   } catch (err) {
     console.error(err);
-    setStatus(`Could not open ${name}: ${err.message ?? err}`, "error");
+    // `doc` is only ever reassigned after a successful parse, so if one was open
+    // it is still open, still painted and still editable. Say so: the failure
+    // message is the only thing the user gets, and "could not open" alone reads
+    // like the editor is now empty.
+    const kept = doc ? " — the document you had open is still here" : "";
+    setStatus(`Could not open ${name}: ${err.message ?? err}${kept}`, "error");
   }
 }
 
@@ -4612,7 +4644,6 @@ function applyAltText() {
     return;
   }
   applyEditResult(res).then(() => {
-    setDocumentState("edited");
     closeAltTextDialog();
     setStatus(text ? "Alt text updated" : "Alt text removed");
   });
@@ -7290,6 +7321,88 @@ function scrollFindMatchIntoView() {
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .highlight"), "center");
 }
 
+// ---- Unsaved-work tracking ---------------------------------------------------
+//
+// Engine-authoritative and fail-dirty. Two independent axes make a document
+// unsaved, and BOTH must be tracked or the guard is silently wrong for one of
+// them:
+//
+//   * the MODEL — every applied edit carries the engine's own monotonic
+//     revision, so the question "has this changed since it was last written
+//     out?" is answered by the engine rather than inferred by the UI;
+//   * the NAME — renaming changes what Save produces without touching the model
+//     at all, so no revision can ever observe it.
+//
+// A watermark, not a boolean: a boolean cannot be cleared correctly by a save
+// that lands between two edits. And when the revision cannot be read for any
+// reason, `revisionUnreadable` latches and the document reports dirty — a
+// needless warning costs one click, the opposite mistake costs the document.
+//
+// Undo back to the original content still reports dirty, because revisions are
+// monotonic. That is the intended direction of the error.
+let savedRevision = 0;
+let currentRevision = 0;
+let savedName = "";
+let revisionUnreadable = false;
+
+/** The engine's post-edit revision, or null if it cannot be read. Never throws:
+ *  a wrapper that has already been freed, or a build whose `EditResult` predates
+ *  the getter, must degrade to "unknown" (and therefore dirty) rather than take
+ *  down the edit that just succeeded. */
+function readRevision(res) {
+  try {
+    const revision = res.revision;
+    return Number.isFinite(revision) ? revision : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Everything true of EVERY landed edit, whichever path applied it.
+ *
+ *  Four apply paths grew independently and diverged: `applyEditResult` cleared
+ *  the find cache but never marked the document edited, `runToolbarEdit` marked
+ *  it but never cleared the cache, `applyBookmarkEdit` did both, and
+ *  `runNodeEdit` — the path every table and list structural edit takes — did
+ *  neither. Shading a cell or converting a list left the header reading
+ *  "Opened" and left Find matching against pre-edit text.
+ *
+ *  A rule that enumerates its subjects is one omission from being wrong, and the
+ *  omission is the write path somebody adds last. What is true of every edit
+ *  belongs here and nowhere else; what genuinely differs between the paths
+ *  (caret movement, stats, sync vs async repaint) stays with them.
+ *
+ *  Call with the revision read BEFORE `res.free()`. */
+function noteDocumentEdited(revision) {
+  clearFindParagraphCache();
+  if (revision === null || revision === undefined) revisionUnreadable = true;
+  else currentRevision = revision;
+  setDocumentState("edited");
+}
+
+/** Re-baseline onto a freshly opened document: nothing is unsaved yet. */
+function resetDirtyTracking(name) {
+  savedRevision = 0;
+  currentRevision = 0;
+  savedName = name;
+  revisionUnreadable = false;
+}
+
+/** The bytes have left the editor, so the current state is now the saved one. */
+function markDocumentSaved() {
+  savedRevision = currentRevision;
+  savedName = currentName;
+  revisionUnreadable = false;
+  setDocumentState("downloaded");
+}
+
+/** Whether closing right now would lose work. */
+function documentIsDirty() {
+  if (!doc) return false;
+  if (revisionUnreadable) return true;
+  return currentRevision !== savedRevision || currentName !== savedName;
+}
+
 /** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
  *  on a page-count change), redraw the caret, and keep it in view. */
 async function applyEditResult(res) {
@@ -7297,8 +7410,9 @@ async function applyEditResult(res) {
   const offset = res.offset;
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
+  const revision = readRevision(res);
   res.free();
-  clearFindParagraphCache();
+  noteDocumentEdited(revision);
   // An edit has landed, so the caret the editor now shows is the result of the
   // user's own action — never the untouched load-time seed, even if the two
   // positions coincide.
@@ -7418,7 +7532,6 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     return;
   }
   await applyEditResult(res);
-  setDocumentState("edited");
 }
 
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
@@ -7476,14 +7589,15 @@ async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
   }
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
+  const revision = readRevision(res);
   res.free();
+  noteDocumentEdited(revision);
   if (newCount !== pages.length) await renderAll();
   else {
     for (const i of dirty) repaintPage(i);
     drawSelection();
   }
   scheduleChromeRefresh({ outline: true });
-  setDocumentState("edited");
 }
 
 /** The uniform run-format state over the selection, or null if not a range. */
@@ -9386,7 +9500,9 @@ function runNodeEdit(thunk) {
   }
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
+  const revision = readRevision(res);
   res.free();
+  noteDocumentEdited(revision);
   if (newCount !== pages.length) renderAll();
   else {
     for (const i of dirty) repaintPage(i);
@@ -11170,8 +11286,9 @@ function bookmarkMutationBlocked() {
 async function applyBookmarkEdit(res) {
   const dirty = res.dirtyPages;
   const newCount = res.pageCount;
+  const revision = readRevision(res);
   res.free();
-  clearFindParagraphCache();
+  noteDocumentEdited(revision);
   if (newCount !== pages.length) {
     await renderAll();
   } else {
@@ -11179,7 +11296,6 @@ async function applyBookmarkEdit(res) {
     drawSelection();
   }
   scheduleChromeRefresh({ stats: true, outline: true });
-  setDocumentState("edited");
 }
 
 /** The current bookmarks as `[{ id, name }]`, parsed from the engine's
@@ -11497,7 +11613,6 @@ async function insertFieldAtCaret(kind) {
     return;
   }
   await applyEditResult(res);
-  setDocumentState("edited");
   setStatus(`Inserted ${FIELD_LABELS.get(kind) ?? "field"}`);
   focusEditorSurface();
 }
@@ -11555,7 +11670,6 @@ async function insertImageAtCaret(bytes, widthPx, heightPx, mime) {
     return;
   }
   await applyEditResult(res);
-  setDocumentState("edited");
   setStatus("Picture inserted");
   focusEditorSurface();
 }
@@ -13063,7 +13177,7 @@ function exportDocumentAs(targetFormat) {
     a.download = downloadNameForFormat(currentName, extension);
     a.click();
     URL.revokeObjectURL(url);
-    setDocumentState("downloaded");
+    markDocumentSaved();
     showCompatibilityFindings(findings, "export");
     setStatus(
       findings === 0
