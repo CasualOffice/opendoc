@@ -13,7 +13,15 @@
 // fetch/register path never asked for the new bucket.
 import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
-const EMOJI_FONT = /notoemoji/i;
+// The asset is `googlefonts/noto-emoji@<sha>/fonts/NotoColorEmoji-emojicompat.ttf`.
+// This matcher used to be /notoemoji/i, which matched the OLD monochrome Google
+// Fonts path (`ofl/notoemoji/NotoEmoji[wght].ttf`). When the face was switched to
+// the real colour font the matcher was left behind, and it matches neither
+// "noto-emoji" (hyphenated) nor "NotoColorEmoji" — so the spec recorded zero
+// requests while the editor was fetching the font correctly all along. Match the
+// family, which is the thing under test, and which no other provisioned face
+// (NotoSans, NotoSerif) contains.
+const EMOJI_FONT = /NotoColorEmoji/i;
 
 test("a document containing emoji provisions the emoji face", async ({ page, consoleErrors }) => {
   const fontRequests = [];
