@@ -8494,7 +8494,13 @@ impl WasmDocument {
 
     /// See [`WasmDocument::page_size`].
     fn page_size_inner(&self, index: u32) -> Result<PageSize, String> {
-        let page = self.page(index)?;
+        // The SAME layout `render_page` draws from. `page_count` and `render_page`
+        // both read the markup layout while show-changes is on, but this asked the
+        // editing layout — and markup materialises struck-through deletions that
+        // the editing layout gives zero width, so markup can hold more pages. A
+        // host looping `0..pageCount` then hit "page index N out of range" partway
+        // through and left the viewer blank or stale, with no user action needed.
+        let page = self.render_page_of(index)?;
         let size = self.page_box(page);
         Ok(PageSize {
             width_twip: size.width.raw(),
@@ -8545,6 +8551,15 @@ impl WasmDocument {
         // cached fragment is potentially stale — drop the whole cache and re-shape.
         self.galley_cache = GalleyCache::new();
         self.layout = paginate_document(&self.document, &self.shaper);
+        // A new face re-shapes the markup view as much as the editing one, and
+        // the markup view is what is on screen while it exists.
+        if self.markup_layout.is_some() {
+            self.markup_layout = Some(paginate_document_view(
+                &self.document,
+                &self.shaper,
+                ReviewView::Markup,
+            ));
+        }
     }
 
     fn register_fonts_inner(&mut self, bytes: &[u8], lengths: &[u32]) -> Result<(), String> {
@@ -8972,7 +8987,24 @@ impl WasmDocument {
             &mut self.galley_cache,
             &DirtySet::new(),
         );
-        let dirty = dirty_pages(&self.layout, &new_layout);
+        // Dirty pages — and the page count the host compares against — must be
+        // measured on the layout the RENDERER reads. While "show changes" is on
+        // that is the markup layout, which `set_show_changes` built once and
+        // nothing ever rebuilt: an edit updated the model and the editing layout
+        // while the canvas kept repainting the view from before the edit, so
+        // nothing the user typed appeared. Markup is on by default for any
+        // document carrying tracked changes, which is exactly the document the
+        // review feature exists for.
+        let dirty = match self.markup_layout.take() {
+            Some(previous) => {
+                let markup =
+                    paginate_document_view(&self.document, &self.shaper, ReviewView::Markup);
+                let dirty = dirty_pages(&previous, &markup);
+                self.markup_layout = Some(markup);
+                dirty
+            }
+            None => dirty_pages(&self.layout, &new_layout),
+        };
         self.layout = new_layout;
         EditResult {
             node: caret.node.to_string(),
@@ -10140,15 +10172,6 @@ impl WasmDocument {
     }
 
     /// The page at `index`, or an out-of-range message.
-    fn page(&self, index: u32) -> Result<&Page, String> {
-        self.layout.pages.get(index as usize).ok_or_else(|| {
-            format!(
-                "page index {index} out of range (0..{})",
-                self.layout.page_count()
-            )
-        })
-    }
-
     /// The layout the *renderer* reads: the read-only markup layout while "show
     /// changes" is on (docs/93), otherwise the live editing layout. Caret,
     /// selection, and hit-testing never use this — they always read `self.layout`.
@@ -25161,6 +25184,70 @@ mod tests {
             Some("CD"),
             "unchanged"
         );
+    }
+
+    /// Typing while "show changes" is on must appear on the page.
+    ///
+    /// The renderer reads `active_layout()` — the markup layout when it exists —
+    /// but `finish_edit` rebuilt only `self.layout`. The markup layout was built
+    /// once by `set_show_changes` and then frozen, so every keystroke updated the
+    /// model and the editing layout while the canvas kept repainting the view
+    /// from before the edit. Nothing the user typed ever appeared. Markup is on
+    /// by default for any document that carries tracked changes, so this is the
+    /// normal state for exactly the documents the review feature exists for.
+    #[test]
+    fn an_edit_reaches_the_markup_layout_the_renderer_reads() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node_id, _) = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, t)| (*id, t.clone()))
+            .expect("a non-empty paragraph");
+        let node = node_id.to_string();
+
+        d.set_show_changes(true);
+        // Compared by digest: an inequality assertion over a few megabytes of
+        // RGBA prints the whole buffer on failure and buries the reason.
+        fn ink(bitmap: &PageBitmap) -> u64 {
+            bitmap.rgba().0.iter().fold(1469598103934665603u64, |h, b| {
+                (h ^ u64::from(*b)).wrapping_mul(1099511628211)
+            })
+        }
+
+        let before = ink(&d.render_page(0, 96.0).expect("render markup page 0"));
+
+        d.insert_text(&node, 0, "ZZTOPMARKER".to_string())
+            .expect("insert while showing changes");
+
+        let after = ink(&d.render_page(0, 96.0).expect("render markup page 0 again"));
+        assert_ne!(
+            before, after,
+            "the page the renderer paints must change when the document does"
+        );
+    }
+
+    /// Every page the renderer will be asked to draw must also report a size.
+    ///
+    /// `page_count` and `render_page` read the markup layout while show-changes
+    /// is on, but `page_size` was hard-wired to the editing layout. Markup
+    /// materialises struck-through deletions that the editing layout gives zero
+    /// width, so the markup layout can hold MORE pages — and the host, looping
+    /// `0..pageCount`, hit "page index N out of range" partway through and left
+    /// the viewer blank or stale. No user action is required to reach it.
+    #[test]
+    fn every_rendered_page_also_reports_a_size() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        d.set_show_changes(true);
+        let count = d.page_count();
+        assert!(count >= 1);
+        for index in 0..count {
+            d.page_size(index)
+                .unwrap_or_else(|e| panic!("page_size({index}) of {count} failed: {e:?}"));
+            d.render_page(index, 96.0)
+                .unwrap_or_else(|e| panic!("render_page({index}) of {count} failed: {e:?}"));
+        }
     }
 
     #[test]
