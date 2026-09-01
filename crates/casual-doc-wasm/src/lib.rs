@@ -16023,7 +16023,21 @@ fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
 
 fn parse_hex_color(hex: &str) -> Option<RgbColor> {
     let h = hex.strip_prefix('#').unwrap_or(hex);
-    if h.len() != 6 {
+    // `str::len` is a BYTE count, not a character count. A six-BYTE multibyte
+    // string — "ÀÁÂ" is three characters of two bytes each — passed this check
+    // and then sliced at byte 2, which is inside a character, and slicing a
+    // `str` off a character boundary panics.
+    //
+    // In WebAssembly a panic traps the module for good: every later call throws
+    // "unreachable executed", so the open and possibly unsaved document becomes
+    // unrecoverable. The reachable inputs are a pasted colour, a host-supplied
+    // underline colour and a shape fill — none of them sanitised, all of them
+    // ultimately attacker- or user-supplied.
+    //
+    // Requiring ASCII hex digits makes the length check mean what it looked like
+    // it meant, and leaves the slices below provably on character boundaries.
+    let bytes = h.as_bytes();
+    if bytes.len() != 6 || !bytes.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     Some(RgbColor {
@@ -16073,7 +16087,22 @@ fn parse_highlight(name: &str) -> HighlightColor {
         "white" => HighlightColor::White,
         "darkgray" | "gray" | "grey" => HighlightColor::DarkGray,
         "lightgray" => HighlightColor::LightGray,
-        _ => HighlightColor::Yellow,
+        // The six dark variants `highlight_name` emits but this never accepted.
+        // Every one of them fell through to yellow, so text highlighted dark red
+        // in an imported Word document silently became yellow the moment it was
+        // copied or picked up with the format painter — a real formatting change
+        // the user neither asked for nor could see happen.
+        "darkblue" => HighlightColor::DarkBlue,
+        "darkcyan" => HighlightColor::DarkCyan,
+        "darkgreen" => HighlightColor::DarkGreen,
+        "darkmagenta" => HighlightColor::DarkMagenta,
+        "darkred" => HighlightColor::DarkRed,
+        "darkyellow" => HighlightColor::DarkYellow,
+        "yellow" => HighlightColor::Yellow,
+        // An unrecognised name is not a highlight. Inventing yellow for it is
+        // what let the six names above stay broken without a single complaint
+        // reaching the code: the wrong answer looked like a deliberate one.
+        _ => HighlightColor::None,
     }
 }
 
@@ -25248,6 +25277,86 @@ mod tests {
             d.render_page(index, 96.0)
                 .unwrap_or_else(|e| panic!("render_page({index}) of {count} failed: {e:?}"));
         }
+    }
+
+    /// A colour string must never be able to trap the module.
+    ///
+    /// `parse_hex_color` checked `str::len`, which counts BYTES, and then sliced
+    /// at byte offsets 2 and 4. A six-byte multibyte string passed the check and
+    /// sliced inside a character, which panics — and a panic in WebAssembly traps
+    /// the module permanently, so every later call throws "unreachable executed"
+    /// and the open document, saved or not, is gone. It is reachable from a
+    /// pasted colour, a host-supplied underline colour and a shape fill.
+    /// Every highlight the engine can NAME must parse back to itself.
+    ///
+    /// `highlight_name` emitted seventeen names and `parse_highlight` accepted
+    /// eleven, falling through to yellow for the rest — so the six dark variants
+    /// routine in imported Word documents turned yellow on copy, paste and format
+    /// painter. Asserted as a round trip over every variant rather than as six
+    /// added cases, because the next variant somebody adds is otherwise the next
+    /// one to silently become yellow.
+    #[test]
+    fn every_highlight_name_parses_back_to_itself() {
+        use casual_doc_model::v1::HighlightColor as H;
+        for colour in [
+            H::None,
+            H::Black,
+            H::Blue,
+            H::Cyan,
+            H::DarkBlue,
+            H::DarkCyan,
+            H::DarkGray,
+            H::DarkGreen,
+            H::DarkMagenta,
+            H::DarkRed,
+            H::DarkYellow,
+            H::Green,
+            H::LightGray,
+            H::Magenta,
+            H::Red,
+            H::White,
+            H::Yellow,
+        ] {
+            let name = highlight_name(colour);
+            assert_eq!(
+                parse_highlight(&name),
+                colour,
+                "{name:?} did not survive name -> parse"
+            );
+        }
+
+        // An unrecognised name is not a highlight. Yellow was the old answer, and
+        // it is the answer that hid the defect.
+        assert_eq!(parse_highlight("chartreuse"), H::None);
+    }
+
+    #[test]
+    fn a_multibyte_colour_string_is_rejected_rather_than_trapping() {
+        // Two THREE-byte characters: six bytes, and byte 2 lands INSIDE the first
+        // one. That distinction is the whole bug — "ÀÁÂ" is also six bytes but
+        // splits cleanly at 2 and 4, so it returned None harmlessly and hid the
+        // defect. Only a slice off a character boundary panics.
+        let six_bytes_not_six_chars = "€€";
+        assert_eq!(six_bytes_not_six_chars.len(), 6, "six bytes, two chars");
+        assert!(
+            !six_bytes_not_six_chars.is_char_boundary(2),
+            "byte 2 must be mid-character or this proves nothing"
+        );
+        assert!(
+            parse_hex_color(six_bytes_not_six_chars).is_none(),
+            "a multibyte string is not a colour"
+        );
+
+        // Neither is anything else that merely happens to be six bytes.
+        for input in ["ÀÁÂ", "#€€", "zzzzzz", "12345", "1234567", "", "##12345"] {
+            assert!(parse_hex_color(input).is_none(), "rejected: {input:?}");
+        }
+
+        // Real colours still parse, with and without the hash.
+        let c = parse_hex_color("#1a2B3c").expect("a valid colour");
+        assert_eq!((c.r, c.g, c.b), (0x1a, 0x2b, 0x3c));
+        let c = parse_hex_color("FFFFFF").expect("a valid colour");
+        assert_eq!((c.r, c.g, c.b), (255, 255, 255));
     }
 
     #[test]
