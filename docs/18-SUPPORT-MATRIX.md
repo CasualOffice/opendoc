@@ -59,7 +59,8 @@ report.
 | Browser/WASM | Yes | WASM facade and reference webapp implemented; generic multi-format Open and target-selectable Save are available with visible compatibility findings. |
 | C ABI | Yes | Planned after the Rust facade stabilizes. |
 | React/Vue/Svelte wrappers | Optional | Must live outside the core runtime. |
-| Native mobile UI | No | Out of scope for v1. |
+| Native mobile UI | No | Out of scope for v1. A *native* app shell is not planned; the browser build is the mobile story. |
+| Mobile/tablet browser | Yes | **Supported target (owner decision, 2026-09-02).** The WASM webapp is expected to open and edit documents on phone and tablet browsers. Not yet met: no `(pointer: coarse)` sizing, no touch-specific handling (no `touchstart`, no `pointerType` branching, no pinch-zoom) and no mobile test — though 54 pointer-event handlers already receive touch, and page rasters are already virtualised and DPR-capped, so the engine side is sound. Tracked as HF-060, HF-083, HF-088, HF-097 in `104-HOTFIX-TRACKER.md`. |
 
 ## Format Capability Status
 

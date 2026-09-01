@@ -110,6 +110,7 @@ The runtime is not a UI toolkit and is not a DOCX-only editor. It is a determini
 98. `98-PDF-EXPORT-AND-PRINT-DESIGN.md` — PDF writer, font-subsetting, print, accessibility, and release-gate design.
 99. `99-REMAINING-WORK-AUDIT.md` — current prioritized repository state, incomplete editing/model/fidelity areas, and deferred SDK/collaboration work.
 101. `101-EDITOR-OBJECT-AND-INSERT-PANEL-AUDIT.md` — deep object-editing correctness/UX audit, competitive analysis, contextual Properties/Insert panel design, equation-authoring gate, and prioritized delivery matrix.
+104. `104-HOTFIX-TRACKER.md` — ranked queue of confirmed UX, UI, and correctness defects in shipped code, with cross-cutting root-cause themes and the owner decisions that block several rows.
 
 Also present (not in the numbered sequence): `PHASE-1A-SEMANTIC-MODELING-TRACKER.md`.
 
