@@ -91,11 +91,11 @@ Every P0 is now closed or in review.
 | HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Open |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Open |
-| HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Open |
+| HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | In review |
 | HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Open |
+| HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | In review |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Open |
+| HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | In review |
 | HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Open |
 | HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Open |
 | HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Open |
@@ -125,7 +125,7 @@ Every P0 is now closed or in review.
 | --- | --- | --- | --- | --- | --- |
 | HF-036 | Printing a mixed-orientation document silently clips the landscape pages | import-export | M | Internal audit | Open |
 | HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | Open |
-| HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | Open |
+| HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | In review |
 | HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
 | HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | Open |
 | HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Open |
@@ -135,7 +135,7 @@ Every P0 is now closed or in review.
 | HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Open |
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Open |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
-| HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | Open |
+| HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | In review |
 | HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | Open |
 | HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Open |
 | HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | Open |
@@ -563,7 +563,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-014 — Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness
 
-**P1** · render · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · render · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** A page containing dashed-underlined text in a subsetted or symbol font (post.underlineThickness == 0, or negative in a malformed font) never finishes rendering — the tab or host process spins indefinitely.
 
@@ -589,7 +589,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-015 — A six-byte non-ASCII color string panics the WASM module and poisons the session
 
-**P1** · wasm · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · wasm · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** A crafted clipboard payload (or a host passing a user-typed color) traps the engine: every subsequent call throws "unreachable executed" and the open, possibly unsaved document is unrecoverable.
 
@@ -613,7 +613,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-017 — Table column count is unbounded on one side and collapses to 1 twip on the other
 
-**P1** · layout · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · layout · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** A small uploaded .docx with a grid-less table of many large-gridSpan cells drives multi-gigabyte allocation and an OOM abort. Conversely, a converter-produced table with more cells than w:tblGrid columns renders the extra cells as an unreadable one-character-per-line sliver that blows up the row height — Word renders both correctly.
 
@@ -927,7 +927,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-038 — Copying or format-painting dark-highlighted text silently repaints it yellow
 
-**P2** · wasm · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · wasm · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Text highlighted dark red, dark yellow, dark blue, dark green, dark cyan or dark magenta (routine in imported Word documents) turns YELLOW when copied and pasted internally or picked up with the format painter — a visible, undetectable formatting change.
 
@@ -1047,7 +1047,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-048 — Changing underline style or double-strike leaves the page showing the old decoration
 
-**P2** · layout · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · layout · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Switching an already-underlined range to double underline, changing underline colour, or striking already-struck text appears to do nothing on screen — yet the change is real and lands in the exported file, so what the user sees and what they save disagree.
 

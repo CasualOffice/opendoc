@@ -775,8 +775,7 @@ fn paragraph_hash(
                 run.italic.hash(&mut hasher);
                 run.letter_spacing.0.hash(&mut hasher);
                 run.color.hash(&mut hasher);
-                run.decoration.underline.hash(&mut hasher);
-                run.decoration.strikethrough.hash(&mut hasher);
+                hash_decoration(&run.decoration, &mut hasher);
                 run.highlight.hash(&mut hasher);
                 run.shading.hash(&mut hasher);
                 run.baseline_shift.0.hash(&mut hasher);
@@ -836,8 +835,7 @@ fn paragraph_hash(
                 style.bold.hash(&mut hasher);
                 style.italic.hash(&mut hasher);
                 style.letter_spacing.0.hash(&mut hasher);
-                style.decoration.underline.hash(&mut hasher);
-                style.decoration.strikethrough.hash(&mut hasher);
+                hash_decoration(&style.decoration, &mut hasher);
             }
             // A text box's flowed fragments are not hashed here; a paragraph
             // carrying one bypasses the galley cache entirely (see
@@ -1962,6 +1960,69 @@ enum WidthSpec {
 }
 
 /// Solves the grid column widths for a table (twips), measuring each cell's
+/// Feeds every field of a [`Decoration`] into the galley cache's hash.
+///
+/// Destructured deliberately: adding a field to `Decoration` must fail to
+/// compile until somebody decides whether the cache has to see it. The cache
+/// answers one question — "did anything the renderer reads change?" — and three
+/// of the five fields the renderer reads were missing from the answer, so
+/// switching an underlined range to double underline, changing an underline
+/// colour, or striking already-struck text repainted the cached fragment and
+/// appeared to do nothing. The change was real and reached the exported file, so
+/// the page and the saved document disagreed.
+fn hash_decoration<H: std::hash::Hasher>(decoration: &crate::text::Decoration, hasher: &mut H) {
+    let crate::text::Decoration {
+        underline,
+        underline_style,
+        underline_color,
+        strikethrough,
+        double_strike,
+    } = decoration;
+    underline.hash(hasher);
+    (*underline_style as u8).hash(hasher);
+    underline_color.hash(hasher);
+    strikethrough.hash(hasher);
+    double_strike.hash(hasher);
+}
+
+/// How many grid columns a table actually occupies.
+///
+/// Two failures met here, and one function settles both.
+///
+/// With no `w:tblGrid` the count was the uncapped sum of `gridSpan` across the
+/// widest row. Import caps an individual span but nothing caps cells-per-row, so
+/// a small crafted file drove an enormous allocation for the column and edge
+/// vectors and aborted the process. A document-controlled count must not size an
+/// allocation without a ceiling.
+///
+/// With a grid present the count was `grid.len()` alone, so a converter-made
+/// table carrying more cells than grid columns — common, and something Word
+/// renders correctly — gave every extra cell a slot clamped to one twip: a
+/// one-character-per-line sliver that then blew up the row height. Taking the
+/// wider of the two makes those cells real columns instead.
+///
+/// The ceiling sits far above any real table (Word itself stops at 63 columns),
+/// so it changes nothing a person authored while bounding what a hostile file can
+/// ask for.
+fn table_column_count(table: &Table) -> usize {
+    let spanned = table
+        .rows
+        .iter()
+        .map(|r| {
+            r.cells
+                .iter()
+                .map(|c| c.properties.grid_span.unwrap_or(1).max(1) as usize)
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(0);
+    table.grid.len().max(spanned).clamp(1, MAX_TABLE_COLUMNS)
+}
+
+/// The ceiling on a table's column count. Far above any authored table; present
+/// so a document cannot choose an allocation size.
+const MAX_TABLE_COLUMNS: usize = 1024;
+
 /// content min/preferred widths with the shaper and distributing `w:gridSpan`
 /// cells across the columns they cover.
 fn solve_table_columns(
@@ -1972,22 +2033,7 @@ fn solve_table_columns(
     merge_roles: &[Vec<VerticalMergeRole>],
     style_layers: &[Vec<TableStyleLayer>],
 ) -> Vec<Twip> {
-    let ncols = if table.grid.is_empty() {
-        table
-            .rows
-            .iter()
-            .map(|r| {
-                r.cells
-                    .iter()
-                    .map(|c| c.properties.grid_span.unwrap_or(1).max(1) as usize)
-                    .sum::<usize>()
-            })
-            .max()
-            .unwrap_or(1)
-            .max(1)
-    } else {
-        table.grid.len()
-    };
+    let ncols = table_column_count(table);
 
     let mut cols: Vec<ColumnConstraint> = (0..ncols)
         .map(|i| ColumnConstraint {
@@ -7147,6 +7193,213 @@ mod tests {
         assert_eq!(cells[1].x, Twip(3000));
         // Each cell shaped its paragraph.
         assert!(!cells[0].blocks.is_empty() && !cells[1].blocks.is_empty());
+    }
+
+    /// A table with MORE cells than `w:tblGrid` columns must give the extra cells
+    /// real width, not a one-twip sliver.
+    ///
+    /// Converters emit this routinely and Word renders it correctly by extending
+    /// the grid. Taking `grid.len()` alone clamped every out-of-range cell to a
+    /// single twip, which rendered as one character per line and then blew up the
+    /// row height.
+    #[test]
+    fn cells_beyond_the_declared_grid_still_get_real_columns() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties,
+        };
+        let cell = |id: u64, text: &str| TableCell {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            properties: TableCellProperties::default(),
+            blocks: vec![paragraph(
+                id + 100,
+                vec![run_node(id + 200, text, RunProperties::default())],
+            )],
+        };
+        // One declared column, three actual cells.
+        let table = BlockNode::Table(Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid: vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells: vec![cell(60, "one"), cell(61, "two"), cell(62, "three")],
+            }],
+        });
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document(vec![table]), &shaper, Twip::from_points(400));
+        let BlockFragment::TableRow { cells, .. } = &galley[0] else {
+            panic!("expected a table row");
+        };
+        assert_eq!(cells.len(), 3, "every cell is laid out");
+        for (index, cell) in cells.iter().enumerate() {
+            assert!(
+                cell.width > Twip(1),
+                "cell {index} is a {:?}-wide sliver; out-of-grid cells must get real columns",
+                cell.width
+            );
+        }
+    }
+
+    /// Every field of `Decoration` must change the galley cache key.
+    ///
+    /// The cache answers one question — did anything the renderer reads change? —
+    /// and three of the five fields the renderer reads were absent from the
+    /// answer. Switching an underlined range to double underline, changing an
+    /// underline colour, or striking already-struck text reused the cached
+    /// fragment and appeared to do nothing, while the change was real and reached
+    /// the exported file. What the user saw and what they saved disagreed.
+    #[test]
+    fn the_galley_hash_sees_every_decoration_field() {
+        use crate::text::Decoration;
+        use casual_doc_model::v1::UnderlineStyle;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher as _;
+
+        let key = |d: &Decoration| {
+            let mut hasher = DefaultHasher::new();
+            hash_decoration(d, &mut hasher);
+            hasher.finish()
+        };
+
+        let base = Decoration {
+            underline: true,
+            strikethrough: true,
+            ..Decoration::default()
+        };
+
+        for (field, variant) in [
+            (
+                "underline_style",
+                Decoration {
+                    underline_style: UnderlineStyle::Double,
+                    ..base
+                },
+            ),
+            (
+                "underline_color",
+                Decoration {
+                    underline_color: Some([255, 0, 0, 255]),
+                    ..base
+                },
+            ),
+            (
+                "double_strike",
+                Decoration {
+                    double_strike: true,
+                    ..base
+                },
+            ),
+            (
+                "underline",
+                Decoration {
+                    underline: false,
+                    ..base
+                },
+            ),
+            (
+                "strikethrough",
+                Decoration {
+                    strikethrough: false,
+                    ..base
+                },
+            ),
+        ] {
+            assert_ne!(
+                key(&base),
+                key(&variant),
+                "changing {field} must change the cache key, or the page keeps \
+                 painting the old decoration"
+            );
+        }
+    }
+
+    /// A document-controlled count must never size an allocation without a cap.
+    ///
+    /// With no `w:tblGrid` the column count was the uncapped sum of `gridSpan`
+    /// across the widest row. Import caps an individual span but nothing caps
+    /// cells-per-row, so a small crafted file drove an enormous allocation for
+    /// the column and edge vectors and aborted the process.
+    ///
+    /// Asserted on the count rather than by actually allocating: a test that
+    /// proves this by running out of memory aborts the whole test binary and
+    /// takes every other result with it, which is a worse signal than a failed
+    /// assertion, not a better one.
+    #[test]
+    fn a_documents_column_count_is_capped() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties,
+        };
+        let spanning = |id: u64, span: u32| TableCell {
+            id: NodeId::from_parts(id, 1).unwrap(),
+            properties: TableCellProperties {
+                grid_span: Some(span),
+                ..TableCellProperties::default()
+            },
+            blocks: Vec::new(),
+        };
+        let table_of = |grid: Vec<GridColumn>, cells: Vec<TableCell>| Table {
+            id: NodeId::from_parts(50, 1).unwrap(),
+            grid,
+            grid_change: None,
+            properties: TableProperties::default(),
+            rows: vec![TableRow {
+                id: NodeId::from_parts(51, 1).unwrap(),
+                properties: TableRowProperties::default(),
+                cells,
+            }],
+        };
+
+        // Gridless and hostile: 40 cells each claiming 100 million columns.
+        let hostile = table_of(
+            Vec::new(),
+            (0..40).map(|i| spanning(60 + i, 100_000_000)).collect(),
+        );
+        assert_eq!(
+            table_column_count(&hostile),
+            MAX_TABLE_COLUMNS,
+            "a document cannot choose the allocation size"
+        );
+
+        // More cells than the declared grid: the count widens to fit them, so
+        // the extra cells get real columns instead of one-twip slivers.
+        let ragged = table_of(
+            vec![GridColumn {
+                width_twips: Some(3000),
+            }],
+            vec![spanning(60, 1), spanning(61, 1), spanning(62, 1)],
+        );
+        assert_eq!(
+            table_column_count(&ragged),
+            3,
+            "the grid widens to the cells"
+        );
+
+        // An ordinary table is untouched: the declared grid wins.
+        let ordinary = table_of(
+            vec![
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+                GridColumn {
+                    width_twips: Some(3000),
+                },
+            ],
+            vec![spanning(60, 1), spanning(61, 1)],
+        );
+        assert_eq!(
+            table_column_count(&ordinary),
+            2,
+            "authored tables are unchanged"
+        );
+
+        // An empty table still has one column, never zero.
+        assert_eq!(table_column_count(&table_of(Vec::new(), Vec::new())), 1);
     }
 
     #[test]

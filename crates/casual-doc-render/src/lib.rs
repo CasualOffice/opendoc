@@ -1135,14 +1135,31 @@ fn draw_underline(
         draw_decoration(surface, clip, x, y, w, t, color);
     };
     // A repeating on/off pattern of segments (dotted/dashed) across the advance.
+    // Every patterned underline derives its period from the face's own underline
+    // thickness, and a font may report that as zero — `post.underlineThickness`
+    // is routinely 0 in subsetted and symbol fonts, and negative in malformed
+    // ones. skrifa passes the value through unclamped whenever `post` parses at
+    // all, so the caller's size-derived fallback never fires. A zero period is a
+    // loop that never advances: the page never finishes rendering and the tab
+    // spins until it is killed, on a document that is otherwise perfectly valid.
+    //
+    // The floor is on the STEP rather than on the thickness, so a legitimately
+    // hairline underline still draws at its own weight while the iteration count
+    // stays bounded by the run's advance.
+    const MIN_PATTERN_STEP: f32 = 0.5;
     let dashed = |surface: &mut Surface, on: f32, off: f32| {
+        let step = if (on + off).is_finite() {
+            (on + off).max(MIN_PATTERN_STEP)
+        } else {
+            MIN_PATTERN_STEP
+        };
         let mut cursor = 0.0_f32;
         while cursor < advance {
             let seg = on.min(advance - cursor);
             if seg > 0.0 {
                 line(surface, x + cursor, seg, y_center, thickness);
             }
-            cursor += on + off;
+            cursor += step;
         }
     };
     match style {
@@ -1202,7 +1219,16 @@ fn draw_underline(
         UnderlineStyle::DotDash => {
             // Alternating dash then dot, each followed by a gap.
             let (dash, dot, gap) = (thickness * 4.0, thickness.max(1.0), thickness * 2.5);
-            let period = dash + gap + dot + gap;
+            // Same guarantee as `dashed`: content decides this period, so it is
+            // floored where it is read rather than trusted.
+            let period = {
+                let raw = dash + gap + dot + gap;
+                if raw.is_finite() {
+                    raw.max(MIN_PATTERN_STEP)
+                } else {
+                    MIN_PATTERN_STEP
+                }
+            };
             let mut base = 0.0_f32;
             while base < advance {
                 let d = dash.min(advance - base);
@@ -3250,5 +3276,45 @@ mod tests {
             "the strike is scaled to the run size, got width {}",
             extent[0].x - pen_x
         );
+    }
+
+    /// A dashed underline must terminate even when the face reports no underline
+    /// thickness at all.
+    ///
+    /// `post.underlineThickness` is routinely 0 in subsetted and symbol fonts and
+    /// negative in malformed ones, and skrifa passes it through unclamped
+    /// whenever `post` parses, so the caller's size-derived fallback never fires.
+    /// Every patterned style derived its period from that number, and a zero
+    /// period is a loop that never advances: the page never finished rendering
+    /// and the tab spun until it was killed, on an otherwise valid document.
+    ///
+    /// The assertion is that this call RETURNS. Unfixed it does not, so the
+    /// failure is a hang rather than a red assertion — which is why the loop is
+    /// bounded at its step rather than left to a timeout.
+    #[test]
+    fn a_zero_thickness_dashed_underline_terminates() {
+        use casual_doc_model::v1::UnderlineStyle;
+
+        for style in [
+            UnderlineStyle::Dashed,
+            UnderlineStyle::Dotted,
+            UnderlineStyle::DotDash,
+        ] {
+            for thickness in [0.0_f32, -3.0, f32::NAN] {
+                let mut surface = Surface::new(200, 40).unwrap();
+                draw_underline(
+                    &mut surface,
+                    None,
+                    0.0,
+                    20.0,
+                    180.0,
+                    thickness,
+                    [0, 0, 0, 255],
+                    style,
+                    &[],
+                    96.0,
+                );
+            }
+        }
     }
 }
