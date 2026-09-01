@@ -766,6 +766,26 @@
       </section>
     </div>
 
+    <!-- The application's one confirmation. `window.confirm` is barred here: it
+         is unstyleable, unlabelable, blocks the wasm engine's own event loop,
+         and is the repo's top-ranked UX defect class. Every yes/no question the
+         editor asks goes through this card via `confirmModal()` in main.js. -->
+    <div id="confirmDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDescription">
+      <section class="dialog-card dialog-card-compact">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" id="confirmIcon" aria-hidden="true">help</span>
+            <div>
+              <h2 id="confirmTitle">Are you sure?</h2>
+              <p id="confirmDescription"></p>
+            </div>
+          </div>
+          <button id="confirmClose" type="button" class="dialog-close" title="Close" aria-label="Close confirmation dialog"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <footer class="dialog-foot"><span class="dialog-note" id="confirmNote"></span><div class="dialog-actions"><button id="confirmCancel" type="button" class="dialog-button">Cancel</button><button id="confirmAccept" type="button" class="dialog-button dialog-button-primary">OK</button></div></footer>
+      </section>
+    </div>
+
     <div id="styleNameDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="styleNameTitle" aria-describedby="styleNameDescription">
       <section class="dialog-card dialog-card-compact">
         <header class="dialog-head">
