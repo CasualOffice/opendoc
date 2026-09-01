@@ -48,9 +48,9 @@ Both are reference-only. Nothing in them was modified.
 | Priority | Count |
 | --- | --- |
 | P0 | 7 |
-| P1 | 28 |
-| P2 | 55 |
-| P3 | 24 |
+| P1 | 33 |
+| P2 | 52 |
+| P3 | 22 |
 | **Total** | **114** |
 
 ## Queue
@@ -67,7 +67,7 @@ Both are reference-only. Nothing in them was modified.
 | HF-006 | Pagination never terminates on a table whose repeated header fills the page | layout | M | Internal audit | Open |
 | HF-007 | Four copy-pasted edit-apply paths have diverged — table and list edits never mark the document dirty | code-structure | S | Sibling gap (opencalc) | Open |
 
-### P1 — 28 items
+### P1 — 33 items
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -78,11 +78,13 @@ Both are reference-only. Nothing in them was modified.
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Open |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Open |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Open |
+| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Open |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Open |
 | HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Open |
 | HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Open |
+| HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Open |
 | HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | Open |
 | HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Open |
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
@@ -94,13 +96,16 @@ Both are reference-only. Nothing in them was modified.
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Open |
 | HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Open |
 | HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Open |
+| HF-081 | No localization seam — every string is an English literal inside a 14.9k-line file | i18n | L | Sibling gap (opencalc + docs) | Open |
 | HF-031 | Command palette announces nothing while arrowing through results | accessibility | S | Internal audit | Open |
+| HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Open |
 | HF-032 | Insert-table grid picker is pointer-only and exposes 80 unnamed buttons | accessibility | S | Internal audit | Open |
 | HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Open |
+| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Open |
 | HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Open |
 | HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Open |
 
-### P2 — 55 items
+### P2 — 52 items
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -119,8 +124,8 @@ Both are reference-only. Nothing in them was modified.
 | HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | Open |
 | HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | Open |
 | HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Open |
-| HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | Open |
+| HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Open |
 | HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Open |
 | HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Open |
 | HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Open |
@@ -128,7 +133,6 @@ Both are reference-only. Nothing in them was modified.
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Open |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Open |
 | HF-059 | Cmd+V never pastes an image, and says nothing | clipboard | S | Internal audit | Open |
-| HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Open |
 | HF-061 | A zero-height table row paints its text across the rest of the page | render | S | Internal audit | Open |
 | HF-062 | Split cell dialog cannot be dismissed by keyboard, and closing it kills typing | editor-ux | S | Internal audit | Open |
 | HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Open |
@@ -149,18 +153,16 @@ Both are reference-only. Nothing in them was modified.
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
 | HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Open |
 | HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | Open |
-| HF-081 | No localization seam — every string is an English literal inside a 14.9k-line file | i18n | L | Sibling gap (opencalc + docs) | Open |
 | HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | Open |
-| HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Open |
 | HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Open |
 | HF-085 | main.js is 93% of the webapp with zero exports, which is why the apply paths diverged and why the embed surface is blocked | code-structure | L | Sibling gap (opencalc) | Open |
 | HF-086 | Undefined --bg-1 makes the header/footer band label unreadable and the "Add header" chip transparent | css | S | Internal audit | Open |
 | HF-087 | Marketing site navigation disappears on phones with no replacement | responsive | M | Internal audit | Open |
-| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Open |
 | HF-089 | Review popover and inline accept/reject card paint above modal dialogs | css | S | Internal audit | Open |
 | HF-090 | Three of four fuzz targets are built but never run, and no browser test opens a hostile document | testing | M | Sibling gap (opencalc) | Open |
+| HF-114 | No collaboration, presence, sharing or roles — and no server for a second person to connect to | collab | L | Sibling gap (opencalc + docs) | Open |
 
-### P3 — 24 items
+### P3 — 22 items
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -170,7 +172,6 @@ Both are reference-only. Nothing in them was modified.
 | HF-094 | Compact-chrome toggle is reachable only from the ribbon chevron — not in View, not in the palette | chrome | S | Sibling gap (docs (ProseMirror)) | Open |
 | HF-095 | Outline panel's active-row colour is defeated for Heading 3 and deeper | css | S | Internal audit | Open |
 | HF-096 | Left rail buttons have a no-op hover state | editor-ux | S | Internal audit | Open |
-| HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Open |
 | HF-098 | Image resize grips are 9px with no expanded hit area | editor-ux | S | Internal audit | Open |
 | HF-099 | Document Properties never shows the file's byte size | dialogs | S | Sibling gap (docs (ProseMirror)) | Open |
 | HF-100 | Tab stops can only be created, moved or deleted with a mouse | accessibility | M | Internal audit | Open |
@@ -187,7 +188,6 @@ Both are reference-only. Nothing in them was modified.
 | HF-111 | Each suggested keystroke re-validates the entire document | perf | M | Internal audit | Open |
 | HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | Open |
 | HF-113 | Every pointermove re-queries and materializes all page wrappers | perf | S | Internal audit | Open |
-| HF-114 | No collaboration, presence, sharing or roles — and no server for a second person to connect to | collab | L | Sibling gap (opencalc + docs) | Open |
 
 ## Cross-cutting themes
 
@@ -274,47 +274,68 @@ Rows: HF-025, HF-060, HF-081
 Open is where a hostile or merely broken file meets the engine, and it currently has: no time budget or cancel, no failure isolation (a failed parse frees the live document), three of four fuzz targets never executed including the entire ODT importer, and no browser test that opens a hostile fixture. These read as four separate rows but they are one hardening pass on one code path.  
 Rows: HF-004, HF-077, HF-090
 
-## Owner decisions required
+## Target design
 
-These are not defects to fix silently. Each is a place where a sibling convention or a
-written spec conflicts with a choice this repository appears to have made deliberately, and
-several rows above are blocked until each is answered.
+`template.png` in the repository root is the agreed target design for the editor
+("Vellum"), annotated with six regions: **1** tabbed ribbon (single row, no wrap),
+**3** navigation rail (Outline, Pages, Comments, Bookmarks, Search), **4** context panel
+(Comments, Properties, Styles), **5** status bar (page, word count, language, mode, view,
+zoom, sync state), **6** command palette and quick access.
 
-**D-1 · Do document bytes get written to browser storage on the user's machine? Autosave drafts, version snapshots and recent files all require it, and all three rows are blocked until this is answered.**
+The shells for the rail and the context panel already exist (`webapp/editor.html:1010`
+`.rail` / `:1015` `.side-panel`), so the design is the direction this editor is already
+travelling — not a rewrite. Where it settles a question a row below was hedging, the row
+now says so. Three elements of the design have no implementation at all today and are
+recorded as such: the status-bar word count (HF-051), the language control (HF-081), and
+the presence/Share/Synced cluster (HF-114).
 
-- *Position A:* Yes — port the sibling shape. opencalc keeps IndexedDB drafts (quiesce 5s / ceiling 60s), compressed version history and a recent list; docs-ref keeps a single-slot autosave plus 60-day recent-file buffers. Without it, opendoc's only recovery mechanism is an undo stack that dies with the page, and rows 4, 17 and 18 cannot be built at all.
-- *Position B:* No, or not in the runtime — docs/83 specifies host-owned persistence and the runtime storing nothing, and opendoc is positioned as a local-first serverless editor. Silently retaining full document buffers on-device for days is a new data-retention posture for a product whose current privacy story is "nothing leaves the tab and nothing is kept".
-- *Recommendation:* Yes, but scoped and owned by webapp/ as the host rather than by the runtime, which keeps docs/83 intact. Adopt docs-ref's gates verbatim (24h age gate for the crash draft, same-doc gate, offer-never-apply), suppress entirely when running in a host iframe (editor.drafts.js:31-35), give it one visible clear/disable control in Settings, and cap recent-file retention well below 60 days. Ship HF-002's beforeunload guard first regardless — it is four lines and needs no storage decision at all.
+Rows are not re-derived from the design here. Reconciling the full design against the
+editor is its own pass, and should produce a design-conformance list separate from this
+defect queue.
 
-**D-2 · Is touch/mobile a supported target, or does desktop-first stand?**
+## Owner decisions — resolved
 
-- *Position A:* Adopt the sibling pass. opencalc ships a documented `@media (pointer: coarse)` block with four gating specs and real CDP touch tests; docs-ref ships a phone breakpoint, a mobile format bar, pinch-zoom and 16px inputs. Touch laptops and tablets are Tier-1 browsers, and WCAG 2.5.5 target size applies regardless of form factor.
-- *Position B:* Desktop-first is a deliberate, in-code decision, not an oversight: style.css:4905 states "The desktop editor remains the primary target", docs/18-SUPPORT-MATRIX.md lists Native mobile UI as out of scope for v1, and narrow-screen work is already tracked as REVIEW-GAP-024 under P1G-REVIEW-039. Adding phone reflow, pinch and a mobile format bar is platform scope expansion competing with fidelity work.
-- *Recommendation:* Split it. Take the accessibility floor now as hygiene, not as mobile scope — the one-line `@media (pointer: coarse) { input, select, textarea { font-size: 16px } }` plus 44px min-height on menu/context/overflow rows, spent on floating chrome so the document canvas loses zero height. Defer pinch-zoom, phone reflow and the mobile format bar behind an explicit scope call, and fold the deferred half into the existing REVIEW-GAP-024 row rather than opening a parallel mobile track.
+Answered by the owner on 2026-09-02. Five of the six are settled; **D-6 remains open.**
+Each answer changes rows above, and the affected rows carry a **Decision.** line saying how.
 
-**D-3 · How does print/PDF output get real text — a PDF writer in the export registry, or a text-based print path plus the browser's Save-as-PDF?**
+**D-1 · Document bytes in browser storage**
 
-- *Position A:* Add a real PDF exporter to the engine's export-format registry, so availableExportFormats() surfaces it, exportDocumentAs picks it up with no UI change, and output is embedded-font vector text under opendoc's own control (page ranges, metadata, tagging for accessibility).
-- *Position B:* Reuse the print pipeline as the reference actually does — usePrintFlow.ts:163-174 ships no PDF writer, it clones real text DOM pages and relies on the browser's Save-as-PDF destination. The parity requirement is only that print output carries selectable text; a full PDF writer is a large engine project that parity does not demand.
-- *Recommendation:* Take the S sub-fix immediately either way: printDocument() (main.js:2872-2923) retains every full-page canvas until teardown at ~8MB/page, which can kill the tab on a long document. Then treat "print output carries real text" as the requirement and pick the cheaper path first; a registry PDF exporter is the better long-term answer (accessible tagged PDF is not reachable through browser Save-as-PDF) but should be scheduled as its own engine project, not smuggled in under a print fix.
+- *Decision:* **Yes — follow opencalc.** Port the sibling shape: an IndexedDB store owned by `webapp/` as the host, keeping drafts, version snapshots and a recent list.
+- *Consequence:* Unblocks HF-011 (autosave/crash recovery), HF-068 (version history) and HF-073 (recent documents). Build **one** store and put all three on it; three separate stores is the expensive mistake. HF-002's `beforeunload` guard still ships first — it needs no storage at all. Retention posture (how long full document buffers persist on-device, and the visible clear/disable control) still needs writing down before this lands.
 
-**D-4 · Is i18n a seam or a shipping capability? The siblings differ from each other, and both differ from opendoc's current position.**
+**D-2 · Touch and mobile**
 
-- *Position A:* Ship localization. docs-ref carries eight translated locales including Hebrew with CI that fails on a missing key; opencalc carries a message module with locale-aware error wording and menu mnemonics. Retrofit cost only grows — main.js is already 14,859 lines with ~500 inline literals.
-- *Position B:* Seam only, translations unscheduled. There is no user-facing demand signal for opendoc today, the repo already tracks this as REVIEW-GAP-025 (P2, Debt), the `locale` config key properly belongs to the docs/83 SDK work that has not landed, and a full key retrofit across nine dialogs carries real regression surface against a codebase in active fidelity work.
-- *Recommendation:* Seam only, now, and widen the existing REVIEW-GAP-025 row rather than opening a new one. `t(key, fallback)` with English as fallback makes the conversion partial-and-correct at every step and byte-identical on day one, so it can ride along with the shortcut-glyph sweep that touches the same label sites. Leave actual translations unscheduled until a host or a market asks; note that engine bidi text layout is already handled and unrelated to chrome mirroring.
+- *Decision:* **Supported.** Mobile is a target, not a deferral.
+- *Consequence:* Raises HF-060 (coarse-pointer sizing, 16px inputs), HF-083 (page canvas on narrow screens), HF-088 (comments column breakpoint) to P1, and HF-097 to P2. `webapp/src/style.css:4905` still states "The desktop editor remains the primary target" and `docs/18-SUPPORT-MATRIX.md` lists mobile UI as out of scope for v1 — **both now contradict this decision and must be updated**, or the next agent will re-derive desktop-first from them. opencalc has the reference implementation: a documented `@media (pointer: coarse)` block, 17 touch handlers in `editor.core.js`, and four dedicated specs (`editor.touch.spec.mjs`, `editor.touch-targets.spec.mjs`, `editor.mobile-menus.spec.mjs`, `editor.mobile-editing-viewport.spec.mjs`). opendoc has **zero** coarse-pointer rules, **one** touch reference in 14,859 lines, and no mobile test.
 
-**D-5 · Does opendoc adopt opencalc's collaboration architecture, or hold to its own designed seams?**
+**D-3 · Print and PDF**
 
-- *Position A:* Port the sibling. opencalc has a proven end-to-end stack — collab.js transport with backoff and half-open detection, presence roster, share dialog, and a server enforcing `Access::{View,Comment,Edit}` with `permits(op)` deny-by-default at the operation level rather than by hiding chrome. The cross-editor consistency note asks both editors to be integrated the same way.
-- *Position B:* Hold. opendoc has already designed this as an additive seam (ADR-030 / docs/45: closed op set, NodeId/ModelPos anchors, sidecar) precisely so collab lands without re-architecting, and docs/83 §3 is an approved spec for transactional single-user plus co-editing. Delivery order is deliberate: fidelity and editing foundation before viewer and collab. There is also no persistence and no server, so there is literally nothing for a second person to open.
-- *Recommendation:* Hold, and file this as a roadmap epic pointing at docs/45 + docs/83 §3, not as a parity row — it is multi-quarter work sitting in a list next to four-line fixes. Make the one decision that is due now: server-mediated with the engine authoritative (crates own the transform, the JS layer owns only socket/reconnect/backoff), which matches opencalc's split and keeps the closed op set as the single choke point. Adopt opencalc's operation-level deny-by-default token model when it lands — that is the part worth copying verbatim. State the deferral in the editor UI, not only in the README. Note the cited CROSS_EDITOR_CONSISTENCY.md is an advisory hand-off note living in the reference scratchpad, not a document in opendoc.
+- *Decision:* **Real text is required.** Take Position A — a PDF writer in the engine export registry.
+- *Consequence:* HF-030 stays P1 and its scope is now fixed: vector text with embedded fonts under opendoc's control, reachable through `availableExportFormats()` / `exportDocumentAs`, per `docs/98`. Accessible tagged PDF is not reachable through browser Save-as-PDF, which is why the registry path wins. The canvas-retention sub-fix (~8MB per page held until teardown) is independent and should land immediately.
 
-**D-6 · Which contract does the embed/SDK surface follow — opencalc's shipped `<opencalc-sheet>` / @opencalc/sheet, or opendoc's approved docs/83 @casualoffice/document-runtime?**
+**D-4 · Localization**
 
-- *Position A:* Follow the sibling so the two editors are integrated identically: a `<opencalc-sheet>`-shaped custom element with the same chrome regions, event map and `Access` vocabulary, packaged the same way. Integrators would learn one contract for both products.
-- *Position B:* Follow docs/83 (with 56/57), which is opendoc's own approved architectural specification covering read-only mode, co-editing, MCP and the embed path, tracked as SDK-001. Adopting a spreadsheet's element contract for a document editor would mean shipping against a spec the repo has already superseded.
-- *Recommendation:* docs/83 is canonical — cite it in the tracker row and do not port @opencalc/sheet's shape. Borrow only the two mechanisms that are genuinely transferable: the CAPABILITIES preset model with a framed-page default of `embedded` (editor.core.js:1015 fixes a measured defect where a framed editor offered File ▸ Open over the host's document), and the hand-written .d.ts plus consumer type-check job that keeps the declaration from drifting. The capability layer is small, is worth doing before anyone embeds opendoc, and does not depend on the module split; the custom element does.
+- *Decision:* **Ship it.** i18n is a capability, not a seam.
+- *Consequence:* Raises HF-081 to P1 and confirms HF-025 (hardcoded ⌘ glyphs). Do them in one sweep — they touch the same label sites. The target design shows a language control in the status bar; there is no language surface in the editor today. Engine bidi text layout is already handled and is unrelated to chrome mirroring.
+
+**D-5 · Collaboration**
+
+- *Decision:* **Adopt opencalc's architecture and release model.**
+- *Consequence:* HF-114 becomes an accepted roadmap epic rather than a parity row. Engine-authoritative (the crates own the transform; the JS layer owns only socket, reconnect and backoff), which matches opencalc's split and keeps the closed op set as the single choke point. Copy its operation-level deny-by-default `Access`/`permits(op)` model verbatim — permissions enforced per operation, not by hiding chrome. This depends on D-1 (there is nothing to share without persistence) and on a server, which opendoc does not yet have. Multi-quarter; keep it out of the hotfix ladder.
+
+**D-6 · Embed / SDK contract**
+
+- *Decision:* **OPEN — still needs an answer.**
+- *Consequence:* opencalc's shipped `<opencalc-sheet>` / `@opencalc/sheet` shape, or opendoc's own approved `docs/83` `@casualoffice/document-runtime` (tracked as SDK-001)? Recommendation unchanged: `docs/83` is canonical and should not be replaced by a spreadsheet's element contract, but borrow two mechanisms that transfer cleanly — the capability-preset model with a framed page defaulting to `embedded`, and the hand-written `.d.ts` plus a consumer type-check job so the declaration cannot drift. HF-109 is blocked until this is answered.
+
+### Rejected
+
+**The `@schnsrw/design-system` package is rejected** (owner, 2026-09-02). It is not adopted,
+not referenced, and not to be re-raised from `CROSS_EDITOR_CONSISTENCY.md` — treat that
+note's design-system section as dead. opendoc keeps its own `:root` token system in
+`webapp/src/style.css`. Token defects (bare hexes, missing dark values — HF-021, HF-033,
+HF-086, HF-092) are fixed against opendoc's own tokens; none of them requires an external
+package, and none of their fixes changes as a result of this rejection.
 
 ## Detail
 
@@ -460,6 +481,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Port editor.drafts.js's shape (not a new invention): an `opendoc-drafts` IndexedDB with a meta row and a bytes row per tab slot, serialized via the existing `doc.exportAs("org.casualoffice.normalized-json")` (main.js:10641); write on quiesce (5s idle, 60s ceiling) keyed on the engine revision moving; write on visibilitychange, not beforeunload; on boot show a bar that names the document, its age, and how far ahead of the last download it is, and OFFERS the draft rather than applying it; delete on successful Save; adopt docs-ref's 24h age gate and same-doc gate rather than inventing new ones. Do not autosave in a host iframe. This is the one IndexedDB seam ranks 17 and 18 also build on. BLOCKED ON the privacy decision below.
 
+**Decision.** **Unblocked by D-1** (browser storage approved, opencalc shape). Build the IndexedDB seam once; HF-068 and HF-073 sit on top of it.
+
 ### HF-012 — Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept
 
 **P1** · import-export · parity · effort M · source: Internal audit · **Status:** Open
@@ -495,6 +518,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** The dashed closure advances cursor += on + off with no floor and both derive from thickness; skrifa sets underline whenever post parses, unclamped, so the fallback never fires. DotDash has the identical zero-period defect.
 
 **Fix.** Sanitize once at the read site: replace the metrics pair with (offset, thickness.abs().max(size_px * 0.06).max(0.5)) so every decoration branch sees a positive thickness; also floor the dash period before the loop.
+
+### HF-051 — No Word Count dialog and no selection-scoped counts — the code flags this hole itself
+
+**P1** · word-count · parity · effort M · source: Sibling gap vs docs (ProseMirror) · **Status:** Open
+
+**Symptom.** The most common counting need — "how many words is this passage" — is unavailable, and the full breakdown is hidden in a hover tooltip that disappears at narrow widths and is unreachable by keyboard or touch. Writers on a word budget hit this daily.
+
+**In opendoc.** webapp/src/main.js:2376-2379 admits it in a comment: "Word keeps the full set one gesture away in its Word Count dialog; until we have that dialog, the whole region carries every figure so nothing shed becomes unobtainable" — the fallback is a `title` tooltip on the footer stats span. updateStats (:2358-2382) calls doc.documentStats() and never consults selection. APP_MENU_SECTIONS.tools (:10963) has no entry. Engine-side, `document_stats` (crates/casual-doc-wasm/src/lib.rs:6081-6096) walks all surfaces with no range parameter, so selection-scoped counting has no API today.
+
+**In the sibling.** docs-repo/docx-editor/packages/react/src/components/dialogs/WordCountDialog.tsx:5-21, :80-105 — pages, words, characters with and without spaces, paragraphs and reading time, opened from the menu or Ctrl+Shift+C (the Google Docs binding); components/StatusBar.tsx:19 also surfaces readability and reading time.
+
+**Fix.** Add a `tools.wordCount` command (⌘⇧C) on the shared dialog shell (style.css:672) showing pages / words / chars with spaces / chars without spaces / paragraphs / reading time, plus a leading "X of Y words" row when hasRange() (main.js:7136) is true. Register it once in APP_MENU_SECTIONS.tools (:10963) so menu, ribbon and palette all inherit it. Decide in design whether selection counts come from a new ranged stats binding or a JS-side count over the existing copyText(selection) path — the binding does not exist today.
+
+**Decision.** **Raised by the target design:** word count is a permanent status-bar element in `template.png`, not an optional dialog.
 
 ### HF-015 — A six-byte non-ASCII color string panics the WASM module and poisons the session
 
@@ -556,6 +593,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Extract the URL parse + http/https/mailto allowlist into one resolveExternalTarget helper and call it from openContextLink, activateLink and the link chip; pass "noopener,noreferrer" consistently. Add a menu-vs-click parity test for a javascript: target.
 
+### HF-060 — No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus
+
+**P1** · a11y · a11y · effort M · source: Sibling gap vs opencalc + docs · **Status:** Open · related: HF-098
+
+**Symptom.** On a touchscreen laptop or tablet, tapping any text field zooms Safari in and leaves the page scrolled sideways, and every menu row and ribbon button is a 30px target against the 44px floor — with destructive commands two rows from their neighbours.
+
+**In opendoc.** `rg 'pointer: *coarse|hover: *none|prefers-contrast|forced-colors'` over webapp/ → 0 hits. --h-control is 30px (style.css:53) and --fs-body 13px (:48) propagates to every field via `button, select, input { font: inherit }` (:195-199). The complete @media inventory is prefers-color-scheme (104, 1444, 1494, 4511), prefers-reduced-motion (3365) and six max-width breakpoints (3814, 4874, 4880, 4889, 4908, 4955) that only shed or condense chrome. playwright.config.mjs:53 has one Desktop Chrome project with no hasTouch; no touch/mobile spec among 93. Partial credit: --h-rail-control is already 44px (:57) and touch-action:none is already set on five overlay handle classes (:4235, 4354, 4397, 4524, 4557), so touch DRAGS do reach the pointer handlers — the gap is target sizing, input font size, and any coarse-pointer test.
+
+**In the sibling.** sheets/webapp/editor.css:2181-2225 `@media (pointer: coarse)` — 44px min-height on .menu-drop/.menu-sub/.ctx-menu/.tb-more-flyout buttons, 44x44 icons, restored band heights, with the rationale at :2150-2180: keyed on modality not width "because the question is what is doing the pointing and not how wide the window is", and "'Clear formatting' and 'Merge cells' are two apart". Gated by tests/browser/editor.touch.spec.mjs (real CDP touch, 390x844), editor.touch-targets, editor.mobile-menus, editor.narrow-screens. docs-repo/docx-editor/packages/react/src/styles/editor.css:924-985 clamps to 100vw, forces 44px HIG minimums, and sets `font-size:16px` on the title input at :961 ("iOS Safari won't zoom in on focus at ≥16 px"); plus components/ui/MobileFormatBar.tsx and hooks/usePinchZoom.ts.
+
+**Fix.** Take the free part now (S): `@media (pointer: coarse) { input, select, textarea { font-size: 16px } }` — it removes the iOS focus-zoom and cannot regress desktop density. Then the coarse-pointer block: 44px min-height on .app-menu-item / menu rows / context-menu rows / ribbon overflow rows and 44x44 on icon-only buttons, spending the growth on floating surfaces (menus, popovers) that cost the page zero height, as opencalc does. Add a hasTouch Playwright project with one spec driving select → context menu → resize handle so the floor cannot ratchet back. Fold this into the existing REVIEW-GAP-024 / P1G-REVIEW-039 row rather than opening a parallel track, and see the mobile-scope decision below before scheduling the rest (pinch zoom, mobile format bar, phone reflow).
+
+**Decision.** **Raised by D-2:** mobile is now a supported target, so the coarse-pointer floor is required, not hygiene.
+
 ### HF-020 — Opening a tracked-changes document can throw mid-render and leave the page list blank
 
 **P1** · wasm · bug · effort S · source: Internal audit · **Status:** Open
@@ -579,6 +630,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **In the sibling.** docs-repo/docx-editor/packages/react/src/styles/tokens.css:40-47 defines semantic status tokens (--color-danger/-soft, --color-success/-soft, --color-warning/-soft, --color-info/-soft) and :99-106 redefines every one for dark. sheets/webapp/editor.css:89 --oc-success-color / :95 --oc-danger-color with dark values at :148 and :193 and derived rings via color-mix at :121/:170/:215.
 
 **Fix.** Add the missing semantic status tokens (--success/--warning/--info/--danger + -soft) to the :root light block (style.css:76-98) mirroring docs-ref tokens.css, and define them in BOTH dark entry points — `@media (prefers-color-scheme: dark) :root:not([data-theme])` (:104) and `:root[data-theme="dark"]` (:126). Every existing dark patch in the file (:1444, :1494, :4511) only covers the media query, so a user who explicitly picks Dark on a light OS currently gets none of them — fix those in the same pass. Then replace every literal in the review-* rules (3563-3752, 4322), amber banner included, with tokens, and add a CI check that fails on a bare hex outside the token blocks.
+
+**Decision.** **Note:** fix against opendoc's own `:root` tokens in `webapp/src/style.css`. The external `@schnsrw/design-system` package is rejected by the owner (2026-09-02) and must not be introduced.
 
 ### HF-022 — With changes shown, clicking places the caret in the wrong place and selection highlights miss the text
 
@@ -627,6 +680,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **In the sibling.** docs-repo/docx-editor/packages/react/src/lib/platform.ts:29-45 — `formatShortcut(keys)` takes a portable string (`Ctrl+Shift+L`) and renders ⌘/⌥/⇧ only on Mac; the file header records the exact bug it fixed: "the Toolbar hard-coded ⌘ symbols even on Windows." Consumed at components/FormattingBar.tsx:397/406/490/501/512 and components/PanelRail.tsx:171.
 
 **Fix.** Add a display-side `formatShortcut(portable)` beside the existing `keyboardPlatform()` in webapp/src/keyboard.mjs (port platform.ts:29 verbatim), store shortcuts as portable strings (`CmdOrCtrl+Shift+P`), and render every `shortcut:`, `title=` and `<kbd>` through it. Sweep all 63 literals. Add the assertion to webapp/tests/keyboard.test.mjs that a `standard` platform never emits ⌘/⌥/⇧.
+
+**Decision.** **Confirmed by D-4.** Do this in the same sweep as HF-081 — both touch the same label sites.
 
 ### HF-026 — Everything pasted from Google Docs arrives bold
 
@@ -688,6 +743,22 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Two separable pieces. (a) Immediate (S): release each page canvas incrementally in printDocument() instead of holding all of them until teardown (main.js:2845-2923), and raise PRINT_DPI. (b) The parity requirement is that print output carries real text — see the decision below on whether that is a vector/text print path or a PDF writer registered in the export-format registry so `availableExportFormats()` surfaces it and exportDocumentAs (:13041) picks it up with no UI change.
 
+**Decision.** **Scoped by D-3:** real-text PDF is required, via a PDF writer in the export registry (Position A), not browser Save-as-PDF. Take the canvas-retention sub-fix immediately; schedule the writer as its own engine project (docs/98).
+
+### HF-081 — No localization seam — every string is an English literal inside a 14.9k-line file
+
+**P1** · i18n · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Open
+
+**Symptom.** opendoc can only ever ship in English, and a host embedding it cannot supply its own language. A translator has nowhere to put a string.
+
+**In opendoc.** No layer at all. `rg -n 'i18n|locale|translat'` over webapp/src/main.js matches only localeCompare (:8840, :11193) and Intl.DateTimeFormat (:11459/:14500); webapp/src holds eight modules (clipboard, context_menu, fidelity, format_io, home-embed, keyboard, main, web_fonts) and none is i18n. Every label is inline — the command registry (:10630-10800), status text, all nine dialogs in editor.html — and plurals are hand-rolled per site (`word${words === 1 ? "" : "s"}`, :2369-2374). editor.html:2 is `<html lang="en">`, hardcoded. `rg 'dir="rtl"|bidi'` over webapp → 0 (engine bidi layout is separate and unblocked by chrome mirroring).
+
+**In the sibling.** sheets/webapp/editor.i18n.js (206 lines) — "Locale, message lookup and the user-facing wording of errors and tips": `t(key, fallback)`, `setMessages(forLocale, map)` with a `relabel()` pass over the live DOM, `setLocalePicker`/`syncLocalePicker`, locale-aware number formatting and human-readable error rewriting; hosts supply their own catalog through the SDK rather than forking. docs-repo/docx-editor/packages/react/i18n ships de/en/he/pl/pt-BR/ru/tr/zh-CN.json behind src/i18n/LocaleContext.tsx `useTranslation()` with typed TranslationKey, plus i18n:validate/fix/new/status scripts and CI that fails on a missing key; docs/i18n.md:7-20.
+
+**Fix.** Already tracked as REVIEW-GAP-025 (docs/81:102, P2 Debt) under P1G-REVIEW-039 — widen that row from review copy to the whole chrome instead of opening a parallel one. Add webapp/src/i18n.mjs with `t(key, fallback)` + `setMessages` + a `relabel()` DOM pass, and convert the highest-density surfaces first (command registry, app menu labels, status/error text) — the fallback argument makes the conversion partial-and-correct at every step, so day-one behaviour is byte-identical. Set `<html lang>` from the locale and mirror `dir` on chrome containers. Add the sibling's CI validate check so it cannot rot. See the i18n-scope decision below on whether translations are in scope.
+
+**Decision.** **Raised by D-4:** i18n is a shipping capability, not a seam. The target design puts a language control ("English (US)") in the status bar; opendoc has no language surface at all (0 hits).
+
 ### HF-031 — Command palette announces nothing while arrowing through results
 
 **P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Open
@@ -699,6 +770,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** Options carry role=option but no id and no aria-selected; selection is the CSS class .sel only; #cmdInput is a bare text input; moveCmdSelection moves nothing focusable.
 
 **Fix.** Give each option a stable id and aria-selected in setCmdSel; make #cmdInput role=combobox with aria-expanded/aria-controls/aria-autocomplete and aria-activedescendant tracking the selection; set tabIndex=-1 on option buttons.
+
+### HF-083 — Pages are squashed horizontally in any window narrower than the sheet
+
+**P1** · layout · bug · effort M · source: Internal audit · **Status:** Open
+
+**Symptom.** In a 700px window (split screen, tablet, or the home-page embed) the page keeps its full height but is clamped to 96vw wide, so every glyph is compressed about 18% — the document renders at the wrong aspect ratio, and no error is reported.
+
+**Location.** `webapp/src/style.css:4271`
+
+**Evidence.** .page-wrap has max-width: 96vw with no aspect compensation while both width and height are set inline from twips and .page is 100%/100%; scaleOf derives sx and sy independently so nothing detects the distortion. All e2e specs run at >=1280px.
+
+**Fix.** Drop max-width: 96vw and let the already-scrollable .viewport scroll horizontally as Word does; or scale both axes together (transform: scale with top-center origin, or default to fit-width below the page width) so width and height stay proportional.
+
+**Decision.** **Raised by D-2:** phone/tablet reflow of the page canvas is now in scope.
 
 ### HF-032 — Insert-table grid picker is pointer-only and exposes 80 unnamed buttons
 
@@ -723,6 +808,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** --accent #3355c4 and --error #c0392b live in the theme-independent :root; neither dark block redefines them. The review literals #137333/#188038/#b3261e appear in no dark block at all.
 
 **Fix.** Move --accent and --error into the per-theme blocks with lightened dark values, have applySettings write a theme-appropriate derivation of a user-chosen accent instead of the raw swatch, and promote the hardcoded review greens/reds to --review-insert/--review-delete/--review-accent defined in all three palette blocks.
+
+### HF-088 — The comments column has no breakpoint below 860px and swallows the page
+
+**P1** · responsive · bug · effort M · source: Internal audit · **Status:** Open
+
+**Symptom.** Opening Review at tablet-portrait or phone width leaves about 74px for the document while the comment column covers the viewport, and the page overflows horizontally — the flagship comments feature is unusable there.
+
+**Location.** `webapp/src/style.css:3814; webapp/src/style.css:4104`
+
+**Evidence.** The only rung is 860px (300px sidebar, 316px padding-right); the 900px and 620px blocks never mention the sidebar, and .page-wrap is still up to 96vw so the sheet collides with the column.
+
+**Fix.** Add a rung around 700px that turns the sidebar into a bottom overlay sheet (fixed, full width, max-height 50vh) and resets .viewport.has-review-sidebar .pages padding-right to 0, mirroring how the 900px block relocates the properties and glyph panels.
+
+**Decision.** **Raised by D-2.** The target design has a persistent comments panel, so its narrow-width behaviour is design-required.
 
 ### HF-034 — The header "Open" button cannot be focused or activated by keyboard
 
@@ -928,18 +1027,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Mirror RemoveField — locate the reference via surface_block_lists and mutate through blocks_owning_mut, teaching the walk to descend into text-box inlines the way find_paragraph_in_inlines_mut does.
 
-### HF-051 — No Word Count dialog and no selection-scoped counts — the code flags this hole itself
-
-**P2** · word-count · parity · effort M · source: Sibling gap vs docs (ProseMirror) · **Status:** Open
-
-**Symptom.** The most common counting need — "how many words is this passage" — is unavailable, and the full breakdown is hidden in a hover tooltip that disappears at narrow widths and is unreachable by keyboard or touch. Writers on a word budget hit this daily.
-
-**In opendoc.** webapp/src/main.js:2376-2379 admits it in a comment: "Word keeps the full set one gesture away in its Word Count dialog; until we have that dialog, the whole region carries every figure so nothing shed becomes unobtainable" — the fallback is a `title` tooltip on the footer stats span. updateStats (:2358-2382) calls doc.documentStats() and never consults selection. APP_MENU_SECTIONS.tools (:10963) has no entry. Engine-side, `document_stats` (crates/casual-doc-wasm/src/lib.rs:6081-6096) walks all surfaces with no range parameter, so selection-scoped counting has no API today.
-
-**In the sibling.** docs-repo/docx-editor/packages/react/src/components/dialogs/WordCountDialog.tsx:5-21, :80-105 — pages, words, characters with and without spaces, paragraphs and reading time, opened from the menu or Ctrl+Shift+C (the Google Docs binding); components/StatusBar.tsx:19 also surfaces readability and reading time.
-
-**Fix.** Add a `tools.wordCount` command (⌘⇧C) on the shared dialog shell (style.css:672) showing pages / words / chars with spaces / chars without spaces / paragraphs / reading time, plus a leading "X of Y words" row when hasRange() (main.js:7136) is true. Register it once in APP_MENU_SECTIONS.tools (:10963) so menu, ribbon and palette all inherit it. Decide in design whether selection counts come from a new ranged stats binding or a JS-side count over the existing copyText(selection) path — the binding does not exist today.
-
 ### HF-052 — Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name"
 
 **P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Open
@@ -951,6 +1038,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** CreateBookmark pre-checks all-surface then inserts into body_mut; DeleteBookmark locates markers across surfaces but removes them from the body only, and the DanglingBookmarkRef validation turns the no-op into InvalidName.
 
 **Fix.** Use blocks_owning_mut for the marker insert, removal and rollback so the surface that find_paragraph_any/locate_bookmark_markers found is the one mutated, and add a distinct EditError for an unsupported surface instead of reusing InvalidName.
+
+### HF-097 — Tools and Help scroll out of the menu bar behind a hidden scrollbar
+
+**P2** · responsive · ux · effort M · source: Internal audit · **Status:** Open
+
+**Symptom.** Below about 500px wide the last two menus disappear with no fade, no chevron and no visible scrollbar, and a mouse user cannot scroll a horizontal-only container — so those menus become undiscoverable.
+
+**Location.** `webapp/src/style.css:345`
+
+**Evidence.** .app-menu-bar is overflow-x:auto with scrollbar-width:none and a display:none webkit scrollbar, inside a max-width:500px chrome container with flex:0 0 auto buttons; updateRibbonOverflow operates only on .rgroup elements and no media query touches the bar.
+
+**Fix.** Give the menu bar the ribbon's treatment: measure and collapse trailing menus into a "..." overflow button, or at minimum add a right-edge fade, a visible scroll affordance, and wheel-to-horizontal handling.
+
+**Decision.** **Raised by D-2.**
 
 ### HF-053 — Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way
 
@@ -1035,18 +1136,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** The Cmd+V keydown cancels the browser ClipboardEvent and routes to the async path, whose loop skips any item without text/html; the insertImageFromBlob branch exists only in the event.clipboardData path. ⌘⇧V has the same silent no-op.
 
 **Fix.** Stop preventDefault-ing the Cmd+V keydown and let the native paste event (already handled) do the work, keeping the async path for the menu/palette. If interception must stay, add the image branch to the async path and setStatus an error when nothing pasteable was found.
-
-### HF-060 — No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus
-
-**P2** · a11y · a11y · effort M · source: Sibling gap vs opencalc + docs · **Status:** Open · related: HF-098
-
-**Symptom.** On a touchscreen laptop or tablet, tapping any text field zooms Safari in and leaves the page scrolled sideways, and every menu row and ribbon button is a 30px target against the 44px floor — with destructive commands two rows from their neighbours.
-
-**In opendoc.** `rg 'pointer: *coarse|hover: *none|prefers-contrast|forced-colors'` over webapp/ → 0 hits. --h-control is 30px (style.css:53) and --fs-body 13px (:48) propagates to every field via `button, select, input { font: inherit }` (:195-199). The complete @media inventory is prefers-color-scheme (104, 1444, 1494, 4511), prefers-reduced-motion (3365) and six max-width breakpoints (3814, 4874, 4880, 4889, 4908, 4955) that only shed or condense chrome. playwright.config.mjs:53 has one Desktop Chrome project with no hasTouch; no touch/mobile spec among 93. Partial credit: --h-rail-control is already 44px (:57) and touch-action:none is already set on five overlay handle classes (:4235, 4354, 4397, 4524, 4557), so touch DRAGS do reach the pointer handlers — the gap is target sizing, input font size, and any coarse-pointer test.
-
-**In the sibling.** sheets/webapp/editor.css:2181-2225 `@media (pointer: coarse)` — 44px min-height on .menu-drop/.menu-sub/.ctx-menu/.tb-more-flyout buttons, 44x44 icons, restored band heights, with the rationale at :2150-2180: keyed on modality not width "because the question is what is doing the pointing and not how wide the window is", and "'Clear formatting' and 'Merge cells' are two apart". Gated by tests/browser/editor.touch.spec.mjs (real CDP touch, 390x844), editor.touch-targets, editor.mobile-menus, editor.narrow-screens. docs-repo/docx-editor/packages/react/src/styles/editor.css:924-985 clamps to 100vw, forces 44px HIG minimums, and sets `font-size:16px` on the title input at :961 ("iOS Safari won't zoom in on focus at ≥16 px"); plus components/ui/MobileFormatBar.tsx and hooks/usePinchZoom.ts.
-
-**Fix.** Take the free part now (S): `@media (pointer: coarse) { input, select, textarea { font-size: 16px } }` — it removes the iOS focus-zoom and cannot regress desktop density. Then the coarse-pointer block: 44px min-height on .app-menu-item / menu rows / context-menu rows / ribbon overflow rows and 44x44 on icon-only buttons, spending the growth on floating surfaces (menus, popovers) that cost the page zero height, as opencalc does. Add a hasTouch Playwright project with one spec driving select → context menu → resize handle so the floor cannot ratchet back. Fold this into the existing REVIEW-GAP-024 / P1G-REVIEW-039 row rather than opening a parallel track, and see the mobile-scope decision below before scheduling the rest (pinch zoom, mobile format bar, phone reflow).
 
 ### HF-061 — A zero-height table row paints its text across the rest of the page
 
@@ -1144,6 +1233,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** BLOCKED ON HF-011 — build on the same IndexedDB seam, not a second store. Capture on explicit Save, on a named "Keep this version" action, and on a slow tick; store metadata and gzipped bytes as separate rows (CompressionStream off the main thread rather than compressing in wasm); retain against a byte budget, not a count; surface as File ▸ Version history with the opencalc row shape (timestamp, kind label, size, Restore) reusing the existing right-panel pattern (main.js:9930/10025/10545), and make Restore go through the same confirm as a destructive open. No Rust needed — exportAs("org.casualoffice.normalized-json") is already wired (:10641). Scope v1 to preview + restore; the word-level diff can follow using the paragraph walk find already does (:12563).
 
+**Decision.** **Unblocked by D-1.** Same store as HF-011 — not a second one. The target design shows a Saved/Synced state, so this surface is design-required.
+
 ### HF-069 — Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted
 
 **P2** · editor-ux · a11y · effort M · source: Internal audit · **Status:** Open
@@ -1203,6 +1294,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **In the sibling.** docs-repo/docx-editor/packages/react/src/utils/recent-files.ts:1-45 — an IndexedDB recent-files store, MAX_ENTRIES 10, STALE_AFTER_MS 60 days, holding name + buffer + size + openedAt so the Home screen reopens in one click; explicitly distinguished from autosave (single-slot crash recovery) and version history (per-doc timeline): "this is 'what docs have I been working with lately, across sessions'."
 
 **Fix.** Downstream of HF-011: add a `recent` store to the same IndexedDB (name, buffer, size, openedAt; cap 10, prune past 60 days on record, per recent-files.ts:20-45), record on every successful open and download, and surface a "Recent" section on the empty state and in the File menu. Carries the same retention decision as HF-011 — full document buffers held on-device for 60 days needs an explicit clear/disable control.
+
+**Decision.** **Unblocked by D-1.** Same store as HF-011.
 
 ### HF-074 — No skip link: reaching the document means tabbing past ~150 chrome controls
 
@@ -1288,18 +1381,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Add line_boxes_for_page(page) walking only the target page and use it from hit_test/hit_test_running/hit_test_text_box; index NodeId -> (page, fragment) once per snapshot for caret_rect_on and move_vertical (do this together with the geometric move_vertical fix).
 
-### HF-081 — No localization seam — every string is an English literal inside a 14.9k-line file
-
-**P2** · i18n · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Open
-
-**Symptom.** opendoc can only ever ship in English, and a host embedding it cannot supply its own language. A translator has nowhere to put a string.
-
-**In opendoc.** No layer at all. `rg -n 'i18n|locale|translat'` over webapp/src/main.js matches only localeCompare (:8840, :11193) and Intl.DateTimeFormat (:11459/:14500); webapp/src holds eight modules (clipboard, context_menu, fidelity, format_io, home-embed, keyboard, main, web_fonts) and none is i18n. Every label is inline — the command registry (:10630-10800), status text, all nine dialogs in editor.html — and plurals are hand-rolled per site (`word${words === 1 ? "" : "s"}`, :2369-2374). editor.html:2 is `<html lang="en">`, hardcoded. `rg 'dir="rtl"|bidi'` over webapp → 0 (engine bidi layout is separate and unblocked by chrome mirroring).
-
-**In the sibling.** sheets/webapp/editor.i18n.js (206 lines) — "Locale, message lookup and the user-facing wording of errors and tips": `t(key, fallback)`, `setMessages(forLocale, map)` with a `relabel()` pass over the live DOM, `setLocalePicker`/`syncLocalePicker`, locale-aware number formatting and human-readable error rewriting; hosts supply their own catalog through the SDK rather than forking. docs-repo/docx-editor/packages/react/i18n ships de/en/he/pl/pt-BR/ru/tr/zh-CN.json behind src/i18n/LocaleContext.tsx `useTranslation()` with typed TranslationKey, plus i18n:validate/fix/new/status scripts and CI that fails on a missing key; docs/i18n.md:7-20.
-
-**Fix.** Already tracked as REVIEW-GAP-025 (docs/81:102, P2 Debt) under P1G-REVIEW-039 — widen that row from review copy to the whole chrome instead of opening a parallel one. Add webapp/src/i18n.mjs with `t(key, fallback)` + `setMessages` + a `relabel()` DOM pass, and convert the highest-density surfaces first (command registry, app menu labels, status/error text) — the fallback argument makes the conversion partial-and-correct at every step, so day-one behaviour is byte-identical. Set `<html lang>` from the locale and mirror `dir` on chrome containers. Add the sibling's CI validate check so it cannot rot. See the i18n-scope decision below on whether translations are in scope.
-
 ### HF-082 — The galley cache never evicts entries for deleted paragraphs
 
 **P2** · perf · perf · effort S · source: Internal audit · **Status:** Open
@@ -1311,18 +1392,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** entries is only inserted into or cleared wholesale on a wrap-width change; there is no per-build sweep, size cap, or removal for nodes that left the document.
 
 **Fix.** Mark-and-sweep per build: record the node ids touched (store + reusable hits) and retain only those at the end of build_galley_cached — free, since the build already visits every live paragraph. Assert with the existing len().
-
-### HF-083 — Pages are squashed horizontally in any window narrower than the sheet
-
-**P2** · layout · bug · effort M · source: Internal audit · **Status:** Open
-
-**Symptom.** In a 700px window (split screen, tablet, or the home-page embed) the page keeps its full height but is clamped to 96vw wide, so every glyph is compressed about 18% — the document renders at the wrong aspect ratio, and no error is reported.
-
-**Location.** `webapp/src/style.css:4271`
-
-**Evidence.** .page-wrap has max-width: 96vw with no aspect compensation while both width and height are set inline from twips and .page is 100%/100%; scaleOf derives sx and sy independently so nothing detects the distortion. All e2e specs run at >=1280px.
-
-**Fix.** Drop max-width: 96vw and let the already-scrollable .viewport scroll horizontally as Word does; or scale both axes together (transform: scale with top-center origin, or default to fit-width below the page width) so width and height stay proportional.
 
 ### HF-084 — Object properties panel covers the ribbon, including the overflow "..." button
 
@@ -1372,18 +1441,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Add a mobile disclosure (nav-toggle button with aria-expanded/aria-controls revealing a stacked panel under 820px), or collapse the links into an overflow menu; at minimum keep them visible and let the header wrap.
 
-### HF-088 — The comments column has no breakpoint below 860px and swallows the page
-
-**P2** · responsive · bug · effort M · source: Internal audit · **Status:** Open
-
-**Symptom.** Opening Review at tablet-portrait or phone width leaves about 74px for the document while the comment column covers the viewport, and the page overflows horizontally — the flagship comments feature is unusable there.
-
-**Location.** `webapp/src/style.css:3814; webapp/src/style.css:4104`
-
-**Evidence.** The only rung is 860px (300px sidebar, 316px padding-right); the 900px and 620px blocks never mention the sidebar, and .page-wrap is still up to 96vw so the sheet collides with the column.
-
-**Fix.** Add a rung around 700px that turns the sidebar into a bottom overlay sheet (fixed, full width, max-height 50vh) and resets .viewport.has-review-sidebar .pages padding-right to 0, mirroring how the 900px block relocates the properties and glyph panels.
-
 ### HF-089 — Review popover and inline accept/reject card paint above modal dialogs
 
 **P2** · css · bug · effort S · source: Internal audit · **Status:** Open
@@ -1407,6 +1464,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **In the sibling.** sheets/.github/workflows/security.yml:53-64 runs a scheduled campaign over four targets for 420s each (`for target in bounded_package ooxml_xml formula_parse number_format`), with :45-50 explaining why the scheduled run must exceed the per-PR one. tests/browser/editor.security.spec.mjs:1-33 opens a hostile fixture through the real engine path and asserts no script executes and no request leaves the origin: "A workbook is untrusted input… any path that turns workbook text into markup runs script in the editor's origin."
 
 **Fix.** Loop security.yml:65 over all four targets with opencalc's longer per-target budget. Add webapp/tests/e2e/security.spec.mjs that opens a fixture carrying script payloads in a style name, a font name, a bookmark name and an author name, then asserts zero pageerrors and zero outbound requests — that spec is what keeps the existing escapeHtml calls honest.
+
+### HF-114 — No collaboration, presence, sharing or roles — and no server for a second person to connect to
+
+**P2** · collab · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Open
+
+**Symptom.** Two people cannot open the same document, there is no Share, no cursors, no room status. With no server-side save there is also nothing for a second person to open.
+
+**In opendoc.** Nothing: `rg -ni 'presence|collaborat|awareness|websocket|desync|yjs'` over webapp/src → 0; no server/ directory; no collab/presence/share e2e spec. The only per-author machinery is offline review metadata (author identity at editor.html:183-184, per-author-color.spec.mjs) and .review-margin-avatar (style.css:3696), a comment-author initial chip, not presence. This is a deliberate, designed deferral: README.md:228-229 puts Phase 5 "Collaboration adapters and product migration" at Planned, and the seams already exist (docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md / ADR-030: closed op set, NodeId/ModelPos anchors, sidecar).
+
+**In the sibling.** sheets/webapp/collab.js:66 `export function collaborate({url, token, document, wasm, onStatus, onDocument, onPresence, recalcBudgetMs})` — websocket transport with heartbeat, exponential backoff, half-open detection and one-hop redirect on a full node (:88-100); editor.presence.js:249 renderPresence(), :338 jumpToParticipant(), :588 shareDialog(), :60 offerKeepWaiting() for the desync window; server-side enforcement at server/casual-calc-collab-server/src/token.rs:45 `pub enum Access { View, Comment, Edit }` and net.rs:2411 `.all(|wire| effective.permits(&wire.op))` — deny-by-default at the operation level, not by hiding chrome; the desync UX is itself a shipped fix (d27efce). docs-repo/docx-editor/packages/react/src/collab/useCollab.ts — Yjs + Hocuspocus, awareness cursors, per-user undo, IndexedDB persistence.
+
+**Fix.** A phased program, not a hotfix — file as a roadmap epic pointing at docs/45 + docs/83 §3, and do NOT let it sit above four-line fixes in the same list. The only near-term actionable slices are (a) the ordering decision below, and (b) stating the deferral in the editor UI rather than only in the README. Explicitly strike the "interim single-writer guard" idea from the original finding: with no network layer there is no divergence class to guard against.
+
+**Decision.** **Accepted by D-5** as a roadmap epic, not a hotfix: adopt opencalc's collaboration architecture and release model, engine-authoritative, with its operation-level deny-by-default `Access` model. The target design already shows presence avatars, Share and a Synced chip. Track the epic against docs/45 + docs/83 §3; this row stays here only as the pointer.
 
 ### HF-091 — Clipboard failure messages are styled as ordinary status text
 
@@ -1479,18 +1550,6 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** .rail is background: var(--bg-2) and .rail-btn:hover sets background: var(--bg-2) — identical in every theme, so the declaration is dead. The pressed state works because it uses --accent-soft.
 
 **Fix.** Use a token that actually contrasts with the rail's own --bg-2 background: background: var(--surface), or color-mix(in srgb, var(--ink) 6%, transparent).
-
-### HF-097 — Tools and Help scroll out of the menu bar behind a hidden scrollbar
-
-**P3** · responsive · ux · effort M · source: Internal audit · **Status:** Open
-
-**Symptom.** Below about 500px wide the last two menus disappear with no fade, no chevron and no visible scrollbar, and a mouse user cannot scroll a horizontal-only container — so those menus become undiscoverable.
-
-**Location.** `webapp/src/style.css:345`
-
-**Evidence.** .app-menu-bar is overflow-x:auto with scrollbar-width:none and a display:none webkit scrollbar, inside a max-width:500px chrome container with flex:0 0 auto buttons; updateRibbonOverflow operates only on .rgroup elements and no media query touches the bar.
-
-**Fix.** Give the menu bar the ribbon's treatment: measure and collapse trailing menus into a "..." overflow button, or at minimum add a right-edge fade, a visible scroll affordance, and wheel-to-horizontal handling.
 
 ### HF-098 — Image resize grips are 9px with no expanded hit area
 
@@ -1636,6 +1695,8 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 **Fix.** Two separable pieces against docs/83 (not against opencalc's @opencalc/sheet shape — see the decision below). (a) Cheap and worth doing early: a CAPABILITIES set beside the existing review modes with standalone/embedded/viewer presets resolved from `?mode=`, defaulting a framed page to `embedded`, gating the File menu, download entries and branding before first paint. (b) Larger: extract a `mount(el, config)` boot seam out of main.js (blocked on HF-085), then ship the `<opendoc-editor>` shadow-DOM element with open/save/configure/theme/run over the existing command registry (:10643), a hand-written .d.ts beside it, and a consumer type-check job so the declaration cannot drift.
 
+**Decision.** **Still blocked on D-6** — the one decision not yet made.
+
 ### HF-110 — Every keystroke walks and materializes the whole document's text twice
 
 **P3** · wasm · perf · effort M · source: Internal audit · **Status:** Open
@@ -1683,16 +1744,4 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** pageFromEvent spreads pagesEl.querySelectorAll('.page-wrap') into an array and indexOf's it on every pointermove/pointerdown, while pageIndexOfWrap reads wrap.__pageIndex, populated for every page by observePages.
 
 **Fix.** Replace the body of pageFromEvent with `const idx = pageIndexOfWrap(wrap); return idx < 0 ? null : pages[idx];` — an exactly equivalent O(1) lookup that also removes the stale-index window during a rebuild.
-
-### HF-114 — No collaboration, presence, sharing or roles — and no server for a second person to connect to
-
-**P3** · collab · architecture · effort L · source: Sibling gap vs opencalc + docs · **Status:** Open
-
-**Symptom.** Two people cannot open the same document, there is no Share, no cursors, no room status. With no server-side save there is also nothing for a second person to open.
-
-**In opendoc.** Nothing: `rg -ni 'presence|collaborat|awareness|websocket|desync|yjs'` over webapp/src → 0; no server/ directory; no collab/presence/share e2e spec. The only per-author machinery is offline review metadata (author identity at editor.html:183-184, per-author-color.spec.mjs) and .review-margin-avatar (style.css:3696), a comment-author initial chip, not presence. This is a deliberate, designed deferral: README.md:228-229 puts Phase 5 "Collaboration adapters and product migration" at Planned, and the seams already exist (docs/45-EXTENSIBILITY-AND-COLLABORATION-SEAMS.md / ADR-030: closed op set, NodeId/ModelPos anchors, sidecar).
-
-**In the sibling.** sheets/webapp/collab.js:66 `export function collaborate({url, token, document, wasm, onStatus, onDocument, onPresence, recalcBudgetMs})` — websocket transport with heartbeat, exponential backoff, half-open detection and one-hop redirect on a full node (:88-100); editor.presence.js:249 renderPresence(), :338 jumpToParticipant(), :588 shareDialog(), :60 offerKeepWaiting() for the desync window; server-side enforcement at server/casual-calc-collab-server/src/token.rs:45 `pub enum Access { View, Comment, Edit }` and net.rs:2411 `.all(|wire| effective.permits(&wire.op))` — deny-by-default at the operation level, not by hiding chrome; the desync UX is itself a shipped fix (d27efce). docs-repo/docx-editor/packages/react/src/collab/useCollab.ts — Yjs + Hocuspocus, awareness cursors, per-user undo, IndexedDB persistence.
-
-**Fix.** A phased program, not a hotfix — file as a roadmap epic pointing at docs/45 + docs/83 §3, and do NOT let it sit above four-line fixes in the same list. The only near-term actionable slices are (a) the ordering decision below, and (b) stating the deferral in the editor UI rather than only in the README. Explicitly strike the "interim single-writer guard" idea from the original finding: with no network layer there is no divergence class to guard against.
 
