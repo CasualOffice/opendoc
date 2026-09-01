@@ -194,84 +194,124 @@ Both are reference-only. Nothing in them was modified.
 Each theme below is one root cause behind several rows. Fixing the theme is cheaper and
 safer than fixing its rows one at a time, and closes the class rather than the instance.
 
-**T-01 · Body-only mutation behind all-surface authoring**  
-Read paths, UI gating and forward operations resolve paragraphs across every surface (headers, footers, footnotes, endnotes, text boxes, cells) while the corresponding mutations call doc.body_mut(). The result is the same shape every time: a control that looks enabled and then fails, silently no-ops, or reports a misleading error. One systemic fix — route all remaining ops through blocks_owning_mut / on_owning_surface_mut / surface_block_lists, teach the *_mut walks to descend into paragraph inlines, and add a single operation x surface matrix test — closes all of them and stops the next one landing.  
+**T-01 · Body-only mutation behind all-surface authoring**
+
+Read paths, UI gating and forward operations resolve paragraphs across every surface (headers, footers, footnotes, endnotes, text boxes, cells) while the corresponding mutations call doc.body_mut(). The result is the same shape every time: a control that looks enabled and then fails, silently no-ops, or reports a misleading error. One systemic fix — route all remaining ops through blocks_owning_mut / on_owning_surface_mut / surface_block_lists, teach the *_mut walks to descend into paragraph inlines, and add a single operation x surface matrix test — closes all of them and stops the next one landing.
+
 Rows: HF-023, HF-027, HF-049, HF-050, HF-052, HF-053
 
-**T-02 · Two layouts, one renderer: markup vs editing layout is never reconciled**  
-active_layout() decides what is painted, but page_size, hit-testing, caret and selection geometry, dirtyPages and page_count are each wired to a different layout, and markup_layout is never invalidated on edit. That single inconsistency produces invisible typing, a blank page list on open, and a misplaced caret. Making one layout the authority (rebuilt in finish_edit, read by every page-indexed and geometry API) fixes three separate user-facing failures at once.  
+**T-02 · Two layouts, one renderer: markup vs editing layout is never reconciled**
+
+active_layout() decides what is painted, but page_size, hit-testing, caret and selection geometry, dirtyPages and page_count are each wired to a different layout, and markup_layout is never invalidated on edit. That single inconsistency produces invisible typing, a blank page list on open, and a misplaced caret. Making one layout the authority (rebuilt in finish_edit, read by every page-indexed and geometry API) fixes three separate user-facing failures at once.
+
 Rows: HF-005, HF-020, HF-022
 
-**T-03 · No single choke point for untrusted URLs**  
-Link targets arrive from imported documents, pasted HTML and the link dialog, and are followed from at least two surfaces — but the scheme allowlist exists in exactly one of them (activateLink). One shared resolveExternalTarget(url) helper used by every follow path, plus the same predicate at the two ingestion points, closes both the parity break and the storage of hostile targets in exported files.  
+**T-03 · No single choke point for untrusted URLs**
+
+Link targets arrive from imported documents, pasted HTML and the link dialog, and are followed from at least two surfaces — but the scheme allowlist exists in exactly one of them (activateLink). One shared resolveExternalTarget(url) helper used by every follow path, plus the same predicate at the two ingestion points, closes both the parity break and the storage of hostile targets in exported files.
+
 Rows: HF-019, HF-066
 
-**T-04 · Missing modal/popover primitive: focus, dismissal and stacking**  
-Dialogs, popovers and panels each hand-roll their focus behaviour, so the ones that were written later lack Escape, backdrop dismissal, focus-in, focus restore, and coverage in syncModalLock — and the z-index ladder lets review chrome paint above modals while Cmd+F walks focus out of one. A single dialog/popover primitive (open: focus in; Escape/backdrop: close and restore; Tab: trap; global shortcuts: no-op while open; one z-index ladder with modals on top) closes the whole cluster.  
+**T-04 · Missing modal/popover primitive: focus, dismissal and stacking**
+
+Dialogs, popovers and panels each hand-roll their focus behaviour, so the ones that were written later lack Escape, backdrop dismissal, focus-in, focus restore, and coverage in syncModalLock — and the z-index ladder lets review chrome paint above modals while Cmd+F walks focus out of one. A single dialog/popover primitive (open: focus in; Escape/backdrop: close and restore; Tab: trap; global shortcuts: no-op while open; one z-index ladder with modals on top) closes the whole cluster.
+
 Rows: HF-062, HF-063, HF-067, HF-070, HF-089
 
-**T-05 · Silent loss with no disposition recorded**  
-Several paths drop or downgrade content and report nothing — unreadable media becomes a zero-byte part, ODT images vanish on conversion, vector custom properties collapse to a scalar, an mc:Fallback the model supports is discarded, and loose text beside a pasted table disappears. The repo's own contract says unsupported data must be reported explicitly. A shared disposition-recording helper (Reporter entry: Omitted/NotRetained + FeatureLocation) wired into every lossy branch turns silent corruption into a visible compatibility line.  
+**T-05 · Silent loss with no disposition recorded**
+
+Several paths drop or downgrade content and report nothing — unreadable media becomes a zero-byte part, ODT images vanish on conversion, vector custom properties collapse to a scalar, an mc:Fallback the model supports is discarded, and loose text beside a pasted table disappears. The repo's own contract says unsupported data must be reported explicitly. A shared disposition-recording helper (Reporter entry: Omitted/NotRetained + FeatureLocation) wired into every lossy branch turns silent corruption into a visible compatibility line.
+
 Rows: HF-037, HF-040, HF-041, HF-042, HF-044
 
-**T-06 · OPC relationship and media emission has no owner or shared allocator**  
-Media parts, part relationships and extra-part relationships are emitted by three independent pieces of code that do not know about each other: one writes duplicate ZIP entries, one puts every image's relationship in document.xml.rels regardless of owning part, and one mints ids that collide with already-minted ones. Introducing per-part media ownership plus one relationship-id allocator per part, with a test asserting Id uniqueness and target resolvability across every generated .rels, fixes all four and prevents the next variant.  
+**T-06 · OPC relationship and media emission has no owner or shared allocator**
+
+Media parts, part relationships and extra-part relationships are emitted by three independent pieces of code that do not know about each other: one writes duplicate ZIP entries, one puts every image's relationship in document.xml.rels regardless of owning part, and one mints ids that collide with already-minted ones. Introducing per-part media ownership plus one relationship-id allocator per part, with a test asserting Id uniqueness and target resolvability across every generated .rels, fixes all four and prevents the next variant.
+
 Rows: HF-001, HF-009, HF-010, HF-044
 
-**T-07 · Unbounded loops and allocation driven by document content**  
-Three independent places let a document control a loop bound or an allocation size with no ceiling: table pagination that cannot prove progress, a dash period that can be zero, and a column count derived from summed gridSpan values. Any of them turns an uploaded file into a frozen tab or an OOM. The systemic answer is the same in each: floor or clamp every content-derived quantity at the point it is read, and require a progress or size invariant for every loop over document data.  
+**T-07 · Unbounded loops and allocation driven by document content**
+
+Three independent places let a document control a loop bound or an allocation size with no ceiling: table pagination that cannot prove progress, a dash period that can be zero, and a column count derived from summed gridSpan values. Any of them turns an uploaded file into a frozen tab or an OOM. The systemic answer is the same in each: floor or clamp every content-derived quantity at the point it is read, and require a progress or size invariant for every loop over document data.
+
 Rows: HF-006, HF-014, HF-017
 
-**T-08 · Color values that are not theme-aware**  
-Colors are defined in four different ways — theme-independent :root tokens, hardcoded literals in feature CSS, media-query-only overrides, and a runtime-written accent — so dark mode fails contrast on the focused menu row, the review mode pill, tracked-change text, and validation errors, and explicit Light under a dark OS fails too. One pass that promotes every semantic color to a token defined in all three palette blocks (and has applySettings derive rather than write raw) closes the cluster and makes the next color addition safe by default.  
+**T-08 · Color values that are not theme-aware**
+
+Colors are defined in four different ways — theme-independent :root tokens, hardcoded literals in feature CSS, media-query-only overrides, and a runtime-written accent — so dark mode fails contrast on the focused menu row, the review mode pill, tracked-change text, and validation errors, and explicit Light under a dark OS fails too. One pass that promotes every semantic color to a token defined in all three palette blocks (and has applySettings derive rather than write raw) closes the cluster and makes the next color addition safe by default.
+
 Rows: HF-033, HF-086, HF-092, HF-093
 
-**T-09 · UTF-16 vs UTF-8 offsets at the JS/WASM boundary**  
-The engine speaks UTF-8 byte offsets and JavaScript speaks UTF-16 code units; where the frontend computes an offset itself instead of using one the engine returned, the two diverge on any non-ASCII character — dropping pasted content in one place and picking the wrong quote glyph in another. The durable fix is a rule plus a helper: never synthesize an engine offset in JS; use the caret from the previous EditResult, or convert explicitly (byteOffsetToStringIndex already exists for the reverse direction).  
+**T-09 · UTF-16 vs UTF-8 offsets at the JS/WASM boundary**
+
+The engine speaks UTF-8 byte offsets and JavaScript speaks UTF-16 code units; where the frontend computes an offset itself instead of using one the engine returned, the two diverge on any non-ASCII character — dropping pasted content in one place and picking the wrong quote glyph in another. The durable fix is a rule plus a helper: never synthesize an engine offset in JS; use the caret from the previous EditResult, or convert explicitly (byteOffsetToStringIndex already exists for the reverse direction).
+
 Rows: HF-013, HF-055
 
-**T-10 · Clipboard HTML importer is additive-only and structure-naive**  
-htmlToRuns can only ever turn formatting on, treats entering a block container as content, and drops top-level text nodes — so the three most common paste sources each corrupt the result in a different way (everything bold from Docs, a leading blank paragraph from Word, missing sentences around a table). All three live in one small module and want one pass: explicit inline style is authoritative, breaks are emitted only when content was contributed, and every top-level node type produces a block.  
+**T-10 · Clipboard HTML importer is additive-only and structure-naive**
+
+htmlToRuns can only ever turn formatting on, treats entering a block container as content, and drops top-level text nodes — so the three most common paste sources each corrupt the result in a different way (everything bold from Docs, a leading blank paragraph from Word, missing sentences around a table). All three live in one small module and want one pass: explicit inline style is authoritative, breaks are emitted only when content was contributed, and every top-level node type produces a block.
+
 Rows: HF-026, HF-040, HF-054
 
-**T-11 · Command-surface parity: capabilities reachable from only one surface**  
-The repo already tracks this class, and it recurs here in three forms: a security guard present on one surface and absent on another, commands declared for the context menu that the builder never reads, and list commands present on the ribbon/palette but missing from the menus. The playbook fix is the same each time — a SURFACE table naming every surface a command must appear on, plus a parity test asserting the registry and each built surface agree in both directions.  
+**T-11 · Command-surface parity: capabilities reachable from only one surface**
+
+The repo already tracks this class, and it recurs here in three forms: a security guard present on one surface and absent on another, commands declared for the context menu that the builder never reads, and list commands present on the ribbon/palette but missing from the menus. The playbook fix is the same each time — a SURFACE table naming every surface a command must appear on, plus a parity test asserting the registry and each built surface agree in both directions.
+
 Rows: HF-019, HF-032, HF-076
 
-**T-12 · Incremental layout caches that are inert, unbounded, or stale**  
-The galley cache is bypassed entirely for real documents, never evicts entries for deleted paragraphs, and its invalidation hash omits live decoration fields — so today it costs memory without helping, and the moment the bypass is lifted it starts rendering stale formatting. These three must be fixed together: broaden the fast path, add the per-build mark-and-sweep, and complete the hash with a test proven to go red.  
+**T-12 · Incremental layout caches that are inert, unbounded, or stale**
+
+The galley cache is bypassed entirely for real documents, never evicts entries for deleted paragraphs, and its invalidation hash omits live decoration fields — so today it costs memory without helping, and the moment the bypass is lifted it starts rendering stale formatting. These three must be fixed together: broaden the fast path, add the per-build mark-and-sweep, and complete the hash with a test proven to go red.
+
 Rows: HF-048, HF-079, HF-082
 
-**T-13 · Operations that mutate before they can fail**  
-Several ops mutate the document and then return an error without restoring, and undo pops its history entry before applying it — so a refused edit can still destroy content and a failed undo leaves a half-reverted document with no way back. Numbering definitions written outside the command choke point are the same shape. One atomicity contract (compute into a clone or snapshot, commit only on success; pop history only after a successful apply; every mutation through an operation with an inverse) enforced with a debug_assert covers all of them.  
+**T-13 · Operations that mutate before they can fail**
+
+Several ops mutate the document and then return an error without restoring, and undo pops its history entry before applying it — so a refused edit can still destroy content and a failed undo leaves a half-reverted document with no way back. Numbering definitions written outside the command choke point are the same shape. One atomicity contract (compute into a clone or snapshot, commit only on success; pop history only after a successful apply; every mutation through an operation with an inverse) enforced with a debug_assert covers all of them.
+
 Rows: HF-003, HF-045, HF-107
 
-**T-14 · Unsaved work has no owner anywhere in the stack**  
-Six of the incoming gaps were the same hole seen from three lenses: the document exists only in wasm heap, `documentState` is written by eight call sites and read by NOBODY, and no code path — unload, open, drop — asks whether work would be lost. One systemic fix (make the dirty flag authoritative, then consume it in one guard) closes the data-loss tier; a second (one IndexedDB seam) closes the recovery tier. Building drafts, versions and recent files against three separate stores would be the expensive mistake here.  
+**T-14 · Unsaved work has no owner anywhere in the stack**
+
+Six of the incoming gaps were the same hole seen from three lenses: the document exists only in wasm heap, `documentState` is written by eight call sites and read by NOBODY, and no code path — unload, open, drop — asks whether work would be lost. One systemic fix (make the dirty flag authoritative, then consume it in one guard) closes the data-loss tier; a second (one IndexedDB seam) closes the recovery tier. Building drafts, versions and recent files against three separate stores would be the expensive mistake here.
+
 Rows: HF-002, HF-007, HF-011, HF-068, HF-073
 
-**T-15 · Built in the engine, unreachable in the UI**  
-A repeating pattern where the hard part is already done and only the surface is missing, which makes these the cheapest rows per unit of user value in the whole list: find already computes the full match set and throws it away; the importer already writes a full findings report behind `importReportJson` with zero webapp readers; the accessibility tree is already projected but never audited; the model already stores image rotation and flip for render but exposes no edit op. Sweep for the pattern rather than fixing them one at a time.  
+**T-15 · Built in the engine, unreachable in the UI**
+
+A repeating pattern where the hard part is already done and only the surface is missing, which makes these the cheapest rows per unit of user value in the whole list: find already computes the full match set and throws it away; the importer already writes a full findings report behind `importReportJson` with zero webapp readers; the accessibility tree is already projected but never audited; the model already stores image rotation and flip for render but exposes no edit op. Sweep for the pattern rather than fixing them one at a time.
+
 Rows: HF-039, HF-047, HF-056, HF-064
 
-**T-16 · One capability, one surface — the recurring command-parity defect**  
-opendoc keeps landing capabilities wired to a single control instead of a single descriptor: the compact-ribbon toggle exists only on the chevron, word count only in a hover tooltip, Help only as an alias for the palette. The repo already has the harness for this (webapp/tests/e2e/ribbon-only-commands.spec.mjs) and the rule (one descriptor → menu + ribbon + palette); enforcing it in the parity spec is a smaller fix than the sum of the rows.  
+**T-16 · One capability, one surface — the recurring command-parity defect**
+
+opendoc keeps landing capabilities wired to a single control instead of a single descriptor: the compact-ribbon toggle exists only on the chevron, word count only in a hover tooltip, Help only as an alias for the palette. The repo already has the harness for this (webapp/tests/e2e/ribbon-only-commands.spec.mjs) and the rule (one descriptor → menu + ribbon + palette); enforcing it in the parity spec is a smaller fix than the sum of the rows.
+
 Rows: HF-051, HF-064, HF-094, HF-104
 
-**T-17 · No shared design-system layer: literals where tokens belong**  
-The review surface hardcodes light-mode Google hexes with no dark values, and both sibling repos solved this identically with semantic status tokens redefined per theme. opendoc additionally has TWO dark entry points (prefers-color-scheme and [data-theme="dark"]) and every existing dark patch covers only the first, so explicit Dark on a light OS is broken across the board. Defining the token set once in both blocks plus a CI check that fails on a bare hex fixes the shipped bug and prevents the next one.  
+**T-17 · No shared design-system layer: literals where tokens belong**
+
+The review surface hardcodes light-mode Google hexes with no dark values, and both sibling repos solved this identically with semantic status tokens redefined per theme. opendoc additionally has TWO dark entry points (prefers-color-scheme and [data-theme="dark"]) and every existing dark patch covers only the first, so explicit Dark on a light OS is broken across the board. Defining the token set once in both blocks plus a CI check that fails on a bare hex fixes the shipped bug and prevents the next one.
+
 Rows: HF-021
 
-**T-18 · main.js is the monolith behind several unrelated-looking rows**  
-14,859 lines, 93% of webapp/src, zero exports. That single fact produced the diverged apply paths (a real data-loss bug), the nine hand-rolled dialogs with three different dismissal contracts, the absence of any boot seam for the docs/83 embed element, and the retrofit cost that got the i18n row downgraded. Extracting the mutation funnel, a dialog primitive and a mount(el, config) seam is the same work as three of these rows.  
+**T-18 · main.js is the monolith behind several unrelated-looking rows**
+
+14,859 lines, 93% of webapp/src, zero exports. That single fact produced the diverged apply paths (a real data-loss bug), the nine hand-rolled dialogs with three different dismissal contracts, the absence of any boot seam for the docs/83 embed element, and the retrofit cost that got the i18n row downgraded. Extracting the mutation funnel, a dialog primitive and a mount(el, config) seam is the same work as three of these rows.
+
 Rows: HF-007, HF-043, HF-085, HF-109
 
-**T-19 · The chrome assumes one platform and one language**  
-63 hardcoded ⌘ glyphs on Tier-1 Windows/Linux, ~500 inline English strings, 13px inputs that trip iOS focus-zoom, 30px targets under the 44px floor. Every one is a display-layer assumption baked at the call site, and all four are cheap while the file is being touched for other reasons — the shortcut sweep and the i18n key extraction hit exactly the same label sites, so sequencing them together roughly halves the work.  
+**T-19 · The chrome assumes one platform and one language**
+
+63 hardcoded ⌘ glyphs on Tier-1 Windows/Linux, ~500 inline English strings, 13px inputs that trip iOS focus-zoom, 30px targets under the 44px floor. Every one is a display-layer assumption baked at the call site, and all four are cheap while the file is being touched for other reasons — the shortcut sweep and the i18n key extraction hit exactly the same label sites, so sequencing them together roughly halves the work.
+
 Rows: HF-025, HF-060, HF-081
 
-**T-20 · Untrusted input is the product's whole job, and it is the least guarded path**  
-Open is where a hostile or merely broken file meets the engine, and it currently has: no time budget or cancel, no failure isolation (a failed parse frees the live document), three of four fuzz targets never executed including the entire ODT importer, and no browser test that opens a hostile fixture. These read as four separate rows but they are one hardening pass on one code path.  
+**T-20 · Untrusted input is the product's whole job, and it is the least guarded path**
+
+Open is where a hostile or merely broken file meets the engine, and it currently has: no time budget or cancel, no failure isolation (a failed parse frees the live document), three of four fuzz targets never executed including the entire ODT importer, and no browser test that opens a hostile fixture. These read as four separate rows but they are one hardening pass on one code path.
+
 Rows: HF-004, HF-077, HF-090
 
 ## Target design
