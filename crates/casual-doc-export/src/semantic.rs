@@ -537,44 +537,43 @@ pub fn write_document_with_retained_parts(
 
     // Parts are emitted in a deterministic order so the package bytes are
     // reproducible.
-    let mut parts: Vec<(String, Vec<u8>)> = vec![
-        (
-            "[Content_Types].xml".to_owned(),
-            content_types_xml(
-                &extras,
-                &docprops,
-                &definitions.media,
-                has_embedded_fonts,
-                retained_parts,
-            )?,
-        ),
-        (
-            "_rels/.rels".to_owned(),
-            root_rels_xml(&docprops, retained_parts)?,
-        ),
-        ("word/document.xml".to_owned(), document_xml),
-        (
-            "word/_rels/document.xml.rels".to_owned(),
-            document_rels_xml(
-                &rels,
-                &extras,
-                &definitions.media,
-                &embedded_rels,
-                retained_parts,
-            )?,
-        ),
-    ];
+    let mut parts = PackageParts::default();
+    parts.push(
+        "[Content_Types].xml".to_owned(),
+        content_types_xml(
+            &extras,
+            &docprops,
+            &definitions.media,
+            has_embedded_fonts,
+            retained_parts,
+        )?,
+    );
+    parts.push(
+        "_rels/.rels".to_owned(),
+        root_rels_xml(&docprops, retained_parts)?,
+    );
+    parts.push("word/document.xml".to_owned(), document_xml);
+    parts.push(
+        "word/_rels/document.xml.rels".to_owned(),
+        document_rels_xml(
+            &rels,
+            &extras,
+            &definitions.media,
+            &embedded_rels,
+            retained_parts,
+        )?,
+    );
     for docprop in &docprops {
-        parts.push((docprop.part_name.to_owned(), docprop.bytes.clone()));
+        parts.push(docprop.part_name.to_owned(), docprop.bytes.clone());
     }
     for extra in extras {
         if !extra.own_rels.is_empty() {
-            parts.push((
+            parts.push(
                 rels_part_name(&extra.part_name),
                 part_rels_xml(&extra.own_rels)?,
-            ));
+            );
         }
-        parts.push((extra.part_name, extra.bytes));
+        parts.push(extra.part_name, extra.bytes);
     }
     // Opaque preserved parts (P1F-2): each part verbatim, plus its owned `_rels`
     // companion verbatim (so parts it references stay reachable). Content types
@@ -582,27 +581,27 @@ pub fn write_document_with_retained_parts(
     // manifests above.
     for retained in &retained_parts.parts {
         if let Some(rels) = &retained.rels {
-            parts.push((rels.part_name.clone(), rels.bytes.clone()));
+            parts.push(rels.part_name.clone(), rels.bytes.clone());
         }
-        parts.push((retained.part_name.clone(), retained.bytes.clone()));
+        parts.push(retained.part_name.clone(), retained.bytes.clone());
     }
     // Media parts (image bytes supplied by the caller; the model carries only
     // the reference metadata). An absent entry writes an empty part — the
     // reference still round-trips (bytes are Retention's concern).
     for (_, reference) in definitions.media.iter() {
         let bytes = media.get(&reference.part_name).cloned().unwrap_or_default();
-        parts.push((reference.part_name.clone(), bytes));
+        parts.push(reference.part_name.clone(), bytes);
     }
     // Embedded fonts: the fontTable's own rels (`/font`) plus the `.odttf` parts.
     if has_embedded_fonts {
-        parts.push((
+        parts.push(
             "word/_rels/fontTable.xml.rels".to_owned(),
             font_rels_xml(&font_rels)?,
-        ));
+        );
         for font in &definitions.font_table {
             for (_, face) in font.embedded.faces() {
                 let bytes = media.get(&face.part_name).cloned().unwrap_or_default();
-                parts.push((face.part_name.clone(), bytes));
+                parts.push(face.part_name.clone(), bytes);
             }
         }
     }
@@ -611,7 +610,7 @@ pub fn write_document_with_retained_parts(
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .last_modified_time(DateTime::default());
-    for (name, bytes) in parts {
+    for (name, bytes) in parts.into_ordered() {
         writer
             .start_file(name, options)
             .map_err(|_| ExportError::Package)?;
@@ -621,6 +620,41 @@ pub fn write_document_with_retained_parts(
         .finish()
         .map_err(|_| ExportError::Package)?
         .into_inner())
+}
+
+/// The package's parts, in emission order, holding the ZIP-level invariant that
+/// a part name appears exactly once.
+///
+/// Media parts, retained parts, doc-prop parts and embedded font faces are each
+/// appended by a different piece of code, and none of them can see the others.
+/// That is how a logo used in both a header and the body — one PART reached
+/// through two relationships, so two `MediaId`s sharing a `part_name` — produced
+/// two ZIP entries with the same name, which `zip` rejects as a duplicate
+/// filename and which surfaced as an opaque `ExportError::Package`. The document
+/// could not be saved by any route, and nothing said why.
+///
+/// Making "written once" a property of the collection rather than a rule each
+/// caller has to remember is what stops the next kind of part reintroducing it.
+/// First write wins: a repeated name is the same part by construction, because
+/// its bytes come from a single lookup keyed by that same name.
+#[derive(Default)]
+struct PackageParts {
+    ordered: Vec<(String, Vec<u8>)>,
+    seen: BTreeSet<String>,
+}
+
+impl PackageParts {
+    /// Appends a part unless its name has already been written.
+    fn push(&mut self, name: String, bytes: Vec<u8>) {
+        if self.seen.insert(name.clone()) {
+            self.ordered.push((name, bytes));
+        }
+    }
+
+    /// The parts in the order they were first pushed (deterministic output).
+    fn into_ordered(self) -> Vec<(String, Vec<u8>)> {
+        self.ordered
+    }
 }
 
 fn new_writer() -> Writer<Cursor<Vec<u8>>> {
@@ -1063,9 +1097,18 @@ fn document_rels_xml(
         rel.push_attribute(("TargetMode", "External"));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
-    // Media relationships with their verbatim ids (so `MediaReference` round-
-    // trips); these ids are reserved elsewhere so nothing else reuses them.
-    let mut reserved: BTreeSet<String> = BTreeSet::new();
+    // Every id written into THIS part, so the internal-parts loop below cannot
+    // mint one that is already taken. The hyperlink ids have to be in here: they
+    // are minted by a builder that SKIPS ids reserved by media, so they are not
+    // a contiguous run — a media relationship at rId2 makes two hyperlinks rId1
+    // and rId3. Counting them instead of naming them (`next = entries.len()`)
+    // therefore under-counts, and the first internal part re-minted rId3 on top
+    // of a hyperlink. Word reads a duplicate Id as a corrupt package, and a
+    // repaired file pointed the hyperlink at styles.xml.
+    //
+    // Retained relationships are not seeded because they use a distinct
+    // `rIdOp{n}` prefix and cannot collide with `rId{n}` by construction.
+    let mut reserved: BTreeSet<String> = entries.iter().map(|(id, _)| id.clone()).collect();
     for (_, reference) in media.iter() {
         reserved.insert(reference.relationship_id.clone());
         let mut rel = start("Relationship");

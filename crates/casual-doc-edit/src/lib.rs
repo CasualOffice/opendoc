@@ -4766,6 +4766,18 @@ fn join_paragraphs(
         };
         let split_at = paragraph_text_len(first_para);
         first_para.inlines.extend(second_para.inlines);
+        // The seam is the whole point: the last run of the first paragraph and
+        // the first run of the second routinely carry identical properties, and
+        // the model forbids adjacent equivalent runs. Every other inline-mutating
+        // operation coalesces for exactly this reason; this one did not, so an
+        // ordinary Backspace left the document failing `validate()` — invisible
+        // in the text, but fatal to every op that validates and rolls back.
+        //
+        // Safe for the inverse: `split_at` is captured BEFORE the merge, and
+        // merging equal-property runs does not change the paragraph's text
+        // length, so the SplitParagraph this returns still cuts in the right
+        // place.
+        coalesce_adjacent_runs(&mut first_para.inlines);
         return Ok(Some(split_at));
     }
     for block in blocks.iter_mut() {
@@ -6606,6 +6618,51 @@ mod tests {
             panic!("expected paragraph");
         };
         assert_eq!(paragraph.inlines[0], original);
+    }
+
+    /// Backspace at the start of a paragraph joins it onto the previous one. The
+    /// join concatenated the two inline lists and stopped there, so the seam
+    /// left two adjacent runs with identical properties — a shape the model
+    /// forbids and `validate()` rejects.
+    ///
+    /// The damage was not visible: the text looked right and kept editing. But
+    /// every operation that validates and rolls back — insert note/field, delete
+    /// an image, document properties, create a style, page setup, bookmarks, and
+    /// every tracked-change and comment operation — then failed permanently with
+    /// a misleading error, and ODT export refused the document. One ordinary
+    /// keystroke quietly disabled a third of the editor.
+    #[test]
+    fn joining_paragraphs_leaves_the_document_valid() {
+        let first = n(2);
+        let second = n(3);
+        // Two default-styled runs: identical properties, so concatenating the
+        // lists produces exactly the adjacent-equal-runs shape validate() bans.
+        let mut d = doc(vec![
+            para(2, vec![run(4, "Hello")]),
+            para(3, vec![run(5, "World")]),
+        ]);
+        let mut ids = IdGenerator::new(9);
+
+        assert!(d.validate().is_ok(), "the fixture starts valid");
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::JoinParagraphs { first, second },
+        )
+        .unwrap();
+
+        assert_eq!(text_of(&d, first), "HelloWorld");
+        d.validate()
+            .expect("a joined paragraph must leave the document valid");
+
+        // Coalescing must not disturb the inverse: SplitParagraph carries the
+        // pre-merge byte length, which merging runs does not change.
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d.body().len(), 2, "the split restores both paragraphs");
+        assert_eq!(text_of(&d, first), "Hello");
+        assert_eq!(text_of(&d, second), "World");
+        d.validate().expect("the inverse also leaves it valid");
     }
 
     #[test]
