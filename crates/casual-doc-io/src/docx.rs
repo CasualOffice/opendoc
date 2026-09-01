@@ -86,12 +86,43 @@ impl FormatImporter for DocxAdapter {
             .map_err(|error| AdapterError::new(format!("semantic import: {error}")))?;
 
         let mut resources = DocumentResources::default();
+        // A media part the package cannot hand back was previously dropped by an
+        // `if let Ok(..)` with no else arm, and the writer then emitted an EMPTY
+        // part alongside a perfectly valid /image relationship and content-type.
+        // The saved file therefore advertised a picture it could not supply: Word
+        // drew a broken-image box, and the export reported no loss whatsoever, so
+        // the user only discovered it on reopening. This repository's contract is
+        // that unsupported or unreadable data is preserved where safe or reported
+        // explicitly — never silently discarded.
+        let mut unreadable: Vec<String> = Vec::new();
         for (_, reference) in imported.document.definitions().media.iter() {
-            if let Ok(bytes) = package.read_part(&reference.part_name) {
-                resources.insert(reference.part_name.clone(), bytes);
+            match package.read_part(&reference.part_name) {
+                Ok(bytes) => {
+                    resources.insert(reference.part_name.clone(), bytes);
+                }
+                // One part can be reached through several relationships, so report
+                // the PART once rather than once per reference to it.
+                Err(_) if !unreadable.contains(&reference.part_name) => {
+                    unreadable.push(reference.part_name.clone());
+                }
+                Err(_) => {}
             }
         }
-        let report = convert_report(&imported.report);
+        let mut report = convert_report(&imported.report);
+        for part_name in unreadable {
+            report.entries.push(CompatibilityEntry {
+                feature: "docx.media.unreadable-part".to_owned(),
+                occurrences: 1,
+                location: FeatureLocation {
+                    part_name: Some(part_name),
+                    namespace: None,
+                    local_name: None,
+                },
+                model_outcome: ModelOutcome::Omitted,
+                retention_outcome: RetentionOutcome::NotRetained,
+            });
+        }
+        report.sort();
         let source = SourceEnvelope::new(
             self.descriptor.id.clone(),
             env!("CARGO_PKG_VERSION").to_owned(),
@@ -263,6 +294,75 @@ mod tests {
     use crate::{DetectionRequest, ExportRequest, FormatSelection};
 
     const MINIMAL_DOCX: &[u8] = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
+
+    /// A media part named by a relationship but absent from (or unreadable in)
+    /// the package must be REPORTED, not silently skipped. Before this, the
+    /// reference survived into the model, the bytes did not, and the writer
+    /// emitted an empty part beside a valid /image relationship — a file that
+    /// advertises a picture it cannot supply, with an empty loss report.
+    #[test]
+    fn an_unreadable_media_part_is_reported_as_lost() {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                    <a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        // Note what is NOT in this archive: `word/media/image1.png`. The
+        // relationship names it, so the model carries the reference; the bytes
+        // cannot be read.
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("missing-media.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the document itself is valid and must still open");
+
+        assert!(
+            !imported.document.definitions().media.is_empty(),
+            "the reference survives; only its bytes are missing"
+        );
+        let reported = imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "docx.media.unreadable-part")
+            .expect("an unreadable media part must appear in the compatibility report");
+        assert_eq!(
+            reported.location.part_name.as_deref(),
+            Some("word/media/image1.png"),
+            "the report names the part that was lost"
+        );
+        assert_eq!(reported.model_outcome, ModelOutcome::Omitted);
+        assert_eq!(reported.retention_outcome, RetentionOutcome::NotRetained);
+    }
 
     #[test]
     fn builtin_registry_detects_imports_exports_and_reopens_docx() {

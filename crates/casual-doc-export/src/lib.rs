@@ -4014,6 +4014,122 @@ mod semantic_tests {
     }
 
     #[test]
+    fn every_generated_relationship_id_is_unique() {
+        // Relationship ids in one .rels part must be unique — Word treats a
+        // duplicate Id as a corrupt package and offers to repair it.
+        //
+        // Hyperlink ids are minted by a builder that SKIPS ids reserved by media,
+        // so with a media relationship at rId2 two hyperlinks become rId1 and
+        // rId3 — not a contiguous run. The internal-parts loop then started at
+        // `entries.len()` (2) and checked only the media/embedded reserved set,
+        // so the first internal part minted rId3 and collided with the hyperlink
+        // that already held it.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        // A styles part makes the writer emit an INTERNAL relationship, which is
+        // what mints an id and collides. Without one there is nothing to collide.
+        let styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style></w:styles>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>
+            <w:p><w:hyperlink r:id="rId101"><w:r><w:t>first link</w:t></w:r></w:hyperlink></w:p>
+            <w:p><w:hyperlink r:id="rId102"><w:r><w:t>second link</w:t></w:r></w:hyperlink></w:p>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                    <a:blip r:embed="rId2"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        // The image deliberately holds rId2, so the two hyperlinks are minted
+        // around it as rId1 and rId3.
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId101" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/one" TargetMode="External"/><Relationship Id="rId102" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/two" TargetMode="External"/><Relationship Id="rId103" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/styles.xml", styles),
+            ("word/media/image1.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        let written = write_document(
+            &m1,
+            &BTreeMap::from([("word/media/image1.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .unwrap();
+
+        let mut reopened = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        let doc_rels_out = reopened.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+
+        let mut ids: Vec<&str> = Vec::new();
+        for chunk in doc_rels_out.split("Id=\"").skip(1) {
+            ids.push(&chunk[..chunk.find('"').unwrap()]);
+        }
+        assert!(!ids.is_empty(), "the part declares relationships");
+        let mut unique: Vec<&str> = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "duplicate relationship Id in document.xml.rels: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn one_media_part_referenced_twice_still_writes_a_valid_package() {
+        // A logo placed in the header AND in the body is one media PART reached
+        // through two relationships. Import mints a MediaId per relationship, so
+        // the media table holds two entries sharing a part_name — and the writer
+        // emitted one ZIP entry per entry, producing a duplicate filename that
+        // aborted the whole export as an opaque `ExportError::Package`. The user
+        // could not save the document at all, by any route.
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                    <a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+            <w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                    <a:blip r:embed="rId8"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+            </wp:inline></w:drawing></w:r></w:p>
+        </w:body></w:document>"#;
+        // Two DISTINCT relationship ids resolving to the SAME part.
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/media/image1.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        assert_eq!(
+            m1.definitions().media.iter().count(),
+            2,
+            "two relationships mint two media ids sharing one part name"
+        );
+
+        let bytes = write_document(
+            &m1,
+            &BTreeMap::from([("word/media/image1.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .expect("a part referenced twice must still export");
+
+        // The part is written exactly once, and the package reopens.
+        let package = DocxPackage::open(&bytes, PackageLimits::default()).unwrap();
+        let emitted = package
+            .entries()
+            .iter()
+            .filter(|e| e.part_name == "word/media/image1.png")
+            .count();
+        assert_eq!(emitted, 1, "the shared part is emitted once, not twice");
+
+        let m2 = reopen(&bytes);
+        assert_eq!(m1, m2, "both references survive write -> reopen");
+    }
+
+    #[test]
     fn text_box_survives_the_semantic_round_trip() {
         // An inline text box holding block content and authored appearance.
         let xml = br#"<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps"><w:body>

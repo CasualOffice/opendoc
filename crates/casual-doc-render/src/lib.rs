@@ -732,15 +732,35 @@ fn render_bitmap_glyph(
         // `CBDT`/`EBDT` metrics report the top-left bearing directly.
         skrifa::bitmap::Origin::TopLeft => baseline_y - glyph.inner_bearing_y * scale,
     };
+    // The destination goes in the TRANSFORM, not in the x/y arguments.
+    //
+    // `draw_pixmap` builds its destination rect at (x, y) and then applies the
+    // caller's transform to that rect — so passing a position alongside a scale
+    // transform multiplies the position BY the scale. A colour strike is authored
+    // far larger than the text it stands in (Noto Color Emoji ships a 109ppem
+    // bitmap, drawn here at ~15px, so scale is about 0.14), which dragged every
+    // emoji to roughly a seventh of its correct offset — i.e. into the top-left
+    // corner of the page, usually clipped. The glyph was painted, just never where
+    // the text was, so emoji looked like they simply did not render.
+    //
+    // Folding the translation into the affine keeps position and scale
+    // independent: (0,0) maps to (x, y) and the bitmap scales about that point.
     surface.pixmap.draw_pixmap(
-        x.round() as i32,
-        y.round() as i32,
+        0,
+        0,
         pixmap.as_ref(),
         &PixmapPaint::default(),
-        Transform::from_scale(scale * scale_x, scale),
+        bitmap_glyph_transform(x, y, scale * scale_x, scale),
         clip,
     );
     true
+}
+
+/// The affine that places a bitmap colour glyph: scale the strike to the run's
+/// size, then translate it to the pen position. Kept separate so the invariant
+/// that matters — the destination is NOT scaled — is directly testable.
+fn bitmap_glyph_transform(x: f32, y: f32, scale_x: f32, scale_y: f32) -> Transform {
+    Transform::from_row(scale_x, 0.0, 0.0, scale_y, x, y)
 }
 
 /// Paints a COLR glyph using the font's default CPAL palette. The color API
@@ -3193,6 +3213,42 @@ mod tests {
         assert!(
             pixel_at(&surface, 100, 85, 18)[0] > 200,
             "outside the arrowhead stays blank"
+        );
+    }
+
+    /// A colour bitmap glyph must be painted at the pen, and its POSITION must not
+    /// be scaled by the strike-to-size ratio.
+    ///
+    /// `Pixmap::draw_pixmap` applies the caller's transform to the destination
+    /// rect it builds from its `x`/`y` arguments, so supplying a position there
+    /// alongside a scale transform multiplied the position by the scale. Noto
+    /// Color Emoji ships a 109ppem strike drawn at ~15px — a factor of about
+    /// 0.14 — so every emoji was dragged into the top-left corner of the page and
+    /// usually clipped away entirely. It looked exactly like emoji not rendering.
+    #[test]
+    fn a_bitmap_colour_glyph_is_positioned_at_the_pen_not_scaled_toward_the_origin() {
+        let pen_x = 200.0_f32;
+        let baseline_y = 300.0_f32;
+        let strike_scale = 15.0 / 109.0; // ~0.14, a real emoji strike at body size
+
+        let transform = bitmap_glyph_transform(pen_x, baseline_y, strike_scale, strike_scale);
+        let mut corner = [tiny_skia::Point::from_xy(0.0, 0.0)];
+        transform.map_points(&mut corner);
+
+        assert!(
+            (corner[0].x - pen_x).abs() < 0.01 && (corner[0].y - baseline_y).abs() < 0.01,
+            "the glyph's top-left must land at the pen ({pen_x}, {baseline_y}), got {:?}",
+            corner[0]
+        );
+
+        // And the strike is still scaled down to text size: 109px of bitmap
+        // becomes ~15px on the page.
+        let mut extent = [tiny_skia::Point::from_xy(109.0, 109.0)];
+        transform.map_points(&mut extent);
+        assert!(
+            (extent[0].x - pen_x - 15.0).abs() < 0.5,
+            "the strike is scaled to the run size, got width {}",
+            extent[0].x - pen_x
         );
     }
 }

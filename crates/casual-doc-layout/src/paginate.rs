@@ -827,6 +827,22 @@ impl<'a> Paginator<'a> {
         if header || self.table_headers.is_empty() || !self.placed.is_empty() {
             return;
         }
+        // Repeating the headers must leave room for the row they caption. A
+        // header taller than the usable content area — a full-width logo in the
+        // header cell is enough — otherwise consumed the whole fresh page, so the
+        // body row could not be placed, which flushed the page, which started
+        // another fresh page, which repeated the headers again. Pagination never
+        // terminated: the tab froze and memory grew until it was killed.
+        //
+        // Word drops the repetition in exactly this situation rather than
+        // looping, and so do we: a page that cannot also carry a body row is not
+        // a continuation, it is a page of nothing but headers. Losing the
+        // repeated caption on such a table is a visible but bounded fidelity
+        // cost; the alternative is an unrecoverable hang.
+        let header_total: i32 = self.table_headers.iter().map(|h| h.height().raw()).sum();
+        if header_total >= self.remaining() {
+            return;
+        }
         self.page_start = FlowPos::at(idx as u32);
         for h in self.table_headers.clone() {
             let height = h.height();
@@ -2632,6 +2648,58 @@ mod tests {
             page2.flow.start.fragment, 0,
             "flow provenance skips the repeated header"
         );
+    }
+
+    /// A repeated table header taller than the usable content area used to hang
+    /// pagination outright: the header consumed the whole fresh page, the body
+    /// row could not be placed, the page flushed, a new page began, and the
+    /// header was repeated again — forever. The tab froze and memory grew until
+    /// it was killed, on a document Word opens fine (a full-width logo in the
+    /// header cell is enough to reach this).
+    ///
+    /// Word drops the repetition rather than looping, and so do we.
+    #[test]
+    fn an_oversized_repeated_header_does_not_hang_pagination() {
+        let config = letter_config();
+        let content_h = config.content_area().size.height.raw();
+
+        // A header row TALLER than the whole content area.
+        let header = table_row(
+            10,
+            5,
+            vec![cell_of(11, vec![paragraph(12, Twip(content_h + 1000))])],
+            false,
+            true,
+        );
+        let mut frags = vec![header];
+        for i in 0..3u64 {
+            frags.push(table_row(
+                100 + i,
+                5,
+                vec![cell_of(200 + i, vec![paragraph(300 + i, Twip(1000))])],
+                true,
+                false,
+            ));
+        }
+
+        // The assertion that matters is that this call RETURNS at all. The bound
+        // then proves it did not merely terminate by accident after thousands of
+        // header-only pages.
+        let layout = paginate(&frags, &config);
+        assert!(
+            layout.page_count() <= 8,
+            "pagination must stay bounded, got {} pages",
+            layout.page_count()
+        );
+        // Every body row still reaches a page: dropping the repeated caption must
+        // never drop content.
+        let placed_body_rows: usize = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.placed.iter())
+            .filter(|p| matches!(p.fragment, BlockFragment::TableRow { header: false, .. }))
+            .count();
+        assert_eq!(placed_body_rows, 3, "no body row is lost");
     }
 
     #[test]
