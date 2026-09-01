@@ -7877,7 +7877,7 @@ impl WasmDocument {
         let paragraph = cascade.resolve_paragraph(&anchor);
         let scheme = self.document.definitions().font_scheme.as_ref();
         let font_family = requested_font_family(&run, scheme)
-            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned());
+            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO_FAMILY_NAME.to_owned());
         let color = match run.color {
             Some(Color::Rgb(c)) => format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b),
             // Automatic/theme colors surface as no explicit swatch — the card
@@ -13973,7 +13973,7 @@ fn run_style_from_effective_runs(document: &Document, properties: &[RunPropertie
     let color = uniform_value(properties, |p| p.color);
     let font = uniform_value(properties, |p| {
         requested_font_family(p, scheme)
-            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO.name.to_owned())
+            .unwrap_or_else(|| casual_doc_layout::fonts::ROBOTO_FAMILY_NAME.to_owned())
     });
     let highlight = uniform_value(properties, |p| p.highlight);
     let underline_style = uniform_value(properties, |p| p.underline_style.unwrap_or_default());

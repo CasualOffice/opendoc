@@ -161,6 +161,15 @@ impl BundledFamily {
     }
 }
 
+/// Roboto's family name, as a plain string.
+///
+/// Deliberately NOT `ROBOTO.name`. `BundledFamily` owns its four face byte
+/// slices, so any reference to the `ROBOTO` constant keeps all four Roboto blobs
+/// (~2 MB) linked into the binary — including the WebAssembly build, whose whole
+/// point under `external-web-fonts` is that the host fetches Roboto over the
+/// network instead. A caller that only wants the NAME must not touch the family.
+pub const ROBOTO_FAMILY_NAME: &str = "Roboto";
+
 /// Roboto — the default family and ultimate fallback.
 pub const ROBOTO: BundledFamily = BundledFamily {
     name: "Roboto",

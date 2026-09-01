@@ -40,10 +40,17 @@ wasm_opt_cached() {
 }
 
 run_wasm_pack() {
+  # `web-host-fonts` drops Roboto's four face blobs from the WebAssembly bundle.
+  # The browser does not need them: `web_fonts.mjs` fetches the Roboto variable
+  # faces from the pinned CDN and registers them before the first paint, so the
+  # embedded copy was ~2 MB every visitor downloaded and the engine then replaced.
+  # The feature has existed since the font-provisioning work; this build simply
+  # never asked for it.
   wasm-pack build "$repo/crates/casual-doc-wasm" \
     --target web \
     --out-dir "$here/pkg" \
-    --out-name casual_doc_wasm
+    --out-name casual_doc_wasm \
+    -- --features web-host-fonts
 }
 
 build_with_retry() {
