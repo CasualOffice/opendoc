@@ -854,6 +854,11 @@ pub fn apply(
 ) -> Result<Operation, EditError> {
     match op {
         Operation::InsertText { at, text } => {
+            // The single choke point for text entering the model. Characters XML
+            // cannot represent are removed here rather than at each call site,
+            // because the call site that forgets is the one somebody adds later —
+            // and the cost of forgetting is a saved file nothing can reopen.
+            let text = &casual_doc_model::strip_xml_forbidden(text);
             if text.is_empty() {
                 return Err(EditError::EmptyEdit);
             }
@@ -6631,6 +6636,68 @@ mod tests {
     /// every tracked-change and comment operation — then failed permanently with
     /// a misleading error, and ODT export refused the document. One ordinary
     /// keystroke quietly disabled a third of the editor.
+    /// Text carrying characters XML cannot represent must never reach the model.
+    ///
+    /// A vertical tab, form feed or NUL is ordinary in text pasted from a PDF or
+    /// a terminal. Written straight through to `document.xml` it produced a
+    /// package that was not well-formed, so Word refused it and this runtime's
+    /// own importer failed with `MalformedXml`. One paste destroyed the file.
+    #[test]
+    fn inserted_text_cannot_carry_characters_xml_forbids() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(9);
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(p, 5),
+                // NUL, vertical tab, form feed and a bell, around real text.
+                text: "\u{0}A\u{b}B\u{c}C\u{7}".to_owned(),
+            },
+        )
+        .expect("the insert still succeeds; only the unrepresentable is dropped");
+
+        let text = text_of(&d, p);
+        assert_eq!(text, "HelloABC", "the readable text survives intact");
+        assert!(
+            !text
+                .chars()
+                .any(|c| c < ' ' && c != '\t' && c != '\n' && c != '\r'),
+            "no XML-forbidden character reaches the model: {text:?}"
+        );
+        d.validate().expect("the document stays valid");
+    }
+
+    /// The inverse must undo exactly what was inserted, not what was offered.
+    #[test]
+    fn the_inverse_of_a_sanitised_insert_removes_the_sanitised_range() {
+        let p = n(2);
+        let mut d = doc(vec![para(2, vec![run(3, "Hello")])]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertText {
+                at: Pos::new(p, 5),
+                text: "\u{0}World\u{b}".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(text_of(&d, p), "HelloWorld");
+
+        // Had the inverse been built from the ORIGINAL length it would delete
+        // seven characters where five were added, and undo would eat "lo".
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(
+            text_of(&d, p),
+            "Hello",
+            "undo restores exactly the prior text"
+        );
+    }
+
     #[test]
     fn joining_paragraphs_leaves_the_document_valid() {
         let first = n(2);

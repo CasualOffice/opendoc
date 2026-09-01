@@ -161,6 +161,15 @@ impl BundledFamily {
     }
 }
 
+/// Roboto's family name, as a plain string.
+///
+/// Deliberately NOT `ROBOTO.name`. `BundledFamily` owns its four face byte
+/// slices, so any reference to the `ROBOTO` constant keeps all four Roboto blobs
+/// (~2 MB) linked into the binary — including the WebAssembly build, whose whole
+/// point under `external-web-fonts` is that the host fetches Roboto over the
+/// network instead. A caller that only wants the NAME must not touch the family.
+pub const ROBOTO_FAMILY_NAME: &str = "Roboto";
+
 /// Roboto — the default family and ultimate fallback.
 pub const ROBOTO: BundledFamily = BundledFamily {
     name: "Roboto",
@@ -353,6 +362,31 @@ pub fn face_bytes(id: FontId) -> &'static [u8] {
 
 #[cfg(test)]
 mod tests {
+
+    /// The bundled faces are the largest single asset in the WebAssembly bundle,
+    /// and they grow silently: adding a family is four more blobs, and nothing
+    /// else in the build reports it.
+    ///
+    /// Measured on the deployed bundle: the 20 embedded faces are 7.00 MB raw,
+    /// which is 2.18 MB of a 7.97 MB brotli download — about 27% of what a
+    /// visitor actually transfers. That is the number worth defending. The
+    /// uncompressed figure is not, and quoting it has already sent one
+    /// size-reduction effort after the wrong target.
+    ///
+    /// This is a ratchet, not a budget: if a family is deliberately added, raise
+    /// the cap in the same commit and say why.
+    #[test]
+    fn the_bundled_face_budget_does_not_grow_unnoticed() {
+        let total: usize = BUNDLED_FACES.iter().map(|(_, bytes)| bytes.len()).sum();
+        const CAP_BYTES: usize = 10 * 1024 * 1024;
+        assert!(
+            total <= CAP_BYTES,
+            "bundled faces are {:.2} MB, over the {:.0} MB cap — adding a family \
+             costs every visitor on every deploy, so raise the cap deliberately",
+            total as f64 / 1_048_576.0,
+            CAP_BYTES as f64 / 1_048_576.0,
+        );
+    }
     use super::*;
 
     #[test]

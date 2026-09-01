@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
+use casual_doc_model::strip_xml_forbidden;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -4051,7 +4052,12 @@ fn write_inline(
             let mut t = start(tag);
             t.push_attribute(("xml:space", "preserve"));
             w.write_event(Event::Start(t)).map_err(pkg)?;
-            w.write_event(Event::Text(BytesText::new(&run.text)))
+            // Defence in depth. The edit path strips XML-forbidden characters at
+            // the choke point, but a model can also arrive through snapshot load
+            // or any future importer, and one such character makes the whole
+            // package unreadable — a failure whose blast radius is the entire
+            // document, not the run. Cheap to check, catastrophic to miss.
+            w.write_event(Event::Text(BytesText::new(&strip_xml_forbidden(&run.text))))
                 .map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new(tag))).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))

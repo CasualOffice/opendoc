@@ -42,6 +42,7 @@ Both are reference-only. Nothing in them was modified.
 
 **Effort:** S = under an hour · M = up to a day · L = more than a day, or needs a design decision first.
 **Status vocabulary:** Open · In progress · In review · Fixed · Won't fix (with reason).
+A `Fixed` row names the PR that closed it, so the claim can be checked rather than trusted.
 
 ## Summary
 
@@ -53,27 +54,40 @@ Both are reference-only. Nothing in them was modified.
 | P3 | 22 |
 | **Total** | **114** |
 
+### Progress
+
+Closed so far, all with a regression test proven to fail against the reintroduced bug:
+
+- **#495** — HF-004, HF-007, and the unload half of HF-002.
+- **#497** — HF-001, HF-003, HF-006, HF-010, HF-044, plus a colour-glyph placement defect
+  found while investigating an emoji report and not previously in this list: bitmap emoji
+  were painted at a fraction of their offset, landing in the page corner.
+- **In review** — HF-005, HF-008, HF-020 (engine); HF-021, HF-033, HF-043, HF-062, HF-063,
+  HF-067, HF-086, HF-089, HF-092, HF-093 and the discard-confirm half of HF-002 (webapp).
+
+Every P0 is now closed or in review.
+
 ## Queue
 
 ### P0 — 7 items
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
-| HF-001 | Saving fails outright when one image is used twice (header logo + body) | import-export | S | Internal audit | Open |
-| HF-002 | Nothing guards unsaved work: no beforeunload prompt, and Open silently replaces a dirty document | data-safety | S | Sibling gap (opencalc + docs) | Open |
-| HF-003 | Backspace at a paragraph start leaves the document invalid, disabling footnotes, bookmarks, comments and suggestions | rust-core | S | Internal audit | Open |
-| HF-004 | A failed Open destroys the document already on screen and leaves the editor pointed at freed wasm memory | data-safety | S | Sibling gap (opencalc) | Open |
-| HF-005 | Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout | wasm | M | Internal audit | Open |
-| HF-006 | Pagination never terminates on a table whose repeated header fills the page | layout | M | Internal audit | Open |
-| HF-007 | Four copy-pasted edit-apply paths have diverged — table and list edits never mark the document dirty | code-structure | S | Sibling gap (opencalc) | Open |
+| HF-001 | Saving fails outright when one image is used twice (header logo + body) | import-export | S | Internal audit | Fixed (#497) |
+| HF-002 | Nothing guards unsaved work: no beforeunload prompt, and Open silently replaces a dirty document | data-safety | S | Sibling gap (opencalc + docs) | Fixed (#495 unload guard; discard confirm in review) |
+| HF-003 | Backspace at a paragraph start leaves the document invalid, disabling footnotes, bookmarks, comments and suggestions | rust-core | S | Internal audit | Fixed (#497) |
+| HF-004 | A failed Open destroys the document already on screen and leaves the editor pointed at freed wasm memory | data-safety | S | Sibling gap (opencalc) | Fixed (#495) |
+| HF-005 | Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout | wasm | M | Internal audit | In review |
+| HF-006 | Pagination never terminates on a table whose repeated header fills the page | layout | M | Internal audit | Fixed (#497) |
+| HF-007 | Four copy-pasted edit-apply paths have diverged — table and list edits never mark the document dirty | code-structure | S | Sibling gap (opencalc) | Fixed (#495) |
 
 ### P1 — 33 items
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
-| HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | Open |
+| HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | In review |
 | HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | Open |
-| HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Open |
+| HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Fixed (#497) |
 | HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Open |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Open |
@@ -85,7 +99,7 @@ Both are reference-only. Nothing in them was modified.
 | HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Open |
 | HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Open |
 | HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Open |
-| HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | Open |
+| HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | In review |
 | HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Open |
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
 | HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Open |
@@ -117,7 +131,7 @@ Both are reference-only. Nothing in them was modified.
 | HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Open |
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Open |
 | HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Open |
-| HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Open |
+| HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
 | HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Open |
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Open |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
@@ -383,7 +397,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-001 — Saving fails outright when one image is used twice (header logo + body)
 
-**P0** · import-export · bug · effort S · source: Internal audit · **Status:** Open
+**P0** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#497)
 
 **Symptom.** A document whose header and body show the same logo cannot be saved at all — the export aborts with an opaque "package" error and the whole editing session is stuck with no way to get the file out.
 
@@ -395,7 +409,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-002 — Nothing guards unsaved work: no beforeunload prompt, and Open silently replaces a dirty document
 
-**P0** · data-safety · bug · effort S · source: Sibling gap vs opencalc + docs · **Status:** Open
+**P0** · data-safety · bug · effort S · source: Sibling gap vs opencalc + docs · **Status:** Fixed (#495 unload guard; discard confirm in review)
 
 **Symptom.** You type for an hour, hit Cmd+R or Cmd+W (or open a second file), and every edit is gone — no "Leave site?" prompt, no confirmation, no trace. The engine has no server and no local copy, so the wasm heap was the only copy that existed.
 
@@ -411,7 +425,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-003 — Backspace at a paragraph start leaves the document invalid, disabling footnotes, bookmarks, comments and suggestions
 
-**P0** · rust-core · bug · effort S · source: Internal audit · **Status:** Open
+**P0** · rust-core · bug · effort S · source: Internal audit · **Status:** Fixed (#497)
 
 **Symptom.** After one ordinary paragraph join, inserting a footnote or field, deleting an image, editing document properties, creating a style, page setup, bookmarks and every tracked-change/comment operation start failing with misleading errors, and ODT export refuses the document.
 
@@ -423,7 +437,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-004 — A failed Open destroys the document already on screen and leaves the editor pointed at freed wasm memory
 
-**P0** · data-safety · bug · effort S · source: Sibling gap vs opencalc · **Status:** Open
+**P0** · data-safety · bug · effort S · source: Sibling gap vs opencalc · **Status:** Fixed (#495)
 
 **Symptom.** You pick the wrong file, or a slightly corrupt one, from the Open dialog. You get a one-line red status message — and the document you were editing is dead: it is still on screen, but every keystroke, toolbar click and Save now throws. There is no undo and no recovery.
 
@@ -439,7 +453,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-005 — Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout
 
-**P0** · wasm · bug · effort M · source: Internal audit · **Status:** Open
+**P0** · wasm · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** In Suggesting mode (or any document opened with tracked changes, where markup is on by default) nothing the user types ever appears on the page. The review card and Find both see the text, but the canvas only catches up after an unrelated zoom or resize.
 
@@ -451,7 +465,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-006 — Pagination never terminates on a table whose repeated header fills the page
 
-**P0** · layout · bug · effort M · source: Internal audit · **Status:** Open
+**P0** · layout · bug · effort M · source: Internal audit · **Status:** Fixed (#497)
 
 **Symptom.** Opening a legitimate Word document (repeated header row taller than the usable content area, e.g. a full-width logo in the header cell) freezes the browser tab forever and grows memory until the tab or the host process is killed.
 
@@ -463,7 +477,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-007 — Four copy-pasted edit-apply paths have diverged — table and list edits never mark the document dirty
 
-**P0** · code-structure · bug · effort S · source: Sibling gap vs opencalc · **Status:** Open · related: HF-002
+**P0** · code-structure · bug · effort S · source: Sibling gap vs opencalc · **Status:** Fixed (#495) · related: HF-002
 
 **Symptom.** Change a table's borders, shade a cell, insert a text box or convert a list, and the header still says "Opened". Once the unsaved-work guard from HF-002 ships, those edits will be discarded on close without a prompt — the guard will be silently wrong for exactly the edits users are least able to redo.
 
@@ -475,7 +489,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-008 — Control characters in text are written raw into document.xml, producing a file nothing can reopen
 
-**P1** · import-export · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · import-export · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Paste text containing a vertical tab, form feed, or NUL (PDF/terminal/odd clipboard sources), save, and the resulting .docx is not well-formed XML: Word reports problems with the contents and opendoc's own importer fails with MalformedXml — the entire document is lost.
 
@@ -499,7 +513,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-010 — Duplicate relationship Id in document.xml.rels makes the saved package invalid
 
-**P1** · import-export · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#497)
 
 **Symptom.** An ordinary document (a header logo plus one external hyperlink) saves with two `<Relationship Id="rId2">` entries; Word declares the file corrupt and offers to repair it, and if it recovers, the hyperlink points at styles.xml instead of the URL.
 
@@ -649,7 +663,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-020 — Opening a tracked-changes document can throw mid-render and leave the page list blank
 
-**P1** · wasm · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · wasm · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Any document whose struck-through deletions push content onto an extra page fails to render on open — pageSize throws "page index N out of range", renderAll aborts before replacing the page list, and the user sees a blank or stale viewer. No user action required; markup is on by default for such files.
 
@@ -985,7 +999,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-044 — An unreadable image is exported as a zero-byte part with no loss reported
 
-**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Open · related: HF-047
+**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#497) · related: HF-047
 
 **Symptom.** Import a file with one corrupt or over-size image part and save: the package advertises an image it cannot supply, Word draws a broken-image box, and the export reports no loss at all — the user only finds out on reopening.
 
