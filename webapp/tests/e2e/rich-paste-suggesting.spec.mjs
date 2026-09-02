@@ -88,6 +88,49 @@ test("rich single-paragraph paste in Suggesting mode preserves per-run formattin
   expect(consoleErrors).toEqual([]);
 });
 
+// HF-013 (docs/104-HOTFIX-TRACKER.md, cluster T-09): the chained per-run
+// insertion advanced its own offset by `run.text.length` — UTF-16 code units —
+// while the engine's positions are UTF-8 byte offsets. Ordinary prose from Word
+// or Docs (a curly quote, an em dash, an accent) therefore put every run after
+// the first at the wrong position: interleaved into the previous run, or refused
+// outright behind "That edit isn't supported for this selection yet".
+//
+// "Café " is one byte longer than it is code units long, so the second run's
+// insertion point drifts by exactly one and the paste lands as "CaféBold " —
+// the same nine characters, in the wrong order, with no error at all.
+test("rich paste in Suggesting mode keeps non-ASCII text in order (HF-013)", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await enterSuggestingMode(page);
+  await moveCaretToDocStart(page);
+
+  await dispatchClipboardEvent(page, "paste", {
+    "text/html": "<p>Café <b>Bold</b></p>",
+    "text/plain": "Café Bold",
+  });
+
+  const cards = page.locator("#reviewSidebar .review-margin-card.review-margin-insertion");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toContainText("Café Bold");
+
+  // Read the model back through copyRichRuns: the text must be in the order it
+  // was pasted, and "Bold" — not "Café" — must be the bold run.
+  await moveCaretToDocStart(page);
+  for (let i = 0; i < "Café Bold".length; i++) await page.keyboard.press("Shift+ArrowRight");
+  const clip = await dispatchClipboardEvent(page, "copy");
+  expect(clip.text).toBe("Café Bold");
+  expect(clip.html).toMatch(/<b>Bold<\/b>/);
+  expect(clip.html).not.toMatch(/<b>Café/);
+
+  // Nothing was refused along the way.
+  expect(await page.locator("#status").textContent()).not.toMatch(/isn't supported/i);
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("multi-paragraph rich paste in Suggesting mode is still rejected, not silently flattened", async ({
   page,
   consoleErrors,
