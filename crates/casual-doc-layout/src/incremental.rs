@@ -234,6 +234,12 @@ pub struct GalleyCache {
     width: Option<Twip>,
     /// Shaped fragments by paragraph node.
     entries: HashMap<NodeId, CachedParagraph>,
+    /// The nodes this build actually used. Anything absent from it when the build
+    /// ends is a paragraph that has left the document, and its fragment is dropped
+    /// — without this the map only ever grew, so every Enter, join and undo/redo
+    /// cycle left shaped lines behind for paragraphs that no longer exist. In a
+    /// browser tab that is a hard limit rather than mere pressure.
+    live: std::collections::HashSet<NodeId>,
     /// Paragraphs (re-)shaped during the most recent build — telemetry that lets
     /// tests and benchmarks confirm work stayed proportional to the edit.
     shaped_last_build: usize,
@@ -274,12 +280,20 @@ impl GalleyCache {
             self.width = Some(width);
         }
         self.shaped_last_build = 0;
+        self.live.clear();
+    }
+
+    /// Drops every entry this build did not use. One cached build covers the whole
+    /// body, so an untouched entry is a paragraph the document no longer has.
+    pub(crate) fn end_build(&mut self) {
+        let live = std::mem::take(&mut self.live);
+        self.entries.retain(|id, _| live.contains(id));
     }
 
     /// The cached fragment reusable for node `id` under content `hash`: a hit
     /// requires a matching hash and a node that was not reported dirty.
     pub(crate) fn reusable(
-        &self,
+        &mut self,
         id: NodeId,
         hash: u64,
         dirty: &DirtySet,
@@ -287,16 +301,16 @@ impl GalleyCache {
         if dirty.contains(id) {
             return None;
         }
-        self.entries
-            .get(&id)
-            .filter(|entry| entry.hash == hash)
-            .map(|entry| &entry.fragment)
+        let entry = self.entries.get(&id).filter(|entry| entry.hash == hash)?;
+        self.live.insert(id);
+        Some(&entry.fragment)
     }
 
     /// Records a freshly shaped `fragment` for node `id` under content `hash` and
     /// counts the re-shape against the current build.
     pub(crate) fn store(&mut self, id: NodeId, hash: u64, fragment: BlockFragment) {
         self.shaped_last_build += 1;
+        self.live.insert(id);
         self.entries.insert(id, CachedParagraph { hash, fragment });
     }
 }
@@ -517,6 +531,42 @@ mod tests {
     }
 
     const WIDTH: Twip = Twip(9_360);
+
+    /// Deleting a paragraph must drop its cached fragment.
+    ///
+    /// Entries were only ever inserted, or cleared wholesale on a wrap-width
+    /// change — there was no sweep, no cap and no removal for nodes that had left
+    /// the document. So memory grew monotonically through a session: every Enter,
+    /// join and undo/redo cycle left shaped lines behind for paragraphs that no
+    /// longer exist. In a browser tab that is a hard limit, not mere pressure.
+    #[test]
+    fn a_paragraph_that_leaves_the_document_leaves_the_cache() {
+        let shaper = SpyShaper::new();
+        let mut cache = GalleyCache::new();
+
+        let four = doc(&["alpha", "bravo", "charlie", "delta"]);
+        let _ = build_galley_cached(&four, &shaper, WIDTH, &mut cache, &DirtySet::everything());
+        assert_eq!(cache.len(), 4, "all four are cached");
+
+        // Two paragraphs are removed from the document.
+        let two = doc(&["alpha", "bravo"]);
+        let _ = build_galley_cached(&two, &shaper, WIDTH, &mut cache, &DirtySet::new());
+        assert_eq!(
+            cache.len(),
+            2,
+            "the departed paragraphs' fragments are dropped, not kept forever"
+        );
+
+        // The survivors are still served from the cache rather than re-shaped.
+        let before = shaper.calls();
+        let _ = build_galley_cached(&two, &shaper, WIDTH, &mut cache, &DirtySet::new());
+        assert_eq!(
+            shaper.calls(),
+            before,
+            "sweeping must not evict paragraphs that are still present"
+        );
+        assert_eq!(cache.len(), 2);
+    }
 
     #[test]
     fn cache_reshapes_only_the_dirty_paragraph() {

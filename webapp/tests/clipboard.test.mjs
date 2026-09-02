@@ -284,3 +284,37 @@ test("the sentences either side of a pasted table survive", () => {
   assert.ok(text.includes("Intro sentence"), `intro sentence dropped: ${text}`);
   assert.ok(text.includes("Closing sentence"), `closing sentence dropped: ${text}`);
 });
+
+test("a pasted link cannot carry an executable scheme", () => {
+  // Copying from a hostile page brought a javascript: target into the document,
+  // which was then written into the exported .docx and handed to whatever
+  // application the user pasted into next. The follow path already refused these
+  // schemes; storing them was the part nobody checked.
+  for (const hostile of [
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    "  javascript:alert(1)",
+    "java\tscript:alert(1)",
+    "data:text/html;base64,PHNjcmlwdD4=",
+    "vbscript:msgbox(1)",
+    "file:///etc/passwd",
+  ]) {
+    const runs = htmlToRuns(root(el("a", { href: hostile }, txt("click me"))));
+    assert.equal(runs[0].href, undefined, `kept a hostile target: ${hostile}`);
+    assert.equal(runs[0].text, "click me", "the text itself still arrives");
+  }
+
+  // The schemes the editor is willing to follow still come through, as do
+  // relative and fragment targets, which carry no scheme and cannot execute.
+  for (const safe of [
+    "https://example.com/a",
+    "http://example.com/a",
+    "mailto:someone@example.com",
+    "/relative/path",
+    "#anchor",
+    "//example.com/protocol-relative",
+  ]) {
+    const runs = htmlToRuns(root(el("a", { href: safe }, txt("x"))));
+    assert.equal(runs[0].href, safe.trim(), `dropped a safe target: ${safe}`);
+  }
+});

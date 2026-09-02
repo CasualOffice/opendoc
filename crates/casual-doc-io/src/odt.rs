@@ -89,16 +89,33 @@ impl FormatImporter for OdtAdapter {
         let imported = package
             .import_document(self.import_limits)
             .map_err(|error| AdapterError::new(format!("ODT semantic import: {error}")))?;
+        // Picture bytes, always — not only when the source is being retained.
+        //
+        // These were collected into the ODT-private retained side-table and the
+        // artifact's `resources` was left empty, so the bytes existed but nothing
+        // outside the ODT round-trip could see them. Exporting an .odt full of
+        // photographs as .docx then wrote every image as a ZERO-BYTE part beside
+        // a perfectly valid relationship, with no entry in the compatibility
+        // report — on a headline capability of the format registry.
+        //
+        // The same collection is reused rather than a second one written: it
+        // already applies the manifest lookup, the reserved/active-content
+        // exclusions and the size budgets.
+        let media_parts = package
+            .retained_media_parts(&imported.document, self.import_limits)
+            .map_err(|error| AdapterError::new(format!("ODT media: {error}")))?;
+        let mut resources = DocumentResources::default();
+        for (name, part) in &media_parts.parts {
+            resources.insert(name.clone(), part.bytes.clone());
+        }
         let retained = if request.retain_source {
-            package
-                .retained_media_parts(&imported.document, self.import_limits)
-                .map_err(|error| AdapterError::new(format!("ODT source retention: {error}")))?
+            media_parts
         } else {
             OdfRetainedParts::default()
         };
         Ok(ImportArtifact {
             document: imported.document,
-            resources: DocumentResources::default(),
+            resources,
             source: SourceEnvelope::new(
                 self.descriptor.id.clone(),
                 env!("CARGO_PKG_VERSION").to_owned(),
@@ -694,5 +711,47 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(error, IoError::ImportFailed { .. }));
+    }
+
+    /// Converting an .odt to .docx must carry the picture BYTES across.
+    ///
+    /// The importer collected them into the ODT-private retained side-table and
+    /// left the artifact's `resources` empty, so the bytes existed but nothing
+    /// outside the ODT round-trip could reach them. The DOCX writer then hit
+    /// `media.get(..).unwrap_or_default()` and emitted a ZERO-BYTE part beside a
+    /// valid relationship: every image destroyed, silently, with no entry in the
+    /// compatibility report — on a headline capability of the format registry.
+    #[test]
+    fn odt_pictures_survive_conversion_to_docx() {
+        const RICH_ODT: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.odt");
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: RICH_ODT,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("pictures.odt"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the fixture imports");
+
+        assert!(
+            !imported.document.definitions().media.is_empty(),
+            "the fixture must actually carry a picture"
+        );
+        for (_, reference) in imported.document.definitions().media.iter() {
+            let bytes = imported
+                .resources
+                .get(&reference.part_name)
+                .unwrap_or_else(|| panic!("no bytes for {}", reference.part_name));
+            assert!(
+                !bytes.is_empty(),
+                "{} came across empty — the export would write a zero-byte image",
+                reference.part_name
+            );
+        }
     }
 }

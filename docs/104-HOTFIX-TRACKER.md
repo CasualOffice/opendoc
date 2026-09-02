@@ -124,15 +124,15 @@ Every P0 is now closed or in review.
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
 | HF-036 | Printing a mixed-orientation document silently clips the landscape pages | import-export | M | Internal audit | Open |
-| HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | Open |
+| HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | In review |
 | HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | In review |
 | HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
 | HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | In review |
-| HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Open |
+| HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | In review |
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Open |
 | HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Open |
 | HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
-| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Open |
+| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | In review |
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Open |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
 | HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | In review |
@@ -152,7 +152,7 @@ Every P0 is now closed or in review.
 | HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Open |
 | HF-064 | No accessibility checker — opendoc makes the editor accessible but never audits the document being written | a11y | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-065 | Re-opening the same file does nothing, and file read errors are completely silent | editor-ux | S | Internal audit | Open |
-| HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | Open |
+| HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | In review |
 | HF-067 | The menu bar has no visible focus indicator — keyboard navigation is blind | a11y | S | Internal audit | Open |
 | HF-068 | No version history — the document has no past that survives a reload | versions | L | Sibling gap (opencalc + docs) | Open |
 | HF-069 | Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted | editor-ux | M | Internal audit | Open |
@@ -167,7 +167,7 @@ Every P0 is now closed or in review.
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
 | HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Open |
 | HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | Open |
-| HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | Open |
+| HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | In review |
 | HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Open |
 | HF-085 | main.js is 93% of the webapp with zero exports, which is why the apply paths diverged and why the embed surface is blocked | code-structure | L | Sibling gap (opencalc) | Open |
 | HF-086 | Undefined --bg-1 makes the header/footer band label unreadable and the "Add header" chip transparent | css | S | Internal audit | Open |
@@ -915,7 +915,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-037 — ODT to DOCX conversion writes every image as a zero-byte file
 
-**P2** · import-export · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · import-export · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Open an .odt with photographs and export as .docx: every image is destroyed silently, with no entry in the compatibility report — on a headline capability of the format registry.
 
@@ -963,7 +963,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-041 — Multi-valued custom document properties collapse to their last value and change type
 
-**P2** · import-export · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · import-export · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** A SharePoint/DMS property like Reviewers = [Ann, Bo, Cy] imports as the single string "Cy" and exports as a scalar — the other values are gone with no compatibility-report entry at all.
 
@@ -1011,7 +1011,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-045 — A failed edit or undo leaves the document half-changed and can lose the undo step
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** An operation that reports failure can still have deleted characters (no inverse recorded, nothing to undo), and a failed undo/redo pops the history entry first — so the document is half-reverted and the next Ctrl+Z reverts the previous action on top of it, with no way back.
 
@@ -1020,6 +1020,10 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** DeleteText clones `old` then runs ensure_run_boundary/remove_covered_range with `?` and never restores; remove_covered_in removes inlines as it scans before erroring on a straddling atomic leaf. undo()/redo() pop first and call apply_group with no snapshot, while apply_action_as does snapshot for multi-op actions.
 
 **Fix.** Give DeleteText/FormatText/ClearFormatting/InsertNote a real rollback (compute into a clone and commit on success, as SetHyperlink does) plus reject_partial_atomic before any mutation; snapshot before undo/redo and only pop the entry after a successful apply, and give apply_group its own snapshot/restore.
+
+**Partial.** The edit-crate half (a failed delete no longer half-mutates) is fixed. The
+`undo()`/`redo()` half — popping the history entry before applying, with no snapshot —
+remains open.
 
 ### HF-046 — The paste-options chip undoes an unrelated edit if you press Cmd+Z first
 
@@ -1261,7 +1265,7 @@ a test that could not fail.
 
 ### HF-066 — Pasted hyperlinks are stored with no scheme filter and re-exported
 
-**P2** · security · security · effort S · source: Internal audit · **Status:** Open
+**P2** · security · security · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Copying a paragraph from a malicious page brings a javascript:/data: link into the document, which is then written into the exported .docx and handed to whatever app the user pastes it into next — and it is executable through the context-menu Open link path.
 
@@ -1270,6 +1274,9 @@ a test that could not fail.
 **Evidence.** htmlToRuns takes getAttribute("href") verbatim in the module that documents itself as sanitizing; applyLinkDialog rejects only an empty target; no scheme predicate exists at any ingestion point.
 
 **Fix.** Add one scheme allowlist at the ingestion choke point: in htmlToRuns resolve the href and keep it only for http/https/mailto or a same-document #anchor (keeping the text otherwise), and apply the same predicate in applyLinkDialog.
+
+**Partial.** Paste ingestion now filters link schemes. The link-dialog half
+(`webapp/src/main.js`) remains open; it sits in a file held by an unmerged branch.
 
 ### HF-067 — The menu bar has no visible focus indicator — keyboard navigation is blind
 
@@ -1445,7 +1452,7 @@ a test that could not fail.
 
 ### HF-082 — The galley cache never evicts entries for deleted paragraphs
 
-**P2** · perf · perf · effort S · source: Internal audit · **Status:** Open
+**P2** · perf · perf · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Memory grows monotonically through a long editing session — every Enter, join and undo/redo cycle leaves shaped fragments behind for paragraphs that no longer exist, which in a browser tab is a hard limit rather than mere pressure.
 

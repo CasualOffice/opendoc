@@ -52,7 +52,7 @@ pub(crate) fn parse(
         None => AppProperties::default(),
     };
     let custom = match &sources.custom {
-        Some(xml) => parse_custom(xml, config)?,
+        Some(xml) => parse_custom(xml, config, reporter)?,
         None => Vec::new(),
     };
     let properties = DocumentProperties { core, app, custom };
@@ -337,13 +337,18 @@ fn parse_bool(value: &str) -> bool {
 
 /// Parses `docProps/custom.xml` into the ordered custom-property list. The OPC
 /// `fmtid`/`pid` bookkeeping is ignored (regenerated on write).
-fn parse_custom(xml: &[u8], config: ImportConfig) -> Result<Vec<CustomProperty>, ImportError> {
+fn parse_custom(
+    xml: &[u8],
+    config: ImportConfig,
+    reporter: &mut Reporter,
+) -> Result<Vec<CustomProperty>, ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut out = Vec::new();
     let mut elements = 0_u64;
     let mut depth = 0_u64;
     let mut pending_name: Option<String> = None;
+    let mut values_seen = 0_u32;
     let mut pending_value: Option<CustomValue> = None;
     let mut vt: Option<Vec<u8>> = None;
     let mut text = String::new();
@@ -364,6 +369,7 @@ fn parse_custom(xml: &[u8], config: ImportConfig) -> Result<Vec<CustomProperty>,
                 if element.local_name().as_ref() == b"property" {
                     pending_name = property_name(&element);
                     pending_value = None;
+                    values_seen = 0;
                 } else if pending_name.is_some() {
                     vt = Some(element.local_name().as_ref().to_vec());
                     text.clear();
@@ -391,10 +397,26 @@ fn parse_custom(xml: &[u8], config: ImportConfig) -> Result<Vec<CustomProperty>,
                     if let (Some(name), Some(value)) = (pending_name.take(), pending_value.take())
                         && !name.is_empty()
                     {
+                        if values_seen > 1 {
+                            reporter.report(b"customProperty:multiValued");
+                        }
                         out.push(CustomProperty { name, value });
                     }
+                    values_seen = 0;
                 } else if let Some(kind) = vt.take() {
-                    pending_value = Some(custom_value(&kind, std::mem::take(&mut text)));
+                    // A `vt:vector` contributes one leaf per element, and each one
+                    // overwrote the last — so `Reviewers = [Ann, Bo, Cy]` imported
+                    // as the single string "Cy" and exported as a scalar, with the
+                    // other values gone and nothing said about it. The model has no
+                    // vector value to preserve them into, so the honest outcome is
+                    // to keep the first (rather than silently the last) and report
+                    // the rest as degraded.
+                    values_seen += 1;
+                    if pending_value.is_none() {
+                        pending_value = Some(custom_value(&kind, std::mem::take(&mut text)));
+                    } else {
+                        text.clear();
+                    }
                 }
                 depth = depth.saturating_sub(1);
             }
@@ -443,6 +465,73 @@ mod tests {
     use super::{DocPropsSources, parse};
     use crate::{ImportConfig, Reporter};
     use casual_doc_model::v1::CustomValue;
+
+    /// A multi-valued custom property must not collapse to one value in silence.
+    ///
+    /// A `vt:vector` contributes one leaf per element and each overwrote the last,
+    /// so a SharePoint/DMS property like `Reviewers = [Ann, Bo, Cy]` imported as
+    /// the single string "Cy" and exported as a scalar — the other values gone,
+    /// the type changed, and no entry in the compatibility report at all.
+    ///
+    /// The model has no vector value to preserve them into, so the honest outcome
+    /// is the FIRST value rather than silently the last, plus a reported
+    /// degradation. Keeping the last was the part that made it look deliberate.
+    #[test]
+    fn a_multi_valued_custom_property_is_reported_not_silently_collapsed() {
+        let sources = DocPropsSources {
+            core: None,
+            app: None,
+            custom: Some(
+                br#"<Properties xmlns="urn:custom" xmlns:vt="urn:vt">
+                    <property name="Reviewers"><vt:vector size="3" baseType="lpstr">
+                        <vt:lpstr>Ann</vt:lpstr><vt:lpstr>Bo</vt:lpstr><vt:lpstr>Cy</vt:lpstr>
+                    </vt:vector></property>
+                    <property name="Label"><vt:lpwstr>single</vt:lpwstr></property>
+                </Properties>"#
+                    .to_vec(),
+            ),
+        };
+        let mut reporter = Reporter::default();
+        let properties = parse(&sources, ImportConfig::default(), &mut reporter)
+            .unwrap()
+            .expect("properties");
+
+        let reviewers = properties
+            .custom
+            .iter()
+            .find(|p| p.name == "Reviewers")
+            .expect("the property survives");
+        assert_eq!(
+            reviewers.value,
+            CustomValue::Text {
+                value: "Ann".to_owned()
+            },
+            "the FIRST value is kept, not the last"
+        );
+
+        let report = reporter.into_report(crate::report::RetentionOutcome::NotRetained);
+        assert!(
+            report
+                .entries
+                .iter()
+                .any(|entry| entry.feature.contains("customProperty:multiValued")),
+            "the dropped values are reported: {:?}",
+            report.entries
+        );
+
+        // A single-valued property is untouched and reports nothing extra.
+        let label = properties
+            .custom
+            .iter()
+            .find(|p| p.name == "Label")
+            .expect("the scalar property survives");
+        assert_eq!(
+            label.value,
+            CustomValue::Text {
+                value: "single".to_owned()
+            }
+        );
+    }
 
     #[test]
     fn xml_references_are_preserved_in_all_property_parts() {
