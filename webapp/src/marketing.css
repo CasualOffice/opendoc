@@ -2504,8 +2504,31 @@ main.home {
 }
 
 @media (max-width: 820px) {
+  /* The nav used to be `display: none` here with nothing put in its place: no
+     toggle, no overflow menu, no footer duplicate. On a phone that left Docs
+     and Fidelity reachable only by typing a URL or pressing Back — the site's
+     own navigation, gone (HF-087). It does not need to be hidden; it needs a
+     row. The header wraps, the brand and the actions keep the first row, and
+     the four primary links get the full width of the second one, centred.
+     Wrapping rather than a disclosure keeps ONE nav in the DOM: no duplicated
+     link set to drift, no second `aria-current`, and no JavaScript on a static
+     marketing page that otherwise ships none. */
+  .site-header-inner {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding-block: 10px;
+  }
+
   .site-nav {
-    display: none;
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .site-header-actions {
+    margin-left: auto;
   }
 
   .home-metrics-grid {
@@ -2546,8 +2569,11 @@ main.home {
     gap: 16px;
   }
 
-  .brand-badge,
-  .header-link {
+  /* The "Pre-release" chip is decoration and can go; the GitHub link is a
+     destination and stays. It was hidden here too, so on a phone the header
+     offered exactly one link out of the current page (HF-087). With the nav on
+     its own row above, the first row has the width for brand + GitHub + CTA. */
+  .brand-badge {
     display: none;
   }
 
