@@ -414,13 +414,6 @@ impl<'a> LayoutSnapshot<'a> {
     pub fn move_vertical(&self, pos: ModelPos, dir: Direction) -> Option<ModelPos> {
         let lines = self.line_boxes();
         let cur = caret_start_line(&lines, pos)?;
-        let target = match dir {
-            Direction::Up => cur.checked_sub(1)?,
-            Direction::Down => {
-                let next = cur + 1;
-                (next < lines.len()).then_some(next)?
-            }
-        };
 
         // The x-affinity: the caret's current x on its own line.
         let cur_stops = stops_for(lines[cur].line, lines[cur].left);
@@ -428,6 +421,52 @@ impl<'a> LayoutSnapshot<'a> {
             .iter()
             .find(|s| s.offset == pos.offset)
             .map_or_else(|| nearest_stop(&cur_stops, lines[cur].left).x, |s| s.x);
+
+        // Vertical movement is GEOMETRIC, not flow-ordered.
+        //
+        // Taking `cur ± 1` in the flat line list meant the next line in document
+        // order, and a table row emits every line of cell 1 before cell 2 — so
+        // pressing Down at the bottom of the top-left cell moved the caret UP and
+        // to the RIGHT into the top-right cell, and the cell directly below could
+        // not be reached with the arrow keys at all. The same shape applies to
+        // multi-column sections. Word and Docs both move down within the column.
+        //
+        // A line is a candidate if it sits below (above, going up) the current
+        // one; candidates in the caret's own column are preferred, so a taller
+        // neighbouring cell cannot capture the caret. `cell` is `None` for a body
+        // paragraph, which spans the content width and therefore always matches.
+        let here = (lines[cur].page, lines[cur].top.raw());
+        let beyond = |lb: &LineBox<'_>| {
+            let there = (lb.page, lb.top.raw());
+            match dir {
+                Direction::Down => there > here,
+                Direction::Up => there < here,
+            }
+        };
+        let in_column = |lb: &LineBox<'_>| {
+            lb.cell
+                .is_none_or(|(left, right)| affinity >= left && affinity < right)
+        };
+        // Distance in visual order, so the nearest band wins; ties inside a band
+        // are broken by horizontal distance from the affinity.
+        let rank = |lb: &LineBox<'_>| {
+            let rows = i64::from(lb.page) * 1_000_000 + i64::from(lb.top.raw());
+            let hereness = i64::from(here.0) * 1_000_000 + i64::from(here.1);
+            let vertical = match dir {
+                Direction::Down => rows - hereness,
+                Direction::Up => hereness - rows,
+            };
+            (vertical, (lb.left.raw() - affinity.raw()).abs())
+        };
+        let best = |column_only: bool| {
+            lines
+                .iter()
+                .enumerate()
+                .filter(|(_, lb)| beyond(lb) && (!column_only || in_column(lb)))
+                .min_by_key(|(_, lb)| rank(lb))
+                .map(|(index, _)| index)
+        };
+        let target = best(true).or_else(|| best(false))?;
 
         let tgt = &lines[target];
         let stops = stops_for(tgt.line, tgt.left);
@@ -1924,6 +1963,76 @@ mod tests {
             );
             last_x = x;
         }
+    }
+
+    /// Down in a table must move down the COLUMN, not across to the next cell.
+    ///
+    /// Vertical movement took `cur ± 1` in the flat line list, and a table row
+    /// emits every line of cell 1 before cell 2 — so pressing Down at the bottom
+    /// of the top-left cell moved the caret UP and to the RIGHT into the
+    /// top-right cell, and the cell directly below could not be reached with the
+    /// arrow keys at all. Word and Docs both move down within the column.
+    #[test]
+    fn down_in_a_table_moves_down_the_column_not_across_the_row() {
+        use crate::block::{
+            CellBorders, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
+        };
+        let cell = |id: u64, x: i32, width: i32, para: u64| CellFragment {
+            id: node(id),
+            grid_span: 1,
+            x: Twip(x),
+            width: Twip(width),
+            cell_spacing: Default::default(),
+            blocks: vec![ltr_para(para, &[1])],
+            margins: CellContentMargins::default(),
+            vertical_alignment: CellVAlign::Top,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
+            shading: None,
+        };
+        let row = |id: u64, left: u64, right: u64| BlockFragment::TableRow {
+            id: node(id),
+            table: node(20),
+            cells: vec![cell(id + 1, 0, 3000, left), cell(id + 2, 3000, 3000, right)],
+            height: Twip(500),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        };
+
+        // A 2x2 table: top row paragraphs 100 (left) and 200 (right); bottom row
+        // 300 (left) and 400 (right).
+        let paginated = layout(&[row(10, 100, 200), row(30, 300, 400)]);
+        let snap = LayoutSnapshot::new(&paginated);
+
+        let from_top_left = ModelPos::new(node(100), 0);
+        let down = snap
+            .move_vertical(from_top_left, Direction::Down)
+            .expect("there is a row below");
+        assert_eq!(
+            down.node,
+            node(300),
+            "Down from the top-left cell lands in the cell BELOW it, not the one beside it"
+        );
+
+        // And back up again returns to the column it came from.
+        let up = snap
+            .move_vertical(down, Direction::Up)
+            .expect("there is a row above");
+        assert_eq!(up.node, node(100), "Up returns to the same column");
+
+        // The right-hand column navigates independently.
+        let from_top_right = ModelPos::new(node(200), 0);
+        let down_right = snap
+            .move_vertical(from_top_right, Direction::Down)
+            .expect("there is a row below");
+        assert_eq!(
+            down_right.node,
+            node(400),
+            "the right column moves down too"
+        );
     }
 
     /// Hit-testing one page must walk one page.
