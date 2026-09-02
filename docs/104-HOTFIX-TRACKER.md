@@ -88,6 +88,16 @@ prescribed fix was found to be wrong:
   width, because it was written above the desktop rule and media queries add no
   specificity.
 
+Gaps surfaced while closing HF-028, not yet rows of their own:
+
+- `wp:docPr@title`/`@name` are dropped on import with no report — the model has
+  no field, so the accessibility `Image` node can carry no title.
+- The accessibility projection walks the BODY only. Headers, footers, notes and
+  text-box stories contribute nothing to the screen-reader tree at all. The fix
+  is `surface_block_lists`, which already exists.
+- `EmbeddedObject` (chart / SmartArt / OLE) still emits no accessibility node; it
+  needs the alt-text field above before announcing it would say anything useful.
+
 Still waiting on an owner decision, not on engineering:
 
 - **HF-102** — Remove Link keeping its blue underline is *documented as
@@ -137,7 +147,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | Fixed |
 | HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Fixed |
-| HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Open |
+| HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Fixed |
 | HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Fixed |
 | HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Open |
 | HF-081 | No localization seam — every string is an English literal inside a 14.9k-line file | i18n | L | Sibling gap (opencalc + docs) | Open |
@@ -159,7 +169,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
 | HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | Fixed |
 | HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Fixed |
-| HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Open |
+| HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Fixed |
 | HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Fixed |
 | HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
 | HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Partly fixed |
@@ -793,7 +803,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-028 — Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish
 
-**P1** · accessibility · a11y · effort M · source: Internal audit · **Status:** Open
+**P1** · accessibility · a11y · effort M · source: Internal audit · **Status:** Fixed (#511 engine projection, #512 host rendering)
 
 **Symptom.** A screen reader reading a figure-heavy document hears the paragraph before the chart and the one after it — the image and the alt text the user carefully typed are simply absent. Tables read with no column or row headers.
 
@@ -1005,7 +1015,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-042 — Charts and ink are dropped even when the file carries a fallback the model supports
 
-**P2** · import-export · bug · effort L · source: Internal audit · **Status:** Open
+**P2** · import-export · bug · effort L · source: Internal audit · **Status:** Fixed (#511)
 
 **Symptom.** A document with a modern chart or ink annotation loses it entirely on import, although the mc:Fallback branch holds a DrawingML/VML equivalent opendoc can represent — Word takes that fallback.
 

@@ -75,3 +75,59 @@ test("the accessibility tree stays in sync when the document is edited", async (
 
   expect(consoleErrors).toEqual([]);
 });
+
+// A picture in the document must be ANNOUNCED. The engine gained an `image`
+// node (#511) carrying the author's alt text; before the host rendered it, the
+// node fell through to the generic branch and became an empty `<p>` — a figure
+// announced as silence, which is worse than announcing it badly.
+test("a picture is announced, with the author's alt text when there is one", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+
+  const images = page.locator("#a11yDocument img");
+  await expect.poll(() => images.count()).toBeGreaterThan(0);
+  const count = await images.count();
+  expect(count).toBeGreaterThan(0);
+
+  // Every announced figure carries a non-empty accessible name. An empty alt
+  // would hide the graphic from a reader entirely, and the engine cannot know
+  // the author meant it to be decorative.
+  for (let i = 0; i < count; i += 1) {
+    const alt = await images.nth(i).getAttribute("alt");
+    expect(alt, `figure ${i} has no accessible name`).toBeTruthy();
+    expect(alt.trim().length).toBeGreaterThan(0);
+  }
+
+  expect(consoleErrors).toEqual([]);
+});
+
+// A table's header geometry is what lets a reader hear "Revenue, Q3" while
+// moving through cells, instead of a bare grid of numbers. The engine reports
+// which rows are headers (#511); the host has to render them as `th` with a
+// scope, or the information is thrown away on the last step.
+test("a header row reaches the accessibility tree as th scope=col", async ({ page }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Insert a table and mark its first row as a repeating header — the same
+  // control a user would use.
+  await page.locator('[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await expect(page.locator("#insertTableMenu")).toBeVisible();
+  await page.locator('.gc[data-r="2"][data-c="2"]').click();
+  await expect(page.locator("#tabTable")).toBeEnabled();
+  await page.locator("#tabTable").click();
+
+  const before = await page.locator('#a11yDocument thead th[scope="col"]').count();
+  expect(before, "the fresh table has no header row yet").toBe(0);
+
+  await page.locator("#tablePropertiesBtn").click();
+  await page.locator("#tableHeaderRow").check();
+
+  // The projection now reports row 0 as a header, and the tree must say so.
+  await expect
+    .poll(() => page.locator('#a11yDocument thead th[scope="col"]').count())
+    .toBeGreaterThan(0);
+});

@@ -10267,18 +10267,56 @@ function buildAccessibilityTree() {
       const heading = document.createElement(`h${level}`);
       heading.textContent = String(node.text ?? "");
       frag.appendChild(heading);
+    } else if (node.kind === "image") {
+      // A figure the engine found in the document. Reaching the `else` below
+      // would render it as an empty `<p>` — a picture announced as SILENCE,
+      // which is worse than announcing it badly.
+      //
+      // `alt` is the author's own description (the same text the object
+      // inspector writes). Without one the graphic is still announced, because a
+      // reader needs to know something is there that they are not being told
+      // about; a decorative `alt=""` would hide it entirely, and this engine
+      // cannot know the author meant that.
+      const image = document.createElement("img");
+      const alt = typeof node.alt === "string" ? node.alt.trim() : "";
+      image.setAttribute("src", "data:,");
+      image.setAttribute("alt", alt || "Image without a description");
+      frag.appendChild(image);
     } else if (node.kind === "table") {
       const table = document.createElement("table");
-      const tbody = document.createElement("tbody");
-      for (const row of Array.isArray(node.rows) ? node.rows : []) {
-        const tr = document.createElement("tr");
-        for (const cell of Array.isArray(row) ? row : []) {
-          const td = document.createElement("td");
-          td.textContent = String(cell ?? "");
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
+      // A table's header geometry is what lets a reader say "Revenue, Q3" while
+      // moving through cells instead of reading a bare grid of numbers. The
+      // engine now reports which rows are headers (`w:tblHeader`, `cnfStyle`, or
+      // `tblLook`) and whether the first column heads its row.
+      const headerRows = new Set(
+        (Array.isArray(node.headerRows) ? node.headerRows : []).map(Number),
+      );
+      const rowHeaderColumn = node.rowHeaderColumn === true;
+      if (typeof node.caption === "string" && node.caption.trim()) {
+        const caption = document.createElement("caption");
+        caption.textContent = node.caption;
+        table.appendChild(caption);
       }
+      if (typeof node.description === "string" && node.description.trim()) {
+        table.setAttribute("aria-description", node.description);
+      }
+      const thead = document.createElement("thead");
+      const tbody = document.createElement("tbody");
+      const rows = Array.isArray(node.rows) ? node.rows : [];
+      for (const [index, row] of rows.entries()) {
+        const tr = document.createElement("tr");
+        const isHeaderRow = headerRows.has(index);
+        for (const [column, cell] of (Array.isArray(row) ? row : []).entries()) {
+          // A header ROW heads its column; a header COLUMN heads its row.
+          const heads = isHeaderRow || (rowHeaderColumn && column === 0);
+          const el = document.createElement(heads ? "th" : "td");
+          if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
+          el.textContent = String(cell ?? "");
+          tr.appendChild(el);
+        }
+        (isHeaderRow ? thead : tbody).appendChild(tr);
+      }
+      if (thead.childElementCount > 0) table.appendChild(thead);
       table.appendChild(tbody);
       frag.appendChild(table);
     } else {
