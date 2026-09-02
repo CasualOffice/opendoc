@@ -1137,8 +1137,13 @@ impl WasmDocument {
         height_emu: f64,
     ) -> Result<EditResult, JsValue> {
         let object = node_id(node)?;
-        let width = (width_emu.round() as i64).clamp(1, MAX_EMU);
-        let height = (height_emu.round() as i64).clamp(1, MAX_EMU);
+        // Rejected rather than clamped. `NaN as i64` saturates to 0, which then
+        // clamps to 1 EMU — so a host passing a NaN width silently collapsed the
+        // object to an invisible sliver instead of being told its input was
+        // nonsense. The sibling `resize_object` already refuses the same values
+        // through `bounded_emu`; these two were the ones that did not.
+        let width = bounded_emu(width_emu, 1, MAX_EMU, "width")?;
+        let height = bounded_emu(height_emu, 1, MAX_EMU, "height")?;
         self.apply_action_caret_as(
             vec![Operation::SetExtent {
                 object,
@@ -1488,8 +1493,8 @@ impl WasmDocument {
             return Err(to_js("the image has no bytes".into()));
         }
         let owner = node_id(node)?;
-        let width = (width_emu.round() as i64).clamp(1, MAX_EMU);
-        let height = (height_emu.round() as i64).clamp(1, MAX_EMU);
+        let width = bounded_emu(width_emu, 1, MAX_EMU, "width")?;
+        let height = bounded_emu(height_emu, 1, MAX_EMU, "height")?;
         let exhausted = || to_js("id space exhausted".into());
         let media_seq = self.edit_ids.next_id().map_err(|_| exhausted())?;
         let drawing_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
@@ -14723,12 +14728,30 @@ const INLINE_RESIZE_HANDLES: u8 = (1 << 3) | (1 << 4) | (1 << 5);
 const FLOAT_RESIZE_HANDLES: u8 = u8::MAX;
 
 fn bounded_emu(value: f64, min: i64, max: i64, label: &str) -> Result<i64, JsValue> {
+    match checked_emu(value, min, max) {
+        Ok(emu) => Ok(emu),
+        Err(EmuError::NotFinite) => Err(to_js(format!("{label} must be finite"))),
+        Err(EmuError::OutOfBounds) => Err(to_js(format!("{label} is out of bounds"))),
+    }
+}
+
+/// Why an EMU value was refused. Separated from [`bounded_emu`] so the rule can
+/// be tested on a native target: building the `JsValue` its caller returns panics
+/// outside WebAssembly, which is how these guards went untested.
+#[derive(Debug, Eq, PartialEq)]
+enum EmuError {
+    NotFinite,
+    OutOfBounds,
+}
+
+/// An EMU measurement from a host, rounded, or the reason it is not one.
+fn checked_emu(value: f64, min: i64, max: i64) -> Result<i64, EmuError> {
     if !value.is_finite() {
-        return Err(to_js(format!("{label} must be finite")));
+        return Err(EmuError::NotFinite);
     }
     let rounded = value.round();
     if rounded < min as f64 || rounded > max as f64 {
-        return Err(to_js(format!("{label} is out of bounds")));
+        return Err(EmuError::OutOfBounds);
     }
     #[allow(clippy::cast_possible_truncation)]
     Ok(rounded as i64)
@@ -25452,6 +25475,43 @@ mod tests {
         // An unrecognised name is not a highlight. Yellow was the old answer, and
         // it is the answer that hid the defect.
         assert_eq!(parse_highlight("chartreuse"), H::None);
+    }
+
+    /// A non-finite extent must be REFUSED, not quietly turned into a sliver.
+    ///
+    /// `setObjectExtent` and `insertImage` did `(v.round() as i64).clamp(1, MAX)`.
+    /// `NaN as i64` saturates to 0, which then clamps to 1 EMU — so a host passing
+    /// a NaN width collapsed the object to something invisible and was told the
+    /// operation succeeded. The sibling `resize_object` already refused the same
+    /// values through `bounded_emu`; these two entry points did not. No in-repo
+    /// caller reaches them, which is exactly why they needed a guard: the exposure
+    /// is third-party embedders.
+    ///
+    /// Asserted on `checked_emu` rather than through the wasm entry points,
+    /// because building the `JsValue` an error returns panics on a native target —
+    /// which is why the old clamp was never caught by a test.
+    #[test]
+    fn a_non_finite_extent_is_refused_rather_than_collapsed() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                checked_emu(bad, 1, MAX_EMU),
+                Err(EmuError::NotFinite),
+                "{bad} is not a measurement"
+            );
+        }
+
+        // Why clamping hid it: `NaN as i64` saturates to 0, which clamps to a
+        // single EMU — an object too small to see, reported as success.
+        #[allow(clippy::cast_possible_truncation)]
+        let collapsed = (f64::NAN.round() as i64).clamp(1, MAX_EMU);
+        assert_eq!(collapsed, 1);
+
+        assert_eq!(checked_emu(0.0, 1, MAX_EMU), Err(EmuError::OutOfBounds));
+        assert_eq!(
+            checked_emu((MAX_EMU as f64) + 1.0, 1, MAX_EMU),
+            Err(EmuError::OutOfBounds)
+        );
+        assert_eq!(checked_emu(100_000.4, 1, MAX_EMU), Ok(100_000));
     }
 
     #[test]

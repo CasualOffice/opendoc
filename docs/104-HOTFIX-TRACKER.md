@@ -103,7 +103,7 @@ Every P0 is now closed or in review.
 | HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Open |
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
 | HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | In review |
-| HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Open |
+| HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | In review |
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | In review |
 | HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | In review |
@@ -196,7 +196,7 @@ Every P0 is now closed or in review.
 | HF-105 | Print freezes the tab with no progress, cancel, or page-range control | perf | M | Internal audit | Open |
 | HF-106 | In crop mode arrow keys move the picture and a cancelled drag leaves crop stuck | editor-ux | M | Internal audit | Open |
 | HF-107 | Changing a list marker writes numbering definitions outside the undo system | wasm | M | Internal audit | Open |
-| HF-108 | setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU | wasm | S | Internal audit | Open |
+| HF-108 | setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU | wasm | S | Internal audit | In review |
 | HF-109 | Nothing is embeddable: no host-capability modes, no custom element, no package | embedding | L | Sibling gap (opencalc + docs) | Open |
 | HF-110 | Every keystroke walks and materializes the whole document's text twice | wasm | M | Internal audit | Open |
 | HF-111 | Each suggested keystroke re-validates the entire document | perf | M | Internal audit | Open |
@@ -713,7 +713,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-024 — Down arrow in a table jumps sideways to the next cell instead of the row below
 
-**P1** · editor-ux · parity · effort M · source: Internal audit · **Status:** Open
+**P1** · editor-ux · parity · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** In a 2x2 table, pressing Down at the bottom of the top-left cell moves the caret up and to the right into the top-right cell; the cell directly below can never be reached with the arrow keys. Word and Docs both move down within the column.
 
@@ -1742,7 +1742,7 @@ a test that could not fail.
 
 ### HF-108 — setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU
 
-**P3** · wasm · bug · effort S · source: Internal audit · **Status:** Open
+**P3** · wasm · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** A host computing an aspect-preserving size from a zero natural width gets success back while the image silently vanishes from the page, and the undo entry records the collapse as a legitimate resize.
 
