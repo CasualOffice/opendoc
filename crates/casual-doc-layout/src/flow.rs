@@ -691,6 +691,11 @@ pub fn build_galley_cached(
             }
         }
     }
+    // One cached build covers the whole body, so anything the build did not touch
+    // belongs to a paragraph the document no longer has. Without this the map only
+    // grew: every Enter, join and undo/redo cycle left shaped lines behind for
+    // paragraphs that are gone.
+    cache.end_build();
     galley
 }
 

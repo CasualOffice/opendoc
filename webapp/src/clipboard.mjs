@@ -84,6 +84,35 @@ function runToHtml(run) {
 const BLOCK_TAGS = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6"]);
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE"]);
 
+/** The schemes a pasted link may carry, matching what the editor is willing to
+ * follow. */
+const SAFE_LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+/** A pasted `href` if it is safe to keep, else `null`.
+ *
+ * This module documents itself as sanitizing, but took `href` verbatim — so
+ * copying a paragraph from a hostile page brought a `javascript:` or `data:`
+ * target into the document, where it was written into the exported .docx and
+ * handed on to whatever application the user pasted into next. The follow path
+ * already refuses those schemes; storing them was the part nobody checked.
+ *
+ * Relative and fragment targets carry no scheme and cannot execute, so they are
+ * kept. ASCII control characters are removed first because browsers ignore them
+ * when resolving a URL, which makes `java\tscript:` executable while looking
+ * schemeless to a naive test. */
+function safeLinkTarget(href) {
+  if (!href) return null;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = href.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!cleaned) return null;
+  const colon = cleaned.indexOf(":");
+  const slash = cleaned.indexOf("/");
+  const hasScheme = colon > 0 && (slash === -1 || colon < slash);
+  if (!hasScheme) return cleaned;
+  const scheme = cleaned.slice(0, colon + 1).toLowerCase();
+  return SAFE_LINK_SCHEMES.has(scheme) ? cleaned : null;
+}
+
 /** Parses a browser-native DOM (from an external app's `text/html` paste —
  * Word, Docs, a browser selection) into `ClipboardRun[]`. Best-effort and
  * sanitizing: recognizes common formatting tags, `<a href>`, and inline CSS on
@@ -141,7 +170,7 @@ export function htmlToRuns(root) {
       if (tag === "SUP") next.vertAlign = "super";
       if (tag === "SUB") next.vertAlign = "sub";
       if (tag === "A") {
-        const href = child.getAttribute("href");
+        const href = safeLinkTarget(child.getAttribute("href"));
         if (href) next.href = href;
       }
       applyInlineStyle(next, child.getAttribute("style"));

@@ -904,12 +904,22 @@ pub fn apply(
             // back each deleted run's own formatting — an `InsertText` (plain text)
             // inverse could not.
             let old = para.inlines.clone();
-            ensure_run_boundary(&mut para.inlines, range.end.offset, ids)?;
-            ensure_run_boundary(&mut para.inlines, range.start.offset, ids)?;
-            remove_covered_range(&mut para.inlines, range.start.offset, range.end.offset)?;
+            // Computed on a copy and committed only once every step has succeeded.
+            //
+            // These three steps mutate as they go and any of them can fail — a
+            // range straddling an atomic leaf makes `remove_covered_range` error
+            // after it has already removed inlines. Running them in place meant a
+            // refused delete had still destroyed characters, with no inverse
+            // recorded because the operation returned `Err` before building one:
+            // text gone, and nothing for undo to bring back.
+            let mut next = old.clone();
+            ensure_run_boundary(&mut next, range.end.offset, ids)?;
+            ensure_run_boundary(&mut next, range.start.offset, ids)?;
+            remove_covered_range(&mut next, range.start.offset, range.end.offset)?;
             // The removal can leave two equal-property runs adjacent (or a boundary
             // split earlier did); the model forbids that, so merge them back.
-            coalesce_adjacent_runs(&mut para.inlines);
+            coalesce_adjacent_runs(&mut next);
+            para.inlines = next;
             Ok(Operation::SetInlines {
                 node: range.start.node,
                 inlines: old,
@@ -6745,6 +6755,58 @@ mod tests {
             "Hello",
             "undo restores exactly the prior text"
         );
+    }
+
+    /// A delete that FAILS must leave the paragraph exactly as it was.
+    ///
+    /// The three steps of the general delete path mutate as they go, and
+    /// `remove_covered_range` errors on a range that straddles an atomic leaf —
+    /// but only after it has already removed every inline the range fully
+    /// covered. Running them in place meant a refused delete had still destroyed
+    /// characters, and because the operation returned `Err` before building its
+    /// inverse there was nothing for undo to bring back. Text gone, no way back,
+    /// and the editor reporting that nothing happened.
+    #[test]
+    fn a_refused_delete_leaves_the_paragraph_untouched() {
+        use casual_doc_model::v1::Symbol;
+
+        // "ab" occupies 0..2; the symbol is a four-byte scalar occupying 2..6, and
+        // it is atomic — it cannot be split, so a range ending inside it is
+        // refused. Deleting 0..4 fully covers the run and straddles the symbol.
+        let p = n(2);
+        let mut d = doc(vec![BlockNode::Paragraph(Paragraph {
+            id: p,
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run(3, "ab"),
+                InlineNode::Symbol(Symbol {
+                    id: n(4),
+                    font: "Wingdings".to_owned(),
+                    char: 0x1_F600,
+                    properties: RunProperties::default(),
+                }),
+                run(5, "cd"),
+            ],
+        })]);
+        let mut ids = IdGenerator::new(9);
+        let before = d.clone();
+
+        let result = apply(
+            &mut d,
+            &mut ids,
+            &Operation::DeleteText {
+                range: Range {
+                    start: Pos::new(p, 0),
+                    end: Pos::new(p, 4),
+                },
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a range straddling an atomic leaf is refused"
+        );
+        assert_eq!(d, before, "a refused delete must not have removed anything");
     }
 
     #[test]
