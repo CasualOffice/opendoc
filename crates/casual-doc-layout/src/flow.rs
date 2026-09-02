@@ -1037,17 +1037,23 @@ fn flow_blocks(
                     .resolve_paragraph(&paragraph.properties)
                     .contextual_spacing;
                 let galley_index = galley.len();
-                // This paragraph's top edge, before it is pushed. A square-wrap
-                // float anchored here spans `[anchor_top, anchor_top + clearance)`.
-                let anchor_top = galley
-                    .iter()
-                    .map(BlockFragment::height)
-                    .fold(Twip::ZERO, |a, h| a + h);
                 if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
                     .iter()
                     .map(|carry| carry.height)
                     .max()
                 {
+                    // This paragraph's top edge, before it is pushed. A square-wrap
+                    // float anchored here spans `[anchor_top, anchor_top + clearance)`.
+                    //
+                    // Summed only when a float is actually anchored here, which is
+                    // rare. It used to be summed for EVERY paragraph, and
+                    // `BlockFragment::height` itself folds over every line of every
+                    // fragment — so laying out a document was quadratic in its own
+                    // length, on documents containing no floats at all.
+                    let anchor_top = galley
+                        .iter()
+                        .map(BlockFragment::height)
+                        .fold(Twip::ZERO, |a, h| a + h);
                     float_floor = float_floor.max(anchor_top + clearance);
                 }
                 galley.push(flow_paragraph_with_carries(

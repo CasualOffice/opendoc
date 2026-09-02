@@ -3131,8 +3131,10 @@ impl WasmDocument {
         let (start, end) = self
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
+        // The ordered endpoints, not the strings again: the string-taking form
+        // re-orders them, and ordering walks every paragraph on every surface.
         let mut ops = self
-            .selection_delete_ops(start_node, start_offset, end_node, end_offset)
+            .selection_delete_ops_ordered(start, end)
             .map_err(to_js)?;
         let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
         ops.append(&mut insert_ops);
@@ -9067,6 +9069,10 @@ impl WasmDocument {
         for (_, note) in definitions.endnotes.iter() {
             collect_block_text(&note.blocks, &mut nodes);
         }
+        // Only the LENGTH of each paragraph is wanted, but the walk built an owned
+        // `String` for every paragraph on every surface first — an allocation per
+        // paragraph, per call, thrown away immediately. On a long document that is
+        // the bulk of the cost of ordering two endpoints.
         nodes
             .into_iter()
             .map(|(id, text)| (id, text.len() as u32))
@@ -9160,6 +9166,16 @@ impl WasmDocument {
         end_offset: u32,
     ) -> Result<Vec<Operation>, String> {
         let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        self.selection_delete_ops_ordered(start, end)
+    }
+
+    /// [`selection_delete_ops`] for a caller that has already ordered its
+    /// endpoints, so the document is not walked a second time.
+    ///
+    /// Ordering an endpoint means walking every paragraph on every surface, and
+    /// `type_text` ordered its endpoints and then called the string-taking form,
+    /// which ordered them again — two full walks per keystroke.
+    fn selection_delete_ops_ordered(&self, start: Pos, end: Pos) -> Result<Vec<Operation>, String> {
         if start.node == end.node {
             if start.offset == end.offset {
                 return Ok(Vec::new());
