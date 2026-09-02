@@ -6602,12 +6602,14 @@ impl WasmDocument {
                 comments.insert(*key, value.clone());
             }
         }
-        let mut body = self.document.body().to_vec();
-        for removed_id in removed {
-            remove_review_comment_markers(&mut body, removed_id);
+        let mut surfaces = review_surfaces(&self.document);
+        for blocks in &mut surfaces {
+            for removed_id in &removed {
+                remove_review_comment_markers(blocks, *removed_id);
+            }
         }
-        let operation =
-            update_review_operation(&self.document, &body, Some(comments)).map_err(to_js)?;
+        let operation = update_review_operation_across(&self.document, &surfaces, Some(comments))
+            .map_err(to_js)?;
         self.apply_action_caret_as(
             vec![operation],
             Pos::new(self.document.id(), 0),
@@ -7395,16 +7397,23 @@ impl WasmDocument {
         for group in editor_groups {
             validate_review_group(self.document.body(), group).map_err(to_js)?;
         }
-        let mut body = self.document.body().to_vec();
-        decide_all_review_revisions(&mut body, accept);
         let marker_ids: BTreeSet<NodeId> = pairs
             .iter()
             .flat_map(|pair| [pair.from.start, pair.from.end, pair.to.start, pair.to.end])
             .collect();
-        if !marker_ids.is_empty() {
-            remove_review_move_markers(&mut body, &marker_ids);
+        // Every surface, not the body alone. Accept All previously decided only
+        // the body's revisions and reported success, so a document with `w:ins`
+        // in a header — which needs no authoring here, an import is enough —
+        // still carried tracked changes afterwards with nothing said about it.
+        let mut surfaces = review_surfaces(&self.document);
+        for blocks in &mut surfaces {
+            decide_all_review_revisions(blocks, accept);
+            if !marker_ids.is_empty() {
+                remove_review_move_markers(blocks, &marker_ids);
+            }
         }
-        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        let operation =
+            update_review_operation_across(&self.document, &surfaces, None).map_err(to_js)?;
         self.apply_action_caret_as(
             vec![operation],
             Pos::new(self.document.id(), 0),
@@ -11553,6 +11562,42 @@ fn collect_changed_review_paragraphs(
         }
     }
     Ok(())
+}
+
+/// Every surface's blocks, copied so a review command can edit them in place.
+///
+/// Review commands used to copy `document.body()` alone, mutate that, and diff
+/// it back. Collection and anchor resolution were already all-surface, so the
+/// asymmetry was invisible until a document carried review content outside the
+/// body — which needs no authoring at all: an imported DOCX with `w:ins` in a
+/// header is enough. Accept All then left those revisions in place, and deleting
+/// a comment anchored in a header stripped the definition while its markers
+/// survived, so the edit failed validation and rolled back under an error about
+/// a value being too large.
+fn review_surfaces(document: &Document) -> Vec<Vec<BlockNode>> {
+    surface_block_lists(document)
+        .into_iter()
+        .map(<[BlockNode]>::to_vec)
+        .collect()
+}
+
+/// [`update_review_operation`] over every surface rather than the body alone.
+fn update_review_operation_across(
+    document: &Document,
+    surfaces: &[Vec<BlockNode>],
+    comments: Option<DefinitionMap<CommentId, Comment>>,
+) -> Result<Operation, String> {
+    let mut paragraphs = Vec::new();
+    for blocks in surfaces {
+        collect_changed_review_paragraphs(document, blocks, &mut paragraphs)?;
+    }
+    if paragraphs.is_empty() && comments.is_none() {
+        return Err("review command made no change".to_owned());
+    }
+    Ok(Operation::UpdateReviewState {
+        paragraphs,
+        comments,
+    })
 }
 
 fn update_review_operation(
@@ -25295,6 +25340,85 @@ mod tests {
     /// painter. Asserted as a round trip over every variant rather than as six
     /// added cases, because the next variant somebody adds is otherwise the next
     /// one to silently become yellow.
+    /// Accept All must decide revisions on every surface, not just the body.
+    ///
+    /// Collection and anchor resolution were already all-surface while the
+    /// mutation copied `document.body()` alone, so Accept All reported success
+    /// and left the header's tracked insertion exactly where it was. No authoring
+    /// is needed to reach this: an imported DOCX carrying `w:ins` in a header is
+    /// enough.
+    #[test]
+    fn accept_all_decides_revisions_outside_the_body() {
+        use casual_doc_model::v1::{
+            Definitions, HeaderFooter, ParagraphProperties, Revision, RevisionKind, Run,
+            RunProperties,
+        };
+
+        let header_id = HeaderFooterId::new(NodeId::from_parts(93, 1).unwrap());
+        let header_para = NodeId::from_parts(93, 2).unwrap();
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            header_id,
+            HeaderFooter {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: header_para,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![InlineNode::Revision(Revision {
+                        id: NodeId::from_parts(93, 3).unwrap(),
+                        kind: RevisionKind::Insertion,
+                        author: Some("Ada".to_owned()),
+                        date: Some("2026-07-31T00:00:00Z".to_owned()),
+                        revision_id: Some("1".to_owned()),
+                        editor_group: None,
+                        inlines: vec![InlineNode::Run(Run {
+                            id: NodeId::from_parts(93, 4).unwrap(),
+                            properties: RunProperties::default(),
+                            text: "inserted in the header".to_owned(),
+                        })],
+                    })],
+                })],
+            },
+        );
+        let body = vec![BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(93, 10).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![InlineNode::Run(Run {
+                id: NodeId::from_parts(93, 11).unwrap(),
+                properties: RunProperties::default(),
+                text: "body".to_owned(),
+            })],
+        })];
+        let document = Document::new(NodeId::from_parts(93, 0).unwrap(), body, definitions)
+            .expect("valid document");
+        let mut d = wasm_document(document);
+
+        d.decide_all_revisions(true)
+            .expect("accept all succeeds with a header revision");
+
+        let header = d
+            .document
+            .definitions()
+            .headers
+            .get(&header_id)
+            .expect("the header survives");
+        let BlockNode::Paragraph(paragraph) = &header.blocks[0] else {
+            panic!("expected the header paragraph");
+        };
+        assert!(
+            !paragraph
+                .inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::Revision(_))),
+            "the header's tracked insertion must be decided, not left behind: {:?}",
+            paragraph.inlines
+        );
+        assert_eq!(
+            node_plain_text(&paragraph.inlines),
+            "inserted in the header"
+        );
+        d.document.validate().expect("the document stays valid");
+    }
+
     #[test]
     fn every_highlight_name_parses_back_to_itself() {
         use casual_doc_model::v1::HighlightColor as H;
