@@ -8133,6 +8133,10 @@ impl WasmDocument {
     /// hidden DOM editors"). Empty paragraphs are omitted as reading noise;
     /// content controls flatten into their blocks; a paragraph inside a table
     /// cell contributes to that cell's text, not a top-level node.
+    ///
+    /// A paragraph also contributes one `image` node per drawing it holds, so a
+    /// figure paragraph — which has no plain text at all, and which the
+    /// empty-text skip above used to drop whole — reaches the reader.
     #[wasm_bindgen(js_name = accessibilityTree)]
     #[must_use]
     pub fn accessibility_tree(&self) -> String {
@@ -8151,23 +8155,31 @@ impl WasmDocument {
         for block in blocks {
             match block {
                 BlockNode::Paragraph(paragraph) => {
+                    // The text node and the figure nodes are two separate
+                    // questions about the same paragraph, so an empty-text
+                    // figure paragraph no longer short-circuits the whole
+                    // block: only its (absent) text is skipped.
                     let text = node_plain_text(&paragraph.inlines);
                     let trimmed = text.trim();
-                    if trimmed.is_empty() {
-                        continue;
+                    if !trimmed.is_empty() {
+                        let text = trimmed.to_owned();
+                        if let Some(level) = self.heading_level_of(paragraph.id, cascade) {
+                            out.push(A11yBlockJson::Heading { level, text });
+                        } else if let Some(reference) = paragraph.properties.numbering.as_ref() {
+                            out.push(A11yBlockJson::ListItem {
+                                ordered: self.numbering_ordered(reference),
+                                level: reference.level,
+                                text,
+                            });
+                        } else {
+                            out.push(A11yBlockJson::Paragraph { text });
+                        }
                     }
-                    let text = trimmed.to_owned();
-                    if let Some(level) = self.heading_level_of(paragraph.id, cascade) {
-                        out.push(A11yBlockJson::Heading { level, text });
-                    } else if let Some(reference) = paragraph.properties.numbering.as_ref() {
-                        out.push(A11yBlockJson::ListItem {
-                            ordered: self.numbering_ordered(reference),
-                            level: reference.level,
-                            text,
-                        });
-                    } else {
-                        out.push(A11yBlockJson::Paragraph { text });
-                    }
+                    // Images follow their paragraph's text rather than being
+                    // spliced into it: a heading or list item is one semantic
+                    // block, and splitting it around a mid-paragraph figure
+                    // would hand the reader half a heading.
+                    collect_a11y_images(&paragraph.inlines, out);
                 }
                 BlockNode::Table(table) => {
                     let rows = table
@@ -8189,7 +8201,16 @@ impl WasmDocument {
                                 .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>();
-                    out.push(A11yBlockJson::Table { rows });
+                    out.push(A11yBlockJson::Table {
+                        rows,
+                        header_rows: a11y_header_rows(table),
+                        // `w:tblLook@firstColumn` is the "First Column" box in
+                        // Word's Table Design band — the author saying the
+                        // leading cell of each row labels that row.
+                        row_header_column: table.properties.look.first_column,
+                        caption: table.properties.caption.clone(),
+                        description: table.properties.description.clone(),
+                    });
                 }
                 BlockNode::Sdt(sdt) => self.collect_a11y_blocks(&sdt.blocks, cascade, out),
                 BlockNode::AltChunk(_) => {}
@@ -10954,11 +10975,103 @@ fn collect_checklist_paragraphs(
     }
 }
 
+/// Appends one [`A11yBlockJson::Image`] per drawing in `inlines`, in document
+/// order, recursing through the wrappers that can hide one.
+///
+/// This is the single place the projection decides what counts as a figure, and
+/// it deliberately mirrors `casual_doc_edit::object_descr` — the lookup behind
+/// the object inspector's Alt text field — so the text a user types into that
+/// field is the text a screen reader reads back. The addition is group
+/// pictures: a logo inside a `wpg:wgp` is as much an image on the page as a
+/// lone one, and it carries its own `pic:cNvPr@descr`.
+///
+/// Text boxes are NOT descended into here. Their block content is a separate
+/// story that the projection does not visit at all yet (see the body-only walk
+/// in [`WasmDocument::accessibility_tree`]); pulling only the pictures out of a
+/// box would put a figure in the reading order while its surrounding sentences
+/// stayed missing, which reads worse than the gap.
+fn collect_a11y_images(inlines: &[InlineNode], out: &mut Vec<A11yBlockJson>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Drawing(drawing) => out.push(A11yBlockJson::Image {
+                alt: drawing.descr.clone(),
+            }),
+            InlineNode::AnchoredDrawing(drawing) => out.push(A11yBlockJson::Image {
+                alt: drawing.descr.clone(),
+            }),
+            InlineNode::Group(group) => collect_a11y_group_images(&group.children, out),
+            // Wrappers carry ordinary flow: a figure inside a link, a tracked
+            // insertion, or an inline content control is still a figure.
+            InlineNode::Hyperlink(hyperlink) => collect_a11y_images(&hyperlink.inlines, out),
+            InlineNode::Field(field) => collect_a11y_images(&field.inlines, out),
+            InlineNode::Sdt(sdt) => collect_a11y_images(&sdt.inlines, out),
+            // A deletion is not on the page under the default projection, so it
+            // is not read; `node_plain_text` drops its text for the same reason.
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
+                collect_a11y_images(&revision.inlines, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// [`collect_a11y_images`] over a DrawingML group's children, in paint order.
+fn collect_a11y_group_images(children: &[GroupChild], out: &mut Vec<A11yBlockJson>) {
+    for child in children {
+        match child {
+            GroupChild::Picture(picture) => out.push(A11yBlockJson::Image {
+                alt: picture.descr.clone(),
+            }),
+            GroupChild::Group(group) => collect_a11y_group_images(&group.children, out),
+            // A group's text box is skipped for the same reason an inline one is.
+            GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
+/// The 0-based indices of `table`'s column-header rows.
+///
+/// Two signals mean "this row is a header", and a table can carry either alone,
+/// so enumerating one of them would have been an omission:
+///
+/// * `w:tblHeader` on the row — Word's "Repeat Header Rows", an explicit
+///   per-row declaration that survives independently of any table style; and
+/// * `w:tblLook@firstRow` — the "Header Row" checkbox in Word's Table Design
+///   band, which designates the FIRST row and formats it through the style's
+///   `firstRow` conditional band. A row can also claim that band for itself
+///   with `w:cnfStyle@firstRow`, which is how a table style's own header row
+///   is marked when the look bits are on the style rather than the table.
+///
+/// Deterministic by construction: the result is built by walking `rows` in
+/// order, and is at most as long as `rows`.
+fn a11y_header_rows(table: &Table) -> Vec<u32> {
+    table
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(index, row)| {
+            row.properties.header
+                || row
+                    .properties
+                    .conditional_format
+                    .is_some_and(|cnf| cnf.first_row)
+                || (*index == 0 && table.properties.look.first_row)
+        })
+        .map(|(index, _)| u32::try_from(index).unwrap_or(u32::MAX))
+        .collect()
+}
+
 /// One read-only, model-derived accessibility node for [`accessibility_tree`]
 /// (docs/67 row 9). Serialized as an internally-tagged JSON object whose `kind`
 /// selects the variant: `heading` (+ 1-based `level`), `paragraph`, `listItem`
-/// (+ `ordered`), or `table` (+ `rows`, a grid of cell plain-text). This is a
-/// structural projection for an off-screen ARIA tree, never an editing surface.
+/// (+ `ordered`), `image` (+ `alt`), or `table` (+ `rows`, a grid of cell
+/// plain-text, plus the header geometry a screen reader needs to announce the
+/// cell it is sitting in). This is a structural projection for an off-screen
+/// ARIA tree, never an editing surface.
 ///
 /// [`accessibility_tree`]: WasmDocument::accessibility_tree
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -10981,8 +11094,44 @@ enum A11yBlockJson {
         level: u8,
         text: String,
     },
+    /// A drawing on the page: an inline or floating picture, or a picture inside
+    /// a DrawingML group. `alt` is the author's alt text (`wp:docPr@descr`, the
+    /// field the object inspector edits) and is `None` when none was authored.
+    ///
+    /// The distinction matters to the host: `Some` renders as `<img alt="…">`,
+    /// while `None` is an UNLABELLED image, which a screen reader must still
+    /// announce as a graphic (Word does) rather than pass over. Emitting nothing
+    /// — what the projection did before this variant existed — told assistive
+    /// technology the figure was not there at all, so a reader heard the
+    /// paragraph before the chart and the one after it and nothing in between.
+    ///
+    /// A drawing has no plain text, so it is NOT part of `node_plain_text`: that
+    /// function is the shaper's byte layout, which caret offsets index, and
+    /// giving alt text bytes there would move every caret past a figure.
+    Image {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt: Option<String>,
+    },
+    /// `rows` is the cell grid, unchanged. The rest is the header geometry: a
+    /// table read with no `<th>` announces bare values, so a user arrowing
+    /// through a wide grid has no idea which column they are in.
+    ///
+    /// `header_rows` holds the 0-based indices of rows whose cells are column
+    /// headers, `row_header_column` says the first cell of every body row is
+    /// that row's header, and `caption`/`description` carry `w:tblCaption` /
+    /// `w:tblDescription` — accessibility fields the model has always parsed and
+    /// the projection has never handed on.
+    #[serde(rename_all = "camelCase")]
     Table {
         rows: Vec<Vec<String>>,
+        #[serde(default)]
+        header_rows: Vec<u32>,
+        #[serde(default)]
+        row_header_column: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
     },
 }
 
@@ -24489,7 +24638,7 @@ mod tests {
         assert!(
             nodes.iter().any(|node| matches!(
                 node,
-                A11yBlockJson::Table { rows } if rows.iter().any(|row| !row.is_empty())
+                A11yBlockJson::Table { rows, .. } if rows.iter().any(|row| !row.is_empty())
             )),
             "at least one table with cells is exposed"
         );
@@ -24504,7 +24653,7 @@ mod tests {
                 A11yBlockJson::Paragraph { text } | A11yBlockJson::ListItem { text, .. } => {
                     assert!(!text.trim().is_empty(), "block text non-empty: {node:?}");
                 }
-                A11yBlockJson::Table { .. } => {}
+                A11yBlockJson::Table { .. } | A11yBlockJson::Image { .. } => {}
             }
         }
 
@@ -24537,6 +24686,210 @@ mod tests {
                 A11yBlockJson::ListItem { ordered: false, level: 0, text } if *text == plain_text
             )),
             "the converted paragraph is now an unordered list item: {after:?}"
+        );
+    }
+
+    /// A figure paragraph carries no plain text, so the projection's
+    /// empty-text skip dropped it whole: a screen reader heard the paragraph
+    /// before the chart and the one after it, and nothing in between — the alt
+    /// text the author typed into the object inspector was unreachable. Tables
+    /// read with no header cells at all, so a user arrowing across a grid had
+    /// no idea which column they were in.
+    #[test]
+    fn accessibility_tree_exposes_figures_and_table_headers() {
+        use casual_doc_model::v1::{
+            Definitions, Drawing, MediaId, MediaReference, TableLook, TableRowProperties,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(11, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId11".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut next = 1u64;
+        let mut id = || {
+            next += 1;
+            NodeId::from_parts(11, next).unwrap()
+        };
+        let text_paragraph = |id: NodeId, run: NodeId, text: &str| {
+            BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: run,
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            })
+        };
+        let drawing = |id: NodeId, descr: Option<&str>| {
+            InlineNode::Drawing(Drawing {
+                id,
+                media,
+                extent: Some(Extent {
+                    width_emu: 914_400,
+                    height_emu: 914_400,
+                }),
+                descr: descr.map(str::to_owned),
+                crop: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })
+        };
+        let cell = |id: NodeId, paragraph: NodeId, run: NodeId, text: &str| TableCell {
+            id,
+            properties: TableCellProperties::default(),
+            blocks: vec![text_paragraph(paragraph, run, text)],
+        };
+
+        let (p1, r1) = (id(), id());
+        let (figure, figure_drawing) = (id(), id());
+        let (p2, r2) = (id(), id());
+        let (p3, r3, unlabelled) = (id(), id(), id());
+        let table_id = id();
+        let header_row = TableRow {
+            id: id(),
+            properties: TableRowProperties {
+                header: true,
+                ..TableRowProperties::default()
+            },
+            cells: vec![
+                cell(id(), id(), id(), "Region"),
+                cell(id(), id(), id(), "Revenue"),
+            ],
+        };
+        let body_row = TableRow {
+            id: id(),
+            properties: TableRowProperties::default(),
+            cells: vec![
+                cell(id(), id(), id(), "North"),
+                cell(id(), id(), id(), "120"),
+            ],
+        };
+        let document = Document::new(
+            NodeId::from_parts(11, 1).unwrap(),
+            vec![
+                text_paragraph(p1, r1, "Before the chart"),
+                // The figure: a paragraph whose only content is the drawing.
+                BlockNode::Paragraph(Paragraph {
+                    id: figure,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![drawing(figure_drawing, Some("Quarterly revenue"))],
+                }),
+                text_paragraph(p2, r2, "After the chart"),
+                // An image with no authored alt text, sharing its paragraph
+                // with prose: still a graphic the reader must be told about.
+                BlockNode::Paragraph(Paragraph {
+                    id: p3,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        InlineNode::Run(Run {
+                            id: r3,
+                            properties: RunProperties::default(),
+                            text: "Our logo".to_owned(),
+                        }),
+                        drawing(unlabelled, None),
+                    ],
+                }),
+                BlockNode::Table(Table {
+                    id: table_id,
+                    grid: Vec::new(),
+                    grid_change: None,
+                    properties: TableProperties {
+                        look: TableLook {
+                            first_column: true,
+                            ..TableLook::default()
+                        },
+                        caption: Some("Revenue by region".to_owned()),
+                        description: Some("Two columns: region and revenue.".to_owned()),
+                        ..TableProperties::default()
+                    },
+                    rows: vec![header_row, body_row],
+                }),
+            ],
+            definitions,
+        )
+        .expect("valid figure-and-table document");
+
+        let d = wasm_document(document);
+        let json = d.accessibility_tree();
+        let nodes: Vec<A11yBlockJson> = serde_json::from_str(&json).expect("typed a11y tree");
+
+        // The figure sits between its neighbours, in reading order.
+        let position = |wanted: &A11yBlockJson| {
+            nodes
+                .iter()
+                .position(|node| node == wanted)
+                .unwrap_or_else(|| panic!("missing {wanted:?} in {nodes:?}"))
+        };
+        let before = position(&A11yBlockJson::Paragraph {
+            text: "Before the chart".to_owned(),
+        });
+        let figure_at = position(&A11yBlockJson::Image {
+            alt: Some("Quarterly revenue".to_owned()),
+        });
+        let after = position(&A11yBlockJson::Paragraph {
+            text: "After the chart".to_owned(),
+        });
+        assert_eq!(
+            (figure_at, after),
+            (before + 1, before + 2),
+            "the figure reads between the paragraphs around it: {nodes:?}"
+        );
+        // An unlabelled image is still announced, as an image with no alt.
+        assert!(
+            nodes.contains(&A11yBlockJson::Image { alt: None }),
+            "an image with no authored alt text is still exposed: {nodes:?}"
+        );
+
+        let table = nodes
+            .iter()
+            .find_map(|node| match node {
+                A11yBlockJson::Table {
+                    rows,
+                    header_rows,
+                    row_header_column,
+                    caption,
+                    description,
+                } => Some((rows, header_rows, row_header_column, caption, description)),
+                _ => None,
+            })
+            .expect("the table is exposed");
+        assert_eq!(
+            table.0,
+            &vec![
+                vec!["Region".to_owned(), "Revenue".to_owned()],
+                vec!["North".to_owned(), "120".to_owned()],
+            ]
+        );
+        assert_eq!(
+            table.1,
+            &vec![0u32],
+            "the `w:tblHeader` row is reported as a column-header row"
+        );
+        assert!(
+            *table.2,
+            "`w:tblLook@firstColumn` makes the leading cell each row's header"
+        );
+        assert_eq!(table.3.as_deref(), Some("Revenue by region"));
+        assert_eq!(table.4.as_deref(), Some("Two columns: region and revenue."));
+
+        // The wire shape the host renders, pinned: the projection is a JSON
+        // contract, so a rename here is a silent break on the other side.
+        assert!(
+            json.contains(r#"{"kind":"image","alt":"Quarterly revenue"}"#),
+            "the image node serializes with its alt text: {json}"
+        );
+        assert!(
+            json.contains(r#""headerRows":[0]"#) && json.contains(r#""rowHeaderColumn":true"#),
+            "the table node serializes its header geometry: {json}"
         );
     }
 
