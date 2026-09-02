@@ -4013,6 +4013,68 @@ mod semantic_tests {
         assert_eq!(m1, m2, "an inline drawing survives write -> reopen");
     }
 
+    /// Every decimal id the writer emits must be one Word can read.
+    ///
+    /// `ST_DecimalNumber` is an `xsd:integer`, but Word reads it as 32-bit
+    /// signed. A `NodeId` is `(namespace << 64) | counter`, so `as_u128()`
+    /// rendered as a twenty-digit value — measured at 20 digits in
+    /// `word/document.xml` for a document with a single list. Word either refuses
+    /// such a file or silently drops the numbering, notes, comments and bookmarks
+    /// that carry those ids.
+    ///
+    /// This repository's own round-trip tests never caught it, because the
+    /// importer reads these attributes back as opaque strings: the model matched
+    /// while the file was unusable. So this asserts on the BYTES, and then still
+    /// re-imports to prove the compact ids did not break the references they
+    /// point at.
+    #[test]
+    fn every_emitted_decimal_id_fits_what_word_reads() {
+        let source = include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx");
+        let m1 = reopen(source);
+        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+
+        let mut package = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+        let parts: Vec<String> = package
+            .entries()
+            .iter()
+            .map(|e| e.part_name.clone())
+            .filter(|n| n.ends_with(".xml"))
+            .collect();
+
+        let mut checked = 0usize;
+        for part in parts {
+            let Ok(bytes) = package.read_part(&part) else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            // Every attribute OOXML types as ST_DecimalNumber that this writer emits.
+            for attribute in ["w:id=\"", "w:numId w:val=\"", "w:abstractNumId=\""] {
+                for chunk in text.split(attribute).skip(1) {
+                    let Some(end) = chunk.find('"') else { continue };
+                    let value = &chunk[..end];
+                    if value.is_empty() || !value.chars().all(|c| c.is_ascii_digit()) {
+                        continue;
+                    }
+                    checked += 1;
+                    let parsed: u64 = value.parse().unwrap_or(u64::MAX);
+                    assert!(
+                        parsed <= i32::MAX as u64,
+                        "{part} emits {attribute}{value}\" — {} digits, past what Word reads",
+                        value.len()
+                    );
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "the fixture must actually exercise decimal ids"
+        );
+
+        // The compact ids must still point at the same things.
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "renumbering preserved every reference");
+    }
+
     #[test]
     fn every_generated_relationship_id_is_unique() {
         // Relationship ids in one .rels part must be unique — Word treats a

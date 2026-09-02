@@ -3525,7 +3525,17 @@ pub fn caret_run_properties(
     node: NodeId,
     offset: u32,
 ) -> Option<&RunProperties> {
-    let para = find_paragraph(document.body(), node)?;
+    // Every surface, not just the body. A caret in a header, footer, footnote,
+    // endnote, comment, text box or table cell found no paragraph here and fell
+    // back to `RunProperties::default()`, so the toolbar reported bold 14pt red
+    // footer text as unbolded, default-size and default-colour — and pressing
+    // Bold then bolded already-bold text instead of clearing it. "Update style to
+    // match selection" captured those defaults too.
+    //
+    // The sibling query `run_properties_in_range` was already corrected this way
+    // and carries a comment describing exactly this defect; this one was missed,
+    // which is what a rule enumerating its surfaces costs.
+    let para = find_paragraph_any(document, node)?;
     // Flatten across final-with-markup wrappers so a caret resting inside a
     // pending tracked revision reflects that run's formatting (docs/81
     // REVIEW-GAP-030), not the paragraph default.
@@ -6773,6 +6783,53 @@ mod tests {
     /// left-aligned, because the read walked the body alone, found nothing, and
     /// the caller fell back to its default. A wrong answer is worse than none —
     /// it invites "fixing" an alignment that was never wrong.
+    /// The caret's inherited run properties must be read from whichever surface
+    /// owns the paragraph, exactly as the paragraph properties above are.
+    ///
+    /// Reading the body alone meant a caret in a header, footer or note found no
+    /// paragraph and the caller fell back to `RunProperties::default()`. The
+    /// toolbar then reported bold footer text as unbolded — so pressing Bold
+    /// bolded already-bold text instead of clearing it, and "update style to
+    /// match selection" captured the defaults rather than the real formatting.
+    ///
+    /// The sibling range query was fixed for this and this one was missed, which
+    /// is the recurring cost of a rule that enumerates its surfaces.
+    #[test]
+    fn caret_run_properties_are_read_from_whichever_surface_owns_them() {
+        let header_id = HeaderFooterId::new(n(980));
+        let para_id = n(981);
+        let mut definitions = Definitions::default();
+        let bold_run = InlineNode::Run(Run {
+            id: n(982),
+            properties: RunProperties {
+                bold: Some(true),
+                ..RunProperties::default()
+            },
+            text: "Bold footer text".to_owned(),
+        });
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![BlockNode::Paragraph(Paragraph {
+                    id: para_id,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![bold_run],
+                })],
+            },
+        );
+        let d = Document::new(n(1001), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+
+        assert_eq!(
+            caret_run_properties(&d, para_id, 4).and_then(|p| p.bold),
+            Some(true),
+            "the header run's own bold, not a default"
+        );
+        // The body still reads correctly, and an unowned id is still None.
+        assert!(caret_run_properties(&d, n(2), 1).is_some());
+        assert!(caret_run_properties(&d, n(4242), 0).is_none());
+    }
+
     #[test]
     fn paragraph_properties_are_read_from_whichever_surface_owns_them() {
         let header_id = HeaderFooterId::new(n(970));

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { embedMarker, escapeHtml, extractMarker, htmlToRuns, runsToHtml } from "../src/clipboard.mjs";
+import {
+  embedMarker,
+  escapeHtml,
+  extractMarker,
+  htmlToRuns,
+  htmlToStructured,
+  runsToHtml,
+} from "../src/clipboard.mjs";
 
 // `htmlToRuns` walks a browser DOM. The unit runner has no DOM, so build a
 // minimal tree faithful to the node interface it reads: `childNodes`,
@@ -197,4 +204,83 @@ test("htmlToRuns still honors legacy formatting tags with no inline style", () =
     { text: "2", vertAlign: "super" },
     { text: "L", href: "https://x.test" },
   ]);
+});
+
+// The three ways the HTML importer corrupted the most common paste sources.
+// All three shared one shape: it could only ever add — formatting on, a break on
+// entering a container, a block from an element — and never account for content
+// that was turned off, absent, or not an element at all.
+
+test("an explicit font-weight:normal turns bold OFF, as CSS says it does", () => {
+  // Google Docs wraps its ENTIRE clipboard payload in `<b style="font-weight:normal">`.
+  // Reading only "does this turn bold on" saw the <b>, never the normal, and
+  // delivered every paste from Docs in bold.
+  const runs = htmlToRuns(
+    root(
+      el("b", { style: "font-weight:normal" }, txt("Not actually bold")),
+    ),
+  );
+  assert.deepEqual(runs, [{ text: "Not actually bold", bold: false }]);
+
+  // A real bold is still bold, from the tag or from the style.
+  assert.equal(htmlToRuns(root(el("b", null, txt("x"))))[0].bold, true);
+  assert.equal(
+    htmlToRuns(root(el("span", { style: "font-weight:700" }, txt("x"))))[0].bold,
+    true,
+  );
+  // And italic behaves the same way, for the same CSS reason.
+  assert.equal(
+    htmlToRuns(root(el("i", { style: "font-style:normal" }, txt("x"))))[0].italic,
+    false,
+  );
+});
+
+test("a wrapper div does not produce a leading blank paragraph", () => {
+  // Word's outer WordSection1 div, and the wrapper div a browser selection
+  // carries, are containers — not content. Treating entering one as content put
+  // a paragraph break before the first word of every such paste.
+  const runs = htmlToRuns(
+    root(el("div", null, el("p", null, txt("First")), el("p", null, txt("Second")))),
+  );
+  assert.deepEqual(runs, [
+    { text: "First" },
+    { paragraphBreak: true },
+    { text: "Second" },
+  ]);
+  assert.notEqual(runs[0].paragraphBreak, true, "nothing precedes the first word");
+});
+
+test("text decoration still propagates from an ancestor", () => {
+  // `text-decoration` is NOT authoritative in both directions: it propagates from
+  // an ancestor and a descendant cannot switch it off. Honouring `none` here
+  // would be wrong CSS, so this pins the asymmetry deliberately.
+  const runs = htmlToRuns(
+    root(el("u", null, el("span", { style: "text-decoration:none" }, txt("still underlined")))),
+  );
+  assert.equal(runs[0].underline, true);
+});
+
+test("the sentences either side of a pasted table survive", () => {
+  // "Intro sentence <table>…</table> Closing sentence" is the ordinary shape of a
+  // copy from a web page or Word. The top-level text branch called `htmlToRuns`
+  // on the TEXT NODE itself, and that walks `childNodes` — a text node has none —
+  // so it returned nothing and both sentences were filtered away as empty
+  // blocks. The table arrived alone, with no warning, against this module's own
+  // no-silent-loss contract.
+  const table = el(
+    "table",
+    null,
+    el("tr", null, el("td", null, txt("cell"))),
+  );
+  // Only enough of the element interface for the table branch to run; the
+  // table's own contents are not what this test is about.
+  table.querySelector = () => null;
+  table.querySelectorAll = () => [];
+  const { blocks } = htmlToStructured(
+    root(txt("Intro sentence"), table, txt("Closing sentence")),
+  );
+
+  const text = JSON.stringify(blocks);
+  assert.ok(text.includes("Intro sentence"), `intro sentence dropped: ${text}`);
+  assert.ok(text.includes("Closing sentence"), `closing sentence dropped: ${text}`);
 });

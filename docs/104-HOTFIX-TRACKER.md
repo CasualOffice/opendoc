@@ -89,7 +89,7 @@ Every P0 is now closed or in review.
 | HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | Open |
 | HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Fixed (#497) |
 | HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
-| HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Open |
+| HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | In review |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Open |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | In review |
 | HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
@@ -105,7 +105,7 @@ Every P0 is now closed or in review.
 | HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Open |
 | HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Open |
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | Open |
+| HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | In review |
 | HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Open |
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Open |
 | HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Open |
@@ -127,7 +127,7 @@ Every P0 is now closed or in review.
 | HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | Open |
 | HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | In review |
 | HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
-| HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | Open |
+| HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | In review |
 | HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Open |
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Open |
 | HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Open |
@@ -140,14 +140,14 @@ Every P0 is now closed or in review.
 | HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Open |
 | HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | Open |
 | HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Open |
-| HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Open |
-| HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Open |
+| HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | In review |
+| HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | In review |
 | HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Open |
 | HF-056 | Images cannot be rotated or flipped — a sideways phone photo has to be fixed outside the editor | images | L | Sibling gap (docs (ProseMirror)) | Open |
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Open |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Open |
 | HF-059 | Cmd+V never pastes an image, and says nothing | clipboard | S | Internal audit | Open |
-| HF-061 | A zero-height table row paints its text across the rest of the page | render | S | Internal audit | Open |
+| HF-061 | A zero-height table row paints its text across the rest of the page | render | S | Internal audit | Won't fix |
 | HF-062 | Split cell dialog cannot be dismissed by keyboard, and closing it kills typing | editor-ux | S | Internal audit | Open |
 | HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Open |
 | HF-064 | No accessibility checker — opendoc makes the editor accessible but never audits the document being written | a11y | M | Sibling gap (docs (ProseMirror)) | Open |
@@ -539,7 +539,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-012 — Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept
 
-**P1** · import-export · parity · effort M · source: Internal audit · **Status:** Open
+**P1** · import-export · parity · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Re-exporting any document with a bulleted list, footnote, comment or bookmark writes ids like 18446744073709551620 into ST_DecimalNumber attributes; Word either refuses the file or silently drops the list numbering, notes and bookmarks. opendoc's own round-trip tests never notice because it re-reads them as opaque strings.
 
@@ -739,7 +739,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-026 — Everything pasted from Google Docs arrives bold
 
-**P1** · import-export · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · import-export · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Copying normal-weight paragraphs from Google Docs — the most common external paste source — makes every pasted run bold in the document and bold in the exported .docx.
 
@@ -951,7 +951,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-040 — Pasting a table from the web silently drops the sentences around it
 
-**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · import-export · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Copy "Intro sentence `<table>`…`</table>` Closing sentence" from a page or Word and paste: the table appears and both sentences are gone, with no warning — the module's own "never silently dropped" contract broken.
 
@@ -1109,7 +1109,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-053 — Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way
 
-**P2** · rust-core · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · rust-core · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Put the caret in bold 14pt red footer text: the toolbar shows Bold off and default size/colour, so pressing Bold bolds already-bold text instead of unbolding it, and "Update style to match selection" captures the wrong formatting.
 
@@ -1121,7 +1121,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-054 — Pasting from Word or a web page inserts a blank paragraph before the content
 
-**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · import-export · bug · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Every paste whose HTML is wrapped in a div — Word and most web-page copies — pushes the caret down a line and leaves an empty paragraph the user has to delete each time.
 
@@ -1193,7 +1193,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-061 — A zero-height table row paints its text across the rest of the page
 
-**P2** · render · ui · effort S · source: Internal audit · **Status:** Open
+**P2** · render · ui · effort S · source: Internal audit · **Status:** Won't fix — not reproducible
 
 **Symptom.** A row authored with an exact height of 0 — which Word collapses to nothing — instead paints its full paragraph on top of every row below it and the body text, garbling the page.
 
@@ -1202,6 +1202,14 @@ Every row, in queue order. Locations were verified against the code at audit tim
 **Evidence.** resolve_row_height returns (Twip(0), clip=true) for hRule=exact val=0; rect_path fails for a zero-height rect so PushClip pushes nothing when the clip stack is empty, and the cell's blocks paint unclipped.
 
 **Fix.** When build_clip_mask returns None, push an empty mask (clip everything) rather than skipping the push, in both the parented and unparented branches — a zero-area clip must clip everything, not nothing.
+
+**Refuted 2026-09-02.** The stated mechanism does not hold. `tiny_skia::Rect::from_xywh(0, 0, 400, 0)`
+returns `Some` — tiny-skia permits a zero-height rect — so `rect_path` succeeds for an exact-height-0
+row, `build_clip_mask` returns a real (zero-area) mask, and the row's content is correctly clipped
+away. The degenerate branch the finding blamed is not reached by this path, and no input was found
+that reaches it: `hairline_snap` clamps negatives to zero and `Twip` is integral, so there is no NaN.
+Verified by probing `rect_path` directly. A fix was written and then reverted rather than shipped with
+a test that could not fail.
 
 ### HF-062 — Split cell dialog cannot be dismissed by keyboard, and closing it kills typing
 
