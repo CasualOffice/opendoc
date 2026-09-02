@@ -155,12 +155,17 @@
   --surface: #ffffff;
   --surface-alt: #fcfcfb;
   --ink: #14161a;
+  /* Like their dark counterparts, --muted and --faint are pinned to clear WCAG
+     AA (4.5:1) against the darkest surface they are painted on — here --bg-2,
+     not --surface. --faint was #6f747c, which passes on white (4.70:1) and fails
+     on --bg-2 (4.16:1), so the search box's "⌘⇧P" hint and the footer's "Mode"
+     label were the two places it showed. Guarded by theme-contrast.spec.mjs. */
   --muted: #565a61;
   /* --faint was #8a8e95 = 3.29:1 on --surface, below the 4.5:1 body-text floor,
      and it is the colour of every menu shortcut hint and empty state — the prose
      a first-time user needs most (docs/104 HF-093). #6f747c measures 4.70:1 on
      --surface and 4.51:1 on --bg. */
-  --faint: #6f747c;
+  --faint: #666b73;
   --line: #edebe6;
   --line-strong: #dedbd4;
   --scrollbar-thumb: rgba(74, 78, 85, 0.3);
@@ -207,7 +212,20 @@
 }
 
 /* Dark palette — via system pref (only when no explicit theme) or explicit
-   choice. The two blocks below are byte-identical on purpose and MUST stay so:
+   choice.
+
+   `--muted` and `--faint` are pinned to clear WCAG AA (4.5:1) against
+   `--surface-alt`, the darkest surface either one is painted on. They used to be
+   #969ba3/#8b9199, which measured 4.42:1 under the ribbon's group captions —
+   UNDO, CLIPBOARD, FONT, PARAGRAPH, STYLES, EDITING, MODE. Nine-pixel text
+   failing AA is not a rounding error: those captions are the smallest type in
+   the product and they were the labels telling you what the toolbar groups are.
+   The light palette passed, so only dark was affected, which is why it read as
+   "dark mode is broken in the toolbar" rather than as a palette bug.
+   `tests/e2e/theme-contrast.spec.mjs` measures this on the live ribbon in both
+   themes, so re-darkening either token fails the build.
+
+   The two blocks below are byte-identical on purpose and MUST stay so:
    a user who picks Dark on a light OS gets only the second one, which is how
    half the theme used to be missing for them (docs/104 HF-092). Plain CSS
    cannot share one declaration list across a media query and a bare selector,
@@ -220,8 +238,8 @@
     --surface: #212429;
     --surface-alt: #282c31;
     --ink: #e8eaed;
-    --muted: #969ba3;
-    --faint: #8b9199;
+    --muted: #a8aeb6;
+    --faint: #9aa0a8;
     --line: #2e323a;
     --line-strong: #383d46;
     --scrollbar-thumb: rgba(232, 234, 237, 0.28);
@@ -263,8 +281,8 @@
   --surface: #212429;
   --surface-alt: #282c31;
   --ink: #e8eaed;
-  --muted: #969ba3;
-  --faint: #8b9199;
+  --muted: #a8aeb6;
+  --faint: #9aa0a8;
   --line: #2e323a;
   --line-strong: #383d46;
   --scrollbar-thumb: rgba(232, 234, 237, 0.28);
@@ -3117,8 +3135,15 @@ body:has(.ribbon.is-collapsed) {
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  width: 202px;
-  max-width: 202px;
+  /* Sized by its cards, not by a constant. The strip used to be pinned to 202px
+     with every card at `flex: 1 1 0`, so the cards divided that fixed budget
+     between them and each name ellipsised down to an initial. Letting the group
+     take its content's width means a card is as wide as its name needs, and the
+     card count (QUICK_STYLE_COUNT) is what keeps the band inside the 1280px
+     no-scrollbar budget. The cap is a backstop against a pathologically long
+     style name, not the normal sizing path. */
+  width: auto;
+  max-width: 244px;
   min-width: 0;
 }
 
@@ -3152,11 +3177,15 @@ body:has(.ribbon.is-collapsed) {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  flex: 1 1 0;
+  /* Size to the label, not to an equal share of the group. `flex: 1 1 0` gave
+   * every card the same width regardless of its name, so "Normal" and
+   * "Heading 1" were both cut to three characters. Shrinking is still allowed,
+   * but only down to a width where a name is still recognisable. */
+  flex: 0 0 auto;
   min-width: 0;
   max-width: none;
   height: 30px;
-  padding: 3px 6px;
+  padding: 3px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   background: var(--surface);
@@ -3202,7 +3231,7 @@ body:has(.ribbon.is-collapsed) {
    overrides these class rules. These remain as a graceful degrade for when the
    preview is unavailable (e.g. before a document's engine is ready). */
 .style-card-title .style-card-name { font-size: 15px; font-weight: 700; }
-.style-card-heading-1 .style-card-name { font-size: 14px; font-weight: 700; }
+.style-card-heading-1 .style-card-name { font-size: 12px; font-weight: 700; }
 .style-card-heading-2 .style-card-name { font-size: 13px; font-weight: 650; }
 .style-card-heading-3 .style-card-name { font-size: 12.5px; font-weight: 600; }
 .style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -5528,6 +5557,15 @@ body:not(.doc-loaded) .drop-title {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  /* A font name that reads "Liberation S…" tells the user nothing about which
+   * face they are in. 122px could not hold the metric-compatible names this
+   * engine substitutes by default. */
+  /* Deliberately narrow. The Home band has a hard 1280px no-scrollbar budget
+     (docs/64) and only about 55px of slack in it; widening this control enough
+     to hold a long family name eats most of that and pushes the Styles gallery
+     into the overflow menu, which is a worse trade than an ellipsis. Word makes
+     the same call at a similar width. The complete name is never lost — the
+     trigger's `title` always carries it, asserted in ribbon-legibility.spec.mjs. */
   width: 122px;
   height: var(--h-control);
   padding: 0 4px 0 8px;

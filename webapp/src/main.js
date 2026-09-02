@@ -360,8 +360,16 @@ let stylesMorePopover = null;
 
 // How many quick-access cards the width-constrained inline ribbon strip shows.
 // The remaining styles live in the "More styles" ▾ popover (Word's collapsed
-// gallery row + its More expander), so raising this never hides any style.
-const QUICK_STYLE_COUNT = 4;
+// gallery row + its More expander), so LOWERING this never hides any style —
+// it only moves one card behind the ▾, which already holds the full set.
+//
+// Three, not four. The Home band has to fit 1280px without a horizontal
+// scrollbar (docs/64, guarded by ribbon-home.spec.mjs), and four cards only fit
+// there by shrinking each one to about 40px — which rendered the gallery as
+// "No… Bo… H… Ca…". A row of four unreadable buttons is worth less than three
+// you can actually read, because the entire reason this strip exists instead of
+// just the dropdown beside it is that you can see what you are picking.
+const QUICK_STYLE_COUNT = 3;
 
 // Roving-tabindex keyboard navigation for a Styles listbox: the group is a
 // single Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the
