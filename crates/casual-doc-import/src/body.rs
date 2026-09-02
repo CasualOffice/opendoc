@@ -560,6 +560,94 @@ struct CommentMeta {
     initials: Option<String>,
 }
 
+/// One open `mc:AlternateContent` (ECMA-376 Part 3, Markup Compatibility): a
+/// set of alternative representations of the same content, of which a consumer
+/// reads exactly one.
+struct AltFrame {
+    /// Whether a branch has already been read, so every later branch is skipped
+    /// (reading two would duplicate the content).
+    selected: bool,
+    /// Whether any `mc:Choice`/`mc:Fallback` was seen at all, so an element that
+    /// lost every branch is distinguishable from a degenerate empty one.
+    saw_branch: bool,
+}
+
+/// One in-scope `xmlns:prefix="uri"` declaration.
+struct NamespaceDeclaration {
+    /// The [`BodyParser::depth`] of the element that declared it.
+    depth: u64,
+    /// The bound prefix (the attribute's local name).
+    prefix: Vec<u8>,
+    /// The namespace URI the prefix is bound to.
+    uri: Vec<u8>,
+}
+
+/// Ceiling on tracked `xmlns:` declarations. A real package declares a couple of
+/// dozen on each part root; the bound exists because the count is
+/// document-controlled and this vector would otherwise grow with the file.
+/// Declarations past the ceiling are simply not tracked, which makes their
+/// prefixes unresolvable — and an unresolvable requirement is treated as
+/// unsupported, i.e. it falls back, which is the safe direction.
+const MAX_TRACKED_NAMESPACES: usize = 512;
+
+/// Namespace URIs whose `mc:Choice` branch this importer can read.
+///
+/// The list is an ALLOWLIST, and that direction is deliberate. `mc:Fallback`
+/// exists precisely because its content is expressible in the base ECMA-376
+/// vocabularies — which are the ones modeled here — so when a requirement is
+/// unknown, taking the fallback recovers something (Word's own cached picture
+/// of a modern chart, the rasterized strokes of an ink annotation) where
+/// reading the choice recovered nothing at all. Everything absent is therefore
+/// treated as unsupported, including, on purpose:
+///
+/// * `wpi` (`…/word/2010/wordprocessingInk`) — ink annotations, whose fallback
+///   is an ordinary picture;
+/// * the `cx1`…`cx8` chart extensions (`…/drawing/2014/chartex` and later),
+///   whose fallback is a classic `c:chart` graphic frame or a cached bitmap;
+/// * `wpc` (`…/word/2010/wordprocessingCanvas`) — the drawing canvas, which the
+///   model does not carry;
+/// * `a14` and the other DrawingML extension vocabularies, whose fallback is
+///   the same shape without the newer effect.
+///
+/// Grouped by vocabulary for reading only: membership is an exact byte compare
+/// over a fixed list, so the order of the entries changes nothing.
+const SUPPORTED_MCE_NAMESPACES: &[&[u8]] = &[
+    // ECMA-376 base vocabularies.
+    b"http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    b"http://schemas.openxmlformats.org/drawingml/2006/main",
+    b"http://schemas.openxmlformats.org/drawingml/2006/picture",
+    b"http://schemas.openxmlformats.org/drawingml/2006/chart",
+    b"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+    b"http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    b"http://schemas.openxmlformats.org/officeDocument/2006/math",
+    // VML and its Office companions: the pre-DrawingML shape vocabulary, which
+    // is what most fallbacks are written in.
+    b"urn:schemas-microsoft-com:vml",
+    b"urn:schemas-microsoft-com:office:office",
+    b"urn:schemas-microsoft-com:office:word",
+    // Microsoft extensions to the vocabularies above. These add elements and
+    // attributes to otherwise ordinary WordprocessingML — a `w14:checkbox`
+    // content control is written inside a `Requires="w14"` choice with no
+    // fallback at all — so refusing them would lose content rather than save it.
+    b"http://schemas.microsoft.com/office/word/2006/wordml",
+    b"http://schemas.microsoft.com/office/word/2010/wordml",
+    b"http://schemas.microsoft.com/office/word/2012/wordml",
+    b"http://schemas.microsoft.com/office/word/2015/wordml/symex",
+    b"http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    b"http://schemas.microsoft.com/office/word/2018/wordml",
+    b"http://schemas.microsoft.com/office/word/2018/wordml/cex",
+    b"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+    b"http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    b"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+];
+
+/// Whether a `mc:Choice/@Requires` namespace URI names a vocabulary this
+/// importer reads. See [`SUPPORTED_MCE_NAMESPACES`] for why absence means "take
+/// the fallback".
+fn is_supported_mce_namespace(uri: &[u8]) -> bool {
+    SUPPORTED_MCE_NAMESPACES.contains(&uri)
+}
+
 /// The content-building state suspended while parsing a text box's own content,
 /// restored when the text box closes. A text box (`w:txbxContent`) carries a full
 /// block sequence, so parsing it requires a fresh paragraph/run/table context;
@@ -978,8 +1066,13 @@ struct BodyParser<'a> {
     /// Depth of an `mc:Choice`/`mc:Fallback` branch being skipped (a non-selected
     /// alternate representation); while non-zero, all events are ignored.
     mc_skip_depth: u32,
-    /// Per-`mc:AlternateContent` "a branch was already selected" flags.
-    alt_stack: Vec<bool>,
+    /// One frame per open `mc:AlternateContent`, innermost last.
+    alt_stack: Vec<AltFrame>,
+    /// In-scope `xmlns:prefix` declarations, innermost last, each recorded with
+    /// the [`Self::depth`] of the element that declared it so its matching close
+    /// takes it back out of scope. Only namespace-PREFIX declarations are kept;
+    /// the default `xmlns` is never what an `mc:Choice/@Requires` names.
+    namespaces: Vec<NamespaceDeclaration>,
     section: Option<SectionAccumulator>,
     sections: Vec<SectionBoundary>,
     /// The open `w:sectPrChange`'s metadata (`Some` between its start and end). While
@@ -1166,6 +1259,7 @@ impl<'a> BodyParser<'a> {
             frames: Vec::new(),
             mc_skip_depth: 0,
             alt_stack: Vec::new(),
+            namespaces: Vec::new(),
             section: None,
             sections: Vec::new(),
             section_change_meta: None,
@@ -1429,6 +1523,12 @@ impl BodyParser<'_> {
                     if self.depth > self.config.max_depth {
                         return Err(ImportError::LimitExceeded { limit: "xml_depth" });
                     }
+                    // Namespace scoping runs BEFORE dispatch and outside every
+                    // element-name guard, because the element being dispatched
+                    // may itself be the `mc:Choice` whose `@Requires` prefixes
+                    // need resolving — including against declarations written
+                    // on that same start tag.
+                    self.push_namespace_declarations(&element);
                     if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
                         self.begin_math(&element)?;
                     } else {
@@ -1446,6 +1546,7 @@ impl BodyParser<'_> {
                 }
                 Event::End(element) => {
                     self.on_end(element.local_name().as_ref())?;
+                    self.pop_namespace_declarations();
                     self.depth = self.depth.saturating_sub(1);
                 }
                 // A `wp:posOffset`/`wp:align` value: its text is captured into the
@@ -1582,6 +1683,10 @@ impl BodyParser<'_> {
                 self.math_in_t = el.local_name().as_ref() == b"t";
             }
             Event::End(_) => {
+                // The math root's own start tag went through the ordinary Start
+                // arm, so any namespace it declared is on the scope stack; its
+                // close never reaches that arm again, so it is unwound here.
+                self.pop_namespace_declarations();
                 self.depth = self.depth.saturating_sub(1);
                 self.math_depth -= 1;
                 self.math_in_t = false;
@@ -1659,6 +1764,70 @@ impl BodyParser<'_> {
             self.text_buffer.push_str(text);
         }
         Ok(())
+    }
+
+    /// Records every `xmlns:prefix="uri"` declaration written on `element`,
+    /// in scope until that element closes. Called for the start tag itself, so
+    /// a declaration and the `@Requires` that uses it can share one tag.
+    fn push_namespace_declarations(&mut self, element: &BytesStart<'_>) {
+        for attribute in element.attributes() {
+            let Ok(attribute) = attribute else { continue };
+            if attribute.key.prefix().map(|prefix| prefix.into_inner()) != Some(b"xmlns".as_slice())
+            {
+                continue;
+            }
+            if self.namespaces.len() >= MAX_TRACKED_NAMESPACES {
+                return;
+            }
+            let Ok(raw) = std::str::from_utf8(attribute.value.as_ref()) else {
+                continue;
+            };
+            let Ok(uri) = quick_xml::escape::unescape(raw) else {
+                continue;
+            };
+            self.namespaces.push(NamespaceDeclaration {
+                depth: self.depth,
+                prefix: attribute.key.local_name().as_ref().to_vec(),
+                uri: uri.as_bytes().to_vec(),
+            });
+        }
+    }
+
+    /// Takes the declarations of the element now closing back out of scope.
+    /// [`Self::depth`] is still that element's depth when this runs.
+    fn pop_namespace_declarations(&mut self) {
+        while self
+            .namespaces
+            .last()
+            .is_some_and(|declaration| declaration.depth >= self.depth)
+        {
+            self.namespaces.pop();
+        }
+    }
+
+    /// Whether an `mc:Choice`'s `@Requires` names only vocabularies this
+    /// importer reads (ECMA-376 Part 3 §10.1.2 — a consumer selects the first
+    /// choice whose requirements it *understands*, and otherwise the fallback).
+    ///
+    /// `@Requires` is a whitespace-separated list of namespace PREFIXES, which
+    /// are meaningless on their own: the same document is free to bind `wps` to
+    /// anything. Each is resolved through the in-scope `xmlns:` declarations to
+    /// the URI it actually names, and a prefix that resolves to nothing is
+    /// treated as unsupported — the direction that falls back rather than
+    /// guessing.
+    fn choice_is_supported(&self, element: &BytesStart<'_>) -> bool {
+        let Some(requires) = attribute_value(element, b"Requires") else {
+            // MCE makes the attribute mandatory. A choice that declares no
+            // requirement asks nothing of the consumer, so read it.
+            return true;
+        };
+        requires.split_ascii_whitespace().all(|prefix| {
+            self.namespaces
+                .iter()
+                .rev()
+                .find(|declaration| declaration.prefix == prefix.as_bytes())
+                .is_some_and(|declaration| is_supported_mce_namespace(&declaration.uri))
+        })
     }
 
     fn on_start(&mut self, local: &[u8], element: &BytesStart<'_>) -> Result<(), ImportError> {
@@ -1782,16 +1951,36 @@ impl BodyParser<'_> {
                 self.in_document = true;
                 self.in_body = true;
             }
-            // Alternate content: select the first branch, skip (and report) the
-            // rest so content is neither duplicated nor lost.
-            b"AlternateContent" => self.alt_stack.push(false),
+            // Alternate content: select the first branch this importer can
+            // actually READ, skip (and report) the rest so content is neither
+            // duplicated nor lost.
+            //
+            // Selecting the first branch regardless of content was the whole
+            // defect: a modern chart or an ink annotation is written as a
+            // choice requiring a vocabulary the model has no representation
+            // for, above a fallback holding the DrawingML or VML equivalent
+            // that it does. Taking the choice dropped the object entirely, even
+            // though the file was carrying a form we could keep — and Word,
+            // reading the same markup, takes the fallback.
+            //
+            // The decision stays streaming: a fallback is by definition last,
+            // so "skip a choice we cannot read, accept whatever comes next that
+            // we can" needs no lookahead.
+            b"AlternateContent" => self.alt_stack.push(AltFrame {
+                selected: false,
+                saw_branch: false,
+            }),
             b"Choice" | b"Fallback" if !self.alt_stack.is_empty() => {
-                let selected = *self.alt_stack.last().expect("alt frame");
-                if selected {
+                let frame = self.alt_stack.last().expect("alt frame");
+                let readable =
+                    !frame.selected && (local == b"Fallback" || self.choice_is_supported(element));
+                let frame = self.alt_stack.last_mut().expect("alt frame");
+                frame.saw_branch = true;
+                if readable {
+                    frame.selected = true;
+                } else {
                     self.mc_skip_depth = 1;
                     self.reporter.report(local);
-                } else {
-                    *self.alt_stack.last_mut().expect("alt frame") = true;
                 }
             }
             // A text box carries block content: parse it in a fresh, suspended
@@ -3890,7 +4079,17 @@ impl BodyParser<'_> {
                 }
             }
             b"AlternateContent" => {
-                self.alt_stack.pop();
+                // A group of alternatives that offered branches and had none
+                // this importer could read is real loss — a chart or an ink
+                // annotation whose producer wrote no fallback. Say so, rather
+                // than let the object disappear between two paragraphs with
+                // the compatibility report claiming a clean import.
+                if let Some(frame) = self.alt_stack.pop()
+                    && frame.saw_branch
+                    && !frame.selected
+                {
+                    self.reporter.report(b"alternateContent:noReadableBranch");
+                }
             }
             b"txbxContent" => self.exit_frame()?,
             // A block control's content closes: build and route the `BlockNode::Sdt`.
