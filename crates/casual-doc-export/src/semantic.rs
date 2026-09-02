@@ -18,6 +18,7 @@ use std::io::{Cursor, Write};
 
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
+use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -292,12 +293,95 @@ impl RelBuilder {
     }
 }
 
+/// Compact, document-local numbers for the ids OOXML writes as decimals.
+///
+/// A `NodeId` is `(namespace << 64) | counter`, so `as_u128()` renders as a
+/// twenty-digit value like 18446744073709551620. Those ids were written straight
+/// into `w:numId`, `w:abstractNumId`, note and comment `w:id`, and
+/// `w:bookmarkStart/@w:id` — all `ST_DecimalNumber`, which Word reads as a 32-bit
+/// signed integer. It either refuses the file or silently drops the numbering,
+/// notes, comments and bookmarks that carry them.
+///
+/// This repository's own round-trip tests never noticed, because the importer
+/// reads those attributes back as opaque strings: the model matched, and the file
+/// was still unusable in Word.
+///
+/// Numbers start at 1 — `w:footnote` reserves 0 and -1 for the separators — and
+/// are assigned in definition order, which `DefinitionMap` keeps sorted, so the
+/// same document always exports the same tokens.
+#[derive(Default)]
+struct IdTokens {
+    abstract_numbering: BTreeMap<AbstractNumberingId, u32>,
+    numbering: BTreeMap<NumberingInstanceId, u32>,
+    footnotes: BTreeMap<NoteId, u32>,
+    endnotes: BTreeMap<NoteId, u32>,
+    comments: BTreeMap<CommentId, u32>,
+    bookmarks: BTreeMap<BookmarkId, u32>,
+}
+
+impl IdTokens {
+    fn new(defs: &Definitions) -> Self {
+        fn number<K: Copy + Ord, V>(map: &DefinitionMap<K, V>) -> BTreeMap<K, u32> {
+            map.iter()
+                .enumerate()
+                .map(|(index, (id, _))| {
+                    // Saturating rather than wrapping: a document with four
+                    // billion definitions is not reachable within the admission
+                    // limits, and a silent wrap would alias two ids onto one
+                    // token, which is the failure this type exists to prevent.
+                    (*id, u32::try_from(index + 1).unwrap_or(u32::MAX))
+                })
+                .collect()
+        }
+        Self {
+            abstract_numbering: number(&defs.abstract_numbering),
+            numbering: number(&defs.numbering),
+            footnotes: number(&defs.footnotes),
+            endnotes: number(&defs.endnotes),
+            comments: number(&defs.comments),
+            bookmarks: number(&defs.bookmarks),
+        }
+    }
+
+    /// Footnote and endnote `w:id` live in separate spaces in OOXML, so a note is
+    /// looked up in both.
+    fn note(&self, id: NoteId) -> String {
+        self.footnotes
+            .get(&id)
+            .or_else(|| self.endnotes.get(&id))
+            .copied()
+            .unwrap_or(0)
+            .to_string()
+    }
+
+    fn comment(&self, id: CommentId) -> String {
+        self.comments.get(&id).copied().unwrap_or(0).to_string()
+    }
+
+    fn bookmark(&self, id: BookmarkId) -> String {
+        self.bookmarks.get(&id).copied().unwrap_or(0).to_string()
+    }
+
+    fn abstract_numbering(&self, id: AbstractNumberingId) -> String {
+        self.abstract_numbering
+            .get(&id)
+            .copied()
+            .unwrap_or(0)
+            .to_string()
+    }
+
+    fn numbering(&self, id: NumberingInstanceId) -> String {
+        self.numbering.get(&id).copied().unwrap_or(0).to_string()
+    }
+}
+
 /// Threaded write context: the bookmark-name source (bookmark markers carry only
 /// a `BookmarkId`; the name lives in `Definitions`) and the relationship
 /// accumulator (external hyperlinks).
 struct Ctx<'a> {
     defs: &'a Definitions,
     rels: RelBuilder,
+    tokens: IdTokens,
 }
 
 /// Serializes a v1 `Document` to a DOCX package. `media` supplies binary image
@@ -335,6 +419,7 @@ pub fn write_document_with_retained_parts(
     retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
     let definitions = document.definitions();
+    let id_tokens = IdTokens::new(definitions);
     // Embedded-object (chart/diagram/OLE) part relationships, emitted with their
     // verbatim ids so the body reference and the relationship agree. Collected
     // before the body is written so their ids are reserved against hyperlink
@@ -408,6 +493,7 @@ pub fn write_document_with_retained_parts(
                 &definitions.styles,
                 definitions.document_defaults.as_ref(),
                 definitions.latent_styles.as_ref(),
+                &id_tokens,
             )?,
         ));
     }
@@ -417,7 +503,11 @@ pub fn write_document_with_retained_parts(
             NUMBERING_CT,
             NUMBERING_REL_TYPE,
             "numbering.xml",
-            numbering_xml(&definitions.abstract_numbering, &definitions.numbering)?,
+            numbering_xml(
+                &definitions.abstract_numbering,
+                &definitions.numbering,
+                &id_tokens,
+            )?,
         ));
     }
     if !definitions.footnotes.is_empty() {
@@ -1203,6 +1293,7 @@ fn notes_xml(
     let mut ctx = Ctx {
         defs,
         rels: RelBuilder::new(BTreeSet::new()),
+        tokens: IdTokens::new(defs),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -1210,7 +1301,7 @@ fn notes_xml(
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, note) in notes.iter() {
         let mut el = start(item);
-        el.push_attribute(("w:id", note_id_token(*id).as_str()));
+        el.push_attribute(("w:id", ctx.tokens.note(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
         for block in &note.blocks {
             write_block(&mut w, block, &mut ctx)?;
@@ -1236,6 +1327,7 @@ fn comments_xml(
     let mut ctx = Ctx {
         defs,
         rels: RelBuilder::new(BTreeSet::new()),
+        tokens: IdTokens::new(defs),
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -1244,7 +1336,7 @@ fn comments_xml(
     w.write_event(Event::Start(r)).map_err(pkg)?;
     for (id, comment) in comments.iter() {
         let mut el = start("w:comment");
-        el.push_attribute(("w:id", comment_id_token(*id).as_str()));
+        el.push_attribute(("w:id", ctx.tokens.comment(*id).as_str()));
         if let Some(author) = &comment.author {
             el.push_attribute(("w:author", author.as_str()));
         }
@@ -1388,14 +1480,6 @@ fn people_xml(people: &[Person]) -> Result<Vec<u8>, ExportError> {
     Ok(finish(w))
 }
 
-fn note_id_token(id: NoteId) -> String {
-    id.node_id().as_u128().to_string()
-}
-
-fn comment_id_token(id: CommentId) -> String {
-    id.node_id().as_u128().to_string()
-}
-
 /// Emits a header or footer part (`w:hdr`/`w:ftr`) from its blocks. Uses a fresh
 /// per-part `Ctx` so a hyperlink inside routes to the part's own rels (returned).
 fn header_footer_xml(
@@ -1407,6 +1491,7 @@ fn header_footer_xml(
     let mut ctx = Ctx {
         defs,
         rels: RelBuilder::new(BTreeSet::new()),
+        tokens: IdTokens::new(defs),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -1690,6 +1775,7 @@ fn styles_xml(
     styles: &DefinitionMap<StyleId, Style>,
     document_defaults: Option<&DocumentDefaults>,
     latent_styles: Option<&LatentStyles>,
+    tokens: &IdTokens,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:styles");
@@ -1718,7 +1804,7 @@ fn styles_xml(
             if *paragraph == ParagraphProperties::default() {
                 w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
             } else {
-                write_paragraph_properties(&mut w, paragraph, None)?;
+                write_paragraph_properties(&mut w, paragraph, None, tokens)?;
             }
         }
         w.write_event(Event::End(BytesEnd::new("w:pPrDefault")))
@@ -1827,6 +1913,7 @@ fn styles_xml(
         }
         write_style_properties(
             &mut w,
+            tokens,
             &style.paragraph,
             &style.run,
             &style.table,
@@ -1834,7 +1921,7 @@ fn styles_xml(
             &style.table_cell,
         )?;
         for over in &style.conditional {
-            write_conditional_format(&mut w, over)?;
+            write_conditional_format(tokens, &mut w, over)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:style")))
             .map_err(pkg)?;
@@ -1861,6 +1948,7 @@ fn style_kind_token(kind: StyleKind) -> &'static str {
 /// bare element preserves presence across the round trip.
 fn write_style_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
+    tokens: &IdTokens,
     paragraph: &Option<ParagraphProperties>,
     run: &Option<RunProperties>,
     table: &Option<TableProperties>,
@@ -1872,7 +1960,7 @@ fn write_style_properties(
             w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
         } else {
             // A style never carries a section break (that is a body concept).
-            write_paragraph_properties(w, paragraph, None)?;
+            write_paragraph_properties(w, paragraph, None, tokens)?;
         }
     }
     if let Some(run) = run {
@@ -1908,6 +1996,7 @@ fn write_style_properties(
 
 /// Emits one `w:tblStylePr` conditional-formatting block (region + overrides).
 fn write_conditional_format(
+    tokens: &IdTokens,
     w: &mut Writer<Cursor<Vec<u8>>>,
     over: &TableStyleOverride,
 ) -> Result<(), ExportError> {
@@ -1916,6 +2005,7 @@ fn write_conditional_format(
     w.write_event(Event::Start(el)).map_err(pkg)?;
     write_style_properties(
         w,
+        tokens,
         &over.paragraph,
         &over.run,
         &over.table,
@@ -2129,6 +2219,7 @@ fn style_id_token(id: StyleId) -> String {
 fn numbering_xml(
     abstracts: &DefinitionMap<AbstractNumberingId, AbstractNumbering>,
     instances: &DefinitionMap<NumberingInstanceId, NumberingInstance>,
+    tokens: &IdTokens,
 ) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut root = start("w:numbering");
@@ -2136,7 +2227,7 @@ fn numbering_xml(
     w.write_event(Event::Start(root)).map_err(pkg)?;
     for (id, abstract_num) in abstracts.iter() {
         let mut el = start("w:abstractNum");
-        el.push_attribute(("w:abstractNumId", abstract_id_token(*id).as_str()));
+        el.push_attribute(("w:abstractNumId", tokens.abstract_numbering(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
         if let Some(kind) = abstract_num.multi_level_type {
             use casual_doc_model::v1::MultiLevelType;
@@ -2165,17 +2256,20 @@ fn numbering_xml(
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         for level in &abstract_num.levels {
-            write_level(&mut w, level)?;
+            write_level(&mut w, level, tokens)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:abstractNum")))
             .map_err(pkg)?;
     }
     for (id, instance) in instances.iter() {
         let mut el = start("w:num");
-        el.push_attribute(("w:numId", num_id_token(*id).as_str()));
+        el.push_attribute(("w:numId", tokens.numbering(*id).as_str()));
         w.write_event(Event::Start(el)).map_err(pkg)?;
         let mut a = start("w:abstractNumId");
-        a.push_attribute(("w:val", abstract_id_token(instance.abstract_ref).as_str()));
+        a.push_attribute((
+            "w:val",
+            tokens.abstract_numbering(instance.abstract_ref).as_str(),
+        ));
         w.write_event(Event::Empty(a)).map_err(pkg)?;
         // Per-instance overrides (`w:lvlOverride`): a `w:startOverride` restart
         // and/or a full `w:lvl` level redefinition, in CT_LvlOverride schema
@@ -2193,7 +2287,7 @@ fn numbering_xml(
                 w.write_event(Event::Empty(so)).map_err(pkg)?;
             }
             if let Some(definition) = &over.definition {
-                write_level(&mut w, definition)?;
+                write_level(&mut w, definition, tokens)?;
             }
             w.write_event(Event::End(BytesEnd::new("w:lvlOverride")))
                 .map_err(pkg)?;
@@ -2210,7 +2304,11 @@ fn numbering_xml(
 /// `Some(default)` pPr/rPr emits a bare element to preserve presence across the
 /// round trip (the property writers elide an all-default value), mirroring the
 /// styles writer.
-fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Result<(), ExportError> {
+fn write_level(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    level: &NumberingLevel,
+    tokens: &IdTokens,
+) -> Result<(), ExportError> {
     let mut lvl = start("w:lvl");
     lvl.push_attribute(("w:ilvl", level.level.to_string().as_str()));
     w.write_event(Event::Start(lvl)).map_err(pkg)?;
@@ -2259,7 +2357,7 @@ fn write_level(w: &mut Writer<Cursor<Vec<u8>>>, level: &NumberingLevel) -> Resul
             w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
         } else {
             // A level's pPr never carries a section break (a body concept).
-            write_paragraph_properties(w, paragraph, None)?;
+            write_paragraph_properties(w, paragraph, None, tokens)?;
         }
     }
     if let Some(run) = &level.run_properties {
@@ -2308,14 +2406,6 @@ fn level_suffix_token(suffix: LevelSuffix) -> &'static str {
     }
 }
 
-fn abstract_id_token(id: AbstractNumberingId) -> String {
-    id.node_id().as_u128().to_string()
-}
-
-fn num_id_token(id: NumberingInstanceId) -> String {
-    id.node_id().as_u128().to_string()
-}
-
 /// Emits `word/document.xml` from the model body, returning the bytes plus the
 /// external hyperlink relationships collected while writing (for
 /// `document.xml.rels`).
@@ -2352,6 +2442,7 @@ fn document_xml(
     let mut ctx = Ctx {
         defs: document.definitions(),
         rels: RelBuilder::new(media_rel_ids),
+        tokens: IdTokens::new(document.definitions()),
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -3581,7 +3672,7 @@ fn write_paragraph(
     let section = properties
         .section_break
         .and_then(|id| ctx.defs.sections.iter().find(|boundary| boundary.id == id));
-    write_paragraph_properties(w, properties, section)?;
+    write_paragraph_properties(w, properties, section, &ctx.tokens)?;
     for inline in inlines {
         write_inline(w, inline, ctx, false)?;
     }
@@ -3594,6 +3685,7 @@ fn write_paragraph_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &ParagraphProperties,
     section: Option<&SectionBoundary>,
+    tokens: &IdTokens,
 ) -> Result<(), ExportError> {
     if *properties == ParagraphProperties::default() {
         return Ok(());
@@ -3610,7 +3702,7 @@ fn write_paragraph_properties(
         ilvl.push_attribute(("w:val", numbering.level.to_string().as_str()));
         w.write_event(Event::Empty(ilvl)).map_err(pkg)?;
         let mut num_id = start("w:numId");
-        num_id.push_attribute(("w:val", num_id_token(numbering.instance).as_str()));
+        num_id.push_attribute(("w:val", tokens.numbering(numbering.instance).as_str()));
         w.write_event(Event::Empty(num_id)).map_err(pkg)?;
         w.write_event(Event::End(BytesEnd::new("w:numPr")))
             .map_err(pkg)?;
@@ -3838,7 +3930,7 @@ fn write_paragraph_properties(
         if change.prior.as_ref() == &ParagraphProperties::default() {
             w.write_event(Event::Empty(start("w:pPr"))).map_err(pkg)?;
         } else {
-            write_paragraph_properties(w, change.prior.as_ref(), None)?;
+            write_paragraph_properties(w, change.prior.as_ref(), None, tokens)?;
         }
         w.write_event(Event::End(BytesEnd::new("w:pPrChange")))
             .map_err(pkg)?;
@@ -4199,7 +4291,7 @@ fn write_inline(
         // from the shared `BookmarkId`; the name lives in `Definitions`.
         InlineNode::BookmarkStart(marker) => {
             if let Some(bookmark) = ctx.defs.bookmarks.get(&marker.bookmark) {
-                let id = marker.bookmark.node_id().as_u128().to_string();
+                let id = ctx.tokens.bookmark(marker.bookmark);
                 let mut el = start("w:bookmarkStart");
                 el.push_attribute(("w:id", id.as_str()));
                 el.push_attribute(("w:name", bookmark.name.as_str()));
@@ -4207,7 +4299,7 @@ fn write_inline(
             }
         }
         InlineNode::BookmarkEnd(marker) => {
-            let id = marker.bookmark.node_id().as_u128().to_string();
+            let id = ctx.tokens.bookmark(marker.bookmark);
             let mut el = start("w:bookmarkEnd");
             el.push_attribute(("w:id", id.as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
@@ -4265,7 +4357,7 @@ fn write_inline(
             };
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
             let mut el = start(element);
-            el.push_attribute(("w:id", note_id_token(note_ref.note).as_str()));
+            el.push_attribute(("w:id", ctx.tokens.note(note_ref.note).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
@@ -4287,7 +4379,7 @@ fn write_inline(
         InlineNode::CommentReference(comment_ref) => {
             w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
             let mut el = start("w:commentReference");
-            el.push_attribute(("w:id", comment_id_token(comment_ref.comment).as_str()));
+            el.push_attribute(("w:id", ctx.tokens.comment(comment_ref.comment).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
             w.write_event(Event::End(BytesEnd::new("w:r")))
                 .map_err(pkg)?;
@@ -4298,12 +4390,12 @@ fn write_inline(
         // `w:commentReference` and the comment part carry).
         InlineNode::CommentRangeStart(marker) => {
             let mut el = start("w:commentRangeStart");
-            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            el.push_attribute(("w:id", ctx.tokens.comment(marker.comment).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         InlineNode::CommentRangeEnd(marker) => {
             let mut el = start("w:commentRangeEnd");
-            el.push_attribute(("w:id", comment_id_token(marker.comment).as_str()));
+            el.push_attribute(("w:id", ctx.tokens.comment(marker.comment).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
         }
         // An inline drawing: the minimal `w:drawing`/`wp:inline`/`pic:pic`

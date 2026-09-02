@@ -94,10 +94,23 @@ const SKIP_TAGS = new Set(["SCRIPT", "STYLE"]);
  * flattened to its plain text — never silently dropped, only unstyled. */
 export function htmlToRuns(root) {
   const runs = [];
-  let sawParagraph = false;
+  // A block boundary is only a paragraph break once there is content on BOTH
+  // sides of it. Marking the break on ENTERING a container treated the container
+  // itself as content, so Word's outer `WordSection1` div — and every wrapper
+  // div a browser selection carries — produced a leading break, and the paste
+  // began with a blank paragraph. The break is therefore deferred until text is
+  // actually contributed.
+  let sawContent = false;
+  let pendingBreak = false;
 
   function pushText(text, format) {
-    if (text) runs.push({ text, ...format });
+    if (!text) return;
+    if (pendingBreak) {
+      runs.push({ paragraphBreak: true });
+      pendingBreak = false;
+    }
+    sawContent = true;
+    runs.push({ text, ...format });
   }
 
   function walk(node, format) {
@@ -113,9 +126,8 @@ export function htmlToRuns(root) {
         pushText("\n", format);
         continue;
       }
-      if (BLOCK_TAGS.has(tag)) {
-        if (sawParagraph) runs.push({ paragraphBreak: true });
-        sawParagraph = true;
+      if (BLOCK_TAGS.has(tag) && sawContent) {
+        pendingBreak = true;
       }
       // Start from the inherited format, then let this element's tag and its
       // inline style each turn formats on (either signal wins). Inline style
@@ -179,7 +191,14 @@ function collectStructuredBlocks(root, out) {
   for (const node of root.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) {
       if (node.textContent.trim()) {
-        for (const b of runsToParagraphBlocks(htmlToRuns(node))) out.push(b);
+        // The text itself, not `htmlToRuns(node)`. That walks `childNodes`, and a
+        // text node has none, so it returned an empty list and the sentence was
+        // filtered away as an empty block — "Intro sentence <table>…</table>
+        // Closing sentence" pasted as the table alone, both sentences silently
+        // gone, against this module's own no-silent-loss contract.
+        for (const b of runsToParagraphBlocks([{ text: node.textContent }])) {
+          out.push(b);
+        }
       }
       continue;
     }
@@ -286,13 +305,23 @@ function applyInlineStyle(format, style) {
   if (!style) return;
   const decls = parseDeclarations(style);
 
+  // An explicit declaration is authoritative in BOTH directions, because
+  // `font-weight` and `font-style` inherit and a descendant may override an
+  // ancestor. Google Docs wraps its entire clipboard payload in
+  // `<b style="font-weight:normal">`, so a rule that could only ever turn bold ON
+  // saw the `<b>`, never saw the `normal`, and delivered every paste from Docs
+  // entirely in bold.
+  //
+  // `text-decoration` is deliberately NOT treated this way below: it propagates
+  // from an ancestor and cannot be switched off by a descendant, so honouring
+  // `text-decoration: none` there would be wrong CSS.
   const weight = decls["font-weight"];
-  if (weight && (weight === "bold" || weight === "bolder" || Number(weight) >= 600)) {
-    format.bold = true;
+  if (weight) {
+    format.bold = weight === "bold" || weight === "bolder" || Number(weight) >= 600;
   }
   const fontStyle = decls["font-style"];
-  if (fontStyle && (fontStyle.startsWith("italic") || fontStyle.startsWith("oblique"))) {
-    format.italic = true;
+  if (fontStyle) {
+    format.italic = fontStyle.startsWith("italic") || fontStyle.startsWith("oblique");
   }
   const decoration = decls["text-decoration-line"] || decls["text-decoration"];
   if (decoration) {
