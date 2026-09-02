@@ -198,9 +198,9 @@ Every P0 is now closed or in review.
 | HF-107 | Changing a list marker writes numbering definitions outside the undo system | wasm | M | Internal audit | Open |
 | HF-108 | setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU | wasm | S | Internal audit | In review |
 | HF-109 | Nothing is embeddable: no host-capability modes, no custom element, no package | embedding | L | Sibling gap (opencalc + docs) | Open |
-| HF-110 | Every keystroke walks and materializes the whole document's text twice | wasm | M | Internal audit | Open |
+| HF-110 | Every keystroke walks and materializes the whole document's text twice | wasm | M | Internal audit | In review |
 | HF-111 | Each suggested keystroke re-validates the entire document | perf | M | Internal audit | Open |
-| HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | Open |
+| HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | In review |
 | HF-113 | Every pointermove re-queries and materializes all page wrappers | perf | S | Internal audit | Open |
 
 ## Cross-cutting themes
@@ -1768,7 +1768,7 @@ a test that could not fail.
 
 ### HF-110 — Every keystroke walks and materializes the whole document's text twice
 
-**P3** · wasm · perf · effort M · source: Internal audit · **Status:** Open
+**P3** · wasm · perf · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Typing latency grows with document length on a 200-page file — thousands of string allocations per committed character — even though pagination itself is incremental.
 
@@ -1792,7 +1792,7 @@ a test that could not fail.
 
 ### HF-112 — flow_blocks recomputes the running galley height for every paragraph
 
-**P3** · perf · perf · effort S · source: Internal audit · **Status:** Open
+**P3** · perf · perf · effort S · source: Internal audit · **Status:** In review
 
 **Symptom.** Laying out a long document spends hundreds of millions of redundant additions on a value that is free to maintain — paid again on every uncached rebuild — and risks an i32 overflow panic in debug on pathological documents.
 
