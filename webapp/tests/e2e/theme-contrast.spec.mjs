@@ -1,14 +1,18 @@
-// The dark palette shipped with ribbon group captions at 4.42:1 — under the
-// WCAG AA floor of 4.5:1, on the smallest type in the product (9px). The labels
-// that tell you what each toolbar group IS were the least readable thing on
-// screen, and only in dark mode, which is why it read as "dark mode is broken in
-// the toolbar" rather than as a palette bug. The light palette measured clean
-// throughout, so nothing about the light theme would ever have caught it.
+// Both palettes shipped text under the WCAG AA floor of 4.5:1, in different
+// places, which is why neither theme could have caught the other:
 //
-// This measures the rendered ribbon rather than reviewing hex codes, because the
-// failure was a PAIRING — `--faint` was readable on `--surface` and failed on
-// `--surface-alt` — and no amount of looking at either token alone shows that.
-// Both themes are checked so a fix for one cannot silently break the other.
+//   * dark, at 4.42:1 — every ribbon group caption (UNDO, CLIPBOARD, FONT,
+//     PARAGRAPH, STYLES, EDITING, MODE). Nine-pixel text, the smallest in the
+//     product, and it was the labels naming what each toolbar group IS;
+//   * light, at 4.16:1 — the search box's "⌘⇧P" hint and the footer's "Mode"
+//     label.
+//
+// Both were the same root cause: `--faint` is readable on the surface it was
+// chosen against and fails on a quieter one also used behind it. That is a
+// PAIRING failure, and no amount of reviewing either token alone reveals it —
+// which is why this measures the rendered app instead of auditing hex codes.
+// The whole chrome is in scope, not just the ribbon, because the light failures
+// were in the header and the footer.
 import { test, expect, gotoEditor } from "./fixtures.mjs";
 
 /** Runs in the page: contrast ratio of every text-bearing element in a region
@@ -100,7 +104,7 @@ const auditRegion = (selector) => {
 };
 
 for (const theme of ["light", "dark"]) {
-  test(`ribbon text meets WCAG AA in the ${theme} theme`, async ({ page }) => {
+  test(`app chrome text meets WCAG AA in the ${theme} theme`, async ({ page }) => {
     await gotoEditor(page);
 
     // Measure the settled palette. Theme tokens are animated, and a colour
@@ -115,7 +119,7 @@ for (const theme of ["light", "dark"]) {
     );
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
-    const failures = await page.evaluate(auditRegion, ".ribbon");
-    expect(failures, `unreadable ribbon text in the ${theme} theme`).toEqual([]);
+    const failures = await page.evaluate(auditRegion, "body");
+    expect(failures, `unreadable text in the ${theme} theme`).toEqual([]);
   });
 }

@@ -155,12 +155,17 @@
   --surface: #ffffff;
   --surface-alt: #fcfcfb;
   --ink: #14161a;
+  /* Like their dark counterparts, --muted and --faint are pinned to clear WCAG
+     AA (4.5:1) against the darkest surface they are painted on — here --bg-2,
+     not --surface. --faint was #6f747c, which passes on white (4.70:1) and fails
+     on --bg-2 (4.16:1), so the search box's "⌘⇧P" hint and the footer's "Mode"
+     label were the two places it showed. Guarded by theme-contrast.spec.mjs. */
   --muted: #565a61;
   /* --faint was #8a8e95 = 3.29:1 on --surface, below the 4.5:1 body-text floor,
      and it is the colour of every menu shortcut hint and empty state — the prose
      a first-time user needs most (docs/104 HF-093). #6f747c measures 4.70:1 on
      --surface and 4.51:1 on --bg. */
-  --faint: #6f747c;
+  --faint: #666b73;
   --line: #edebe6;
   --line-strong: #dedbd4;
   --scrollbar-thumb: rgba(74, 78, 85, 0.3);
