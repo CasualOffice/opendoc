@@ -197,7 +197,12 @@ test("the Styles selector exposes every style and the quick gallery applies a re
 
   const gallery = page.locator("#stylesGallery");
   await expect(gallery.locator(".style-card").first()).toBeVisible();
-  await expect(gallery.locator(".style-card")).toHaveCount(4);
+  // Three, not four. The band has to fit 1280px without a horizontal scrollbar
+  // (asserted at the top of this file), and a fourth card only fits by shrinking
+  // all of them until every name ellipsises to an initial. The dropped style is
+  // not lost — it moves behind the ▾ "More styles" popover, which already holds
+  // the full set and is exercised further down. See QUICK_STYLE_COUNT.
+  await expect(gallery.locator(".style-card")).toHaveCount(3);
   expect(await page.locator("#paragraphStyle option").count()).toBeGreaterThan(4);
   const styleWidths = await page.evaluate(() => [
     document.querySelector("#paragraphStyle").getBoundingClientRect().width,
@@ -244,13 +249,14 @@ test("each Styles gallery card is drawn IN its own style (model-driven preview)"
   await clickIntoFirstPage(page);
 
   const looks = await galleryCardLooks(page);
-  expect(looks.length).toBe(4);
+  // Matches QUICK_STYLE_COUNT — see the count assertion above for why it is 3.
+  expect(looks.length).toBe(3);
   // Every card's label carries an inline preview weight (the engine-resolved
   // style drove it), never the bare default only.
   for (const look of looks) {
     expect(["400", "450", "500", "600", "650", "700"]).toContain(look.weight);
   }
-  // The cards genuinely differ — a real visual hierarchy, not four identical
+  // The cards genuinely differ — a real visual hierarchy, not a row of identical
   // labels: at least two distinct (weight, size) pairs across the gallery.
   const distinct = new Set(looks.map((l) => `${l.weight}/${l.size}`));
   expect(distinct.size).toBeGreaterThanOrEqual(2);
