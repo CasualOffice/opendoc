@@ -1134,7 +1134,8 @@ pub fn apply(
             })
         }
         Operation::InsertRow { table, index, row } => {
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             let idx = *index as usize;
             if idx > t.rows.len() {
                 return Err(EditError::OffsetOutOfRange);
@@ -1146,7 +1147,8 @@ pub fn apply(
             })
         }
         Operation::DeleteRow { table, index } => {
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             let idx = *index as usize;
             if idx >= t.rows.len() {
                 return Err(EditError::OffsetOutOfRange);
@@ -1169,7 +1171,8 @@ pub fn apply(
             width,
             cells,
         } => {
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             ensure_regular_table(t)?;
             let idx = *index as usize;
             if idx > t.grid.len() {
@@ -1193,7 +1196,8 @@ pub fn apply(
             })
         }
         Operation::DeleteColumn { table, index } => {
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             ensure_regular_table(t)?;
             let idx = *index as usize;
             if idx >= t.grid.len() {
@@ -1214,7 +1218,8 @@ pub fn apply(
             })
         }
         Operation::DeleteTable { table } => {
-            let (container, index, removed) = remove_table(doc.body_mut(), None, *table)?;
+            let (container, index, removed) =
+                remove_table(blocks_owning_mut(doc, *table)?, None, *table)?;
             Ok(Operation::InsertTable {
                 container,
                 index,
@@ -1409,7 +1414,8 @@ pub fn apply(
             Ok(Operation::DeleteObject { object: node.id() })
         }
         Operation::SetTableCellProperties { cell, properties } => {
-            let c = find_cell_mut(doc.body_mut(), *cell).ok_or(EditError::NodeNotFound)?;
+            let c = find_cell_mut(blocks_owning_mut(doc, *cell)?, *cell)
+                .ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut c.properties, (**properties).clone());
             Ok(Operation::SetTableCellProperties {
                 cell: *cell,
@@ -1417,7 +1423,8 @@ pub fn apply(
             })
         }
         Operation::SetTableProperties { table, properties } => {
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(&mut t.properties, (**properties).clone());
             Ok(Operation::SetTableProperties {
                 table: *table,
@@ -1428,7 +1435,8 @@ pub fn apply(
             if replacement.id != *table {
                 return Err(EditError::Unsupported);
             }
-            let t = find_table_mut(doc.body_mut(), *table).ok_or(EditError::NodeNotFound)?;
+            let t = find_table_mut(blocks_owning_mut(doc, *table)?, *table)
+                .ok_or(EditError::NodeNotFound)?;
             let previous = std::mem::replace(t, (**replacement).clone());
             Ok(Operation::ReplaceTable {
                 table: *table,
@@ -1617,18 +1625,24 @@ pub fn apply(
                 .bookmarks
                 .insert(*bookmark, Bookmark { name: name.clone() });
 
-            let insertion =
-                insert_bookmark_pair(doc.body_mut(), *start, start_marker, *end, end_marker, ids);
+            let insertion = insert_bookmark_pair(
+                blocks_owning_mut(doc, start.node)?,
+                *start,
+                start_marker,
+                *end,
+                end_marker,
+                ids,
+            );
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidName));
             if let Err(err) = outcome {
                 // Roll back both the markers and the definition; no partial mutation
                 // may survive an error.
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), start.node) {
+                if let Some(para) = find_paragraph_any_mut(doc, start.node) {
                     para.inlines = start_snapshot;
                 }
                 if let Some(end_snapshot) = end_snapshot
-                    && let Some(para) = find_paragraph_mut(doc.body_mut(), end.node)
+                    && let Some(para) = find_paragraph_any_mut(doc, end.node)
                 {
                     para.inlines = end_snapshot;
                 }
@@ -1667,30 +1681,30 @@ pub fn apply(
                 None
             };
 
-            if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+            if let Some(para) = find_paragraph_any_mut(doc, start_site.node) {
                 remove_marker_by_id(&mut para.inlines, start_site.marker);
             }
-            if let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node) {
+            if let Some(para) = find_paragraph_any_mut(doc, end_site.node) {
                 remove_marker_by_id(&mut para.inlines, end_site.marker);
             }
             // Removing a marker can leave two equal-property runs it had kept apart
             // adjacent, which the model forbids; coalesce each affected paragraph.
-            if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+            if let Some(para) = find_paragraph_any_mut(doc, start_site.node) {
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             if end_site.node != start_site.node
-                && let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node)
+                && let Some(para) = find_paragraph_any_mut(doc, end_site.node)
             {
                 coalesce_adjacent_runs(&mut para.inlines);
             }
             let removed = doc.definitions_mut().bookmarks.remove(bookmark);
 
             if doc.validate().is_err() {
-                if let Some(para) = find_paragraph_mut(doc.body_mut(), start_site.node) {
+                if let Some(para) = find_paragraph_any_mut(doc, start_site.node) {
                     para.inlines = start_snapshot;
                 }
                 if let Some(end_snapshot) = end_snapshot
-                    && let Some(para) = find_paragraph_mut(doc.body_mut(), end_site.node)
+                    && let Some(para) = find_paragraph_any_mut(doc, end_site.node)
                 {
                     para.inlines = end_snapshot;
                 }
@@ -1735,7 +1749,12 @@ pub fn apply(
                 .ok_or(EditError::NodeNotFound)?
                 .inlines
                 .clone();
-            let insertion = insert_field_at(doc.body_mut(), *at, (**field).clone(), ids);
+            let insertion = insert_field_at(
+                blocks_owning_mut(doc, at.node)?,
+                *at,
+                (**field).clone(),
+                ids,
+            );
             let outcome =
                 insertion.and_then(|()| doc.validate().map_err(|_| EditError::InvalidField));
             if let Err(err) = outcome {
@@ -2034,7 +2053,7 @@ pub fn apply(
             // Locate and remove the body-side reference, recovering its paragraph
             // and offset for the inverse's caret.
             let Some((para_node, offset, old_inlines)) =
-                remove_note_reference(doc.body_mut(), *reference_id)
+                on_owning_surface_mut(doc, |blocks| remove_note_reference(blocks, *reference_id))
             else {
                 return Err(EditError::NodeNotFound);
             };
@@ -2045,7 +2064,7 @@ pub fn apply(
             let Some(removed) = removed else {
                 // The reference existed but the definition did not: restore the
                 // reference and refuse (no partial mutation).
-                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                let para = find_paragraph_any_mut(doc, para_node)
                     .expect("the paragraph we just edited still exists");
                 para.inlines = old_inlines;
                 return Err(EditError::NodeNotFound);
@@ -2059,7 +2078,7 @@ pub fn apply(
                         doc.definitions_mut().endnotes.insert(*note, removed);
                     }
                 }
-                let para = find_paragraph_mut(doc.body_mut(), para_node)
+                let para = find_paragraph_any_mut(doc, para_node)
                     .expect("the paragraph we just edited still exists");
                 para.inlines = old_inlines;
                 return Err(EditError::Unsupported);
@@ -3759,11 +3778,19 @@ fn blocks_contain(blocks: &[BlockNode], id: NodeId) -> bool {
     }
     blocks.iter().any(|block| match block {
         BlockNode::Table(table) => {
+            // Rows and cells are addressable in their own right: table editing
+            // operations name a cell or a row, not the paragraph inside it. Only
+            // matching the table and recursing into cell CONTENT meant a lookup
+            // for a cell id found no surface at all, so every caller fell back to
+            // the body and a cell in a header, footer, note or text box reported
+            // itself as belonging nowhere.
             table.id == id
                 || table.rows.iter().any(|row| {
-                    row.cells
-                        .iter()
-                        .any(|cell| blocks_contain(&cell.blocks, id))
+                    row.id == id
+                        || row
+                            .cells
+                            .iter()
+                            .any(|cell| cell.id == id || blocks_contain(&cell.blocks, id))
                 })
         }
         BlockNode::Sdt(sdt) => blocks_contain(&sdt.blocks, id),
@@ -3880,6 +3907,18 @@ fn all_surfaces(doc: &Document) -> Vec<Surface> {
 /// surface at a time; calling them on `doc.body_mut()` is what made deleting an
 /// image in a header, or inserting one there, fail with `NodeNotFound`. `f` must
 /// leave a surface untouched when it answers `None`, which every helper below
+/// The paragraph `id` names, wherever it lives — the body-agnostic replacement
+/// for `find_paragraph_mut(doc.body_mut(), id)`.
+///
+/// The read side has resolved paragraphs across every surface for a long time
+/// while the matching mutations kept walking the body alone. That mismatch has
+/// one shape wherever it appears: a control that looks enabled, then fails,
+/// silently does nothing, or reports an error about the wrong thing.
+fn find_paragraph_any_mut(doc: &mut Document, id: NodeId) -> Option<&mut Paragraph> {
+    let surface = surface_of(doc, id)?;
+    find_paragraph_mut(surface_blocks_mut(doc, &surface)?, id)
+}
+
 /// does — they mutate only after they have found their target.
 fn on_owning_surface_mut<T>(
     doc: &mut Document,
@@ -6794,6 +6833,123 @@ mod tests {
     ///
     /// The sibling range query was fixed for this and this one was missed, which
     /// is the recurring cost of a rule that enumerates its surfaces.
+    /// Table editing must work on whichever surface owns the table.
+    ///
+    /// The read paths and the UI gating resolve tables across every surface, but
+    /// the mutations walked `doc.body_mut()` alone — so every table command was
+    /// offered for a table in a header, footer, note or text box and then failed
+    /// with `NodeNotFound`, which the editor reports as an error about the wrong
+    /// thing. This is the operation-by-surface matrix the theme asks for, in the
+    /// smallest form that would have caught it.
+    #[test]
+    fn table_operations_reach_a_table_that_is_not_in_the_body() {
+        use casual_doc_model::v1::{
+            GridColumn, Table, TableCell, TableCellProperties, TableProperties, TableRow,
+            TableRowProperties,
+        };
+
+        let header_id = HeaderFooterId::new(n(990));
+        let table_id = n(991);
+        let row_id = n(992);
+        let cell_id = n(993);
+
+        let cell = |id: NodeId, para_id: u64, run_id: u64, text: &str| TableCell {
+            id,
+            properties: TableCellProperties::default(),
+            blocks: vec![para(para_id, vec![run(run_id, text)])],
+        };
+        let new_row = |row: NodeId, c: NodeId, para_id: u64, run_id: u64| TableRow {
+            id: row,
+            properties: TableRowProperties::default(),
+            cells: vec![cell(c, para_id, run_id, "added")],
+        };
+
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            header_id,
+            casual_doc_model::v1::HeaderFooter {
+                blocks: vec![BlockNode::Table(Table {
+                    id: table_id,
+                    grid: vec![GridColumn {
+                        width_twips: Some(3000),
+                    }],
+                    grid_change: None,
+                    properties: TableProperties::default(),
+                    rows: vec![TableRow {
+                        id: row_id,
+                        properties: TableRowProperties::default(),
+                        cells: vec![cell(cell_id, 994, 995, "header cell")],
+                    }],
+                })],
+            },
+        );
+        let mut d = Document::new(n(1002), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        let mut ids = IdGenerator::new(9000);
+
+        // The surface itself must be resolvable from every id the table exposes —
+        // the table, its row and its cell. Only the table id used to resolve, so a
+        // cell-addressed operation found no surface at all.
+        assert!(surface_of(&d, table_id).is_some(), "table id resolves");
+        assert!(surface_of(&d, row_id).is_some(), "row id resolves");
+        assert!(surface_of(&d, cell_id).is_some(), "cell id resolves");
+
+        // A cell-addressed operation.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetTableCellProperties {
+                cell: cell_id,
+                properties: Box::new(TableCellProperties::default()),
+            },
+        )
+        .expect("cell properties apply to a header table");
+
+        // A table-addressed structural operation.
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::InsertRow {
+                table: table_id,
+                index: 1,
+                row: Box::new(new_row(n(996), n(997), 998, 999)),
+            },
+        )
+        .expect("a row inserts into a header table");
+
+        let table = find_table(&d, table_id).expect("the header table is still there");
+        assert_eq!(table.rows.len(), 2, "the row landed on the header's table");
+        d.validate().expect("the document stays valid");
+
+        // The same asymmetry reached bookmarks: the marker pair was inserted into
+        // the body regardless of where the positions pointed, so bookmarking text
+        // in a header either failed or wrote the markers into the wrong surface.
+        let header_paragraph = n(994);
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::CreateBookmark {
+                bookmark: casual_doc_model::v1::BookmarkId::new(n(1100)),
+                name: "in-the-header".to_owned(),
+                start: Pos::new(header_paragraph, 0),
+                start_id: n(1101),
+                end: Pos::new(header_paragraph, 6),
+                end_id: n(1102),
+            },
+        )
+        .expect("a bookmark can be created over header text");
+
+        let para = find_paragraph_any(&d, header_paragraph).expect("the header paragraph");
+        assert!(
+            para.inlines
+                .iter()
+                .any(|inline| matches!(inline, InlineNode::BookmarkStart(_))),
+            "the start marker landed in the header, not the body: {:?}",
+            para.inlines
+        );
+        d.validate().expect("the document is still valid");
+    }
+
     #[test]
     fn caret_run_properties_are_read_from_whichever_surface_owns_them() {
         let header_id = HeaderFooterId::new(n(980));

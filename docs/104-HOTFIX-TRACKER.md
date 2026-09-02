@@ -102,11 +102,11 @@ Every P0 is now closed or in review.
 | HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | In review |
 | HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Open |
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
-| HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Open |
+| HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | In review |
 | HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Open |
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | In review |
-| HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Open |
+| HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | In review |
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Open |
 | HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Open |
 | HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Open |
@@ -136,9 +136,9 @@ Every P0 is now closed or in review.
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Open |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
 | HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | In review |
-| HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | Open |
-| HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Open |
-| HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | Open |
+| HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | In review |
+| HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | In review |
+| HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | In review |
 | HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Open |
 | HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | In review |
 | HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | In review |
@@ -701,7 +701,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-023 — Every table command is enabled but always fails for tables in headers, footers, notes and text boxes
 
-**P1** · parity · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · parity · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Click into a header layout table (very common in imported .docx) and the whole Table ribbon group lights up — then insert/delete row, insert/delete column, cell shading, borders, table properties, delete table and merge/split all fail with an internal error. The commands can never succeed there.
 
@@ -751,7 +751,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-027 — Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes
 
-**P1** · wasm · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · wasm · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** The UI reports all changes applied while the revision count stays non-zero and the exported .docx still carries redlines recipients will see. Deciding one revision of a group outside the body also splits the group in half — the state the atomicity guard exists to prevent — and if every revision lives outside the body the user gets a generic "made no change" failure.
 
@@ -1059,7 +1059,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-049 — A comment anchored in a header or footnote can never be deleted
 
-**P2** · wasm · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · wasm · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Comment on text in a page header, then try to delete the thread: it is refused with "That edit isn't supported for this selection yet" — an error unrelated to the cause — and the comment is permanently stuck in the document.
 
@@ -1071,7 +1071,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-050 — A footnote inserted outside the body can never be undone or removed
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Insert a footnote with the caret in a text box or header, press Ctrl+Z: undo reports failure, the note stays in the document forever, and the history entry is consumed so it can never be undone again.
 
@@ -1083,7 +1083,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-052 — Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name"
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Open
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** A bookmark on a header selection refuses to be created, and an imported bookmark anchored in a header is listed in the bookmark manager but can never be deleted — both failing with a name error that has nothing to do with the real cause.
 
