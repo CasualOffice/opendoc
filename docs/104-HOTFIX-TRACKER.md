@@ -46,26 +46,56 @@ A `Fixed` row names the PR that closed it, so the claim can be checked rather th
 
 ## Summary
 
-| Priority | Count |
-| --- | --- |
-| P0 | 7 |
-| P1 | 33 |
-| P2 | 52 |
-| P3 | 22 |
-| **Total** | **114** |
+| Priority | Count | Still open |
+| --- | --- | --- |
+| P0 | 7 | 0 |
+| P1 | 33 | 9 |
+| P2 | 55 | 24 |
+| P3 | 24 | 14 |
+| **Total** | **114** | **47** |
 
 ### Progress
 
-Closed so far, all with a regression test proven to fail against the reintroduced bug:
+**47 of 114 rows remain open. Every P0 is closed.**
 
-- **#495** — HF-004, HF-007, and the unload half of HF-002.
-- **#497** — HF-001, HF-003, HF-006, HF-010, HF-044, plus a colour-glyph placement defect
-  found while investigating an emoji report and not previously in this list: bitmap emoji
-  were painted at a fraction of their offset, landing in the page corner.
-- **In review** — HF-005, HF-008, HF-020 (engine); HF-021, HF-033, HF-043, HF-062, HF-063,
-  HF-067, HF-086, HF-089, HF-092, HF-093 and the discard-confirm half of HF-002 (webapp).
+| Priority | Opened with | Still open |
+| --- | --- | --- |
+| P0 | 7 | 0 |
+| P1 | 33 | 9 |
+| P2 | 55 | 24 |
+| P3 | 24 | 14 |
 
-Every P0 is now closed or in review.
+Closed across #495–#509. Every fix carries a regression test that was run against
+the reintroduced bug and seen to fail first; a guard that could not be driven red
+was rewritten until it could, or dropped.
+
+Three cross-cutting themes are closed as themes rather than as point fixes:
+**T-01** (body-only mutation behind all-surface authoring), **T-04** (no modal
+primitive), **T-08** (colour values that are not theme-aware). **T-06** (OPC
+relationship and media ownership) closed with #503.
+
+Two rows are recorded as **Won't fix** rather than closed, and one row's own
+prescribed fix was found to be wrong:
+
+- **HF-061** was refuted outright — `tiny_skia::Rect::from_xywh(0, 0, 400, 0)`
+  returns `Some`, so the mechanism the finding blamed does not exist. A fix had
+  already been written when the test refused to fail against the reintroduced
+  bug; it was reverted rather than shipped.
+- **HF-098's** prescribed `inset: -8px` breaks corner resizing: the grips sit on
+  the object perimeter closer together than a grip is wide, so the South target
+  covered South-East's centre. Growth must be outward-only.
+- **HF-088's** evidence line is wrong: the 860px rung has never applied at any
+  width, because it was written above the desktop rule and media queries add no
+  specificity.
+
+Still waiting on an owner decision, not on engineering:
+
+- **HF-102** — Remove Link keeping its blue underline is *documented as
+  intentional*; Word and Docs both restore the surrounding appearance.
+- **HF-107** — routing list numbering through undo means adding to the closed op
+  set (invariant I2, `docs/45`).
+- **HF-078** — a decoded-image cache needs an eviction policy first; unbounded
+  decoded bitmaps is HF-082's trap at a much larger scale.
 
 ## Queue
 
@@ -77,7 +107,7 @@ Every P0 is now closed or in review.
 | HF-002 | Nothing guards unsaved work: no beforeunload prompt, and Open silently replaces a dirty document | data-safety | S | Sibling gap (opencalc + docs) | Fixed (#495 unload guard; discard confirm in review) |
 | HF-003 | Backspace at a paragraph start leaves the document invalid, disabling footnotes, bookmarks, comments and suggestions | rust-core | S | Internal audit | Fixed (#497) |
 | HF-004 | A failed Open destroys the document already on screen and leaves the editor pointed at freed wasm memory | data-safety | S | Sibling gap (opencalc) | Fixed (#495) |
-| HF-005 | Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout | wasm | M | Internal audit | In review |
+| HF-005 | Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout | wasm | M | Internal audit | Fixed |
 | HF-006 | Pagination never terminates on a table whose repeated header fills the page | layout | M | Internal audit | Fixed (#497) |
 | HF-007 | Four copy-pasted edit-apply paths have diverged — table and list edits never mark the document dirty | code-structure | S | Sibling gap (opencalc) | Fixed (#495) |
 
@@ -85,38 +115,38 @@ Every P0 is now closed or in review.
 
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
-| HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | In review |
-| HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | In review |
+| HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | Fixed |
+| HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | Fixed |
 | HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Fixed (#497) |
 | HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
-| HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | In review |
-| HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Open |
-| HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | In review |
+| HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Fixed |
+| HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Fixed |
+| HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
 | HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | In review |
+| HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Fixed |
 | HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | In review |
-| HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Open |
-| HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Open |
-| HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Open |
-| HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | In review |
-| HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Open |
+| HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Fixed |
+| HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Fixed |
+| HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Fixed |
+| HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Fixed |
+| HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | Fixed |
+| HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Fixed |
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
-| HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | In review |
-| HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | In review |
+| HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Fixed |
+| HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Fixed |
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | In review |
-| HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | In review |
+| HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | Fixed |
+| HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Fixed |
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Open |
-| HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Open |
+| HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Fixed |
 | HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Open |
 | HF-081 | No localization seam — every string is an English literal inside a 14.9k-line file | i18n | L | Sibling gap (opencalc + docs) | Open |
-| HF-031 | Command palette announces nothing while arrowing through results | accessibility | S | Internal audit | Open |
-| HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Open |
-| HF-032 | Insert-table grid picker is pointer-only and exposes 80 unnamed buttons | accessibility | S | Internal audit | Open |
-| HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Open |
-| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Open |
-| HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Open |
+| HF-031 | Command palette announces nothing while arrowing through results | accessibility | S | Internal audit | Fixed |
+| HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Fixed |
+| HF-032 | Insert-table grid picker is pointer-only and exposes 80 unnamed buttons | accessibility | S | Internal audit | Fixed |
+| HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Fixed |
+| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Partly fixed |
+| HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Partly fixed |
 | HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Open |
 
 ### P2 — 52 items
@@ -124,55 +154,55 @@ Every P0 is now closed or in review.
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
 | HF-036 | Printing a mixed-orientation document silently clips the landscape pages | import-export | M | Internal audit | Open |
-| HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | In review |
-| HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | In review |
+| HF-037 | ODT to DOCX conversion writes every image as a zero-byte file | import-export | M | Internal audit | Fixed |
+| HF-038 | Copying or format-painting dark-highlighted text silently repaints it yellow | wasm | S | Internal audit | Fixed |
 | HF-039 | Find highlights only the current match, so "7 of 23" cannot be answered by looking at the page | find-replace | M | Sibling gap (opencalc) | Open |
-| HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | In review |
-| HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | In review |
+| HF-040 | Pasting a table from the web silently drops the sentences around it | import-export | S | Internal audit | Fixed |
+| HF-041 | Multi-valued custom document properties collapse to their last value and change type | import-export | M | Internal audit | Fixed |
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Open |
-| HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Open |
+| HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Fixed |
 | HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
-| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | In review |
-| HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Open |
+| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Partly fixed |
+| HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Fixed |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
-| HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | In review |
-| HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | In review |
-| HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | In review |
-| HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | In review |
-| HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Open |
-| HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | In review |
-| HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | In review |
+| HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | Fixed |
+| HF-049 | A comment anchored in a header or footnote can never be deleted | wasm | M | Internal audit | Fixed |
+| HF-050 | A footnote inserted outside the body can never be undone or removed | rust-core | M | Internal audit | Fixed |
+| HF-052 | Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name" | rust-core | M | Internal audit | Fixed |
+| HF-097 | Tools and Help scroll out of the menu bar behind a hidden scrollbar | responsive | M | Internal audit | Partly fixed |
+| HF-053 | Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way | rust-core | S | Internal audit | Fixed |
+| HF-054 | Pasting from Word or a web page inserts a blank paragraph before the content | import-export | S | Internal audit | Fixed |
 | HF-055 | Smart quotes insert the wrong glyph after any non-ASCII character | webapp-js | S | Internal audit | Open |
 | HF-056 | Images cannot be rotated or flipped — a sideways phone photo has to be fixed outside the editor | images | L | Sibling gap (docs (ProseMirror)) | Open |
 | HF-057 | Object properties panel shows stale geometry and Apply reverts a drag-resize | editor-ux | M | Internal audit | Open |
 | HF-058 | The object action bar stays frozen on screen while the object scrolls away | layout | S | Internal audit | Open |
 | HF-059 | Cmd+V never pastes an image, and says nothing | clipboard | S | Internal audit | Open |
 | HF-061 | A zero-height table row paints its text across the rest of the page | render | S | Internal audit | Won't fix |
-| HF-062 | Split cell dialog cannot be dismissed by keyboard, and closing it kills typing | editor-ux | S | Internal audit | Open |
-| HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Open |
+| HF-062 | Split cell dialog cannot be dismissed by keyboard, and closing it kills typing | editor-ux | S | Internal audit | Fixed |
+| HF-063 | Cmd+F inside a modal steals focus out of the dialog and opens Find behind it | editor-ux | S | Internal audit | Fixed |
 | HF-064 | No accessibility checker — opendoc makes the editor accessible but never audits the document being written | a11y | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-065 | Re-opening the same file does nothing, and file read errors are completely silent | editor-ux | S | Internal audit | Open |
-| HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | In review |
-| HF-067 | The menu bar has no visible focus indicator — keyboard navigation is blind | a11y | S | Internal audit | Open |
+| HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | Partly fixed |
+| HF-067 | The menu bar has no visible focus indicator — keyboard navigation is blind | a11y | S | Internal audit | Fixed |
 | HF-068 | No version history — the document has no past that survives a reload | versions | L | Sibling gap (opencalc + docs) | Open |
 | HF-069 | Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted | editor-ux | M | Internal audit | Open |
 | HF-070 | Ribbon popovers and Settings never take focus, and closing them loses the user's place | editor-ux | M | Internal audit | Open |
 | HF-071 | The accessibility mirror is rebuilt wholesale on every edit, resetting the screen reader to the top | accessibility | L | Internal audit | Open |
-| HF-072 | The floating selection toolbar never shows Bold/Italic/Underline state, so clicking B un-bolds | editor-ux | S | Internal audit | Open |
+| HF-072 | The floating selection toolbar never shows Bold/Italic/Underline state, so clicking B un-bolds | editor-ux | S | Internal audit | Fixed |
 | HF-073 | No recent documents — the only way back into yesterday's file is the OS file picker | file | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-074 | No skip link: reaching the document means tabbing past ~150 chrome controls | accessibility | S | Internal audit | Open |
 | HF-075 | Colour pickers for accent and table borders have no accessible name | a11y | S | Internal audit | Open |
 | HF-076 | Right-click menu is missing Paste-without-formatting and Select all; checklist missing from menus | parity | M | Internal audit | Open |
 | HF-077 | Opening a heavy document freezes the tab with no budget, no progress and no cancel | architecture | L | Sibling gap (opencalc) | Open |
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
-| HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | In review |
-| HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | In review |
-| HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | In review |
-| HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Open |
+| HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Fixed |
+| HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | Fixed |
+| HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | Fixed |
+| HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Fixed |
 | HF-085 | main.js is 93% of the webapp with zero exports, which is why the apply paths diverged and why the embed surface is blocked | code-structure | L | Sibling gap (opencalc) | Open |
-| HF-086 | Undefined --bg-1 makes the header/footer band label unreadable and the "Add header" chip transparent | css | S | Internal audit | Open |
-| HF-087 | Marketing site navigation disappears on phones with no replacement | responsive | M | Internal audit | Open |
-| HF-089 | Review popover and inline accept/reject card paint above modal dialogs | css | S | Internal audit | Open |
+| HF-086 | Undefined --bg-1 makes the header/footer band label unreadable and the "Add header" chip transparent | css | S | Internal audit | Fixed |
+| HF-087 | Marketing site navigation disappears on phones with no replacement | responsive | M | Internal audit | Fixed |
+| HF-089 | Review popover and inline accept/reject card paint above modal dialogs | css | S | Internal audit | Fixed |
 | HF-090 | Three of four fuzz targets are built but never run, and no browser test opens a hostile document | testing | M | Sibling gap (opencalc) | Open |
 | HF-114 | No collaboration, presence, sharing or roles — and no server for a second person to connect to | collab | L | Sibling gap (opencalc + docs) | Open |
 
@@ -181,12 +211,12 @@ Every P0 is now closed or in review.
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
 | HF-091 | Clipboard failure messages are styled as ordinary status text | css | S | Internal audit | Open |
-| HF-092 | Validation error text is unreadable in two of the six theme/OS combinations | css | S | Internal audit | Open |
-| HF-093 | Keyboard-shortcut hints and empty-state prose sit at ~3.3:1 in both themes | accessibility | M | Internal audit | Open |
+| HF-092 | Validation error text is unreadable in two of the six theme/OS combinations | css | S | Internal audit | Fixed |
+| HF-093 | Keyboard-shortcut hints and empty-state prose sit at ~3.3:1 in both themes | accessibility | M | Internal audit | Fixed |
 | HF-094 | Compact-chrome toggle is reachable only from the ribbon chevron — not in View, not in the palette | chrome | S | Sibling gap (docs (ProseMirror)) | Open |
-| HF-095 | Outline panel's active-row colour is defeated for Heading 3 and deeper | css | S | Internal audit | Open |
-| HF-096 | Left rail buttons have a no-op hover state | editor-ux | S | Internal audit | Open |
-| HF-098 | Image resize grips are 9px with no expanded hit area | editor-ux | S | Internal audit | Open |
+| HF-095 | Outline panel's active-row colour is defeated for Heading 3 and deeper | css | S | Internal audit | Fixed |
+| HF-096 | Left rail buttons have a no-op hover state | editor-ux | S | Internal audit | Fixed |
+| HF-098 | Image resize grips are 9px with no expanded hit area | editor-ux | S | Internal audit | Fixed |
 | HF-099 | Document Properties never shows the file's byte size | dialogs | S | Sibling gap (docs (ProseMirror)) | Open |
 | HF-100 | Tab stops can only be created, moved or deleted with a mouse | accessibility | M | Internal audit | Open |
 | HF-101 | Undo parks the caret at the start of the paragraph | editor-ux | M | Internal audit | Open |
@@ -196,11 +226,11 @@ Every P0 is now closed or in review.
 | HF-105 | Print freezes the tab with no progress, cancel, or page-range control | perf | M | Internal audit | Open |
 | HF-106 | In crop mode arrow keys move the picture and a cancelled drag leaves crop stuck | editor-ux | M | Internal audit | Open |
 | HF-107 | Changing a list marker writes numbering definitions outside the undo system | wasm | M | Internal audit | Open |
-| HF-108 | setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU | wasm | S | Internal audit | In review |
+| HF-108 | setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU | wasm | S | Internal audit | Fixed |
 | HF-109 | Nothing is embeddable: no host-capability modes, no custom element, no package | embedding | L | Sibling gap (opencalc + docs) | Open |
-| HF-110 | Every keystroke walks and materializes the whole document's text twice | wasm | M | Internal audit | In review |
+| HF-110 | Every keystroke walks and materializes the whole document's text twice | wasm | M | Internal audit | Fixed |
 | HF-111 | Each suggested keystroke re-validates the entire document | perf | M | Internal audit | Open |
-| HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | In review |
+| HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | Fixed |
 | HF-113 | Every pointermove re-queries and materializes all page wrappers | perf | S | Internal audit | Open |
 
 ## Cross-cutting themes
@@ -453,7 +483,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-005 — Typing in Suggesting mode is invisible — the page repaints from a frozen markup layout
 
-**P0** · wasm · bug · effort M · source: Internal audit · **Status:** In review
+**P0** · wasm · bug · effort M · source: Internal audit · **Status:** Fixed (#498)
 
 **Symptom.** In Suggesting mode (or any document opened with tracked changes, where markup is on by default) nothing the user types ever appears on the page. The review card and Find both see the text, but the canvas only catches up after an unrelated zoom or resize.
 
@@ -489,7 +519,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-008 — Control characters in text are written raw into document.xml, producing a file nothing can reopen
 
-**P1** · import-export · bug · effort M · source: Internal audit · **Status:** In review
+**P1** · import-export · bug · effort M · source: Internal audit · **Status:** Fixed (#498)
 
 **Symptom.** Paste text containing a vertical tab, form feed, or NUL (PDF/terminal/odd clipboard sources), save, and the resulting .docx is not well-formed XML: Word reports problems with the contents and opendoc's own importer fails with MalformedXml — the entire document is lost.
 
@@ -501,7 +531,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-009 — Images in headers, footers, footnotes and comments lose their relationship on save
 
-**P1** · import-export · bug · effort M · source: Internal audit · **Status:** In review
+**P1** · import-export · bug · effort M · source: Internal audit · **Status:** Fixed (#503)
 
 **Symptom.** Save a document with a logo in the header and Word shows a missing-image placeholder or reports invalid content; re-importing the exported file drops the picture entirely. If the same header also has a hyperlink, the image's r:embed resolves to that hyperlink instead. Nothing is reported to the user.
 
@@ -539,7 +569,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-012 — Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept
 
-**P1** · import-export · parity · effort M · source: Internal audit · **Status:** In review
+**P1** · import-export · parity · effort M · source: Internal audit · **Status:** Fixed (#500)
 
 **Symptom.** Re-exporting any document with a bulleted list, footnote, comment or bookmark writes ids like 18446744073709551620 into ST_DecimalNumber attributes; Word either refuses the file or silently drops the list numbering, notes and bookmarks. opendoc's own round-trip tests never notice because it re-reads them as opaque strings.
 
@@ -551,7 +581,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-013 — Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character
 
-**P1** · webapp-js · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · webapp-js · bug · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** Pasting ordinary prose copied from Word or Docs (curly quotes, em dashes, accents, any non-Latin script) while suggesting either silently loses the rest of the paste behind "That edit isn't supported for this selection yet" or interleaves the runs at the wrong positions.
 
@@ -563,7 +593,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-014 — Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness
 
-**P1** · render · bug · effort S · source: Internal audit · **Status:** In review
+**P1** · render · bug · effort S · source: Internal audit · **Status:** Fixed (#499)
 
 **Symptom.** A page containing dashed-underlined text in a subsetted or symbol font (post.underlineThickness == 0, or negative in a malformed font) never finishes rendering — the tab or host process spins indefinitely.
 
@@ -589,7 +619,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-015 — A six-byte non-ASCII color string panics the WASM module and poisons the session
 
-**P1** · wasm · bug · effort S · source: Internal audit · **Status:** In review
+**P1** · wasm · bug · effort S · source: Internal audit · **Status:** Fixed (#499)
 
 **Symptom.** A crafted clipboard payload (or a host passing a user-typed color) traps the engine: every subsequent call throws "unreachable executed" and the open, possibly unsaved document is unrecoverable.
 
@@ -613,7 +643,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-017 — Table column count is unbounded on one side and collapses to 1 twip on the other
 
-**P1** · layout · bug · effort M · source: Internal audit · **Status:** In review
+**P1** · layout · bug · effort M · source: Internal audit · **Status:** Fixed (#499)
 
 **Symptom.** A small uploaded .docx with a grid-less table of many large-gridSpan cells drives multi-gigabyte allocation and an OOM abort. Conversely, a converter-produced table with more cells than w:tblGrid columns renders the extra cells as an unreadable one-character-per-line sliver that blows up the row height — Word renders both correctly.
 
@@ -625,7 +655,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-018 — Blocking site data leaves the editor completely dead (blank, no handlers)
 
-**P1** · webapp-js · bug · effort S · source: Internal audit · **Status:** Open
+**P1** · webapp-js · bug · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** With cookies/site data blocked, or when the editor is embedded cross-origin from the marketing site, the page loads and nothing works at all — no ribbon wiring, no keyboard, only a console error.
 
@@ -637,7 +667,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-019 — Right-click "Open link" bypasses the URL scheme allowlist the click path enforces
 
-**P1** · security · security · effort S · source: Internal audit · **Status:** Open
+**P1** · security · security · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** A hyperlink in an untrusted document whose target is javascript:, data: or file: is correctly blocked when clicked, but opens unchecked from the context menu — the two surfaces disagree about the same capability, and the menu path also leaks the referrer.
 
@@ -649,7 +679,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-060 — No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus
 
-**P1** · a11y · a11y · effort M · source: Sibling gap vs opencalc + docs · **Status:** Open · related: HF-098
+**P1** · a11y · a11y · effort M · source: Sibling gap vs opencalc + docs · **Status:** Fixed (#509) · related: HF-098
 
 **Symptom.** On a touchscreen laptop or tablet, tapping any text field zooms Safari in and leaves the page scrolled sideways, and every menu row and ribbon button is a 30px target against the 44px floor — with destructive commands two rows from their neighbours.
 
@@ -663,7 +693,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-020 — Opening a tracked-changes document can throw mid-render and leave the page list blank
 
-**P1** · wasm · bug · effort S · source: Internal audit · **Status:** In review
+**P1** · wasm · bug · effort S · source: Internal audit · **Status:** Fixed (#498)
 
 **Symptom.** Any document whose struck-through deletions push content onto an extra page fails to render on open — pageSize throws "page index N out of range", renderAll aborts before replacing the page list, and the user sees a blank or stale viewer. No user action required; markup is on by default for such files.
 
@@ -675,7 +705,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-021 — Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode
 
-**P1** · design-system · ui · effort M · source: Sibling gap vs opencalc + docs · **Status:** Open · related: HF-033, HF-086, HF-092
+**P1** · design-system · ui · effort M · source: Sibling gap vs opencalc + docs · **Status:** Fixed (#505) · related: HF-033, HF-086, HF-092
 
 **Symptom.** In dark mode the deletion text in the review margin is effectively invisible (~1.4:1) and the always-visible Editing/Suggesting/Read-only segment in the footer is unreadable. Users cannot read their own tracked changes — the flagship Word-parity feature.
 
@@ -701,7 +731,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-023 — Every table command is enabled but always fails for tables in headers, footers, notes and text boxes
 
-**P1** · parity · bug · effort M · source: Internal audit · **Status:** In review
+**P1** · parity · bug · effort M · source: Internal audit · **Status:** Fixed (#501)
 
 **Symptom.** Click into a header layout table (very common in imported .docx) and the whole Table ribbon group lights up — then insert/delete row, insert/delete column, cell shading, borders, table properties, delete table and merge/split all fail with an internal error. The commands can never succeed there.
 
@@ -713,7 +743,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-024 — Down arrow in a table jumps sideways to the next cell instead of the row below
 
-**P1** · editor-ux · parity · effort M · source: Internal audit · **Status:** In review
+**P1** · editor-ux · parity · effort M · source: Internal audit · **Status:** Fixed (#504)
 
 **Symptom.** In a 2x2 table, pressing Down at the bottom of the top-left cell moves the caret up and to the right into the top-right cell; the cell directly below can never be reached with the arrow keys. Word and Docs both move down within the column.
 
@@ -739,7 +769,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-026 — Everything pasted from Google Docs arrives bold
 
-**P1** · import-export · bug · effort S · source: Internal audit · **Status:** In review
+**P1** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#500)
 
 **Symptom.** Copying normal-weight paragraphs from Google Docs — the most common external paste source — makes every pasted run bold in the document and bold in the exported .docx.
 
@@ -751,7 +781,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-027 — Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes
 
-**P1** · wasm · bug · effort M · source: Internal audit · **Status:** In review
+**P1** · wasm · bug · effort M · source: Internal audit · **Status:** Fixed (#501)
 
 **Symptom.** The UI reports all changes applied while the revision count stays non-zero and the exported .docx still carries redlines recipients will see. Deciding one revision of a group outside the body also splits the group in half — the state the atomicity guard exists to prevent — and if every revision lives outside the body the user gets a generic "made no change" failure.
 
@@ -775,7 +805,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-029 — The status line is the only error channel and is not a live region — every failure is silent to screen readers
 
-**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Open
+**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** A blind user opening a corrupt file, failing a save, hitting a blocked link, or trying an edit refused in Viewing mode hears nothing at all — a failure is indistinguishable from the app doing nothing.
 
@@ -815,7 +845,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-031 — Command palette announces nothing while arrowing through results
 
-**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Open
+**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** A screen-reader user types in the palette, presses Down three times, hears silence, presses Enter and gets whatever command happened to be selected. Disabled-command reasons in the hint column are never announced either — and the palette is the documented keyboard fallback for controls with no other keyboard route.
 
@@ -827,7 +857,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-083 — Pages are squashed horizontally in any window narrower than the sheet
 
-**P1** · layout · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · layout · bug · effort M · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** In a 700px window (split screen, tablet, or the home-page embed) the page keeps its full height but is clamped to 96vw wide, so every glyph is compressed about 18% — the document renders at the wrong aspect ratio, and no error is reported.
 
@@ -841,7 +871,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-032 — Insert-table grid picker is pointer-only and exposes 80 unnamed buttons
 
-**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Open
+**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** A keyboard user opens Insert ▸ Table, tabs into the grid, hears "button" 80 times with no size, and Enter/Space inserts nothing. The only keyboard route to a table is the fixed 3x3 palette command.
 
@@ -853,7 +883,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-033 — Dark theme fails contrast on focused menu rows, review chips and error text
 
-**P1** · css · a11y · effort M · source: Internal audit · **Status:** Open
+**P1** · css · a11y · effort M · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** In dark mode the menu row under the keyboard cursor becomes the least legible thing on screen (~2.2:1), the error status line is unreadable, and the tracked-change text plus the Suggesting/Editing mode pill — the control that tells the user whether typing is being recorded — sit around 2.5-3:1.
 
@@ -865,7 +895,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-088 — The comments column has no breakpoint below 860px and swallows the page
 
-**P1** · responsive · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · responsive · bug · effort M · source: Internal audit · **Status:** Partly fixed — #509 (gutter and overflow; the bottom sheet needs main.js)
 
 **Symptom.** Opening Review at tablet-portrait or phone width leaves about 74px for the document while the comment column covers the viewport, and the page overflows horizontally — the flagship comments feature is unusable there.
 
@@ -879,7 +909,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-034 — The header "Open" button cannot be focused or activated by keyboard
 
-**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Open
+**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Partly fixed — #508 (button is focusable; the pre-document File menu needs a CSS rule)
 
 **Symptom.** Tabbing through a freshly loaded editor skips the primary Open button entirely — it is a label wrapping a hidden input — and the File menu that offers Open… is hidden until a document exists. Screen-reader users never encounter the app's main entry point.
 
@@ -915,7 +945,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-037 — ODT to DOCX conversion writes every image as a zero-byte file
 
-**P2** · import-export · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · import-export · bug · effort M · source: Internal audit · **Status:** Fixed (#502)
 
 **Symptom.** Open an .odt with photographs and export as .docx: every image is destroyed silently, with no entry in the compatibility report — on a headline capability of the format registry.
 
@@ -927,7 +957,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-038 — Copying or format-painting dark-highlighted text silently repaints it yellow
 
-**P2** · wasm · bug · effort S · source: Internal audit · **Status:** In review
+**P2** · wasm · bug · effort S · source: Internal audit · **Status:** Fixed (#499)
 
 **Symptom.** Text highlighted dark red, dark yellow, dark blue, dark green, dark cyan or dark magenta (routine in imported Word documents) turns YELLOW when copied and pasted internally or picked up with the format painter — a visible, undetectable formatting change.
 
@@ -951,7 +981,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-040 — Pasting a table from the web silently drops the sentences around it
 
-**P2** · import-export · bug · effort S · source: Internal audit · **Status:** In review
+**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#500)
 
 **Symptom.** Copy "Intro sentence `<table>`…`</table>` Closing sentence" from a page or Word and paste: the table appears and both sentences are gone, with no warning — the module's own "never silently dropped" contract broken.
 
@@ -963,7 +993,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-041 — Multi-valued custom document properties collapse to their last value and change type
 
-**P2** · import-export · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · import-export · bug · effort M · source: Internal audit · **Status:** Fixed (#502)
 
 **Symptom.** A SharePoint/DMS property like Reviewers = [Ann, Bo, Cy] imports as the single string "Cy" and exports as a scalar — the other values are gone with no compatibility-report entry at all.
 
@@ -987,7 +1017,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-043 — Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal
 
-**P2** · dialogs · ux · effort M · source: Sibling gap vs opencalc · **Status:** Open · related: HF-062, HF-063, HF-070
+**P2** · dialogs · ux · effort M · source: Sibling gap vs opencalc · **Status:** Fixed (#505) · related: HF-062, HF-063, HF-070
 
 **Symptom.** You open Split cell, press Escape — the universal cancel — and nothing happens. Tab walks you out of the dialog into the ribbon behind the dimmed backdrop while the dialog still claims to be modal, and Enter in the number field does not confirm. Every dialog behaves slightly differently, so there is no rule to learn.
 
@@ -1011,7 +1041,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-045 — A failed edit or undo leaves the document half-changed and can lose the undo step
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Partly fixed — #502 (edit path; the undo/redo half is open)
 
 **Symptom.** An operation that reports failure can still have deleted characters (no inverse recorded, nothing to undo), and a failed undo/redo pops the history entry first — so the document is half-reverted and the next Ctrl+Z reverts the previous action on top of it, with no way back.
 
@@ -1027,7 +1057,7 @@ remains open.
 
 ### HF-046 — The paste-options chip undoes an unrelated edit if you press Cmd+Z first
 
-**P2** · clipboard · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · clipboard · bug · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** Type a sentence, paste, press Cmd+Z to drop the paste (the chip stays visible), then click "Keep text only" — the typed sentence is silently deleted and replaced by the clipboard text, and redo cannot cleanly recover it.
 
@@ -1051,7 +1081,7 @@ remains open.
 
 ### HF-048 — Changing underline style or double-strike leaves the page showing the old decoration
 
-**P2** · layout · bug · effort S · source: Internal audit · **Status:** In review
+**P2** · layout · bug · effort S · source: Internal audit · **Status:** Fixed (#499)
 
 **Symptom.** Switching an already-underlined range to double underline, changing underline colour, or striking already-struck text appears to do nothing on screen — yet the change is real and lands in the exported file, so what the user sees and what they save disagree.
 
@@ -1063,7 +1093,7 @@ remains open.
 
 ### HF-049 — A comment anchored in a header or footnote can never be deleted
 
-**P2** · wasm · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · wasm · bug · effort M · source: Internal audit · **Status:** Fixed (#501)
 
 **Symptom.** Comment on text in a page header, then try to delete the thread: it is refused with "That edit isn't supported for this selection yet" — an error unrelated to the cause — and the comment is permanently stuck in the document.
 
@@ -1075,7 +1105,7 @@ remains open.
 
 ### HF-050 — A footnote inserted outside the body can never be undone or removed
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Fixed (#501)
 
 **Symptom.** Insert a footnote with the caret in a text box or header, press Ctrl+Z: undo reports failure, the note stays in the document forever, and the history entry is consumed so it can never be undone again.
 
@@ -1087,7 +1117,7 @@ remains open.
 
 ### HF-052 — Bookmarks in headers, footers and notes cannot be created or deleted, and report "invalid name"
 
-**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** In review
+**P2** · rust-core · bug · effort M · source: Internal audit · **Status:** Fixed (#501)
 
 **Symptom.** A bookmark on a header selection refuses to be created, and an imported bookmark anchored in a header is listed in the bookmark manager but can never be deleted — both failing with a name error that has nothing to do with the real cause.
 
@@ -1099,7 +1129,7 @@ remains open.
 
 ### HF-097 — Tools and Help scroll out of the menu bar behind a hidden scrollbar
 
-**P2** · responsive · ux · effort M · source: Internal audit · **Status:** Open
+**P2** · responsive · ux · effort M · source: Internal audit · **Status:** Partly fixed — #509 (the clip is visible; measure-and-collapse needs main.js)
 
 **Symptom.** Below about 500px wide the last two menus disappear with no fade, no chevron and no visible scrollbar, and a mouse user cannot scroll a horizontal-only container — so those menus become undiscoverable.
 
@@ -1113,7 +1143,7 @@ remains open.
 
 ### HF-053 — Toolbar formatting state is wrong for a caret in a header, footer or note — so Bold toggles the wrong way
 
-**P2** · rust-core · bug · effort S · source: Internal audit · **Status:** In review
+**P2** · rust-core · bug · effort S · source: Internal audit · **Status:** Fixed (#500)
 
 **Symptom.** Put the caret in bold 14pt red footer text: the toolbar shows Bold off and default size/colour, so pressing Bold bolds already-bold text instead of unbolding it, and "Update style to match selection" captures the wrong formatting.
 
@@ -1125,7 +1155,7 @@ remains open.
 
 ### HF-054 — Pasting from Word or a web page inserts a blank paragraph before the content
 
-**P2** · import-export · bug · effort S · source: Internal audit · **Status:** In review
+**P2** · import-export · bug · effort S · source: Internal audit · **Status:** Fixed (#500)
 
 **Symptom.** Every paste whose HTML is wrapped in a div — Word and most web-page copies — pushes the caret down a line and leaves an empty paragraph the user has to delete each time.
 
@@ -1217,7 +1247,7 @@ a test that could not fail.
 
 ### HF-062 — Split cell dialog cannot be dismissed by keyboard, and closing it kills typing
 
-**P2** · editor-ux · a11y · effort S · source: Internal audit · **Status:** Open · related: HF-043
+**P2** · editor-ux · a11y · effort S · source: Internal audit · **Status:** Fixed (#505) · related: HF-043
 
 **Symptom.** Escape, Enter and clicking the backdrop all do nothing in the Split cell modal, and Tab walks out behind the scrim into the ribbon the dialog claims is inert. Cancel or Split then drops focus onto a hidden button, so the editor appears frozen — every keystroke is ignored until the user clicks the page.
 
@@ -1229,7 +1259,7 @@ a test that could not fail.
 
 ### HF-063 — Cmd+F inside a modal steals focus out of the dialog and opens Find behind it
 
-**P2** · editor-ux · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · editor-ux · bug · effort S · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** Typing in the Document properties dialog and pressing Cmd+F opens the Find panel behind the modal overlay and moves focus into it — the user cannot see where their keystrokes are going and the modal's focus trap is defeated.
 
@@ -1265,7 +1295,7 @@ a test that could not fail.
 
 ### HF-066 — Pasted hyperlinks are stored with no scheme filter and re-exported
 
-**P2** · security · security · effort S · source: Internal audit · **Status:** In review
+**P2** · security · security · effort S · source: Internal audit · **Status:** Partly fixed — #502 + #508 (paste and follow paths; the link dialog is open)
 
 **Symptom.** Copying a paragraph from a malicious page brings a javascript:/data: link into the document, which is then written into the exported .docx and handed to whatever app the user pastes it into next — and it is executable through the context-menu Open link path.
 
@@ -1280,7 +1310,7 @@ a test that could not fail.
 
 ### HF-067 — The menu bar has no visible focus indicator — keyboard navigation is blind
 
-**P2** · a11y · a11y · effort S · source: Internal audit · **Status:** Open
+**P2** · a11y · a11y · effort S · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** Arrowing across File/Edit/View and down through their items produces a background change of about 1.1:1 — invisible on a laptop screen and identical to hover, so a keyboard user cannot tell where they are on the app's primary command surface.
 
@@ -1342,7 +1372,7 @@ a test that could not fail.
 
 ### HF-072 — The floating selection toolbar never shows Bold/Italic/Underline state, so clicking B un-bolds
 
-**P2** · editor-ux · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · editor-ux · bug · effort S · source: Internal audit · **Status:** Fixed (#508)
 
 **Symptom.** Select already-bold text: the distant ribbon B lights up, but the bar floating directly over the selection — the one the user is looking at — shows neutral, so clicking B removes bold instead of applying it. Screen readers hear no pressed state at all.
 
@@ -1428,7 +1458,7 @@ a test that could not fail.
 
 ### HF-079 — The incremental galley cache is inert for every imported document
 
-**P2** · perf · perf · effort L · source: Internal audit · **Status:** In review
+**P2** · perf · perf · effort L · source: Internal audit · **Status:** Fixed (#506)
 
 **Symptom.** Typing one character in any real .docx re-shapes every paragraph in the document, so keystroke latency grows with document length — the exact cost the incremental layout work was built to remove.
 
@@ -1440,7 +1470,7 @@ a test that could not fail.
 
 ### HF-080 — Every pointer move and caret query flattens the whole document's lines
 
-**P2** · perf · perf · effort M · source: Internal audit · **Status:** In review
+**P2** · perf · perf · effort M · source: Internal audit · **Status:** Fixed (#503)
 
 **Symptom.** Drag-selecting in a 500-page document allocates roughly 1.6 MB twice per mouse-move before any hit-testing happens, making selection visibly janky on long files.
 
@@ -1452,7 +1482,7 @@ a test that could not fail.
 
 ### HF-082 — The galley cache never evicts entries for deleted paragraphs
 
-**P2** · perf · perf · effort S · source: Internal audit · **Status:** In review
+**P2** · perf · perf · effort S · source: Internal audit · **Status:** Fixed (#502)
 
 **Symptom.** Memory grows monotonically through a long editing session — every Enter, join and undo/redo cycle leaves shaped fragments behind for paragraphs that no longer exist, which in a browser tab is a hard limit rather than mere pressure.
 
@@ -1464,7 +1494,7 @@ a test that could not fail.
 
 ### HF-084 — Object properties panel covers the ribbon, including the overflow "..." button
 
-**P2** · layout · ui · effort S · source: Internal audit · **Status:** Open
+**P2** · layout · ui · effort S · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** With an object selected and Properties open, the 280px panel is painted over the ribbon's right edge — the overflow "..." button and the rightmost group of whatever tab is active become unclickable, so relocated ribbon commands are unreachable while editing an object.
 
@@ -1488,7 +1518,7 @@ a test that could not fail.
 
 ### HF-086 — Undefined --bg-1 makes the header/footer band label unreadable and the "Add header" chip transparent
 
-**P2** · css · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · css · bug · effort S · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** Double-clicking into a header shows a "Header"/"Footer" label at about 1.5:1 on its accent chip — the only cue telling the user which layer their keystrokes go to — and the "Add header" marker loses its background entirely, sitting directly on the page raster.
 
@@ -1500,7 +1530,7 @@ a test that could not fail.
 
 ### HF-087 — Marketing site navigation disappears on phones with no replacement
 
-**P2** · responsive · ux · effort M · source: Internal audit · **Status:** Open
+**P2** · responsive · ux · effort M · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** On a 390px phone the nav and GitHub link are hidden, so Docs and Fidelity cannot be reached from any other page — only the browser back button or typing a URL works.
 
@@ -1512,7 +1542,7 @@ a test that could not fail.
 
 ### HF-089 — Review popover and inline accept/reject card paint above modal dialogs
 
-**P2** · css · bug · effort S · source: Internal audit · **Status:** Open
+**P2** · css · bug · effort S · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** Pin a tracked-change card, then open the command palette or a dialog: the card floats on top of the scrim with live Accept/Reject buttons, so a change can be accepted while a blocking modal is supposedly in control, and the dialog is visually occluded.
 
@@ -1562,7 +1592,7 @@ a test that could not fail.
 
 ### HF-092 — Validation error text is unreadable in two of the six theme/OS combinations
 
-**P3** · css · bug · effort S · source: Internal audit · **Status:** Open
+**P3** · css · bug · effort S · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** With the OS light and the app set to Dark, the "why your link/bookmark/alt text was rejected" note stays dark red on a dark surface (~2.3:1); with the OS dark and the app set to Light it goes pale pink on white (~1.9:1). Both are reachable from the Settings theme control.
 
@@ -1574,7 +1604,7 @@ a test that could not fail.
 
 ### HF-093 — Keyboard-shortcut hints and empty-state prose sit at ~3.3:1 in both themes
 
-**P3** · accessibility · a11y · effort M · source: Internal audit · **Status:** Open
+**P3** · accessibility · a11y · effort M · source: Internal audit · **Status:** Fixed (#505)
 
 **Symptom.** Shortcut hints in every menu, "No matching commands" in the palette, and the Outline/font-menu empty states are drawn as small grey text that low-vision users cannot read — exactly the prose a first-time user needs most.
 
@@ -1598,7 +1628,7 @@ a test that could not fail.
 
 ### HF-095 — Outline panel's active-row colour is defeated for Heading 3 and deeper
 
-**P3** · css · ui · effort S · source: Internal audit · **Status:** Open
+**P3** · css · ui · effort S · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** With the caret in an H3, the Outline row gets the tinted background and bolder weight but its text stays grey instead of accent, and hovering deep rows changes no colour — so the current-location cue is weaker for deep headings than shallow ones.
 
@@ -1610,7 +1640,7 @@ a test that could not fail.
 
 ### HF-096 — Left rail buttons have a no-op hover state
 
-**P3** · editor-ux · ui · effort S · source: Internal audit · **Status:** Open
+**P3** · editor-ux · ui · effort S · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** Hovering Outline / Pages / Review produces no button-shaped fill — only a faint icon recolour — so the rail does not read as a set of buttons the way every other icon control in the shell does.
 
@@ -1622,7 +1652,7 @@ a test that could not fail.
 
 ### HF-098 — Image resize grips are 9px with no expanded hit area
 
-**P3** · editor-ux · ux · effort S · source: Internal audit · **Status:** Open
+**P3** · editor-ux · ux · effort S · source: Internal audit · **Status:** Fixed (#509)
 
 **Symptom.** Resizing an image means landing the pointer inside a 9x9 px square — fiddly with a trackpad and effectively out of reach with a finger or pen, where Word and Docs both expand the invisible target well past the drawn grip.
 
@@ -1742,7 +1772,7 @@ a test that could not fail.
 
 ### HF-108 — setObjectExtent and insertImage accept NaN and collapse the object to 1 EMU
 
-**P3** · wasm · bug · effort S · source: Internal audit · **Status:** In review
+**P3** · wasm · bug · effort S · source: Internal audit · **Status:** Fixed (#504)
 
 **Symptom.** A host computing an aspect-preserving size from a zero natural width gets success back while the image silently vanishes from the page, and the undo entry records the collapse as a legitimate resize.
 
@@ -1768,7 +1798,7 @@ a test that could not fail.
 
 ### HF-110 — Every keystroke walks and materializes the whole document's text twice
 
-**P3** · wasm · perf · effort M · source: Internal audit · **Status:** In review
+**P3** · wasm · perf · effort M · source: Internal audit · **Status:** Fixed (#507)
 
 **Symptom.** Typing latency grows with document length on a 200-page file — thousands of string allocations per committed character — even though pagination itself is incremental.
 
@@ -1792,7 +1822,7 @@ a test that could not fail.
 
 ### HF-112 — flow_blocks recomputes the running galley height for every paragraph
 
-**P3** · perf · perf · effort S · source: Internal audit · **Status:** In review
+**P3** · perf · perf · effort S · source: Internal audit · **Status:** Fixed (#507)
 
 **Symptom.** Laying out a long document spends hundreds of millions of redundant additions on a value that is free to maintain — paid again on every uncached rebuild — and risks an i32 overflow panic in debug on pathological documents.
 
