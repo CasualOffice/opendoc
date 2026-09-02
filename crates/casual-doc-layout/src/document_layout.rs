@@ -1014,15 +1014,35 @@ fn build_section_runs_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> Vec<SectionRun> {
-    if !document.definitions().sections.is_empty()
-        || !referenced_endnotes(document.body()).is_empty()
-    {
+    // The incremental cache used to be switched off whenever the document
+    // declared ANY section — and every Word-produced file ends `w:body` with a
+    // trailing `w:sectPr`, so `sections` is non-empty for essentially every
+    // imported document. The cache was therefore inert exactly where it matters:
+    // real files, where each keystroke re-shaped the whole body.
+    //
+    // What the fast path actually needs is one full-width flow over the whole
+    // body. A single trailing section with one column is precisely that — it
+    // differs from the no-section case only in where the page config comes from.
+    // Anything else (a real section break mid-body, multiple columns, endnotes
+    // appended to the flow) keeps the uncached builder.
+    let sections = &document.definitions().sections;
+    let single_trailing_section = match sections.as_slice() {
+        [] => true,
+        [only] => {
+            section_break_points(document.body(), sections).is_empty()
+                && only.columns.count.max(1) == 1
+        }
+        _ => false,
+    };
+    if !single_trailing_section || !referenced_endnotes(document.body()).is_empty() {
         return build_section_runs(document, shaper, plans, ReviewView::Editing);
     }
-    // Single-section fast path: one full-width run over the whole body, built
-    // incrementally. Mirrors the `sections.is_empty()` arm of `build_section_runs`,
-    // swapping `build_galley_for_blocks` for the cached builder.
-    let config = plans[0].config;
+    // One full-width run over the whole body, built incrementally. Mirrors the
+    // `sections.is_empty()` arm of `build_section_runs`, swapping
+    // `build_galley_for_blocks` for the cached builder.
+    let config = sections.last().map_or(plans[0].config, |last| {
+        plan_for_section(plans, last.id).config
+    });
     let layout = ColumnLayout::single(config.content_area());
     let galley = build_galley_cached(document, shaper, layout.flow_width(), cache, dirty);
     vec![SectionRun {
@@ -1121,6 +1141,100 @@ mod cached_pagination_tests {
     /// The whole point: after a realistic single-paragraph edit, the incremental
     /// path must produce the byte-for-byte same pagination as a full re-shape —
     /// while re-shaping only the one paragraph that changed.
+    /// The incremental cache must engage on a document that declares a section.
+    ///
+    /// Every Word-produced file ends `w:body` with a trailing `w:sectPr`, so
+    /// `definitions().sections` is non-empty for essentially every imported
+    /// document — and the cached builder bailed to the uncached one whenever ANY
+    /// section existed. The cache was therefore inert exactly where it matters:
+    /// on real files, every keystroke re-shaped the whole body.
+    #[test]
+    fn the_cache_engages_on_a_document_with_a_trailing_section() {
+        use casual_doc_model::v1::{
+            DocGrid, NoteProperties, PageBorders, PageMargins, PageNumbering, PageSize,
+            PaperSource, SectionBoundary, SectionColumns, SectionId,
+        };
+
+        let shaper = ParleyShaper::new();
+        let texts: Vec<String> = prose(60);
+        let with_section = |texts: &[String]| {
+            let mut d = doc(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+            // The trailing body-level sectPr every Word document carries.
+            d.definitions_mut().sections = vec![SectionBoundary {
+                id: SectionId::new(node(9_000)),
+                page_size: PageSize {
+                    width_twips: 12_240,
+                    height_twips: 15_840,
+                },
+                page_margins: PageMargins {
+                    top_twips: 1_440,
+                    bottom_twips: 1_440,
+                    start_twips: 1_440,
+                    end_twips: 1_440,
+                    header_twips: None,
+                    footer_twips: None,
+                    gutter_twips: None,
+                },
+                columns: SectionColumns {
+                    count: 1,
+                    space_twips: None,
+                    separator: None,
+                    equal_width: None,
+                    columns: Vec::new(),
+                },
+                headers: Vec::new(),
+                footers: Vec::new(),
+                section_type: None,
+                title_page: None,
+                vertical_alignment: None,
+                page_numbering: PageNumbering::default(),
+                doc_grid: DocGrid::default(),
+                orientation: None,
+                paper_source: PaperSource::default(),
+                page_borders: PageBorders::default(),
+                line_numbering: Default::default(),
+                footnote_props: NoteProperties::default(),
+                endnote_props: NoteProperties::default(),
+                text_direction: None,
+                bidi: false,
+                section_change: None,
+            }];
+            d
+        };
+
+        let before = with_section(&texts);
+        let mut cache = GalleyCache::new();
+        let warm = paginate_document_cached(&before, &shaper, &mut cache, &DirtySet::everything());
+        assert_eq!(
+            warm,
+            paginate_document(&before, &shaper),
+            "a full-dirty cached build must equal the fresh build"
+        );
+        assert!(
+            cache.len() > 1,
+            "the cache must actually hold the document's paragraphs, got {}",
+            cache.len()
+        );
+
+        // Edit one paragraph; only that paragraph may re-shape.
+        let mut after_texts = texts.clone();
+        after_texts[30] = "Paragraph 30. EDITED — a longer line that rewraps it.".to_owned();
+        let after = with_section(&after_texts);
+
+        let cached = paginate_document_cached(&after, &shaper, &mut cache, &DirtySet::new());
+        assert_eq!(
+            cached,
+            paginate_document(&after, &shaper),
+            "incremental re-pagination diverged from a full re-shape"
+        );
+        assert_eq!(
+            cache.shaped_last_build(),
+            1,
+            "only the edited paragraph re-shapes; the cache was bypassed if this \
+             is the whole document"
+        );
+    }
+
     #[test]
     fn cached_matches_full_after_a_paragraph_edit() {
         let shaper = ParleyShaper::new();

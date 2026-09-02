@@ -165,7 +165,7 @@ Every P0 is now closed or in review.
 | HF-076 | Right-click menu is missing Paste-without-formatting and Select all; checklist missing from menus | parity | M | Internal audit | Open |
 | HF-077 | Opening a heavy document freezes the tab with no budget, no progress and no cancel | architecture | L | Sibling gap (opencalc) | Open |
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
-| HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Open |
+| HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | In review |
 | HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | In review |
 | HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | In review |
 | HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Open |
@@ -1428,7 +1428,7 @@ a test that could not fail.
 
 ### HF-079 — The incremental galley cache is inert for every imported document
 
-**P2** · perf · perf · effort L · source: Internal audit · **Status:** Open
+**P2** · perf · perf · effort L · source: Internal audit · **Status:** In review
 
 **Symptom.** Typing one character in any real .docx re-shapes every paragraph in the document, so keystroke latency grows with document length — the exact cost the incremental layout work was built to remove.
 
