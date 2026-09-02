@@ -107,3 +107,46 @@ test("paste options: 'Merge formatting' keeps emphasis but drops the pasted font
   await page.locator("#undoBtn").click(); // the merged paste
   expect(consoleErrors).toEqual([]);
 });
+
+// HF-046 (docs/104-HOTFIX-TRACKER.md): the chip's two actions work by undoing
+// the paste and redoing it differently. Nothing checked that the paste was still
+// the change an undo would remove, and no edit ever retired the offer — so
+// pressing ⌘Z first (dropping the paste, chip still on screen) and then clicking
+// "Keep text only" deleted the sentence typed BEFORE the paste and replaced it
+// with the clipboard. The offer now expires with the edit it is about.
+test("paste options: the chip retires when any later edit lands, so it cannot undo someone else's work", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("TYPEDFIRST");
+
+  await dispatchClipboardEvent(page, "paste", {
+    "text/html": "<b>PASTEDAFTER</b>",
+    "text/plain": "PASTEDAFTER",
+  });
+  await expect(page.locator("#pasteOptions")).toBeVisible();
+
+  // ⌘Z drops the paste. The chip is an offer about that paste; with the paste
+  // gone, the offer goes with it.
+  await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+z`);
+  await expect(page.locator("#pasteOptions")).toBeHidden();
+
+  // The undo removed the paste and only the paste: the typed sentence survives.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const el = [...document.querySelectorAll("#a11yDocument p")].find((node) =>
+          (node.textContent || "").includes("TYPEDFIRST"),
+        );
+        return el ? el.textContent : null;
+      }),
+    )
+    .toBe("TYPEDFIRST");
+
+  await page.locator("#undoBtn").click(); // the typed marker
+  expect(consoleErrors).toEqual([]);
+});

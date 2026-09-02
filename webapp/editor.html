@@ -69,11 +69,18 @@
         <kbd>⌘⇧P</kbd>
       </button>
       <div class="controls">
-        <label class="btn btn-primary file">
-          <input id="file" type="file" accept=".docx,.odt,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/json,text/plain" hidden />
+        <!-- Open is the app's main entry point, so it is a real button: as a
+             label wrapping a hidden input it was skipped by Tab and had no
+             keydown wiring, which left a freshly loaded editor with no
+             keyboard-reachable way in at all (the File menu is inside
+             #documentChrome, hidden until a document exists). The picker stays
+             `hidden` — the button opens it — so it is out of the tab order and
+             cannot become a second, dead focus stop. -->
+        <button id="openBtn" type="button" class="btn btn-primary file" title="Open a document" disabled>
           <span class="ms" aria-hidden="true">upload_file</span>
           <span class="btn-label">Open</span>
-        </label>
+        </button>
+        <input id="file" type="file" accept=".docx,.odt,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/json,text/plain" hidden />
         <select id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled></select>
         <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
         <button id="save" type="button" class="btn" disabled title="Download the edited document">
@@ -358,7 +365,7 @@
         <div id="panelInsert" class="ribbon-panel" data-panel="insert" role="tabpanel" aria-labelledby="tabInsert" hidden>
           <div class="rgroup" data-group="insert-table" data-ribbon-pinned>
             <div class="rgroup-ctl">
-              <button id="insertTableBtn" type="button" class="fmt fmt-big" title="Insert table" aria-label="Insert table" aria-haspopup="menu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span><span class="fmt-big-label">Table</span></button>
+              <button id="insertTableBtn" type="button" class="fmt fmt-big" title="Insert table" aria-label="Insert table" aria-haspopup="dialog" aria-controls="insertTableMenu" aria-expanded="false" disabled><span class="ms" aria-hidden="true">table_chart</span><span class="fmt-big-label">Table</span></button>
             </div>
             <span class="rgroup-label">Table</span>
           </div>
@@ -660,7 +667,9 @@
       </div>
     </div>
 
-    <div id="insertTableMenu" class="context-menu grid-picker" hidden role="menu" aria-label="Insert table">
+    <!-- A size grid, not a menu: the container is a dialog holding a `role="grid"`
+         so the eighty cells are gridcells rather than menuitems that never were. -->
+    <div id="insertTableMenu" class="context-menu grid-picker" hidden role="dialog" aria-label="Insert table">
       <div id="gridPicker" class="grid-cells"></div>
       <div id="gridLabel" class="grid-label">Insert table</div>
     </div>
@@ -942,7 +951,12 @@
       <div class="cmd-box" role="dialog" aria-label="Command palette" aria-modal="true">
         <div class="cmd-search">
           <span class="ms cmd-search-icon" aria-hidden="true">search</span>
-          <input id="cmdInput" type="text" placeholder="Search commands…" autocomplete="off" spellcheck="false" aria-label="Search commands" />
+          <!-- The palette is the documented keyboard fallback for commands with
+               no other keyboard route, so arrowing through it has to speak. The
+               input is the combobox and keeps focus; `aria-activedescendant`
+               (maintained by setCmdSel) is what makes the highlighted option
+               announce without moving focus off the query field. -->
+          <input id="cmdInput" type="text" placeholder="Search commands…" autocomplete="off" spellcheck="false" aria-label="Search commands" role="combobox" aria-controls="cmdList" aria-expanded="false" aria-autocomplete="list" aria-haspopup="listbox" />
           <span class="cmd-kbd">⌘⇧P</span>
         </div>
         <div id="cmdList" class="cmd-list" role="listbox" aria-label="Commands"></div>
@@ -977,10 +991,10 @@
     </div>
 
     <div id="selToolbar" class="sel-toolbar" role="toolbar" aria-label="Selection formatting" hidden>
-      <button type="button" class="fmt" data-fmt="bold" title="Bold (⌘B)" aria-label="Bold"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
-      <button type="button" class="fmt" data-fmt="italic" title="Italic (⌘I)" aria-label="Italic"><span class="format-glyph italic-glyph" aria-hidden="true">I</span></button>
-      <button type="button" class="fmt" data-fmt="underline" title="Underline (⌘U)" aria-label="Underline"><span class="format-glyph underline-glyph" aria-hidden="true">U</span></button>
-      <button type="button" class="fmt" data-fmt="strike" title="Strikethrough" aria-label="Strikethrough"><span class="format-glyph strike-glyph" aria-hidden="true">S</span></button>
+      <button type="button" class="fmt" data-fmt="bold" title="Bold (⌘B)" aria-label="Bold" aria-pressed="false"><span class="format-glyph bold-glyph" aria-hidden="true">B</span></button>
+      <button type="button" class="fmt" data-fmt="italic" title="Italic (⌘I)" aria-label="Italic" aria-pressed="false"><span class="format-glyph italic-glyph" aria-hidden="true">I</span></button>
+      <button type="button" class="fmt" data-fmt="underline" title="Underline (⌘U)" aria-label="Underline" aria-pressed="false"><span class="format-glyph underline-glyph" aria-hidden="true">U</span></button>
+      <button type="button" class="fmt" data-fmt="strike" title="Strikethrough" aria-label="Strikethrough" aria-pressed="false"><span class="format-glyph strike-glyph" aria-hidden="true">S</span></button>
       <span class="sel-divider"></span>
       <button type="button" id="selTextColorBtn" class="sel-color-btn" title="Text color" aria-haspopup="dialog" aria-expanded="false" aria-controls="selTextColorMenu" aria-label="Text color">
         <span class="color-apply-glyph" aria-hidden="true">A</span>
@@ -1288,6 +1302,19 @@
     <footer class="footer">
       <span class="foot-left">
         <span id="status" class="status">Loading engine…</span>
+        <!-- The status line is the editor's only error channel — a failed open,
+             a refused save, a blocked link, an edit Viewing mode rejected. It is
+             painted text, so it announced nothing and a failure was
+             indistinguishable from the app doing nothing. These two off-screen
+             regions carry the same message to assistive technology: routine
+             messages politely, `kind === "error"` assertively, both written by
+             `setStatus`. They mirror rather than replace the visible line
+             because the visible text is read synchronously (tests and the
+             progressive-disclosure layout depend on it) while a live region has
+             to be cleared and rewritten on a later frame to re-announce a
+             repeated identical message. -->
+        <span id="statusLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+        <span id="statusAlertRegion" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></span>
         <!-- data-status-priority drives the status bar's progressive
              disclosure (see "Status-bar progressive disclosure" in style.css):
              higher numbers are shed first as the window narrows, mirroring how

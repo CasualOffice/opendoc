@@ -43,9 +43,46 @@ function escapeHtml(text) {
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
 const fontCache = new Map();
 
+// ---- Persisted preferences --------------------------------------------------
+// `localStorage` is host policy, not a dependency: with site data blocked, in a
+// cross-origin embed, or in some private modes, even *touching* `window
+// .localStorage` throws. Every preference read and write goes through these two
+// helpers so no future one can be written without the guard — an unguarded
+// module-scope read used to throw before the first listener was attached and
+// left the whole editor inert (blank page, no ribbon, no keyboard).
+// Preferences are a convenience; the editor is fully usable without them, so a
+// failure is silent by design and costs the session nothing but persistence.
+
+/** The stored value for `key`, or `fallback` when storage is unavailable. */
+function readPref(key, fallback = null) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Persists `value` under `key`; a no-op when storage is unavailable. */
+function writePref(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode / storage disabled — the preference applies for this session only */
+  }
+}
+
 const statusEl = document.getElementById("status");
+// Off-screen mirrors of the status line: routine messages announce politely,
+// failures assertively (see the markup comment beside them in editor.html).
+const statusLiveRegion = document.getElementById("statusLiveRegion");
+const statusAlertRegion = document.getElementById("statusAlertRegion");
 const reviewLiveRegion = document.getElementById("reviewLiveRegion");
 const fileEl = document.getElementById("file");
+// The header's Open button. It is the only keyboard route into the app before a
+// document exists, so it owns the file picker rather than the picker owning it.
+const openBtn = document.getElementById("openBtn");
+if (openBtn) openBtn.addEventListener("click", () => fileEl.click());
 const zoomEl = document.getElementById("zoom");
 // Zoom (Q4): an editable % plus Fit width / Fit page. `zoomFactor` is the live
 // scale the renderer/ruler read; `zoomMode` is "custom" for a fixed % or a fit
@@ -283,21 +320,13 @@ function setRibbonCollapsed(collapsed) {
     const icon = ribbonViewToggle.querySelector(".ms");
     if (icon) icon.textContent = collapsed ? "keyboard_arrow_down" : "keyboard_arrow_up";
   }
-  try {
-    localStorage.setItem("opendoc.ribbonCollapsed", collapsed ? "1" : "0");
-  } catch {
-    /* private mode / storage disabled — the toggle still works in-session */
-  }
+  writePref("opendoc.ribbonCollapsed", collapsed ? "1" : "0");
   if (!collapsed && typeof scheduleRibbonOverflow === "function") scheduleRibbonOverflow();
 }
 
 if (ribbonViewToggle) {
   ribbonViewToggle.addEventListener("click", () => setRibbonCollapsed(!ribbonViewCollapsed));
-  try {
-    if (localStorage.getItem("opendoc.ribbonCollapsed") === "1") setRibbonCollapsed(true);
-  } catch {
-    /* ignore */
-  }
+  if (readPref("opendoc.ribbonCollapsed") === "1") setRibbonCollapsed(true);
 }
 
 // --- Home ribbon: Clipboard, Styles gallery, overflow, tooltips (docs/64) ----
@@ -2382,6 +2411,7 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
   statusClearTimer = 0;
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+  announceStatus(text, kind);
   if (text && timeout > 0) {
     statusClearTimer = window.setTimeout(() => {
       statusEl.textContent = "";
@@ -2389,6 +2419,24 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
       statusClearTimer = 0;
     }, timeout);
   }
+}
+
+/** Speaks a status message. Failures go to the assertive region because a
+ *  refusal the user cannot hear reads as the editor doing nothing; everything
+ *  else is polite and waits its turn. The clear-then-next-frame write is what
+ *  makes a repeated identical message (the same edit refused twice) count as a
+ *  change worth announcing — the same trick `announceReview` uses. */
+function announceStatus(text, kind) {
+  const region = kind === "error" ? statusAlertRegion : statusLiveRegion;
+  if (!region) return;
+  // Only one of the two regions may hold text, or a screen reader browsing the
+  // footer meets the last error long after it stopped being true.
+  if (statusLiveRegion) statusLiveRegion.textContent = "";
+  if (statusAlertRegion) statusAlertRegion.textContent = "";
+  if (!text) return;
+  requestAnimationFrame(() => {
+    region.textContent = text;
+  });
 }
 
 function setDocumentState(state) {
@@ -2506,6 +2554,7 @@ async function boot() {
     await init();
     setStatus("Ready — open a .docx, .odt, .json, or .txt");
     fileEl.disabled = false;
+    if (openBtn) openBtn.disabled = false;
   } catch (err) {
     console.error(err);
     setStatus("Failed to load the WASM engine", "error");
@@ -5146,6 +5195,54 @@ linkChipRemove.hidden = internal;
   return true;
 }
 
+/** The schemes this host is willing to hand to the browser. Anything else in a
+ * link target — `javascript:`, `data:`, `file:`, a custom app scheme — is a
+ * capability an imported document must not be able to reach. */
+const EXTERNAL_LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+/** Resolves a document-supplied URL to something safe to navigate to, or null.
+ *
+ * Link targets arrive from imported files, pasted HTML and the link dialog, and
+ * are followed from three surfaces (the chip's Open, a click on the text, the
+ * context menu). The allowlist used to live inside `activateLink` only, so the
+ * context menu opened `javascript:` unchecked — the same capability, guarded on
+ * one surface. Every follow path resolves here now, so there is one predicate
+ * to change when the policy does. */
+function resolveExternalTarget(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
+  let target;
+  try {
+    target = new URL(url, window.location.href);
+  } catch {
+    return null;
+  }
+  return EXTERNAL_LINK_SCHEMES.has(target.protocol) ? target : null;
+}
+
+/** Follows an allowlisted target and reports the refusal when there is not one.
+ * A blocked link says so — a link that silently does nothing is indistinguishable
+ * from a broken editor. `noreferrer` accompanies `noopener` everywhere: the
+ * context-menu path used to leak the referrer that the click path withheld. */
+function followExternalTarget(url) {
+  const target = resolveExternalTarget(url);
+  if (!target) {
+    let scheme = "";
+    try {
+      scheme = new URL(url, window.location.href).protocol;
+    } catch {
+      scheme = "";
+    }
+    setStatus(
+      scheme ? `Blocked ${scheme} link scheme` : "Blocked an invalid link target",
+      "error",
+    );
+    return false;
+  }
+  if (target.protocol === "mailto:") window.location.assign(target.href);
+  else window.open(target.href, "_blank", "noopener,noreferrer");
+  return true;
+}
+
 /** Activates a previously queried authored link. The runtime resolves
  * geometry/bookmarks; this host owns the external-scheme allowlist and browser
  * navigation. */
@@ -5163,20 +5260,7 @@ function activateLink(link) {
     return true;
   }
 
-  let target;
-  try {
-    target = new URL(link.url, window.location.href);
-  } catch {
-    setStatus("Blocked an invalid link target", "error");
-    return true;
-  }
-  if (target.protocol === "http:" || target.protocol === "https:") {
-    window.open(target.href, "_blank", "noopener,noreferrer");
-  } else if (target.protocol === "mailto:") {
-    window.location.assign(target.href);
-  } else {
-    setStatus(`Blocked ${target.protocol || "unknown"} link scheme`, "error");
-  }
+  followExternalTarget(link.url);
   return true;
 }
 
@@ -5982,7 +6066,7 @@ function removeContextLink(link) {
 function openContextLink(link) {
   if (!link) return;
   if (link.url) {
-    window.open(link.url, "_blank", "noopener");
+    followExternalTarget(link.url);
     return;
   }
   if (link.targetNode != null) {
@@ -7487,6 +7571,12 @@ async function applyEditResult(res) {
   // positions coincide.
   implicitCaretAt = null;
   selection = { anchor: { node, offset }, focus: { node, offset } };
+  // The paste-options chip only ever means "redo the paste you just made,
+  // differently" — it acts by undoing it. Once any other edit has landed, an
+  // undo removes that edit instead, so the offer has expired. Retiring it here,
+  // where every edit passes, is what stops a ⌘Z before the click from silently
+  // deleting the sentence the user typed before the paste.
+  if (pasteOptionsShowing()) hidePasteOptions();
   dropVanishedObjectSelection();
   if (newCount !== pages.length) {
     await renderAll(); // structural change (page added/removed): rebuild the list
@@ -7582,11 +7672,14 @@ function blockMutationInViewing() {
 /** Runs an edit thunk and applies its result; unsupported edits are ignored.
  *  `gate: true` marks a mutation that has no tracked-revision representation
  *  (yet, or ever, per REVIEW-GAP-009's structural backlog): it is blocked
- *  outright in Suggesting mode rather than silently applying untracked. */
+ *  outright in Suggesting mode rather than silently applying untracked.
+ *
+ *  Returns whether the edit actually landed, so a caller chaining several edits
+ *  can stop instead of continuing against a document that never changed. */
 async function runEdit(thunk, { typing = false, gate = false } = {}) {
-  if (blockMutationInViewing()) return;
+  if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
-  if (gate && blockUntrackedInSuggesting()) return;
+  if (gate && blockUntrackedInSuggesting()) return false;
   let res;
   try {
     res = thunk();
@@ -7598,9 +7691,10 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     // to stop this from reading as "nothing happened" (docs/67, "Error/
     // reporting UX": never silently do nothing).
     setStatus("That edit isn't supported for this selection yet", "error");
-    return;
+    return false;
   }
   await applyEditResult(res);
+  return true;
 }
 
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
@@ -7785,6 +7879,22 @@ function hexToRgb(hex) {
   return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 }
 
+/** Every control that toggles run format `key`, on any surface. The ribbon
+ *  button is the one held by id; anything else declares itself with `data-fmt`,
+ *  so a new surface inherits the state sync by existing rather than by being
+ *  added to a list here. Cached because `updateToolbar` runs on every repaint
+ *  and the set is fixed markup. */
+const formatToggleCache = new Map();
+function formatToggleButtons(key) {
+  let buttons = formatToggleCache.get(key);
+  if (!buttons) {
+    buttons = [...new Set([fmtButtons[key], ...document.querySelectorAll(`[data-fmt="${key}"]`)])]
+      .filter(Boolean);
+    formatToggleCache.set(key, buttons);
+  }
+  return buttons;
+}
+
 /** Reflects the selection in the toolbar: active states + which controls are
  *  enabled (run controls need a text range; paragraph controls need a caret). */
 function updateToolbar() {
@@ -7803,7 +7913,12 @@ function updateToolbar() {
     const pressed = range
       ? runState && runState[key]
       : (pendingFormat?.[key] ?? (caretFmt ? caretFmt[key] : false));
-    fmtButtons[key].setAttribute("aria-pressed", mixed ? "mixed" : String(!!pressed));
+    const state = mixed ? "mixed" : String(!!pressed);
+    // Every surface that toggles this format, not just the ribbon. The floating
+    // bar sits directly over the selection — it is the one the user is looking
+    // at — and reading neutral over already-bold text made clicking B remove
+    // bold instead of applying it, with no pressed state announced either.
+    for (const button of formatToggleButtons(key)) button.setAttribute("aria-pressed", state);
   }
   // Run controls work with a range (apply) or a caret (arm for typing), so they are
   // enabled whenever there is a selection.
@@ -9969,41 +10084,119 @@ document.addEventListener("keydown", (event) => {
 });
 
 // -- Insert table: a hover grid picker (Google-Docs style) --------------------
+// It is a real grid, not eighty anonymous buttons: rows carry `role="row"` (with
+// `display: contents`, so the ten-column CSS grid is untouched), every cell has
+// the size it inserts as its accessible name, and one roving tab stop plus arrow
+// keys makes it navigable. Insertion lives on the cell's `click`, so the pointer
+// and the keyboard travel the same path instead of the keyboard having none.
 const GRID_ROWS = 8;
 const GRID_COLS = 10;
+const gridCells = [];
+gridPicker.setAttribute("role", "grid");
+gridPicker.setAttribute("aria-label", "Table size");
 for (let r = 1; r <= GRID_ROWS; r++) {
+  const row = document.createElement("div");
+  row.setAttribute("role", "row");
+  row.style.display = "contents";
+  const cells = [];
   for (let c = 1; c <= GRID_COLS; c++) {
     const cell = document.createElement("button");
     cell.type = "button";
     cell.className = "gc";
     cell.dataset.r = String(r);
     cell.dataset.c = String(c);
-    gridPicker.appendChild(cell);
+    cell.setAttribute("role", "gridcell");
+    cell.setAttribute("aria-label", `${c} by ${r} table`);
+    cell.tabIndex = r === 1 && c === 1 ? 0 : -1;
+    row.appendChild(cell);
+    cells.push(cell);
   }
+  gridPicker.appendChild(row);
+  gridCells.push(cells);
 }
+/** The cell at 1-based `r`/`c`, or undefined outside the grid. */
+const gridCellAt = (r, c) => gridCells[r - 1]?.[c - 1];
+
 function highlightGrid(rows, cols) {
-  for (const cell of gridPicker.children) {
-    const on = Number(cell.dataset.r) <= rows && Number(cell.dataset.c) <= cols;
-    cell.classList.toggle("on", on);
+  for (const row of gridCells) {
+    for (const cell of row) {
+      const on = Number(cell.dataset.r) <= rows && Number(cell.dataset.c) <= cols;
+      cell.classList.toggle("on", on);
+    }
   }
   gridLabel.textContent = rows ? `${cols} × ${rows}` : "Insert table";
 }
-gridPicker.addEventListener("pointermove", (e) => {
-  const cell = e.target.closest(".gc");
-  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
-});
-gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
-gridPicker.addEventListener("pointerdown", async (e) => {
-  const cell = e.target.closest(".gc");
+
+/** Moves the single tab stop to `r`/`c`, previews that size, and focuses it —
+ *  the roving-tabindex pattern, so Tab enters the grid once and the arrows do
+ *  the rest. */
+function focusGridCell(r, c) {
+  const cell = gridCellAt(r, c);
+  if (!cell) return;
+  for (const row of gridCells) for (const other of row) other.tabIndex = other === cell ? 0 : -1;
+  highlightGrid(r, c);
+  cell.focus();
+}
+
+async function insertTableFromGrid(cell) {
   if (!cell || !selection || !doc) return;
-  e.preventDefault();
   const rows = Number(cell.dataset.r);
   const cols = Number(cell.dataset.c);
   await runEdit(() => doc.insertTable(selection.focus.node, rows, cols), { gate: true });
   closePopover(insertTablePopover);
   focusEditorSurface();
+}
+
+gridPicker.addEventListener("pointermove", (e) => {
+  const cell = e.target.closest(".gc");
+  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
 });
-const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => highlightGrid(0, 0));
+gridPicker.addEventListener("pointerleave", () => highlightGrid(0, 0));
+// Keep a pointer press from collapsing the document selection the table is
+// about to be inserted into; the click that follows is what inserts.
+gridPicker.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".gc")) e.preventDefault();
+});
+gridPicker.addEventListener("click", (e) => {
+  const cell = e.target.closest(".gc");
+  if (cell) void insertTableFromGrid(cell);
+});
+gridPicker.addEventListener("focusin", (e) => {
+  const cell = e.target.closest(".gc");
+  if (cell) highlightGrid(Number(cell.dataset.r), Number(cell.dataset.c));
+});
+gridPicker.addEventListener("keydown", (e) => {
+  const cell = e.target.closest(".gc");
+  if (!cell) return;
+  const r = Number(cell.dataset.r);
+  const c = Number(cell.dataset.c);
+  const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+  if (step) {
+    const next = gridCellAt(r + step[0], c + step[1]);
+    if (!next) return; // at an edge: stay put rather than wrapping to a different size
+    e.preventDefault();
+    focusGridCell(r + step[0], c + step[1]);
+  } else if (e.key === "Home") {
+    e.preventDefault();
+    focusGridCell(e.ctrlKey || e.metaKey ? 1 : r, 1);
+  } else if (e.key === "End") {
+    e.preventDefault();
+    focusGridCell(e.ctrlKey || e.metaKey ? GRID_ROWS : r, GRID_COLS);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closePopover(insertTablePopover);
+    insertTableBtn.focus();
+  }
+  // Enter and Space need no handling: these are real buttons, so the browser
+  // turns them into the same `click` the pointer path uses.
+});
+const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () => {
+  // Opening puts the keyboard inside the grid at 1×1. Without this the popover
+  // opened behind the focus ring and Tab walked past it into the rest of the
+  // page, which is what made the whole picker pointer-only.
+  focusGridCell(1, 1);
+  highlightGrid(0, 0);
+});
 
 // ---- Off-screen accessibility tree (docs/67 row 9) --------------------------
 /**
@@ -12595,13 +12788,22 @@ function renderCommands(query) {
     empty.className = "cmd-empty";
     empty.textContent = "No matching commands";
     cmdList.appendChild(empty);
+    cmdInput.setAttribute("aria-expanded", "false");
+    cmdInput.removeAttribute("aria-activedescendant");
     return;
   }
+  cmdInput.setAttribute("aria-expanded", "true");
   cmdMatches.forEach((c, i) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = `cmd-item${i === cmdSel ? " sel" : ""}`;
     item.setAttribute("role", "option");
+    // A stable id per option is what `aria-activedescendant` points at; the
+    // option itself must stay out of the tab order because focus never leaves
+    // the query input.
+    item.id = `cmdOption-${i}`;
+    item.tabIndex = -1;
+    item.setAttribute("aria-selected", String(i === cmdSel));
     item.disabled = c.enabled === false;
     if (c.disabledReason) item.title = c.disabledReason;
     // The hint column shows the disabled reason when unavailable, else the
@@ -12613,14 +12815,34 @@ function renderCommands(query) {
     item.addEventListener("click", () => runCommand(i));
     cmdList.appendChild(item);
   });
+  reflectCmdSel();
 }
 
 function setCmdSel(i) {
   if (i < 0 || cmdMatches[i]?.enabled === false) return;
   cmdSel = i;
+  reflectCmdSel();
+}
+
+/** Publishes the current selection to both channels: the `.sel` class the eye
+ *  reads, and the `aria-selected` / `aria-activedescendant` pair a screen reader
+ *  reads. Arrowing used to move only the class, so the palette said nothing
+ *  while the highlight travelled and Enter ran whatever happened to be under
+ *  it. The option's own text carries the hint column, so a disabled command
+ *  announces its reason with its name. */
+function reflectCmdSel() {
   const items = cmdList.querySelectorAll(".cmd-item");
-  items.forEach((el, k) => el.classList.toggle("sel", k === i));
-  items[i]?.scrollIntoView({ block: "nearest" });
+  items.forEach((el, k) => {
+    el.classList.toggle("sel", k === cmdSel);
+    el.setAttribute("aria-selected", String(k === cmdSel));
+  });
+  const active = items[cmdSel];
+  if (active) {
+    cmdInput.setAttribute("aria-activedescendant", active.id);
+    active.scrollIntoView({ block: "nearest" });
+  } else {
+    cmdInput.removeAttribute("aria-activedescendant");
+  }
 }
 
 function moveCmdSelection(direction) {
@@ -13444,10 +13666,10 @@ async function pasteTrackedRichRuns(runs) {
 
   breakTypingSession();
   const session = typingSessionForKey();
-  const node = selection.focus.node;
+  let node = selection.focus.node;
   let offset = selection.focus.offset;
   for (const run of insertable) {
-    await runEdit(
+    const applied = await runEdit(
       () => doc.suggestStyledInsert(
         node,
         offset,
@@ -13467,7 +13689,17 @@ async function pasteTrackedRichRuns(runs) {
       ),
       { typing: true },
     );
-    offset += run.text.length;
+    // A refused run has already reported itself; continuing would paste the
+    // remainder at an offset the document never reached.
+    if (!applied) break;
+    // Never synthesize the next insertion point. The engine's offsets are UTF-8
+    // bytes and `run.text.length` is UTF-16 code units, so `offset += length`
+    // drifted on every curly quote, em dash or accent — the rest of the paste
+    // then landed inside an earlier run, or was refused outright. The caret in
+    // the EditResult `applyEditResult` just installed is the engine's own answer
+    // for where that run ended, so read it back instead (docs/104 T-09).
+    node = selection.focus.node;
+    offset = selection.focus.offset;
   }
   // Close the gesture explicitly so a later, unrelated keystroke cannot
   // merge into this paste's group (mirrors the pause-based boundary real
@@ -13692,14 +13924,36 @@ const pasteOptionsMergeBtn = document.getElementById("pasteOptionsMerge");
 const pasteOptionsCloseBtn = document.getElementById("pasteOptionsClose");
 let pasteOptionsPlain = null;
 let pasteOptionsRuns = null;
+// The document revision the chip's own paste produced. Both chip actions work by
+// undoing that paste and redoing it differently, so they are only safe while the
+// paste is still the change an undo would remove. Captured when the chip is
+// offered; `pasteOptionsStillOnTop` is the fail-closed check.
+let pasteOptionsRevision = null;
 // The rich-run JSON of the most recent paste, captured by `pasteRichRunsJson`
 // and drained by `offerPasteOptions` for the "Merge formatting" option.
 let lastRichPasteJson = null;
+
+/** Whether the chip is currently offered. Read from `applyEditResult`, which is
+ *  defined earlier in the file but only ever runs from an event or `boot()`,
+ *  by which time this section has evaluated. */
+function pasteOptionsShowing() {
+  return !pasteOptionsEl.hidden;
+}
 
 function hidePasteOptions() {
   pasteOptionsEl.hidden = true;
   pasteOptionsPlain = null;
   pasteOptionsRuns = null;
+  pasteOptionsRevision = null;
+}
+
+/** True while the chip's paste is still the change an undo would remove. An
+ *  unreadable revision counts as "moved on": the chip may not gamble with the
+ *  user's previous edit on a number it could not read. */
+function pasteOptionsStillOnTop() {
+  return (
+    pasteOptionsRevision !== null && !revisionUnreadable && currentRevision === pasteOptionsRevision
+  );
 }
 /** Shows the chip only when the plain text differs from what a rich paste
  *  produced would matter — i.e. there is text to fall back to. "Merge
@@ -13711,6 +13965,7 @@ function offerPasteOptions(plain) {
   if (!plain) return hidePasteOptions();
   pasteOptionsPlain = plain;
   pasteOptionsRuns = runsJson;
+  pasteOptionsRevision = revisionUnreadable ? null : currentRevision;
   pasteOptionsMergeBtn.hidden = !runsJson;
   pasteOptionsEl.hidden = false;
   requestAnimationFrame(positionPasteOptions);
@@ -13738,20 +13993,30 @@ function positionPasteOptions() {
 }
 async function switchPasteToTextOnly() {
   const text = pasteOptionsPlain;
+  const onTop = pasteOptionsStillOnTop();
   hidePasteOptions();
   if (!text || !doc) return;
+  if (!onTop) return refusePasteOptions();
   if (doc.canUndo) await runEdit(() => doc.undo());
   await pasteText(text);
   focusEditorSurface();
 }
+/** Says no rather than undoing whatever is on top of the stack instead. */
+function refusePasteOptions() {
+  setStatus("The paste is no longer the most recent change; paste options can't be applied", "error");
+  focusEditorSurface();
+}
+
 /** "Merge formatting": undo the rich paste and re-insert it with each run's
  *  properties reduced to the emphasis flags only (bold/italic/underline/
  *  strike/vertAlign). Dropping font, size, color, and highlight lets the text
  *  inherit the destination paragraph's formatting — the Word/Docs behavior. */
 async function switchPasteToMergeFormatting() {
   const runsJson = pasteOptionsRuns;
+  const onTop = pasteOptionsStillOnTop();
   hidePasteOptions();
   if (!runsJson || !doc) return;
+  if (!onTop) return refusePasteOptions();
   let runs = null;
   try {
     runs = JSON.parse(runsJson);
@@ -13840,14 +14105,14 @@ document.addEventListener("compositionend", async (e) => {
 // any cached text, so it is the engine's own content that decides — including
 // after an undo, a paste, or a caret move the editor did not originate.
 const SMART_QUOTE_PREF = "opendoc.smartQuotes";
-let smartQuotesEnabled = localStorage.getItem(SMART_QUOTE_PREF) !== "off";
+let smartQuotesEnabled = readPref(SMART_QUOTE_PREF) !== "off";
 
 /** Characters after which a quote is an OPENING quote. */
 const QUOTE_OPENERS = new Set(["(", "[", "{", "\u2018", "\u201C", "\u2014", "\u2013", "-", "/"]);
 
 function setSmartQuotes(enabled) {
   smartQuotesEnabled = enabled;
-  localStorage.setItem(SMART_QUOTE_PREF, enabled ? "on" : "off");
+  writePref(SMART_QUOTE_PREF, enabled ? "on" : "off");
   setStatus(enabled ? "Smart quotes on" : "Smart quotes off");
 }
 
@@ -14545,18 +14810,15 @@ let settings = loadSettings();
 
 function loadSettings() {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("opendoc.settings") || "{}") };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(readPref("opendoc.settings") || "{}") };
   } catch {
+    // Storage is already guarded by readPref; this catches a corrupt payload.
     return { ...DEFAULT_SETTINGS };
   }
 }
 
 function saveSettings() {
-  try {
-    localStorage.setItem("opendoc.settings", JSON.stringify(settings));
-  } catch {
-    /* storage disabled — settings apply for the session only */
-  }
+  writePref("opendoc.settings", JSON.stringify(settings));
 }
 
 /**
@@ -15042,6 +15304,7 @@ pageSetupApplyBtn.addEventListener("click", async () => {
   togglePageSetup(false);
 });
 fileEl.disabled = true;
+if (openBtn) openBtn.disabled = true;
 // No document is open yet, so every document-scoped control starts disabled.
 // (Not "no selection yet": once a document opens it always has an insertion
 // point — see `openBytes` — so `selection` tracks the document, not the click.)
