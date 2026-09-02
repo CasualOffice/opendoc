@@ -3670,9 +3670,17 @@ fn image_beside_a_text_box_in_the_same_drawing_is_not_dropped() {
     assert_eq!(tb_block_text(&text_box.blocks), "Caption");
 }
 
+/// The real `wps` (2010 WordprocessingShape) namespace URI — a text box choice
+/// this importer reads, so the fallback beside it is the branch that is skipped.
+const WPS_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+/// The real `wpi` (2010 WordprocessingInk) namespace URI — an ink annotation,
+/// which the model has no representation for.
+const WPI_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingInk";
+
 #[test]
 fn alternate_content_selects_one_branch_and_does_not_duplicate() {
-    let xml = br#"<w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="urn:wps" xmlns:v="urn:v"><w:body>
+    let xml = format!(
+        r#"<w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:wps="{WPS_NS}" xmlns:v="urn:v"><w:body>
         <w:p><w:r><mc:AlternateContent>
             <mc:Choice Requires="wps"><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx>
                 <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
@@ -3681,8 +3689,9 @@ fn alternate_content_selects_one_branch_and_does_not_duplicate() {
                 <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
             </v:textbox></v:shape></w:pict></mc:Fallback>
         </mc:AlternateContent></w:r></w:p>
-    </w:body></w:document>"#;
-    let import = import(xml);
+    </w:body></w:document>"#
+    );
+    let import = import(xml.as_bytes());
     let para = paragraph(&import, 0);
     let boxes = para
         .inlines
@@ -3696,6 +3705,93 @@ fn alternate_content_selects_one_branch_and_does_not_duplicate() {
     let text_box = find_textbox(&para.inlines).expect("text box modeled");
     assert_eq!(tb_block_text(&text_box.blocks), "Boxed");
     assert!(features(&import).contains(&"Fallback"));
+}
+
+/// A choice requiring a vocabulary the model cannot represent — an ink
+/// annotation — must NOT be selected just for being first. Word reads the
+/// fallback beside it, and so must this: the file is carrying a picture of the
+/// strokes, and taking the choice threw it away.
+#[test]
+fn alternate_content_takes_the_fallback_when_the_choice_is_unreadable() {
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:r="urn:r" xmlns:w14="urn:w14" xmlns:wpi="{WPI_NS}"><w:body>
+        <w:p><w:r><mc:AlternateContent>
+            <mc:Choice Requires="wpi"><w14:contentPart r:id="rId8"/></mc:Choice>
+            <mc:Fallback><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Ink 1" descr="Handwritten note"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Fallback>
+        </mc:AlternateContent></w:r></w:p>
+    </w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let para = paragraph(&import, 0);
+    let drawing = para
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Drawing(drawing) => Some(drawing),
+            _ => None,
+        })
+        .expect("the fallback picture is imported");
+    assert_eq!(drawing.descr.as_deref(), Some("Handwritten note"));
+    // The unread branch is still dispositioned, so the report shows what the
+    // file offered and this importer declined.
+    assert!(
+        features(&import).contains(&"Choice"),
+        "the skipped choice is reported: {:?}",
+        features(&import)
+    );
+}
+
+/// The prefix in `@Requires` is meaningless on its own: the same three letters
+/// are whatever the document's `xmlns:` binds them to. A choice naming `wps`
+/// bound to the INK namespace is an ink choice, and must fall back — otherwise
+/// the check is a prefix allowlist wearing a namespace's clothes.
+#[test]
+fn alternate_content_resolves_requires_prefixes_through_the_declared_namespace() {
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:r="urn:r" xmlns:wps="{WPI_NS}"><w:body>
+        <w:p><w:r><mc:AlternateContent>
+            <mc:Choice Requires="wps"><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice>
+            <mc:Fallback><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Shape 1" descr="Fallback picture"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Fallback>
+        </mc:AlternateContent></w:r></w:p>
+    </w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let para = paragraph(&import, 0);
+    assert!(
+        find_textbox(&para.inlines).is_none(),
+        "the choice was resolved by URI, not by the look of its prefix"
+    );
+    let drawing = para
+        .inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Drawing(drawing) => Some(drawing),
+            _ => None,
+        })
+        .expect("the fallback picture is imported");
+    assert_eq!(drawing.descr.as_deref(), Some("Fallback picture"));
+}
+
+/// An alternate-content group whose every branch is unreadable and which offers
+/// no fallback loses its object. That is allowed by MCE, but it is still loss,
+/// and the compatibility report must say so rather than report a clean import.
+#[test]
+fn alternate_content_with_no_readable_branch_is_reported_as_loss() {
+    let xml = format!(
+        r#"<w:document xmlns:w="urn:w" xmlns:mc="urn:mc" xmlns:r="urn:r" xmlns:w14="urn:w14" xmlns:wpi="{WPI_NS}"><w:body>
+        <w:p><w:r><mc:AlternateContent>
+            <mc:Choice Requires="wpi"><w14:contentPart r:id="rId8"/></mc:Choice>
+        </mc:AlternateContent></w:r></w:p>
+    </w:body></w:document>"#
+    );
+    let import = import(xml.as_bytes());
+    assert!(
+        features(&import).contains(&"alternateContent:noReadableBranch"),
+        "the lost object is dispositioned: {:?}",
+        features(&import)
+    );
 }
 
 #[test]
