@@ -30,6 +30,7 @@ import {
   moveMenuIndex,
   normalizeMenuEntries,
 } from "./context_menu.mjs";
+import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
 
 function escapeHtml(text) {
   return String(text)
@@ -523,41 +524,127 @@ const styleNameCancel = document.getElementById("styleNameCancel");
 const styleNameClose = document.getElementById("styleNameClose");
 let styleNameResolve = null;
 
+/** The name the dialog will resolve with when it closes. Escape and the
+ *  backdrop go through the primitive, which knows nothing about our promise, so
+ *  the result is staged here and read back in onClose — a dismissal that skipped
+ *  our own close path used to leave promptStyleName pending forever. */
+let styleNameResult = null;
+
+const styleNameModal = styleNameDialog
+  ? registerModal(styleNameDialog, {
+      initialFocus: () => styleNameInput,
+      fallbackFocus: () => pagesEl,
+      defaultAction: () => finishStyleName(styleNameInput.value.trim()),
+      onClose: () => {
+        const resolve = styleNameResolve;
+        const result = styleNameResult;
+        styleNameResolve = null;
+        styleNameResult = null;
+        if (resolve) resolve(result);
+      },
+    })
+  : null;
+
+function finishStyleName(result) {
+  styleNameResult = result;
+  styleNameModal?.close();
+}
+
 /** Opens the create-style dialog and resolves to the entered name, or null if
  *  cancelled. A single in-flight prompt at a time. */
 function promptStyleName() {
-  if (!styleNameDialog) return Promise.resolve(null);
+  if (!styleNameModal) return Promise.resolve(null);
   return new Promise((resolve) => {
     styleNameResolve = resolve;
+    styleNameResult = null;
     styleNameInput.value = "";
-    styleNameDialog.hidden = false;
-    styleNameInput.focus();
+    styleNameModal.open();
   });
-}
-
-function closeStyleNameDialog(result) {
-  if (!styleNameDialog || styleNameDialog.hidden) return;
-  styleNameDialog.hidden = true;
-  const resolve = styleNameResolve;
-  styleNameResolve = null;
-  if (resolve) resolve(result);
 }
 
 if (styleNameDialog) {
-  styleNameConfirm.addEventListener("click", () => closeStyleNameDialog(styleNameInput.value.trim()));
-  styleNameCancel.addEventListener("click", () => closeStyleNameDialog(null));
-  styleNameClose.addEventListener("click", () => closeStyleNameDialog(null));
-  styleNameDialog.addEventListener("click", (event) => {
-    if (event.target === styleNameDialog) closeStyleNameDialog(null);
+  styleNameConfirm.addEventListener("click", () => finishStyleName(styleNameInput.value.trim()));
+  styleNameCancel.addEventListener("click", () => finishStyleName(null));
+  styleNameClose.addEventListener("click", () => finishStyleName(null));
+}
+
+// ---- Confirmation ----------------------------------------------------------
+// The application's single yes/no question. `window.alert`/`confirm`/`prompt`
+// are barred in this editor: they cannot be styled or labelled, they freeze the
+// wasm engine's event loop while they are up, and browsers increasingly refuse
+// them outright — so a "confirmation" the user never sees would silently read
+// as cancelled. This card goes through the same modal contract as every other
+// dialog, which means Escape and the backdrop already answer it (as "no").
+const confirmDialog = document.getElementById("confirmDialog");
+const confirmTitleEl = document.getElementById("confirmTitle");
+const confirmDescriptionEl = document.getElementById("confirmDescription");
+const confirmNoteEl = document.getElementById("confirmNote");
+const confirmIconEl = document.getElementById("confirmIcon");
+const confirmAcceptBtn = document.getElementById("confirmAccept");
+const confirmCancelBtn = document.getElementById("confirmCancel");
+const confirmCloseBtn = document.getElementById("confirmClose");
+let confirmResolve = null;
+let confirmAnswer = false;
+
+const confirmModalController = registerModal(confirmDialog, {
+  // Cancel holds focus, so Enter and Space answer "no". Every question this
+  // card asks is asked because the alternative destroys something; the safe
+  // answer is the one a reflexive keypress lands on.
+  initialFocus: () => confirmCancelBtn,
+  fallbackFocus: () => pagesEl,
+  defaultAction: () => finishConfirm(true),
+  onClose: () => {
+    const resolve = confirmResolve;
+    const answer = confirmAnswer;
+    confirmResolve = null;
+    confirmAnswer = false;
+    // Escape, the backdrop and ✕ never set an answer, so they resolve false —
+    // dismissal is a refusal, not a silent yes.
+    if (resolve) resolve(answer);
+  },
+});
+
+function finishConfirm(answer) {
+  confirmAnswer = answer;
+  confirmModalController.close();
+}
+
+/** Asks one yes/no question and resolves to the user's answer. Resolves false
+ *  for every form of dismissal. A second call while one is open resolves the
+ *  first as refused rather than stacking two questions. */
+function confirmModal({ title, message, confirmLabel = "OK", cancelLabel = "Cancel", note = "", icon = "help" }) {
+  if (confirmModalController.isOpen) finishConfirm(false);
+  confirmTitleEl.textContent = title;
+  confirmDescriptionEl.textContent = message;
+  confirmNoteEl.textContent = note;
+  confirmIconEl.textContent = icon;
+  confirmAcceptBtn.textContent = confirmLabel;
+  confirmCancelBtn.textContent = cancelLabel;
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    confirmAnswer = false;
+    confirmModalController.open();
   });
-  styleNameInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      closeStyleNameDialog(styleNameInput.value.trim());
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeStyleNameDialog(null);
-    }
+}
+
+confirmAcceptBtn.addEventListener("click", () => finishConfirm(true));
+confirmCancelBtn.addEventListener("click", () => finishConfirm(false));
+confirmCloseBtn.addEventListener("click", () => finishConfirm(false));
+
+/** Gate for anything that replaces the open document. Returns true when it is
+ *  safe to proceed. Reads `documentIsDirty()` — the engine revision watermark,
+ *  which fails dirty — so this and the beforeunload guard can never disagree
+ *  about whether work would be lost (docs/104 T-14: one dirty signal, one
+ *  reader). */
+async function confirmDiscardIfEdited() {
+  if (!documentIsDirty()) return true;
+  return confirmModal({
+    title: "Discard unsaved changes?",
+    message: `Opening another file replaces “${currentName || "this document"}”. Your edits have not been saved and there is no copy of them anywhere else.`,
+    confirmLabel: "Discard and open",
+    cancelLabel: "Keep editing",
+    note: "Save the .docx first to keep your work.",
+    icon: "warning",
   });
 }
 
@@ -2259,6 +2346,10 @@ const TYPING_PAUSE_MS = 1000;
 const EDITOR_KEYBOARD_PLATFORM = keyboardPlatform(navigator);
 
 function focusEditorSurface() {
+  // Never steal the keyboard from a modal. Repaints and deferred edit results
+  // both call this, and either can land while a dialog is open; the dialog's
+  // focus trap would then be fighting the editor for the caret.
+  if (modalIsOpen()) return;
   pagesEl.focus({ preventScroll: true });
 }
 
@@ -4583,10 +4674,9 @@ const altTextNote = document.getElementById("altTextNote");
 const altTextClose = document.getElementById("altTextClose");
 const altTextCancel = document.getElementById("altTextCancel");
 const ALT_TEXT_HINT = "Leave empty to remove the alt text. Enter applies; Shift+Enter adds a line.";
-/** The object a currently-open object dialog is editing, and the chrome to
- *  restore focus to when it closes. */
+/** The object a currently-open object dialog is editing. The dialog stays bound
+ *  to it even though `objectSelection` keeps moving behind the modal. */
 let objectDialogNode = null;
-let objectDialogReturnFocus = null;
 
 /** True (after surfacing the standard read-only/untracked message) if an object
  *  edit must not apply in the current review mode. Object edits are fail-closed
@@ -4601,26 +4691,29 @@ function setAltTextNote(message, isError) {
   altTextNote.classList.toggle("error", !!isError && !!message);
 }
 
+const altTextModal = altTextDialog
+  ? registerModal(altTextDialog, {
+      initialFocus: () => altTextInput,
+      fallbackFocus: () => pagesEl,
+      onOpen: () => altTextInput.select(),
+      onClose: () => {
+        objectDialogNode = null;
+      },
+    })
+  : null;
+
 function openAltTextDialog() {
-  if (!doc || !objectSelection?.canAltText || !altTextDialog) return;
+  if (!doc || !objectSelection?.canAltText || !altTextModal) return;
   objectDialogNode = objectSelection.node;
-  objectDialogReturnFocus = document.activeElement;
   // Prefill the current alt text so the user refines it rather than blind-
   // overwriting (Word/Docs both show the existing description).
   altTextInput.value = doc.objectDescr(objectSelection.node) ?? "";
   setAltTextNote("", false);
-  altTextDialog.hidden = false;
-  queueMicrotask(() => {
-    altTextInput.focus();
-    altTextInput.select();
-  });
+  altTextModal.open();
 }
 
 function closeAltTextDialog() {
-  if (!altTextDialog || altTextDialog.hidden) return;
-  altTextDialog.hidden = true;
-  objectDialogNode = null;
-  restoreObjectDialogFocus();
+  altTextModal?.close();
 }
 
 /** Applies the alt text as one undoable action. The engine rejects an
@@ -4649,18 +4742,6 @@ function applyAltText() {
   });
 }
 
-/** Returns focus to the chrome that opened an object dialog, or the canvas if it
- *  is gone (the context bar is rebuilt on every repaint, so its buttons detach). */
-function restoreObjectDialogFocus() {
-  const returnTo = objectDialogReturnFocus;
-  objectDialogReturnFocus = null;
-  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
-    returnTo.focus({ preventScroll: true });
-  } else {
-    focusEditorSurface();
-  }
-}
-
 if (altTextDialog) {
   altTextForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -4678,18 +4759,6 @@ if (altTextDialog) {
   });
   altTextClose.addEventListener("click", () => closeAltTextDialog());
   altTextCancel.addEventListener("click", () => closeAltTextDialog());
-  altTextDialog.addEventListener("click", (event) => {
-    if (event.target === altTextDialog) closeAltTextDialog();
-  });
-  altTextDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeAltTextDialog();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, altTextDialog);
-    }
-  });
 }
 
 // Threshold (twips) beyond which a float body drag counts as a move, not a click.
@@ -7977,7 +8046,7 @@ tableStyleMenu.addEventListener("click", (event) => {
 function onButton(el, handler) {
   el.addEventListener("mousedown", (e) => {
     e.preventDefault();
-    handler();
+    handler(e);
   });
   // Native buttons activated from the keyboard emit `click` without a preceding
   // mouse event (`detail === 0`). Preserve the selection on pointer activation
@@ -7985,7 +8054,7 @@ function onButton(el, handler) {
   el.addEventListener("click", (e) => {
     if (e.detail !== 0) return;
     e.preventDefault();
-    handler();
+    handler(e);
   });
 }
 
@@ -8307,7 +8376,7 @@ fontSizeSel.addEventListener("change", () => {
 const TWIPS_PER_POINT = 20;
 const popovers = [];
 
-function openPopover(p) {
+function openPopover(p, { keyboard = false } = {}) {
   // An object can be selected with no text caret behind it (clicking a float
   // first thing), and its Fill/Outline pickers must still open.
   if (!selection && !objectSelection) return;
@@ -8331,17 +8400,40 @@ function openPopover(p) {
       : Math.max(gutter, above);
   p.menu.style.left = `${Math.round(left)}px`;
   p.menu.style.top = `${Math.round(top)}px`;
+  // Opened from the keyboard, the popover takes focus (docs/104 HF-070: it used
+  // to leave focus on the trigger, so reaching a swatch meant tabbing through
+  // the rest of the ribbon first). Opened by pointer it deliberately does NOT,
+  // because these menus preserve the document selection on mouse interaction —
+  // that is what the mousedown preventDefault in registerPopover is for.
+  if (keyboard) focusFirstIn(p.menu);
+}
+
+/** Focuses the first visible, enabled control inside `container`. */
+function focusFirstIn(container) {
+  const first = [
+    ...container.querySelectorAll(
+      "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
+    ),
+  ].find((element) => element.getClientRects().length > 0);
+  first?.focus({ preventScroll: true });
+  return first ?? null;
 }
 
 function closePopover(p) {
+  // Closing must not strand the keyboard: if focus is inside the menu it goes
+  // back to the trigger, which is where the user's place was.
+  const holdsFocus = p.menu.contains(document.activeElement);
   p.menu.hidden = true;
   p.btn.setAttribute("aria-expanded", "false");
+  if (holdsFocus) p.btn.focus({ preventScroll: true });
 }
 
 function registerPopover(btn, menu, reflect) {
   const p = { btn, menu, reflect };
   popovers.push(p);
-  onButton(btn, () => (menu.hidden ? openPopover(p) : closePopover(p)));
+  onButton(btn, (event) =>
+    menu.hidden ? openPopover(p, { keyboard: event?.detail === 0 }) : closePopover(p),
+  );
   // Keep clicks inside the menu from stealing the selection focus, but let form
   // controls (inputs, selects) focus, toggle, and open normally.
   menu.addEventListener("mousedown", (e) => {
@@ -9602,25 +9694,33 @@ onButton(mergeCellsBtn, async () => {
   updateToolbar();
 });
 
+// Split cell had no keydown listener, no backdrop handler, no focus trap and no
+// Enter-to-confirm, and it closed onto `splitCellBtn` — a button inside a hidden
+// contextual ribbon panel, so `.focus()` was a no-op and the keyboard fell to
+// <body>, which is why the editor appeared frozen afterwards (HF-062). The
+// primitive supplies all of it; `fallbackFocus` is what catches the hidden
+// button, since the controller only restores focus to a control still on screen.
+const splitCellModal = registerModal(splitCellDialog, {
+  initialFocus: () => splitCellColumns,
+  fallbackFocus: () => pagesEl,
+  defaultAction: () => void applySplitCell(),
+});
+
 function toggleSplitCellDialog(open) {
-  splitCellDialog.hidden = !open;
   if (open) {
     splitCellRows.value = "1";
     splitCellColumns.value = "2";
-    splitCellColumns.focus();
+    splitCellColumns.setCustomValidity("");
+    splitCellModal.open();
   } else {
-    splitCellBtn.focus({ preventScroll: true });
+    splitCellModal.close();
   }
 }
 
-onButton(splitCellBtn, () => {
-  if (!selection || !doc) return;
-  toggleSplitCellDialog(true);
-});
-
-onButton(splitCellClose, () => toggleSplitCellDialog(false));
-onButton(splitCellCancel, () => toggleSplitCellDialog(false));
-onButton(splitCellConfirm, async () => {
+/** Splits the caret's merged cell into rows x columns. Refuses out-of-range
+ *  input inline and keeps the dialog open with the typed values intact, rather
+ *  than closing on a number the engine will not accept. */
+async function applySplitCell() {
   if (!selection || !doc) return;
   const rows = Number.parseInt(splitCellRows.value, 10);
   const columns = Number.parseInt(splitCellColumns.value, 10);
@@ -9634,7 +9734,16 @@ onButton(splitCellConfirm, async () => {
   toggleSplitCellDialog(false);
   tableSelection = null;
   updateToolbar();
+}
+
+onButton(splitCellBtn, () => {
+  if (!selection || !doc) return;
+  toggleSplitCellDialog(true);
 });
+
+onButton(splitCellClose, () => toggleSplitCellDialog(false));
+onButton(splitCellCancel, () => toggleSplitCellDialog(false));
+onButton(splitCellConfirm, () => void applySplitCell());
 
 cellShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(cellShade.value);
@@ -10742,7 +10851,6 @@ const cmdList = document.getElementById("cmdList");
 const searchTrigger = document.getElementById("searchTrigger");
 let cmdMatches = [];
 let cmdSel = 0;
-let cmdReturnFocus = null;
 
 /** Shared command descriptors for search and contextual surfaces. Dynamic
  * entries are rebuilt so document styles and availability never go stale. */
@@ -11250,7 +11358,6 @@ const bookmarkClose = document.getElementById("bookmarkClose");
 const bookmarkDone = document.getElementById("bookmarkDone");
 const BOOKMARK_ADD_HINT = "Select text in the document, then add a bookmark for it.";
 let bookmarkSortAsc = true;
-let bookmarkReturnFocus = null;
 
 /** The bookmark name's byte length under the engine's UTF-8 255-byte bound. */
 function bookmarkNameByteLength(name) {
@@ -11500,26 +11607,23 @@ function deleteBookmark(id, name) {
   });
 }
 
+const bookmarkModal = bookmarkDialog
+  ? registerModal(bookmarkDialog, {
+      initialFocus: () => bookmarkNameInput,
+      fallbackFocus: () => pagesEl,
+    })
+  : null;
+
 function openBookmarkManager() {
-  if (!doc || !bookmarkDialog) return;
-  bookmarkReturnFocus = document.activeElement;
+  if (!doc || !bookmarkModal) return;
   bookmarkNameInput.value = "";
   setBookmarkAddNote("", false);
   refreshBookmarkList();
-  bookmarkDialog.hidden = false;
-  queueMicrotask(() => bookmarkNameInput.focus());
+  bookmarkModal.open();
 }
 
 function closeBookmarkDialog() {
-  if (!bookmarkDialog || bookmarkDialog.hidden) return;
-  bookmarkDialog.hidden = true;
-  const returnTo = bookmarkReturnFocus;
-  bookmarkReturnFocus = null;
-  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
-    returnTo.focus({ preventScroll: true });
-  } else {
-    focusEditorSurface();
-  }
+  bookmarkModal?.close();
 }
 
 if (bookmarkDialog) {
@@ -11537,18 +11641,6 @@ if (bookmarkDialog) {
   });
   bookmarkClose.addEventListener("click", () => closeBookmarkDialog());
   bookmarkDone.addEventListener("click", () => closeBookmarkDialog());
-  bookmarkDialog.addEventListener("click", (event) => {
-    if (event.target === bookmarkDialog) closeBookmarkDialog();
-  });
-  bookmarkDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeBookmarkDialog();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, bookmarkDialog);
-    }
-  });
 }
 
 // ---- Insert field ----------------------------------------------------------
@@ -11789,11 +11881,17 @@ const fieldDialog = document.getElementById("fieldDialog");
 const fieldList = document.getElementById("fieldList");
 const fieldClose = document.getElementById("fieldClose");
 const fieldCancel = document.getElementById("fieldCancel");
-let fieldReturnFocus = null;
 
 function fieldChoiceButtons() {
   return fieldList ? [...fieldList.querySelectorAll(".field-choice")] : [];
 }
+
+const fieldModal = fieldDialog
+  ? registerModal(fieldDialog, {
+      initialFocus: () => fieldChoiceButtons()[0],
+      fallbackFocus: () => pagesEl,
+    })
+  : null;
 
 /** Opens the field picker against the current insertion point; the first choice
  *  is focused for keyboard use. Needs only an open document — Word's Insert ▸
@@ -11806,21 +11904,11 @@ function openFieldDialog() {
   // through the palette, and picking a field only to be told no is a worse
   // answer than not opening.
   if (blockMutationInViewing()) return;
-  fieldReturnFocus = document.activeElement;
-  fieldDialog.hidden = false;
-  queueMicrotask(() => fieldChoiceButtons()[0]?.focus());
+  fieldModal.open();
 }
 
 function closeFieldDialog() {
-  if (!fieldDialog || fieldDialog.hidden) return;
-  fieldDialog.hidden = true;
-  const returnTo = fieldReturnFocus;
-  fieldReturnFocus = null;
-  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
-    returnTo.focus({ preventScroll: true });
-  } else {
-    focusEditorSurface();
-  }
+  fieldModal?.close();
 }
 
 /** Closes the picker, then inserts — insertFieldAtCaret ends by focusing the
@@ -11836,17 +11924,8 @@ if (fieldDialog) {
   }
   fieldClose.addEventListener("click", () => closeFieldDialog());
   fieldCancel.addEventListener("click", () => closeFieldDialog());
-  fieldDialog.addEventListener("click", (event) => {
-    if (event.target === fieldDialog) closeFieldDialog();
-  });
   fieldDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeFieldDialog();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, fieldDialog);
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const items = fieldChoiceButtons();
       const index = items.indexOf(document.activeElement);
@@ -12320,10 +12399,8 @@ const linkDialogClose = document.getElementById("linkDialogClose");
 const linkCancelBtn = document.getElementById("linkCancelBtn");
 const linkRemoveBtn = document.getElementById("linkRemoveBtn");
 const LINK_DIALOG_HINT = "Enter applies; Esc cancels.";
-/** The range a currently-open link dialog targets, plus what to restore focus
- *  to when it closes. `null` when the dialog is closed. */
+/** The range a currently-open link dialog targets. `null` when it is closed. */
 let linkDialogCtx = null;
-let linkDialogReturnFocus = null;
 let linkDialogMode = "url";
 
 function setLinkDialogNote(message, isError) {
@@ -12367,6 +12444,19 @@ function populateLinkPlaces(selectedAnchor) {
   return entries.length;
 }
 
+const linkModal = linkDialog
+  ? registerModal(linkDialog, {
+      initialFocus: () => (linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput),
+      fallbackFocus: () => pagesEl,
+      onOpen: () => {
+        if (linkDialogMode !== "place") linkUrlInput.select();
+      },
+      onClose: () => {
+        linkDialogCtx = null;
+      },
+    })
+  : null;
+
 /** Opens the dialog over `[node, start)..[node, end)`. `link` (optional) is an
  *  existing hyperlink to edit — it prefills the URL / bookmark / ScreenTip and
  *  shows Remove; a fresh insert leaves them empty. `text` is the current display
@@ -12376,7 +12466,6 @@ function openLinkDialog({ node, start, end, link = null, text = "" }) {
   if (!doc || !linkDialog) return;
   if (blockMutationInViewing() || blockUntrackedInSuggesting()) return;
   linkDialogCtx = { node, start, end, editing: !!link, originalText: text };
-  linkDialogReturnFocus = document.activeElement;
 
   const internal = link?.kind === "internal";
   const hasPlaces = populateLinkPlaces(internal ? link.anchor : null);
@@ -12388,25 +12477,11 @@ function openLinkDialog({ node, start, end, link = null, text = "" }) {
   linkDialogTitle.textContent = link ? "Edit link" : "Insert link";
   linkRemoveBtn.hidden = !link;
 
-  linkDialog.hidden = false;
-  queueMicrotask(() => {
-    const first = linkDialogMode === "place" ? linkPlaceSelect : linkUrlInput;
-    first.focus();
-    if (first === linkUrlInput) linkUrlInput.select();
-  });
+  linkModal.open();
 }
 
 function closeLinkDialog() {
-  if (!linkDialog || linkDialog.hidden) return;
-  linkDialog.hidden = true;
-  linkDialogCtx = null;
-  const returnTo = linkDialogReturnFocus;
-  linkDialogReturnFocus = null;
-  if (returnTo && typeof returnTo.focus === "function" && document.contains(returnTo)) {
-    returnTo.focus({ preventScroll: true });
-  } else {
-    focusEditorSurface();
-  }
+  linkModal?.close();
 }
 
 /** The target string the active mode resolves to: a trimmed URL, or the picked
@@ -12498,20 +12573,11 @@ if (linkDialog) {
   linkRemoveBtn.addEventListener("click", () => void removeLinkDialog());
   linkCancelBtn.addEventListener("click", () => closeLinkDialog());
   linkDialogClose.addEventListener("click", () => closeLinkDialog());
-  linkDialog.addEventListener("click", (event) => {
-    if (event.target === linkDialog) closeLinkDialog();
-  });
   linkDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeLinkDialog();
-    } else if (event.key === "Enter" && event.target === linkPlaceSelect) {
+    if (event.key === "Enter" && event.target === linkPlaceSelect) {
       // Enter on the native select would not submit the form; apply explicitly.
       event.preventDefault();
       void applyLinkDialog();
-    } else if (event.key === "Tab") {
-      trapModalFocus(event, linkDialog);
     }
   });
 }
@@ -12576,20 +12642,28 @@ function runCommand(i) {
   cmd.run();
 }
 
+// The palette is modal too — it takes the keyboard and dims the app behind it —
+// so it joins the same stack rather than keeping a fourth dismissal contract.
+// It brings its own Arrow/Enter handling on #cmdInput; the primitive only owns
+// Escape, Tab containment and the shortcut lock.
+const cmdModal = registerModal(cmdPalette, {
+  initialFocus: () => cmdInput,
+  fallbackFocus: () => pagesEl,
+  // A shortcut that opens a surface must also close it; the lock would
+  // otherwise swallow the second ⌘⇧P and strand the palette open.
+  toggleChord: (event) => (event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "p",
+  onClose: () => searchTrigger.setAttribute("aria-expanded", "false"),
+});
+
 function openCmd() {
   closeAppMenu();
-  cmdReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  cmdPalette.hidden = false;
-  searchTrigger.setAttribute("aria-expanded", "true");
   cmdInput.value = "";
   renderCommands("");
-  cmdInput.focus();
+  searchTrigger.setAttribute("aria-expanded", "true");
+  cmdModal.open();
 }
 function closeCmd() {
-  cmdPalette.hidden = true;
-  searchTrigger.setAttribute("aria-expanded", "false");
-  cmdReturnFocus?.focus();
-  cmdReturnFocus = null;
+  cmdModal.close();
 }
 
 cmdInput.addEventListener("input", () => renderCommands(cmdInput.value));
@@ -12603,13 +12677,7 @@ cmdInput.addEventListener("keydown", (e) => {
   } else if (e.key === "Enter") {
     e.preventDefault();
     runCommand(cmdSel);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    closeCmd();
   }
-});
-cmdPalette.addEventListener("pointerdown", (e) => {
-  if (e.target === cmdPalette) closeCmd(); // click the backdrop
 });
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
@@ -12621,7 +12689,7 @@ document.addEventListener("keydown", (e) => {
   // Search pill is the discoverable on-screen entry point (doc 69 §1.4.1).
   if (e.shiftKey && lower === "p") {
     e.preventDefault();
-    cmdPalette.hidden ? openCmd() : closeCmd();
+    cmdModal.isOpen ? closeCmd() : openCmd();
     return;
   }
   // ⌘K inserts/edits a hyperlink on the current text selection. Skipped while a
@@ -12993,6 +13061,10 @@ findCloseBtn.addEventListener("click", closeFind);
 findBtn.addEventListener("click", () => openFind());
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    // No modal check here on purpose: the primitive's keydown lock refuses every
+    // application chord while a dialog is open, so Find can no longer open
+    // behind one (docs/104 HF-063). Guarding each shortcut individually is the
+    // enumeration this change exists to delete.
     e.preventDefault();
     openFind();
   }
@@ -14296,6 +14368,10 @@ document.addEventListener("keydown", async (e) => {
   }
 });
 
+/** The one entry point for "open these bytes as the document" — the picker and
+ *  the viewport drop both land here, which is why the unsaved-work question is
+ *  asked here and nowhere else (docs/104 HF-002). Two paths asking the same
+ *  question two ways is how one of them ends up not asking it. */
 async function handleFile(file) {
   if (!file) return;
   // The WASM `open` auto-detects any registered format from the bytes, so accept
@@ -14305,11 +14381,25 @@ async function handleFile(file) {
     setStatus("Please choose a .docx, .odt, .json, or .txt file", "error");
     return;
   }
+  // The open document lives in the wasm heap and nowhere else, so replacing it
+  // is unrecoverable. Ask before, not after.
+  if (!(await confirmDiscardIfEdited())) {
+    setStatus("Open cancelled — your changes are still here");
+    return;
+  }
   const buf = await file.arrayBuffer();
   await openBytes(new Uint8Array(buf), file.name);
 }
 
-fileEl.addEventListener("change", (e) => handleFile(e.target.files[0]));
+fileEl.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  // Clear the picker's value either way. A file input fires `change` only when
+  // the selection differs from what it already holds, so keeping the value
+  // makes "cancel the discard prompt, then pick the same file again" a dead
+  // control — and re-opening the same file impossible generally (HF-065).
+  e.target.value = "";
+  await handleFile(file);
+});
 // ---- Zoom (Q4): editable %, Fit width / Fit page, Ctrl+scroll ---------------
 const zoomMenu = document.getElementById("zoomMenu");
 const zoomMenuBtn = document.getElementById("zoomMenuBtn");
@@ -14493,7 +14583,14 @@ function applySettings() {
   root.style.setProperty("--accent", settings.accent);
 
   for (const b of themeSeg.querySelectorAll("button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.theme === settings.theme));
+    const checked = b.dataset.theme === settings.theme;
+    // role=radio + aria-checked, because the group is declared a radiogroup and
+    // three aria-pressed toggles do not make one (docs/104 HF-070). Roving
+    // tabindex so Tab enters the group once and arrows move within it.
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(checked));
+    b.tabIndex = checked ? 0 : -1;
+    b.removeAttribute("aria-pressed");
   }
   for (const b of accentSwatches.querySelectorAll(".acc[data-accent]")) {
     b.setAttribute(
@@ -14513,6 +14610,20 @@ themeSeg.addEventListener("click", (e) => {
   settings.theme = b.dataset.theme;
   saveSettings();
   applySettings();
+});
+themeSeg.addEventListener("keydown", (e) => {
+  const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
+    : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1
+      : 0;
+  if (!step) return;
+  e.preventDefault();
+  const items = [...themeSeg.querySelectorAll("button[data-theme]")];
+  const index = items.indexOf(document.activeElement);
+  const next = items[(Math.max(0, index) + step + items.length) % items.length];
+  settings.theme = next.dataset.theme;
+  saveSettings();
+  applySettings();
+  next.focus();
 });
 accentSwatches.addEventListener("click", (e) => {
   const b = e.target.closest(".acc[data-accent]");
@@ -14544,8 +14655,14 @@ settingsReset.addEventListener("click", () => {
 
 function toggleSettings(open) {
   const show = open ?? settingsPanel.hidden;
+  const holdsFocus = !show && settingsPanel.contains(document.activeElement);
   settingsPanel.hidden = !show;
   settingsBtn.setAttribute("aria-expanded", String(show));
+  // Settings is a form, not a menu: opening it hands over the keyboard, and
+  // closing it gives the user their place back instead of collapsing focus to
+  // the top of the page (docs/104 HF-070).
+  if (show) queueMicrotask(() => focusFirstIn(settingsPanel));
+  else if (holdsFocus) settingsBtn.focus({ preventScroll: true });
 }
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -14673,48 +14790,36 @@ function reflectDocumentMetadata() {
   metaCustomSection.hidden = custom.length === 0;
 }
 
-function syncModalLock() {
-  const modalOpen =
-    !propertiesPanel.hidden ||
-    (typeof pageSetupMenu !== "undefined" && !pageSetupMenu.hidden);
-  document.body.classList.toggle("modal-open", modalOpen);
-}
+// Chrome that must never survive into a modal's foreground (docs/104 HF-089):
+// a pinned tracked-change card used to paint above the scrim with live
+// Accept/Reject buttons, so a change could be accepted while a blocking dialog
+// was supposedly in control. The z-index ladder now puts modals on top, and
+// this hook makes the floating review chrome go away entirely — one place,
+// rather than teaching every dialog's open path about every popover.
+setModalHooks({
+  firstOpen: () => {
+    closeReviewPopover();
+    closeReviewInlineCard();
+    closeAppMenu();
+  },
+});
 
-function trapModalFocus(e, modal) {
-  if (e.key !== "Tab") return;
-  const focusable = [
-    ...modal.querySelectorAll(
-      'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
-    ),
-  ].filter((element) => element.getClientRects().length > 0);
-  if (focusable.length === 0) return;
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (e.shiftKey && document.activeElement === first) {
-    e.preventDefault();
-    last.focus();
-  } else if (!e.shiftKey && document.activeElement === last) {
-    e.preventDefault();
-    first.focus();
-  }
-}
+const propertiesModal = registerModal(propertiesPanel, {
+  initialFocus: () => propTitle,
+  fallbackFocus: () => propertiesBtn,
+});
 
 function toggleProperties(open) {
-  const show = open ?? propertiesPanel.hidden;
+  const show = open ?? !propertiesModal.isOpen;
+  if (show === propertiesModal.isOpen) return;
   if (show && doc) {
     const current = JSON.parse(doc.documentProperties());
     for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";
     reflectDocumentMetadata();
   }
-  const returnFocus = !show && propertiesPanel.contains(document.activeElement);
-  propertiesPanel.hidden = !show;
   propertiesBtn.setAttribute("aria-expanded", String(show));
-  syncModalLock();
-  if (show) {
-    queueMicrotask(() => propTitle.focus());
-  } else if (returnFocus) {
-    propertiesBtn.focus({ preventScroll: true });
-  }
+  if (show) propertiesModal.open();
+  else propertiesModal.close();
 }
 propertiesBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -14731,19 +14836,6 @@ propertiesApplyBtn.addEventListener("click", async () => {
   }
   await runEdit(() => doc.setDocumentProperties(JSON.stringify(current)), { gate: true });
   toggleProperties(false);
-});
-propertiesPanel.addEventListener("mousedown", (e) => {
-  if (e.target === propertiesPanel) toggleProperties(false);
-});
-document.addEventListener("keydown", (e) => {
-  if (!propertiesPanel.hidden) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      toggleProperties(false);
-    } else {
-      trapModalFocus(e, propertiesPanel);
-    }
-  }
 });
 
 // ---- Page setup (page size, margins, orientation) ----------------------------
@@ -14879,20 +14971,18 @@ pageSetupSection.addEventListener("change", () => {
   updatePageSetupPreview();
 });
 
+const pageSetupModal = registerModal(pageSetupMenu, {
+  initialFocus: () => pageOrientationSeg.querySelector('button[aria-pressed="true"]'),
+  fallbackFocus: () => pageSetupBtn,
+});
+
 function togglePageSetup(open) {
-  const show = open ?? pageSetupMenu.hidden;
+  const show = open ?? !pageSetupModal.isOpen;
+  if (show === pageSetupModal.isOpen) return;
   if (show && !reflectPageSetup()) return; // no section geometry to edit
-  const returnFocus = !show && pageSetupMenu.contains(document.activeElement);
-  pageSetupMenu.hidden = !show;
   pageSetupBtn.setAttribute("aria-expanded", String(show));
-  syncModalLock();
-  if (show) {
-    queueMicrotask(() =>
-      pageOrientationSeg.querySelector('button[aria-pressed="true"]')?.focus(),
-    );
-  } else if (returnFocus) {
-    pageSetupBtn.focus({ preventScroll: true });
-  }
+  if (show) pageSetupModal.open();
+  else pageSetupModal.close();
 }
 pageSetupBtn.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -14951,20 +15041,6 @@ pageSetupApplyBtn.addEventListener("click", async () => {
   await runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
   togglePageSetup(false);
 });
-pageSetupMenu.addEventListener("mousedown", (e) => {
-  if (e.target === pageSetupMenu) togglePageSetup(false);
-});
-document.addEventListener("keydown", (e) => {
-  if (!pageSetupMenu.hidden) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      togglePageSetup(false);
-    } else {
-      trapModalFocus(e, pageSetupMenu);
-    }
-  }
-});
-
 fileEl.disabled = true;
 // No document is open yet, so every document-scoped control starts disabled.
 // (Not "no selection yet": once a document opens it always has an insertion

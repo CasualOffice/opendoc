@@ -13,16 +13,76 @@
   border: 0;
 }
 
-/* --accent is settable at runtime (Settings); everything tints derive from it. */
+/* ---- Color contract (docs/104 theme T-08) ------------------------------------
+   Colour is defined in exactly two kinds of place, and nowhere else:
+
+     1. THIS theme-independent block — geometry, elevation, the settable accent,
+        and the "paper layer" (see below), none of which change with the theme.
+     2. The three palette blocks that follow — the light block and BOTH dark
+        entry points. Every semantic colour token is declared in all three.
+
+   Feature CSS below never writes a bare hex. A literal in a rule is a colour
+   with no dark value, which is how tracked-change text ended up at 2.4:1 on the
+   dark surface: the review chrome was written in light-mode Google hexes and
+   the dark blocks had no idea it existed. `tests/style_tokens.test.mjs` fails
+   the build on a bare hex outside these blocks, and on a token that is declared
+   in the light block but missing from either dark block — the duplication
+   between the two dark blocks is unavoidable in plain CSS (one lives inside a
+   media query), so the test is what keeps them in step. */
 :root {
   /* Redesign default accent — Studio blue. main.js also sets --accent inline
-     from persisted Settings, so this is the fallback/first-paint value. */
+     from persisted Settings, so this is the fallback/first-paint value.
+     `--accent` is the FILL: it keeps the user's chosen value in both themes,
+     because accent fills are read against `--accent-ink`, not against the
+     theme surface. `--accent-text` (per-theme, below) is the same accent as
+     foreground/edge on a theme surface, where a dark blue on a dark panel is
+     unreadable — use that one for `color:`, `border-color:` and `outline:`. */
   --accent: #3355c4;
   --accent-strong: color-mix(in srgb, var(--accent) 82%, var(--ink));
   --accent-ink: #ffffff;
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 42%, transparent);
-  --error: #c0392b;
+
+  /* ---- Paper layer ----------------------------------------------------------
+     The document sheet is white in BOTH themes — the editor themes its chrome,
+     not the page being authored. Anything painted onto or over the raster (the
+     caret, the IME preedit, crop handles, the review markers on the glyphs)
+     therefore has a fixed contrast partner and must NOT follow the theme: a
+     dark-mode green marker would be drawn onto white paper at ~2:1. These are
+     the paper's own colours, and they are deliberately theme-independent. */
+  --paper: #ffffff;
+  --paper-ink: #111318;
+  --paper-insert: #188038;
+  --paper-delete: #d93025;
+  --paper-comment: #c58b00;
+
+  /* ---- Stacking ladder ------------------------------------------------------
+     One ordered list for every body-level floating surface, so "what paints
+     over what" is answered here instead of by 27 scattered z-index values.
+     A modal is the top of the ladder by definition: while one is open it owns
+     the interaction, so nothing else may paint over it (docs/104 HF-089 — the
+     pinned tracked-change card used to float above the scrim with live
+     Accept/Reject buttons). Surfaces INSIDE the viewport (rulers, page chrome,
+     running-band markers) form their own local stacking contexts and keep their
+     small local values; they are not part of this ladder. */
+  --z-bar: 30;
+  --z-selection-toolbar: 40;
+  --z-link-chip: 45;
+  --z-drawer: 45;
+  --z-find: 55;
+  --z-menu: 60;
+  --z-submenu: 61;
+  --z-paste-options: 62;
+  --z-inspector: 65;
+  --z-review-popover: 66;
+  --z-review-card: 67;
+  --z-palette: 90;
+  --z-modal: 100;
+  /* Above the modal on purpose, and the only thing that is: a tooltip is a
+     `pointer-events: none` hint that never receives input, so it cannot let a
+     user act on chrome the modal has taken control of. */
+  --z-tooltip: 1000;
+
   /* Canvas / grid aesthetic (redesign): the shell reads as a flat gridded
      surface split by hairlines, not a stack of rounded cards — so the chrome
      radii are near-square. Floating popovers keep a small radius so they still
@@ -84,7 +144,11 @@
   --surface-alt: #fcfcfb;
   --ink: #14161a;
   --muted: #565a61;
-  --faint: #8a8e95;
+  /* --faint was #8a8e95 = 3.29:1 on --surface, below the 4.5:1 body-text floor,
+     and it is the colour of every menu shortcut hint and empty state — the prose
+     a first-time user needs most (docs/104 HF-093). #6f747c measures 4.70:1 on
+     --surface and 4.51:1 on --bg. */
+  --faint: #6f747c;
   --line: #edebe6;
   --line-strong: #dedbd4;
   --scrollbar-thumb: rgba(74, 78, 85, 0.3);
@@ -97,10 +161,46 @@
   --primary-bg: #14161a;
   --primary-bg-hover: #2c2f35;
   --primary-ink: #fbfaf8;
+  /* The accent as foreground/edge on a theme surface. Identical to the fill in
+     light mode; the dark blocks mix it toward white so a user-chosen accent
+     cannot land unreadable on a dark panel however dark they picked it. */
+  --accent-text: var(--accent);
+  /* Semantic status colours. `-line` is the border/edge weight (3:1 UI bar),
+     `-soft` the tinted background. Measured against --surface. */
+  --success: #137333;
+  --success-line: #188038;
+  --success-soft: color-mix(in srgb, var(--success-line) 12%, var(--surface));
+  --warning: #b06000;
+  --warning-line: #f9ab00;
+  --warning-soft: color-mix(in srgb, var(--warning-line) 16%, var(--surface));
+  --danger: #b3261e;
+  --danger-line: #d93025;
+  --danger-soft: color-mix(in srgb, var(--danger-line) 12%, var(--surface));
+  --info: #1a56c4;
+  --info-line: #1a73e8;
+  --info-soft: color-mix(in srgb, var(--info-line) 12%, var(--surface));
+  /* Review roles. Insertion/deletion/replacement reuse the status ramp so a
+     tracked change reads the same as any other affirmative/destructive signal;
+     move and formatting need their own hues to stay distinguishable from it. */
+  --review-insert: var(--success);
+  --review-insert-line: var(--success-line);
+  --review-insert-soft: var(--success-soft);
+  --review-delete: var(--danger);
+  --review-delete-line: var(--danger-line);
+  --review-delete-soft: var(--danger-soft);
+  --review-replace-line: var(--info-line);
+  --review-format-line: #9334e6;
+  --review-move: #0b8043;
   color-scheme: light;
 }
 
-/* Dark palette — via system pref (only when no explicit theme) or explicit choice. */
+/* Dark palette — via system pref (only when no explicit theme) or explicit
+   choice. The two blocks below are byte-identical on purpose and MUST stay so:
+   a user who picks Dark on a light OS gets only the second one, which is how
+   half the theme used to be missing for them (docs/104 HF-092). Plain CSS
+   cannot share one declaration list across a media query and a bare selector,
+   so `tests/style_tokens.test.mjs` asserts the two agree instead. Add a token
+   to one and the test fails until it is in the other, and in the light block. */
 @media (prefers-color-scheme: dark) {
 :root:not([data-theme]) {
     --bg: #141619;
@@ -109,7 +209,7 @@
     --surface-alt: #282c31;
     --ink: #e8eaed;
     --muted: #969ba3;
-    --faint: #6b7178;
+    --faint: #8b9199;
     --line: #2e323a;
     --line-strong: #383d46;
     --scrollbar-thumb: rgba(232, 234, 237, 0.28);
@@ -119,6 +219,28 @@
     --primary-bg: #e8eaed;
     --primary-bg-hover: #ffffff;
     --primary-ink: #16181c;
+    --accent-text: color-mix(in srgb, var(--accent) 58%, #ffffff);
+    --success: #81c995;
+    --success-line: #5bb974;
+    --success-soft: color-mix(in srgb, var(--success-line) 20%, var(--surface));
+    --warning: #fdd663;
+    --warning-line: #e0b25c;
+    --warning-soft: color-mix(in srgb, var(--warning-line) 20%, var(--surface));
+    --danger: #f28b82;
+    --danger-line: #ee675c;
+    --danger-soft: color-mix(in srgb, var(--danger-line) 20%, var(--surface));
+    --info: #8ab4f8;
+    --info-line: #669df6;
+    --info-soft: color-mix(in srgb, var(--info-line) 20%, var(--surface));
+    --review-insert: var(--success);
+    --review-insert-line: var(--success-line);
+    --review-insert-soft: var(--success-soft);
+    --review-delete: var(--danger);
+    --review-delete-line: var(--danger-line);
+    --review-delete-soft: var(--danger-soft);
+    --review-replace-line: var(--info-line);
+    --review-format-line: #d7aefb;
+    --review-move: #6dd58c;
     color-scheme: dark;
   }
 }
@@ -130,7 +252,7 @@
   --surface-alt: #282c31;
   --ink: #e8eaed;
   --muted: #969ba3;
-  --faint: #6b7178;
+  --faint: #8b9199;
   --line: #2e323a;
   --line-strong: #383d46;
   --scrollbar-thumb: rgba(232, 234, 237, 0.28);
@@ -140,11 +262,42 @@
   --primary-bg: #e8eaed;
   --primary-bg-hover: #ffffff;
   --primary-ink: #16181c;
+  --accent-text: color-mix(in srgb, var(--accent) 58%, #ffffff);
+  --success: #81c995;
+  --success-line: #5bb974;
+  --success-soft: color-mix(in srgb, var(--success-line) 20%, var(--surface));
+  --warning: #fdd663;
+  --warning-line: #e0b25c;
+  --warning-soft: color-mix(in srgb, var(--warning-line) 20%, var(--surface));
+  --danger: #f28b82;
+  --danger-line: #ee675c;
+  --danger-soft: color-mix(in srgb, var(--danger-line) 20%, var(--surface));
+  --info: #8ab4f8;
+  --info-line: #669df6;
+  --info-soft: color-mix(in srgb, var(--info-line) 20%, var(--surface));
+  --review-insert: var(--success);
+  --review-insert-line: var(--success-line);
+  --review-insert-soft: var(--success-soft);
+  --review-delete: var(--danger);
+  --review-delete-line: var(--danger-line);
+  --review-delete-soft: var(--danger-soft);
+  --review-replace-line: var(--info-line);
+  --review-format-line: #d7aefb;
+  --review-move: #6dd58c;
   color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* Baseline keyboard-focus ring (docs/104 HF-067). Anything the chrome styles
+   explicitly still wins on specificity; this only guarantees that a control
+   nobody remembered to style is never focused invisibly. Deliberately
+   `:focus-visible`, so a pointer click does not paint a ring. */
+:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
 }
 
 /* ---- Scrollbars: one thin, quiet, overlay-style treatment everywhere --------
@@ -209,7 +362,7 @@ input {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
-  z-index: 30;
+  z-index: var(--z-bar);
 }
 
 /* Visible ⌘K entry point (doc 69 §1.4.1/§1.2) — the palette itself already
@@ -329,11 +482,11 @@ input {
 }
 
 .document-state[data-state="edited"] {
-  color: color-mix(in srgb, var(--accent) 82%, var(--ink));
+  color: var(--accent-strong);
 }
 
 .document-state[data-state="downloaded"] {
-  color: #2a8a60;
+  color: var(--success);
 }
 
 .app-menu-bar {
@@ -365,10 +518,18 @@ input {
 }
 
 .app-menu-button:hover,
-.app-menu-button:focus-visible,
 .app-menu-button[aria-expanded="true"] {
   background: var(--bg-2);
-  outline: none;
+}
+
+/* HF-067: hover and keyboard focus used to share this one 1.13:1 background
+   change, so arrowing across File/Edit/View — the app's primary command
+   surface — showed nothing at all. Focus is a ring, hover is a tint; they are
+   different states and now read as different states. */
+.app-menu-button:focus-visible {
+  background: var(--bg-2);
+  outline: 2px solid var(--accent-text);
+  outline-offset: -1px;
 }
 
 /* ---- Buttons --------------------------------------------------------------- */
@@ -445,7 +606,7 @@ input {
 .compatibility-status {
   max-width: 150px;
   overflow: hidden;
-  color: color-mix(in srgb, var(--accent) 82%, var(--ink));
+  color: color-mix(in srgb, var(--accent-text) 82%, var(--ink));
   font-size: var(--fs-small);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -482,7 +643,7 @@ input {
   outline: none;
   cursor: text;
   background: var(--surface);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 2px var(--accent-soft);
   text-overflow: clip;
 }
@@ -490,7 +651,7 @@ input {
 
 .app-menu-popover {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-menu);
   width: min(286px, calc(100vw - 16px));
   max-height: min(560px, calc(100vh - var(--h-header) - 16px));
   padding: 6px;
@@ -520,10 +681,14 @@ input {
   cursor: pointer;
 }
 
-.app-menu-item:hover:not(:disabled),
-.app-menu-item:focus-visible {
+.app-menu-item:hover:not(:disabled) {
   background: var(--bg-2);
-  outline: none;
+}
+
+.app-menu-item:focus-visible {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
 }
 
 .app-menu-item:disabled {
@@ -560,7 +725,7 @@ input {
   position: absolute;
   top: var(--h-header);
   right: 12px;
-  z-index: 20;
+  z-index: var(--z-menu);
   width: 268px;
   padding: 14px;
   background: var(--surface);
@@ -605,7 +770,11 @@ input {
   cursor: pointer;
 }
 
-.segmented button[aria-pressed="true"] {
+/* Both spellings: a segmented control is a toggle set (aria-pressed) except
+   where the choices are mutually exclusive, which makes it a radio group
+   (aria-checked) — the Theme control is the latter, per docs/104 HF-070. */
+.segmented button[aria-pressed="true"],
+.segmented button[aria-checked="true"] {
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow-sm);
@@ -672,7 +841,7 @@ body.modal-open {
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: var(--z-modal);
   display: grid;
   place-items: center;
   padding: var(--space-6);
@@ -724,7 +893,7 @@ body.modal-open {
   place-items: center;
   border-radius: var(--radius-md);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--icon-rail);
 }
 
@@ -870,7 +1039,7 @@ body.modal-open {
 .dialog-field > textarea:focus,
 .number-control:focus-within {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -973,9 +1142,9 @@ body.modal-open {
   width: 150px;
   aspect-ratio: var(--page-ratio, 8.27 / 11.69);
   overflow: hidden;
-  border: 1px solid #d7dbe0;
+  border: 1px solid var(--line-strong);
   border-radius: 2px;
-  background: #ffffff;
+  background: var(--paper);
   box-shadow: 0 8px 24px rgba(20, 22, 28, 0.15);
   transition: width 0.16s ease, aspect-ratio 0.16s ease;
 }
@@ -995,7 +1164,7 @@ body.modal-open {
   flex-direction: column;
   gap: 7px;
   padding-top: 4px;
-  border: 1px dashed #c7ccd3;
+  border: 1px dashed var(--line-strong);
 }
 
 .page-preview-margins span {
@@ -1003,7 +1172,7 @@ body.modal-open {
   height: 2px;
   margin-inline: 10%;
   border-radius: 999px;
-  background: #e3e6ea;
+  background: var(--bg-2);
 }
 
 .page-preview-margins span:nth-child(2) {
@@ -1075,7 +1244,7 @@ body.modal-open {
 
 .dialog-select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1166,7 +1335,7 @@ body.modal-open {
 }
 
 .field-choice:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1177,7 +1346,7 @@ body.modal-open {
 }
 
 .field-choice:hover .field-choice-icon {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .field-choice-text {
@@ -1255,7 +1424,7 @@ body.modal-open {
 }
 
 .glyph-search:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1283,13 +1452,13 @@ body.modal-open {
 }
 
 .glyph-tab:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
 .glyph-tab.is-active {
   background: var(--accent-soft, var(--bg-2));
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   color: var(--ink);
 }
 
@@ -1326,7 +1495,7 @@ body.modal-open {
 }
 
 .glyph-cell:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1382,7 +1551,7 @@ body.modal-open {
 .link-body input:focus,
 .link-body select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1420,7 +1589,7 @@ body.modal-open {
 }
 
 .link-mode-tab:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1432,17 +1601,13 @@ body.modal-open {
 
 #linkDialogNote.error,
 #linkPlaceEmpty {
-  color: #b3261e;
+  color: var(--danger);
   font-weight: 550;
 }
 
 #linkPlaceEmpty {
   color: var(--muted);
   font-weight: 450;
-}
-
-@media (prefers-color-scheme: dark) {
-  #linkDialogNote.error { color: #f2b8b5; }
 }
 
 .bookmark-add {
@@ -1478,7 +1643,7 @@ body.modal-open {
 
 .bookmark-add-row > input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1487,14 +1652,8 @@ body.modal-open {
 }
 
 #bookmarkAddNote.error {
-  color: #b3261e;
+  color: var(--danger);
   font-weight: 550;
-}
-
-@media (prefers-color-scheme: dark) {
-  #bookmarkAddNote.error {
-    color: #f2b8b5;
-  }
 }
 
 .bookmark-list-head {
@@ -1588,15 +1747,15 @@ body.modal-open {
 }
 
 .bookmark-goto:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .bookmark-goto:hover .ms {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .bookmark-goto:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1611,7 +1770,7 @@ body.modal-open {
   min-width: 0;
   height: 30px;
   padding: 0 8px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--accent-text);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
@@ -1655,12 +1814,12 @@ body.modal-open {
 }
 
 .bookmark-action.danger:hover {
-  color: #b3261e;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #d93025 40%, transparent);
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-line) 40%, transparent);
 }
 
 .bookmark-action:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -1745,7 +1904,7 @@ body.modal-open {
 .link {
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -1757,7 +1916,7 @@ body.modal-open {
   /* Above the floating selection toolbar (z-index 40) so a right-click on a
      selection never has its menu occluded — or its items click-intercepted — by
      the toolbar that hovers the same selection. */
-  z-index: 60;
+  z-index: var(--z-menu);
   min-width: 224px;
   max-width: min(340px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
@@ -1826,26 +1985,26 @@ body.modal-open {
    open path stays visible. */
 .menu-item.has-submenu[aria-expanded="true"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .editor-submenu {
-  z-index: 61;
+  z-index: var(--z-submenu);
 }
 
 .menu-item:hover,
 .menu-item.active,
 .menu-item:focus-visible {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   outline: none;
 }
 
 .menu-item.danger:hover,
 .menu-item.danger.active,
 .menu-item.danger:focus-visible {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .menu-item:disabled {
@@ -1972,7 +2131,7 @@ body.modal-open {
 }
 
 .spacing-line[aria-checked="true"] {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .menu-row {
@@ -2000,7 +2159,7 @@ body.modal-open {
 
 .menu-row input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
 }
 
 .menu-row .menu-select {
@@ -2020,7 +2179,7 @@ body.modal-open {
 
 .menu-select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
 }
 
 .menu-unit {
@@ -2087,8 +2246,8 @@ body.modal-open {
 
 .chip-btn:hover {
   background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent-text);
 }
 
 .chip-row {
@@ -2119,7 +2278,7 @@ body.modal-open {
 
 .grid-cells .gc.on {
   background: var(--accent-soft);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
 }
 
 .grid-label {
@@ -2134,7 +2293,7 @@ body.modal-open {
 .cmd-overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-palette);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -2223,7 +2382,7 @@ body.modal-open {
 .cmd-item.sel,
 .cmd-item:hover {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .cmd-empty {
@@ -2238,7 +2397,7 @@ body.modal-open {
   position: fixed;
   top: calc(var(--h-header) + 88px);
   right: 18px;
-  z-index: 55;
+  z-index: var(--z-find);
   display: flex;
   flex-direction: column;
   width: min(440px, calc(100vw - 36px));
@@ -2307,7 +2466,7 @@ body.modal-open {
 }
 
 .find-panel input[type="text"]:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
@@ -2323,7 +2482,7 @@ body.modal-open {
 }
 
 .find-status.miss {
-  color: var(--error);
+  color: var(--danger);
 }
 
 .find-status:empty {
@@ -2353,8 +2512,8 @@ body.modal-open {
 
 .find-option:has(input:checked) {
   background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent-text);
 }
 
 .find-option input {
@@ -2387,7 +2546,7 @@ body.modal-open {
 /* ---- Floating selection toolbar -------------------------------------------- */
 .sel-toolbar {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-selection-toolbar);
   display: flex;
   align-items: center;
   gap: 2px;
@@ -2419,7 +2578,7 @@ body.modal-open {
 }
 
 .sel-toolbar .fmt[aria-pressed="true"] {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }
@@ -2460,11 +2619,11 @@ body.modal-open {
 
 .sel-toolbar .sel-color-btn[aria-expanded="true"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .sel-toolbar .sel-color-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -2473,7 +2632,7 @@ body.modal-open {
    activation without making DOM text authoritative. */
 .link-chip {
   position: fixed;
-  z-index: 45;
+  z-index: var(--z-link-chip);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -2498,7 +2657,7 @@ body.modal-open {
   height: 30px;
   place-items: center;
   border-radius: var(--radius-sm);
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
 }
 
@@ -2535,7 +2694,7 @@ body.modal-open {
   padding: 0 11px;
   border: 1px solid var(--accent-line);
   border-radius: var(--radius-sm);
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   font-weight: 650;
   cursor: pointer;
@@ -2553,7 +2712,7 @@ body.modal-open {
 }
 
 .link-chip-danger {
-  color: var(--error);
+  color: var(--danger);
 }
 
 /* Border presets: a row of buttons each showing a mini box with the relevant
@@ -2707,8 +2866,8 @@ body.modal-open {
 }
 
 .ribbon-tab[aria-selected="true"] {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--accent-text);
+  border-bottom-color: var(--accent-text);
 }
 
 .ribbon-tab:disabled {
@@ -2771,8 +2930,8 @@ body.modal-open {
 }
 
 .table-ribbon .table-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .table-command-badge {
@@ -2974,18 +3133,18 @@ body.modal-open {
 }
 
 .style-card:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   background: var(--accent-soft);
 }
 
 .style-card[aria-selected="true"] {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent-text);
 }
 
 /* Keyboard focus ring for arrow-key roving between cards (listbox model). */
 .style-card:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -3036,12 +3195,12 @@ body.modal-open {
 }
 
 .styles-more-btn:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   background: var(--accent-soft);
 }
 
 .styles-more-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -3054,7 +3213,7 @@ body.modal-open {
    popover holding a live-preview card for every paragraph style. */
 .styles-more-panel {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-selection-toolbar);
   display: grid;
   grid-template-columns: repeat(2, minmax(150px, 1fr));
   gap: 4px;
@@ -3091,7 +3250,7 @@ body.modal-open {
 
 .ribbon-overflow-menu {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-selection-toolbar);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -3147,7 +3306,7 @@ body.modal-open {
 /* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
 .ribbon-tooltip {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-tooltip);
   max-width: 240px;
   padding: 5px 8px;
   border-radius: 6px;
@@ -3323,12 +3482,12 @@ body.modal-open {
 .fmt[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent-line);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .fmt[aria-pressed="mixed"] {
   border-color: var(--accent-line);
-  color: var(--accent);
+  color: var(--accent-text);
   background: linear-gradient(
     135deg,
     var(--accent-soft) 0 45%,
@@ -3434,7 +3593,7 @@ body.is-format-painting .page-wrap * {
 
 .rail-btn[aria-pressed="true"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .rail-btn:disabled {
@@ -3466,7 +3625,7 @@ body.is-format-painting .page-wrap * {
 
 .object-inspector {
   position: fixed;
-  z-index: 65;
+  z-index: var(--z-inspector);
   top: 86px;
   right: 8px;
   bottom: 8px;
@@ -3502,7 +3661,7 @@ body.is-format-painting .page-wrap * {
 
 .review-popover {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-review-popover);
   width: min(320px, calc(100vw - 24px));
   padding: 12px;
   border: 1px solid var(--line-strong);
@@ -3521,7 +3680,7 @@ body.is-format-painting .page-wrap * {
    matches the rest of the editor chrome in light and dark themes. */
 .review-inline-card {
   position: fixed;
-  z-index: 85;
+  z-index: var(--z-review-card);
   width: max-content;
   max-width: min(340px, calc(100vw - 24px));
   padding: 10px 12px;
@@ -3532,7 +3691,7 @@ body.is-format-painting .page-wrap * {
   box-shadow: var(--shadow-lg);
   outline: none;
 }
-.review-inline-card:focus-visible { box-shadow: var(--shadow-lg), 0 0 0 2px var(--accent); }
+.review-inline-card:focus-visible { box-shadow: var(--shadow-lg), 0 0 0 2px var(--accent-text); }
 .review-inline-head { display: flex; align-items: center; gap: 8px; }
 .review-inline-dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: var(--accent-strong); }
 .review-inline-who { display: grid; gap: 1px; min-width: 0; }
@@ -3560,18 +3719,18 @@ body.is-format-painting .page-wrap * {
   cursor: pointer;
 }
 .review-inline-bar button .ms { font-size: 16px; }
-.review-inline-bar button:hover { background: color-mix(in srgb, #188038 12%, var(--surface)); border-color: #188038; color: #137333; }
-.review-inline-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.review-inline-bar button.danger:hover { background: color-mix(in srgb, #d93025 12%, var(--surface)); border-color: #d93025; color: #b3261e; }
+.review-inline-bar button:hover { background: var(--review-insert-soft); border-color: var(--review-insert-line); color: var(--review-insert); }
+.review-inline-bar button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.review-inline-bar button.danger:hover { background: var(--review-delete-soft); border-color: var(--review-delete-line); color: var(--review-delete); }
 .review-mode-segmented { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--bg-2); }
 .review-mode-seg { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 999px; padding: 4px 8px; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-ribbon-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .review-mode-seg .ms { font-size: var(--fs-medium); }
-.review-mode-seg[aria-pressed="true"] { color: #137333; border-color: #188038; background: color-mix(in srgb, #188038 12%, var(--surface)); }
-.review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+.review-mode-seg[aria-pressed="true"] { color: var(--review-insert); border-color: var(--review-insert-line); background: var(--review-insert-soft); }
+.review-mode-seg[data-review-mode="viewing"][aria-pressed="true"] { color: var(--ink); border-color: var(--accent-text); background: var(--accent-soft); }
 .review-mode-seg:disabled { opacity: 0.45; cursor: default; }
 .review-mode-seg:not(:disabled):not([aria-pressed="true"]):hover { background: var(--accent-soft); color: var(--ink); }
-.viewing-banner { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-.viewing-banner .ms { color: var(--accent); }
+.viewing-banner { border-color: color-mix(in srgb, var(--accent-text) 42%, var(--line)); background: color-mix(in srgb, var(--accent-text) 12%, var(--surface)); }
+.viewing-banner .ms { color: var(--accent-text); }
 .suggesting-banner {
   min-height: 32px;
   margin: 6px 8px 0;
@@ -3580,14 +3739,14 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid color-mix(in srgb, #f9ab00 42%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--warning-line) 42%, var(--line));
   border-radius: 8px;
-  background: color-mix(in srgb, #fbbc04 16%, var(--surface));
+  background: var(--warning-soft);
   color: var(--ink);
   font-size: var(--fs-small);
 }
 .suggesting-banner[hidden] { display: none; }
-.suggesting-banner .ms { color: #b06000; font-size: 17px; }
+.suggesting-banner .ms { color: var(--warning); font-size: 17px; }
 .suggesting-banner button {
   border: 0;
   padding: 3px 6px;
@@ -3643,7 +3802,7 @@ body.is-format-painting .page-wrap * {
   border: 1px solid var(--line); border-radius: 6px;
   background: transparent; color: var(--ink); cursor: pointer;
 }
-.review-nav-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.review-nav-button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); }
 .review-nav-button:disabled { opacity: 0.4; cursor: default; }
 .review-nav-button .ms { font-size: 18px; }
 .review-sidebar-controlrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -3686,24 +3845,24 @@ body.is-format-painting .page-wrap * {
   background: var(--surface);
   box-shadow: 0 1px 3px rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
-.review-margin-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.review-margin-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .review-margin-card.resolved { opacity: 0.72; }
 .review-margin-card-head { display: flex; align-items: flex-start; gap: 9px; }
 /* Per-author avatar chip (docs/81 REVIEW-GAP-015): filled with the author's
  * stable palette color (`--review-author-color`, set per card) with white text
  * for legible contrast in light and dark themes. Falls back to the theme accent
  * when a card sets no author color. */
-.review-margin-avatar { --review-author-color: var(--accent-strong); width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--review-author-color); color: #fff; font-size: 11px; font-weight: 700; }
+.review-margin-avatar { --review-author-color: var(--accent-strong); width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; border-radius: 50%; background: var(--review-author-color); color: var(--accent-ink); font-size: 11px; font-weight: 700; }
 .review-margin-title { min-width: 0; display: grid; gap: 1px; }
 .review-margin-title strong { font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-margin-title small { color: var(--muted); font-size: var(--fs-caption); text-transform: capitalize; }
 .review-margin-card p { margin: 8px 0; font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.review-margin-revision p { padding-left: 8px; border-left: 3px solid var(--accent); }
-.review-margin-insertion p { border-left-color: #188038; color: #137333; }
-.review-margin-deletion p { border-left-color: #d93025; color: #b3261e; text-decoration: line-through; }
-.review-margin-replacement p { border-left-color: #1a73e8; }
-.review-margin-formatting p { border-left-color: #9334e6; }
-.review-margin-move p { border-left-color: #0b8043; }
+.review-margin-revision p { padding-left: 8px; border-left: 3px solid var(--accent-text); }
+.review-margin-insertion p { border-left-color: var(--review-insert-line); color: var(--review-insert); }
+.review-margin-deletion p { border-left-color: var(--review-delete-line); color: var(--review-delete); text-decoration: line-through; }
+.review-margin-replacement p { border-left-color: var(--review-replace-line); }
+.review-margin-formatting p { border-left-color: var(--review-format-line); }
+.review-margin-move p { border-left-color: var(--review-move); }
 .review-move-path {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -3728,13 +3887,13 @@ body.is-format-painting .page-wrap * {
 .review-move-end:hover { background: var(--bg-2); }
 .review-move-end:focus-visible {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 .review-move-end[disabled] { cursor: default; opacity: 0.6; }
 .review-move-end b { color: var(--ink); font-size: var(--fs-caption); }
 .review-move-end span { font-size: var(--fs-micro); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.review-move-path > .ms { color: #0b8043; font-size: var(--fs-medium); }
+.review-move-path > .ms { color: var(--review-move); font-size: var(--fs-medium); }
 .review-margin-revision:has(.review-margin-title small) { border-color: var(--line-strong); }
 .review-margin-card-actions { display: flex; gap: 5px; flex-wrap: wrap; }
 .review-margin-card:not(.expanded) .review-margin-card-actions,
@@ -3748,8 +3907,8 @@ body.is-format-painting .page-wrap * {
 .review-margin-reply-head small { color: var(--muted); font-size: var(--fs-micro); }
 .review-margin-reply p { margin: 0; padding: 0; border: 0; color: var(--ink); font-size: 11px; text-decoration: none; }
 .review-margin-action { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: transparent; color: var(--ink); font: inherit; font-size: var(--fs-caption); cursor: pointer; }
-.review-margin-action:hover { background: var(--accent-soft); border-color: var(--accent); }
-.review-margin-action.danger { color: var(--danger, #b3261e); }
+.review-margin-action:hover { background: var(--accent-soft); border-color: var(--accent-text); }
+.review-margin-action.danger { color: var(--danger); }
 /* REVIEW-GAP-011: per-reply edit/delete controls; REVIEW-GAP-012: related-comment list. */
 .review-margin-reply-actions { display: flex; gap: 6px; margin-top: 2px; }
 .review-margin-reply-edit { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 11px; color: var(--ink); background: var(--surface, transparent); }
@@ -3803,7 +3962,7 @@ body.is-format-painting .page-wrap * {
   overflow: hidden;
 }
 .review-reply-composer textarea:focus,
-.review-margin-composer textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.review-margin-composer textarea:focus { border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
 .review-margin-composer textarea { min-height: 60px; }
 .review-composer-actions {
   display: flex;
@@ -3902,7 +4061,7 @@ body.is-format-painting .page-wrap * {
   place-items: center;
   border-radius: 8px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--icon-control);
 }
 
@@ -3995,12 +4154,12 @@ body.is-format-painting .page-wrap * {
 
 .outline-item:hover {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .outline-item.is-active {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 650;
 }
 
@@ -4037,11 +4196,11 @@ body.is-format-painting .page-wrap * {
 /* Compact thumbnails: a single centered column, each card capped below the
    panel width so it reads as a small page preview with breathing room. */
 .page-thumb { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; max-width: 176px; padding: 0; border: none; background: none; cursor: pointer; }
-.page-thumb-box { position: relative; width: 100%; display: block; overflow: hidden; background: var(--paper, #fff); border: 1px solid var(--line-strong); border-radius: 3px; box-shadow: var(--shadow-sm); }
+.page-thumb-box { position: relative; width: 100%; display: block; overflow: hidden; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 3px; box-shadow: var(--shadow-sm); }
 .page-thumb-canvas { display: block; width: 100%; height: auto; }
 .page-thumb-box.is-empty { aspect-ratio: 51 / 66; }
 .page-thumb:hover .page-thumb-box { border-color: var(--muted); }
-.page-thumb.is-active .page-thumb-box { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.page-thumb.is-active .page-thumb-box { border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
 .page-thumb-num { font: 500 10px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
 .page-thumb.is-active .page-thumb-num { color: var(--accent-strong); }
 
@@ -4052,17 +4211,17 @@ body.is-format-painting .page-wrap * {
 .review-composer-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .review-mode { display: flex; align-items: center; gap: 4px; padding: 8px 10px 0; font-size: 11px; color: var(--muted); }
 .review-mode-button { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
-.review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.review-mode-button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
 .review-filters { display: flex; gap: 4px; padding: 8px 10px 0; }
 .review-filter { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
-.review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.review-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-strong); }
 .review-empty, .review-readonly-note { color: var(--muted); font-size: var(--fs-small); line-height: 1.5; }
 .review-card { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--surface); }
 .review-card strong, .review-card small { display: block; }
 .review-card small { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .review-card p { margin: 7px 0 0; color: var(--ink); font-size: var(--fs-small); line-height: 1.45; white-space: pre-wrap; }
 .review-card-action { margin-top: 8px; border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; background: transparent; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
-.review-reply { margin-left: 14px; border-left: 3px solid var(--accent); }
+.review-reply { margin-left: 14px; border-left: 3px solid var(--accent-text); }
 .review-bulk-actions { display: flex; gap: 6px; padding: 8px 10px 0; }
 .review-revision-actions { display: flex; gap: 6px; }
 
@@ -4079,12 +4238,12 @@ body.is-format-painting .page-wrap * {
   content: "Drop to open";
   position: fixed;
   inset: 116px 16px 16px;
-  border: 2px dashed var(--accent);
+  border: 2px dashed var(--accent-text);
   border-radius: 14px;
   display: grid;
   place-items: center;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-text);
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   pointer-events: none;
   z-index: 5;
@@ -4172,8 +4331,8 @@ body.is-format-painting .page-wrap * {
 }
 
 .tab-corner:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 /* A tab stop glyph sitting on the lower edge of the ruler. */
@@ -4185,7 +4344,7 @@ body.is-format-painting .page-wrap * {
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
-  color: var(--accent);
+  color: var(--accent-text);
   cursor: grab;
   pointer-events: auto;
 }
@@ -4265,7 +4424,7 @@ body.is-format-painting .page-wrap * {
    live raster canvas, when mounted, fills it exactly. */
 .page-wrap {
   position: relative;
-  background: #fff;
+  background: var(--paper);
   box-shadow: var(--shadow-page);
   border-radius: 3px;
   max-width: 96vw;
@@ -4302,7 +4461,7 @@ body.is-format-painting .page-wrap * {
  * the comment author's stable palette color; the amber default keeps a comment
  * recognizable when no author is attributed. */
 .overlay .review-comment-marker {
-  --review-author-color: #c58b00;
+  --review-author-color: var(--paper-comment);
   position: absolute;
   background: color-mix(in srgb, var(--review-author-color) 22%, transparent);
   border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 75%, transparent);
@@ -4319,7 +4478,7 @@ body.is-format-painting .page-wrap * {
  * comment marker uses), so caret placement inside a tracked change is unaffected
  * (REVIEW-GAP-005). Insertion = author-colored underline; deletion = author-
  * colored tint + underline, preserving the fill-vs-underline distinction. */
-.overlay .review-revision-marker { --review-author-color: #188038; position: absolute; pointer-events: auto; }
+.overlay .review-revision-marker { --review-author-color: var(--paper-insert); position: absolute; pointer-events: auto; }
 .overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 .overlay .review-deletion-marker { background: color-mix(in srgb, var(--review-author-color) 18%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 .overlay .review-revision-marker-active { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); }
@@ -4390,8 +4549,8 @@ body.is-format-painting .page-wrap * {
   width: 12px;
   height: 12px;
   margin: -6px 0 0 -6px; /* center on the handle point */
-  background: #14161a;
-  border: 2px solid #fff;
+  background: var(--paper-ink);
+  border: 2px solid var(--paper);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: auto;
   touch-action: none;
@@ -4407,14 +4566,14 @@ body.is-format-painting .page-wrap * {
 /* Active state for the Crop → Apply button while a crop session is live. */
 .object-bar-btn.is-active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 /* Placeholder object context bar (docs/85 §4.1): names the selected object and
  * the actions the later slices will make real. */
 .object-context-bar {
   position: fixed;
-  z-index: 40;
+  z-index: var(--z-selection-toolbar);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4441,10 +4600,10 @@ body.is-format-painting .page-wrap * {
   font-size: 11px;
   cursor: pointer;
 }
-.object-wrap-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+.object-wrap-btn:hover { background: var(--accent-soft); border-color: var(--accent-text); }
 .object-wrap-btn[aria-pressed="true"] {
   background: var(--accent-soft);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   color: var(--accent-strong);
   font-weight: 650;
 }
@@ -4470,9 +4629,9 @@ body.is-format-painting .page-wrap * {
   cursor: pointer;
 }
 .object-bar-btn .ms { font-size: 15px; }
-.object-bar-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
-.object-bar-btn.danger { color: #b3261e; }
-.object-bar-btn.danger:hover { background: rgba(179, 38, 30, 0.1); border-color: #b3261e; }
+.object-bar-btn:hover { background: var(--accent-soft); border-color: var(--accent-text); }
+.object-bar-btn.danger { color: var(--danger); }
+.object-bar-btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 
 /* ---- Object alt-text / crop dialogs -------------------------------------- */
 .object-dialog { width: min(440px, 100%); }
@@ -4501,17 +4660,13 @@ body.is-format-painting .page-wrap * {
 }
 .object-dialog-body textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-#altTextNote.error {
-  color: #b3261e;
+#altTextNote.error,
+#cropNote.error {
+  color: var(--danger);
   font-weight: 550;
-}
-@media (prefers-color-scheme: dark) {
-  .object-bar-btn.danger { color: #f2b8b5; }
-  #altTextNote.error,
-  #cropNote.error { color: #f2b8b5; }
 }
 
 .overlay .table-col-resize-handle {
@@ -4564,7 +4719,7 @@ body.is-format-painting .page-wrap * {
 
 .overlay .caret {
   position: absolute;
-  background: #111;
+  background: var(--paper-ink);
   animation: caret-blink 1.06s steps(1) infinite;
 }
 
@@ -4575,8 +4730,8 @@ body.is-format-painting .page-wrap * {
   display: flex;
   align-items: center;
   padding: 0 2px;
-  color: #111;
-  background: color-mix(in srgb, var(--accent) 10%, #fff);
+  color: var(--paper-ink);
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
   border-bottom: 2px solid var(--accent);
   white-space: pre;
   font: inherit;
@@ -4761,7 +4916,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .status.error {
-  color: var(--error);
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -4929,7 +5084,7 @@ body:not(.doc-loaded) .drop-title {
   .side-panel.table-properties-panel,
   .side-panel.properties-panel {
     position: fixed;
-    z-index: 45;
+    z-index: var(--z-drawer);
     top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
     right: 8px;
     bottom: calc(var(--h-footer) + 8px);
@@ -4941,7 +5096,7 @@ body:not(.doc-loaded) .drop-title {
 
   .side-panel.glyph-panel {
     position: fixed;
-    z-index: 45;
+    z-index: var(--z-drawer);
     top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
     right: 8px;
     bottom: calc(var(--h-footer) + 8px);
@@ -5138,12 +5293,12 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .font-family-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
 .font-family-trigger[aria-expanded="true"] {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
 }
 
 .font-family-label {
@@ -5245,7 +5400,7 @@ body:not(.doc-loaded) .drop-title {
 
 .color-apply-bar.is-none {
   background:
-    linear-gradient(45deg, transparent 44%, var(--error, #d64562) 44% 56%, transparent 56%),
+    linear-gradient(45deg, transparent 44%, var(--danger) 44% 56%, transparent 56%),
     var(--surface-alt);
 }
 
@@ -5281,14 +5436,14 @@ body:not(.doc-loaded) .drop-title {
 
 .color-apply:focus-visible,
 .color-caret:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
   border-radius: var(--radius-sm);
 }
 
 .color-caret[aria-expanded="true"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Split list buttons: the main toggle keeps its plain `.fmt` look while a
@@ -5319,11 +5474,11 @@ body:not(.doc-loaded) .drop-title {
 
 .list-caret[aria-expanded="true"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .underline-split.is-mixed .list-caret {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 #underline .underline-glyph {
@@ -5393,18 +5548,18 @@ body:not(.doc-loaded) .drop-title {
 .list-gallery-cell:hover,
 .list-gallery-cell:focus-visible {
   background: var(--bg-2);
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   outline: none;
 }
 
 .list-gallery-cell[aria-checked="true"] {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .list-gallery-cell[aria-checked="true"] .list-gallery-sample {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Keep the last Font control clear of the Paragraph divider (mirrors the old
@@ -5427,8 +5582,8 @@ body:not(.doc-loaded) .drop-title {
 .shape-choice-preview {
   width: 18px;
   height: 12px;
-  background: var(--accent-soft, rgba(51, 85, 196, 0.18));
-  border: 1px solid var(--accent, #3355c4);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-text);
   justify-self: center;
 }
 
@@ -5441,19 +5596,19 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .shape-preview-triangle {
-  background: var(--accent, #3355c4);
+  background: var(--accent);
   border: none;
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
 .shape-preview-rightTriangle {
-  background: var(--accent, #3355c4);
+  background: var(--accent);
   border: none;
   clip-path: polygon(0 0, 100% 100%, 0 100%);
 }
 
 .shape-preview-diamond {
-  background: var(--accent, #3355c4);
+  background: var(--accent);
   border: none;
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
@@ -5462,7 +5617,7 @@ body:not(.doc-loaded) .drop-title {
   height: 0;
   background: none;
   border: none;
-  border-top: 2px solid var(--accent, #3355c4);
+  border-top: 2px solid var(--accent-text);
   align-self: center;
 }
 
@@ -5517,13 +5672,13 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .underline-style-option[aria-checked="true"] {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   font-weight: 600;
 }
 
 .underline-menu .color-row-action.is-active {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
 }
 
@@ -5584,7 +5739,7 @@ body:not(.doc-loaded) .drop-title {
 .color-row-action:hover,
 .color-row-action:focus-visible {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   outline: none;
 }
 
@@ -5592,13 +5747,13 @@ body:not(.doc-loaded) .drop-title {
   width: 15px;
   height: 15px;
   border-radius: 3px;
-  background: var(--sw, #000);
+  background: var(--sw, var(--ink));
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
 }
 
 .color-chip-none {
   background:
-    linear-gradient(45deg, transparent 44%, var(--error, #d64562) 44% 56%, transparent 56%),
+    linear-gradient(45deg, transparent 44%, var(--danger) 44% 56%, transparent 56%),
     var(--surface);
 }
 
@@ -5624,7 +5779,10 @@ body:not(.doc-loaded) .drop-title {
   padding: 0;
   border: 1px solid rgba(0, 0, 0, 0.14);
   border-radius: 3px;
-  background: var(--sw);
+  /* --sw is written inline per swatch by the colour-menu builder. The fallback
+     is the never-happens case made visible: without one the cell would render
+     transparent and read as a working control that shows nothing. */
+  background: var(--sw, var(--ink));
   cursor: pointer;
   transition: transform 0.08s;
 }
@@ -5638,12 +5796,12 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .swatch-cell:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
 .swatch-cell.is-active {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--accent);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--accent-text);
 }
 
 /* ---- Font menu ------------------------------------------------------------- */
@@ -5702,7 +5860,7 @@ body:not(.doc-loaded) .drop-title {
 .font-menu-check {
   flex: 0 0 16px;
   font-size: 16px;
-  color: var(--accent);
+  color: var(--accent-text);
   opacity: 0;
 }
 
@@ -5722,7 +5880,7 @@ body:not(.doc-loaded) .drop-title {
 .font-menu-item.is-active,
 .font-menu-item:focus-visible {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   outline: none;
 }
 
@@ -5758,7 +5916,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .zoom-input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: -1px;
   background: var(--surface);
 }
@@ -5787,7 +5945,7 @@ body:not(.doc-loaded) .drop-title {
 }
 
 .zoom-caret:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
 
@@ -5818,7 +5976,7 @@ body:not(.doc-loaded) .drop-title {
 /* ---- Paste-options chip ---------------------------------------------------- */
 .paste-options {
   position: fixed;
-  z-index: 62;
+  z-index: var(--z-paste-options);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -5845,7 +6003,7 @@ body:not(.doc-loaded) .drop-title {
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--fs-small);
   font-weight: 600;
   cursor: pointer;
@@ -5908,7 +6066,7 @@ body:not(.doc-loaded) .drop-title {
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: var(--bg-1);
+  color: var(--accent-ink);
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0.02em;
@@ -5931,10 +6089,10 @@ body:not(.doc-loaded) .drop-title {
   position: absolute;
   z-index: 4;
   padding: 3px 9px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--accent-text);
   border-radius: var(--radius-sm);
-  background: var(--bg-1);
-  color: var(--accent);
+  background: var(--surface);
+  color: var(--accent-text);
   font: inherit;
   font-size: var(--fs-small);
   line-height: 1.4;
@@ -5944,11 +6102,11 @@ body:not(.doc-loaded) .drop-title {
 
 .running-marker:hover {
   background: var(--accent);
-  color: var(--bg-1);
+  color: var(--accent-ink);
 }
 
 .running-marker:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
 }
 

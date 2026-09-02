@@ -115,6 +115,13 @@ test("a file the engine rejects leaves the open document alive and editable", as
     buffer: Buffer.from([0x50, 0x4b, 0x03, 0x04, ...Array(64).fill(0x41)]),
   });
 
+  // Open now asks before replacing unsaved work (HF-002), and this document has
+  // some. Answer it, because the failure being proved here is what happens
+  // AFTER the user has agreed to the replacement — the engine rejecting the
+  // bytes must not take the live document with it.
+  await expect(page.locator("#confirmDialog")).toBeVisible();
+  await page.locator("#confirmAccept").click();
+
   await expect(page.locator("#status")).toContainText(/could not open/i);
   // The previous document is what the user still has, so the editor must say so
   // rather than implying it is now empty.
@@ -134,4 +141,66 @@ test("a file the engine rejects leaves the open document alive and editable", as
   await clickIntoFirstPage(page);
   await page.keyboard.type("stillalive");
   await expect(page.locator("#a11yDocument")).toContainText("stillalive");
+});
+
+// The unload guard closes the "close the tab" half of HF-002. This is the other
+// half: Open replaced a dirty document with no prompt at all, on both the file
+// picker and the drag-and-drop path. Both are routed through one confirm, so
+// both are asserted — a guard on one path and not the other is how this class
+// of defect keeps coming back.
+test("opening another file over unsaved work asks first, and keeping means keeping", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.type("KEEPME");
+  await expect(page.locator("#a11yDocument")).toContainText("KEEPME");
+
+  await page.locator("#file").setInputFiles("sample.docx");
+  const prompt = page.locator("#confirmDialog");
+  await expect(prompt).toBeVisible();
+  await expect(prompt).toContainText(/unsaved/i);
+
+  await page.locator("#confirmCancel").click();
+  await expect(prompt).toBeHidden();
+  // Refused means refused: the same document, the same edit, still dirty.
+  await expect(page.locator("#a11yDocument")).toContainText("KEEPME");
+  await expect(page.locator("#documentState")).toHaveAttribute("data-state", "edited");
+  expect(await unloadIsGuarded(page)).toBe(true);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("opening another file over a clean document does not ask", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  // Nothing has been typed, so there is nothing to lose and nothing to ask
+  // about — a prompt here would be the "needless warning" half of the tradeoff.
+  await page.locator("#file").setInputFiles("sample.docx");
+  await expect(page.locator("#confirmDialog")).toBeHidden();
+  await expect(page.locator("#docTitle")).toHaveValue("sample.docx");
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a dropped file over unsaved work asks the same question", async ({ page }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.type("DROPME");
+  await expect(page.locator("#a11yDocument")).toContainText("DROPME");
+
+  // Synthesize the drop the viewport listens for. The picker and the drop both
+  // land in handleFile, which is the point: one question, asked once.
+  await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "dropped.docx"));
+    document
+      .getElementById("viewport")
+      .dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  });
+
+  await expect(page.locator("#confirmDialog")).toBeVisible();
+  await page.locator("#confirmCancel").click();
+  await expect(page.locator("#a11yDocument")).toContainText("DROPME");
 });
