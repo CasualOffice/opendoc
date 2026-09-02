@@ -117,6 +117,18 @@
   --h-rail-control: 44px;
   --h-footer: 30px;
   --h-header: 58px;
+  /* The captioned ribbon band under the tab strip. Content-sized in reality —
+     the tallest tab (Home, with the styles gallery) measures 90.5px — so this
+     is the one number here that has to be kept honest by a test rather than by
+     arithmetic; responsive-shell.spec.mjs asserts the panels below actually
+     clear the ribbon's measured bottom edge. */
+  --h-ribbon-band: 92px;
+  /* Bottom edge of the fixed shell chrome: header bar + ribbon tab strip +
+     ribbon band. Anything that floats over the workarea from a viewport-fixed
+     position anchors to THIS, never to a literal, so the ribbon's right-hand
+     group and its "⋯" overflow button can never end up underneath a panel
+     (HF-084). Redefined below for the collapsed ribbon, where the band is gone. */
+  --chrome-bottom: calc(var(--h-header) + var(--h-tab) + var(--h-ribbon-band));
   --icon-compact: 16px;
   --icon-control: 18px;
   --icon-rail: 20px;
@@ -489,6 +501,19 @@ input {
   color: var(--success);
 }
 
+/* The bar scrolls horizontally with its scrollbar suppressed, so when the
+   header ran out of room the trailing menus (Tools, Help) were cut off mid-row
+   with no fade, no chevron and no bar — they simply were not there, and nothing
+   said they existed (HF-097). The trailing mask makes the clip legible: it
+   fades whatever is cut instead of slicing it, which is the standard "there is
+   more this way" cue for a hidden-scrollbar strip. It costs no height, which
+   matters because the 58px header band is fully committed — a visible scrollbar
+   would have to come out of the menu row itself.
+   It is self-revealing rather than always-on: the bar is a flex box that fills
+   `.document-chrome`, so when every menu fits, the last 22px are empty and the
+   fade falls on nothing. This is the affordance half only; collecting the
+   overflow into a "⋯" button the way the ribbon does needs the measuring pass
+   in main.js (`updateRibbonOverflow`), which is not a stylesheet change. */
 .app-menu-bar {
   display: flex;
   align-items: center;
@@ -498,6 +523,8 @@ input {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 22px), transparent);
 }
 
 .app-menu-bar::-webkit-scrollbar {
@@ -2848,6 +2875,15 @@ body.modal-open {
   display: none;
 }
 
+/* Compact view deletes the band, so the chrome's bottom edge moves up with it
+   and every panel anchored to `--chrome-bottom` follows. `:has()` reads the
+   ribbon's own state rather than requiring a second class on <body>, so the
+   token can never disagree with what is actually on screen. */
+body:has(.ribbon.is-collapsed) {
+  /* Tab strip plus the ribbon's own bottom hairline; the band itself is gone. */
+  --chrome-bottom: calc(var(--h-header) + var(--h-tab) + 1px);
+}
+
 .ribbon-tab {
   height: var(--h-tab);
   padding: 0 14px;
@@ -3586,8 +3622,14 @@ body.is-format-painting .page-wrap * {
   font-weight: 600;
 }
 
+/* `--surface`, not `--bg-2`: the rail's own background IS `--bg-2` (see `.rail`
+   above), so the old hover fill was the same colour as what it painted over, in
+   every theme — a declaration that could never show. Only the icon recoloured,
+   so the rail did not read as a set of buttons the way the rest of the shell's
+   icon controls do (HF-096). `--surface` is the one token guaranteed to sit a
+   step off `--bg-2` in both palettes. */
 .rail-btn:hover:not(:disabled) {
-  background: var(--bg-2);
+  background: var(--surface);
   color: var(--ink);
 }
 
@@ -3623,10 +3665,16 @@ body.is-format-painting .page-wrap * {
   display: none;
 }
 
+/* `top: 86px` put this panel's top edge inside the ribbon band: at z-index 65
+   over the ribbon's 2, it painted across the ribbon's right-hand group and the
+   "⋯" overflow button, so every command the overflow had just relocated became
+   unclickable for as long as an object was selected (HF-084). It now starts
+   below the chrome, from the same expression the 900px block already uses for
+   the properties and glyph panels — one token, so the two cannot drift apart. */
 .object-inspector {
   position: fixed;
   z-index: var(--z-inspector);
-  top: 86px;
+  top: calc(var(--chrome-bottom) + 8px);
   right: 8px;
   bottom: 8px;
   width: 280px;
@@ -3970,14 +4018,37 @@ body.is-format-painting .page-wrap * {
   gap: 6px;
 }
 
+/* Narrow-window rungs for the comment column. The COLUMN's own geometry is
+   overridden here, next to its base rule; the page-stack gutter that pairs with
+   each rung lives beside `.viewport.has-review-sidebar .pages` further down,
+   because that rule is declared after this point in the file and a media query
+   adds no specificity — an override written here would simply lose on source
+   order. That is not hypothetical: the 860px rung below shipped with its
+   `padding-right: 316px` written in this block, where it never once applied. */
 @media (max-width: 860px) {
   .review-sidebar {
     right: 8px;
     width: 300px;
     min-width: 300px;
   }
-  .viewport.has-review-sidebar .pages {
-    padding-right: 316px; /* 300 column + 8 gutter + 8 breathing room */
+}
+
+/* Below tablet-portrait the reserved-gutter model stops working: there is no
+   window left to reserve from. At 390px the column and its page gutter left the
+   document about 74px of usable width and pushed the sheet off the right edge —
+   the flagship comments surface making the document it annotates unreadable
+   (HF-088). The column gives up its 300px hard floor here so it can never be the
+   thing that forces the overflow, and floats over the page rather than beside it.
+   The cards keep riding the document's own scroll — they are positioned in
+   document-scroll coordinates inside `.viewport`, which is what keeps every card
+   pinned to the text it annotates with no JS scroll-sync — so this stays a
+   layout change only. A dismissable bottom sheet, the phone-native shape, would
+   have to move the cards out of those coordinates: a change in main.js, not here. */
+@media (max-width: 700px) {
+  .review-sidebar {
+    right: 8px;
+    width: min(320px, calc(100% - 24px));
+    min-width: 0;
   }
 }
 .panel-head {
@@ -4173,13 +4244,25 @@ body.is-format-painting .page-wrap * {
 
 .outline-item.lvl-3 {
   padding-left: 32px;
-  color: var(--muted);
 }
 
 .outline-item.lvl-4,
 .outline-item.lvl-5,
 .outline-item.lvl-6 {
   padding-left: 44px;
+}
+
+/* Depth reads as indent + quieter ink — but the quieter ink must not outrank
+   the hover/current-location accent. `:hover` and `.is-active` above are both
+   (0,2,0), and so is `.outline-item.lvl-3`; declared later, the depth colour
+   simply won on source order and left an H3 row grey while it was the caret's
+   own heading, so the cue got WEAKER the deeper you went (HF-095). Excluding
+   the two states here restores the intended order without depending on where in
+   the file these rules happen to sit. */
+.outline-item.lvl-3:not(:hover):not(.is-active),
+.outline-item.lvl-4:not(:hover):not(.is-active),
+.outline-item.lvl-5:not(:hover):not(.is-active),
+.outline-item.lvl-6:not(:hover):not(.is-active) {
   color: var(--muted);
 }
 
@@ -4249,11 +4332,21 @@ body.is-format-painting .page-wrap * {
   z-index: 5;
 }
 
+/* `width: max-content` is what makes the horizontal scroll REACHABLE. A
+   centered flex item wider than its container overflows equally on both sides,
+   and the left overflow sits before the scroll origin, so it can never be
+   scrolled to — the classic centering trap. Sizing the stack to its widest
+   child (the sheet, plus the comment column's reserved gutter when that is on)
+   grows the scrollable area instead, and `align-items: center` then has room to
+   do its job; `min-width: 100%` keeps the stack filling the viewport when the
+   sheet is narrower than the window, which is the usual case. */
 .pages {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 22px;
+  width: max-content;
+  min-width: 100%;
 }
 
 /* When the comment column is shown, reserve its width in the page stack's right
@@ -4262,6 +4355,25 @@ body.is-format-painting .page-wrap * {
    context. (Toggled by JS: `#viewport.has-review-sidebar`.) */
 .viewport.has-review-sidebar .pages {
   padding-right: 364px; /* 340 comment column + 12 gutter + 12 breathing room */
+}
+
+/* The gutter follows the column's own rungs (see the two media queries beside
+   `.review-sidebar`). They have to be written HERE, after the rule above:
+   media queries contribute no specificity, so the earlier block would lose the
+   tie on source order — which is exactly what happened to the 860px rung, whose
+   `padding-right: 316px` sat in an unreachable position and never applied.
+   At 700px and below there is nothing left to reserve from, so the gutter goes
+   entirely and the sheet gets its full measure back. */
+@media (max-width: 860px) {
+  .viewport.has-review-sidebar .pages {
+    padding-right: 316px; /* 300 column + 8 gutter + 8 breathing room */
+  }
+}
+
+@media (max-width: 700px) {
+  .viewport.has-review-sidebar .pages {
+    padding-right: 0;
+  }
 }
 
 .pages:focus {
@@ -4422,12 +4534,21 @@ body.is-format-painting .page-wrap * {
    the page size in twips) and the sheet chrome, so it holds its space and looks
    like a blank page even when its canvas is virtualized away off-screen. The
    live raster canvas, when mounted, fills it exactly. */
+/* No `max-width` here, deliberately. The wrap's width AND height are both set
+   inline in CSS px from the section's page size in twips, so any width clamp
+   that the height does not follow rescales one axis only — the sheet then
+   renders at the wrong aspect ratio and every glyph is horizontally compressed,
+   silently, with no error (HF-083). The previous `max-width: 96vw` did exactly
+   that in any window narrower than the sheet: split screen, tablet, phone.
+   A page has a real width, so when it does not fit we do what Word does and let
+   `.viewport` scroll horizontally (`.pages` below reserves the room for it);
+   a reader who would rather scale than scroll has Fit width in the zoom menu,
+   which recomputes the factor on every resize and keeps both axes together. */
 .page-wrap {
   position: relative;
   background: var(--paper);
   box-shadow: var(--shadow-page);
   border-radius: 3px;
-  max-width: 96vw;
   line-height: 0;
 }
 
@@ -4512,6 +4633,66 @@ body.is-format-painting .page-wrap * {
   pointer-events: auto; /* drag to resize (P1G-OBJ-GEOMETRY) */
   touch-action: none;
 }
+
+/* The grip stays 9px (12px for crop) because that is the drawn chrome Word and
+   Docs both use — but the TARGET must not be 9px. WCAG 2.5.8 asks for 24x24,
+   and a finger or pen never reliably lands inside a 9px square, so resizing an
+   image was effectively pointer-only (HF-098). A pseudo-element grows the hit
+   area without moving a pixel of the visual, the same trick `.ruler-marker
+   ::after` already uses for the indent markers.
+   It grows OUTWARD ONLY, and that direction is the whole design. The eight
+   grips sit on the object's perimeter, so on a small object they are only a few
+   pixels apart — the demo document has a 16px-wide image whose grips are 8px
+   apart, closer together than a 9px grip is wide. A symmetric `inset: -8px`
+   therefore put the South grip's target over the South-East grip's centre, and
+   because South paints later it won: dragging the corner resized the wrong
+   axis. Growing away from the object instead keeps every target clear of every
+   other grip's centre for any object wider than the grips themselves, while
+   still reaching 24px on the axis the grip is dragged along — which is the axis
+   that matters, since a North grip is never dragged sideways.
+   Finger-sized (44px) grips need more than this: they would have to overlap and
+   be arbitrated by distance in the pointerdown handler, which is main.js. */
+.overlay .object-handle {
+  --grip-grow: 15px; /* 9px grip + 15px = 24px, the WCAG 2.5.8 target */
+}
+
+.overlay .object-crop-handle {
+  --grip-grow: 12px; /* 12px grip + 12px = 24px */
+}
+
+.overlay .object-handle::after,
+.overlay .object-crop-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+/* North-facing grips (NW, N, NE) grow up; and so on clockwise. Corner grips
+   appear in two lists and so grow on both of their outward axes. */
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="0"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="1"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="2"]::after {
+  top: calc(-1 * var(--grip-grow));
+}
+
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="2"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="3"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="4"]::after {
+  right: calc(-1 * var(--grip-grow));
+}
+
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="4"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="5"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="6"]::after {
+  bottom: calc(-1 * var(--grip-grow));
+}
+
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="6"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="7"]::after,
+.overlay :is(.object-handle, .object-crop-handle)[data-handle="0"]::after {
+  left: calc(-1 * var(--grip-grow));
+}
+
 /* Directional resize cursors, keyed by handle index (NW,N,NE,E,SE,S,SW,W). */
 .overlay .object-handle[data-handle="0"],
 .overlay .object-handle[data-handle="4"] { cursor: nwse-resize; }
@@ -5085,7 +5266,7 @@ body:not(.doc-loaded) .drop-title {
   .side-panel.properties-panel {
     position: fixed;
     z-index: var(--z-drawer);
-    top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
+    top: calc(var(--chrome-bottom) + 8px);
     right: 8px;
     bottom: calc(var(--h-footer) + 8px);
     width: min(340px, calc(100vw - 42px));
@@ -5097,7 +5278,7 @@ body:not(.doc-loaded) .drop-title {
   .side-panel.glyph-panel {
     position: fixed;
     z-index: var(--z-drawer);
-    top: calc(var(--h-header) + var(--h-tab) + var(--h-control) + 48px);
+    top: calc(var(--chrome-bottom) + 8px);
     right: 8px;
     bottom: calc(var(--h-footer) + 8px);
     width: min(360px, calc(100vw - 42px));
@@ -5246,6 +5427,82 @@ body:not(.doc-loaded) .drop-title {
 
   .page-setup-fields {
     gap: 18px;
+  }
+}
+
+/* =========================================================================
+   Coarse pointers — touch and pen (HF-060)
+   -------------------------------------------------------------------------
+   Keyed on the pointing MODALITY, not on window width, because the question
+   is what is doing the pointing and not how wide the window is: a 13-inch
+   touchscreen laptop is a wide window with a finger on it, and a 500px window
+   driven by a mouse still wants mouse density. Every rung above this one is a
+   `max-width` rung and none of them would have caught either case.
+
+   Two things change here and nothing else.
+
+   1. Fields go to 16px. Below 16px iOS Safari zooms the page on focus and
+      leaves the document scrolled sideways with no way back — so on iPad and
+      iPhone every single tap into a dialog field, the find box, the document
+      title or a comment composer wrecked the view. 16px is the documented
+      threshold that turns it off, not a taste call.
+      The selectors are shaped by specificity, not by taste. Fields all over
+      this file set their own size from class-scoped rules — `.find-panel
+      input[type="text"]` and `.ctl > input[type="number"]` at (0,2,1),
+      `.dialog-field > textarea` and the review composers at (0,1,1) — and a
+      bare `input` / `textarea` selector loses to every one of them, silently.
+      The chained `:not()`s do double duty: they exclude the inputs that render
+      no text (colour, range, checkbox, radio — a size there only moves their
+      swatch geometry) AND each adds a class's worth of weight, which is what
+      lifts this rule over those without reaching for `!important`. Same reason
+      `textarea` carries one.
+
+   2. Targets a finger has to hit reach the 44px HIG floor. The growth is spent
+      ONLY on surfaces that float over the document — menus, the command
+      palette, context menus, the ribbon's overflow flyout, the comment column,
+      the object toolbar, panel headers. Those are painted over the page, so
+      44px rows cost the canvas nothing; the ribbon band, the tab strip and the
+      footer keep their desktop heights for exactly that reason. It matters
+      most where the rows are destructive: in the context menu "Delete row" is
+      two rows from "Merge cells".
+
+   Deliberately NOT here, and tracked rather than half-done: the header's own
+   `.app-menu-button` row (21px inside a committed 58px band — a 44px floor
+   there needs the header redesigned, not restyled), and the eight object
+   resize grips, whose targets are already widened to ~25px by `.object-handle
+   ::after` but cannot go to 44px without adjacent handles overlapping on a
+   small image, which needs hit-test arbitration in main.js.
+   ========================================================================= */
+@media (pointer: coarse) {
+  input:not([type="color"]):not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  select:not([multiple]),
+  textarea:not([hidden]) {
+    font-size: 16px;
+  }
+
+  /* Rows in floating menus: the app menus, context menus and submenus, the
+     command palette, and dialog choice lists. */
+  .app-menu-item,
+  .menu-item,
+  .cmd-item,
+  .field-choice {
+    min-height: 44px;
+  }
+
+  /* Icon-only controls on floating surfaces. */
+  .panel-close,
+  .review-nav-button,
+  .ribbon-overflow-menu .fmt {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+
+  /* Compact pills inside the floating comment column and the object toolbar. */
+  .review-filter,
+  .review-card-action,
+  .object-bar-btn {
+    min-height: 44px;
   }
 }
 
