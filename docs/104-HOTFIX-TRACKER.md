@@ -86,7 +86,7 @@ Every P0 is now closed or in review.
 | ID | Title | Area | Effort | Source | Status |
 | --- | --- | --- | --- | --- | --- |
 | HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | In review |
-| HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | Open |
+| HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | In review |
 | HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Fixed (#497) |
 | HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | In review |
@@ -166,7 +166,7 @@ Every P0 is now closed or in review.
 | HF-077 | Opening a heavy document freezes the tab with no budget, no progress and no cancel | architecture | L | Sibling gap (opencalc) | Open |
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
 | HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Open |
-| HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | Open |
+| HF-080 | Every pointer move and caret query flattens the whole document's lines | perf | M | Internal audit | In review |
 | HF-082 | The galley cache never evicts entries for deleted paragraphs | perf | S | Internal audit | In review |
 | HF-084 | Object properties panel covers the ribbon, including the overflow "..." button | layout | S | Internal audit | Open |
 | HF-085 | main.js is 93% of the webapp with zero exports, which is why the apply paths diverged and why the embed surface is blocked | code-structure | L | Sibling gap (opencalc) | Open |
@@ -501,7 +501,7 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-009 — Images in headers, footers, footnotes and comments lose their relationship on save
 
-**P1** · import-export · bug · effort M · source: Internal audit · **Status:** Open
+**P1** · import-export · bug · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Save a document with a logo in the header and Word shows a missing-image placeholder or reports invalid content; re-importing the exported file drops the picture entirely. If the same header also has a hyperlink, the image's r:embed resolves to that hyperlink instead. Nothing is reported to the user.
 
@@ -1440,7 +1440,7 @@ a test that could not fail.
 
 ### HF-080 — Every pointer move and caret query flattens the whole document's lines
 
-**P2** · perf · perf · effort M · source: Internal audit · **Status:** Open
+**P2** · perf · perf · effort M · source: Internal audit · **Status:** In review
 
 **Symptom.** Drag-selecting in a 500-page document allocates roughly 1.6 MB twice per mouse-move before any hit-testing happens, making selection visibly janky on long files.
 

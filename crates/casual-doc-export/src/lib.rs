@@ -4136,6 +4136,82 @@ mod semantic_tests {
         );
     }
 
+    /// A picture in a header must have its relationship declared by the HEADER's
+    /// own `_rels`, not by `document.xml.rels`.
+    ///
+    /// Every media entry was announced in `document.xml.rels` whatever part it
+    /// belonged to, and the per-part writers declared no image relationships at
+    /// all — so `header1.xml.rels`, the file Word consults for that part, said
+    /// nothing about the logo the header referenced. Word showed a missing-image
+    /// placeholder or called the content invalid, and re-importing dropped the
+    /// picture. Worse, the per-part hyperlink allocator reserved nothing, so a
+    /// header that also carried a link could mint that link onto the image's id
+    /// and the `r:embed` resolved to the hyperlink.
+    #[test]
+    fn a_header_picture_declares_its_relationship_in_the_headers_own_rels() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:r><w:t>body text</w:t></w:r></w:p>
+            <w:sectPr><w:headerReference w:type="default" r:id="rId5"/></w:sectPr>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+        // The picture lives in the header, and its relationship is declared by the
+        // header's own rels — which is exactly where it must end up again.
+        let header = br#"<w:hdr xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="685800"/>
+            <a:graphic><a:graphicData><pic:pic><pic:blipFill>
+                <a:blip r:embed="rId9"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+        </wp:inline></w:drawing></w:r></w:p></w:hdr>"#;
+        let header_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>"#;
+
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/header1.xml", header),
+            ("word/_rels/header1.xml.rels", header_rels),
+            ("word/media/logo.png", b"PNGDATA"),
+        ]);
+        let m1 = reopen(&source);
+        assert!(
+            !m1.definitions().headers.is_empty(),
+            "the fixture must carry a header"
+        );
+        assert!(
+            !m1.definitions().media.is_empty(),
+            "the fixture must carry a picture"
+        );
+
+        let written = write_document(
+            &m1,
+            &BTreeMap::from([("word/media/logo.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .unwrap();
+        let mut package = DocxPackage::open(&written, PackageLimits::default()).unwrap();
+
+        let header_rels_out = package
+            .read_part("word/_rels/header1.xml.rels")
+            .expect("the header declares its own relationships");
+        let header_rels_out = String::from_utf8_lossy(&header_rels_out);
+        assert!(
+            header_rels_out.contains("/image") && header_rels_out.contains("media/logo.png"),
+            "the header must declare its own picture: {header_rels_out}"
+        );
+
+        // And the body's rels must not claim a picture the body does not use.
+        let doc_rels_out = package.read_part("word/_rels/document.xml.rels").unwrap();
+        let doc_rels_out = String::from_utf8_lossy(&doc_rels_out);
+        assert!(
+            !doc_rels_out.contains("media/logo.png"),
+            "the body declared a picture only the header uses: {doc_rels_out}"
+        );
+
+        // The picture still round-trips through a re-import.
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "the header picture survives write -> reopen");
+    }
+
     #[test]
     fn one_media_part_referenced_twice_still_writes_a_valid_package() {
         // A logo placed in the header AND in the body is one media PART reached

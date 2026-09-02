@@ -209,6 +209,11 @@ struct ExtraPart {
     /// The part's own external relationships (a hyperlink inside a note/comment/
     /// header resolves through `word/_rels/<part>.rels`, not the document's).
     own_rels: Vec<RelEntry>,
+    /// The `/image` relationships this part declares, as `(rId, target)`. An
+    /// image belongs to the part that uses it; emitting every one into
+    /// `document.xml.rels` left a header's `r:embed` pointing at a relationship
+    /// its own part never declared.
+    own_media: Vec<MediaRel>,
 }
 
 impl ExtraPart {
@@ -227,7 +232,13 @@ impl ExtraPart {
             bytes,
             rel_id: None,
             own_rels: Vec::new(),
+            own_media: Vec::new(),
         }
+    }
+
+    fn with_own_media(mut self, own_media: Vec<MediaRel>) -> Self {
+        self.own_media = own_media;
+        self
     }
 
     fn with_own_rels(mut self, own_rels: Vec<RelEntry>) -> Self {
@@ -243,6 +254,12 @@ impl ExtraPart {
 
 /// A `document.xml.rels` entry: (relationship id, external target URL).
 type RelEntry = (String, String);
+
+/// An `/image` relationship a part declares: `(rId, target)`.
+type MediaRel = (String, String);
+
+/// A part's XML, its own external relationships, and the images it declares.
+type PartWithRels = (Vec<u8>, Vec<RelEntry>, Vec<MediaRel>);
 
 /// Accumulates the `word/_rels/document.xml.rels` entries the body needs while
 /// it is written. Today that is one external-target relationship per distinct
@@ -511,7 +528,7 @@ pub fn write_document_with_retained_parts(
         ));
     }
     if !definitions.footnotes.is_empty() {
-        let (bytes, own_rels) = notes_xml(
+        let (bytes, own_rels, own_media) = notes_xml(
             "w:footnotes",
             "w:footnote",
             &definitions.footnotes,
@@ -525,11 +542,12 @@ pub fn write_document_with_retained_parts(
                 "footnotes.xml",
                 bytes,
             )
-            .with_own_rels(own_rels),
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
         );
     }
     if !definitions.endnotes.is_empty() {
-        let (bytes, own_rels) = notes_xml(
+        let (bytes, own_rels, own_media) = notes_xml(
             "w:endnotes",
             "w:endnote",
             &definitions.endnotes,
@@ -543,11 +561,12 @@ pub fn write_document_with_retained_parts(
                 "endnotes.xml",
                 bytes,
             )
-            .with_own_rels(own_rels),
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
         );
     }
     if !definitions.comments.is_empty() {
-        let (bytes, own_rels) = comments_xml(&definitions.comments, definitions)?;
+        let (bytes, own_rels, own_media) = comments_xml(&definitions.comments, definitions)?;
         extras.push(
             ExtraPart::new(
                 "word/comments.xml",
@@ -556,7 +575,8 @@ pub fn write_document_with_retained_parts(
                 "comments.xml",
                 bytes,
             )
-            .with_own_rels(own_rels),
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
         );
         // Comment companion parts (P1F-10), each emitted only when it carries
         // data so a package without threading/identity stays byte-identical.
@@ -592,7 +612,7 @@ pub fn write_document_with_retained_parts(
     // section's `w:sectPr` references. Emitted in ascending-id order so the
     // importer (which keys by relationship order) re-allocates matching ids.
     for (index, (id, header)) in definitions.headers.iter().enumerate() {
-        let (bytes, own_rels) = header_footer_xml("w:hdr", &header.blocks, definitions)?;
+        let (bytes, own_rels, own_media) = header_footer_xml("w:hdr", &header.blocks, definitions)?;
         extras.push(
             ExtraPart::new(
                 &format!("word/header{}.xml", index + 1),
@@ -602,11 +622,12 @@ pub fn write_document_with_retained_parts(
                 bytes,
             )
             .with_rel_id(hf_rel_id(*id))
-            .with_own_rels(own_rels),
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
         );
     }
     for (index, (id, footer)) in definitions.footers.iter().enumerate() {
-        let (bytes, own_rels) = header_footer_xml("w:ftr", &footer.blocks, definitions)?;
+        let (bytes, own_rels, own_media) = header_footer_xml("w:ftr", &footer.blocks, definitions)?;
         extras.push(
             ExtraPart::new(
                 &format!("word/footer{}.xml", index + 1),
@@ -616,7 +637,8 @@ pub fn write_document_with_retained_parts(
                 bytes,
             )
             .with_rel_id(hf_rel_id(*id))
-            .with_own_rels(own_rels),
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
         );
     }
 
@@ -649,7 +671,7 @@ pub fn write_document_with_retained_parts(
         document_rels_xml(
             &rels,
             &extras,
-            &definitions.media,
+            &part_media(document.body(), &definitions.media),
             &embedded_rels,
             retained_parts,
         )?,
@@ -658,10 +680,10 @@ pub fn write_document_with_retained_parts(
         parts.push(docprop.part_name.to_owned(), docprop.bytes.clone());
     }
     for extra in extras {
-        if !extra.own_rels.is_empty() {
+        if !extra.own_rels.is_empty() || !extra.own_media.is_empty() {
             parts.push(
                 rels_part_name(&extra.part_name),
-                part_rels_xml(&extra.own_rels)?,
+                part_rels_xml(&extra.own_rels, &extra.own_media)?,
             );
         }
         parts.push(extra.part_name, extra.bytes);
@@ -1159,7 +1181,7 @@ const fn bool_token(value: bool) -> &'static str {
 fn document_rels_xml(
     entries: &[RelEntry],
     extras: &[ExtraPart],
-    media: &DefinitionMap<MediaId, MediaReference>,
+    media: &[MediaRel],
     embedded_rels: &[EmbeddedRelEntry],
     retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
@@ -1200,12 +1222,16 @@ fn document_rels_xml(
     // Retained relationships are not seeded because they use a distinct
     // `rIdOp{n}` prefix and cannot collide with `rId{n}` by construction.
     let mut reserved: BTreeSet<String> = entries.iter().map(|(id, _)| id.clone()).collect();
-    for (_, reference) in media.iter() {
-        reserved.insert(reference.relationship_id.clone());
+    // Only the images the BODY uses. Every media entry used to be declared here
+    // regardless of the part it belonged to, so a header's picture was announced
+    // by `document.xml.rels` while `header1.xml.rels` — the file Word consults
+    // for that part — said nothing about it.
+    for (id, target) in media {
+        reserved.insert(id.clone());
         let mut rel = start("Relationship");
-        rel.push_attribute(("Id", reference.relationship_id.as_str()));
+        rel.push_attribute(("Id", id.as_str()));
         rel.push_attribute(("Type", IMAGE_REL_TYPE));
-        rel.push_attribute(("Target", media_target(&reference.part_name)));
+        rel.push_attribute(("Target", target.as_str()));
         w.write_event(Event::Empty(rel)).map_err(pkg)?;
     }
     // Embedded-object (chart/diagram/OLE) part relationships with their verbatim
@@ -1262,11 +1288,21 @@ fn rels_part_name(part_name: &str) -> String {
 
 /// Emits a part-own relationships file carrying external hyperlink targets (used
 /// by a note/comment part whose content contains a hyperlink).
-fn part_rels_xml(entries: &[RelEntry]) -> Result<Vec<u8>, ExportError> {
+fn part_rels_xml(entries: &[RelEntry], media: &[(String, String)]) -> Result<Vec<u8>, ExportError> {
     let mut w = new_writer();
     let mut rels = start("Relationships");
     rels.push_attribute(("xmlns", REL_NS));
     w.write_event(Event::Start(rels)).map_err(pkg)?;
+    // The images this part uses, declared by the part that uses them. Emitting
+    // them into `document.xml.rels` instead left a header's `r:embed` pointing at
+    // a relationship its own part never declared.
+    for (id, target) in media {
+        let mut rel = start("Relationship");
+        rel.push_attribute(("Id", id.as_str()));
+        rel.push_attribute(("Type", IMAGE_REL_TYPE));
+        rel.push_attribute(("Target", target.as_str()));
+        w.write_event(Event::Empty(rel)).map_err(pkg)?;
+    }
     for (id, url) in entries {
         let mut rel = start("Relationship");
         rel.push_attribute(("Id", id.as_str()));
@@ -1288,11 +1324,22 @@ fn notes_xml(
     item: &str,
     notes: &DefinitionMap<NoteId, Note>,
     defs: &Definitions,
-) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
+    // The images these notes use, declared by this part and reserved so a
+    // hyperlink minted here cannot take an id an image already holds.
+    let mut own_media: Vec<MediaRel> = Vec::new();
+    for (_, note) in notes.iter() {
+        for entry in part_media(&note.blocks, &defs.media) {
+            if !own_media.iter().any(|(id, _)| *id == entry.0) {
+                own_media.push(entry);
+            }
+        }
+    }
+    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(BTreeSet::new()),
+        rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
     let mut r = start(root);
@@ -1311,7 +1358,7 @@ fn notes_xml(
     }
     w.write_event(Event::End(BytesEnd::new(root)))
         .map_err(pkg)?;
-    Ok((finish(w), ctx.rels.entries))
+    Ok((finish(w), ctx.rels.entries, own_media))
 }
 
 /// Emits `word/comments.xml`: each comment keyed by a `w:id` derived from its
@@ -1322,11 +1369,20 @@ fn notes_xml(
 fn comments_xml(
     comments: &DefinitionMap<CommentId, Comment>,
     defs: &Definitions,
-) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
+    let mut own_media: Vec<MediaRel> = Vec::new();
+    for (_, comment) in comments.iter() {
+        for entry in part_media(&comment.blocks, &defs.media) {
+            if !own_media.iter().any(|(id, _)| *id == entry.0) {
+                own_media.push(entry);
+            }
+        }
+    }
+    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(BTreeSet::new()),
+        rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
     let mut r = start("w:comments");
@@ -1371,7 +1427,7 @@ fn comments_xml(
     }
     w.write_event(Event::End(BytesEnd::new("w:comments")))
         .map_err(pkg)?;
-    Ok((finish(w), ctx.rels.entries))
+    Ok((finish(w), ctx.rels.entries, own_media))
 }
 
 /// Whether a block is a paragraph (the anchor kind for a comment's `w14:paraId`).
@@ -1486,11 +1542,16 @@ fn header_footer_xml(
     root: &str,
     blocks: &[BlockNode],
     defs: &Definitions,
-) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
+    // The images this part uses, reserved so a hyperlink minted inside the part
+    // cannot be handed an id an image already holds — which is how a header's
+    // `r:embed` came to resolve to a hyperlink.
+    let own_media = part_media(blocks, &defs.media);
+    let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
-        rels: RelBuilder::new(BTreeSet::new()),
+        rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
     let mut r = start(root);
@@ -1505,7 +1566,7 @@ fn header_footer_xml(
     }
     w.write_event(Event::End(BytesEnd::new(root)))
         .map_err(pkg)?;
-    Ok((finish(w), ctx.rels.entries))
+    Ok((finish(w), ctx.rels.entries, own_media))
 }
 
 /// The relationship id a `w:sectPr` uses to reference a header/footer part,
@@ -4030,6 +4091,124 @@ fn write_drop_cap_frame(
 type EmbeddedRelEntry = (String, String, String);
 
 /// Collects every embedded-object part relationship in document order, deduped
+/// Every media entry a block list actually references.
+///
+/// An `/image` relationship belongs in the `_rels` of the part that USES the
+/// image. They were all emitted into `word/_rels/document.xml.rels` instead,
+/// whatever part the picture actually lived in — so a logo in a header pointed
+/// at a relationship that part did not declare. Word showed a missing-image
+/// placeholder or reported the content invalid, re-importing dropped the picture
+/// entirely, and if the same header also carried a hyperlink the image's
+/// `r:embed` resolved to the hyperlink instead. Nothing was reported.
+fn collect_block_media(block: &BlockNode, out: &mut BTreeSet<MediaId>) {
+    match block {
+        BlockNode::Paragraph(paragraph) => {
+            for inline in &paragraph.inlines {
+                collect_inline_media(inline, out);
+            }
+        }
+        BlockNode::Table(table) => {
+            for row in &table.rows {
+                for cell in &row.cells {
+                    for block in &cell.blocks {
+                        collect_block_media(block, out);
+                    }
+                }
+            }
+        }
+        BlockNode::Sdt(sdt) => {
+            for block in &sdt.blocks {
+                collect_block_media(block, out);
+            }
+        }
+        BlockNode::AltChunk(_) => {}
+    }
+}
+
+fn collect_inline_media(inline: &InlineNode, out: &mut BTreeSet<MediaId>) {
+    match inline {
+        InlineNode::Drawing(drawing) => {
+            out.insert(drawing.media);
+        }
+        InlineNode::AnchoredDrawing(drawing) => {
+            out.insert(drawing.media);
+        }
+        InlineNode::Group(group) => collect_group_media(group, out),
+        // An OLE/chart object's preview picture is media too, referenced through
+        // `v:imagedata` rather than a drawing — so a walk that only looked for
+        // drawings dropped its relationship.
+        InlineNode::EmbeddedObject(object) => {
+            if let Some(preview) = object.preview {
+                out.insert(preview);
+            }
+        }
+        InlineNode::Hyperlink(link) => {
+            for child in &link.inlines {
+                collect_inline_media(child, out);
+            }
+        }
+        InlineNode::Field(field) => {
+            for child in &field.inlines {
+                collect_inline_media(child, out);
+            }
+        }
+        InlineNode::Revision(revision) => {
+            for child in &revision.inlines {
+                collect_inline_media(child, out);
+            }
+        }
+        InlineNode::Sdt(sdt) => {
+            for child in &sdt.inlines {
+                collect_inline_media(child, out);
+            }
+        }
+        InlineNode::TextBox(text_box) => {
+            for block in &text_box.blocks {
+                collect_block_media(block, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_group_media(group: &WordprocessingGroup, out: &mut BTreeSet<MediaId>) {
+    for child in &group.children {
+        match child {
+            GroupChild::Picture(picture) => {
+                out.insert(picture.media);
+            }
+            GroupChild::TextBox(text_box) => {
+                for block in &text_box.blocks {
+                    collect_block_media(block, out);
+                }
+            }
+            GroupChild::Group(nested) => collect_group_media(nested, out),
+            GroupChild::Shape(_) => {}
+        }
+    }
+}
+
+/// The media a block list references, as `(relationship id, reference)` pairs in
+/// definition order.
+fn part_media(
+    blocks: &[BlockNode],
+    media: &DefinitionMap<MediaId, MediaReference>,
+) -> Vec<MediaRel> {
+    let mut ids = BTreeSet::new();
+    for block in blocks {
+        collect_block_media(block, &mut ids);
+    }
+    ids.into_iter()
+        .filter_map(|id| media.get(&id))
+        .map(|reference| {
+            (
+                reference.relationship_id.clone(),
+                media_target(&reference.part_name).to_owned(),
+            )
+        })
+        .collect()
+}
+
 /// by relationship id (the first occurrence wins). Walked before the body is
 /// written so the ids can be reserved against hyperlink minting.
 fn collect_embedded_rels(document: &Document) -> Vec<EmbeddedRelEntry> {

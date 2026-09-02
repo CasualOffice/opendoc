@@ -188,9 +188,8 @@ impl<'a> LayoutSnapshot<'a> {
     /// whitespace. Returns `None` only when the page has no content at all.
     #[must_use]
     pub fn hit_test(&self, page_number: u32, point: Point) -> Option<HitResult> {
-        let lines = self.line_boxes();
-        let page_lines: Vec<&LineBox<'_>> =
-            lines.iter().filter(|lb| lb.page == page_number).collect();
+        let lines = self.line_boxes_on(page_number);
+        let page_lines: Vec<&LineBox<'_>> = lines.iter().collect();
         let first = *page_lines.first()?;
 
         let (x, y) = (point.x.raw(), point.y.raw());
@@ -680,6 +679,30 @@ impl<'a> LayoutSnapshot<'a> {
                 RunningBand::Footer => &page.footer,
             };
             for placed in fragments {
+                collect_fragment(
+                    &placed.fragment,
+                    placed.rect.origin.x,
+                    placed.rect.origin.y,
+                    page.number,
+                    None,
+                    &mut out,
+                );
+            }
+        }
+        out
+    }
+
+    /// The lines on ONE page.
+    ///
+    /// `hit_test` built every line in the document and then filtered the result
+    /// down to a single page — so a drag-select in a 500-page file allocated the
+    /// whole document's lines twice per mouse-move before any hit-testing began,
+    /// which is what made selection janky on long documents. `running_line_boxes`
+    /// already walked one page this way; the body path simply never did.
+    fn line_boxes_on(&self, page_number: u32) -> Vec<LineBox<'a>> {
+        let mut out = Vec::new();
+        for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
+            for placed in &page.placed {
                 collect_fragment(
                     &placed.fragment,
                     placed.rect.origin.x,
@@ -1901,5 +1924,50 @@ mod tests {
             );
             last_x = x;
         }
+    }
+
+    /// Hit-testing one page must walk one page.
+    ///
+    /// `hit_test` built every line in the document and then filtered down to the
+    /// page it was asked about, so a drag-select in a long document allocated the
+    /// whole document's lines on every mouse-move. A behavioural test cannot see
+    /// the difference — which is exactly why it went unnoticed — so this compares
+    /// the work the per-page walk does against the whole-document walk, and then
+    /// proves the two agree on what they find.
+    #[test]
+    fn hit_testing_a_page_does_not_walk_the_whole_document() {
+        // Enough paragraphs to span many pages.
+        let fragments: Vec<BlockFragment> =
+            (0..120).map(|i| ltr_para(1_000 + i, &[8, 8, 8])).collect();
+        let layout = paginate(&fragments, &letter_config());
+        assert!(
+            layout.page_count() > 5,
+            "the fixture must span many pages, got {}",
+            layout.page_count()
+        );
+        let snapshot = LayoutSnapshot::new(&layout);
+
+        let whole = snapshot.line_boxes().len();
+        let one_page = snapshot.line_boxes_on(1).len();
+        assert!(one_page > 0, "page 1 has lines, or this proves nothing");
+        assert!(
+            one_page * 4 < whole,
+            "the per-page walk must be far smaller than the document walk \
+             ({one_page} vs {whole})"
+        );
+
+        // And it finds exactly what the filtered whole-document walk found.
+        let filtered: Vec<_> = snapshot
+            .line_boxes()
+            .into_iter()
+            .filter(|lb| lb.page == 1)
+            .map(|lb| (lb.left, lb.top))
+            .collect();
+        let direct: Vec<_> = snapshot
+            .line_boxes_on(1)
+            .into_iter()
+            .map(|lb| (lb.left, lb.top))
+            .collect();
+        assert_eq!(direct, filtered, "the per-page walk finds the same lines");
     }
 }
