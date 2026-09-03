@@ -31,6 +31,7 @@ import {
   normalizeMenuEntries,
 } from "./context_menu.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { previewInkIsLegible } from "./contrast.mjs";
 
 function escapeHtml(text) {
   return String(text)
@@ -428,6 +429,73 @@ if (stylesMorePanel) {
  *  Styles gallery. Degrades to the plain slug look if the preview is
  *  unavailable. The preview font size is clamped so a 28pt Title still fits the
  *  dense 30px card while keeping the visible hierarchy. */
+/** Resolves any CSS color string to sRGB bytes.
+ *
+ *  Via canvas rather than a regex: the browser hands back `rgb()`, `color(srgb
+ *  ...)`, `color-mix(...)` and `oklab(...)` depending on how the value was
+ *  authored and whether a transition is in flight, and a regex that assumes one
+ *  form reads another's components as RGB. Canvas understands every CSS color
+ *  syntax, including ones that do not exist yet. */
+let colorProbeContext = null;
+function resolveColor(value) {
+  if (!value) return null;
+  if (!colorProbeContext) {
+    colorProbeContext = document
+      .createElement("canvas")
+      .getContext("2d", { willReadFrequently: true });
+  }
+  const ctx = colorProbeContext;
+  // An unparseable value leaves fillStyle untouched, so a sentinel distinguishes
+  // "transparent black" from "the browser rejected this string".
+  ctx.fillStyle = "#ff00ff";
+  ctx.fillStyle = value;
+  if (ctx.fillStyle === "#ff00ff" && !/^#ff00ff$|magenta/i.test(value.trim())) return null;
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+  return { r, g, b, a: a / 255 };
+}
+
+/** The background a gallery card's label is actually painted on: the first
+ *  opaque ancestor, since the card itself is usually transparent. */
+function effectiveBackground(element) {
+  for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
+    const color = resolveColor(getComputedStyle(node).backgroundColor);
+    if (color && color.a === 1) return color;
+  }
+  return resolveColor(getComputedStyle(document.body).backgroundColor);
+}
+
+/** Paints the authored preview color if it is legible here, otherwise falls back
+ *  to the card's theme ink. */
+function applyPreviewInk(label) {
+  const authored = label.dataset.previewColor;
+  if (!authored) {
+    label.style.color = "";
+    return;
+  }
+  const ink = resolveColor(authored);
+  const background = effectiveBackground(label);
+  label.style.color = previewInkIsLegible(ink, background) ? authored : "";
+}
+
+// On the "System" setting no attribute changes when the OS flips to dark, so
+// nothing above would fire — but the palette underneath the cards has changed
+// completely. Without this the gallery keeps light-theme decisions on a dark
+// surface, which is the exact bug, just reached by the more common route.
+window
+  .matchMedia("(prefers-color-scheme: dark)")
+  .addEventListener("change", () => refreshStyleCardPreviews());
+
+/** Re-decides every card's preview color. The cards are built once per document,
+ *  but the surface under them changes with the theme, and a decision made against
+ *  the light palette is not valid against the dark one. */
+function refreshStyleCardPreviews() {
+  for (const label of document.querySelectorAll(".style-card-name[data-preview-color]")) {
+    applyPreviewInk(label);
+  }
+}
+
 function applyStyleCardPreview(label, name) {
   if (!doc || typeof doc.stylePreview !== "function") return;
   let preview;
@@ -447,9 +515,18 @@ function applyStyleCardPreview(label, name) {
   label.style.fontWeight = preview.bold ? "700" : "450";
   label.style.fontStyle = preview.italic ? "italic" : "normal";
   label.style.textDecoration = preview.underline ? "underline" : "none";
-  // Explicit RGB colors preview as authored; automatic/theme colors resolve to
-  // an empty string and inherit the card's theme-aware ink (light/dark safe).
-  label.style.color = preview.color || "";
+  // Explicit RGB colors preview as authored — but only when they are actually
+  // legible on the card. Automatic/theme colors resolve to an empty string and
+  // inherit the card's theme-aware ink.
+  //
+  // A document's colors are absolute and the chrome's are not. Word's built-in
+  // Heading 1 is #2F5496, which sits at about 1.7:1 on the dark theme's surface:
+  // the label was painted, correctly, in a color nobody could see. Word never has
+  // to solve this because its gallery is always light. Ours follows the theme, so
+  // the pairing has to be judged every time it changes — hence the authored value
+  // is kept on the element and re-decided in `refreshStyleCardPreviews`.
+  label.dataset.previewColor = preview.color || "";
+  applyPreviewInk(label);
   const align = preview.alignment;
   label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
 }
@@ -2577,6 +2654,13 @@ async function boot() {
   const demo = params.get("demo");
   if (params.get("fixture") === "rich") {
     await loadStartupDocument("./demo.docx", "opendoc-demo.docx");
+  } else if (params.get("fixture") === "styled") {
+    // A document whose styles carry EXPLICIT colors — Word's own built-in
+    // #2F5496 headings plus a near-black body — because no other fixture does.
+    // Every shipped sample leaves style colors automatic, which is why the
+    // Styles gallery could paint an unreadable label on the dark theme and every
+    // test still passed.
+    await loadStartupDocument("./styled.docx", "styled.docx");
   } else if (params.get("fixture") === "float") {
     // A document with a top-level floating image, for the object move/wrap e2e
     // (no shipped sample doc contains a float). Generated by the
@@ -3144,7 +3228,13 @@ async function renderAll() {
 
     const wrap = document.createElement("div");
     wrap.className = "page-wrap";
-    wrap.style.width = `${wTwip * cssPerTwip}px`;
+    const pageWidthPx = wTwip * cssPerTwip;
+    wrap.style.width = `${pageWidthPx}px`;
+    // Publish the sheet's rendered width so the stylesheet can size the review
+    // gutter against the space that is ACTUALLY spare. CSS cannot know this —
+    // it depends on paper size and zoom — and a gutter reserved from space that
+    // does not exist pushes the page off the side of the window (docs/64).
+    if (i === 0) viewportEl.style.setProperty("--page-width", `${pageWidthPx}px`);
     wrap.style.height = `${hTwip * cssPerTwip}px`;
 
     // A transparent overlay above the canvas holds the caret/selection we draw
@@ -15118,6 +15208,9 @@ function applySettings() {
   if (settings.theme === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", settings.theme);
   root.style.setProperty("--accent", settings.accent);
+  // The gallery is built per document, but its legibility decisions were made
+  // against whatever palette was live at the time.
+  refreshStyleCardPreviews();
 
   for (const b of themeSeg.querySelectorAll("button")) {
     const checked = b.dataset.theme === settings.theme;
