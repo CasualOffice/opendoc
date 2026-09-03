@@ -283,7 +283,18 @@ impl<'a> LayoutSnapshot<'a> {
             .iter()
             .find(|s| s.offset == pos.offset)
             .map_or_else(|| nearest_stop(&stops, lb.left).x, |s| s.x);
-        let rect = Rect::new(Point::new(x, lb.top), Size::new(Twip::ZERO, lb.line.height));
+        // Ascent + descent, NOT the full line height. `height` is
+        // `ascent + descent + leading`, so a caret built from it grows with the
+        // paragraph's line spacing while the text does not: at double spacing the
+        // caret measured twice the height of the glyphs it sits in, starting well
+        // above the tallest ascender and ending well below the deepest descender.
+        // Word and Docs draw the caret over the text's own vertical extent and
+        // leave the leading alone, because the caret is telling you where the
+        // GLYPHS will go, not how far apart the lines are.
+        let rect = Rect::new(
+            Point::new(x, lb.top),
+            Size::new(Twip::ZERO, lb.line.ascent + lb.line.descent),
+        );
         Some((lb.page, rect))
     }
 
@@ -951,6 +962,19 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
 
     if stops.is_empty() {
         // An empty line (e.g. an empty paragraph) still has one caret slot.
+        //
+        // KNOWN DEFECT, not fixed here: `left` is the content box's leading edge,
+        // so it discards the alignment the paragraph actually has. Press Enter
+        // after a centered title and the caret parks at the left margin while the
+        // text you type appears in the middle of the page — measured at 75.6px
+        // versus glyphs landing near 355px on a Letter body.
+        //
+        // It cannot be repaired from here: an empty line carries no runs, so the
+        // aligned origin the shaper resolved is not present in the galley at all
+        // (an earlier attempt to read `runs.first().origin.x` was a silent no-op
+        // for exactly that reason). The fix belongs in the shaper — either emit a
+        // zero-glyph run at the aligned origin for an empty line, or carry the
+        // line's resolved start on `Line` — and is tracked as such.
         stops.push(CaretStop {
             x: left,
             offset: line.range.start.offset,
