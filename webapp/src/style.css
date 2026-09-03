@@ -4407,7 +4407,33 @@ body.is-format-painting .page-wrap * {
    in the reserved margin — the same spatial layout as before, now in ONE scroll
    context. (Toggled by JS: `#viewport.has-review-sidebar`.) */
 .viewport.has-review-sidebar .pages {
-  padding-right: 364px; /* 340 comment column + 12 gutter + 12 breathing room */
+  /* Reserve the comment column's width — but only out of space that exists.
+     `.pages` is `width: max-content`, so a fixed reservation is ADDED to the
+     sheet's own width rather than taken out of the window: 364px of gutter plus
+     an 816px Letter sheet plus the 55px rail needs a 1235px window, and the
+     first step-down below was at 860px. Every window between those two numbers
+     rendered the page hanging off the right edge, with the comment column —
+     absolutely positioned inside this same box — carried off-screen with it.
+     The whole band is common laptop territory, which is why this showed up as
+     "the layout does not fit in suggesting mode".
+
+     `--page-width` is published by the renderer because the sheet's width is a
+     function of paper size and zoom, neither of which a media query can see.
+     The fallback is a 100% Letter sheet, so the reservation degrades to the old
+     behaviour rather than to zero if it is ever missing. */
+  padding-right: clamp(
+    0px,
+    calc(100% - var(--page-width, 816px) - 12px),
+    364px
+  );
+}
+
+/* The column narrows with the gutter it lives in, down to a floor below which it
+   stops being readable; past that it simply overlaps the sheet, which is what
+   Docs does at narrow widths and is strictly better than being off-screen. */
+.viewport.has-review-sidebar .review-sidebar {
+  width: clamp(240px, calc(100% - var(--page-width, 816px) - 24px), 340px);
+  min-width: 0;
 }
 
 /* The gutter follows the column's own rungs (see the two media queries beside
