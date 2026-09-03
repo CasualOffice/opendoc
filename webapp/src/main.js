@@ -3925,51 +3925,102 @@ function reflectShapeFormatState() {
 let objectContextBarEl = null;
 let objectInspectorEl = null;
 
+/** The object the inspector's fields currently describe. It is what tells a
+ *  repaint of the SAME object (where a field the user is typing in must be left
+ *  alone) apart from a move to a DIFFERENT one (where leaving the old numbers is
+ *  the data-loss defect: Apply then wrote one object's geometry onto another). */
+let objectInspectorNode = null;
+
+/** Fills the inspector from the model's live geometry for the selected object.
+ *
+ *  This runs on every repaint while the panel is open (docs/104 HF-057). It used
+ *  to run only on the opening call, so a drag-resize left the panel showing the
+ *  pre-drag numbers and the next Apply — or a nudge — put the object back where
+ *  it had been; and selecting a second object left the first one's size, alt text
+ *  and wrap in the fields, aimed at the new object.
+ *
+ *  A field the user is mid-edit in is not overwritten, because typing "3.2" and
+ *  having the caret jump is its own defect — but that courtesy stops at the
+ *  object boundary: when the panel switches objects every field is rewritten,
+ *  focused or not, because a stale value there is a wrong write, not a nuisance. */
+function reflectObjectInspector() {
+  if (!objectInspectorEl || !doc || !objectSelection) return;
+  const rect = doc.objectRect(objectSelection.node);
+  if (rect.length < 5) return;
+  const sameObject = objectInspectorNode === objectSelection.node;
+  objectInspectorNode = objectSelection.node;
+  // `value` writes are skipped for the focused control only while the panel is
+  // still describing the same object.
+  const setValue = (element, value) => {
+    if (!element) return;
+    if (sameObject && element === document.activeElement) return;
+    element.value = value;
+  };
+  const inches = (twips) => String(Math.round(twips / TWIPS_PER_INCH * 100) / 100);
+  setValue(objectInspectorEl.querySelector("[data-object-prop=width]"), inches(rect[3]));
+  setValue(objectInspectorEl.querySelector("[data-object-prop=height]"), inches(rect[4]));
+  setValue(objectInspectorEl.querySelector("[data-object-prop=left]"), inches(rect[1]));
+  setValue(objectInspectorEl.querySelector("[data-object-prop=top]"), inches(rect[2]));
+  objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
+  const altField = objectInspectorEl.querySelector("[data-object-inspector-alt]");
+  altField.hidden = !objectSelection.canAltText;
+  if (objectSelection.canAltText) setValue(altField.querySelector("input"), doc.objectDescr(objectSelection.node) ?? "");
+  const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
+  wrapField.hidden = !objectSelection.canWrap;
+  if (objectSelection.canWrap) setValue(wrapField.querySelector("select"), doc.objectWrap(objectSelection.ref.root) || "square");
+  const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
+  appearance.hidden = objectSelection.kind !== "shape" || (!objectSelection.canFill && !objectSelection.canStroke);
+  appearance.querySelector("[data-object-inspector-fill]").hidden = !objectSelection.canFill;
+  appearance.querySelector("[data-object-inspector-stroke]").hidden = !objectSelection.canStroke;
+  const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
+  bodyField.hidden = objectSelection.kind !== "textbox";
+  if (objectSelection.kind === "textbox" && typeof doc.textBoxBodyProperties === "function") {
+    try {
+      const raw = doc.textBoxBodyProperties(objectSelection.node);
+      const props = raw ? JSON.parse(raw) : null;
+      if (props) {
+        const insets = props.insets ?? {};
+        for (const side of ["left", "top", "right", "bottom"]) {
+          const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
+          if (input) setValue(input, String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100));
+        }
+        setValue(bodyField.querySelector("[data-object-textbox-anchor]"), props.vertical_anchor ?? "top");
+        setValue(bodyField.querySelector("[data-object-textbox-h-overflow]"), props.horizontal_overflow ?? "overflow");
+        setValue(bodyField.querySelector("[data-object-textbox-v-overflow]"), props.vertical_overflow ?? "overflow");
+        setValue(bodyField.querySelector("[data-object-textbox-autofit]"), props.auto_fit?.mode ?? "none");
+      }
+    } catch {
+      // A malformed/unsupported payload fails closed; authored data is not overwritten.
+    }
+  }
+}
+
 function toggleObjectInspector(open) {
   if (!objectInspectorEl) return;
   const show = open ?? objectInspectorEl.hidden;
-  if (show && objectSelection && doc) {
-    const rect = doc.objectRect(objectSelection.node);
-    if (rect.length >= 5) {
-      objectInspectorEl.querySelector("[data-object-prop=width]").value = String(Math.round(rect[3] / TWIPS_PER_INCH * 100) / 100);
-      objectInspectorEl.querySelector("[data-object-prop=height]").value = String(Math.round(rect[4] / TWIPS_PER_INCH * 100) / 100);
-      objectInspectorEl.querySelector("[data-object-prop=left]").value = String(Math.round(rect[1] / TWIPS_PER_INCH * 100) / 100);
-      objectInspectorEl.querySelector("[data-object-prop=top]").value = String(Math.round(rect[2] / TWIPS_PER_INCH * 100) / 100);
-      objectInspectorEl.querySelector("[data-object-inspector-kind]").textContent = OBJECT_LABELS[objectSelection.kind] ?? "Object";
-      const altField = objectInspectorEl.querySelector("[data-object-inspector-alt]");
-      altField.hidden = !objectSelection.canAltText;
-      if (objectSelection.canAltText) altField.querySelector("input").value = doc.objectDescr(objectSelection.node) ?? "";
-      const wrapField = objectInspectorEl.querySelector("[data-object-inspector-wrap]");
-      wrapField.hidden = !objectSelection.canWrap;
-      if (objectSelection.canWrap) wrapField.querySelector("select").value = doc.objectWrap(objectSelection.ref.root) || "square";
-      const appearance = objectInspectorEl.querySelector("[data-object-inspector-appearance]");
-      appearance.hidden = objectSelection.kind !== "shape" || (!objectSelection.canFill && !objectSelection.canStroke);
-      appearance.querySelector("[data-object-inspector-fill]").hidden = !objectSelection.canFill;
-      appearance.querySelector("[data-object-inspector-stroke]").hidden = !objectSelection.canStroke;
-      const bodyField = objectInspectorEl.querySelector("[data-object-inspector-textbox]");
-      bodyField.hidden = objectSelection.kind !== "textbox";
-      if (objectSelection.kind === "textbox" && typeof doc.textBoxBodyProperties === "function") {
-        try {
-          const raw = doc.textBoxBodyProperties(objectSelection.node);
-          const props = raw ? JSON.parse(raw) : null;
-          if (props) {
-            const insets = props.insets ?? {};
-            for (const side of ["left", "top", "right", "bottom"]) {
-              const input = bodyField.querySelector(`[data-object-textbox-inset=${side}]`);
-              if (input) input.value = String(Math.round(Number(insets[`${side}Emu`] ?? 0) / 914400 * 100) / 100);
-            }
-            bodyField.querySelector("[data-object-textbox-anchor]").value = props.vertical_anchor ?? "top";
-            bodyField.querySelector("[data-object-textbox-h-overflow]").value = props.horizontal_overflow ?? "overflow";
-            bodyField.querySelector("[data-object-textbox-v-overflow]").value = props.vertical_overflow ?? "overflow";
-            bodyField.querySelector("[data-object-textbox-autofit]").value = props.auto_fit?.mode ?? "none";
-          }
-        } catch {
-          // A malformed/unsupported payload fails closed; authored data is not overwritten.
-        }
-      }
-    }
+  if (show) {
+    // Opening always re-reads the model, even for the object the fields already
+    // name: what the panel held may pre-date a drag, an undo or an engine edit.
+    objectInspectorNode = null;
+    reflectObjectInspector();
+  } else {
+    objectInspectorNode = null;
   }
   objectInspectorEl.hidden = !show;
+}
+
+/** Fail-closed precondition for every Apply button in the inspector: the numbers
+ *  in the fields must belong to the object that is selected now. `reflectObject-
+ *  Inspector` keeps that true on every repaint, so this only fires if some path
+ *  changed the selection without one — in which case applying would write the
+ *  previous object's geometry onto this one (docs/104 HF-057). It re-reads the
+ *  model and refuses, rather than silently doing the wrong write or nothing. */
+function objectInspectorMatchesSelection() {
+  if (!objectSelection) return false;
+  if (objectInspectorNode === objectSelection.node) return true;
+  reflectObjectInspector();
+  setStatus("Object properties now show the selected object — check the values, then apply", "error");
+  return false;
 }
 
 function ensureObjectInspector() {
@@ -3983,7 +4034,7 @@ function ensureObjectInspector() {
     <div class="panel-body properties-panel-body"><p class="properties-panel-intro">Exact model geometry. Changes apply as one undoable resize.</p><fieldset class="dialog-group property-section"><legend>Position</legend><label class="dialog-field">Left<span class="number-control"><input data-object-prop="left" type="number" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top<span class="number-control"><input data-object-prop="top" type="number" step="0.01" /><span>in</span></span></label></fieldset><fieldset class="dialog-group property-section"><legend>Size</legend><label class="dialog-field">Width<span class="number-control"><input data-object-prop="width" type="number" min="0.1" step="0.01" /><span>in</span></span></label><label class="dialog-field">Height<span class="number-control"><input data-object-prop="height" type="number" min="0.1" step="0.01" /><span>in</span></span></label><button type="button" class="dialog-button dialog-button-primary" data-object-inspector-apply>Apply geometry</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-wrap hidden><legend>Text wrapping</legend><label class="dialog-field">Wrap<select data-object-inspector-wrap-select><option value="square">Square</option><option value="tight">Tight</option><option value="through">Through</option><option value="topAndBottom">Top &amp; bottom</option><option value="behind">Behind text</option><option value="front">In front of text</option></select></label><button type="button" class="dialog-button" data-object-inspector-wrap-apply>Apply wrap</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-textbox hidden><legend>Text box body</legend><div class="property-grid-2"><label class="dialog-field">Left inset<span class="number-control"><input data-object-textbox-inset="left" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Right inset<span class="number-control"><input data-object-textbox-inset="right" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Top inset<span class="number-control"><input data-object-textbox-inset="top" type="number" min="0" step="0.01" /><span>in</span></span></label><label class="dialog-field">Bottom inset<span class="number-control"><input data-object-textbox-inset="bottom" type="number" min="0" step="0.01" /><span>in</span></span></label></div><label class="dialog-field">Vertical alignment<select data-object-textbox-anchor><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label><label class="dialog-field">Horizontal overflow<select data-object-textbox-h-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option></select></label><label class="dialog-field">Vertical overflow<select data-object-textbox-v-overflow><option value="overflow">Overflow</option><option value="clip">Clip</option><option value="ellipsis">Ellipsis</option></select></label><label class="dialog-field">Autofit<select data-object-textbox-autofit><option value="none">Fixed shape</option><option value="shape">Grow shape to fit</option><option value="normal">Scale text</option></select></label><button type="button" class="dialog-button" data-object-inspector-textbox-apply>Apply text box body</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-alt hidden><legend>Accessibility</legend><label class="dialog-field">Description<input data-object-inspector-alt-input type="text" maxlength="255" placeholder="Describe this object" /></label><button type="button" class="dialog-button" data-object-inspector-alt-apply>Apply description</button></fieldset><fieldset class="dialog-group property-section" data-object-inspector-appearance hidden><legend>Appearance</legend><button type="button" class="dialog-button" data-object-inspector-fill>Shape fill</button><button type="button" class="dialog-button" data-object-inspector-stroke>Shape outline</button></fieldset></div>`;
   objectInspectorEl.querySelector(".panel-close").addEventListener("click", () => toggleObjectInspector(false));
   objectInspectorEl.querySelector("[data-object-inspector-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canResize) return;
+    if (!doc || !objectSelection?.canResize || !objectInspectorMatchesSelection()) return;
     const rect = doc.objectRect(objectSelection.node);
     const width = Number(objectInspectorEl.querySelector("[data-object-prop=width]").value);
     const height = Number(objectInspectorEl.querySelector("[data-object-prop=height]").value);
@@ -3993,12 +4044,13 @@ function ensureObjectInspector() {
     runEdit(() => doc.resizeObject(objectSelection.ref.root, left * TWIPS_PER_INCH * 635, top * TWIPS_PER_INCH * 635, width * TWIPS_PER_INCH * 635, height * TWIPS_PER_INCH * 635), { gate: true });
   });
   objectInspectorEl.querySelector("[data-object-inspector-wrap-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canWrap) return;
+    if (!doc || !objectSelection?.canWrap || !objectInspectorMatchesSelection()) return;
     const mode = objectInspectorEl.querySelector("[data-object-inspector-wrap-select]").value;
     runEdit(() => doc.setObjectWrap(objectSelection.ref.root, mode), { gate: true });
   });
   objectInspectorEl.querySelector("[data-object-inspector-textbox-apply]").addEventListener("click", () => {
     if (!doc || objectSelection?.kind !== "textbox" || typeof doc.textBoxBodyProperties !== "function" || typeof doc.setTextBoxBodyProperties !== "function") return;
+    if (!objectInspectorMatchesSelection()) return;
     let props;
     try { props = JSON.parse(doc.textBoxBodyProperties(objectSelection.node)); } catch { return; }
     if (!props?.insets) return;
@@ -4023,7 +4075,7 @@ function ensureObjectInspector() {
     runEdit(() => doc.setTextBoxBodyProperties(objectSelection.node, JSON.stringify(props)), { gate: true });
   });
   objectInspectorEl.querySelector("[data-object-inspector-alt-apply]").addEventListener("click", () => {
-    if (!doc || !objectSelection?.canAltText) return;
+    if (!doc || !objectSelection?.canAltText || !objectInspectorMatchesSelection()) return;
     const value = objectInspectorEl.querySelector("[data-object-inspector-alt-input]").value.trim();
     runEdit(() => doc.setObjectDescr(objectSelection.node, value || null), { gate: true });
   });
@@ -4055,7 +4107,6 @@ function updateObjectContextBar() {
     objectContextBarEl.hidden = true;
     return;
   }
-  const { rect: pageRect, sx, sy } = scaleOf(page);
   const label = OBJECT_LABELS[objectSelection.kind] ?? "Object";
   objectContextBarEl.replaceChildren();
   const strong = document.createElement("strong");
@@ -4130,12 +4181,60 @@ function updateObjectContextBar() {
     objectContextBarEl.appendChild(actions);
   }
   objectContextBarEl.hidden = false;
-  // Position just above the object's top-left, clamped into the viewport.
-  const left = pageRect.left + rect[1] * sx;
-  const top = pageRect.top + rect[2] * sy - objectContextBarEl.offsetHeight - 8;
-  objectContextBarEl.style.left = `${Math.max(8, left)}px`;
-  objectContextBarEl.style.top = `${Math.max(8, top)}px`;
+  positionObjectContextBar();
+  // The panel is a live view of the selected object, so it is re-read here —
+  // this runs on every repaint, which is what makes a drag-resize, a nudge and a
+  // change of selection all show up in the fields (docs/104 HF-057).
+  if (objectInspectorEl && !objectInspectorEl.hidden) reflectObjectInspector();
 }
+
+/** Puts the object action bar just above the object it acts on, and takes it off
+ *  screen when that object is not on screen.
+ *
+ *  The bar is body-level with fixed viewport coordinates, so nothing about a
+ *  scroll moves it on its own: it used to stay parked at its original position
+ *  over unrelated paragraphs or the ribbon after the object had scrolled away —
+ *  with a live Delete button still aimed at an object the user could no longer
+ *  see (docs/104 HF-058). Separated from `updateObjectContextBar` so a scroll
+ *  only re-measures; it never rebuilds the bar's contents. */
+function positionObjectContextBar() {
+  if (!objectContextBarEl || !doc) return;
+  if (!objectSelection || objectSelection.mode !== "selected") {
+    objectContextBarEl.hidden = true;
+    return;
+  }
+  const rect = doc.objectRect(objectSelection.node); // [page, x, y, w, h] twips
+  const page = rect.length >= 5 ? pages[rect[0] - 1] : null;
+  if (!page) {
+    objectContextBarEl.hidden = true;
+    return;
+  }
+  const { rect: pageRect, sx, sy } = scaleOf(page);
+  const objectLeft = pageRect.left + rect[1] * sx;
+  const objectTop = pageRect.top + rect[2] * sy;
+  const objectBottom = objectTop + rect[4] * sy;
+  const view = viewportEl.getBoundingClientRect();
+  if (objectBottom <= view.top || objectTop >= view.bottom) {
+    objectContextBarEl.hidden = true; // the object is scrolled out of the page view
+    return;
+  }
+  objectContextBarEl.hidden = false; // must be visible to be measured
+  const height = objectContextBarEl.offsetHeight;
+  const top = objectTop - height - 8;
+  objectContextBarEl.style.left = `${Math.max(8, objectLeft)}px`;
+  // Clamp into the scrolling page view rather than the window, so an object at
+  // the top of the view does not push the bar up behind the ribbon.
+  objectContextBarEl.style.top =
+    `${Math.round(Math.max(view.top + 8, Math.min(top, view.bottom - height - 8)))}px`;
+}
+
+// The five viewport scroll listeners never touched the object bar, and the page
+// IntersectionObserver never calls drawSelection, so scrolling left it behind.
+// Window scroll and resize matter too: the whole shell can move under a bar that
+// is positioned in viewport coordinates.
+viewportEl.addEventListener("scroll", positionObjectContextBar, { passive: true });
+window.addEventListener("scroll", positionObjectContextBar, { passive: true });
+window.addEventListener("resize", positionObjectContextBar);
 
 /** Selects an object as a unit (docs/85 §4.1). Keeps `selection` as a caret at
  *  the object's surrounding-text anchor so the two-step Escape can return to it.
@@ -6287,11 +6386,27 @@ function buildContextCommands(context) {
   const inTable = !!context.table;
   const commands = [];
 
-  // 1 — Clipboard: the universal primary actions, with leading icons.
+  // 1 — The universal primary actions: history, then clipboard, in the order
+  // every text field on the platform offers them.
+  //
+  // Membership is READ from the command's own `contextMenu: true` declaration
+  // rather than hand-picked here. Seven commands declared the flag and this
+  // function looked at none of them, so "Paste without formatting" — a top-five
+  // action in both Word and Docs — and "Select all" were declared for the
+  // right-click menu and absent from it (docs/104 HF-076). A capability that is
+  // reachable from one surface only is this repo's recurring defect; the cure is
+  // one declaration feeding every surface instead of three hand-wired copies.
+  const CONTEXT_MENU_ICONS = { "edit.cut": "cut", "edit.copy": "copy", "edit.paste": "paste" };
   commands.push(
-    pick("edit.cut", { icon: "cut", group: "clipboard" }),
-    pick("edit.copy", { icon: "copy", group: "clipboard" }),
-    pick("edit.paste", { icon: "paste", group: "clipboard" }),
+    ...[...registry.values()]
+      .filter((command) => command.contextMenu)
+      .map((command) => ({
+        ...command,
+        icon: CONTEXT_MENU_ICONS[command.id],
+        // The palette's own grouping decides the divider: "Edit" (undo/redo)
+        // and "Clipboard" become two blocks, as in the platform's text menus.
+        group: command.group === "Clipboard" ? "clipboard" : "history",
+      })),
   );
 
   // 2 — Review decisions: only over a tracked change, kept near the top since
@@ -6418,6 +6533,17 @@ function buildContextCommands(context) {
       enabled: structuralEnabled,
       disabledReason: structuralReason,
       run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")),
+    },
+    {
+      // The engine has had checklists as long as the ribbon button has, but the
+      // list submenu offered only Bulleted and Numbered — a user browsing the
+      // menus concluded the editor had none (docs/104 HF-076).
+      id: "paragraph.list.checklist",
+      label: context.listKind === "checklist" ? "Remove checklist" : "Checklist",
+      group: "list",
+      enabled: structuralEnabled,
+      disabledReason: structuralReason,
+      run: () => toggleChecklistCommand(),
     },
     {
       id: "paragraph.restart",
@@ -8165,17 +8291,23 @@ tableStyleMenu.addEventListener("click", (event) => {
   runEdit(() => doc.applyTableStyle(selection.focus.node, choice.dataset.tableStyle), { gate: true });
 });
 
-// mousedown (not click) so a button never steals the selection focus mid-edit.
+/** Wires a chrome control to `handler` — the seam 44 command call sites and
+ *  every popover trigger go through.
+ *
+ *  The mousedown listener exists ONLY for its preventDefault: that is what stops
+ *  the button taking focus and collapsing the document selection the command is
+ *  about to act on. The command itself runs on `click`, i.e. on mouse-UP over
+ *  the control, which is what makes a mis-press abortable — press "Clear direct
+ *  formatting" or "Delete row", drag off the button, release, and nothing
+ *  happens, exactly as in Word and Docs. Running it from mousedown, as this used
+ *  to, gave the user no way out of a slip (WCAG 2.5.2 Pointer Cancellation,
+ *  Level A — docs/104 HF-069).
+ *
+ *  A keyboard activation arrives as a `click` with `detail === 0` and no
+ *  preceding mouse event, so both routes are the same one listener. */
 function onButton(el, handler) {
-  el.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    handler(e);
-  });
-  // Native buttons activated from the keyboard emit `click` without a preceding
-  // mouse event (`detail === 0`). Preserve the selection on pointer activation
-  // while keeping every command reachable with Enter/Space.
+  el.addEventListener("mousedown", (e) => e.preventDefault());
   el.addEventListener("click", (e) => {
-    if (e.detail !== 0) return;
     e.preventDefault();
     handler(e);
   });
@@ -8531,15 +8663,23 @@ function openPopover(p, { keyboard = false } = {}) {
   if (keyboard) focusFirstIn(p.menu);
 }
 
-/** Focuses the first visible, enabled control inside `container`. */
+// A control that reports itself as the current choice. Focus belongs on it
+// rather than on the first row: opening the spacing menu should land on the
+// spacing this paragraph already has, the way a native menu opens on its checked
+// item, so the arrow keys start from where the user is (docs/104 HF-070).
+const CHECKED_SELECTOR = '[aria-checked="true"], [aria-pressed="true"], [aria-selected="true"]';
+
+/** Focuses the checked control inside `container`, or the first visible, enabled
+ *  one when nothing is checked. */
 function focusFirstIn(container) {
-  const first = [
+  const focusable = [
     ...container.querySelectorAll(
       "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
     ),
-  ].find((element) => element.getClientRects().length > 0);
-  first?.focus({ preventScroll: true });
-  return first ?? null;
+  ].filter((element) => element.getClientRects().length > 0);
+  const target = focusable.find((element) => element.matches(CHECKED_SELECTOR)) ?? focusable[0];
+  target?.focus({ preventScroll: true });
+  return target ?? null;
 }
 
 function closePopover(p) {
@@ -8581,10 +8721,10 @@ if (stylesMoreBtn && stylesMorePanel) {
       stylesMorePanel.querySelector(".style-card");
     card?.focus();
   };
-  stylesMoreBtn.addEventListener("mousedown", focusIntoMorePanel);
-  stylesMoreBtn.addEventListener("click", (e) => {
-    if (e.detail === 0) focusIntoMorePanel();
-  });
+  // Registered after `registerPopover`, so on the same click it runs after the
+  // popover has opened. (It used to hang off mousedown, which is where the
+  // popover opened before commands moved to mouse-up — docs/104 HF-069.)
+  stylesMoreBtn.addEventListener("click", focusIntoMorePanel);
 }
 
 document.addEventListener("mousedown", (e) => {
@@ -11093,6 +11233,12 @@ let cmdSel = 0;
 
 /** Shared command descriptors for search and contextual surfaces. Dynamic
  * entries are rebuilt so document styles and availability never go stale. */
+/** Whether the caret sits in a numbered list — the precondition the Restart and
+ *  Continue numbering controls share, on every surface that offers them. */
+function numberedListAtCaret() {
+  return !!doc && !!selection && doc.listStyleAt(selection.focus.node) === "numbered";
+}
+
 function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
@@ -11206,8 +11352,11 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
     { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
     { id: "paragraph.list.checklist", label: "Checklist", group: "Paragraph", kw: "checklist checkbox todo task tick check box", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleChecklistCommand() },
-    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
-    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
+    // Restart/continue take the SAME predicate the ribbon buttons take
+    // (`updateToolbar`), so a row can never be live in the menu while the button
+    // for it is greyed — they are now on both surfaces (docs/104 HF-076).
+    { id: "paragraph.list.restart", label: "Restart numbering", group: "Paragraph", kw: "list restart 1", enabled: numberedListAtCaret(), disabledReason: "Place the caret in a numbered list", run: () => selection && runNodeEdit(() => doc.restartList(selection.focus.node)) },
+    { id: "paragraph.list.continue", label: "Continue numbering", group: "Paragraph", kw: "list continue resume", enabled: numberedListAtCaret() && doc.canContinueList(selection.focus.node), disabledReason: "There is no earlier numbered list to continue", run: () => selection && runNodeEdit(() => doc.continueList(selection.focus.node)) },
     { id: "paragraph.indent.increase", label: "Increase indent", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(360) },
     { id: "paragraph.indent.decrease", label: "Decrease indent", group: "Paragraph", kw: "outdent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => adjustIndentCommand(-360) },
     // Insert commands take their `enabled` from `insertCommandEnabled`, the same
@@ -11419,7 +11568,11 @@ const APP_MENU_SECTIONS = {
     ["format.case.upper", "format.case.lower", "format.case.title", "format.case.sentence", "format.case.toggle"],
     ["format.superscript", "format.subscript", "format.clear"],
     ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
-    ["paragraph.list.bullet", "paragraph.list.numbered"],
+    // Checklist, restart and continue existed on the ribbon and in the palette
+    // but in no menu, so browsing Format said the editor had no checklists at
+    // all (docs/104 HF-076).
+    ["paragraph.list.bullet", "paragraph.list.numbered", "paragraph.list.checklist"],
+    ["paragraph.list.restart", "paragraph.list.continue"],
     ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
     ["style.updateFromSelection", "style.createFromSelection"],
   ],
@@ -13925,7 +14078,7 @@ async function paste(event = null) {
   }
   try {
     let plain = "";
-    try { plain = await navigator.clipboard.readText(); } catch { /* html-only clipboard */ }
+    try { plain = await navigator.clipboard.readText(); } catch { /* html-only or image-only clipboard */ }
     if (navigator.clipboard.read) {
       const items = await navigator.clipboard.read();
       for (const item of items) {
@@ -13936,11 +14089,32 @@ async function paste(event = null) {
           return;
         }
       }
+      // Then an image. ⌘V is intercepted as a keydown, so this async path — not
+      // the native ClipboardEvent one — is what a screenshot paste actually
+      // reaches, and it had no image branch at all: ⌘V over a copied image did
+      // nothing and said nothing (docs/104 HF-059). HTML is tried first because
+      // a fragment copied from a web page carries BOTH an image and its markup,
+      // and Word and Docs paste the markup in that case; a screenshot carries
+      // only the bitmap. The insertable-format decision stays where it already
+      // lives, in `insertImageFromBlob`, so both paste paths refuse alike.
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith("image/"));
+        if (!imageType) continue;
+        await insertImageFromBlob(await item.getType(imageType));
+        return;
+      }
     }
-    await pasteText(plain);
+    if (plain) {
+      await pasteText(plain);
+      return;
+    }
+    // Nothing on the clipboard this editor can place. Saying so is the point:
+    // a command that looks live and quietly does nothing is indistinguishable
+    // from a broken editor.
+    setStatus("There is nothing on the clipboard to paste here", "error");
   } catch (err) {
     console.warn("paste failed:", err);
-    setStatus("Clipboard paste was blocked by the browser", "err");
+    setStatus("Clipboard paste was blocked by the browser", "error");
   }
 }
 
@@ -13954,10 +14128,18 @@ async function pasteAsText() {
   }
   try {
     const text = await navigator.clipboard.readText();
-    if (text) await pasteText(text);
+    if (text) {
+      await pasteText(text);
+      return;
+    }
+    // ⌘⇧V over an image-only clipboard has nothing to keep the text of. Say so
+    // rather than returning silently (docs/104 HF-059). The status kind is
+    // "error" — the two clipboard failures here used to pass "err", which is not
+    // a class the stylesheet defines, so they were reported in the plain style.
+    setStatus("There is no text on the clipboard to paste", "error");
   } catch (err) {
     console.warn("paste text failed:", err);
-    setStatus("Clipboard paste was blocked by the browser", "err");
+    setStatus("Clipboard paste was blocked by the browser", "error");
   }
 }
 
@@ -14172,7 +14354,18 @@ function smartQuoteFor(key, node, offset) {
   let previous = "";
   if (offset > 0) {
     try {
-      previous = doc.copyText(node, offset - 1, node, offset);
+      // Read the whole prefix and take its last code point. `offset` is an
+      // engine offset — a UTF-8 BYTE index — so `offset - 1` is only the
+      // preceding character when that character is ASCII. After "Müller",
+      // "café" or any Cyrillic/CJK word it lands INSIDE a multi-byte character;
+      // the engine's clamp then snaps it forward past `offset`, `copyText`
+      // returns "", and an empty prefix reads as start-of-paragraph — so every
+      // apostrophe typed after a non-ASCII letter came out as an opening quote
+      // (docs/104 HF-055). Never synthesize an engine offset in JS: `offset`
+      // itself is the caret the last EditResult reported, and 0 is a boundary by
+      // definition, so those are the only two this can name.
+      const prefix = doc.copyText(node, 0, node, offset);
+      previous = [...prefix].at(-1) ?? "";
     } catch {
       return key; // an engine that cannot read the position gets the literal key
     }
@@ -14679,6 +14872,12 @@ document.addEventListener("keydown", async (e) => {
   }
 });
 
+/** The viewer's package-admission limit, mirroring `max_input_bytes` in
+ *  `casual-doc-wasm` (64 MiB). Mirrored rather than imported because the engine
+ *  applies it inside `open(bytes)`, i.e. only once the whole file has already
+ *  been read; this is the pre-check that lets the editor say no first. */
+const MAX_OPEN_BYTES = 64 * 1024 * 1024;
+
 /** The one entry point for "open these bytes as the document" — the picker and
  *  the viewport drop both land here, which is why the unsaved-work question is
  *  asked here and nowhere else (docs/104 HF-002). Two paths asking the same
@@ -14694,11 +14893,36 @@ async function handleFile(file) {
   }
   // The open document lives in the wasm heap and nowhere else, so replacing it
   // is unrecoverable. Ask before, not after.
+  // The engine refuses anything over its package-admission limit, but it only
+  // gets to refuse AFTER the whole file has been read into memory. Checking the
+  // size the picker already told us is both faster and a message the user can
+  // act on ("this file is too big"), instead of a decode failure deep in open().
+  if (file.size > MAX_OPEN_BYTES) {
+    setStatus(
+      `${file.name} is ${Math.round(file.size / 1024 / 1024)} MB — the editor opens files up to 64 MB`,
+      "error",
+    );
+    return;
+  }
   if (!(await confirmDiscardIfEdited())) {
     setStatus("Open cancelled — your changes are still here");
     return;
   }
-  const buf = await file.arrayBuffer();
+  // Reading a file can fail for reasons that have nothing to do with its
+  // contents: it moved or was renamed since it was picked, the volume went away,
+  // permission was withdrawn. That rejection used to land on a discarded promise
+  // at both call sites, so a dropped file that could not be read did nothing at
+  // all — no status, no error, no clue (docs/104 HF-065). Reported here, at the
+  // one entry point both the picker and the drop go through, so neither caller
+  // can be the one that forgets.
+  let buf;
+  try {
+    buf = await file.arrayBuffer();
+  } catch (err) {
+    console.warn("file read failed:", err);
+    setStatus(`${file.name} could not be read — it may have moved or been renamed`, "error");
+    return;
+  }
   await openBytes(new Uint8Array(buf), file.name);
 }
 
@@ -14838,7 +15062,12 @@ viewportEl.addEventListener("dragover", () => viewportEl.classList.add("dragging
 viewportEl.addEventListener("dragleave", () => viewportEl.classList.remove("dragging"));
 viewportEl.addEventListener("drop", (e) => {
   viewportEl.classList.remove("dragging");
-  handleFile(e.dataTransfer?.files?.[0]);
+  // `handleFile` reports every failure it can name; this catch is for the ones
+  // it cannot, so a dropped file can never fail into silence (docs/104 HF-065).
+  handleFile(e.dataTransfer?.files?.[0]).catch((err) => {
+    console.error("open failed:", err);
+    setStatus("That file could not be opened", "error");
+  });
 });
 
 // ---- Settings: theme + accent + reviewer identity, persisted (OSS-customizable) ----

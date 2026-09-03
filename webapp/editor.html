@@ -23,6 +23,7 @@
     <link rel="preload" as="fetch" type="application/wasm" crossorigin href="./pkg/casual_doc_wasm_bg.wasm" />
   </head>
   <body>
+    <a class="skip-link" href="#pages">Skip to the document</a>
     <header class="bar">
       <div class="brand">
         <img class="brand-logo" src="./opendoc-mark.svg" alt="" width="24" height="24" />
@@ -180,7 +181,7 @@
           <button type="button" class="acc" data-accent="#d64562" style="--c:#d64562" title="Rose" aria-label="Rose"></button>
           <button type="button" class="acc" data-accent="#c88a1a" style="--c:#c88a1a" title="Amber" aria-label="Amber"></button>
           <label class="acc acc-custom" title="Custom color">
-            <input id="accentCustom" type="color" value="#3355c4" />
+            <input id="accentCustom" type="color" value="#3355c4" aria-label="Custom accent color" />
           </label>
         </div>
       </div>
@@ -653,7 +654,7 @@
           <button type="button" class="border-btn" data-cellborder="left" title="Left border" aria-pressed="false"><span class="bx"></span></button>
           <button type="button" class="border-btn" data-cellborder="right" title="Right border" aria-pressed="false"><span class="bx"></span></button>
         </div>
-        <label class="border-color" title="Border color"><input id="cellBorderColor" type="color" value="#000000" /></label>
+        <label class="border-color" title="Border color"><input id="cellBorderColor" type="color" value="#000000" aria-label="Cell border color" /></label>
       </div>
       <div class="menu-divider"></div>
       <div class="menu-heading">Table borders</div>
@@ -663,7 +664,7 @@
           <button type="button" class="chip-btn" data-tableborder="box">Box</button>
           <button type="button" class="chip-btn" data-tableborder="all">All</button>
         </div>
-        <label class="border-color" title="Table border color"><input id="tableBorderColor" type="color" value="#000000" /></label>
+        <label class="border-color" title="Table border color"><input id="tableBorderColor" type="color" value="#000000" aria-label="Table border color" /></label>
       </div>
     </div>
 

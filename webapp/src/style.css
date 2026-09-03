@@ -13,6 +13,30 @@
   border: 0;
 }
 
+/* WCAG 2.4.1 (Level A). Arriving on the page, or returning from the ribbon,
+   used to mean tabbing past Search, Save, Properties, Settings, eight menus,
+   five ribbon tabs and the whole Home band — roughly 150 controls — before
+   reaching the document (docs/104 HF-074). #pages is already tabindex=0, so it
+   is a real tab target for the link to hand over to. Off-screen until focused,
+   then placed over the chrome so it is visibly the first stop. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ---- Color contract (docs/104 theme T-08) ------------------------------------
    Colour is defined in exactly two kinds of place, and nowhere else:
 
