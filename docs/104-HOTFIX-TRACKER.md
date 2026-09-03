@@ -243,6 +243,57 @@ Still waiting on an owner decision, not on engineering:
 | HF-112 | flow_blocks recomputes the running galley height for every paragraph | perf | S | Internal audit | Fixed |
 | HF-113 | Every pointermove re-queries and materializes all page wrappers | perf | S | Internal audit | Open |
 
+## Behavioural audit — 2026-09-04
+
+Five parallel investigations of the areas reported as unusable, each required to
+MEASURE rather than describe, and to say plainly what it could not reproduce.
+Rows marked Fixed shipped in #516 / #517; the rest are open with a verified
+reproduction and the responsible `file:line` already identified.
+
+| ID | Finding | Area | Sev | Status |
+| --- | --- | --- | --- | --- |
+| HF-115 | The editor silently stops accepting input: an edit reports a caret position whose node the same edit removed, no caret paints, and every later keystroke is swallowed as a generic status. Reached by undo-after-insert-table, undo in Suggesting (x2), Accept all, Reject all | webapp | P0 | Fixed (#516) |
+| HF-116 | A row/column/table selection stays painted through typing, deleting, undo and arrow keys, so the screen claims a table is selected while the real selection is a caret in one cell | webapp | P2 | Fixed (#516) |
+| HF-117 | Objects are entirely mouse-gated: `traverseObjects` returns early unless an object is already selected, so nothing can make the first selection | webapp | P1 | Fixed (#516) |
+| HF-118 | No object command appears in the command palette, and Object properties exists on the floating bar and nowhere else | webapp | P2 | Fixed (#516) |
+| HF-119 | Resizing an object shows no live dimensions | webapp | P3 | Fixed (#516) |
+| HF-120 | The caret's height is the whole line box (`ascent + descent + leading`), so it grows with line spacing: 18.39px at single, 36.80px at double, on the same text | layout | P2 | Fixed (#517) |
+| HF-121 | An empty CENTERED or right-aligned paragraph parks the caret at the left margin while the text lands elsewhere (75.6px vs ~355px on a Letter body). Not repairable in the hit-test: an empty line carries no runs, so the aligned origin never reaches the galley — the shaper must emit a zero-glyph run at the aligned origin, or `Line` must carry its resolved start | layout | P2 | Open |
+| HF-122 | On a mixed-size line the caret takes the tallest run's height everywhere: 42.92px inside a 12pt run sharing a line with 28pt text, vs 18.39px on a uniform line. Needs per-run vertical metrics on `GlyphRun` | layout | P2 | Open |
+| HF-123 | Clicking past the last word of a soft-wrapped line, or pressing End there, teleports the caret to the start of the next line (660px left, one line down). `caret_start_line` has no affinity | layout | P2 | Open |
+| HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Open |
+| HF-125 | Enter inside a text box does nothing ("That edit isn't supported for this selection yet"): `split_paragraph` and `join_paragraphs` never recurse into a paragraph's inlines, unlike `find_paragraph_mut` | rust-core | P1 | Open |
+| HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Open |
+| HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
+| HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Open |
+| HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Open |
+| HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Open |
+| HF-131 | Paragraph-level formatting (style, list, indent, alignment, spacing) is refused rather than tracked in Suggesting mode; Word records `w:pPrChange` | wasm | P1 | Open |
+| HF-132 | The emoji picker offers 355 glyphs against ~1,900 in Word/Docs/Slack, and its search is near-useless: "smile" returns 3, "party" 1, "fire"/"check"/"star" 2 each. Gated on a bundle-size and font-coverage decision | webapp | P2 | Open (owner decision) |
+
+### Deliberately refuted
+
+Recorded so they are not "found" again. Each was measured, not assumed.
+
+- **Suggesting mode does not lose deleted text.** It is struck, kept in the model
+  and the sidebar card, and exported as `w:del`/`w:delText`; Reject-all restored
+  the demo byte-identically.
+- **The text selection highlight is correct** under type, delete, paste, cut,
+  undo, redo and rapid typing — before/after rect counts and areas measured on
+  every path. The "highlights everything" report was HF-116, a different
+  mechanism. Pinned green in `selection-integrity.spec.mjs`.
+- **The caret is correct for ordinary typing and Enter** in left-aligned text:
+  the typed glyph inks inside the caret's band and the caret advances by exactly
+  one advance.
+- **Enter in lists is already right** — an empty item outdents one level and the
+  outermost exits the list, verified at three nesting levels and mid-list;
+  Backspace at an item start outdents, then leaves, then merges up.
+- **No command mutates a document untracked in Suggesting mode.** A spread of
+  commands was probed; every untrackable one is blocked with a message.
+- **Object resize is genuinely good**: 8 engine-derived handles, pictures lock
+  aspect on a corner drag by default with Shift to free (text boxes inverse),
+  crop is direct-manipulation, and undo granularity is one action per operation.
+
 ## Cross-cutting themes
 
 Each theme below is one root cause behind several rows. Fixing the theme is cheaper and
