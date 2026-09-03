@@ -4455,6 +4455,27 @@ body.is-format-painting .page-wrap * {
   }
 }
 
+/* The live W x H bubble shown while an object is being resized. Anchored to the
+   preview's bottom-right, which is where the pointer already is on the most
+   common (SE) handle, and nudged inside the box so it never leaves the page. */
+.object-resize-readout {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  transform: translate(-4px, -4px);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  /* --accent-ink, not #ffffff: accent fills are read against the ink token, and
+     a literal here has no dark value by construction (tests/style_tokens). */
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .pages:focus {
   outline: none;
 }

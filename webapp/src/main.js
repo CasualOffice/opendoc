@@ -3929,7 +3929,33 @@ function updateObjectResize(event) {
   drag.preview.style.top = `${newY * sy}px`;
   drag.preview.style.width = `${newW * sx}px`;
   drag.preview.style.height = `${newH * sy}px`;
+  // Say what size you are dragging TO. The preview was an outline and nothing
+  // else, so resizing to a specific size meant releasing, opening the properties
+  // panel to read what you got, and correcting it there. Docs shows a W×H bubble
+  // during the drag and Word live-updates its Size box; this is the same promise
+  // in the place the eye already is.
+  updateObjectResizeReadout(drag, newW, newH);
   event.preventDefault();
+}
+
+/** Paints the live dimensions onto the resize preview, in inches to two places
+ *  because that is the unit the properties panel accepts — a readout in a unit
+ *  the user cannot then type back is decoration. Announced politely as well: the
+ *  bubble is meaningless to a screen reader, and resize is keyboard-reachable. */
+function updateObjectResizeReadout(drag, widthTwip, heightTwip) {
+  let readout = drag.readout;
+  if (!readout) {
+    readout = document.createElement("span");
+    readout.className = "object-resize-readout";
+    // Not a live region itself: it changes on every pointer move, and a live
+    // region here would flood the buffer. The committed size is announced once
+    // by `finishObjectResize`.
+    readout.setAttribute("aria-hidden", "true");
+    drag.preview.appendChild(readout);
+    drag.readout = readout;
+  }
+  const inches = (twip) => (twip / TWIPS_PER_INCH).toFixed(2);
+  readout.textContent = `${inches(widthTwip)} × ${inches(heightTwip)} in`;
 }
 
 /** Commits (or cancels) the resize on release through one engine geometry
@@ -4383,12 +4409,53 @@ function selectObject(node, kind, anchor, anchored = false, descriptor = null) {
   drawSelection();
 }
 
+/** The object context for whatever is selected right now.
+ *
+ *  `objectContextAtEvent` builds the same shape from a pointer hit, which is why
+ *  every object command used to need a mouse to exist. `objectSelection` already
+ *  carries the identity and the engine-declared capabilities, so this is a
+ *  reshape rather than a second source of truth — the capabilities are never
+ *  re-derived here, or they could disagree with what the bar offers. */
+function selectedObjectContext() {
+  if (!objectSelection) return null;
+  const { node, ref, kind, anchored, ...rest } = objectSelection;
+  return {
+    surface: "object",
+    node,
+    ref,
+    kind,
+    anchored,
+    ...Object.fromEntries(OBJECT_CAPABILITY_KEYS.map((key) => [key, rest[key] === true])),
+  };
+}
+
+/** Whether the document holds any floating object at all, which is what decides
+ *  if the "select next object" commands are offered rather than greyed. Asked of
+ *  the engine's own paint order so the answer cannot drift from what traversal
+ *  would actually land on. */
+function documentHasObjects() {
+  if (!doc) return false;
+  try {
+    const objects = JSON.parse(doc.objectOrder());
+    return Array.isArray(objects) && objects.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Moves the object selection `step` places through the document's objects, in
  *  the engine's own paint order, wrapping at both ends so the gesture never
  *  dead-ends. Reads the order fresh each time because an edit may have added or
  *  removed an object since the last keystroke. */
 function traverseObjects(step) {
-  if (!doc || !objectSelection) return;
+  // Deliberately NOT gated on an existing selection. It used to be, which made
+  // the whole object surface mouse-only: Tab cycles objects once one is
+  // selected, but nothing else selected one, so a keyboard user could not reach
+  // an image or a text box at all — while the comment beside the Tab handler
+  // claimed this was "the only way to reach an object without a pointer". The
+  // wrap-around below already handles "no current object" by starting at either
+  // end, so seeding a first selection needs no extra machinery.
+  if (!doc) return;
   let objects;
   try {
     objects = JSON.parse(doc.objectOrder());
@@ -4396,7 +4463,9 @@ function traverseObjects(step) {
     return;
   }
   if (!Array.isArray(objects) || objects.length === 0) return;
-  const current = objects.findIndex((entry) => entry.node === objectSelection.node);
+  const current = objectSelection
+    ? objects.findIndex((entry) => entry.node === objectSelection.node)
+    : -1;
   // An object that has vanished from the order (deleted, or scrolled out of a
   // layout that no longer places it) restarts from whichever end we moved toward.
   const next =
@@ -6843,6 +6912,24 @@ function buildObjectContextCommands(context) {
     });
   }
 
+  // Properties — Word's "Size and Position…", Docs' "All image options". It had
+  // exactly ONE route in the whole product: a button on the floating bar, which
+  // a keyboard user cannot reach because Tab is bound to object traversal while
+  // an object is selected. Adding it here puts it on the right-click menu and,
+  // through the palette flattening in `editorCommands`, on the palette too.
+  //
+  // Not gated on `mutationEnabled`: reading an object's exact geometry is useful
+  // in Viewing and Suggesting, and the panel's own Apply buttons already refuse
+  // the write.
+  commands.push({
+    id: "object.properties",
+    label: "Properties…",
+    group: "arrange",
+    icon: "tune",
+    enabled: true,
+    run: () => toggleObjectInspector(true),
+  });
+
   // Delete — the destructive action, kept in its own trailing group.
   if (context.canDelete) {
     commands.push({
@@ -7782,6 +7869,45 @@ function documentIsDirty() {
 
 /** Apply an EditResult: place the caret, repaint only the dirty pages (or rebuild
  *  on a page-count change), redraw the caret, and keep it in view. */
+/** Adopts the position an edit reports, or the nearest one that exists.
+ *
+ *  The engine's `EditResult` position was trusted unconditionally, and for undo,
+ *  redo and accept/reject-all it can name a node that the very same operation
+ *  removed. Nothing then painted a caret — `caretRect` returns an empty rect, so
+ *  `place()` bailed — and every following keystroke threw inside `runEdit`, which
+ *  turned it into a console warning and the generic status "That edit isn't
+ *  supported for this selection yet". The document was still intact and the
+ *  editor still looked alive; it simply ignored the keyboard until the user
+ *  happened to click. That is the worst failure shape available to a text
+ *  editor, and it is why this validates rather than trusts.
+ *
+ *  `caretRect` is the oracle because it is the same call the painter makes: if
+ *  it cannot place the caret, neither can the user. The fallback is the body's
+ *  first position, which the open path already relies on.
+ *
+ *  The engine should also not report a position it has just deleted; this is the
+ *  host-side belt, not a reason to leave that unfixed. */
+function adoptEditPosition(node, offset) {
+  const at = { anchor: { node, offset }, focus: { node, offset } };
+  try {
+    if (doc.caretRect(node, offset).length >= 5) return at;
+  } catch {
+    // fall through — an unplaceable position is exactly what we are guarding
+  }
+  try {
+    const fallback = doc.firstPosition();
+    const recovered = { node: fallback.node, offset: fallback.offset };
+    fallback.free?.();
+    if (doc.caretRect(recovered.node, recovered.offset).length >= 5) {
+      return { anchor: recovered, focus: recovered };
+    }
+  } catch {
+    // no recoverable position: keep the reported one rather than crashing, and
+    // let the caller repaint. Better a missing caret than a dead editor.
+  }
+  return at;
+}
+
 async function applyEditResult(res) {
   const node = res.node;
   const offset = res.offset;
@@ -7794,7 +7920,13 @@ async function applyEditResult(res) {
   // user's own action — never the untouched load-time seed, even if the two
   // positions coincide.
   implicitCaretAt = null;
-  selection = { anchor: { node, offset }, focus: { node, offset } };
+  selection = adoptEditPosition(node, offset);
+  // A content mutation invalidates a row/column/table selection the same way it
+  // invalidates an object selection. Without this the accent fill survives
+  // typing, deleting, undo and arrow keys, so the editor claims a whole table is
+  // selected while the real selection is a collapsed caret in one cell — Copy
+  // returns "" and Backspace removes a single character.
+  tableSelection = null;
   // The paste-options chip only ever means "redo the paste you just made,
   // differently" — it acts by undoing it. Once any other edit has landed, an
   // undo removes that edit instead, so the offer has expired. Retiring it here,
@@ -7926,6 +8058,10 @@ function navCaret(dir, extend) {
   if (!selection) return;
   if (objectCropSession) cancelCrop(); // arrow-navigating away discards the crop preview
   objectSelection = null; // moving the caret leaves any object selection
+  // ...and so does it leave a row/column/table selection. These two were written
+  // as one rule and only one of them was applied here, which is how arrowing out
+  // of a table left the whole table still painted as selected.
+  tableSelection = null;
   clearObjectStatus();
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
@@ -11610,6 +11746,55 @@ function editorCommands(context = { surface: "palette" }) {
       );
     cmds.push(...flatten(tableToolCommands(contextAt(selection.anchor)), ""));
   }
+  // Object commands, on the same terms. Everything a selected image, shape or
+  // text box can do lived on the floating bar and (mostly) the right-click menu
+  // and nowhere else: the palette had no object command at all, and "Object
+  // properties" had exactly one route in the entire product. A capability
+  // reachable from one surface is this repo's recurring defect, and tables were
+  // already fixed by exactly the flattening above.
+  if (objectSelection && objectSelection.mode === "selected") {
+    // Flattened the same way as the table rows above, because some object
+    // commands are submenus (Wrap text) and a palette entry whose `run` is a
+    // submenu is a dead row.
+    const flattenObject = (entries, trail) =>
+      entries.flatMap((entry) =>
+        entry.submenu
+          ? flattenObject(entry.submenu, trail ? `${trail} ${entry.label}` : entry.label)
+          : [{
+            id: entry.id,
+            label: trail ? `Object: ${trail} ${entry.label}` : `Object: ${entry.label}`,
+            group: "Object",
+            kw: `object image picture shape text box ${trail} ${entry.label}`.toLowerCase(),
+            enabled: entry.enabled,
+            disabledReason: entry.disabledReason,
+            run: entry.run,
+          }],
+      );
+    cmds.push(...flattenObject(buildObjectContextCommands(selectedObjectContext()), ""));
+  }
+  // Reaching an object at all is a command too, and it is the one that has to
+  // work with no object selected — otherwise every row above is unreachable
+  // without a mouse.
+  cmds.push(
+    {
+      id: "object.selectNext",
+      label: "Select next object",
+      group: "Object",
+      kw: "object image picture shape text box select next navigate keyboard",
+      enabled: documentHasObjects(),
+      disabledReason: "This document has no images, shapes or text boxes",
+      run: () => traverseObjects(1),
+    },
+    {
+      id: "object.selectPrevious",
+      label: "Select previous object",
+      group: "Object",
+      kw: "object image picture shape text box select previous navigate keyboard",
+      enabled: documentHasObjects(),
+      disabledReason: "This document has no images, shapes or text boxes",
+      run: () => traverseObjects(-1),
+    },
+  );
   return cmds.filter((command) => doc || command.noDoc);
 }
 
