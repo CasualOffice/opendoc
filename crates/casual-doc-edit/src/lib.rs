@@ -4800,7 +4800,79 @@ fn split_paragraph(
                     return Ok(true);
                 }
             }
+            // A text box hangs off a paragraph's INLINES, not off a block list, so
+            // a walk that only descends into tables and content controls can never
+            // reach the paragraphs inside one. `find_paragraph_mut` has always
+            // descended here, which is why typing in a text box worked while Enter
+            // in the same box returned NodeNotFound and surfaced as "That edit
+            // isn't supported for this selection yet" -- a box could hold text but
+            // could never gain a second paragraph.
+            BlockNode::Paragraph(para) => {
+                if split_paragraph_in_inlines(&mut para.inlines, id, offset, new_id, ids)? {
+                    return Ok(true);
+                }
+            }
             _ => {}
+        }
+    }
+    Ok(false)
+}
+
+/// [`split_paragraph`] through a shape group's children. Mirrors
+/// [`find_paragraph_in_group_mut`].
+fn split_paragraph_in_group(
+    children: &mut [GroupChild],
+    id: NodeId,
+    offset: u32,
+    new_id: NodeId,
+    ids: &mut dyn RunIds,
+) -> Result<bool, EditError> {
+    for child in children {
+        let split = match child {
+            GroupChild::TextBox(text_box) => {
+                split_paragraph(&mut text_box.blocks, id, offset, new_id, ids)?
+            }
+            GroupChild::Group(nested) => {
+                split_paragraph_in_group(&mut nested.children, id, offset, new_id, ids)?
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => false,
+        };
+        if split {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// [`split_paragraph`], continued through the inline nodes that can contain block
+/// content. Mirrors [`find_paragraph_in_inlines_mut`] exactly: the two must agree
+/// about where a paragraph can live, or an edit resolves a position it cannot
+/// then mutate.
+fn split_paragraph_in_inlines(
+    inlines: &mut [InlineNode],
+    id: NodeId,
+    offset: u32,
+    new_id: NodeId,
+    ids: &mut dyn RunIds,
+) -> Result<bool, EditError> {
+    for inline in inlines {
+        let split = match inline {
+            InlineNode::TextBox(text_box) => {
+                split_paragraph(&mut text_box.blocks, id, offset, new_id, ids)?
+            }
+            InlineNode::Hyperlink(link) => {
+                split_paragraph_in_inlines(&mut link.inlines, id, offset, new_id, ids)?
+            }
+            InlineNode::Field(field) => {
+                split_paragraph_in_inlines(&mut field.inlines, id, offset, new_id, ids)?
+            }
+            InlineNode::Group(group) => {
+                split_paragraph_in_group(&mut group.children, id, offset, new_id, ids)?
+            }
+            _ => false,
+        };
+        if split {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -4860,7 +4932,66 @@ fn join_paragraphs(
                     return Ok(Some(at));
                 }
             }
+            // The same gap `split_paragraph` had, and it has to close with it: a
+            // text box that can gain a paragraph must also be able to lose one, or
+            // Enter works inside a box and the Backspace that undoes it by hand
+            // does not.
+            BlockNode::Paragraph(para) => {
+                if let Some(at) = join_paragraphs_in_inlines(&mut para.inlines, first, second)? {
+                    return Ok(Some(at));
+                }
+            }
             _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// [`join_paragraphs`] through a shape group's children.
+fn join_paragraphs_in_group(
+    children: &mut [GroupChild],
+    first: NodeId,
+    second: NodeId,
+) -> Result<Option<u32>, EditError> {
+    for child in children {
+        let joined = match child {
+            GroupChild::TextBox(text_box) => join_paragraphs(&mut text_box.blocks, first, second)?,
+            GroupChild::Group(nested) => {
+                join_paragraphs_in_group(&mut nested.children, first, second)?
+            }
+            GroupChild::Picture(_) | GroupChild::Shape(_) => None,
+        };
+        if joined.is_some() {
+            return Ok(joined);
+        }
+    }
+    Ok(None)
+}
+
+/// [`join_paragraphs`], continued through the inline nodes that can contain block
+/// content. Mirrors [`find_paragraph_in_inlines_mut`], as its split counterpart
+/// does.
+fn join_paragraphs_in_inlines(
+    inlines: &mut [InlineNode],
+    first: NodeId,
+    second: NodeId,
+) -> Result<Option<u32>, EditError> {
+    for inline in inlines {
+        let joined = match inline {
+            InlineNode::TextBox(text_box) => join_paragraphs(&mut text_box.blocks, first, second)?,
+            InlineNode::Hyperlink(link) => {
+                join_paragraphs_in_inlines(&mut link.inlines, first, second)?
+            }
+            InlineNode::Field(field) => {
+                join_paragraphs_in_inlines(&mut field.inlines, first, second)?
+            }
+            InlineNode::Group(group) => {
+                join_paragraphs_in_group(&mut group.children, first, second)?
+            }
+            _ => None,
+        };
+        if joined.is_some() {
+            return Ok(joined);
         }
     }
     Ok(None)
