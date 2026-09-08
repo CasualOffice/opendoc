@@ -299,11 +299,11 @@ Suggesting before and after a tracked deletion.
 
 | ID | Finding | Sev | Status |
 | --- | --- | --- | --- |
-| HF-142 | Double-click cannot select a word inside a header, footer, or text box being edited: nothing is selected and typing inserts instead of replacing. Triple-click at the same pixel works, so hit-testing is fine and only the dblclick routing is wrong | P1 | Open |
-| HF-143 | Shift-click from a header into the body highlights the ENTIRE document (422 rects across all 15 pages) and then swallows every keystroke. The drag path has this guard; the click path never got it | P1 | Open |
-| HF-144 | The page jumps 85px sideways on the first tracked change, because the review gutter is reserved from change presence rather than from review mode | P2 | Open |
-| HF-145 | No horizontal autoscroll while drag-selecting, so at any zoom where the page is wider than the window you cannot select to the end of a line | P2 | Open |
-| HF-146 | A click in the gap between two pages is a complete no-op; the drag path already has a nearest-page resolver the click path does not use | P3 | Open |
+| HF-142 | Double-click cannot select a word inside a header, footer, or text box being edited: nothing is selected and typing inserts instead of replacing. Triple-click at the same pixel works, so hit-testing is fine and only the dblclick routing is wrong | P1 | Fixed (#526) |
+| HF-143 | Shift-click from a header into the body highlights the ENTIRE document (422 rects across all 15 pages) and then swallows every keystroke. The drag path has this guard; the click path never got it | P1 | Fixed (#526) |
+| HF-144 | The page jumps 85px sideways on the first tracked change, because the review gutter is reserved from change presence rather than from review mode | P2 | Fixed (#526) |
+| HF-145 | No horizontal autoscroll while drag-selecting, so at any zoom where the page is wider than the window you cannot select to the end of a line | P2 | Fixed (#526) |
+| HF-146 | A click in the gap between two pages is a complete no-op | P3 | Won't fix — documented-intentional. `pagesEl`'s pointerdown requires strict page containment on purpose: "ambiguous page-gap clicks must not jump into the nearest table or other fragment". Changing it needs an owner decision, not a silent reversal of a recorded one |
 
 **Structural note.** This class has now recurred three times. The auditor's
 recommendation is recorded here rather than lost: tag `LayoutSnapshot` with its
