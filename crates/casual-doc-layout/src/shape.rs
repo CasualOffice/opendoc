@@ -1127,11 +1127,16 @@ impl ParleyShaper {
                 // through the brush.
                 let highlight = (style.brush.highlight[3] != 0).then_some(style.brush.highlight);
                 let shading = (style.brush.shading[3] != 0).then_some(style.brush.shading);
+                // Per-run vertical metrics, so the caret can be as tall as the
+                // text it sits in rather than as tall as the line's tallest run.
+                let run_metrics = glyph_run.run().metrics();
                 out_runs.push(GlyphRun {
                     is_marker: false,
                     is_leader: false,
                     font,
                     size,
+                    ascent: Twip(run_metrics.ascent.round() as i32),
+                    descent: Twip(run_metrics.descent.round() as i32),
                     character_scale_percent: style.brush.character_scale_percent,
                     color: style.brush.color,
                     origin,
@@ -1310,6 +1315,8 @@ mod tests {
                 is_leader: false,
                 font: FontId(0),
                 size: Twip(220),
+                ascent: Twip(0),
+                descent: Twip(0),
                 character_scale_percent: 100,
                 color: [0, 0, 0, 255],
                 origin: Point::new(Twip::ZERO, Twip(180)),
