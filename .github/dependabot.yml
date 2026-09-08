@@ -9,9 +9,33 @@ updates:
       timezone: Asia/Kolkata
     open-pull-requests-limit: 5
     groups:
+      # The document substrate is pre-1.0, so a minor bump is a major bump: it
+      # carries API breaks that need a real port (quick-xml 0.42 moved every
+      # name and attribute from bytes to `str`; zip 8 made `data_start()`
+      # optional). Kept out of the general group so one breaking crate cannot
+      # hold every routine bump red behind it.
       rust-dependencies:
         patterns:
           - "*"
+        exclude-patterns:
+          - "quick-xml"
+          - "zip"
+          - "fontique"
+          - "image"
+          - "parley"
+          - "resvg"
+          - "skrifa"
+          - "tiny-skia"
+      xml-and-graphics:
+        patterns:
+          - "quick-xml"
+          - "zip"
+          - "fontique"
+          - "image"
+          - "parley"
+          - "resvg"
+          - "skrifa"
+          - "tiny-skia"
 
   - package-ecosystem: github-actions
     directory: /
