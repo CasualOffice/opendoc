@@ -266,7 +266,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Open |
 | HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
 | HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Fixed (#519) |
-| HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Open |
+| HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Fixed (#520) |
 | HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Open |
 | HF-131 | Paragraph-level formatting (style, list, indent, alignment, spacing) is refused rather than tracked in Suggesting mode; Word records `w:pPrChange` | wasm | P1 | Open |
 | HF-132 | The emoji picker offers 355 glyphs against ~1,900 in Word/Docs/Slack, and its search is near-useless: "smile" returns 3, "party" 1, "fire"/"check"/"star" 2 each. Gated on a bundle-size and font-coverage decision | webapp | P2 | Open (owner decision) |

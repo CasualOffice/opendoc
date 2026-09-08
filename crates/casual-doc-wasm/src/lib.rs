@@ -12285,6 +12285,85 @@ fn extend_review_group_insertion(
     false
 }
 
+/// The top-level [`Revision`] wrapper that wholly contains `[start, end)`, with
+/// the wrapper's own starting offset — or `None` when the range spans wrappers or
+/// covers plain text as well.
+///
+/// Only a wholly-contained range is claimed. A range that straddles a wrapper
+/// boundary is the mixed case of docs/86 decision 4, where each covered segment
+/// has to be handled by origin; answering `Some` here would silently apply one
+/// rule to all of it.
+fn enclosing_revision(inlines: &[InlineNode], start: u32, end: u32) -> Option<(usize, u32)> {
+    let mut cursor: u32 = 0;
+    for (index, inline) in inlines.iter().enumerate() {
+        let next = cursor.saturating_add(inline_anchor_len_for_review(inline));
+        if matches!(inline, InlineNode::Revision(_))
+            && start >= cursor
+            && end <= next
+            && start < end
+        {
+            return Some((index, cursor));
+        }
+        cursor = next;
+    }
+    None
+}
+
+/// [`wrap_review_deletion`]'s inline half, so a deletion can be recorded inside a
+/// wrapper as well as beside one. Recurses, so a revision nested in a revision
+/// resolves too.
+fn wrap_review_deletion_in_inlines(
+    inlines: &mut Vec<InlineNode>,
+    start: u32,
+    end: u32,
+    revision: Revision,
+    ids: &mut IdGenerator,
+) -> bool {
+    if let Some((index, base)) = enclosing_revision(inlines, start, end) {
+        let InlineNode::Revision(wrapper) = &mut inlines[index] else {
+            return false;
+        };
+        return wrap_review_deletion_in_inlines(
+            &mut wrapper.inlines,
+            start - base,
+            end - base,
+            revision,
+            ids,
+        );
+    }
+    if !review_split_top_level_run(inlines, start, ids)
+        || !review_split_top_level_run(inlines, end, ids)
+    {
+        return false;
+    }
+    let mut cursor: u32 = 0;
+    let mut first = None;
+    let mut last = None;
+    for (index, inline) in inlines.iter().enumerate() {
+        let len = inline_anchor_len_for_review(inline);
+        if cursor == start && first.is_none() {
+            first = Some(index);
+        }
+        cursor = cursor.saturating_add(len);
+        if cursor == end {
+            last = Some(index);
+            break;
+        }
+    }
+    let (Some(first), Some(last)) = (first, last) else {
+        return false;
+    };
+    let children = inlines.drain(first..=last).collect();
+    inlines.insert(
+        first,
+        InlineNode::Revision(Revision {
+            inlines: children,
+            ..revision
+        }),
+    );
+    true
+}
+
 fn wrap_review_deletion(
     blocks: &mut [BlockNode],
     node: NodeId,
@@ -12296,6 +12375,29 @@ fn wrap_review_deletion(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) if paragraph.id == node => {
+                // A range that lies wholly inside another author's tracked range
+                // is nested there rather than refused. Word does the same: a
+                // `w:del` inside a `w:ins` records "this reviewer wants that
+                // reviewer's addition gone" without touching a character of it,
+                // which is exactly what docs/86 decision 4 asks for. Refusing
+                // instead is why a second reviewer's Backspace vanished with only
+                // a status line to show for it.
+                //
+                // Checked BEFORE splitting at top level: the range is expressed in
+                // review coordinates, and once it is known to be interior the
+                // split has to happen inside the wrapper, not around it.
+                if let Some((index, base)) = enclosing_revision(&paragraph.inlines, start, end) {
+                    let InlineNode::Revision(wrapper) = &mut paragraph.inlines[index] else {
+                        return false;
+                    };
+                    return wrap_review_deletion_in_inlines(
+                        &mut wrapper.inlines,
+                        start - base,
+                        end - base,
+                        revision,
+                        ids,
+                    );
+                }
                 if !review_split_top_level_run(&mut paragraph.inlines, start, ids)
                     || !review_split_top_level_run(&mut paragraph.inlines, end, ids)
                 {
@@ -13726,6 +13828,88 @@ fn coalesce_review_runs(inlines: &mut Vec<InlineNode>) {
     }
 }
 
+/// Splits the [`Revision`] wrapper at `index` into two adjacent wrappers at
+/// `local` (a byte offset within the wrapper), so a boundary exists where another
+/// author's edit can be placed.
+///
+/// This is how `docs/86` says a foreign suggestion must be treated: "left intact
+/// and… marked with our own deletion at the boundary; we do not silently discard
+/// another author's suggestion." Splitting divides the RANGE without touching a
+/// single character of its content — the other author's text, authorship and date
+/// survive verbatim in both halves.
+///
+/// The halves are UNGROUPED. `editor_group` marks one authored action, and
+/// `validate_review_group` requires a group's members to sit at consecutive
+/// top-level indices — which is exactly what a split breaks, because the point of
+/// splitting is to put another author's content between the halves. Keeping the
+/// group produced a document where "Reject all" failed validation and silently
+/// decided nothing, which is a far worse outcome than two cards: the halves are
+/// two `w:ins` elements in OOXML terms, and that is now what they are here.
+///
+/// Authorship, date and `revision_id` are carried across unchanged, so both
+/// halves still belong to their original author. Only `id` is refreshed, because
+/// two inline nodes cannot share an identity.
+fn split_revision_wrapper(
+    inlines: &mut Vec<InlineNode>,
+    index: usize,
+    local: u32,
+    ids: &mut IdGenerator,
+) -> bool {
+    // A boundary has to exist inside the wrapper before its content can be
+    // partitioned; this recurses, so a revision nested in a revision also splits.
+    {
+        let InlineNode::Revision(revision) = &mut inlines[index] else {
+            return false;
+        };
+        if !review_split_top_level_run(&mut revision.inlines, local, ids) {
+            return false;
+        }
+    }
+    let (cut, len) = {
+        let InlineNode::Revision(revision) = &inlines[index] else {
+            return false;
+        };
+        let mut cursor: u32 = 0;
+        let mut cut = None;
+        for i in 0..=revision.inlines.len() {
+            if cursor == local {
+                cut = Some(i);
+                break;
+            }
+            if let Some(inline) = revision.inlines.get(i) {
+                cursor = cursor.saturating_add(inline_anchor_len_for_review(inline));
+            }
+        }
+        match cut {
+            Some(cut) => (cut, revision.inlines.len()),
+            None => return false,
+        }
+    };
+    // Already at an edge: the caller's insertion point is outside this wrapper and
+    // no split is needed. Splitting anyway would leave an empty wrapper, which the
+    // model rejects.
+    if cut == 0 || cut == len {
+        return true;
+    }
+    let Ok(new_id) = ids.next_id() else {
+        return false;
+    };
+    let right = {
+        let InlineNode::Revision(revision) = &mut inlines[index] else {
+            return false;
+        };
+        let tail = revision.inlines.split_off(cut);
+        let mut right = revision.clone();
+        right.id = new_id;
+        right.inlines = tail;
+        right.editor_group = None;
+        revision.editor_group = None;
+        right
+    };
+    inlines.insert(index + 1, InlineNode::Revision(right));
+    true
+}
+
 fn review_split_top_level_run(
     inlines: &mut Vec<InlineNode>,
     offset: u32,
@@ -13762,6 +13946,13 @@ fn review_split_top_level_run(
             return true;
         }
         if offset > cursor && offset < next {
+            // The offset lands inside a tracked range — another author's pending
+            // insertion, typically. Split THAT wrapper rather than refusing: a
+            // bare `return false` here is why a second reviewer's keystrokes were
+            // dropped with nothing but a status line to show for it.
+            if matches!(inlines[index], InlineNode::Revision(_)) {
+                return split_revision_wrapper(inlines, index, offset - cursor, ids);
+            }
             return false;
         }
         cursor = next;
