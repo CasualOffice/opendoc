@@ -1618,7 +1618,12 @@ function renderReviewMarginItems() {
   }
   items.sort((a, b) => a.rect.pageNumber - b.rect.pageNumber || a.rect.top - b.rect.top);
 
-  const show = reviewSidebarPreference ?? items.length > 0;
+  // Suggesting mode reserves the column whether or not a change exists yet.
+  // Keying off `items.length` meant the gutter appeared with the FIRST tracked
+  // change, so the whole page slid 85px sideways the moment a reviewer began
+  // editing — and slid back on Undo. Everything the user was aiming at moved
+  // under the pointer, which is the worst possible moment for the page to jump.
+  const show = reviewSidebarPreference ?? (items.length > 0 || reviewMode === "suggesting");
   reviewSidebar.hidden = !show;
   // Mutually exclusive with the outline panel (see toggleOutline): whenever the
   // review sidebar is shown the outline closes, so the canvas is only ever
@@ -3292,6 +3297,16 @@ function pointToTwip(page, event) {
 }
 
 /** Resolve a pointer event to a model anchor, or null if it misses content. */
+/** Identifies the story the caret is currently in — the body, a running band, or
+ *  a specific text box. Two positions belong to the same range only if this
+ *  agrees for both; a range across stories is not representable in
+ *  WordprocessingML and no edit can apply to one. */
+function currentStoryKey() {
+  if (objectSelection?.mode === "editing") return `object:${objectSelection.node}`;
+  if (runningEditBand) return `running:${runningEditBand}:${runningEditPage}`;
+  return "body";
+}
+
 function anchorAt(page, event) {
   const { x, y } = pointToTwip(page, event);
   // While a header or footer is open, a point inside a running band belongs to
@@ -5593,6 +5608,11 @@ function onPointerDown(page, event) {
       updateObjectContextBar();
     }
   }
+  // Which STORY the caret is in before the click resolves. `anchorAt` may leave a
+  // header, footer or text box on the way to answering — that is the deliberate
+  // way out of running content — and when it does, the existing selection anchor
+  // belongs to a story the new focus does not.
+  const storyBefore = currentStoryKey();
   const anchor = anchorAt(page, event);
   if (!anchor) {
     updateObjectSelectionState();
@@ -5616,9 +5636,20 @@ function onPointerDown(page, event) {
     runningBand: runningEditBand,
     objectNode: editingHere ? objectSelection.node : null,
   };
-  // Shift+Click extends the current selection to the click (keeps the anchor).
+  // Shift+Click extends the current selection to the click (keeps the anchor) —
+  // but only WITHIN one story. A range cannot span WordprocessingML stories, and
+  // shift-clicking from an open header into the body used to build exactly that:
+  // the anchor stayed in the header while the focus landed in the body, which
+  // painted 422 highlight rectangles across every page of the document and then
+  // made the editor swallow every keystroke, because no edit can apply to a range
+  // whose ends live in different stories.
+  //
+  // `updateDragSelection` already clips a DRAG at the story edge; the click path
+  // never got the same rule. Crossing stories with Shift is treated as a plain
+  // click, which is what both Word and Docs do.
+  const crossedStory = currentStoryKey() !== storyBefore;
   selection =
-    event.shiftKey && selection
+    event.shiftKey && selection && !crossedStory
       ? { anchor: selection.anchor, focus: anchor }
       : { anchor, focus: anchor };
   // Non-blocking secondary effect (REVIEW-GAP-005): surface the sidebar card
@@ -5785,10 +5816,25 @@ function startSelectionAutoScroll() {
       dy = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
     }
 
-    if (dy !== 0) {
-      const before = viewportEl.scrollTop;
-      viewportEl.scrollTop = Math.max(0, before + dy);
-      if (viewportEl.scrollTop !== before) {
+    // The same rule on the other axis. Only `dy` existed, so at any zoom where
+    // the sheet is wider than the window a drag-selection simply stopped at the
+    // window edge and the end of the line was unreachable by mouse.
+    const x = pointerGesture.lastClientX;
+    let dx = 0;
+    if (x < rect.left + AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (rect.left + AUTO_SCROLL_EDGE_PX - x) / AUTO_SCROLL_EDGE_PX);
+      dx = -Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    } else if (x > rect.right - AUTO_SCROLL_EDGE_PX) {
+      const ratio = Math.min(1, (x - (rect.right - AUTO_SCROLL_EDGE_PX)) / AUTO_SCROLL_EDGE_PX);
+      dx = Math.ceil(ratio * AUTO_SCROLL_MAX_PX);
+    }
+
+    if (dy !== 0 || dx !== 0) {
+      const beforeTop = viewportEl.scrollTop;
+      const beforeLeft = viewportEl.scrollLeft;
+      if (dy !== 0) viewportEl.scrollTop = Math.max(0, beforeTop + dy);
+      if (dx !== 0) viewportEl.scrollLeft = Math.max(0, beforeLeft + dx);
+      if (viewportEl.scrollTop !== beforeTop || viewportEl.scrollLeft !== beforeLeft) {
         updateDragSelection(clientPointEvent(pointerGesture.lastClientX, pointerGesture.lastClientY));
       }
     }
@@ -5981,7 +6027,15 @@ pagesEl.addEventListener("dblclick", (e) => {
   // Double-click on an object enters its edit mode (container) or selects it
   // (leaf) — docs/85 §4.3; otherwise it selects the word under the caret.
   const { x, y } = pointToTwip(page, e);
-  const object = doc?.objectAt(page.pageNumber, x, y);
+  // An object you are INSIDE is a text surface, not a target — the same rule
+  // pointer-down already applies. Without it, double-clicking a word inside a
+  // text box you are editing re-selected the BOX and never reached word
+  // selection, so the word was never selected and the next keystroke inserted
+  // instead of replacing.
+  const editingHere =
+    objectSelection?.mode === "editing" &&
+    pointInsideObject(objectSelection.node, page, x, y);
+  const object = editingHere ? null : doc?.objectAt(page.pageNumber, x, y);
   if (object) {
     let node = object.node;
     let kind = object.kind;
@@ -6033,8 +6087,13 @@ pagesEl.addEventListener("dblclick", (e) => {
   // has nothing to hit-test, so keying off a hit meant double-clicking the top
   // margin fell through to word-selection and grabbed a word out of the BODY —
   // the opposite of what the gesture asks for.
+  // Entering the band is what a double-click means from OUTSIDE it. Once you are
+  // already editing that band, the same gesture means what it means everywhere
+  // else — select the word — and re-entering the context you are already in
+  // selected nothing at all. Triple-click at the identical pixel already worked,
+  // which is what showed the hit-testing was fine and only this routing was not.
   const bandAtPoint = runningBandAt(page, y);
-  if (bandAtPoint) {
+  if (bandAtPoint && !(bandAtPoint === runningEditBand && page.pageNumber === runningEditPage)) {
     e.preventDefault();
     void editRunningContent(bandAtPoint, page);
     return;
