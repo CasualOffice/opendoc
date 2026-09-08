@@ -260,7 +260,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-120 | The caret's height is the whole line box (`ascent + descent + leading`), so it grows with line spacing: 18.39px at single, 36.80px at double, on the same text | layout | P2 | Fixed (#517) |
 | HF-121 | An empty CENTERED or right-aligned paragraph parks the caret at the left margin while the text lands elsewhere (75.6px vs ~355px on a Letter body). Not repairable in the hit-test: an empty line carries no runs, so the aligned origin never reaches the galley — the shaper must emit a zero-glyph run at the aligned origin, or `Line` must carry its resolved start | layout | P2 | Open |
 | HF-122 | On a mixed-size line the caret takes the tallest run's height everywhere: 42.92px inside a 12pt run sharing a line with 28pt text, vs 18.39px on a uniform line. Needs per-run vertical metrics on `GlyphRun` | layout | P2 | Fixed (#524) |
-| HF-123 | Clicking past the last word of a soft-wrapped line, or pressing End there, teleports the caret to the start of the next line (660px left, one line down). `caret_start_line` has no affinity | layout | P2 | Open |
+| HF-123 | Clicking past the last word of a soft-wrapped line, or pressing Home/End there, teleports the caret to another visual line. `caret_start_line` has no affinity: an offset that both ends line N and starts line N+1 always resolves to N+1. Measured with NO tracked change present (caret y 279.3 -> 316.1 on End), which rules out the painted-vs-editing layout cause and makes this purely an affinity defect | layout | P2 | Open |
 | HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Fixed (#518) |
 | HF-125 | Enter inside a text box does nothing ("That edit isn't supported for this selection yet"): `split_paragraph` and `join_paragraphs` never recurse into a paragraph's inlines, unlike `find_paragraph_mut` | rust-core | P1 | Fixed (#518) |
 | HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Open |
@@ -270,6 +270,47 @@ reproduction and the responsible `file:line` already identified.
 | HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Open |
 | HF-131 | Paragraph-level formatting (style, list, indent, alignment, spacing) is refused rather than tracked in Suggesting mode; Word records `w:pPrChange` | wasm | P1 | Open |
 | HF-132 | The emoji picker offers 355 glyphs against ~1,900 in Word/Docs/Slack, and its search is near-useless: "smile" returns 3, "party" 1, "fire"/"check"/"star" 2 each. Gated on a bundle-size and font-coverage decision | webapp | P2 | Open (owner decision) |
+
+### Layout-space audit — 2026-09-09
+
+Two exhaustive audits of the screen-to-model pipeline, prompted by the owner's
+observation that "cursor position detection, drawing and the resulting action"
+were unreliable. The engine half found NINE live defects sharing ONE root cause:
+`self.layout` (editing) and the markup layout are both `&PaginatedLayout`, so
+asking the wrong one is not a compile error. All nine are fixed in #525 by
+routing every screen-to-model conversion through `painted_layout()`, and the
+accessors are now named after the QUESTION rather than the field.
+
+| ID | Finding | Measured | Status |
+| --- | --- | --- | --- |
+| HF-133 | Arrow Up/Down lands in the wrong column: vertical movement reads its x-affinity off the unpainted layout | 78px sideways | Fixed (#525) |
+| HF-134 | Object boxes (image/shape/text-box rects, handles, hit-testing) come from the editing layout — the root cause behind four separate symptoms | image selectable 167px from where it is drawn; clicking it where painted selects nothing | Fixed (#525) |
+| HF-135 | The active-cell outline is drawn around the wrong cell | 180px off | Fixed (#525) |
+| HF-136 | Table column-resize handles sit on a phantom table — and they are draggable, so a real resize starts from an edge that is not there | 147px off | Fixed (#525) |
+| HF-137 | Checklist markers are click targets over glyphs baked into the markup raster | 147px off | Fixed (#525) |
+| HF-138 | Header/footer bands are unreachable on pages that exist only in the markup layout (band lookup is by page NUMBER against the wrong layout) | no marker at all | Fixed (#525) |
+| HF-139 | `textBoxHitTest` resolves real mouse pixels against the unpainted layout, and its two callers disagree about which space they are in | latent | Fixed (#525) |
+| HF-140 | `linkAt` measures editing-space link ranges against painted pixels, and reports the wrong `targetPage` for internal links | code-proven | Fixed (#525) |
+| HF-141 | `documentStats().pages` disagrees with `pageCount` on the same object whenever markup is shown | SDK inconsistency | Fixed (#525) |
+
+The pointer half found five more, none of which corrupt content — the painted
+range is the range that gets edited, verified forward, backward, and in
+Suggesting before and after a tracked deletion.
+
+| ID | Finding | Sev | Status |
+| --- | --- | --- | --- |
+| HF-142 | Double-click cannot select a word inside a header, footer, or text box being edited: nothing is selected and typing inserts instead of replacing. Triple-click at the same pixel works, so hit-testing is fine and only the dblclick routing is wrong | P1 | Open |
+| HF-143 | Shift-click from a header into the body highlights the ENTIRE document (422 rects across all 15 pages) and then swallows every keystroke. The drag path has this guard; the click path never got it | P1 | Open |
+| HF-144 | The page jumps 85px sideways on the first tracked change, because the review gutter is reserved from change presence rather than from review mode | P2 | Open |
+| HF-145 | No horizontal autoscroll while drag-selecting, so at any zoom where the page is wider than the window you cannot select to the end of a line | P2 | Open |
+| HF-146 | A click in the gap between two pages is a complete no-op; the drag path already has a nearest-page resolver the click path does not use | P3 | Open |
+
+**Structural note.** This class has now recurred three times. The auditor's
+recommendation is recorded here rather than lost: tag `LayoutSnapshot` with its
+`ReviewView` and give markup positions a `ViewPos` newtype whose only
+constructors are the mapping functions, so the whole class becomes a compile
+error. #525 takes the cheaper half — naming the accessors after the question —
+which makes each call site state its intent but still permits the mistake.
 
 ### Deliberately refuted
 

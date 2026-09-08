@@ -437,7 +437,7 @@ impl core::fmt::Debug for WasmDocument {
         // `ParleyShaper` is opaque; report the shape a
         // caller can act on without dumping the whole model.
         f.debug_struct("WasmDocument")
-            .field("pages", &self.layout.page_count())
+            .field("pages", &self.editing_layout().page_count())
             .field("media_parts", &self.document.definitions().media.len())
             .finish_non_exhaustive()
     }
@@ -512,7 +512,7 @@ impl WasmDocument {
     pub fn page_count(&self) -> u32 {
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
-        u32::try_from(self.active_layout().page_count()).unwrap_or(u32::MAX)
+        u32::try_from(self.painted_layout().page_count()).unwrap_or(u32::MAX)
     }
 
     /// Toggles the read-only "show changes" markup view (docs/93). When on, a
@@ -658,7 +658,7 @@ impl WasmDocument {
         // the editing space. This is the entry point the editor actually calls on
         // a click, so it is the one that decides whether clicking a word puts the
         // caret in that word once anything upstream has been struck.
-        let snapshot = LayoutSnapshot::new(self.active_layout());
+        let snapshot = LayoutSnapshot::new(self.painted_layout());
         let hit = snapshot.hit_test(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
         let pos = self.edit_pos(hit.pos);
         Some(HitPayload {
@@ -682,7 +682,7 @@ impl WasmDocument {
         let point = Point::new(Twip(x_twip), Twip(y_twip));
         // Same rule as `hit_test`: a link is hit where it is PAINTED. The rect
         // comparison below stays in that same layout, so both halves agree.
-        let snapshot = LayoutSnapshot::new(self.active_layout());
+        let snapshot = LayoutSnapshot::new(self.painted_layout());
         let hit = snapshot.hit_test(page, point)?;
         if hit.zone != HitZone::Content {
             return None;
@@ -690,8 +690,16 @@ impl WasmDocument {
         let paragraph = find_paragraph_any(&self.document, hit.pos.node)?;
         let links = paragraph_links(&self.document, paragraph);
         let link = links.into_iter().find(|candidate| {
+            // `paragraph_links` reports EDITING-space offsets (it skips revisions
+            // that do not contribute without advancing the offset), so the range
+            // has to be mapped before it is measured against painted pixels. The
+            // layout agreed here already; the byte space did not.
+            let range = ModelRange::new(
+                self.view_pos(candidate.range.start),
+                self.view_pos(candidate.range.end),
+            );
             snapshot
-                .selection_rects(candidate.range)
+                .selection_rects(range)
                 .into_iter()
                 .any(|(candidate_page, rect)| candidate_page == page && rect.contains(point))
         })?;
@@ -710,7 +718,12 @@ impl WasmDocument {
         let (target_node, target_offset, target_page) = target.map_or_else(
             || (String::new(), 0, 0),
             |pos| {
-                let target_page = snapshot.caret_rect(pos).map_or(0, |(page, _)| page);
+                // Mapped for the same reason as the range above: the bookmark
+                // resolves to an editing-space position, and this asks the
+                // painted layout which page shows it.
+                let target_page = snapshot
+                    .caret_rect(self.view_pos(pos))
+                    .map_or(0, |(page, _)| page);
                 (pos.node.to_string(), pos.offset, target_page)
             },
         );
@@ -752,11 +765,12 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = textBoxHitTest)]
     #[must_use]
     pub fn text_box_hit_test(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<HitPayload> {
-        let snapshot = LayoutSnapshot::new(&self.layout);
+        let snapshot = self.painted_snapshot();
         let hit = snapshot.hit_test_text_box(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        let pos = self.edit_pos(hit.pos);
         Some(HitPayload {
-            node: hit.pos.node.to_string(),
-            offset: hit.pos.offset,
+            node: pos.node.to_string(),
+            offset: pos.offset,
             zone: match hit.zone {
                 HitZone::Content => "content",
                 HitZone::Outside => "outside",
@@ -826,7 +840,7 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = bandAt)]
     #[must_use]
     pub fn band_at(&self, page: u32, x_twip: i32, y_twip: i32) -> String {
-        LayoutSnapshot::new(&self.layout)
+        self.painted_snapshot()
             .band_at(page, Point::new(Twip(x_twip), Twip(y_twip)))
             .map(band_name)
             .unwrap_or_default()
@@ -848,7 +862,7 @@ impl WasmDocument {
     #[must_use]
     pub fn resolve_click(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<RunningHitPayload> {
         let point = Point::new(Twip(x_twip), Twip(y_twip));
-        let snapshot = LayoutSnapshot::new(&self.layout);
+        let snapshot = self.painted_snapshot();
         // Which band, if any, the POINT is in — decided by the page's margin
         // geometry, so a band with no content still owns its own area.
         let band = snapshot.band_at(page, point);
@@ -884,7 +898,7 @@ impl WasmDocument {
         // while the markup view is painted resolved a click to whatever character
         // occupied that x in a DIFFERENT layout — so clicking a word put the caret
         // somewhere else once anything upstream had been struck.
-        let hit = LayoutSnapshot::new(self.active_layout()).hit_test(page, point)?;
+        let hit = LayoutSnapshot::new(self.painted_layout()).hit_test(page, point)?;
         let pos = self.edit_pos(hit.pos);
         Some(RunningHitPayload {
             node: pos.node.to_string(),
@@ -911,7 +925,7 @@ impl WasmDocument {
             "footer" => RunningBand::Footer,
             _ => return None,
         };
-        let pos = LayoutSnapshot::new(&self.layout).nearest_in_band(
+        let pos = self.painted_snapshot().nearest_in_band(
             page,
             Point::new(Twip(x_twip), Twip(y_twip)),
             band,
@@ -935,11 +949,12 @@ impl WasmDocument {
         x_twip: i32,
         y_twip: i32,
     ) -> Option<RunningHitPayload> {
-        let snapshot = LayoutSnapshot::new(&self.layout);
+        let snapshot = self.painted_snapshot();
         let hit = snapshot.hit_test_running(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        let pos = self.edit_pos(hit.pos);
         Some(RunningHitPayload {
-            node: hit.pos.node.to_string(),
-            offset: hit.pos.offset,
+            node: pos.node.to_string(),
+            offset: pos.offset,
             band: match hit.band {
                 RunningBand::Header => "header",
                 RunningBand::Footer => "footer",
@@ -1754,7 +1769,7 @@ impl WasmDocument {
         let Some(pos) = parse_pos(node, offset) else {
             return Vec::new();
         };
-        LayoutSnapshot::new(self.active_layout())
+        LayoutSnapshot::new(self.painted_layout())
             .caret_rect_on(self.view_pos(pos), self.edit_context.running_page())
             .map(|(page, rect)| flat_rect(page, rect).to_vec())
             .unwrap_or_default()
@@ -1782,7 +1797,7 @@ impl WasmDocument {
             self.view_pos(ModelPos::new(end.node, end.offset)),
         );
         let mut out = Vec::new();
-        for (page, rect) in LayoutSnapshot::new(self.active_layout())
+        for (page, rect) in LayoutSnapshot::new(self.painted_layout())
             .selection_rects_on(range, self.edit_context.running_page())
         {
             out.extend_from_slice(&flat_rect(page, rect));
@@ -4131,7 +4146,7 @@ impl WasmDocument {
         }
         // Precise marker rects from layout, kept only for checklist paragraphs.
         let mut out = Vec::new();
-        for (page, rect, node) in LayoutSnapshot::new(&self.layout).marker_rects() {
+        for (page, rect, node) in self.painted_snapshot().marker_rects() {
             let Some(&checked) = checked_by_node.get(&node) else {
                 continue;
             };
@@ -5559,7 +5574,7 @@ impl WasmDocument {
         let Ok(nid) = NodeId::from_str(node) else {
             return Vec::new();
         };
-        LayoutSnapshot::new(&self.layout)
+        self.painted_snapshot()
             .cell_rect(nid)
             .map(|(page, rect)| flat_rect(page, rect).to_vec())
             .unwrap_or_default()
@@ -5584,7 +5599,7 @@ impl WasmDocument {
         let Some(t) = find_table(&self.document, table) else {
             return Vec::new();
         };
-        let layout = LayoutSnapshot::new(&self.layout);
+        let layout = self.painted_snapshot();
         let mut out = Vec::new();
         for anchor in table_selection_anchors(t, row as usize, col as usize, mode) {
             if let Some((page, rect)) = layout.cell_rect(anchor) {
@@ -5616,7 +5631,10 @@ impl WasmDocument {
         if cols < 2 {
             return Vec::new();
         }
-        let layout = LayoutSnapshot::new(&self.layout);
+        // Painted, because these grips are dragged: a handle resolved against the
+        // editing layout sat 147px off the table it belongs to and began a real
+        // resize from an edge that is not there.
+        let layout = self.painted_snapshot();
         let mut edges: BTreeMap<(u32, usize), (i32, i32, i32)> = BTreeMap::new();
         for row in &t.rows {
             for col in 0..cols - 1 {
@@ -6153,7 +6171,11 @@ impl WasmDocument {
                 .sum(),
             characters_with_spaces: nodes.iter().map(|(_, t)| t.chars().count() as u32).sum(),
             paragraphs: nodes.len() as u32,
-            pages: self.layout.page_count() as u32,
+            // The painted count, so this agrees with `pageCount` on the same
+            // object. It used to report the editing layout's, which differs from
+            // `pageCount` exactly when markup is shown — an SDK inconsistency
+            // waiting for someone to believe one of the two numbers.
+            pages: self.painted_layout().page_count() as u32,
         }
     }
 
@@ -9092,7 +9114,7 @@ impl WasmDocument {
                 self.markup_layout = Some(markup);
                 dirty
             }
-            None => dirty_pages(&self.layout, &new_layout),
+            None => dirty_pages(self.editing_layout(), &new_layout),
         };
         self.layout = new_layout;
         EditResult {
@@ -9726,7 +9748,15 @@ impl WasmDocument {
         // Per-paragraph claimed flags, so a paragraph split across pages still maps
         // each placed box to a distinct model node (media match first, order next).
         let mut claimed: HashMap<NodeId, (Vec<bool>, Vec<bool>)> = HashMap::new();
-        for page in &self.layout.pages {
+        // The PAINTED layout. Object boxes are the geometry of things the user
+        // points at and drags, so reading them from the editing layout put every
+        // image, shape and text box where it would have been if the tracked
+        // deletions beside it were already applied: on the demo, the image was
+        // outlined and selectable 167px from where it was actually drawn, and
+        // clicking it where it appeared selected nothing at all. The model
+        // correlation below (media-name match, then document order) is
+        // layout-independent, so nothing else about this walk changes.
+        for page in &self.painted_layout().pages {
             for placed in &page.placed {
                 let BlockFragment::Paragraph {
                     id,
@@ -10194,9 +10224,18 @@ impl WasmDocument {
                 } else {
                     Direction::Down
                 };
-                LayoutSnapshot::new(&self.layout)
-                    .move_vertical(ModelPos::new(nid, offset), direction)
-                    .map_or((nid, offset), |p| (p.node, p.offset))
+                // Vertical movement is GEOMETRIC — it keeps the caret's x and
+                // finds the line above or below — so it has to run on the layout
+                // the user is looking at. Reading the x off the editing layout
+                // took it from pixels nobody is looking at, and the caret landed
+                // 78px sideways once anything upstream on its line was struck.
+                let pos = self.view_pos(ModelPos::new(nid, offset));
+                self.painted_snapshot()
+                    .move_vertical(pos, direction)
+                    .map_or((nid, offset), |p| {
+                        let p = self.edit_pos(p);
+                        (p.node, p.offset)
+                    })
             }
             "left" => {
                 if offset > 0 {
@@ -10225,8 +10264,14 @@ impl WasmDocument {
             // Line start/end: probe the same visual line at its far left/right via
             // hit-testing (reuses the exact line geometry).
             "lineStart" | "lineEnd" => {
-                let snapshot = LayoutSnapshot::new(&self.layout);
-                let Some((page, rect)) = snapshot.caret_rect(ModelPos::new(nid, offset)) else {
+                // "The same visual line" means the line the user can SEE. The two
+                // layouts wrap differently once a deletion is struck, so probing
+                // the editing layout walked a line that is not on screen and Home
+                // and End moved the caret up or down by whole lines.
+                let snapshot = self.painted_snapshot();
+                let Some((page, rect)) =
+                    snapshot.caret_rect(self.view_pos(ModelPos::new(nid, offset)))
+                else {
                     return (nid, offset);
                 };
                 let y = Twip(rect.origin.y.raw() + rect.size.height.raw() / 2);
@@ -10237,7 +10282,10 @@ impl WasmDocument {
                 };
                 snapshot
                     .hit_test(page, Point::new(x, y))
-                    .map_or((nid, offset), |h| (h.pos.node, h.pos.offset))
+                    .map_or((nid, offset), |h| {
+                        let p = self.edit_pos(h.pos);
+                        (p.node, p.offset)
+                    })
             }
             "wordRight" => {
                 let text = self.paragraph_text(nid);
@@ -10274,12 +10322,37 @@ impl WasmDocument {
         }
     }
 
-    /// The page at `index`, or an out-of-range message.
-    /// The layout the *renderer* reads: the read-only markup layout while "show
-    /// changes" is on (docs/93), otherwise the live editing layout. Caret,
-    /// selection, and hit-testing never use this — they always read `self.layout`.
-    fn active_layout(&self) -> &PaginatedLayout {
+    /// The layout the user is looking at: the read-only markup layout while "show
+    /// changes" is on (docs/93), otherwise the live editing layout.
+    ///
+    /// EVERYTHING that converts between the screen and the model must read this
+    /// one — hit-testing, caret and selection rectangles, object boxes, table and
+    /// checklist chrome, vertical caret movement, and the running-content bands.
+    /// The two layouts have different byte spaces AND different geometry, so
+    /// answering a question about pixels from the layout that did not paint them
+    /// produces an answer about a document the user cannot see. That has now been
+    /// the cause of three separate defect clusters, so the rule is stated once
+    /// here and the accessors below are named after the QUESTION rather than the
+    /// field, to make each call site say which one it is asking.
+    fn painted_layout(&self) -> &PaginatedLayout {
         self.markup_layout.as_ref().unwrap_or(&self.layout)
+    }
+
+    /// The editing layout, for bookkeeping that is deliberately independent of
+    /// what is painted: repagination, the dirty-page set, page counts for export,
+    /// and logical (non-geometric) caret movement.
+    ///
+    /// If you are answering a question that started as a pixel, or producing a
+    /// rectangle that will be drawn, this is the wrong one — use
+    /// [`Self::painted_layout`].
+    fn editing_layout(&self) -> &PaginatedLayout {
+        &self.layout
+    }
+
+    /// A snapshot of the layout that produced the pixels, which is what every
+    /// geometry query should be built on.
+    fn painted_snapshot(&self) -> LayoutSnapshot<'_> {
+        LayoutSnapshot::new(self.painted_layout())
     }
 
     /// Maps an editing-space position into the layout the user is actually
@@ -10319,7 +10392,7 @@ impl WasmDocument {
 
     /// The page to render for `index`, from [`WasmDocument::active_layout`].
     fn render_page_of(&self, index: u32) -> Result<&Page, String> {
-        let layout = self.active_layout();
+        let layout = self.painted_layout();
         layout.pages.get(index as usize).ok_or_else(|| {
             format!(
                 "page index {index} out of range (0..{})",
