@@ -654,11 +654,16 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = hitTest)]
     #[must_use]
     pub fn hit_test(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<HitPayload> {
-        let snapshot = LayoutSnapshot::new(&self.layout);
+        // The layout that produced the pixels under the pointer, mapped back into
+        // the editing space. This is the entry point the editor actually calls on
+        // a click, so it is the one that decides whether clicking a word puts the
+        // caret in that word once anything upstream has been struck.
+        let snapshot = LayoutSnapshot::new(self.active_layout());
         let hit = snapshot.hit_test(page, Point::new(Twip(x_twip), Twip(y_twip)))?;
+        let pos = self.edit_pos(hit.pos);
         Some(HitPayload {
-            node: hit.pos.node.to_string(),
-            offset: hit.pos.offset,
+            node: pos.node.to_string(),
+            offset: pos.offset,
             zone: match hit.zone {
                 HitZone::Content => "content",
                 HitZone::Outside => "outside",
@@ -675,7 +680,9 @@ impl WasmDocument {
     #[must_use]
     pub fn link_at(&self, page: u32, x_twip: i32, y_twip: i32) -> Option<LinkHit> {
         let point = Point::new(Twip(x_twip), Twip(y_twip));
-        let snapshot = LayoutSnapshot::new(&self.layout);
+        // Same rule as `hit_test`: a link is hit where it is PAINTED. The rect
+        // comparison below stays in that same layout, so both halves agree.
+        let snapshot = LayoutSnapshot::new(self.active_layout());
         let hit = snapshot.hit_test(page, point)?;
         if hit.zone != HitZone::Content {
             return None;
@@ -872,10 +879,16 @@ impl WasmDocument {
     }
 
     fn body_hit(&self, page: u32, point: Point) -> Option<RunningHitPayload> {
-        let hit = LayoutSnapshot::new(&self.layout).hit_test(page, point)?;
+        // Hit the layout that produced the pixels under the pointer, then bring
+        // the answer back into the editing space. Hit-testing the editing layout
+        // while the markup view is painted resolved a click to whatever character
+        // occupied that x in a DIFFERENT layout — so clicking a word put the caret
+        // somewhere else once anything upstream had been struck.
+        let hit = LayoutSnapshot::new(self.active_layout()).hit_test(page, point)?;
+        let pos = self.edit_pos(hit.pos);
         Some(RunningHitPayload {
-            node: hit.pos.node.to_string(),
-            offset: hit.pos.offset,
+            node: pos.node.to_string(),
+            offset: pos.offset,
             band: String::new(),
         })
     }
@@ -1741,8 +1754,8 @@ impl WasmDocument {
         let Some(pos) = parse_pos(node, offset) else {
             return Vec::new();
         };
-        LayoutSnapshot::new(&self.layout)
-            .caret_rect_on(pos, self.edit_context.running_page())
+        LayoutSnapshot::new(self.active_layout())
+            .caret_rect_on(self.view_pos(pos), self.edit_context.running_page())
             .map(|(page, rect)| flat_rect(page, rect).to_vec())
             .unwrap_or_default()
     }
@@ -1765,11 +1778,11 @@ impl WasmDocument {
             return Vec::new();
         };
         let range = ModelRange::new(
-            ModelPos::new(start.node, start.offset),
-            ModelPos::new(end.node, end.offset),
+            self.view_pos(ModelPos::new(start.node, start.offset)),
+            self.view_pos(ModelPos::new(end.node, end.offset)),
         );
         let mut out = Vec::new();
-        for (page, rect) in LayoutSnapshot::new(&self.layout)
+        for (page, rect) in LayoutSnapshot::new(self.active_layout())
             .selection_rects_on(range, self.edit_context.running_page())
         {
             out.extend_from_slice(&flat_rect(page, rect));
@@ -10269,6 +10282,41 @@ impl WasmDocument {
         self.markup_layout.as_ref().unwrap_or(&self.layout)
     }
 
+    /// Maps an editing-space position into the layout the user is actually
+    /// looking at.
+    ///
+    /// The markup view paints struck deletions, which the editing layout gives
+    /// zero width. Painting a caret or a selection from the editing layout onto
+    /// markup pixels therefore drew it over the WRONG CHARACTERS: with "Rich "
+    /// struck from "Rich Document", selecting seven characters highlighted what
+    /// read as "Rich Do" and deleted "Documen" — five characters the user never
+    /// touched. Geometry has to come from the same layout as the pixels.
+    fn view_pos(&self, pos: ModelPos) -> ModelPos {
+        if self.markup_layout.is_none() {
+            return pos;
+        }
+        let Some(paragraph) = find_paragraph_any(&self.document, pos.node) else {
+            return pos;
+        };
+        let mut segments = Vec::new();
+        review_segments(&self.document, &paragraph.inlines, false, &mut segments);
+        ModelPos::new(pos.node, editing_to_markup_offset(&segments, pos.offset))
+    }
+
+    /// The inverse of [`WasmDocument::view_pos`]: a position hit-tested against
+    /// what is painted, brought back into the space edits are expressed in.
+    fn edit_pos(&self, pos: ModelPos) -> ModelPos {
+        if self.markup_layout.is_none() {
+            return pos;
+        }
+        let Some(paragraph) = find_paragraph_any(&self.document, pos.node) else {
+            return pos;
+        };
+        let mut segments = Vec::new();
+        review_segments(&self.document, &paragraph.inlines, false, &mut segments);
+        ModelPos::new(pos.node, markup_to_editing_offset(&segments, pos.offset))
+    }
+
     /// The page to render for `index`, from [`WasmDocument::active_layout`].
     fn render_page_of(&self, index: u32) -> Result<&Page, String> {
         let layout = self.active_layout();
@@ -13784,6 +13832,97 @@ fn collect_review_comment_inline(
         }
         _ => {}
     }
+}
+
+/// One run of paragraph content, as a length and whether it exists in the EDITING
+/// byte space. Deleted (and move-from) text is shown by the markup view and is
+/// zero-width to the editor, so the two spaces differ by exactly the sum of these
+/// non-contributing lengths.
+struct ReviewSegment {
+    len: u32,
+    in_editing_space: bool,
+}
+
+/// Flattens a paragraph's inlines into [`ReviewSegment`]s in document order.
+///
+/// The recursion mirrors the layout's own rule (`flow.rs`: a run contributes when
+/// its projection says so OR the view is Markup), which is what makes the two
+/// spaces relatable at all. Wrappers that merely group content — hyperlinks,
+/// fields, content controls — are transparent to both spaces and are descended
+/// through.
+fn review_segments(
+    document: &Document,
+    inlines: &[InlineNode],
+    deleted: bool,
+    out: &mut Vec<ReviewSegment>,
+) {
+    for inline in inlines {
+        match inline {
+            InlineNode::Revision(revision) => {
+                let contributes = revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup);
+                review_segments(document, &revision.inlines, !contributes, out);
+            }
+            InlineNode::Hyperlink(link) => review_segments(document, &link.inlines, deleted, out),
+            InlineNode::Field(field) => review_segments(document, &field.inlines, deleted, out),
+            InlineNode::Sdt(sdt) => review_segments(document, &sdt.inlines, deleted, out),
+            other => {
+                let len = inline_anchor_len(document, other);
+                if len > 0 {
+                    out.push(ReviewSegment {
+                        len,
+                        in_editing_space: !deleted,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Editing-space offset -> markup-space offset within one paragraph.
+///
+/// A caret at an editing offset sits AFTER any struck text that precedes it,
+/// which is where Word and Docs put it: the deletion has already happened, so the
+/// insertion point belongs on its far side.
+fn editing_to_markup_offset(segments: &[ReviewSegment], editing_offset: u32) -> u32 {
+    let mut edit_pos = 0u32;
+    let mut markup_pos = 0u32;
+    for segment in segments {
+        if segment.in_editing_space {
+            if edit_pos + segment.len >= editing_offset {
+                return markup_pos + (editing_offset - edit_pos);
+            }
+            edit_pos += segment.len;
+        }
+        markup_pos += segment.len;
+    }
+    markup_pos
+}
+
+/// Markup-space offset -> editing-space offset within one paragraph.
+///
+/// A position INSIDE struck text has no editing-space equivalent — the text is
+/// not there to put a caret in — so it collapses to the deletion's leading edge.
+/// Clamping rather than guessing is what stops a click on struck text from
+/// resolving to a character somewhere else entirely.
+fn markup_to_editing_offset(segments: &[ReviewSegment], markup_offset: u32) -> u32 {
+    let mut edit_pos = 0u32;
+    let mut markup_pos = 0u32;
+    for segment in segments {
+        if markup_pos + segment.len >= markup_offset {
+            return if segment.in_editing_space {
+                edit_pos + (markup_offset - markup_pos)
+            } else {
+                edit_pos
+            };
+        }
+        markup_pos += segment.len;
+        if segment.in_editing_space {
+            edit_pos += segment.len;
+        }
+    }
+    edit_pos
 }
 
 fn inline_anchor_len_for_review(inline: &InlineNode) -> u32 {
