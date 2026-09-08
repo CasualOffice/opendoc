@@ -46,6 +46,7 @@ use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
+use casual_doc_model::v1::BreakKind;
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
@@ -298,6 +299,7 @@ enum HistoryKind {
     Replace,
     ParagraphBreak,
     Formatting,
+    LineBreak,
     ParagraphFormatting,
     ListFormatting,
     LinkChange,
@@ -329,6 +331,7 @@ impl HistoryKind {
             Self::Delete => "Delete",
             Self::Replace => "Replace",
             Self::ParagraphBreak => "Paragraph break",
+            Self::LineBreak => "Line break",
             Self::Formatting => "Formatting",
             Self::ParagraphFormatting => "Paragraph formatting",
             Self::ListFormatting => "List formatting",
@@ -2825,6 +2828,42 @@ impl WasmDocument {
             at: Pos::new(nid, offset),
             new_id,
         })
+        .map_err(to_js)
+    }
+
+    /// Shift+Enter: a soft line break inside the current paragraph.
+    ///
+    /// Distinct from [`Self::split_paragraph`] in exactly the way users expect and
+    /// the editor previously did not: the text stays in ONE paragraph, so it keeps
+    /// that paragraph's list membership, style, numbering and spacing. Shift+Enter
+    /// used to fall through to a paragraph split, which in a bulleted list produced
+    /// a second bullet and at the end of a heading dropped the next line into body
+    /// text — the opposite of what the gesture means in Word and Docs.
+    ///
+    /// No new operation: `w:br` is an inline node, so this is
+    /// [`Operation::InsertInlineObject`] carrying [`InlineNode::Break`], and its
+    /// inverse is the existing `RemoveInlineObject`. The closed op set (ADR-030,
+    /// invariant I2) stays closed, and undo/redo, review tracking and the
+    /// transaction log all work without knowing this gesture exists.
+    ///
+    /// The caret lands after the break, which is the start of the new visual line.
+    #[wasm_bindgen(js_name = insertLineBreak)]
+    pub fn insert_line_break(&mut self, node: &str, offset: u32) -> Result<EditResult, JsValue> {
+        let nid = node_id(node)?;
+        let break_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".into()))?;
+        self.apply_action_as(
+            vec![Operation::InsertInlineObject {
+                at: Pos::new(nid, offset),
+                node: Box::new(InlineNode::Break(Break {
+                    id: break_id,
+                    kind: BreakKind::Line,
+                })),
+            }],
+            HistoryKind::LineBreak,
+        )
         .map_err(to_js)
     }
 

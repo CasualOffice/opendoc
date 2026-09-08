@@ -14996,6 +14996,33 @@ document.addEventListener("keydown", async (e) => {
   }
   if (key === "Enter") {
     e.preventDefault();
+    // Shift+Enter is a SOFT line break: the text stays in one paragraph and so
+    // keeps its list membership, style, numbering and spacing. It used to fall
+    // through to the paragraph split below, which in a bulleted list produced a
+    // second bullet and at the end of a heading dropped the next line into body
+    // text — the opposite of what the gesture means in Word and Docs.
+    //
+    // Checked before the Suggesting gate and before the empty-list-item rule,
+    // because neither is about this gesture: a line break inside an empty list
+    // item must not exit the list.
+    if (e.shiftKey && !mod) {
+      if (reviewMode === "suggesting") {
+        setStatus("Line breaks cannot be tracked yet; switch to Editing to insert one", "error");
+        return;
+      }
+      // A non-collapsed selection is replaced first, exactly as typing a
+      // character would — otherwise the break lands beside text the user meant
+      // to overwrite.
+      if (range) {
+        const ok = await runEdit(() =>
+          doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset),
+        );
+        if (!ok || !selection) return;
+      }
+      const at = selection.focus;
+      await runEdit(() => doc.insertLineBreak(at.node, at.offset));
+      return;
+    }
     if (reviewMode === "suggesting") {
       setStatus("Paragraph breaks cannot be tracked yet; switch to Editing to insert one", "error");
       return;
