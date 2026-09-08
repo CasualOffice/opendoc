@@ -4952,6 +4952,11 @@ pub(crate) fn shape_field_run(
             is_leader: false,
             font: style.font,
             size: style.size,
+            // Synthesized here rather than shaped, so there is no face to
+            // measure: zero means "use the line's metrics", which is exactly
+            // what a caret in this run drew before per-run metrics existed.
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: style.character_scale_percent,
             color: style.color,
             origin,
@@ -6985,6 +6990,8 @@ mod tests {
                 is_leader: false,
                 font: FontId(0),
                 size: Twip(100),
+                ascent: Twip(0),
+                descent: Twip(0),
                 character_scale_percent: 100,
                 color: [0, 0, 0, 255],
                 origin: Point::new(Twip::ZERO, Twip(baseline)),

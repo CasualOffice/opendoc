@@ -959,6 +959,10 @@ fn leader_run(
         })
         .collect();
     Some(GlyphRun {
+        // No shaped face here, so no run metrics: zero means
+        // "use the line's", which is what this drew before.
+        ascent: Twip(0),
+        descent: Twip(0),
         is_marker: false,
         // A leader is decorative fill, not model text: exclude it from caret slots.
         is_leader: true,

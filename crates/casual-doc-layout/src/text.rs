@@ -71,6 +71,21 @@ pub struct GlyphRun {
     pub font: FontId,
     /// Font size.
     pub size: Twip,
+    /// Typographic ascent of the face this run was shaped with, at this size.
+    ///
+    /// Stored per RUN, not just per line, because the caret has to be as tall as
+    /// the text at the insertion point rather than as tall as the tallest thing
+    /// sharing the line: a caret sitting in 12pt text on a line that also carries
+    /// 28pt text was drawn 2.3x too tall, which reads as the editor being about to
+    /// type at the wrong size. Defaulted and skipped when zero so galleys written
+    /// before these fields existed still deserialize, and so a run with no
+    /// metrics serializes exactly as it used to.
+    #[serde(default, skip_serializing_if = "Twip::is_zero")]
+    pub ascent: Twip,
+    /// Typographic descent of the face this run was shaped with, at this size.
+    /// See [`ascent`](Self::ascent).
+    #[serde(default, skip_serializing_if = "Twip::is_zero")]
+    pub descent: Twip,
     /// Horizontal glyph scaling percentage (`w:w`). Advances are already scaled
     /// during shaping; the renderer uses this value to scale glyph outlines by
     /// the same factor without changing vertical metrics.
@@ -746,6 +761,8 @@ mod tests {
             is_leader: false,
             font: FontId(0),
             size: Twip::from_points(11),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::default(),

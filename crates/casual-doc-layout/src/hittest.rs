@@ -28,6 +28,7 @@ use casual_doc_model::NodeId;
 use crate::block::BlockFragment;
 use crate::model::{ModelPos, ModelRange};
 use crate::page::{AnchorContent, PaginatedLayout};
+use crate::text::GlyphRun;
 use crate::text::Line;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -283,17 +284,26 @@ impl<'a> LayoutSnapshot<'a> {
             .iter()
             .find(|s| s.offset == pos.offset)
             .map_or_else(|| nearest_stop(&stops, lb.left).x, |s| s.x);
-        // Ascent + descent, NOT the full line height. `height` is
-        // `ascent + descent + leading`, so a caret built from it grows with the
-        // paragraph's line spacing while the text does not: at double spacing the
-        // caret measured twice the height of the glyphs it sits in, starting well
-        // above the tallest ascender and ending well below the deepest descender.
-        // Word and Docs draw the caret over the text's own vertical extent and
-        // leave the leading alone, because the caret is telling you where the
-        // GLYPHS will go, not how far apart the lines are.
+        // Ascent + descent of the RUN AT THE INSERTION POINT, anchored on the
+        // line's baseline. Two separate mistakes were folded into the old
+        // `Size::new(_, lb.line.height)`:
+        //
+        //   * `height` is `ascent + descent + leading`, and leading is the gap
+        //     BETWEEN lines, so the caret grew with the paragraph's line spacing
+        //     while the text did not — 18.39px at single, 36.80px at double, on
+        //     the same 12pt text;
+        //   * the LINE's ascent/descent are the maximum over its runs, so on a
+        //     mixed-size line a caret sitting in 12pt text took the height of the
+        //     28pt text beside it — 2.3x too tall, and hanging well below the
+        //     12pt baseline.
+        //
+        // Both read as the editor being about to type at the wrong size, which is
+        // the one thing the caret's height is for.
+        let (ascent, descent) = caret_metrics(lb.line, pos.offset);
+        let baseline = lb.top + lb.line.ascent;
         let rect = Rect::new(
-            Point::new(x, lb.top),
-            Size::new(Twip::ZERO, lb.line.ascent + lb.line.descent),
+            Point::new(x, baseline - ascent),
+            Size::new(Twip::ZERO, ascent + descent),
         );
         Some((lb.page, rect))
     }
@@ -983,6 +993,53 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     stops
 }
 
+/// The vertical extent to draw a caret at `offset` on `line`: the metrics of the
+/// run the caret sits in, falling back to the line's own.
+///
+/// The run to the LEFT of the offset wins, because the caret advertises the
+/// formatting that typing would use, and typing takes the properties of the
+/// preceding character — the same rule the toolbar's size box follows. Only when
+/// the caret is at the very start of a line does the following run answer.
+///
+/// A run with zero metrics is one this crate synthesized rather than shaped (a
+/// tab leader, a flow-built marker); it has no face to measure, so it defers to
+/// the line and the behaviour is exactly what it was before per-run metrics
+/// existed.
+fn caret_metrics(line: &Line, offset: u32) -> (Twip, Twip) {
+    let mut best: Option<&GlyphRun> = None;
+    for run in &line.runs {
+        if run.ascent.is_zero() && run.descent.is_zero() {
+            continue;
+        }
+        let Some(start) = run.glyphs.iter().map(|glyph| glyph.cluster).min() else {
+            continue;
+        };
+        // `<=` so a caret resting exactly at a run's end still belongs to it;
+        // later runs starting at the same offset overwrite it only if they also
+        // start at or before the caret, which keeps "the run to the left" true.
+        if start <= offset
+            && best.is_none_or(|current| {
+                current
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.cluster)
+                    .min()
+                    .is_none_or(|current_start| current_start <= start)
+            })
+        {
+            best = Some(run);
+        }
+    }
+    // Nothing to the left (caret at a line start), so the first shaped run on the
+    // line answers instead.
+    let run = best.or_else(|| {
+        line.runs
+            .iter()
+            .find(|run| !(run.ascent.is_zero() && run.descent.is_zero()))
+    });
+    run.map_or((line.ascent, line.descent), |run| (run.ascent, run.descent))
+}
+
 /// The caret slot whose x is nearest `x` (ties resolve to the first).
 fn nearest_stop(stops: &[CaretStop], x: Twip) -> CaretStop {
     stops
@@ -1113,6 +1170,8 @@ mod tests {
                 is_leader: false,
                 font: FontId(0),
                 size: Twip(LINE_H),
+                ascent: Twip(0),
+                descent: Twip(0),
                 character_scale_percent: 100,
                 color: [0, 0, 0, 255],
                 origin: Point::new(Twip::ZERO, Twip(baseline)),
@@ -1172,6 +1231,8 @@ mod tests {
             is_leader: false,
             font: FontId(0),
             size: Twip(LINE_H),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip(LINE_H)),
@@ -1863,6 +1924,8 @@ mod tests {
             is_leader: false,
             font: FontId(0),
             size: Twip(LINE_H),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip(LINE_H)),
@@ -1884,6 +1947,8 @@ mod tests {
             is_leader: false,
             font: FontId(0),
             size: Twip(LINE_H),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip(6 * ADV), Twip(LINE_H)),
@@ -2102,5 +2167,205 @@ mod tests {
             .map(|lb| (lb.left, lb.top))
             .collect();
         assert_eq!(direct, filtered, "the per-page walk finds the same lines");
+    }
+    /// A caret must be as tall as the text it sits IN, not as tall as the tallest
+    /// thing sharing the line. On a mixed-size line the caret used to take the
+    /// line's ascent/descent — the maximum over its runs — so a caret in 12pt text
+    /// beside 28pt text was drawn more than twice too tall and hung well below the
+    /// 12pt baseline, advertising a size the user was not about to type at.
+    #[test]
+    fn caret_takes_the_metrics_of_the_run_it_sits_in() {
+        let small = GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(240),
+            ascent: Twip(200),
+            descent: Twip(40),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip::ZERO, Twip(560)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            glyphs: vec![Glyph {
+                id: 1,
+                advance: Twip(120),
+                cluster: 0,
+                is_whitespace: false,
+            }],
+        };
+        let large = GlyphRun {
+            size: Twip(560),
+            ascent: Twip(480),
+            descent: Twip(80),
+            origin: Point::new(Twip(120), Twip(560)),
+            glyphs: vec![Glyph {
+                id: 2,
+                advance: Twip(300),
+                cluster: 1,
+                is_whitespace: false,
+            }],
+            ..small.clone()
+        };
+        let line = Line {
+            // The line box is sized by the LARGE run, which is exactly the trap.
+            ascent: Twip(480),
+            descent: Twip(80),
+            height: Twip(700),
+            runs: vec![small.clone(), large.clone()],
+            clip: false,
+            range: ModelRange::new(ModelPos::new(node(1), 0), ModelPos::new(node(1), 2)),
+            line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+
+        // Offset 0 sits in the small run: 240 twips tall, not the line's 560.
+        assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
+        // Offset 1 is the boundary; the run to the LEFT wins, because typing takes
+        // the preceding character's formatting.
+        assert_eq!(caret_metrics(&line, 1), (Twip(480), Twip(80)));
+        // And the tall run answers where the caret really is inside it.
+        assert_eq!(caret_metrics(&line, 2), (Twip(480), Twip(80)));
+    }
+
+    /// The wiring, not just the helper: a caret resolved through `caret_rect_on`
+    /// on a mixed-size line must be as tall as the run it lands in. Asserting
+    /// `caret_metrics` alone left `caret_rect_on` free to keep using the line's
+    /// metrics — which it did, and no test noticed.
+    #[test]
+    fn caret_rect_height_follows_the_run_on_a_mixed_size_line() {
+        let small = GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(240),
+            ascent: Twip(200),
+            descent: Twip(40),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip::ZERO, Twip(480)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            glyphs: vec![Glyph {
+                id: 1,
+                advance: Twip(120),
+                cluster: 0,
+                is_whitespace: false,
+            }],
+        };
+        let large = GlyphRun {
+            size: Twip(560),
+            ascent: Twip(480),
+            descent: Twip(80),
+            origin: Point::new(Twip(120), Twip(480)),
+            glyphs: vec![Glyph {
+                id: 2,
+                advance: Twip(300),
+                cluster: 1,
+                is_whitespace: false,
+            }],
+            ..small.clone()
+        };
+        let id = node(1);
+        let line = Line {
+            ascent: Twip(480),
+            descent: Twip(80),
+            height: Twip(700),
+            runs: vec![small, large],
+            clip: false,
+            range: ModelRange::new(ModelPos::new(id, 0), ModelPos::new(id, 2)),
+            line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        let fragment = BlockFragment::Paragraph {
+            id,
+            lines: LineLayout { lines: vec![line] },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
+        };
+        let paginated = layout(&[fragment]);
+        let snapshot = LayoutSnapshot::new(&paginated);
+
+        let in_small = snapshot
+            .caret_rect_on(ModelPos::new(id, 0), None)
+            .expect("caret in the small run");
+        let in_large = snapshot
+            .caret_rect_on(ModelPos::new(id, 2), None)
+            .expect("caret in the large run");
+
+        assert_eq!(
+            in_small.1.size.height,
+            Twip(240),
+            "caret took the line's height"
+        );
+        assert_eq!(in_large.1.size.height, Twip(560));
+        // Both sit on the same baseline: the short caret's bottom edge meets the
+        // tall one's, rather than floating at the top of the line box.
+        assert_eq!(
+            in_small.1.origin.y + in_small.1.size.height - Twip(40),
+            in_large.1.origin.y + in_large.1.size.height - Twip(80),
+        );
+    }
+
+    /// A run this crate synthesized rather than shaped — a tab leader, a flow-built
+    /// marker — carries no face metrics. Zero must mean "defer to the line", or
+    /// those carets would collapse to nothing.
+    #[test]
+    fn caret_falls_back_to_the_line_when_a_run_has_no_metrics() {
+        let bare = GlyphRun {
+            is_marker: false,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(240),
+            ascent: Twip(0),
+            descent: Twip(0),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip::ZERO, Twip(240)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            glyphs: vec![Glyph {
+                id: 1,
+                advance: Twip(120),
+                cluster: 0,
+                is_whitespace: false,
+            }],
+        };
+        let line = Line {
+            ascent: Twip(200),
+            descent: Twip(40),
+            height: Twip(280),
+            runs: vec![bare],
+            clip: false,
+            range: ModelRange::new(ModelPos::new(node(1), 0), ModelPos::new(node(1), 1)),
+            line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        };
+        assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
     }
 }

@@ -1285,6 +1285,8 @@ mod tests {
             is_leader: false,
             font: FontId(0),
             size: Twip(200),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip(200)),

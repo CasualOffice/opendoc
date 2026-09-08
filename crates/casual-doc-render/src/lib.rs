@@ -1970,6 +1970,8 @@ mod tests {
         let run = GlyphRun {
             font: FontId(9),
             size: Twip::from_points(12),
+            ascent: Twip(0),
+            descent: Twip(0),
             character_scale_percent: 100,
             color: [0, 0, 0, 255],
             origin: Point::new(Twip::ZERO, Twip::from_points(12)),
