@@ -64,6 +64,17 @@ const MODALS = [
     },
   },
   {
+    id: "shortcutsDialog",
+    name: "Keyboard shortcuts",
+    opener: null,
+    restore: "#pages",
+    focus: "#shortcutsClose",
+    async open(page) {
+      await gotoEditor(page);
+      await runFromPalette(page, "keyboard shortcuts", "Keyboard shortcuts");
+    },
+  },
+  {
     id: "splitCellDialog",
     name: "Split cell",
     opener: null,

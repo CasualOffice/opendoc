@@ -263,7 +263,7 @@ reproduction and the responsible `file:line` already identified.
 | HF-123 | Clicking past the last word of a soft-wrapped line, or pressing Home/End there, teleports the caret to another visual line. `caret_start_line` has no affinity: an offset that both ends line N and starts line N+1 always resolves to N+1. Measured with NO tracked change present (caret y 279.3 -> 316.1 on End), which rules out the painted-vs-editing layout cause and makes this purely an affinity defect | layout | P2 | Open |
 | HF-124 | Shift+Enter is a paragraph break everywhere — in a list it makes a second bullet, in a heading it drops into body text. The engine has no line-break operation at all, though the model and layout already support `BreakKind::Line` | rust-core | P1 | Fixed (#518) |
 | HF-125 | Enter inside a text box does nothing ("That edit isn't supported for this selection yet"): `split_paragraph` and `join_paragraphs` never recurse into a paragraph's inlines, unlike `find_paragraph_mut` | rust-core | P1 | Fixed (#518) |
-| HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Open |
+| HF-126 | Enter after a CHECKED checklist item produces another checked item, because the split clones `numbering` and a checklist item's checked state IS its numbering instance | rust-core | P2 | Fixed (#528) |
 | HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
 | HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Fixed (#519) |
 | HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Fixed (#520) |
@@ -311,6 +311,33 @@ recommendation is recorded here rather than lost: tag `LayoutSnapshot` with its
 constructors are the mapping functions, so the whole class becomes a compile
 error. #525 takes the cheaper half — naming the accessors after the question —
 which makes each call site state its intent but still permits the mistake.
+
+### Command-surface gaps found by the chrome prototypes — 2026-09-10
+
+Building a complete command surface twice, in two chrome prototypes since deleted with
+that direction (see `docs/105`), exposed capabilities the product HAS but the command
+registry cannot express. These are not chrome defects: they are holes in the
+addressable surface, so the palette, the app menus, and any host driving the editor
+through the SDK cannot reach them.
+
+| ID | Finding | Evidence | Sev | Status |
+| --- | --- | --- | --- | --- |
+| HF-147 | **Font family and font size have no command id at all.** `format.grow` and `format.shrink` exist, so a caller can nudge a size one step, but nothing can set a face or an exact size. The controls are ribbon-only chrome | `webapp/editor.html:249` (`#fontFamily`), `:255` (`#fontSize`); zero matches for `id: "format.(family\|size\|font)"` in `webapp/src/main.js` | P1 | Fixed (#528) |
+| HF-148 | **`insert.table` is hard-wired to 3x3** and says so in its own label. Every word processor puts a size picker behind that control; the command surface cannot express any other size | `webapp/src/main.js:11652` — `label: "Insert table (3×3)"`, `doc.insertTable(node, 3, 3)` | P2 | Fixed (#528) |
+| HF-149 | The nine zoom presets are chrome with no ids — only `view.zoomIn` / `view.zoomOut` are addressable, so a host cannot ask for a specific zoom | prototype gap G2 | P3 | Fixed (#528) |
+| HF-150 | The underline-style menu is chrome with no ids | prototype gap G3 | P3 | Fixed (#528) |
+| HF-151 | `help.commands` opens the command palette. There is no keyboard-shortcut reference anywhere in the product | prototype gap G4 | P3 | Fixed (#528) |
+
+### Ribbon keyboard reachability — 2026-09-10
+
+| ID | Finding | Evidence | Sev | Status |
+| --- | --- | --- | --- | --- |
+| HF-152 | **The ribbon band was a wall for the keyboard.** Every control in the shown panel was its own Tab stop, so crossing Home cost ~45 presses before the document body could be reached, and all 24 groups were anonymous button runs to a screen reader — the caption printed under each group was decoration, not its accessible name | `webapp/editor.html` — 24 `.rgroup` with a `.rgroup-label` and no `role`/`aria-label`; no `role="toolbar"` and no roving tabindex anywhere in the band | P2 | Fixed (#528) |
+| HF-153 | **Every shortcut was printed in Apple glyphs on every platform.** The registry declares `⌘S`, `⌘⇧P`, `⌘⌥⏎` and the palette, app menus and ribbon tooltips rendered them verbatim, so a Windows or Linux user was told to press keys their keyboard does not have | 18 distinct `shortcut:` strings in `webapp/src/main.js`, all Apple-glyph; three render sites, none translating | P2 | Fixed (#528) |
+
+The prototype also had to add a **Table menu** to the app menu bar: its absence from
+the shipped bar is precisely why every structural table command is right-click-only,
+which is the same parity defect recorded as HF-118 for objects.
 
 ### Deliberately refuted
 

@@ -146,6 +146,12 @@ underlying document operations do not yet exist. Dead placeholders remain forbid
 6. Menu bar, backed only by functional shared commands. *(implemented)*
 
 ## 5. Open decision (for the owner)
+
+> **Still the shipped decision.** A second, configuration-selected layout was
+> explored in [doc 105](105-DUAL-CHROME-DESIGN.md) and **cancelled by the owner on
+> 2026-09-10**: "we have our old UI.. keep that one .. just polish it and fix that
+> issues". Doc 105 is kept for its evidence, not as a plan. Option A below stands.
+
 - **A. Tabbed ribbon** (this proposal) — closest to `template.png`; risk: light tabs.
 - **B. Rich single toolbar + contextual bars** (Google-Docs model) — cleaner for our
   current control count; less like the reference.

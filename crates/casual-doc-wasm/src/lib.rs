@@ -3174,6 +3174,25 @@ impl WasmDocument {
             .selection_delete_ops(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
         let (mut insert_ops, caret) = self.plain_text_ops(start, &text).map_err(to_js)?;
+        // A checklist item's CHECKED state is its numbering instance, and a split
+        // clones the paragraph's properties wholesale — so pressing Enter at the
+        // end of a ticked item produced another item that was already ticked, and
+        // rendered struck through, before it had any content to complete. Word's
+        // `w:next` rule at the top of the SplitParagraph arm is the same shape of
+        // problem ("what should the NEXT paragraph be?"), but it cannot answer this
+        // one: only this layer knows which instance means "checked".
+        if kind == HistoryKind::ParagraphBreak
+            && let Some(unchecked) = self.unchecked_followup(start)
+            && let Some(new_id) = insert_ops.iter().rev().find_map(|op| match op {
+                Operation::SplitParagraph { new_id, .. } => Some(*new_id),
+                _ => None,
+            })
+        {
+            insert_ops.push(Operation::SetParagraphProperties {
+                node: new_id,
+                properties: Box::new(unchecked),
+            });
+        }
         ops.append(&mut insert_ops);
         if ops.is_empty() {
             return Err(to_js("nothing to insert".into()));
@@ -8714,6 +8733,33 @@ impl WasmDocument {
         }
         self.repaginate();
         Ok(())
+    }
+
+    /// The properties a new paragraph should take when Enter is pressed at the END
+    /// of a CHECKED checklist item: the same paragraph, re-pointed at the unchecked
+    /// checklist instance. `None` for every other case — including a split in the
+    /// middle of an item, which is one item becoming two and must keep its state.
+    fn unchecked_followup(&mut self, at: Pos) -> Option<ParagraphProperties> {
+        let checked = self.checklist_checked?;
+        // Everything that reads the document is resolved into owned values first,
+        // because `ensure_checklist` below needs `&mut self`.
+        let (mut properties, level) = {
+            let paragraph = find_paragraph_any(&self.document, at.node)?;
+            let numbering = paragraph.properties.numbering.as_ref()?;
+            if numbering.instance != checked {
+                return None;
+            }
+            (paragraph.properties.clone(), numbering.level)
+        };
+        if at.offset != self.paragraph_text(at.node).len() as u32 {
+            return None;
+        }
+        let unchecked = self.ensure_checklist(false).ok()?;
+        properties.numbering = Some(NumberingRef {
+            instance: unchecked,
+            level,
+        });
+        Some(properties)
     }
 
     /// Builds the closed operation group for inserting normalized plain text at
@@ -24699,6 +24745,65 @@ mod tests {
         // Not a checklist item any more, so a toggle would be rejected at the
         // boundary (the error path constructs a JsValue, exercised in the browser).
         assert_eq!(d.checkbox_state_at(&node), -1);
+    }
+
+    /// HF-126 — Enter at the END of a checked item starts a NEW, unchecked task;
+    /// Enter in the MIDDLE of one splits a single task into two that both keep
+    /// the state the user set. The two rules pull in opposite directions, which
+    /// is why the split cannot simply drop `numbering`.
+    #[test]
+    fn enter_after_a_checked_item_starts_an_unchecked_one() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let (node, text) = nodes
+            .iter()
+            .find(|(_, text)| text.chars().count() > 4)
+            .map(|(id, text)| (id.to_string(), text.clone()))
+            .expect("a paragraph with room to split inside");
+        let end = u32::try_from(text.len()).expect("paragraph length fits u32");
+
+        d.toggle_list(&node, 0, &node, 0, "checklist")
+            .expect("checklist on");
+        d.toggle_checklist_item(&node).expect("tick it");
+        assert_eq!(
+            d.checkbox_state_at(&node),
+            1,
+            "the item under test is ticked"
+        );
+
+        // Enter at the end of the ticked item.
+        let result = d
+            .insert_plain_text_as(&node, end, &node, end, "\n".into(), "paragraphBreak")
+            .expect("paragraph break");
+        let created = result.node();
+        assert_eq!(
+            d.list_style_at(&created),
+            "checklist",
+            "the follow-on line is still a checklist item"
+        );
+        assert_eq!(
+            d.checkbox_state_at(&created),
+            0,
+            "a new task is not already done"
+        );
+        assert_eq!(
+            d.checkbox_state_at(&node),
+            1,
+            "and the item the user actually ticked stays ticked"
+        );
+
+        // Enter in the MIDDLE of a ticked item: one task becomes two, both done.
+        let middle = end / 2;
+        let split = d
+            .insert_plain_text_as(&node, middle, &node, middle, "\n".into(), "paragraphBreak")
+            .expect("mid-item split");
+        assert_eq!(
+            d.checkbox_state_at(&split.node()),
+            1,
+            "splitting a finished task leaves both halves finished"
+        );
+        assert_eq!(d.checkbox_state_at(&node), 1);
     }
 
     /// A checked checklist round-trips through DOCX (export → reopen) and is still

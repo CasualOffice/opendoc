@@ -1009,6 +1009,58 @@ body.modal-open {
   padding: 18px var(--space-5) var(--space-5);
 }
 
+/* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
+   whole keymap is scannable without scrolling past the group you want; one
+   column as soon as that would squeeze the key chips. */
+.shortcuts-dialog {
+  width: min(var(--dialog-width-wide), 100%);
+}
+
+.shortcuts-body {
+  columns: 2;
+  column-gap: var(--space-6);
+}
+
+.shortcuts-group {
+  break-inside: avoid;
+  margin: 0 0 var(--space-5);
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-small);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 3px 0;
+}
+
+.shortcuts-row span:first-child {
+  color: var(--ink);
+}
+
+.shortcuts-keys {
+  flex: 0 0 auto;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .shortcuts-body {
+    columns: 1;
+  }
+}
+
 .dialog-foot {
   display: flex;
   align-items: center;

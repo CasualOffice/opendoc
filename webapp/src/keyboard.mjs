@@ -100,3 +100,73 @@ export function lineDeletionDirection(event, platform = keyboardPlatform()) {
   if (!lineModifier) return null;
   return event.key === "Backspace" ? "backward" : "forward";
 }
+
+// Every shortcut in this editor is DECLARED in Apple glyphs — "⌘⇧P" — because
+// that is what the ribbon tooltips and the palette were first written against.
+// On Windows and Linux those glyphs name keys that are not on the keyboard, so
+// the shortcut column was telling a large share of users to press a key they do
+// not have.
+const SHORTCUT_GLYPHS = new Map([
+  ["⌘", "Ctrl"],
+  ["⌃", "Ctrl"],
+  ["⌥", "Alt"],
+  ["⇧", "Shift"],
+  ["⏎", "Enter"],
+  ["⌫", "Backspace"],
+  ["⌦", "Delete"],
+  ["⎋", "Esc"],
+  ["⇥", "Tab"],
+]);
+
+/** Renders a declared shortcut for the keyboard in front of the user.
+ *
+ * Apple keeps the glyphs, which is the platform convention and is what the
+ * strings already are. Everywhere else each glyph becomes its key name joined by
+ * "+", so "⌘⇧P" reads "Ctrl+Shift+P". A string with no glyphs at all is
+ * returned untouched, so a plain "F5" survives both platforms.
+ */
+export function formatShortcut(shortcut, platform = keyboardPlatform()) {
+  if (!shortcut) return "";
+  if (platform === APPLE_PLATFORM) return shortcut;
+  const parts = [];
+  let literal = "";
+  for (const character of shortcut) {
+    const name = SHORTCUT_GLYPHS.get(character);
+    if (name) {
+      if (literal) {
+        parts.push(literal);
+        literal = "";
+      }
+      parts.push(name);
+    } else {
+      literal += character;
+    }
+  }
+  if (literal) parts.push(literal);
+  return parts.join("+");
+}
+
+// Caret movement is the one part of the keymap with no command behind it — it
+// is handled straight out of `navigationDirection` — so it appears in no menu,
+// no palette and, before this table existed, in no reference either. Declared
+// here beside the function it describes, with the modifier genuinely differing
+// per platform (Apple moves by word on Option, everyone else on Control), and
+// `keyboard.test.mjs` drives each row through `navigationDirection` so a row
+// that stops being true turns red instead of quietly lying in the dialog.
+export const NAVIGATION_SHORTCUTS = [
+  { apple: "←  →", standard: "←  →", label: "Move by character", direction: ["left", "right"], event: { key: "ArrowLeft" }, second: { key: "ArrowRight" } },
+  { apple: "⌥←  ⌥→", standard: "Ctrl+←  Ctrl+→", label: "Move by word", direction: ["wordLeft", "wordRight"], event: { key: "ArrowLeft", altKey: true }, second: { key: "ArrowRight", altKey: true }, standardEvent: { key: "ArrowLeft", ctrlKey: true }, standardSecond: { key: "ArrowRight", ctrlKey: true } },
+  { apple: "↑  ↓", standard: "↑  ↓", label: "Move by line", direction: ["up", "down"], event: { key: "ArrowUp" }, second: { key: "ArrowDown" } },
+  { apple: "⌘↑  ⌘↓", standard: "Ctrl+↑  Ctrl+↓", label: "Move by paragraph", direction: ["paragraphUp", "paragraphDown"], event: { key: "ArrowUp", metaKey: true }, second: { key: "ArrowDown", metaKey: true }, standardEvent: { key: "ArrowUp", ctrlKey: true }, standardSecond: { key: "ArrowDown", ctrlKey: true } },
+  { apple: "⌘←  ⌘→", standard: "Home  End", label: "Start or end of line", direction: ["lineStart", "lineEnd"], event: { key: "ArrowLeft", metaKey: true }, second: { key: "ArrowRight", metaKey: true }, standardEvent: { key: "Home" }, standardSecond: { key: "End" } },
+  { apple: "⌘↖  ⌘↘", standard: "Ctrl+Home  Ctrl+End", label: "Start or end of document", direction: ["docStart", "docEnd"], event: { key: "Home", metaKey: true }, second: { key: "End", metaKey: true }, standardEvent: { key: "Home", ctrlKey: true }, standardSecond: { key: "End", ctrlKey: true } },
+  { apple: "⇞  ⇟", standard: "PgUp  PgDn", label: "Move by screen", direction: ["pageUp", "pageDown"], event: { key: "PageUp" }, second: { key: "PageDown" } },
+];
+
+/** The caret-movement rows as the platform in front of the user sees them. */
+export function navigationShortcuts(platform = keyboardPlatform()) {
+  return NAVIGATION_SHORTCUTS.map((row) => ({
+    keys: platform === APPLE_PLATFORM ? row.apple : row.standard,
+    label: row.label,
+  }));
+}

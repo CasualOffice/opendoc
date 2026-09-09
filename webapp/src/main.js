@@ -20,9 +20,11 @@ import {
   formatInfo,
 } from "./format_io.mjs";
 import {
+  formatShortcut,
   keyboardPlatform,
   lineDeletionDirection,
   navigationDirection,
+  navigationShortcuts,
   wordDeletionDirection,
 } from "./keyboard.mjs";
 import {
@@ -31,6 +33,7 @@ import {
   normalizeMenuEntries,
 } from "./context_menu.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { previewInkIsLegible } from "./contrast.mjs";
 
 function escapeHtml(text) {
@@ -266,6 +269,10 @@ function selectRibbonTab(name) {
   // already in its final inline-or-overflow location the moment the panel shows —
   // the newly shown panel reflows and the previous panel's groups are restored.
   if (typeof updateRibbonOverflow === "function") updateRibbonOverflow();
+  // The band's single Tab stop belongs to the panel now showing, not to a
+  // control that just went hidden with the previous one.
+  ribbonTabStop = null;
+  syncRibbonTabStops();
 }
 for (const t of ribbonTabs) {
   t.addEventListener("click", (event) => {
@@ -616,6 +623,11 @@ function reflectActiveCards(container) {
 function syncStylesGalleryActive() {
   reflectActiveCards(stylesGallery);
   reflectActiveCards(stylesMorePanel);
+  // The inline strip sits inside the ribbon band, and the band owns exactly one
+  // Tab stop across everything it holds. Re-assert that after the strip has
+  // published its own internal stop, or the band grows a second Tab stop on
+  // every caret move — which is precisely how it had three to begin with.
+  syncRibbonTabStops();
 }
 
 /** Closes the "More styles" popover, optionally restoring focus to its button. */
@@ -866,7 +878,10 @@ function updateRibbonOverflow() {
 let ribbonOverflowFrame = 0;
 function scheduleRibbonOverflow() {
   cancelAnimationFrame(ribbonOverflowFrame);
-  ribbonOverflowFrame = requestAnimationFrame(updateRibbonOverflow);
+  ribbonOverflowFrame = requestAnimationFrame(() => {
+    updateRibbonOverflow();
+    syncRibbonTabStops();
+  });
 }
 
 if (ribbonOverflowBtn && ribbonOverflowMenu) {
@@ -913,6 +928,118 @@ if (ribbonOverflowBtn && ribbonOverflowMenu) {
   }
 }
 
+// --- Ribbon keyboard navigation (WAI-ARIA toolbar pattern) -------------------
+// The band is ONE Tab stop; Left/Right/Home/End move between its controls. It
+// used to be roughly forty-five stops on Home alone, so anyone driving the
+// editor from the keyboard had to walk every formatting button to get past the
+// ribbon. Each `.rgroup` also becomes a named `role="group"`, taking its name
+// from the caption already printed under it, so a screen reader announces
+// "Font, toolbar group" instead of twenty-four anonymous button runs.
+
+/** The controls the band navigates, in visual order.
+ *
+ * A composite that runs its own roving tabindex (the styles listbox, the table
+ * grid picker) counts as ONE item: the band moves focus to it and its own keys
+ * take over from there, which is how Word treats a gallery. The "⋯" button is
+ * last when it is showing, matching where it sits.
+ */
+const RIBBON_ITEM_SELECTOR = "button, input, select, [tabindex]";
+const RIBBON_COMPOSITE_SELECTOR =
+  '[role="listbox"], [role="grid"], [role="menu"], [role="radiogroup"]';
+
+function ribbonBandItems() {
+  const panel = ribbonPanels.find((p) => !p.hidden);
+  if (!panel || ribbonViewCollapsed) return [];
+  const items = [];
+  const composites = new Set();
+  for (const el of panel.querySelectorAll(RIBBON_ITEM_SELECTOR)) {
+    if (el.disabled || el.hidden || el.closest("[hidden]")) continue;
+    if (el.getAttribute("aria-hidden") === "true") continue;
+    if (!el.offsetWidth && !el.offsetHeight) continue;
+    const composite = el.closest(RIBBON_COMPOSITE_SELECTOR);
+    if (composite && panel.contains(composite)) {
+      if (composites.has(composite)) continue;
+      composites.add(composite);
+      items.push(composite.querySelector('[tabindex="0"]') || el);
+      continue;
+    }
+    items.push(el);
+  }
+  if (ribbonOverflowBtn && !ribbonOverflowBtn.hidden) items.push(ribbonOverflowBtn);
+  return items;
+}
+
+// The control the band hands focus back to. Remembered rather than recomputed
+// because overflow and enablement churn the item list constantly, and a band
+// that resets to its first control every time undo greys out is worse than no
+// memory at all.
+let ribbonTabStop = null;
+// Callers earlier in this file re-publish their own Tab stops (the styles strip
+// does it on every caret move) and must be able to ask the band to re-assert
+// itself. Until the band is wired below there is nothing to re-assert, and the
+// bindings it reads do not exist yet.
+let ribbonNavReady = false;
+
+function syncRibbonTabStops() {
+  if (!ribbonNavReady) return;
+  const panel = ribbonPanels.find((p) => !p.hidden);
+  const items = ribbonBandItems();
+  const index = tabStopIndex(items, ribbonTabStop);
+  ribbonTabStop = index < 0 ? null : items[index];
+  // Neutralize EVERY focusable control in the band, not just the collected
+  // items: a composite runs its own roving and re-publishes an internal
+  // `tabindex="0"` whenever it rebuilds, which is how the styles gallery kept
+  // handing the band two extra Tab stops after this pattern was already in
+  // place. One pass over everything, then one control is granted the stop.
+  for (const el of panel ? panel.querySelectorAll(RIBBON_ITEM_SELECTOR) : []) {
+    el.tabIndex = el === ribbonTabStop ? 0 : -1;
+  }
+  if (ribbonOverflowBtn) {
+    ribbonOverflowBtn.tabIndex = ribbonOverflowBtn === ribbonTabStop ? 0 : -1;
+  }
+}
+
+if (ribbonBodyEl) {
+  // Name every group from the caption already rendered under it, so the two can
+  // never disagree the way a hand-written `aria-label` would.
+  for (const group of document.querySelectorAll(".rgroup")) {
+    const caption = group.querySelector(".rgroup-label")?.textContent?.trim();
+    if (!caption) continue;
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", caption);
+  }
+  for (const panel of ribbonPanels) panel.setAttribute("aria-orientation", "horizontal");
+
+  ribbonBodyEl.addEventListener("keydown", (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target.closest("#ribbonOverflowMenu")) return;
+    // A field wants Home/End for its own text, and a composite that runs its own
+    // roving owns the arrows once focus is inside it.
+    const editable =
+      event.target.isContentEditable ||
+      /^(?:INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+    if (editable) return;
+    const inComposite = event.target.closest(RIBBON_COMPOSITE_SELECTOR);
+    if (inComposite && ribbonBodyEl.contains(inComposite)) return;
+    const items = ribbonBandItems();
+    const next = rovingIndex(event.key, items.indexOf(event.target), items.length);
+    if (next === null) return;
+    event.preventDefault();
+    ribbonTabStop = items[next];
+    syncRibbonTabStops();
+    items[next].focus();
+  });
+  // Clicking a control makes it the band's Tab stop, so returning by Tab lands
+  // where the user last worked rather than back at the start of the row.
+  ribbonBodyEl.addEventListener("focusin", (event) => {
+    if (event.target.closest("#ribbonOverflowMenu")) return;
+    if (ribbonBandItems().includes(event.target)) ribbonTabStop = event.target;
+    syncRibbonTabStops();
+  });
+  ribbonNavReady = true;
+  syncRibbonTabStops();
+}
+
 // --- Delayed tooltips for icon-only ribbon controls (docs/64 §3) -------------
 // A single custom tooltip (~350ms hover/focus delay) shows the control's name +
 // shortcut. Reuses the existing `title`/`aria-label` content; the native title
@@ -933,7 +1060,11 @@ function tipContentFor(el) {
   const label = (el.getAttribute("aria-label") ?? "").trim();
   const match = raw.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
   const name = (label || (match ? match[1] : raw)).trim();
-  const shortcut = match ? match[2].trim() : "";
+  // The parenthetical is a shortcut only if it reads like one. "(3×3)" and
+  // "(compact view)" are part of the name, and translating them would have
+  // printed nonsense in the shortcut slot.
+  const parenthetical = match ? match[2].trim() : "";
+  const shortcut = /[⌘⌃⌥⇧]/u.test(parenthetical) ? formatShortcut(parenthetical) : "";
   return { name, shortcut };
 }
 
@@ -7165,7 +7296,7 @@ function renderMenuLevel(el, entries, depth) {
       // never widens to fit an explanation; the reason stays as a hover title.
       const hint = document.createElement("span");
       hint.className = "menu-item-hint";
-      hint.textContent = entry.shortcut;
+      hint.textContent = formatShortcut(entry.shortcut);
       button.appendChild(hint);
     }
     button.addEventListener("mousemove", () => {
@@ -8891,23 +9022,67 @@ onButton(continueListBtn, () => {
   if (selection && doc) runNodeEdit(() => doc.continueList(selection.focus.node));
 });
 
-fontSizeSel.addEventListener("change", () => {
-  const pt = Number(fontSizeSel.value);
-  const valid =
-    fontSizeSel.value.trim() !== "" &&
-    Number.isFinite(pt) &&
-    pt >= 1 &&
-    pt <= 1638 &&
-    Number.isInteger(pt * 2);
-  fontSizeSel.setCustomValidity(valid ? "" : "Enter a font size from 1 to 1638 pt in 0.5 pt steps.");
-  if (!valid) {
-    fontSizeSel.reportValidity();
-    updateToolbar();
+/** Inserts a SOFT line break at the caret — the Shift+Enter gesture.
+ *
+ * The text stays in one paragraph and so keeps its list membership, style,
+ * numbering and spacing. Extracted from the Enter handler so `insert.lineBreak`
+ * runs exactly this and not a second, quietly different version of it: the
+ * gesture was keyboard-only, which is the same one-surface defect docs/104 keeps
+ * recording. */
+async function insertLineBreakAtSelection() {
+  if (!doc || !selection) return;
+  if (reviewMode === "suggesting") {
+    setStatus("Line breaks cannot be tracked yet; switch to Editing to insert one", "error");
     return;
+  }
+  // A non-collapsed selection is replaced first, exactly as typing a character
+  // would — otherwise the break lands beside text the user meant to overwrite.
+  if (hasRange()) {
+    const { anchor, focus } = selection;
+    const ok = await runEdit(() =>
+      doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset),
+    );
+    if (!ok || !selection) return;
+  }
+  const at = selection.focus;
+  await runEdit(() => doc.insertLineBreak(at.node, at.offset));
+}
+
+/** Applies an exact point size, or reports why it cannot.
+ *
+ * Shared by the ribbon's size field and by the `format.size` command, so a
+ * caller asking for 14pt goes through the same validation the typed value does
+ * instead of a second, quietly different rule. `report` is off for callers with
+ * no field to attach a validation bubble to. */
+function applyFontSize(points, { report = true } = {}) {
+  const pt = Number(points);
+  const valid = Number.isFinite(pt) && pt >= 1 && pt <= 1638 && Number.isInteger(pt * 2);
+  if (report) {
+    fontSizeSel.setCustomValidity(
+      valid ? "" : "Enter a font size from 1 to 1638 pt in 0.5 pt steps.",
+    );
+  }
+  if (!valid) {
+    if (report) {
+      fontSizeSel.reportValidity();
+      updateToolbar();
+    }
+    return false;
   }
   armOrApplyRun({ sizeHalfPoints: Math.round(pt * 2) }, () =>
     runToolbarEdit((a, b, c, d) => doc.setFontSize(a, b, c, d, pt)),
   );
+  return true;
+}
+
+fontSizeSel.addEventListener("change", () => {
+  if (fontSizeSel.value.trim() === "") {
+    fontSizeSel.setCustomValidity("Enter a font size from 1 to 1638 pt in 0.5 pt steps.");
+    fontSizeSel.reportValidity();
+    updateToolbar();
+    return;
+  }
+  applyFontSize(fontSizeSel.value);
 });
 // ---- Toolbar popovers (compact anchored menus such as spacing) --------------
 // One lightweight manager: anchor a menu under its button, only one open at a
@@ -11621,6 +11796,31 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
     { id: "format.painter", label: "Format painter", group: "Format", kw: "copy formatting paint brush clone style match", shortcut: "⌘⇧C", enabled: !!selection, disabledReason: "Place the caret or select text to copy its formatting", run: () => armFormatPainter(false) },
+    // HF-147 — the face and the exact size were ribbon chrome with no command
+    // id, so nothing but a mouse on that one control could set either. These two
+    // open the control's own picker; the exact values are generated further down
+    // as `format.family.<name>` and `format.size.<pt>`.
+    {
+      id: "format.family",
+      label: "Font…",
+      group: "Format",
+      kw: "typeface face family font name",
+      enabled: !!selection,
+      disabledReason: "Place the caret or select text",
+      run: () => fontFamilyBtn.click(),
+    },
+    {
+      id: "format.size",
+      label: "Font size…",
+      group: "Format",
+      kw: "points pt exact size font",
+      enabled: !!selection,
+      disabledReason: "Place the caret or select text",
+      run: () => {
+        fontSizeSel.focus();
+        fontSizeSel.select();
+      },
+    },
     { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
     { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
     { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
@@ -11649,7 +11849,25 @@ function editorCommands(context = { surface: "palette" }) {
     // one surface and greyed on another. None of them asks for a prior click:
     // an open document already has an insertion point (Word/Docs), so the only
     // Insert precondition left is a real one — Link needs text to link.
-    { id: "insert.table", label: "Insert table (3×3)", group: "Insert", kw: "grid", enabled: insertCommandEnabled("insert.table"), run: () => selection && runEdit(() => doc.insertTable(selection.focus.node, 3, 3), { gate: true }) },
+    // HF-148 — the id used to BE the 3x3 default, label and all, so no caller
+    // could ask for any other size. The grid picker remains what a user without
+    // a size in mind gets; the argument is what a host or a keyboard caller
+    // needs.
+    {
+      id: "insert.table",
+      label: "Insert table…",
+      group: "Insert",
+      kw: "grid rows columns",
+      enabled: insertCommandEnabled("insert.table"),
+      run: () => insertTableBtn.click(),
+    },
+    // Shift+Enter was reachable ONLY from the keyboard — no id, so no palette
+    // row, no menu row, and nothing in the shortcut reference. It is placed in
+    // the palette here; a ribbon/menu home (Word files it under Insert ▸ Break)
+    // is deliberately deferred, because the Insert ribbon and the Insert menu
+    // are held at exact parity by `insert-surface.spec.mjs` and adding a control
+    // to both is a chrome change, not this fix.
+    { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", shortcut: "⇧⏎", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "layout.firstPageVariant", label: `Different first page: ${runningVariantState().firstPage ? "on" : "off"}`, group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("firstPage") },
     { id: "layout.evenOddVariant", label: `Different odd & even pages: ${runningVariantState().evenOdd ? "on" : "off"}`, group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("evenOdd") },
@@ -11681,7 +11899,8 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
-    { id: "help.commands", label: "Keyboard shortcuts and commands", group: "Help", kw: "help shortcuts command palette", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
+    { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
+    { id: "help.shortcuts", label: "Keyboard shortcuts", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => toggleShortcutsReference(true) },
     {
       id: "review.comment",
       label: "Add comment",
@@ -11766,6 +11985,85 @@ function editorCommands(context = { surface: "palette" }) {
         });
       }
     }
+  }
+  // HF-149 / HF-150 — the nine zoom presets and the underline-style menu were
+  // chrome with no ids, so the palette, the app menu and any host driving the
+  // editor could step zoom but never ASK for 150%, and could turn underline on
+  // but never make it wavy. Generated from the same markup and the same label
+  // map the controls themselves use, so a preset or a style added there gets its
+  // command for free and no label can drift from the control it mirrors.
+  for (const preset of zoomMenu?.querySelectorAll(".zoom-preset") ?? []) {
+    const factor = Number(preset.dataset.zoom);
+    cmds.push({
+      id: `view.zoom.${Math.round(factor * 100)}`,
+      label: `Zoom: ${preset.querySelector(".menu-item-label")?.textContent?.trim() ?? `${Math.round(factor * 100)}%`}`,
+      group: "View",
+      kw: "zoom scale magnify percent",
+      run: () => setZoom(factor),
+    });
+  }
+  for (const fit of zoomMenu?.querySelectorAll(".zoom-fit") ?? []) {
+    const mode = fit.dataset.zoomMode;
+    cmds.push({
+      id: `view.zoom.${mode === "fit-width" ? "fitWidth" : "fitPage"}`,
+      label: `Zoom: ${fit.querySelector(".menu-item-label")?.textContent?.trim() ?? mode}`,
+      group: "View",
+      kw: "zoom fit width page whole",
+      run: () => setZoomMode(mode),
+    });
+  }
+  // The open-ended one: any percentage, not just the nine on the menu. With no
+  // argument it focuses the field the user would have typed into anyway.
+  cmds.push({
+    id: "view.zoom",
+    label: "Zoom to…",
+    group: "View",
+    kw: "zoom percent custom exact scale",
+    run: (percent) => {
+      const value = Number(percent);
+      if (!Number.isFinite(value) || value <= 0) {
+        zoomEl.focus();
+        zoomEl.select();
+        return;
+      }
+      setZoom(value / 100);
+    },
+  });
+  // The exact values behind the two "…" commands above. Generated from the same
+  // inventory the font menu renders and the same step table Grow/Shrink walks,
+  // so "Font: Georgia" and "Font size: 14 pt" mean exactly what picking them off
+  // the ribbon means, and a face added to the inventory gets its command free.
+  if (selection) {
+    for (const name of fontInventory()) {
+      cmds.push({
+        id: `format.family.${name}`,
+        label: `Font: ${name}`,
+        group: "Format",
+        kw: `font typeface family ${name}`.toLowerCase(),
+        run: () => applyFontFamily(name),
+      });
+    }
+    for (const points of FONT_STEP_SIZES) {
+      cmds.push({
+        id: `format.size.${points}`,
+        label: `Font size: ${points} pt`,
+        group: "Format",
+        kw: `font size point ${points}`,
+        run: () => applyFontSize(points, { report: false }),
+      });
+    }
+  }
+  for (const [style, label] of UNDERLINE_STYLE_LABELS) {
+    if (style === "none") continue; // "no underline" is `format.underline` off
+    cmds.push({
+      id: `format.underline.${style}`,
+      label: `Underline: ${label}`,
+      group: "Format",
+      kw: `underline ${label} line style`.toLowerCase(),
+      enabled: !!selection,
+      disabledReason: "Place the caret or select text",
+      run: () => applyUnderlineStyle(style),
+    });
   }
   if (doc) {
     for (const name of doc.listStyles()) {
@@ -11911,7 +12209,7 @@ const APP_MENU_SECTIONS = {
     ["style.updateFromSelection", "style.createFromSelection"],
   ],
   tools: [["layout.pageSetup", "layout.paragraph"], ["tools.smartQuotes"], ["file.properties", "view.settings"]],
-  help: [["help.commands"]],
+  help: [["help.commands", "help.shortcuts"]],
 };
 
 function appMenuFocusableItems() {
@@ -11966,7 +12264,7 @@ function renderAppMenu(name) {
       label.textContent = command.label;
       const hint = document.createElement("span");
       hint.className = "app-menu-item-hint";
-      hint.textContent = command.shortcut ?? "";
+      hint.textContent = formatShortcut(command.shortcut);
       item.append(label, hint);
       item.addEventListener("click", () => {
         if (command.enabled === false) return;
@@ -12065,6 +12363,75 @@ window.addEventListener("resize", () => closeAppMenu());
 function buildCommands() {
   return editorCommands({ surface: "palette" });
 }
+
+// ---- Keyboard shortcuts reference (HF-151) ---------------------------------
+// Help offered "Keyboard shortcuts and commands", which opened the palette — a
+// launcher, not a reference. Nothing in the product ever told a user what the
+// chords WERE. Generated from the command registry plus the caret-movement
+// table in `keyboard.mjs`, so it can neither list a shortcut that does not
+// exist nor miss one that does, and every chord is rendered for the keyboard in
+// front of the user rather than in Apple glyphs on every platform.
+const shortcutsDialog = document.getElementById("shortcutsDialog");
+const shortcutsBody = document.getElementById("shortcutsBody");
+const shortcutsClose = document.getElementById("shortcutsClose");
+
+function shortcutGroups() {
+  const groups = new Map([["Moving around", navigationShortcuts()]]);
+  for (const command of editorCommands({ surface: "palette" })) {
+    if (!command.shortcut) continue;
+    const rows = groups.get(command.group) ?? [];
+    // A command can be listed twice by the registry (the same chord reached
+    // from two contexts); the reference shows each chord once.
+    if (rows.some((row) => row.keys === formatShortcut(command.shortcut))) continue;
+    rows.push({ keys: formatShortcut(command.shortcut), label: command.label });
+    groups.set(command.group, rows);
+  }
+  return [...groups].filter(([, rows]) => rows.length);
+}
+
+function buildShortcutsReference() {
+  if (!shortcutsBody) return;
+  shortcutsBody.replaceChildren();
+  for (const [group, rows] of shortcutGroups()) {
+    const section = document.createElement("section");
+    section.className = "shortcuts-group";
+    const heading = document.createElement("h3");
+    heading.textContent = group;
+    section.appendChild(heading);
+    for (const row of rows) {
+      const line = document.createElement("div");
+      line.className = "shortcuts-row";
+      const label = document.createElement("span");
+      label.textContent = row.label;
+      const keys = document.createElement("span");
+      keys.className = "shortcuts-keys";
+      keys.textContent = row.keys;
+      line.append(label, keys);
+      section.appendChild(line);
+    }
+    shortcutsBody.appendChild(section);
+  }
+}
+
+const shortcutsModal = shortcutsDialog
+  ? registerModal(shortcutsDialog, {
+      initialFocus: () => shortcutsClose,
+      fallbackFocus: () => pagesEl,
+    })
+  : null;
+
+function toggleShortcutsReference(open) {
+  if (!shortcutsModal) return;
+  if (open) {
+    // Built on open, not once at boot: the registry's labels move with the
+    // document (undo names its action) and the roster grows with the styles.
+    buildShortcutsReference();
+    shortcutsModal.open();
+  } else {
+    shortcutsModal.close();
+  }
+}
+shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- Bookmark manager ------------------------------------------------------
 // A Word/Docs-style bookmark surface over the engine's create/rename/delete ops
@@ -13342,7 +13709,7 @@ function renderCommands(query) {
     // The hint column shows the disabled reason when unavailable, else the
     // command's keyboard shortcut when it has one (so the palette teaches the
     // shortcut), else its group.
-    const hint = c.enabled === false ? c.disabledReason : (c.shortcut || c.group);
+    const hint = c.enabled === false ? c.disabledReason : (formatShortcut(c.shortcut) || c.group);
     item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(hint)}</span>`;
     item.addEventListener("mousemove", () => setCmdSel(i));
     item.addEventListener("click", () => runCommand(i));
@@ -15065,21 +15432,7 @@ document.addEventListener("keydown", async (e) => {
     // because neither is about this gesture: a line break inside an empty list
     // item must not exit the list.
     if (e.shiftKey && !mod) {
-      if (reviewMode === "suggesting") {
-        setStatus("Line breaks cannot be tracked yet; switch to Editing to insert one", "error");
-        return;
-      }
-      // A non-collapsed selection is replaced first, exactly as typing a
-      // character would — otherwise the break lands beside text the user meant
-      // to overwrite.
-      if (range) {
-        const ok = await runEdit(() =>
-          doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset),
-        );
-        if (!ok || !selection) return;
-      }
-      const at = selection.focus;
-      await runEdit(() => doc.insertLineBreak(at.node, at.offset));
+      await insertLineBreakAtSelection();
       return;
     }
     if (reviewMode === "suggesting") {

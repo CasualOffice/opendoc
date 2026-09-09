@@ -536,6 +536,29 @@
       </div>
     </div>
 
+    <!-- HF-151 — the product had no keyboard-shortcut reference at all; Help ▸
+         "Keyboard shortcuts and commands" opened the command palette, which is a
+         launcher, not a reference. The body is generated from the command
+         registry and from `NAVIGATION_SHORTCUTS`, so a shortcut cannot be listed
+         here without existing, or exist without being listed. -->
+    <div id="shortcutsDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" aria-describedby="shortcutsDescription">
+      <section class="dialog-card shortcuts-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">keyboard</span>
+            <div>
+              <h2 id="shortcutsTitle">Keyboard shortcuts</h2>
+              <p id="shortcutsDescription">Every command that has one, plus caret movement — spelled for the keyboard you are using.</p>
+            </div>
+          </div>
+          <button id="shortcutsClose" type="button" class="dialog-close" title="Close" aria-label="Close keyboard shortcuts">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div id="shortcutsBody" class="dialog-body shortcuts-body"></div>
+      </section>
+    </div>
+
     <div id="pageSetupMenu" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pageSetupTitle" aria-describedby="pageSetupDescription">
       <section class="dialog-card page-setup-dialog">
         <header class="dialog-head">
