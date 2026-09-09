@@ -30,6 +30,7 @@ use crate::model::{ModelPos, ModelRange};
 use crate::page::{AnchorContent, PaginatedLayout};
 use crate::text::GlyphRun;
 use crate::text::Line;
+use crate::text::LineBreak;
 use crate::units::{Point, Rect, Size, Twip};
 
 /// A direction for vertical caret movement (up/down arrow keys).
@@ -242,7 +243,29 @@ impl<'a> LayoutSnapshot<'a> {
         };
 
         let stops = stops_for(lb.line, lb.left);
-        let nearest = nearest_stop(&stops, point.x);
+        let mut nearest = nearest_stop(&stops, point.x);
+        // A soft-wrap boundary offset both ENDS this line and STARTS the next, and
+        // `caret_start_line` resolves that tie to the next line. So clicking past
+        // the last word of a wrapped line — or pressing End, which hit-tests the
+        // line's far right — put the caret at the left edge of the following line:
+        // 660px left and one line down from where the user pointed.
+        //
+        // Word and Docs answer the same click with the position after the last
+        // non-space character, which is strictly inside this line and therefore
+        // not ambiguous at all. That is both the correct behaviour and the thing
+        // that removes the tie, so no affinity has to be threaded through the API.
+        if lb.line.line_break == LineBreak::Wrap
+            && nearest.offset == lb.line.range.end.offset
+            && let Some(offset) = visual_line_end(lb.line)
+        {
+            nearest = CaretStop {
+                x: stops
+                    .iter()
+                    .find(|stop| stop.offset == offset)
+                    .map_or(nearest.x, |stop| stop.x),
+                offset,
+            };
+        }
         let horizontally_inside =
             point.x.raw() >= line_left(&stops).raw() && point.x.raw() <= line_right(&stops).raw();
         let zone = if vertically_inside && horizontally_inside {
@@ -1038,6 +1061,41 @@ fn caret_metrics(line: &Line, offset: u32) -> (Twip, Twip) {
             .find(|run| !(run.ascent.is_zero() && run.descent.is_zero()))
     });
     run.map_or((line.ascent, line.descent), |run| (run.ascent, run.descent))
+}
+
+/// The offset just after the last non-whitespace glyph on `line`, or `None` if the
+/// line is entirely whitespace.
+///
+/// This is where a soft-wrapped line visually ENDS. The line's model range runs to
+/// the wrap point, which includes the space the wrap happened at — a space drawn
+/// at the right margin that the user cannot see and did not click on.
+fn visual_line_end(line: &Line) -> Option<u32> {
+    let mut last = None;
+    for run in &line.runs {
+        for glyph in &run.glyphs {
+            if !glyph.is_whitespace {
+                last = Some(glyph.cluster);
+            }
+        }
+    }
+    let last = last?;
+    // The caret goes AFTER that glyph, which is the next cluster boundary — the
+    // same slot `stops_for` emits for a run's trailing edge. Clusters are model
+    // offsets and are not necessarily contiguous (one cluster can span several
+    // bytes), so the next one is found rather than computed.
+    let mut offsets: Vec<u32> = line
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.cluster))
+        .collect();
+    offsets.sort_unstable();
+    offsets.dedup();
+    Some(
+        offsets
+            .into_iter()
+            .find(|&offset| offset > last)
+            .unwrap_or(line.range.end.offset),
+    )
 }
 
 /// The caret slot whose x is nearest `x` (ties resolve to the first).
