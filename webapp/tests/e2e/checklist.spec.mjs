@@ -67,3 +67,48 @@ test("toggling a checklist item is blocked in Viewing mode", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+// HF-126 — Enter at the end of a TICKED item produced another ticked item.
+// A paragraph split clones the paragraph's properties, and a checklist item's
+// checked state IS its numbering instance, so the new line arrived already
+// completed and struck through before it had any content to complete.
+test("Enter after a checked item starts an unchecked one, and a mid-item split does not", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await page.keyboard.press("Home");
+
+  await page.locator("#checkList").click();
+  await expect(page.locator("#checkList")).toHaveAttribute("aria-pressed", "true");
+
+  const markers = page.locator(".overlay .checklist-marker");
+  await markers.first().click();
+  await expect(markers.first()).toHaveAttribute("aria-checked", "true");
+
+  // End of the ticked item, then Enter: the follow-on item is a NEW task.
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(markers).toHaveCount(2);
+  await expect(markers.nth(0)).toHaveAttribute("aria-checked", "true");
+  await expect(markers.nth(1)).toHaveAttribute("aria-checked", "false");
+
+  // Typing into the new item must not tick it either.
+  await page.keyboard.type("second task");
+  await expect(markers.nth(1)).toHaveAttribute("aria-checked", "false");
+
+  // Splitting a ticked item in the MIDDLE is one task becoming two, and both
+  // halves keep the state the user set — the opposite rule, and the reason this
+  // cannot simply clear `numbering` on every split.
+  await markers.nth(1).click();
+  await expect(markers.nth(1)).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("End");
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Enter");
+  await expect(markers).toHaveCount(3);
+  await expect(markers.nth(1)).toHaveAttribute("aria-checked", "true");
+  await expect(markers.nth(2)).toHaveAttribute("aria-checked", "true");
+
+  expect(consoleErrors).toEqual([]);
+});

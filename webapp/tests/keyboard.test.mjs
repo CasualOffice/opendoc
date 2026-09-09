@@ -4,9 +4,12 @@ import test from "node:test";
 import {
   APPLE_PLATFORM,
   STANDARD_PLATFORM,
+  formatShortcut,
+  NAVIGATION_SHORTCUTS,
   keyboardPlatform,
   lineDeletionDirection,
   navigationDirection,
+  navigationShortcuts,
   wordDeletionDirection,
 } from "../src/keyboard.mjs";
 
@@ -184,4 +187,75 @@ test("line deletion is a macOS ⌘ chord and never fires elsewhere", () => {
     lineDeletionDirection(key("Delete", { metaKey: true }), STANDARD_PLATFORM),
     null,
   );
+});
+
+test("Apple keyboards keep the glyphs the shortcuts are declared in", () => {
+  assert.equal(formatShortcut("⌘⇧P", APPLE_PLATFORM), "⌘⇧P");
+  assert.equal(formatShortcut("⌘⌥⏎", APPLE_PLATFORM), "⌘⌥⏎");
+});
+
+test("every other keyboard gets key names it actually has", () => {
+  assert.equal(formatShortcut("⌘S", STANDARD_PLATFORM), "Ctrl+S");
+  assert.equal(formatShortcut("⌘⇧P", STANDARD_PLATFORM), "Ctrl+Shift+P");
+  assert.equal(formatShortcut("⌘⌥⏎", STANDARD_PLATFORM), "Ctrl+Alt+Enter");
+  assert.equal(formatShortcut("⌘⌥M", STANDARD_PLATFORM), "Ctrl+Alt+M");
+});
+
+test("a shortcut with no glyphs survives both platforms unchanged", () => {
+  assert.equal(formatShortcut("F5", STANDARD_PLATFORM), "F5");
+  assert.equal(formatShortcut("F5", APPLE_PLATFORM), "F5");
+  assert.equal(formatShortcut("", STANDARD_PLATFORM), "");
+  assert.equal(formatShortcut(undefined, STANDARD_PLATFORM), "");
+});
+
+test("every shortcut the editor declares renders without a leftover glyph", () => {
+  const declared = [
+    "⌘A", "⌘B", "⌘C", "⌘F", "⌘I", "⌘K", "⌘P", "⌘S", "⌘U", "⌘V", "⌘X", "⌘Z",
+    "⌘⇧C", "⌘⇧P", "⌘⇧V", "⌘⇧Z", "⌘⌥M", "⌘⌥⏎",
+  ];
+  for (const shortcut of declared) {
+    const rendered = formatShortcut(shortcut, STANDARD_PLATFORM);
+    assert.ok(
+      !/[⌘⌃⌥⇧⏎⌫⌦⎋⇥]/u.test(rendered),
+      `${shortcut} still shows an Apple glyph as ${rendered}`,
+    );
+  }
+});
+
+test("every caret-movement row in the reference is a chord the editor really handles", () => {
+  const blank = { altKey: false, ctrlKey: false, metaKey: false, shiftKey: false };
+  for (const row of NAVIGATION_SHORTCUTS) {
+    const [first, last] = row.direction;
+    assert.equal(
+      navigationDirection({ ...blank, ...row.event }, APPLE_PLATFORM),
+      first,
+      `${row.label} (Apple, first key)`,
+    );
+    assert.equal(
+      navigationDirection({ ...blank, ...row.second }, APPLE_PLATFORM),
+      last,
+      `${row.label} (Apple, second key)`,
+    );
+    assert.equal(
+      navigationDirection({ ...blank, ...(row.standardEvent ?? row.event) }, STANDARD_PLATFORM),
+      first,
+      `${row.label} (standard, first key)`,
+    );
+    assert.equal(
+      navigationDirection({ ...blank, ...(row.standardSecond ?? row.second) }, STANDARD_PLATFORM),
+      last,
+      `${row.label} (standard, second key)`,
+    );
+  }
+});
+
+test("the reference renders the platform's own modifier, not the other one's", () => {
+  const apple = navigationShortcuts(APPLE_PLATFORM);
+  const standard = navigationShortcuts(STANDARD_PLATFORM);
+  assert.equal(apple.length, NAVIGATION_SHORTCUTS.length);
+  assert.equal(standard.length, NAVIGATION_SHORTCUTS.length);
+  const word = (rows) => rows.find((r) => r.label === "Move by word").keys;
+  assert.match(word(apple), /⌥/);
+  assert.match(word(standard), /Ctrl/);
+  for (const row of standard) assert.ok(!/[⌘⌥⇧⌃]/u.test(row.keys), row.keys);
 });
