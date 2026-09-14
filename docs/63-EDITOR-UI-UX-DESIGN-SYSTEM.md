@@ -35,9 +35,13 @@ Borrowed from the reference, adapted to the CasualOffice brand:
   chrome does not depend on a runtime font request.
 - **Neutrals** — near-white surfaces on a light-grey canvas; hairline dividers
   (`--line`); soft, low-contrast shadows for lifted surfaces (menus, panels).
-- **Shape & space** — rounded surfaces (`--radius` 8px, small controls 7px,
-  popovers 10px, dialogs 12px), a 4/8/12/16/20/24px spacing grid, 30px toolbar
-  controls, 34px actions, and 36px form fields.
+- **Shape & space** — a 4/8/12/16/20/24px spacing grid, 30px toolbar controls,
+  34px actions, and 36px form fields. **Radii were flattened after this doc was
+  written** (corrected 2026-09-15, `105` UX-024 context): the shipped tokens are
+  `--radius`/`--radius-sm`/`--radius-md` **3px** — near-square, deliberately — while
+  floating surfaces keep their own larger radius so a popover still detaches from the
+  flat chrome. `style.css` is the source of truth for token *values*; this document
+  owns their *roles*. Change them in the same PR or this drift recurs.
 - **Light & dark** — both first-class (`:root[data-theme]` + `prefers-color-scheme`).
 - **Motion** — quick (120ms) fades/slides for popovers and panels; nothing bouncy.
 
@@ -131,8 +135,11 @@ Where things live, so we stay consistent as we add features:
 
 - Keep the **single settable accent**; brand default orange, reference blue is a
   preset. Structure/spacing follow the reference; colour does not have to.
-- **Tabbed ribbon**: the working Home/Insert/Table/View ribbon is now the primary
-  toolbar. Tabs and controls appear only when the underlying command is real;
+- **Tabbed ribbon**: the working Home/Insert/Table/View/**Review** ribbon is now the
+  primary toolbar (five tabs as shipped; this doc and `64` both said four until
+  2026-09-15). A **Layout** tab is the next one this rule licenses — the page/section
+  commands to fill it already ship, scattered across View, Tools and Insert; see `105`
+  UX-010. Tabs and controls appear only when the underlying command is real;
   unavailable contextual commands remain visibly disabled.
 - **Collaboration avatars / Share** in the reference depend on a host-owned
   multi-user identity and sync contract. We do **not** stub them. Comments and

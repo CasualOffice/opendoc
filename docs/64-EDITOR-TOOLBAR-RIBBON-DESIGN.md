@@ -112,6 +112,9 @@ host/runtime contract yet, chiefly collaboration avatars and Share.
 A **single-row tabbed ribbon** replacing the flat toolbar, styled per doc 63
 (hairline group dividers, tiny uppercase group labels, no wrap, overflow scrolls):
 
+*(As shipped, five tabs: Home │ Insert │ Table\* │ View │ Review. The diagram below
+predates the Review tab.)*
+
 ```
 ┌ Home │ Insert │ Table* │ View ────────────────────────────────────┐
 │ ⤺ ⤻ │ Style ▾ Font ▾ Size ▾ │ B I U S  A▾ 🖍▾ x² x₂ │ ≡≣≢≡ ⋯     │  (Home)
@@ -125,13 +128,28 @@ A **single-row tabbed ribbon** replacing the flat toolbar, styled per doc 63
 - **Insert** — Insert table (grid picker); later: image, page break, link, symbol.
 - **Table** — *contextual*: enabled only in a table; the cell/table-format controls
   (shading, borders, valign, table borders/align) inline + row/column ops.
-- **View** — zoom −/＋/%, Outline toggle, Settings (theme/accent).
+- **View** — zoom −/＋/%, Outline toggle, Page setup. Settings (theme/accent) was
+  specified here and ships only from the header gear and the Tools menu, not on this
+  band (`105` UX-015).
+- **Review** — *shipped, not in this design*: tracking toggle, show-changes, prev/next,
+  accept/reject (± all), comment, review panel.
+- **Layout** — *not built.* "Only tabs we can fill" (§2) ruled it out when page and
+  section commands did not exist. They do now — page setup, margins, orientation, size,
+  columns, indent/spacing, header/footer variants — and they are currently scattered
+  across the View ribbon, the Tools menu and the Insert menu, with the command palette
+  already declaring a `Layout` group that has no tab to live on. The rule now licenses
+  the tab rather than forbidding it: `105` UX-010.
 
 Rules:
 - Only tabs with functional controls appear. **Table** is present but **disabled**
   unless the caret is in a table (contextual, not dead — matches Google Docs).
 - Group labels are the tiny uppercase captions under each cluster (reference style).
-- Overflow: the row never wraps; it horizontally scrolls on very narrow widths.
+- Overflow: the row never wraps and **never scrolls horizontally** — groups collapse
+  right-to-left into the "⋯" surface instead (corrected 2026-09-15: this line said
+  "horizontally scrolls on very narrow widths", contradicting §"No horizontal scrollbar"
+  above and the shipped collapser). Note the shipped behaviour has a floor worth
+  designing away: below ~390px only the Clipboard group stays inline, so the whole Home
+  tab becomes one dropdown (`105` UX-019).
 - Everything reuses doc 63 components (`.fmt`, `.ctl`, popovers, segmented).
 
 Deferred (functional when shipped): collaboration/Share chrome and commands whose

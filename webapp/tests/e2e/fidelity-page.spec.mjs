@@ -13,7 +13,7 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   // Real semantic table with column headers and row headers (scope) for AT.
   await expect(table.locator('thead th[scope="col"]')).toHaveCount(5);
   const rowHeaders = table.locator('tbody th[scope="row"]');
-  await expect(rowHeaders).toHaveCount(19);
+  await expect(rowHeaders).toHaveCount(26);
 
   // Honest cells are actually present in the DOM (not just in the data file).
   await expect(rowHeaders.filter({ hasText: "Images & inline drawings" })).toHaveCount(1);

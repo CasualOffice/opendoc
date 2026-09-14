@@ -82,6 +82,13 @@ test("every construct family in the expected set is present exactly once", () =>
     "Tracked changes",
     "Bookmarks & hyperlinks",
     "Content controls (w:sdt)",
+    "Fonts, fallback & color glyphs",
+    "Hyphenation",
+    "Line numbering (w:lnNumType)",
+    "Watermarks & WordArt",
+    "Bidi, RTL & CJK grid",
+    "Vertical & rotated text",
+    "Drop caps",
   ];
   const actual = FIDELITY.map((row) => row.family);
   assert.deepEqual(
@@ -147,9 +154,20 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // remainders (docGrid/autospace on paragraphs, unknown numFmt on lists) are
   // niche/bounded, not common gaps.
   assert.equal(by["Character / run formatting"].rendered, "partial");
-  // Numbering is fully modeled as of Layer 1 (overrides/indirection/restart/
-  // numFmt vocabulary all typed + round-trip) and now renders in full.
-  assert.equal(by["Lists & numbering"].modeled, "full");
+  // Numbering renders in full, but it is NOT fully modeled: `w:lvlPicBulletId`
+  // and the `w:numPicBullet` definitions it references have zero representation
+  // in the model (`grep -rn "numPicBullet" crates/` is empty), so picture
+  // bullets are dropped on import without a finding. Upgrading this to "full"
+  // requires typing them; the note must stop calling it a render-only gap.
+  assert.equal(by["Lists & numbering"].modeled, "partial");
+  assert.equal(by["Lists & numbering"].rendered, "full");
+  // Comments render only under the read-only markup review view
+  // (casual-doc-layout/src/flow.rs:2908-2919 gates the highlight on
+  // ReviewView::Markup). In the default editing view the highlight and sidebar
+  // are host/DOM chrome and contribute nothing to the display list, so engine
+  // rendering is partial. Upgrade only when comment anchors reach the display
+  // list in the default view.
+  assert.equal(by["Comments"].rendered, "partial");
   // Charts / SmartArt are preserved, not rendered as charts/diagrams.
   assert.equal(by["Charts"].rendered, "preserved");
   assert.equal(by["SmartArt"].rendered, "preserved");
@@ -168,6 +186,53 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
       by[family].editable,
       "full",
       `${family} must not claim full editability`,
+    );
+  }
+
+  // Families added by the 2026-09 audit because their absence from this table
+  // was itself an overstatement: a reader seeing only full/partial rows infers
+  // coverage that does not exist. Each assertion below names the code fact that
+  // has to change before the cell may be raised, so the guard fails on a
+  // premature upgrade rather than rubber-stamping it.
+
+  // No hyphenator, dictionary, or consumer for w:autoHyphenation /
+  // w:hyphenationZone exists; only w:suppressAutoHyphens is cascaded
+  // (casual-doc-layout/src/cascade.rs:560-561).
+  assert.equal(by["Hyphenation"].rendered, "none");
+  // w:lnNumType is typed on the section, but every layout reference is
+  // `line_numbering: Default::default()` in test scaffolding — no generator.
+  assert.equal(by["Line numbering (w:lnNumType)"].modeled, "full");
+  assert.equal(by["Line numbering (w:lnNumType)"].rendered, "none");
+  // `grep -ri watermark crates/` finds no watermark concept, and neither
+  // v:textpath nor a:prstTxWarp is typed, so warped watermark text cannot paint.
+  assert.equal(by["Watermarks & WordArt"].modeled, "none");
+  assert.equal(by["Watermarks & WordArt"].rendered, "none");
+  // One writing-mode axis only: every layout reference to text_direction is
+  // `None` in test scaffolding.
+  assert.equal(by["Vertical & rotated text"].rendered, "none");
+  // Embedded .odttf faces are modeled and imported but never de-obfuscated or
+  // registered — there is no deobfuscation code in layout, render, or wasm — so
+  // the model side of font support is partial however well fallback works.
+  assert.equal(by["Fonts, fallback & color glyphs"].modeled, "partial");
+  // Colour glyphs DO render (sbix/CBDT strikes then COLR v0/v1 in
+  // casual-doc-render/src/lib.rs:593-605). This asserts the page does not
+  // regress to denying a shipped feature, as it did until this audit.
+  assert.equal(by["Fonts, fallback & color glyphs"].rendered, "full");
+  // The shaper exposes no paragraph base-direction control and levels collapse
+  // to a single RTL flag (casual-doc-layout/src/shape.rs:480-505, :1125).
+  assert.equal(by["Bidi, RTL & CJK grid"].rendered, "partial");
+  // None of these seven is authorable from the editor today.
+  for (const family of [
+    "Hyphenation",
+    "Line numbering (w:lnNumType)",
+    "Watermarks & WordArt",
+    "Vertical & rotated text",
+    "Drop caps",
+  ]) {
+    assert.equal(
+      by[family].editable,
+      "none",
+      `${family} is not authorable from the editor`,
     );
   }
 });

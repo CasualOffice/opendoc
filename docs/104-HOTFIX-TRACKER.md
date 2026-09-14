@@ -5,8 +5,13 @@
 **Scope:** every confirmed UX, UI, and correctness defect currently known in this
 repository, ranked in fix-first order. This is the *defect* queue. It does not
 replace `14-EXECUTION-TRACKER.md` (per-slice execution state), `99-REMAINING-WORK-AUDIT.md`
-(unfinished capability), or the fidelity audits (`46`/`55`/`60`) — it is the list of
-things that are wrong in code that already shipped.
+(unfinished capability), `105-AUDIT-2026-09-TRACKER.md` (the 2026-09 audit round and the
+ONLYOFFICE fit-gap), or the fidelity audits (`46`/`55`/`60`) — it is the list of things
+that are wrong in code that already shipped.
+
+Rows are not duplicated between this queue and `105`. Where `105` restates an HF row it
+does so as a cross-reference and this document stays authoritative; where `105` supersedes
+one (HF-076 → UX-004) the HF row says so.
 
 ## How this list was produced
 
@@ -46,24 +51,33 @@ A `Fixed` row names the PR that closed it, so the claim can be checked rather th
 
 ## Summary
 
-| Priority | Count | Still open |
-| --- | --- | --- |
+**Recounted from the rows themselves on 2026-09-15** (docs/105 §2.4). The previous
+summary read 114 rows / 47 open and had not been updated as the two later audit
+sections were appended — the same staleness `99` §6 records as process debt. Counts
+below are derived, not maintained by hand; re-derive them rather than editing them.
+
+| Section | Rows | Still open |
+| --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 9 |
-| P2 | 55 | 24 |
-| P3 | 24 | 14 |
-| **Total** | **114** | **47** |
+| P1 | 33 | 10 |
+| P2 | 52 | 23 |
+| P3 | 22 | 14 |
+| Behavioural audit — 2026-09-04 | 18 | 7 |
+| Layout-space audit — 2026-09-09 | 14 | 0 |
+| **Total** | **146** | **54** |
+
+"Still open" counts `Open`, `Partly fixed`, and `In progress`.
 
 ### Progress
 
-**47 of 114 rows remain open. Every P0 is closed.**
+**54 of 146 rows remain open. Every P0 is closed.**
 
-| Priority | Opened with | Still open |
-| --- | --- | --- |
-| P0 | 7 | 0 |
-| P1 | 33 | 9 |
-| P2 | 55 | 24 |
-| P3 | 24 | 14 |
+Four rows previously listed Open were re-read against the code on 2026-09-15 and are
+closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
+**HF-075** (colour pickers named), and the declaration half of **HF-076**. Each was
+verified in the source, not taken from a report. Their membership question is
+superseded by docs/105 **UX-004**, which found that the two tests named for
+command-surface parity cannot fail on it.
 
 Closed across #495–#509. Every fix carries a regression test that was run against
 the reintroduced bug and seen to fail first; a guard that could not be driven red
@@ -195,14 +209,14 @@ Still waiting on an owner decision, not on engineering:
 | HF-066 | Pasted hyperlinks are stored with no scheme filter and re-exported | security | S | Internal audit | Partly fixed |
 | HF-067 | The menu bar has no visible focus indicator — keyboard navigation is blind | a11y | S | Internal audit | Fixed |
 | HF-068 | No version history — the document has no past that survives a reload | versions | L | Sibling gap (opencalc + docs) | Open |
-| HF-069 | Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted | editor-ux | M | Internal audit | Open |
+| HF-069 | Toolbar and menu commands fire on mouse-down, so a mis-press cannot be aborted | editor-ux | M | Internal audit | Fixed (verified 2026-09-15, docs/105 §2.4: `onButton` preventDefaults mousedown and runs on `click`, `main.js:8593-8599`) |
 | HF-070 | Ribbon popovers and Settings never take focus, and closing them loses the user's place | editor-ux | M | Internal audit | Open |
 | HF-071 | The accessibility mirror is rebuilt wholesale on every edit, resetting the screen reader to the top | accessibility | L | Internal audit | Open |
 | HF-072 | The floating selection toolbar never shows Bold/Italic/Underline state, so clicking B un-bolds | editor-ux | S | Internal audit | Fixed |
 | HF-073 | No recent documents — the only way back into yesterday's file is the OS file picker | file | M | Sibling gap (docs (ProseMirror)) | Open |
-| HF-074 | No skip link: reaching the document means tabbing past ~150 chrome controls | accessibility | S | Internal audit | Open |
-| HF-075 | Colour pickers for accent and table borders have no accessible name | a11y | S | Internal audit | Open |
-| HF-076 | Right-click menu is missing Paste-without-formatting and Select all; checklist missing from menus | parity | M | Internal audit | Open |
+| HF-074 | No skip link: reaching the document means tabbing past ~150 chrome controls | accessibility | S | Internal audit | Fixed (verified 2026-09-15, docs/105 §2.4: `editor.html:26`). Note the target still has no visible focus indicator — carried as UX-024 |
+| HF-075 | Colour pickers for accent and table borders have no accessible name | a11y | S | Internal audit | Fixed (verified 2026-09-15, docs/105 §2.4: `aria-label` on `accentCustom`, `cellBorderColor`, `tableBorderColor`, `borderColor`) |
+| HF-076 | Right-click menu is missing Paste-without-formatting and Select all; checklist missing from menus | parity | M | Internal audit | Partly fixed (the `contextMenu: true` declaration is now read, `main.js:6609-6628`). Membership itself is superseded by docs/105 UX-004: the guard asserts a frozen 7-id `toContain` list, so it cannot detect an omitted entry. Close under UX-004, not here |
 | HF-077 | Opening a heavy document freezes the tab with no budget, no progress and no cancel | architecture | L | Sibling gap (opencalc) | Open |
 | HF-078 | Images are re-decoded from source bytes on every page repaint | perf | M | Internal audit | Open |
 | HF-079 | The incremental galley cache is inert for every imported document | perf | L | Internal audit | Fixed |

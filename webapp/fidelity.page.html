@@ -22,30 +22,35 @@
     <main class="fid-report">
       <section class="fid-intro" aria-label="Fidelity overview">
         <span class="fid-kicker">Fidelity</span>
-        <h1>Measured against an oracle, not a feature list.</h1>
+        <h1>Graded by construct, not by feature list.</h1>
         <p>
-          Every fixture renders through the CPU backend and is diffed against LibreOffice.
-          Page counts, collision gates, and geometry are CI-enforced; regressions fail the
-          build.
+          The table below grades every construct family at the level the code actually
+          reaches. The page counts are a <b>manual</b> LibreOffice-oracle measurement
+          recorded in
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/60-FIDELITY-CORPUS-RENDERING-AUDIT.md">docs/60</a>
+          on 2026-07-27, not a CI gate: the automated geometry gate
+          (<code>oracle_geometry.rs</code>) is written but <b>inert</b> until its reference
+          is blessed, and no pixel-diff gate exists yet. Treat these as dated evidence,
+          not a live build signal.
         </p>
       </section>
 
       <section class="fid-stats" aria-label="Headline metrics">
         <div class="fid-stat">
-          <div class="fid-stat-num">3/5</div>
-          <div class="fid-stat-label">Exact page-count parity</div>
+          <div class="fid-stat-num">4/5</div>
+          <div class="fid-stat-label">Exact page-count parity (docs/60, 2026-07-27)</div>
         </div>
         <div class="fid-stat">
-          <div class="fid-stat-num">±1</div>
-          <div class="fid-stat-label">Worst-case page delta</div>
+          <div class="fid-stat-num">+2</div>
+          <div class="fid-stat-label">Worst-case page delta (Chinese SDS)</div>
         </div>
         <div class="fid-stat">
-          <div class="fid-stat-num">7 ms</div>
-          <div class="fid-stat-label">Incremental page repaint</div>
+          <div class="fid-stat-num">19</div>
+          <div class="fid-stat-label">Construct families graded below</div>
         </div>
         <div class="fid-stat">
-          <div class="fid-stat-num">100%</div>
-          <div class="fid-stat-label">Unedited byte-identical export</div>
+          <div class="fid-stat-num">0</div>
+          <div class="fid-stat-label">Pixel-diff or page-count gates in CI</div>
         </div>
       </section>
 
@@ -57,7 +62,7 @@
             <span class="meta">CPU raster · 150 dpi</span>
           </div>
           <div class="fid-panel-figure">
-            <span>Comparison images are produced locally by tools/opendoc-fidelity</span>
+            <span>No comparison image ships: there is no image-diff harness yet</span>
           </div>
           <figcaption class="visually-hidden">A page rasterized by the OpenDoc CPU backend.</figcaption>
         </figure>
@@ -107,25 +112,29 @@
             </div>
             <div class="fid-frow">
               <div class="fx-name">Chinese SDS</div>
-              <div class="fx-cell mono">17</div>
-              <div class="fx-cell mono">+1</div>
+              <div class="fx-cell mono">18</div>
+              <div class="fx-cell mono">+2</div>
               <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
               <div class="fx-cell"><span class="fx-chip gap">Final-page column balancing</span></div>
             </div>
             <div class="fid-frow">
               <div class="fx-name">Medical form</div>
-              <div class="fx-cell mono">3</div>
-              <div class="fx-cell mono">−1</div>
+              <div class="fx-cell mono">4</div>
+              <div class="fx-cell mono">0</div>
               <div class="fx-cell"><span class="fx-chip semantic">Semantic</span></div>
-              <div class="fx-cell"><span class="fx-chip gap">Document-grid row heights</span></div>
+              <div class="fx-cell">—</div>
             </div>
           </div>
         </div>
         <p class="fid-foot">
           Page counts are this engine's output against a LibreOffice oracle on the
-          five-document review corpus (<code>tools/opendoc-fidelity</code>); the documents
-          themselves are not redistributable, so only the measurements are published.
-          Numbers move with every fidelity PR. They are evidence, not a Word-grade claim.
+          five-document review corpus, measured by hand and recorded in
+          <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/60-FIDELITY-CORPUS-RENDERING-AUDIT.md">docs/60</a>
+          on <b>2026-07-27</b>; they have not been re-measured since. The documents are not
+          redistributable, so only the measurements are published.
+          <code>tools/opendoc-fidelity</code> is a separate text-only differential and
+          produces neither page counts nor images. These are dated evidence, not a
+          Word-grade claim.
         </p>
       </section>
 
@@ -200,12 +209,12 @@
             <li><b>Math (OMML)</b> is fully typed and round-trips; the common constructs typeset inline. Box/border-box rules and full Word-parity math typesetting are partial, and math is not editable — there is no equation editor.</li>
             <li><b>Charts and SmartArt</b> are modeled as first-class references and preserved byte-for-byte on export, but are not painted as live charts/diagrams — an embedded preview image shows if the file provides one, otherwise a text placeholder (⊟).</li>
             <li><b>Non-PNG/JPEG images (EMF/WMF, SVG on the browser build), undecodable images, and <code>w:altChunk</code></b> paint a visible placeholder that reserves layout space, so nothing silently vanishes (▢).</li>
-            <li><b>Color fonts and color emoji are not supported.</b> Emoji render, but through a monochrome face — the CPU rasterizer paints glyph outlines and has no color glyph-table (COLR/CBDT/sbix) path.</li>
+            <li><b>Color fonts and color emoji render.</b> The CPU rasterizer tries bitmap strikes (<code>sbix</code>, <code>CBDT</code>) and then <code>COLR</code> v0/v1 paint graphs with the default <code>CPAL</code> palette before falling back to monochrome outlines. Gradient and clip-heavy COLRv1 graphs are approximated; a face the bundled set does not cover still needs a host-registered font.</li>
             <li><b>No PDF export.</b> The design is written (<a href="https://github.com/CasualOffice/opendoc/blob/main/docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md">docs/98</a>, ADR-031) but not implemented; printing goes through the browser from engine-rendered pages.</li>
             <li><b>Text wrap around floats</b> reserves shared flow for top-and-bottom and square wrapping, including inside table cells, headers and footers. Tight and through contour wrapping, and page-coupled reflow, remain partial.</li>
             <li><b><code>.docm</code> macro-enabled files are rejected at open.</b> Strip-and-open versus explicit non-support is an undecided policy question, not an oversight.</li>
             <li><b>Round-trips means a semantic fixed point</b> (import&nbsp;→&nbsp;export&nbsp;→&nbsp;reopen yields an equal model), not a byte-identical file. Byte-exact preservation applies to the retention/no-edit floor.</li>
-            <li><b>No silent data loss:</b> anything not modeled is preserved verbatim via the retention floor and reported, per the <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/35-DISPOSITION-TAXONOMY.md">disposition taxonomy</a>.</li>
+            <li><b>Data-loss reporting is partial, not total.</b> The <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/35-DISPOSITION-TAXONOMY.md">disposition taxonomy</a> is the intended contract and whole unmodeled <i>parts</i> are preserved verbatim. But the DOCX exporter has no reporting path yet, unknown <i>attributes</i> (notably <code>w:rsid*</code>) are outside the report vocabulary, and the theme, font-table and comment-extension parsers regenerate their parts without reporting. Tracked in <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/105-AUDIT-2026-09-TRACKER.md">docs/105</a>.</li>
           </ul>
         </section>
       </section>
