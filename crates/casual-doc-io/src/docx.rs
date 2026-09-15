@@ -2,14 +2,11 @@
 
 use std::sync::Arc;
 
-use casual_doc_export::{
-    Disposition as ExportDisposition, ModelOutcome as ExportModelOutcome,
-    RetentionOutcome as ExportRetentionOutcome, export_document,
-    export_document_with_retained_parts,
-};
+use casual_doc_export::{export_document, export_document_with_retained_parts};
 use casual_doc_import::{
-    ImportConfig, ImportMode, ModelOutcome as DocxModelOutcome, RetainedParts,
-    RetentionOutcome as DocxRetentionOutcome, import_package,
+    FeatureLocation as DocxFeatureLocation, ImportConfig, ImportMode,
+    ModelOutcome as DocxModelOutcome, RetainedParts, RetentionOutcome as DocxRetentionOutcome,
+    import_package,
 };
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
@@ -145,6 +142,7 @@ impl FormatImporter for DocxAdapter {
                     part_name: Some(part_name),
                     namespace: None,
                     local_name: None,
+                    attribute_name: None,
                 },
                 model_outcome: ModelOutcome::Omitted,
                 retention_outcome: RetentionOutcome::NotRetained,
@@ -158,6 +156,7 @@ impl FormatImporter for DocxAdapter {
                     part_name: Some(part_name),
                     namespace: None,
                     local_name: None,
+                    attribute_name: None,
                 },
                 model_outcome: ModelOutcome::Omitted,
                 retention_outcome: RetentionOutcome::NotRetained,
@@ -316,13 +315,50 @@ pub fn builtin_registry_with_package_limits(package_limits: PackageLimits) -> Fo
     registry
 }
 
+/// Lifts a DOCX-layer location into the format-neutral one.
+///
+/// `fallback_local_name` supplies a local name for a finding the DOCX layer
+/// located only by part or not at all — the stable `docx.export.*` id's last
+/// dotted segment, which is what the adapter surfaced before the DOCX layer had
+/// an element/attribute vocabulary at all (FID-R-03). Where the DOCX layer now
+/// names the element, that name wins, because it is the real one.
+fn convert_location(
+    location: &DocxFeatureLocation,
+    fallback_local_name: Option<String>,
+) -> FeatureLocation {
+    FeatureLocation {
+        part_name: location.part_name.clone(),
+        namespace: None,
+        local_name: location.element.clone().or(fallback_local_name),
+        attribute_name: location.attribute.clone(),
+    }
+}
+
+fn convert_model_outcome(outcome: DocxModelOutcome) -> ModelOutcome {
+    match outcome {
+        DocxModelOutcome::Mapped => ModelOutcome::Mapped,
+        DocxModelOutcome::Degraded => ModelOutcome::Degraded,
+        DocxModelOutcome::Omitted => ModelOutcome::Omitted,
+    }
+}
+
+fn convert_retention_outcome(outcome: DocxRetentionOutcome) -> RetentionOutcome {
+    match outcome {
+        DocxRetentionOutcome::Preserved => RetentionOutcome::Preserved,
+        DocxRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
+        DocxRetentionOutcome::Blocked => RetentionOutcome::Blocked,
+        DocxRetentionOutcome::Rejected => RetentionOutcome::Rejected,
+        DocxRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
+    }
+}
+
 /// Lifts the DOCX writer's findings into the format-neutral report.
 ///
 /// Exists because the two layers keep separate types on purpose: the adapter
 /// vocabulary is shared by every format, the writer's is DOCX-specific. The
 /// disposition itself is not re-decided here — both axes come from the writer's
-/// [`ExportDisposition`], so a finding cannot mean one thing to the writer and
-/// another to the caller.
+/// `Disposition` — so a finding cannot mean one thing to the writer and another
+/// to the caller.
 fn convert_export_report(report: &casual_doc_export::CompatibilityReport) -> CompatibilityReport {
     let mut converted = CompatibilityReport {
         entries: report
@@ -331,36 +367,17 @@ fn convert_export_report(report: &casual_doc_export::CompatibilityReport) -> Com
             .map(|entry| CompatibilityEntry {
                 feature: entry.feature.clone(),
                 occurrences: entry.occurrences,
-                location: FeatureLocation {
-                    part_name: entry.part_name.clone(),
-                    namespace: None,
-                    local_name: entry.feature.rsplit('.').next().map(str::to_owned),
-                },
-                model_outcome: convert_model_outcome(entry.disposition),
-                retention_outcome: convert_retention_outcome(entry.disposition),
+                location: convert_location(
+                    &entry.location,
+                    entry.feature.rsplit('.').next().map(str::to_owned),
+                ),
+                model_outcome: convert_model_outcome(entry.model_outcome()),
+                retention_outcome: convert_retention_outcome(entry.retention_outcome()),
             })
             .collect(),
     };
     converted.sort();
     converted
-}
-
-fn convert_model_outcome(disposition: ExportDisposition) -> ModelOutcome {
-    match disposition.model_outcome() {
-        ExportModelOutcome::Mapped => ModelOutcome::Mapped,
-        ExportModelOutcome::Degraded => ModelOutcome::Degraded,
-        ExportModelOutcome::Omitted => ModelOutcome::Omitted,
-    }
-}
-
-fn convert_retention_outcome(disposition: ExportDisposition) -> RetentionOutcome {
-    match disposition.retention_outcome() {
-        ExportRetentionOutcome::Preserved => RetentionOutcome::Preserved,
-        ExportRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
-        ExportRetentionOutcome::Blocked => RetentionOutcome::Blocked,
-        ExportRetentionOutcome::Rejected => RetentionOutcome::Rejected,
-        ExportRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
-    }
 }
 
 fn convert_report(report: &casual_doc_import::CompatibilityReport) -> CompatibilityReport {
@@ -371,23 +388,9 @@ fn convert_report(report: &casual_doc_import::CompatibilityReport) -> Compatibil
             .map(|entry| CompatibilityEntry {
                 feature: entry.feature.clone(),
                 occurrences: entry.occurrences,
-                location: FeatureLocation {
-                    part_name: entry.part.as_ref().map(|part| part.part_name.clone()),
-                    namespace: None,
-                    local_name: entry.part.is_none().then(|| entry.feature.clone()),
-                },
-                model_outcome: match entry.model_outcome {
-                    DocxModelOutcome::Mapped => ModelOutcome::Mapped,
-                    DocxModelOutcome::Degraded => ModelOutcome::Degraded,
-                    DocxModelOutcome::Omitted => ModelOutcome::Omitted,
-                },
-                retention_outcome: match entry.retention_outcome {
-                    DocxRetentionOutcome::Preserved => RetentionOutcome::Preserved,
-                    DocxRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
-                    DocxRetentionOutcome::Blocked => RetentionOutcome::Blocked,
-                    DocxRetentionOutcome::Rejected => RetentionOutcome::Rejected,
-                    DocxRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
-                },
+                location: convert_location(&entry.location, None),
+                model_outcome: convert_model_outcome(entry.model_outcome()),
+                retention_outcome: convert_retention_outcome(entry.retention_outcome()),
             })
             .collect(),
     };
@@ -401,6 +404,69 @@ mod tests {
     use crate::{DetectionRequest, ExportRequest, FormatSelection};
 
     const MINIMAL_DOCX: &[u8] = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
+
+    /// The attribute axis must survive the lift into the format-neutral report
+    /// (FID-R-03). A capability that stops at a crate boundary is not reachable,
+    /// and this is the boundary every host reads the report through.
+    #[test]
+    fn an_attribute_level_finding_keeps_its_attribute_at_the_adapter_boundary() {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        // One paragraph carrying the durable identity a semantic save drops.
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:w14="urn:w14"><w:body>
+            <w:p w14:paraId="0A0A0A0A"><w:r><w:t>x</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("para-id.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the document is valid");
+        let entry = imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "p/@paraId")
+            .unwrap_or_else(|| {
+                panic!(
+                    "the attribute finding reaches the adapter: {:?}",
+                    imported
+                        .report
+                        .entries
+                        .iter()
+                        .map(|entry| entry.feature.as_str())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(entry.location.local_name.as_deref(), Some("p"));
+        assert_eq!(entry.location.attribute_name.as_deref(), Some("paraId"));
+        assert_eq!(entry.model_outcome, ModelOutcome::Degraded);
+    }
 
     /// A media part named by a relationship but absent from (or unreadable in)
     /// the package must be REPORTED, not silently skipped. Before this, the

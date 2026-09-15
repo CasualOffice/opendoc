@@ -5202,7 +5202,7 @@ mod semantic_tests {
             })
             .expect("the customXml part is dispositioned");
         assert_eq!(
-            entry.retention_outcome,
+            entry.retention_outcome(),
             casual_doc_import::RetentionOutcome::Preserved
         );
         assert_eq!(reimport.retained_parts.parts.len(), 2);
@@ -5540,7 +5540,12 @@ mod semantic_tests {
         // No signature part is preserved via the side-table.
         assert!(import.retained_parts.is_empty());
         assert!(import.retained_parts.relationships.is_empty());
-        // Both signature content parts are dispositioned `not-retained` (dropped).
+        // Both signature content parts are dispositioned `blocked`, not
+        // `not-retained`: doc 35's `blocked` is "retention refused by security or
+        // resource policy; nothing is trusted or stored", which is exactly why a
+        // signature is dropped here — a signature over regenerated content would
+        // assert an integrity nobody verified. `not-retained` would say it was
+        // merely declined, which understates the reason (FID-R-02).
         for part_name in ["_xmlsignatures/origin.sigs", "_xmlsignatures/sig1.xml"] {
             let entry = import
                 .report
@@ -5554,9 +5559,13 @@ mod semantic_tests {
                 })
                 .unwrap_or_else(|| panic!("{part_name} is dispositioned"));
             assert_eq!(
-                entry.retention_outcome,
-                casual_doc_import::RetentionOutcome::NotRetained,
-                "{part_name} is reported dropped"
+                entry.retention_outcome(),
+                casual_doc_import::RetentionOutcome::Blocked,
+                "{part_name} is reported refused by policy"
+            );
+            assert!(
+                entry.ledger_id.is_none(),
+                "{part_name} retains nothing, so it must cite no preservation record"
             );
         }
 

@@ -242,7 +242,10 @@ fn a_media_reference_without_bytes_is_reported_and_left_out_whole() {
         .iter()
         .find(|entry| entry.feature == "docx.export.media.missing_bytes")
         .expect("a media part with no bytes must be reported");
-    assert_eq!(entry.part_name.as_deref(), Some(part_name.as_str()));
+    assert_eq!(
+        entry.location.part_name.as_deref(),
+        Some(part_name.as_str())
+    );
     assert_eq!(
         entry.model_outcome(),
         casual_doc_export::ModelOutcome::Omitted
@@ -326,7 +329,10 @@ fn an_embedded_face_without_bytes_is_reported_and_left_out_whole() {
         .iter()
         .find(|entry| entry.feature == "docx.export.embedded_font.missing_bytes")
         .expect("an embedded face with no bytes must be reported");
-    assert_eq!(entry.part_name.as_deref(), Some("word/fonts/font1.odttf"));
+    assert_eq!(
+        entry.location.part_name.as_deref(),
+        Some("word/fonts/font1.odttf")
+    );
 
     let parts = parts_of(&export.bytes);
     assert!(!parts.contains_key("word/fonts/font1.odttf"));
@@ -376,6 +382,23 @@ fn a_page_background_the_writer_cannot_emit_is_reported() {
     );
     let export = export_document(&document, &BTreeMap::new()).expect("exports");
     assert!(features(&export.report).contains("docx.export.background"));
+
+    // And it is LOCATED (FID-R-03): the stable id says which finding it is, the
+    // location says what in the source it is about. Before the export report had
+    // an attribute vocabulary, `docx.export.background` was all there was — a
+    // feature-level pseudo-name standing in for `w:background/@w:color`.
+    let entry = export
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "docx.export.background")
+        .expect("the finding is present");
+    assert_eq!(
+        entry.location.part_name.as_deref(),
+        Some("word/document.xml")
+    );
+    assert_eq!(entry.location.element.as_deref(), Some("background"));
+    assert_eq!(entry.location.attribute.as_deref(), Some("color"));
 
     // And a document without one must not raise it.
     let plain = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
@@ -441,7 +464,10 @@ fn an_embedded_object_part_the_package_lacks_is_reported() {
         .iter()
         .find(|entry| entry.feature == "docx.export.embedded_object.missing_part")
         .expect("a chart part the package lacks must be reported");
-    assert_eq!(entry.part_name.as_deref(), Some("word/charts/chart1.xml"));
+    assert_eq!(
+        entry.location.part_name.as_deref(),
+        Some("word/charts/chart1.xml")
+    );
 }
 
 /// The same chart, with the part carried through the side-table, reports

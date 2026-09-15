@@ -170,7 +170,12 @@ pub(crate) fn parse_comments_extended(
                         },
                     );
                 }
-                None => reporter.report(b"commentEx"),
+                // No usable `paraId` means there is no comment to join this
+                // entry to and nothing to rewrite it as: it is structurally
+                // unusable, which doc 35 calls `rejected` — refused and
+                // reported — not `not-retained`, which is a deliberate drop of
+                // something that could have been carried.
+                None => reporter.report_invalid(b"commentEx"),
             },
             other => reporter.report(other),
         }
@@ -196,7 +201,8 @@ pub(crate) fn parse_comments_ids(
                 (Some(para_id), Some(durable_id)) => {
                     out.insert(para_id, durable_id);
                 }
-                _ => reporter.report(b"commentId"),
+                // Half a durable-id pair can neither be joined nor rewritten.
+                _ => reporter.report_invalid(b"commentId"),
             },
             other => reporter.report(other),
         }
@@ -242,12 +248,15 @@ pub(crate) fn parse_people(
                             presence: None,
                         });
                         if pending.is_none() {
-                            reporter.report(b"person");
+                            // A collaborator with no usable author name cannot be
+                            // identified or rewritten: unusable, not merely dropped.
+                            reporter.report_invalid(b"person");
                         }
                     }
                     b"presenceInfo" => match pending.as_mut() {
                         Some(person) => person.presence = Some(presence(&element)),
-                        None => reporter.report(b"presenceInfo"),
+                        // Presence with no open person has nothing to attach to.
+                        None => reporter.report_invalid(b"presenceInfo"),
                     },
                     other => reporter.report(other),
                 }
@@ -262,11 +271,11 @@ pub(crate) fn parse_people(
                             author,
                             presence: None,
                         }),
-                        None => reporter.report(b"person"),
+                        None => reporter.report_invalid(b"person"),
                     },
                     b"presenceInfo" => match pending.as_mut() {
                         Some(person) => person.presence = Some(presence(&element)),
-                        None => reporter.report(b"presenceInfo"),
+                        None => reporter.report_invalid(b"presenceInfo"),
                     },
                     other => reporter.report(other),
                 }

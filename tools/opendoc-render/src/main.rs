@@ -244,7 +244,7 @@ fn disposition_summary(entries: &[casual_doc_import::CompatibilityEntry]) -> Str
     let mut omitted: BTreeMap<&str, u32> = BTreeMap::new();
     let mut degraded: BTreeMap<&str, u32> = BTreeMap::new();
     for entry in entries {
-        let bucket = match entry.model_outcome {
+        let bucket = match entry.model_outcome() {
             ModelOutcome::Omitted => &mut omitted,
             ModelOutcome::Degraded => &mut degraded,
             ModelOutcome::Mapped => continue,

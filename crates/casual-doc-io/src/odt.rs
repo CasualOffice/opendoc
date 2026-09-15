@@ -259,6 +259,9 @@ fn convert_report(report: &OdfCompatibilityReport, retained_source: bool) -> Com
                     part_name: Some(casual_doc_odf::CONTENT_PART.to_owned()),
                     namespace: feature_namespace(&entry.feature).map(str::to_owned),
                     local_name: entry.feature.rsplit('.').next().map(str::to_owned),
+                    // The ODF report has no attribute vocabulary of its own; the
+                    // axis exists at this layer for adapters that do.
+                    attribute_name: None,
                 },
                 model_outcome: match entry.model_outcome {
                     OdfModelOutcome::Mapped => ModelOutcome::Mapped,

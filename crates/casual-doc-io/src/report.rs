@@ -35,6 +35,15 @@ pub struct FeatureLocation {
     pub namespace: Option<String>,
     /// XML local name or another adapter-defined logical feature name.
     pub local_name: Option<String>,
+    /// XML local name of the attribute, when the finding is about an attribute of
+    /// `local_name` rather than the element itself (FID-R-03).
+    ///
+    /// Without this axis an adapter could describe a lost element but not a lost
+    /// attribute, and attribute-level facts had to be smuggled through as
+    /// feature-level pseudo-names (`theme:nameAttribute`). Attributes are where
+    /// most WordprocessingML meaning actually lives, so a report vocabulary
+    /// without them cannot be complete.
+    pub attribute_name: Option<String>,
 }
 
 /// One aggregated compatibility finding.

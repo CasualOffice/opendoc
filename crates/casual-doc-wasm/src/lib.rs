@@ -16793,6 +16793,11 @@ struct CompatibilityLocationJson<'a> {
     part_name: Option<&'a str>,
     namespace: Option<&'a str>,
     local_name: Option<&'a str>,
+    /// The attribute the finding is about, when it is about one (FID-R-03). Host
+    /// visible: an attribute-level loss the adapter can now describe would
+    /// otherwise stop at this boundary, and a capability no host can reach is not
+    /// a capability.
+    attribute_name: Option<&'a str>,
 }
 
 /// Records every embedded (`.odttf`) face the engine could not use on the
@@ -16816,6 +16821,7 @@ fn report_embedded_font_failures(
                 part_name: Some(failure.part_name.clone()),
                 namespace: None,
                 local_name: Some(failure.slot.to_owned()),
+                attribute_name: None,
             },
             // The face is modeled and round-trips; what is lost is its USE, so
             // the run renders in a substitute — a degraded, not omitted, mapping.
@@ -16836,6 +16842,7 @@ fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, S
                 part_name: entry.location.part_name.as_deref(),
                 namespace: entry.location.namespace.as_deref(),
                 local_name: entry.location.local_name.as_deref(),
+                attribute_name: entry.location.attribute_name.as_deref(),
             },
             model_outcome: match entry.model_outcome {
                 IoModelOutcome::Mapped => "mapped",

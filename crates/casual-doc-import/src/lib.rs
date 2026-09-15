@@ -57,7 +57,9 @@ pub use opaque::{
     RelationshipOwner, RetainedPart, RetainedParts, RetainedRelationship, RetainedRels,
 };
 pub use report::{
-    CompatibilityEntry, CompatibilityReport, ModelOutcome, PartDisposition, RetentionOutcome,
+    CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
+    LedgerId, LedgerRecord, ModelOutcome, PartDisposition, PreservationKind, PreservationLedger,
+    RSID_CLASS_FEATURE, RetentionOutcome,
 };
 pub use retain::RetainedSource;
 pub use vml::{
@@ -77,7 +79,7 @@ use casual_doc_ooxml::DocxPackage;
 use crate::body::EmbeddedRel;
 use crate::media::MediaSource;
 use crate::numbering::Numbering;
-use crate::report::Reporter;
+use crate::report::{Reporter, SourceRetention, WholePartDisposition};
 use crate::styles::Styles;
 
 /// Resolves one streamed XML character/general-reference event.
@@ -107,6 +109,13 @@ pub struct Import {
     pub document: Document,
     /// The compatibility report.
     pub report: CompatibilityReport,
+    /// The preservation ledger licensing every `preserved` retention outcome in
+    /// [`Import::report`] (`35-DISPOSITION-TAXONOMY.md`). A caller can audit a
+    /// preservation claim through it instead of trusting the word `preserved`;
+    /// `CompatibilityReport::validate` has already checked that every claim
+    /// resolves, and an import whose claims did not resolve fails rather than
+    /// reporting.
+    pub ledger: PreservationLedger,
     /// Source retained for round-trip; `Some` only in `Retention` mode.
     pub retained_source: Option<RetainedSource>,
     /// Opaque part side-table (P1F-2): admitted parts the semantic model does
@@ -411,6 +420,11 @@ pub fn import_package(
             }
             retained.parts.insert(name, bytes);
         }
+        // The byte floor just grew from the main document to every admitted part,
+        // so the snapshot record now accounts for the whole package. The record is
+        // what licenses every `preserved` finding in this mode, and a caller
+        // auditing the claim must see the real figure.
+        import.ledger.restate_source_snapshot(total);
     }
 
     // Document properties (`docProps/{core,app,custom}.xml`). Their relationships
@@ -425,18 +439,21 @@ pub fn import_package(
         consumed.insert(part);
     }
     if !sources.is_empty() {
-        let mut reporter = Reporter::default();
+        // The property parts are covered by the same byte floor as every other
+        // part, so they share the main pass's retention scope rather than
+        // re-deciding it.
+        let mut reporter = Reporter::new(match config.mode {
+            ImportMode::Retention => SourceRetention::Snapshot,
+            ImportMode::Semantic => SourceRetention::Regenerated,
+        });
         if let Some(properties) = metadata::parse(&sources, config, &mut reporter)? {
             import.document = import
                 .document
                 .with_properties(properties)
                 .map_err(ImportError::Model)?;
         }
-        let retention = match config.mode {
-            ImportMode::Retention => RetentionOutcome::Preserved,
-            ImportMode::Semantic => RetentionOutcome::NotRetained,
-        };
-        import.report.merge(reporter.into_report(retention));
+        let docprops = reporter.into_report(&mut import.ledger);
+        import.report.merge(docprops);
     }
 
     // Package-manifest disposition pass (F2, `44-COVERAGE-GAP-AUDIT`) + opaque
@@ -453,13 +470,25 @@ pub fn import_package(
     //     writer re-emits it; Retention's byte floor already keeps it); or
     //   * a digital signature (`_xmlsignatures/*` or a signature content type) —
     //     deliberately NOT preserved on the semantic path, because editing
-    //     invalidates a signature. It is dropped and reported `not-retained` in
-    //     Semantic mode (Retention's byte floor still keeps the bytes verbatim,
-    //     so it is `preserved` there).
-    let (retained_parts, dispositions) =
-        build_retained_parts(package, &consumed, &import.embedded_part_names, config)?;
+    //     invalidates a signature. Retention is refused for a security reason
+    //     rather than merely declined, which is `35`'s `blocked` ("refused by
+    //     security or resource policy; nothing is trusted or stored") rather than
+    //     `not-retained` ("intentionally and reportably dropped"). Retention
+    //     mode's byte floor still keeps the bytes verbatim, so it is `preserved`
+    //     there.
+    let (retained_parts, dispositions) = build_retained_parts(
+        package,
+        &consumed,
+        &import.embedded_part_names,
+        config,
+        &mut import.ledger,
+    )?;
     import.retained_parts = retained_parts;
     import.report.add_part_dispositions(dispositions);
+    import
+        .report
+        .validate(&import.ledger)
+        .map_err(ImportError::Disposition)?;
 
     Ok(import)
 }
@@ -478,7 +507,8 @@ fn build_retained_parts(
     consumed: &std::collections::BTreeSet<String>,
     embedded_part_names: &std::collections::BTreeSet<String>,
     config: ImportConfig,
-) -> Result<(RetainedParts, Vec<(PartDisposition, RetentionOutcome)>), ImportError> {
+    ledger: &mut PreservationLedger,
+) -> Result<(RetainedParts, Vec<WholePartDisposition>), ImportError> {
     // The admitted part names (sorted), and the subset the model does not
     // consume and that is not pure OPC plumbing — the candidate opaque parts.
     let admitted: std::collections::BTreeSet<String> = package
@@ -511,22 +541,21 @@ fn build_retained_parts(
     for name in &unconsumed {
         let content_type = package.content_type(name).map(str::to_owned);
         let is_signature = opaque::is_signature_part(name, content_type.as_deref());
-        // Retention: the byte floor keeps every part, so both preserved and
-        // signature parts are `preserved`. Semantic: only side-table parts are
-        // preserved; a signature is dropped (`not-retained`).
-        let retention = match config.mode {
-            ImportMode::Retention => RetentionOutcome::Preserved,
-            ImportMode::Semantic if is_signature => RetentionOutcome::NotRetained,
-            ImportMode::Semantic => RetentionOutcome::Preserved,
+        let part = PartDisposition {
+            part_name: name.clone(),
+            content_type: content_type.clone(),
         };
-        dispositions.push((
-            PartDisposition {
-                part_name: name.clone(),
-                content_type: content_type.clone(),
-            },
-            retention,
-        ));
         if is_signature {
+            // Retention mode's byte floor keeps the signature bytes verbatim, so
+            // the snapshot record licenses a `preserved` claim. On the semantic
+            // path retention is REFUSED — a signature over regenerated content
+            // would assert an integrity nobody checked — which is `blocked`, not
+            // `not-retained`: nothing about it is trusted or stored.
+            let (disposition, ledger_id) = match ledger.source_snapshot() {
+                Some(snapshot) => (Disposition::OmittedPreserved, Some(snapshot)),
+                None => (Disposition::OmittedBlocked, None),
+            };
+            dispositions.push((part, disposition, ledger_id));
             continue;
         }
         let bytes = package.read_part(name).map_err(ImportError::Package)?;
@@ -553,6 +582,14 @@ fn build_retained_parts(
                 limit: "retained_bytes",
             });
         }
+        // The side-table carries this part verbatim through the semantic writer,
+        // so its `preserved` claim has a record of its own on BOTH paths — a
+        // caller can audit the byte count rather than take the word for it.
+        let retained_bytes = bytes
+            .len()
+            .saturating_add(rels.as_ref().map_or(0, |rels| rels.bytes.len()));
+        let ledger_id = ledger.record_opaque_part(name, retained_bytes);
+        dispositions.push((part, Disposition::OmittedPreserved, Some(ledger_id)));
         parts.push(RetainedPart {
             part_name: name.clone(),
             content_type,
@@ -1041,9 +1078,21 @@ pub(crate) fn import_with_sources(
         }
         ImportMode::Semantic => None,
     };
-    let retention = match config.mode {
-        ImportMode::Retention => RetentionOutcome::Preserved,
-        ImportMode::Semantic => RetentionOutcome::NotRetained,
+    // What retains the unconsumed remainder of everything this pass reads. In
+    // Retention mode the tier-1 byte floor reproduces the import input exactly,
+    // so a single source-snapshot ledger record licenses every `preserved`
+    // finding; in Semantic mode nothing blanket-retains, and a finding is
+    // `preserved` only if the finding itself carries an in-model retention
+    // (`Reporter::report_retained_in_model`). This is *not* the old per-mode
+    // disposition constant: the per-construct half of the pair comes from the
+    // call site, so one Semantic import now yields `not-retained`, `rejected`
+    // and `preserved` on different constructs (FID-R-02).
+    let (source_retention, mut ledger) = match retained_source.as_ref() {
+        Some(retained) => (
+            SourceRetention::Snapshot,
+            PreservationLedger::with_source_snapshot(retained.main_document.len()),
+        ),
+        None => (SourceRetention::Regenerated, PreservationLedger::default()),
     };
 
     let mut ids = IdGenerator::new(config.id_namespace);
@@ -1051,7 +1100,7 @@ pub(crate) fn import_with_sources(
     let document_id = ids
         .next_id()
         .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
-    let mut reporter = Reporter::default();
+    let mut reporter = Reporter::new(source_retention);
 
     let styles = match styles_xml {
         Some(xml) => styles::parse(xml, &mut ids, &mut reporter, config)?,
@@ -1220,9 +1269,16 @@ pub(crate) fn import_with_sources(
             .with_background(color)
             .map_err(ImportError::Model)?;
     }
+    let report = reporter.into_report(&mut ledger);
+    // `35` requires an illegal disposition to fail the import rather than be
+    // reported. The nine legal axis pairs are unrepresentable by construction, so
+    // what this catches is the preservation rule: a `preserved` claim with no
+    // validated ledger record behind it.
+    report.validate(&ledger).map_err(ImportError::Disposition)?;
     Ok(Import {
         document,
-        report: reporter.into_report(retention),
+        report,
+        ledger,
         retained_source,
         // The XML-only path has no package, so no opaque parts to preserve;
         // `import_package` populates the side-table when a package is available.
