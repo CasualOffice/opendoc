@@ -43,8 +43,40 @@ jobs:
             fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
             libreoffice-writer-nogui poppler-utils python3
           soffice --version
+          mkdir -p fixtures/oracle
           # Record the exact versions into the reference set for provenance.
           soffice --version > fixtures/oracle/.toolchain 2>/dev/null || true
+
+      - name: Record which faces fontconfig actually resolved
+        run: |
+          set -euo pipefail
+          # Installing a font package is not the same as LibreOffice using it.
+          # This records what fontconfig resolved, so a reference can never be
+          # produced by a silently substituted face without that being visible
+          # in the diff.
+          #
+          # Scope, stated honestly: this guards the PINNED LATIN faces only. It
+          # is NOT the explanation for the H2 residual — on the corpus fixture
+          # the Latin runs already agree with LibreOffice to the twip (our 24pt
+          # heading ends at 6919, LibreOffice's at 6919.04). The real gap is the
+          # fixture's CJK/Arabic line, which NO pinned face covers, so every
+          # environment substitutes differently (container 7933, macOS 6953,
+          # ours 6885). docs/94's font-parity premise is Latin-only; the test
+          # and the extractor both exclude uncoverable lines and compare the
+          # excluded count exactly, which is what actually closes that hole.
+          sudo fc-cache -f >/dev/null
+          : > fixtures/oracle/.fonts
+          status=0
+          for family in "Liberation Sans" "Liberation Serif" "Liberation Mono" \
+                        "Carlito" "Caladea"; do
+            resolved="$(fc-match "$family" family | head -n1)"
+            echo "$family => $resolved" | tee -a fixtures/oracle/.fonts
+            if [ "$resolved" != "$family" ]; then
+              echo "::error::fontconfig substituted '$resolved' for '$family' — the oracle would shape Latin text with the wrong face"
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Extract per-fixture geometry references
         run: |
