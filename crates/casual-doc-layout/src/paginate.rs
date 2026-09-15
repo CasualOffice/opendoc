@@ -61,9 +61,16 @@ pub struct PageConfig {
     pub margin_top: Twip,
     /// Bottom margin.
     pub margin_bottom: Twip,
-    /// Leading (start) margin.
+    /// Leading (start) margin, **including the binding gutter**
+    /// (`w:pgMar/@w:gutter`), which Word adds to the inside edge — see
+    /// [`crate::document_layout::document_page_config`]. This is the page's
+    /// *physical* left margin on a recto (odd) page.
     pub margin_start: Twip,
-    /// Trailing (end) margin.
+    /// Trailing (end) margin — the outside edge on a recto (odd) page.
+    ///
+    /// Under `w:mirrorMargins` the inside and outside margins swap on verso
+    /// (even) pages; the section paginator ([`crate::columns`]) applies that
+    /// per page, so this field always holds the recto geometry.
     pub margin_end: Twip,
     /// Distance from the top page edge to the header band (`w:pgMar/@w:header`,
     /// Word default 720 twips). The header band is anchored here, nested inside
@@ -1201,12 +1208,46 @@ pub(crate) fn build_page(
 ) -> Page {
     let start = ModelPos::new(placed.first().unwrap().fragment.node_id(), 0);
     let end = ModelPos::new(placed.last().unwrap().fragment.node_id(), 0);
+    let mut page = page_shell(index, config, content, flow, start);
+    page.placed = placed;
+    page.end = end;
+    page
+}
+
+/// Assembles a page that carries **no** body content — the parity blank a
+/// `w:type="evenPage"`/`"oddPage"` section break inserts when the page the next
+/// section would otherwise open on has the wrong parity (`docs/105` FID-L-03).
+///
+/// Word still paints running content on that page, so it is a real page in every
+/// other respect: it belongs to the *preceding* section (whose header/footer it
+/// shows and whose page-number sequence it advances), and it collapses to a
+/// single model position — `anchor`, the end of the page before it — so hit
+/// testing and the model-range queries stay monotonic across it.
+pub(crate) fn build_blank_page(
+    index: usize,
+    config: &PageConfig,
+    content: Rect,
+    flow: FlowSpan,
+    anchor: ModelPos,
+) -> Page {
+    page_shell(index, config, content, flow, anchor)
+}
+
+/// The common page skeleton: everything both a content page and a parity blank
+/// share, with the post-pagination bands/floats/borders left for their passes.
+fn page_shell(
+    index: usize,
+    config: &PageConfig,
+    content: Rect,
+    flow: FlowSpan,
+    at: ModelPos,
+) -> Page {
     Page {
         number: (index + 1) as u32,
         section: config.section,
         page_size: config.page_size,
         content_area: content,
-        placed,
+        placed: Vec::new(),
         header: Vec::new(),
         footer: Vec::new(),
         // Filled by the post-pagination anchored-placement pass, off the hot path.
@@ -1217,8 +1258,8 @@ pub(crate) fn build_page(
         separators: Vec::new(),
         // Filled by the post-pagination page-border pass, off the hot path.
         page_borders: None,
-        start,
-        end,
+        start: at,
+        end: at,
         flow,
     }
 }
