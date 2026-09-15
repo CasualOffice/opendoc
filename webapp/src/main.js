@@ -220,12 +220,30 @@ const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
-const insertFootnoteBtn = document.getElementById("insertFootnoteBtn");
-const insertEndnoteBtn = document.getElementById("insertEndnoteBtn");
 const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
 const insertEmojiBtn = document.getElementById("insertEmojiBtn");
+// Layout band (docs/105 UX-010).
+const layoutMarginsBtn = document.getElementById("layoutMarginsBtn");
+const layoutOrientationBtn = document.getElementById("layoutOrientationBtn");
+const layoutSizeBtn = document.getElementById("layoutSizeBtn");
+const layoutColumnsBtn = document.getElementById("layoutColumnsBtn");
+const layoutIndentDecBtn = document.getElementById("layoutIndentDecBtn");
+const layoutIndentIncBtn = document.getElementById("layoutIndentIncBtn");
+const layoutIndentFieldsBtn = document.getElementById("layoutIndentFieldsBtn");
+const layoutSpacingFieldsBtn = document.getElementById("layoutSpacingFieldsBtn");
+const layoutWrapBtn = document.getElementById("layoutWrapBtn");
+const layoutPositionBtn = document.getElementById("layoutPositionBtn");
+const layoutBringForwardBtn = document.getElementById("layoutBringForwardBtn");
+// References band (the IA half of OO-001/OO-005).
+const refTocBtn = document.getElementById("refTocBtn");
+const refBookmarkBtn = document.getElementById("refBookmarkBtn");
+const refCrossRefBtn = document.getElementById("refCrossRefBtn");
+const refFootnoteBtn = document.getElementById("refFootnoteBtn");
+const refEndnoteBtn = document.getElementById("refEndnoteBtn");
+const refFieldBtn = document.getElementById("refFieldBtn");
+const refUpdateFieldsBtn = document.getElementById("refUpdateFieldsBtn");
 const tabReviewBtn = document.getElementById("tabReview");
 const reviewTrackBtn = document.getElementById("reviewTrackBtn");
 const reviewShowChangesBtn = document.getElementById("reviewShowChangesBtn");
@@ -2793,6 +2811,189 @@ async function applyDemoPreset(preset) {
       }
     },
   );
+}
+
+// ---- New blank document (docs/105 UX-011, OO-002) ---------------------------
+//
+// Until now the editor could only ever edit a file that already existed: there
+// was no `file.new` on any surface, so the most basic thing a word processor
+// does — start a document — was the one thing this one could not do.
+//
+// The engine exposes `open(bytes)` and nothing that manufactures a document, and
+// the plain-text importer would give us a body with no styles at all (see
+// `document_from_text`: `Definitions::default()`), so a "blank document" made
+// that way would have no Normal, no headings, and no section geometry. So the
+// host hands the engine what it hands every other document: a real, minimal
+// DOCX package. It is built here rather than shipped as a binary asset so the
+// blank document is readable, reviewable text in this file, needs no fetch (and
+// therefore works with the network off, which is the whole local-first point),
+// and cannot drift away from what the importer expects without this code
+// changing.
+//
+// Deliberately NOT included: `w:rFonts`. Naming Calibri would make every new
+// document start by asking for a face the engine has to substitute and report;
+// omitting it lets the engine use the default it is certain to have.
+const UNTITLED_DOCUMENT_NAME = "Untitled document.docx";
+
+const BLANK_DOCX_XMLNS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+
+/** One heading style, neutral: size and weight only. A blank document should
+ *  not arrive carrying somebody's brand colours. */
+function blankHeadingStyle(id, name, level, halfPoints, beforeTwips) {
+  return (
+    `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/>` +
+    `<w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
+    `<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="${beforeTwips}" w:after="80"/>` +
+    `<w:outlineLvl w:val="${level}"/></w:pPr>` +
+    `<w:rPr><w:b/><w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr></w:style>`
+  );
+}
+
+/** The parts of the blank package, in the order they are written. Letter at 1in
+ *  margins is Word's en-US default; the user can change it in Page setup, and
+ *  the choice is recorded here rather than hidden in a binary. */
+const BLANK_DOCX_PARTS = [
+  [
+    "[Content_Types].xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
+      "</Types>",
+  ],
+  [
+    "_rels/.rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      "</Relationships>",
+  ],
+  [
+    "word/_rels/document.xml.rels",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      "</Relationships>",
+  ],
+  [
+    "word/document.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      `<w:document ${BLANK_DOCX_XMLNS}><w:body><w:p/>` +
+      '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>' +
+      '<w:cols w:space="720"/></w:sectPr></w:body></w:document>',
+  ],
+  [
+    "word/styles.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      `<w:styles ${BLANK_DOCX_XMLNS}>` +
+      "<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/></w:rPr></w:rPrDefault>" +
+      '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
+      '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
+      '<w:pPr><w:spacing w:after="80"/><w:contextualSpacing/></w:pPr>' +
+      '<w:rPr><w:sz w:val="56"/><w:szCs w:val="56"/></w:rPr></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
+      '<w:pPr><w:spacing w:after="160"/></w:pPr>' +
+      '<w:rPr><w:i/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>' +
+      blankHeadingStyle("Heading1", "heading 1", 0, 32, 360) +
+      blankHeadingStyle("Heading2", "heading 2", 1, 26, 320) +
+      blankHeadingStyle("Heading3", "heading 3", 2, 24, 280) +
+      "</w:styles>",
+  ],
+];
+
+/** CRC-32 over `bytes`, the one checksum a ZIP local header needs. Table built
+ *  once, lazily — a blank document is not created on the hot path. */
+let crcTable = null;
+function crc32(bytes) {
+  if (!crcTable) {
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Writes `parts` ([name, utf-8 text]) as a STORED (uncompressed) ZIP.
+ *
+ *  Stored, not deflated, because the package is ~3 KB of XML that is read once
+ *  and thrown away; adding a compressor to the editor to save two kilobytes
+ *  would be the wrong trade. Timestamps are fixed at zero so the same blank
+ *  document produces the same bytes every time — determinism is a property this
+ *  repo holds everywhere else and there is no reason to break it here. */
+function zipStore(parts) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  const u16 = (v) => [v & 0xff, (v >>> 8) & 0xff];
+  const u32 = (v) => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];
+
+  for (const [name, text] of parts) {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(text);
+    const crc = crc32(data);
+    const header = [
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), // signature, version, flags, STORED
+      ...u16(0), ...u16(0), // dos time, dos date — fixed for determinism
+      ...u32(crc), ...u32(data.length), ...u32(data.length),
+      ...u16(nameBytes.length), ...u16(0),
+    ];
+    chunks.push(Uint8Array.from(header), nameBytes, data);
+    central.push({ nameBytes, crc, size: data.length, offset });
+    offset += header.length + nameBytes.length + data.length;
+  }
+
+  const directoryStart = offset;
+  for (const entry of central) {
+    const record = [
+      ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0),
+      ...u32(entry.crc), ...u32(entry.size), ...u32(entry.size),
+      ...u16(entry.nameBytes.length), ...u16(0), ...u16(0),
+      ...u16(0), ...u16(0), ...u32(0),
+      ...u32(entry.offset),
+    ];
+    chunks.push(Uint8Array.from(record), entry.nameBytes);
+    offset += record.length + entry.nameBytes.length;
+  }
+  chunks.push(
+    Uint8Array.from([
+      ...u32(0x06054b50), ...u16(0), ...u16(0),
+      ...u16(central.length), ...u16(central.length),
+      ...u32(offset - directoryStart), ...u32(directoryStart), ...u16(0),
+    ]),
+  );
+
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+}
+
+/** Opens a new, empty document. Goes through the same `confirmDiscardIfEdited`
+ *  gate as Open, because it replaces what is on screen exactly as Open does —
+ *  a new document that silently discarded the last one would be the worst kind
+ *  of data loss, the kind the user asked for without knowing. */
+async function newBlankDocument() {
+  if (!(await confirmDiscardIfEdited())) return;
+  await openBytes(zipStore(BLANK_DOCX_PARTS), UNTITLED_DOCUMENT_NAME, () => {
+    // A brand-new document is where the user wants to type, not somewhere they
+    // have to click first.
+    focusEditorSurface();
+  });
 }
 
 async function loadStartupDocument(url, name, onOpened, onRendered) {
@@ -7847,6 +8048,13 @@ function hasRange() {
 // the test — each row stamps its command id onto its button, and
 // `insert-surface.spec.mjs` asserts the ribbon's id set equals the Insert menu's,
 // so the omission that shipped Picture unreachable now fails CI instead.
+//
+// `buttons` is a LIST because one command can legitimately have more than one
+// ribbon face: Word shows Bookmark on both Insert ▸ Links and References ▸
+// Navigation, and Insert field on both Insert ▸ Text and References ▸ Fields.
+// Declaring the faces here keeps enablement and activation single-sourced —
+// a second `someBtn.disabled = …` line written next to the new tab is exactly
+// how the Insert ribbon drifted out of sync with its menu the first time.
 const INSERT_SURFACE = [
   // "doc" is Word's rule: an open document has an insertion point, so the
   // command is live the moment a document loads (see `implicitCaretAt`).
@@ -7854,8 +8062,8 @@ const INSERT_SURFACE = [
   // already fails closed through `blockMutationInViewing` /
   // `blockUntrackedInSuggesting`, which tells the user WHY the insert did not
   // happen. A greyed button would only say "no".
-  { command: "insert.table", button: insertTableBtn, requires: "doc", activate: null },
-  { command: "insert.image", button: insertPictureBtn, requires: "doc", activate: () => insertImageFromFile() },
+  { command: "insert.table", buttons: [insertTableBtn], requires: "doc", activate: null },
+  { command: "insert.image", buttons: [insertPictureBtn], requires: "doc", activate: () => insertImageFromFile() },
   // Link is the one Insert command that genuinely needs a range: it hyperlinks
   // selected text. A cross-paragraph range still enables the button and is
   // answered by `editSelectionLink`'s "Links must stay within one paragraph",
@@ -7863,18 +8071,129 @@ const INSERT_SURFACE = [
   // The gallery popover registers its own toggle on this button (like the list
   // galleries), so wiring `activate` here too would open it on mousedown and
   // immediately close it again.
-  { command: "insert.shape", button: insertShapeBtn, requires: "doc", activate: null },
-  { command: "insert.textbox", button: insertTextBoxBtn, requires: "doc", activate: () => void insertTextBoxObject() },
-  { command: "insert.link", button: insertLinkBtn, requires: "range", activate: () => editSelectionLink() },
-  { command: "insert.bookmark", button: insertBookmarkBtn, requires: "doc", activate: () => openBookmarkManager() },
-  { command: "insert.field", button: insertFieldBtn, requires: "doc", activate: () => openFieldDialog() },
-  { command: "insert.footnote", button: insertFootnoteBtn, requires: "doc", activate: () => insertNote("footnote") },
-  { command: "insert.endnote", button: insertEndnoteBtn, requires: "doc", activate: () => insertNote("endnote") },
-  { command: "insert.header", button: insertHeaderBtn, requires: "doc", activate: () => editRunningContent("header") },
-  { command: "insert.footer", button: insertFooterBtn, requires: "doc", activate: () => editRunningContent("footer") },
-  { command: "insert.symbol", button: insertSymbolBtn, requires: "doc", activate: () => openSymbolPicker() },
-  { command: "insert.emoji", button: insertEmojiBtn, requires: "doc", activate: () => openEmojiPicker() },
+  { command: "insert.shape", buttons: [insertShapeBtn], requires: "doc", activate: null },
+  { command: "insert.textbox", buttons: [insertTextBoxBtn], requires: "doc", activate: () => void insertTextBoxObject() },
+  { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
+  { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
+  { command: "insert.field", buttons: [insertFieldBtn, refFieldBtn], requires: "doc", activate: () => openFieldDialog() },
+  // Notes live on References only, as they do in Word. The app-menu row and the
+  // palette entry are untouched, so the command keeps three surfaces.
+  { command: "insert.footnote", buttons: [refFootnoteBtn], requires: "doc", activate: () => insertNote("footnote") },
+  { command: "insert.endnote", buttons: [refEndnoteBtn], requires: "doc", activate: () => insertNote("endnote") },
+  { command: "insert.header", buttons: [insertHeaderBtn], requires: "doc", activate: () => editRunningContent("header") },
+  { command: "insert.footer", buttons: [insertFooterBtn], requires: "doc", activate: () => editRunningContent("footer") },
+  { command: "insert.symbol", buttons: [insertSymbolBtn], requires: "doc", activate: () => openSymbolPicker() },
+  { command: "insert.emoji", buttons: [insertEmojiBtn], requires: "doc", activate: () => openEmojiPicker() },
 ];
+
+// ---- Layout and References surfaces ----------------------------------------
+// The same seam as INSERT_SURFACE/REVIEW_SURFACE, for the two tabs the ribbon
+// did not have (docs/105 UX-010, and the IA half of OO-001/OO-005). Each row is
+// one command: the palette entry, the ribbon button, and the enablement rule all
+// read from this table, so there is nowhere to write a second opinion.
+//
+// `requires` values:
+//   "doc"      — an open document is the only precondition.
+//   "caret"    — a paragraph to act on (the caret, wherever it is).
+//   "object"   — a selected image, shape or text box.
+//   "missing"  — the command is REAL as a user intention but has no engine
+//                operation behind it. It ships permanently disabled carrying the
+//                reason, because a control that silently does nothing is the one
+//                thing docs/63 forbids outright, and hiding it would make the
+//                gap invisible to the person deciding what to build next.
+const LAYOUT_SURFACE = [
+  // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
+  // into the same section geometry; each one opens the dialog with its own
+  // fieldset focused rather than pretending to be a separate dialog.
+  { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [layoutMarginsBtn], requires: "doc", run: () => togglePageSetup(true, () => pageMarginTopInput) },
+  { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [layoutOrientationBtn], requires: "doc", run: () => togglePageSetup(true, () => pageOrientationSeg.querySelector('button[aria-pressed="true"]')) },
+  { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [layoutSizeBtn], requires: "doc", run: () => togglePageSetup(true, () => pageWidthInput) },
+  { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [layoutColumnsBtn], requires: "doc", run: () => togglePageSetup(true, () => pageColumnCount) },
+  // Paragraph: the existing relative nudges, plus the two fieldsets of the
+  // paragraph-properties panel that hold the absolute indent and spacing values.
+  // The ribbon deliberately does NOT carry its own numeric fields: the panel
+  // reflects engine state and applies through the gated edit path, and a second
+  // pair of inputs would be a second answer to "what is this paragraph's indent".
+  { command: "paragraph.indent.decrease", buttons: () => [layoutIndentDecBtn], requires: "caret", run: () => adjustIndentCommand(-360) },
+  { command: "paragraph.indent.increase", buttons: () => [layoutIndentIncBtn], requires: "caret", run: () => adjustIndentCommand(360) },
+  { command: "layout.indent", label: "Indentation…", kw: "indent left right first line hanging exact fields paragraph", buttons: () => [layoutIndentFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => indentLeftInput) },
+  { command: "layout.spacing", label: "Paragraph spacing…", kw: "spacing line before after leading paragraph fields", buttons: () => [layoutSpacingFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => paraLineSpacing) },
+  // Arrange: the object inspector's own wrap and geometry sections, reached from
+  // a durable affordance instead of only the floating bar that appears on hover.
+  { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
+  { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
+  {
+    command: "layout.arrange.bringForward",
+    label: "Bring object forward",
+    kw: "bring forward z order layer front back send backward arrange",
+    buttons: () => [layoutBringForwardBtn],
+    requires: "missing",
+    // `objectOrder()` READS paint order; nothing writes it, and there is no
+    // z-order op in the wasm facade. Adding one is engine work, not UI work.
+    reason: "Bring forward needs a z-order operation the engine does not expose yet",
+  },
+];
+
+const REFERENCE_SURFACE = [
+  {
+    command: "reference.tableOfContents",
+    label: "Table of contents",
+    kw: "table of contents toc outline headings index navigation",
+    buttons: () => [refTocBtn],
+    requires: "missing",
+    reason: "A table of contents needs field evaluation and update, which the engine does not expose yet",
+  },
+  {
+    command: "reference.crossReference",
+    label: "Cross-reference",
+    kw: "cross reference ref heading bookmark figure numbered item",
+    buttons: () => [refCrossRefBtn],
+    requires: "missing",
+    reason: "A cross-reference needs the REF field engine, which does not exist yet",
+  },
+  {
+    command: "reference.updateFields",
+    label: "Update fields",
+    kw: "update fields refresh recalculate page number date time",
+    buttons: () => [refUpdateFieldsBtn],
+    requires: "missing",
+    // PAGE/NUMPAGES already recompute at pagination; the cached kinds
+    // (date/time/filename/author) would need a re-evaluation pass, and
+    // `insertField` is the only field op the facade exposes.
+    reason: "Updating cached fields needs a field-evaluation pass the engine does not expose yet; page numbers already recompute at pagination",
+  },
+];
+
+/** Whether a Layout/References row's precondition is met right now. */
+function ribbonSurfaceEnabled(entry) {
+  if (entry.requires === "missing") return false;
+  if (!doc) return false;
+  if (entry.requires === "object") return !!(objectSelection && objectSelection.mode === "selected");
+  if (entry.requires === "caret") return !!selection;
+  return true;
+}
+
+/** Why a Layout/References row is unavailable, for the button title and the
+ *  palette's `disabledReason`. */
+function ribbonSurfaceReason(entry) {
+  if (entry.requires === "missing") return entry.reason;
+  if (!doc) return "Open a document first";
+  if (entry.requires === "object") return "Select an image, shape or text box first";
+  if (entry.requires === "caret") return "Place the caret in a paragraph";
+  return "";
+}
+
+/** Opens the object inspector and focuses the control the caller asked for, so
+ *  Layout ▸ Wrap text lands on the wrap select rather than on the panel's first
+ *  field. A no-op without a selected object; the button is disabled then. */
+function openObjectInspectorAt(selector) {
+  if (!objectSelection || objectSelection.mode !== "selected") return;
+  // The panel is created lazily by the object context bar. Reaching it from the
+  // ribbon must not depend on that bar having been drawn first.
+  ensureObjectInspector();
+  toggleObjectInspector(true);
+  queueMicrotask(() => objectInspectorEl?.querySelector(selector)?.focus({ preventScroll: true }));
+}
 
 /** The one enablement rule for an Insert command, shared by its ribbon button,
  *  its app-menu row, and its palette entry. `context.hasRange` lets a surface
@@ -8620,7 +8939,25 @@ function updateToolbar() {
   // about Insert is decided here any more; a per-button rule written at this
   // spot is exactly how the ribbon drifted out of sync with the menu.
   for (const entry of INSERT_SURFACE) {
-    entry.button.disabled = !insertCommandEnabled(entry.command, { hasRange: range });
+    const enabled = insertCommandEnabled(entry.command, { hasRange: range });
+    for (const button of entry.buttons) button.disabled = !enabled;
+  }
+  // Layout and References take their enablement from the same tables their
+  // palette rows read, for the same reason: one rule, one place.
+  for (const entry of [...LAYOUT_SURFACE, ...REFERENCE_SURFACE]) {
+    const enabled = ribbonSurfaceEnabled(entry);
+    const reason = ribbonSurfaceReason(entry);
+    for (const button of entry.buttons()) {
+      if (!button) continue;
+      button.disabled = !enabled;
+      // A disabled control has to SAY why. `title` is the only channel a
+      // disabled button has (it takes no focus and fires no events), and the
+      // authored title is the "missing" reason already, so only the transient
+      // preconditions rewrite it.
+      if (entry.requires !== "missing") {
+        button.title = enabled ? (button.dataset.enabledTitle ?? button.title) : reason;
+      }
+    }
   }
   // Review: a document is the only precondition, except commenting, which needs
   // text to attach to. The two toggles reflect engine state rather than a local
@@ -8767,13 +9104,30 @@ for (const entry of REVIEW_SURFACE) {
 }
 
 for (const entry of INSERT_SURFACE) {
-  if (entry.activate) onButton(entry.button, entry.activate);
-  // Stamp the command id onto the button so the ribbon's membership is readable
-  // from the DOM. `insert-surface.spec.mjs` compares this set against the Insert
-  // menu's own `data-command` ids, which is what actually catches the drift this
-  // table is meant to prevent: a command added to the menu and the palette but
-  // never given a ribbon button — exactly how Picture shipped unreachable.
-  entry.button.dataset.command = entry.command;
+  for (const button of entry.buttons) {
+    if (entry.activate) onButton(button, entry.activate);
+    // Stamp the command id onto the button so the ribbon's membership is readable
+    // from the DOM. `insert-surface.spec.mjs` compares this set against the Insert
+    // menu's own `data-command` ids, which is what actually catches the drift this
+    // table is meant to prevent: a command added to the menu and the palette but
+    // never given a ribbon button — exactly how Picture shipped unreachable.
+    button.dataset.command = entry.command;
+  }
+}
+
+// Layout and References, wired the same way. The `missing` rows get NO handler:
+// the button stays disabled for the life of the build, so a click can never be
+// dispatched, and wiring a run that cannot work would be the dead control the
+// house rule forbids.
+for (const entry of [...LAYOUT_SURFACE, ...REFERENCE_SURFACE]) {
+  for (const button of entry.buttons()) {
+    if (!button) continue;
+    button.dataset.command = entry.command;
+    // Remember the authored tooltip so `updateToolbar` can put it back after a
+    // precondition message has replaced it.
+    button.dataset.enabledTitle = button.title;
+    if (entry.run) onButton(button, entry.run);
+  }
 }
 for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
@@ -10182,7 +10536,11 @@ function reflectParagraphProperties() {
   state.free();
 }
 
-function toggleParagraphProperties(open) {
+// `focusTarget` lets Layout ▸ Indent and Layout ▸ Spacing land on the fieldset
+// the user asked for. The panel owns the real indent/spacing values — the ribbon
+// deliberately holds no second copy of them — so the deep link is what makes the
+// ribbon button honest about what it does.
+function toggleParagraphProperties(open, focusTarget = null) {
   const show = open ?? paragraphPropertiesPanel.hidden;
   if (show && (!doc || !selection)) return;
   const returnFocus =
@@ -10193,7 +10551,7 @@ function toggleParagraphProperties(open) {
     toggleTableProperties(false);
     for (const popover of popovers) closePopover(popover);
     reflectParagraphProperties();
-    queueMicrotask(() => paraPanelStyle.focus());
+    queueMicrotask(() => (focusTarget?.() ?? paraPanelStyle).focus());
   } else if (returnFocus) {
     paraOptsBtn.focus({ preventScroll: true });
   }
@@ -11664,6 +12022,12 @@ function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
   const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
   const cmds = [
+    // `noDoc`, and first: with no document open this is the only File command
+    // that can run, and it is the one a user arriving with nothing to open needs.
+    // No keyboard shortcut is claimed — ⌘N/Ctrl+N belongs to the browser window
+    // and cannot be intercepted, and a shortcut hint the editor cannot honour
+    // would be a lie printed in the palette.
+    { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, run: () => void newBlankDocument() },
     { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, run: () => fileEl.click() },
     { id: "file.save", label: "Save", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocument() },
     { id: "file.export.docx", label: "Export as DOCX…", group: "File", kw: "export save as word", run: () => exportDocumentAs("org.openxmlformats.wordprocessingml.document") },
@@ -11814,9 +12178,39 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "view.showChanges", label: "Show changes (read-only)", group: "View", kw: "tracked changes markup deletions insertions review redline", run: () => toggleShowChanges() },
     { id: "view.zoomIn", label: "Zoom in", group: "View", kw: "", run: () => stepZoom(1) },
     { id: "view.zoomOut", label: "Zoom out", group: "View", kw: "", run: () => stepZoom(-1) },
+    // Ribbon density (docs/104 HF-094). The choice was already real and already
+    // persisted, but the ONLY way to reach it was a 28px chevron at the right
+    // end of the tab strip — so a user who wanted Docs-style compact chrome had
+    // to find an unlabelled arrow. The label carries the current state, the same
+    // shape `tools.smartQuotes` uses, so the palette and the View menu both read
+    // as a switch rather than as an action with an unknown effect.
+    { id: "view.compactRibbon", label: `Compact ribbon: ${ribbonViewCollapsed ? "on" : "off"}`, group: "View", kw: "compact ribbon collapse expand band density toolbar chrome docs word full", noDoc: true, run: () => setRibbonCollapsed(!ribbonViewCollapsed) },
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
+    // The Layout and References tabs' own rows, generated from the SAME tables
+    // their buttons are built from, so a tab button and its palette row can
+    // never disagree about whether the command is available or why it is not.
+    // Rows without a `label` (the indent pair) already have a palette entry
+    // above and only borrow the table's button wiring.
+    ...LAYOUT_SURFACE.filter((entry) => entry.label).map((entry) => ({
+      id: entry.command,
+      label: entry.label,
+      group: "Layout",
+      kw: entry.kw,
+      enabled: ribbonSurfaceEnabled(entry),
+      disabledReason: ribbonSurfaceReason(entry),
+      run: entry.run ?? (() => {}),
+    })),
+    ...REFERENCE_SURFACE.filter((entry) => entry.label).map((entry) => ({
+      id: entry.command,
+      label: entry.label,
+      group: "References",
+      kw: entry.kw,
+      enabled: ribbonSurfaceEnabled(entry),
+      disabledReason: ribbonSurfaceReason(entry),
+      run: entry.run ?? (() => {}),
+    })),
     { id: "help.commands", label: "Keyboard shortcuts and commands", group: "Help", kw: "help shortcuts command palette", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
     {
       id: "review.comment",
@@ -12007,6 +12401,7 @@ let activeAppMenuTrigger = null;
 
 const APP_MENU_SECTIONS = {
   file: [
+    ["file.new"],
     ["file.open", "file.save"],
     ["file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
     ["file.print"],
@@ -12021,6 +12416,9 @@ const APP_MENU_SECTIONS = {
   view: [
     ["view.outline", "review.toggle", "view.showChanges"],
     ["view.zoomIn", "view.zoomOut"],
+    // The ribbon-density switch belongs in View, next to the other things that
+    // change what the window shows rather than what the document says.
+    ["view.compactRibbon"],
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
   ],
   review: [
@@ -13471,6 +13869,12 @@ function renderCommands(query) {
     // option itself must stay out of the tab order because focus never leaves
     // the query input.
     item.id = `cmdOption-${i}`;
+    // The command id, on the row, for the same reason the context menu carries
+    // it (`data-command-id`) and the ribbon buttons carry `data-command`: it
+    // makes "is this capability on more than one surface?" a question the DOM can
+    // answer, so a parity guard compares id sets instead of matching labels that
+    // are context sensitive and carry their shortcut in the same box.
+    item.dataset.commandId = c.id;
     item.tabIndex = -1;
     item.setAttribute("aria-selected", String(i === cmdSel));
     item.disabled = c.enabled === false;
@@ -16066,15 +16470,24 @@ pageSetupSection.addEventListener("change", () => {
   updatePageSetupPreview();
 });
 
+// Which control the dialog should land on for THIS opening. Layout ▸ Margins and
+// Layout ▸ Columns are the same dialog reached with a different intent, and
+// Word/Docs both put you on the field you asked for; landing everyone on
+// Orientation would make three of the four buttons feel like the wrong button.
+// Reset on every open so a deep link cannot leak into the next plain opening.
+let pageSetupFocusTarget = null;
+
 const pageSetupModal = registerModal(pageSetupMenu, {
-  initialFocus: () => pageOrientationSeg.querySelector('button[aria-pressed="true"]'),
+  initialFocus: () =>
+    pageSetupFocusTarget?.() ?? pageOrientationSeg.querySelector('button[aria-pressed="true"]'),
   fallbackFocus: () => pageSetupBtn,
 });
 
-function togglePageSetup(open) {
+function togglePageSetup(open, focusTarget = null) {
   const show = open ?? !pageSetupModal.isOpen;
   if (show === pageSetupModal.isOpen) return;
   if (show && !reflectPageSetup()) return; // no section geometry to edit
+  pageSetupFocusTarget = show ? focusTarget : null;
   pageSetupBtn.setAttribute("aria-expanded", String(show));
   if (show) pageSetupModal.open();
   else pageSetupModal.close();
