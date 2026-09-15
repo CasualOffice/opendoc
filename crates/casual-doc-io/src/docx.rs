@@ -2,7 +2,11 @@
 
 use std::sync::Arc;
 
-use casual_doc_export::{write_document, write_document_with_retained_parts};
+use casual_doc_export::{
+    Disposition as ExportDisposition, ModelOutcome as ExportModelOutcome,
+    RetentionOutcome as ExportRetentionOutcome, export_document,
+    export_document_with_retained_parts,
+};
 use casual_doc_import::{
     ImportConfig, ImportMode, ModelOutcome as DocxModelOutcome, RetainedParts,
     RetentionOutcome as DocxRetentionOutcome, import_package,
@@ -194,22 +198,41 @@ impl FormatExporter for DocxAdapter {
             .and_then(SourceEnvelope::state::<DocxSourceState>);
 
         let (bytes, mut report) = match request.mode {
-            ExportMode::Semantic => (
-                write_document(request.document, request.resources.as_map())
-                    .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?,
-                CompatibilityReport::default(),
-            ),
+            // Semantic: regenerate everything from the model and carry no opaque
+            // part. The writer's own findings now travel with the bytes instead of
+            // being thrown away behind a `CompatibilityReport::default()`
+            // (FID-R-01), and the side-table this mode deliberately does not carry
+            // is named too, because "the user asked for a semantic save" does not
+            // make the dropped parts less dropped.
+            ExportMode::Semantic => {
+                let exported = export_document(request.document, request.resources.as_map())
+                    .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
+                let mut report = convert_export_report(&exported.report);
+                let dropped = matching_source
+                    .map(|source| source.retained_parts.parts.len())
+                    .unwrap_or(0);
+                if dropped != 0 {
+                    report.entries.push(CompatibilityEntry {
+                        feature: "docx.export.retained_parts".to_owned(),
+                        occurrences: u32::try_from(dropped).unwrap_or(u32::MAX),
+                        location: FeatureLocation::default(),
+                        model_outcome: ModelOutcome::Omitted,
+                        retention_outcome: RetentionOutcome::NotRetained,
+                    });
+                }
+                (exported.bytes, report)
+            }
             ExportMode::PreserveWhenSafe => {
                 let retained = matching_source
                     .map(|source| &source.retained_parts)
                     .unwrap_or(&empty_retained);
-                let bytes = write_document_with_retained_parts(
+                let exported = export_document_with_retained_parts(
                     request.document,
                     request.resources.as_map(),
                     retained,
                 )
                 .map_err(|error| AdapterError::new(format!("semantic writer: {error}")))?;
-                let mut report = CompatibilityReport::default();
+                let mut report = convert_export_report(&exported.report);
                 if request.source.is_some() && matching_source.is_none() {
                     report.entries.push(CompatibilityEntry {
                         feature: "source_envelope".to_owned(),
@@ -219,7 +242,7 @@ impl FormatExporter for DocxAdapter {
                         retention_outcome: RetentionOutcome::NotRetained,
                     });
                 }
-                (bytes, report)
+                (exported.bytes, report)
             }
             ExportMode::ExactIfUnchanged => {
                 let bytes = matching_source
@@ -291,6 +314,53 @@ pub fn builtin_registry_with_package_limits(package_limits: PackageLimits) -> Fo
         .register_exporter(adapter)
         .expect("built-in ODT exporter registration is unique");
     registry
+}
+
+/// Lifts the DOCX writer's findings into the format-neutral report.
+///
+/// Exists because the two layers keep separate types on purpose: the adapter
+/// vocabulary is shared by every format, the writer's is DOCX-specific. The
+/// disposition itself is not re-decided here — both axes come from the writer's
+/// [`ExportDisposition`], so a finding cannot mean one thing to the writer and
+/// another to the caller.
+fn convert_export_report(report: &casual_doc_export::CompatibilityReport) -> CompatibilityReport {
+    let mut converted = CompatibilityReport {
+        entries: report
+            .entries
+            .iter()
+            .map(|entry| CompatibilityEntry {
+                feature: entry.feature.clone(),
+                occurrences: entry.occurrences,
+                location: FeatureLocation {
+                    part_name: entry.part_name.clone(),
+                    namespace: None,
+                    local_name: entry.feature.rsplit('.').next().map(str::to_owned),
+                },
+                model_outcome: convert_model_outcome(entry.disposition),
+                retention_outcome: convert_retention_outcome(entry.disposition),
+            })
+            .collect(),
+    };
+    converted.sort();
+    converted
+}
+
+fn convert_model_outcome(disposition: ExportDisposition) -> ModelOutcome {
+    match disposition.model_outcome() {
+        ExportModelOutcome::Mapped => ModelOutcome::Mapped,
+        ExportModelOutcome::Degraded => ModelOutcome::Degraded,
+        ExportModelOutcome::Omitted => ModelOutcome::Omitted,
+    }
+}
+
+fn convert_retention_outcome(disposition: ExportDisposition) -> RetentionOutcome {
+    match disposition.retention_outcome() {
+        ExportRetentionOutcome::Preserved => RetentionOutcome::Preserved,
+        ExportRetentionOutcome::NotRetained => RetentionOutcome::NotRetained,
+        ExportRetentionOutcome::Blocked => RetentionOutcome::Blocked,
+        ExportRetentionOutcome::Rejected => RetentionOutcome::Rejected,
+        ExportRetentionOutcome::NotApplicable => RetentionOutcome::NotApplicable,
+    }
 }
 
 fn convert_report(report: &casual_doc_import::CompatibilityReport) -> CompatibilityReport {
@@ -549,6 +619,189 @@ mod tests {
             )
             .unwrap();
         assert_eq!(reopened.document, original_model);
+    }
+
+    /// The adapter must hand back what the writer reported, and must report
+    /// nothing for a document the writer emits in full.
+    ///
+    /// Both halves matter. Before this, `ExportMode::Semantic` returned
+    /// `CompatibilityReport::default()` unconditionally (FID-R-01), so export loss
+    /// on the primary format could not be surfaced at all; a report that instead
+    /// fires on every healthy save is the failure in the other direction, and one
+    /// callers learn to ignore.
+    #[test]
+    fn an_ordinary_document_exports_through_the_adapter_with_an_empty_report() {
+        const RICH: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: RICH,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("rich.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("an ordinary Word document opens");
+        assert!(
+            imported.resources.get("word/media/image1.png").is_some(),
+            "the fixture must carry its picture bytes, or an empty report proves nothing"
+        );
+        let exported = registry
+            .export(
+                &FormatId::new(formats::DOCX).unwrap(),
+                ExportRequest {
+                    document: &imported.document,
+                    resources: &imported.resources,
+                    source: Some(&imported.source),
+                    source_unchanged: false,
+                    mode: ExportMode::Semantic,
+                },
+            )
+            .expect("it exports");
+        assert!(
+            exported.report.entries.is_empty(),
+            "an ordinary document must export with no findings, got {:?}",
+            exported.report.entries
+        );
+    }
+
+    /// Media bytes the caller cannot supply are reported on the EXPORT side too,
+    /// with the part named, and the package does not pretend otherwise.
+    ///
+    /// The import half of this already reported (`docx.media.unreadable-part`);
+    /// the export half returned a default report while writing a zero-byte part
+    /// behind a live `/image` relationship (FID-R-06).
+    #[test]
+    fn media_bytes_the_caller_cannot_supply_are_reported_on_export() {
+        const RICH: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: RICH,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("rich.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("an ordinary Word document opens");
+        // The picture is still declared by the model; its bytes are not offered.
+        let exported = registry
+            .export(
+                &FormatId::new(formats::DOCX).unwrap(),
+                ExportRequest {
+                    document: &imported.document,
+                    resources: &DocumentResources::default(),
+                    source: None,
+                    source_unchanged: false,
+                    mode: ExportMode::Semantic,
+                },
+            )
+            .expect("it still exports");
+        let entry = exported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "docx.export.media.missing_bytes")
+            .expect("the export must report the picture it could not write");
+        assert_eq!(
+            entry.location.part_name.as_deref(),
+            Some("word/media/image1.png"),
+            "the finding names the part"
+        );
+        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+    }
+
+    /// A semantic save drops the opaque parts the preserving save carries, and
+    /// must say so.
+    ///
+    /// "The caller asked for `ExportMode::Semantic`" explains the drop; it does
+    /// not make the dropped `customXml` less gone. Doc 35 admits `not-retained`
+    /// only when a report records it, so the same export that silently shed the
+    /// side-table now names it — and the preserving mode, which really does carry
+    /// the part, stays silent.
+    #[test]
+    fn a_semantic_save_reports_the_opaque_parts_a_preserving_save_would_carry() {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/customXml/item1.xml" ContentType="application/xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="customXml/item1.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+        let custom_xml = br#"<root><bound>value</bound></root>"#;
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("customXml/item1.xml", custom_xml.as_slice()),
+        ] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        let source = zw.finish().unwrap().into_inner();
+
+        let registry = builtin_registry();
+        let imported = registry
+            .import(
+                DetectionRequest {
+                    bytes: &source,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("bound.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the package opens");
+
+        let semantic = registry
+            .export(
+                &FormatId::new(formats::DOCX).unwrap(),
+                ExportRequest {
+                    document: &imported.document,
+                    resources: &imported.resources,
+                    source: Some(&imported.source),
+                    source_unchanged: false,
+                    mode: ExportMode::Semantic,
+                },
+            )
+            .expect("it exports");
+        let entry = semantic
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "docx.export.retained_parts")
+            .expect("a semantic save must report the side-table it drops");
+        assert_eq!(entry.occurrences, 1, "one opaque part was dropped");
+        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome, RetentionOutcome::NotRetained);
+
+        let preserving = registry
+            .export(
+                &FormatId::new(formats::DOCX).unwrap(),
+                ExportRequest {
+                    document: &imported.document,
+                    resources: &imported.resources,
+                    source: Some(&imported.source),
+                    source_unchanged: false,
+                    mode: ExportMode::PreserveWhenSafe,
+                },
+            )
+            .expect("it exports");
+        assert!(
+            preserving.report.entries.is_empty(),
+            "the preserving save carries the part, so it must report nothing, got {:?}",
+            preserving.report.entries
+        );
     }
 
     #[test]

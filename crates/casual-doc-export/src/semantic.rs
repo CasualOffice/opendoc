@@ -12,6 +12,19 @@
 //!
 //! Output is byte-deterministic for a given model: parts in fixed order, a fixed
 //! ZIP timestamp, ids/relationships re-minted in document order.
+//!
+//! What the package cannot carry is reported rather than skipped silently
+//! (FID-R-01): the entry points return a [`DocxExport`] whose
+//! [`CompatibilityReport`](crate::CompatibilityReport) names every such
+//! construct with both disposition axes from `35-DISPOSITION-TAXONOMY.md`. A
+//! document the writer emits in full reports nothing.
+//!
+//! One package-level invariant is load-bearing for those findings: **no
+//! relationship is written for content the package does not contain**. A missing
+//! image or embedded face used to produce a zero-byte part with a live
+//! relationship, which Word reads as a picture it cannot supply (FID-R-06); the
+//! reference, the relationship, the content-type entry and the ZIP entry are now
+//! all derived from one table of available media, so they cannot disagree.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
@@ -55,6 +68,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 use crate::ExportError;
+use crate::report::{Disposition, DocxExport, Reporter};
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const CT_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -397,6 +411,12 @@ impl IdTokens {
 /// accumulator (external hyperlinks).
 struct Ctx<'a> {
     defs: &'a Definitions,
+    /// The media the written package will actually contain: the model's media
+    /// table minus every entry whose bytes the caller did not supply. Drawing
+    /// writers resolve through this rather than `defs.media`, so a picture whose
+    /// bytes are missing is left out of the body instead of pointing at a
+    /// relationship for an empty part (FID-R-06).
+    media: &'a DefinitionMap<MediaId, MediaReference>,
     rels: RelBuilder,
     tokens: IdTokens,
 }
@@ -408,11 +428,28 @@ struct Ctx<'a> {
 /// This preserves no opaque (unmodeled) package parts; use
 /// [`write_document_with_retained_parts`] to carry an import's side-table
 /// through so unmodeled parts survive a semantic edit→save.
+///
+/// The compatibility report is discarded. Prefer [`export_document`], which
+/// returns the same bytes together with what writing them cost; this signature
+/// stays for callers that have nowhere to put a report yet.
 pub fn write_document(
     document: &Document,
     media: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, ExportError> {
-    write_document_with_retained_parts(document, media, &RetainedParts::default())
+    export_document(document, media).map(|export| export.bytes)
+}
+
+/// Serializes a v1 `Document` to a DOCX package, reporting what the package does
+/// not carry.
+///
+/// Same bytes as [`write_document`], plus the compatibility report doc 35
+/// requires: every construct the writer could not emit in full, with both
+/// disposition axes. A document the writer emits in full reports nothing.
+pub fn export_document(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+) -> Result<DocxExport, ExportError> {
+    export_document_with_retained_parts(document, media, &RetainedParts::default())
 }
 
 /// Serializes a v1 `Document` to a DOCX package, additionally carrying an
@@ -430,30 +467,55 @@ pub fn write_document(
 /// is regenerated from the model without that reference, so its relationship
 /// exists (keeping the part in the package graph) but no body id names it.
 /// Re-linking such objects is a future object-node slice, out of scope here.
+///
+/// The compatibility report is discarded; prefer
+/// [`export_document_with_retained_parts`].
 pub fn write_document_with_retained_parts(
     document: &Document,
     media: &BTreeMap<String, Vec<u8>>,
     retained_parts: &RetainedParts,
 ) -> Result<Vec<u8>, ExportError> {
+    export_document_with_retained_parts(document, media, retained_parts).map(|export| export.bytes)
+}
+
+/// Serializes a v1 `Document` with an import's opaque part side-table, reporting
+/// what the package does not carry.
+///
+/// Same bytes as [`write_document_with_retained_parts`] (see it for what
+/// retention covers), plus the compatibility report doc 35 requires.
+pub fn export_document_with_retained_parts(
+    document: &Document,
+    media: &BTreeMap<String, Vec<u8>>,
+    retained_parts: &RetainedParts,
+) -> Result<DocxExport, ExportError> {
     let definitions = document.definitions();
+    let mut reporter = Reporter::default();
     let id_tokens = IdTokens::new(definitions);
+    // The media the package will contain. An entry whose bytes the caller did
+    // not supply is dropped here, once, and everything downstream — the body
+    // reference, the relationship, the content-type default and the ZIP entry —
+    // derives from this table, so those four cannot disagree with each other.
+    // They used to: the part was written EMPTY beside a live `/image`
+    // relationship, which is a package advertising a picture it cannot supply
+    // (FID-R-06). Word drew a broken-image box and nothing was reported.
+    let available_media = available_media(definitions, media, &mut reporter);
     // Embedded-object (chart/diagram/OLE) part relationships, emitted with their
     // verbatim ids so the body reference and the relationship agree. Collected
     // before the body is written so their ids are reserved against hyperlink
     // minting; the referenced part BYTES come from the side-table (P1F-2).
     let embedded_rels = collect_embedded_rels(document);
+    report_embedded_object_parts(&embedded_rels, retained_parts, &mut reporter);
     // Media relationships are emitted with their verbatim ids so the model
     // round-trips; reserve them (and the embedded-object ids) so hyperlink/part
     // rids do not collide.
-    let mut reserved_rel_ids: BTreeSet<String> = definitions
-        .media
+    let mut reserved_rel_ids: BTreeSet<String> = available_media
         .iter()
         .map(|(_, reference)| reference.relationship_id.clone())
         .collect();
     for (id, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
-    let (document_xml, rels) = document_xml(document, reserved_rel_ids)?;
+    let (document_xml, rels) = document_xml(document, &available_media, reserved_rel_ids)?;
 
     // Extra parts beyond document.xml, each carrying its content-type override
     // and a document relationship; they appear only when the model has the
@@ -461,7 +523,7 @@ pub fn write_document_with_retained_parts(
     let mut extras: Vec<ExtraPart> = Vec::new();
     let mut font_rels: Vec<RelEntry> = Vec::new();
     if !definitions.font_table.is_empty() {
-        let (bytes, rels) = font_table_xml(&definitions.font_table)?;
+        let (bytes, rels) = font_table_xml(&definitions.font_table, media, &mut reporter)?;
         font_rels = rels;
         extras.push(ExtraPart::new(
             "word/fontTable.xml",
@@ -533,6 +595,7 @@ pub fn write_document_with_retained_parts(
             "w:footnote",
             &definitions.footnotes,
             definitions,
+            &available_media,
         )?;
         extras.push(
             ExtraPart::new(
@@ -552,6 +615,7 @@ pub fn write_document_with_retained_parts(
             "w:endnote",
             &definitions.endnotes,
             definitions,
+            &available_media,
         )?;
         extras.push(
             ExtraPart::new(
@@ -566,7 +630,8 @@ pub fn write_document_with_retained_parts(
         );
     }
     if !definitions.comments.is_empty() {
-        let (bytes, own_rels, own_media) = comments_xml(&definitions.comments, definitions)?;
+        let (bytes, own_rels, own_media) =
+            comments_xml(&definitions.comments, definitions, &available_media)?;
         extras.push(
             ExtraPart::new(
                 "word/comments.xml",
@@ -612,7 +677,8 @@ pub fn write_document_with_retained_parts(
     // section's `w:sectPr` references. Emitted in ascending-id order so the
     // importer (which keys by relationship order) re-allocates matching ids.
     for (index, (id, header)) in definitions.headers.iter().enumerate() {
-        let (bytes, own_rels, own_media) = header_footer_xml("w:hdr", &header.blocks, definitions)?;
+        let (bytes, own_rels, own_media) =
+            header_footer_xml("w:hdr", &header.blocks, definitions, &available_media)?;
         extras.push(
             ExtraPart::new(
                 &format!("word/header{}.xml", index + 1),
@@ -627,7 +693,8 @@ pub fn write_document_with_retained_parts(
         );
     }
     for (index, (id, footer)) in definitions.footers.iter().enumerate() {
-        let (bytes, own_rels, own_media) = header_footer_xml("w:ftr", &footer.blocks, definitions)?;
+        let (bytes, own_rels, own_media) =
+            header_footer_xml("w:ftr", &footer.blocks, definitions, &available_media)?;
         extras.push(
             ExtraPart::new(
                 &format!("word/footer{}.xml", index + 1),
@@ -656,7 +723,7 @@ pub fn write_document_with_retained_parts(
         content_types_xml(
             &extras,
             &docprops,
-            &definitions.media,
+            &available_media,
             has_embedded_fonts,
             retained_parts,
         )?,
@@ -671,7 +738,7 @@ pub fn write_document_with_retained_parts(
         document_rels_xml(
             &rels,
             &extras,
-            &part_media(document.body(), &definitions.media),
+            &part_media(document.body(), &available_media),
             &embedded_rels,
             retained_parts,
         )?,
@@ -698,14 +765,19 @@ pub fn write_document_with_retained_parts(
         }
         parts.push(retained.part_name.clone(), retained.bytes.clone());
     }
-    // Media parts (image bytes supplied by the caller; the model carries only
-    // the reference metadata). An absent entry writes an empty part — the
-    // reference still round-trips (bytes are Retention's concern).
-    for (_, reference) in definitions.media.iter() {
-        let bytes = media.get(&reference.part_name).cloned().unwrap_or_default();
+    // Media parts. Only the entries whose bytes the caller supplied are here, so
+    // every `/image` relationship written above has a non-empty part behind it.
+    for (_, reference) in available_media.iter() {
+        let bytes = media
+            .get(&reference.part_name)
+            .cloned()
+            .expect("available_media only holds references whose bytes are present");
         parts.push(reference.part_name.clone(), bytes);
     }
     // Embedded fonts: the fontTable's own rels (`/font`) plus the `.odttf` parts.
+    // `font_rels` already excludes a face whose bytes are missing (the `w:embed*`
+    // element is not emitted either), so the same non-empty-part invariant holds
+    // for `/font` as for `/image`.
     if has_embedded_fonts {
         parts.push(
             "word/_rels/fontTable.xml.rels".to_owned(),
@@ -713,10 +785,18 @@ pub fn write_document_with_retained_parts(
         );
         for font in &definitions.font_table {
             for (_, face) in font.embedded.faces() {
-                let bytes = media.get(&face.part_name).cloned().unwrap_or_default();
-                parts.push(face.part_name.clone(), bytes);
+                if let Some(bytes) = media.get(&face.part_name) {
+                    parts.push(face.part_name.clone(), bytes.clone());
+                }
             }
         }
+    }
+    // The page background (`w:background`) has no writer: it is imported into the
+    // model and then dropped on every save. Emitting it is a fidelity fix owned by
+    // FID-R-04; until then the loss is at least named rather than silent, exactly
+    // as the ODT writer names its own (`odt.export.background`).
+    if document.background().is_some() {
+        reporter.record("docx.export.background", Disposition::OmittedNotRetained);
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -729,10 +809,83 @@ pub fn write_document_with_retained_parts(
             .map_err(|_| ExportError::Package)?;
         writer.write_all(&bytes).map_err(|_| ExportError::Package)?;
     }
-    Ok(writer
-        .finish()
-        .map_err(|_| ExportError::Package)?
-        .into_inner())
+    Ok(DocxExport {
+        bytes: writer
+            .finish()
+            .map_err(|_| ExportError::Package)?
+            .into_inner(),
+        report: reporter.finish(),
+    })
+}
+
+/// The media entries the package can actually carry: every model media reference
+/// whose bytes `media` supplies, keyed exactly as `definitions.media` is.
+///
+/// A reference whose bytes are absent is reported and left out. Leaving it in
+/// wrote a zero-byte part beside a live `/image` relationship — a package that
+/// advertises a picture it cannot supply, which Word renders as a broken-image
+/// box with no explanation, and which the export reported as a clean save
+/// (FID-R-06). Dropping the entry instead removes the body reference, the
+/// relationship, the content-type default and the ZIP entry together, because all
+/// four are derived from this one table, so the written package stays internally
+/// consistent and the loss is named.
+///
+/// Note that the *picture* is lost either way; the choice is between a corrupt
+/// package that hides it and a valid package that reports it.
+fn available_media(
+    definitions: &Definitions,
+    media: &BTreeMap<String, Vec<u8>>,
+    reporter: &mut Reporter,
+) -> DefinitionMap<MediaId, MediaReference> {
+    let mut available = DefinitionMap::default();
+    for (id, reference) in definitions.media.iter() {
+        if media.contains_key(&reference.part_name) {
+            available.insert(*id, reference.clone());
+        } else {
+            // Charged to the PART: one part can be reached through several
+            // `MediaId`s (a logo in a header and in the body), and the occurrence
+            // count then says how many references it cost.
+            reporter.record_part(
+                "docx.export.media.missing_bytes",
+                &reference.part_name,
+                Disposition::OmittedNotRetained,
+            );
+        }
+    }
+    available
+}
+
+/// Reports an embedded-object (chart / SmartArt / OLE / `altChunk`) part that the
+/// body references but the package does not contain.
+///
+/// The bytes of such a part come only from the opaque side-table, so a semantic
+/// export without retention emits the relationship and the body reference while
+/// the part itself is absent. That is a live relationship pointing at nothing —
+/// worse than the zero-byte media part FID-R-06 is about — and it is *reported*
+/// here rather than repaired, because repairing it means deciding what the body
+/// should say instead of the object, which is FID-R-08's open scope question. The
+/// finding at least makes the state visible to a caller that must warn a user.
+fn report_embedded_object_parts(
+    embedded_rels: &[EmbeddedRelEntry],
+    retained_parts: &RetainedParts,
+    reporter: &mut Reporter,
+) {
+    for (_, _, target) in embedded_rels {
+        // `document.xml.rels` targets are `word/`-relative; the side-table keys
+        // parts by their full package name.
+        let part_name = format!("word/{target}");
+        if !retained_parts
+            .parts
+            .iter()
+            .any(|part| part.part_name == part_name)
+        {
+            reporter.record_part(
+                "docx.export.embedded_object.missing_part",
+                &part_name,
+                Disposition::OmittedNotRetained,
+            );
+        }
+    }
 }
 
 /// The package's parts, in emission order, holding the ZIP-level invariant that
@@ -1324,13 +1477,14 @@ fn notes_xml(
     item: &str,
     notes: &DefinitionMap<NoteId, Note>,
     defs: &Definitions,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images these notes use, declared by this part and reserved so a
     // hyperlink minted here cannot take an id an image already holds.
     let mut own_media: Vec<MediaRel> = Vec::new();
     for (_, note) in notes.iter() {
-        for entry in part_media(&note.blocks, &defs.media) {
+        for entry in part_media(&note.blocks, available_media) {
             if !own_media.iter().any(|(id, _)| *id == entry.0) {
                 own_media.push(entry);
             }
@@ -1339,6 +1493,7 @@ fn notes_xml(
     let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
+        media: available_media,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
@@ -1369,11 +1524,12 @@ fn notes_xml(
 fn comments_xml(
     comments: &DefinitionMap<CommentId, Comment>,
     defs: &Definitions,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     let mut own_media: Vec<MediaRel> = Vec::new();
     for (_, comment) in comments.iter() {
-        for entry in part_media(&comment.blocks, &defs.media) {
+        for entry in part_media(&comment.blocks, available_media) {
             if !own_media.iter().any(|(id, _)| *id == entry.0) {
                 own_media.push(entry);
             }
@@ -1382,6 +1538,7 @@ fn comments_xml(
     let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
+        media: available_media,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
@@ -1542,15 +1699,17 @@ fn header_footer_xml(
     root: &str,
     blocks: &[BlockNode],
     defs: &Definitions,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
     // cannot be handed an id an image already holds — which is how a header's
     // `r:embed` came to resolve to a hyperlink.
-    let own_media = part_media(blocks, &defs.media);
+    let own_media = part_media(blocks, available_media);
     let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
+        media: available_media,
         rels: RelBuilder::new(reserved),
         tokens: IdTokens::new(defs),
     };
@@ -1585,7 +1744,17 @@ fn hf_kind_token(kind: HeaderFooterKind) -> &'static str {
 }
 
 /// Emits `word/fontTable.xml` from the model's font descriptors, in order.
-fn font_table_xml(fonts: &[FontDescriptor]) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
+///
+/// An embedded face (`w:embedRegular` and friends) is emitted only when `media`
+/// supplies its obfuscated `.odttf` bytes. A face whose bytes are missing used to
+/// be announced anyway, with a `/font` relationship and a zero-byte part behind
+/// it, so Word was told the document embedded a face it could not load (FID-R-06);
+/// the face is now left out of all three places at once and reported.
+fn font_table_xml(
+    fonts: &[FontDescriptor],
+    media: &BTreeMap<String, Vec<u8>>,
+    reporter: &mut Reporter,
+) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
     let mut font_rels: Vec<RelEntry> = Vec::new();
     let mut root = start("w:fonts");
@@ -1640,6 +1809,14 @@ fn font_table_xml(fonts: &[FontDescriptor]) -> Result<(Vec<u8>, Vec<RelEntry>), 
         // Embedded faces: emit each `w:embed*` with its verbatim relationship id
         // (into `fontTable.xml.rels`) and font key, and record the rel.
         for (name, face) in font.embedded.faces() {
+            if !media.contains_key(&face.part_name) {
+                reporter.record_part(
+                    "docx.export.embedded_font.missing_bytes",
+                    &face.part_name,
+                    Disposition::OmittedNotRetained,
+                );
+                continue;
+            }
             let mut child = start(name);
             child.push_attribute(("r:id", face.relationship_id.as_str()));
             child.push_attribute(("w:fontKey", face.font_key.as_str()));
@@ -2472,6 +2649,7 @@ fn level_suffix_token(suffix: LevelSuffix) -> &'static str {
 /// `document.xml.rels`).
 fn document_xml(
     document: &Document,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
     media_rel_ids: BTreeSet<String>,
 ) -> Result<(Vec<u8>, Vec<RelEntry>), ExportError> {
     let mut w = new_writer();
@@ -2502,6 +2680,7 @@ fn document_xml(
 
     let mut ctx = Ctx {
         defs: document.definitions(),
+        media: available_media,
         rels: RelBuilder::new(media_rel_ids),
         tokens: IdTokens::new(document.definitions()),
     };
@@ -4189,7 +4368,9 @@ fn collect_group_media(group: &WordprocessingGroup, out: &mut BTreeSet<MediaId>)
 }
 
 /// The media a block list references, as `(relationship id, reference)` pairs in
-/// definition order.
+/// definition order. `media` is the *available* table, so a reference whose bytes
+/// are missing yields no relationship — the same table the body writer resolves
+/// through, which is what keeps the two from disagreeing.
 fn part_media(
     blocks: &[BlockNode],
     media: &DefinitionMap<MediaId, MediaReference>,
@@ -4581,7 +4762,7 @@ fn write_inline(
         // scaffold whose one load-bearing attribute is `a:blip@r:embed`, the
         // media's (verbatim) relationship id. The importer discards the rest.
         InlineNode::Drawing(drawing) => {
-            let Some(reference) = ctx.defs.media.get(&drawing.media) else {
+            let Some(reference) = ctx.media.get(&drawing.media) else {
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
@@ -4602,7 +4783,7 @@ fn write_inline(
         // An anchored (floating) drawing: a `w:drawing`/`wp:anchor` carrying the
         // picture's position, wrap, z-order, and alt text.
         InlineNode::AnchoredDrawing(drawing) => {
-            let Some(reference) = ctx.defs.media.get(&drawing.media) else {
+            let Some(reference) = ctx.media.get(&drawing.media) else {
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
@@ -5107,7 +5288,6 @@ fn write_wgp(
         match child {
             GroupChild::Picture(picture) => {
                 let embed = ctx
-                    .defs
                     .media
                     .get(&picture.media)
                     .map(|reference| reference.relationship_id.clone());
@@ -5860,7 +6040,7 @@ fn write_ole_object(
     // The preview shape, when a preview image resolves in the media table.
     let preview_rel = object
         .preview
-        .and_then(|id| ctx.defs.media.get(&id))
+        .and_then(|id| ctx.media.get(&id))
         .map(|reference| reference.relationship_id.clone());
     if let Some(rel_id) = &preview_rel {
         let mut shape = start("v:shape");
