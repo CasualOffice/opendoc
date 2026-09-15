@@ -192,7 +192,7 @@ impl ParleyShaper {
     /// `w:embed*` slot it came from implies.
     ///
     /// This is the seam that puts document-embedded faces at the *top* of the
-    /// fallback chain (`40-FONT-MANAGEMENT-DESIGN.md` §3.2): [`Self::pick_family`]
+    /// fallback chain (`40-FONT-MANAGEMENT-DESIGN.md` §3.2): family selection
     /// prefers a run's requested family whenever the collection knows that name,
     /// so registering the embedded face under the declared name makes the
     /// document's own face beat the bundled metric substitute. The family name is
