@@ -14,6 +14,7 @@
 //!   inside margin, and `w:mirrorMargins` swaps the inside and outside margins on
 //!   verso (even) pages, moving the body and the running bands with them.
 
+use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{document_page_config, paginate_document};
 use casual_doc_layout::page::PlacedFragment;
 use casual_doc_layout::shape::ParleyShaper;
@@ -249,6 +250,23 @@ fn the_parity_blank_page_keeps_the_previous_sections_running_content() {
         "Word still paints the previous section's header on the blank page"
     );
     assert_eq!(first_node(&layout.pages[2].header), Some(node(321)));
+}
+
+#[test]
+fn the_parity_blank_page_composes_to_its_running_content_alone() {
+    let shaper = ParleyShaper::new();
+    let layout = paginate_document(&two_section_document(SectionType::OddPage, 1), &shaper);
+
+    // A page with no placed body fragments is a new shape for every downstream
+    // consumer, so compose it: the display list must build and carry the
+    // header's glyphs and nothing from the body.
+    let blank = compose_page(&layout.pages[1]);
+    let content = compose_page(&layout.pages[2]);
+    assert!(
+        !blank.items.is_empty(),
+        "the blank page still paints its running content"
+    );
+    assert!(blank.items.len() < content.items.len());
 }
 
 #[test]
