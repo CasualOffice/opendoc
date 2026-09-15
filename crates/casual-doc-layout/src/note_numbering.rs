@@ -233,11 +233,13 @@ pub(crate) fn resolve_note_labels(
     document: &Document,
     layout: Option<&PaginatedLayout>,
 ) -> NoteLabels {
-    let mut labels = NoteLabels {
-        restarts_each_page: any_container_restarts_each_page(document),
-        ..NoteLabels::default()
-    };
+    let mut labels = NoteLabels::default();
     let references = document_order_note_refs(document);
+    // Only a document that both asks for page restart *and* has a note to number
+    // owes the driver a second pagination pass; a `w:settings` container carrying
+    // the policy with no reference in the body must not cost a whole extra layout.
+    labels.restarts_each_page =
+        !references.is_empty() && any_container_restarts_each_page(document);
     let pages = layout.map(note_pages);
     for kind in [NoteKind::Footnote, NoteKind::Endnote] {
         let mut counter: u32 = 0;
