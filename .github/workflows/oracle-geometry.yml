@@ -43,8 +43,36 @@ jobs:
             fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
             libreoffice-writer-nogui poppler-utils python3
           soffice --version
+          mkdir -p fixtures/oracle
           # Record the exact versions into the reference set for provenance.
           soffice --version > fixtures/oracle/.toolchain 2>/dev/null || true
+
+      - name: Verify LibreOffice resolves the bundled faces, not substitutes
+        run: |
+          set -euo pipefail
+          # The first reference this job ever produced was silently WRONG: the
+          # packages above were installed, but nothing checked that fontconfig
+          # actually resolved them, and it did not. The result came back ~17.5%
+          # wider than the same string shaped in Liberation Sans and with its
+          # first baseline pushed down — the signature of a wider, taller
+          # substitute. A reference produced with the wrong font does not
+          # measure our fidelity, it measures the container's font cache.
+          #
+          # So: resolve every bundled family, record what came back, and FAIL
+          # here rather than emit a reference nobody can trust.
+          sudo fc-cache -f >/dev/null
+          : > fixtures/oracle/.fonts
+          status=0
+          for family in "Liberation Sans" "Liberation Serif" "Liberation Mono" \
+                        "Carlito" "Caladea"; do
+            resolved="$(fc-match "$family" family | head -n1)"
+            echo "$family => $resolved" | tee -a fixtures/oracle/.fonts
+            if [ "$resolved" != "$family" ]; then
+              echo "::error::fontconfig substituted '$resolved' for '$family' — the oracle would shape with the wrong face"
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Extract per-fixture geometry references
         run: |
