@@ -363,14 +363,87 @@ struct OracleReference {
     pages: Vec<PageGeom>,
 }
 
-/// Reads the committed oracle reference for `fixture_id`, or `None` if the
-/// LibreOffice re-bless job has not produced it yet.
+/// The LibreOffice build a reference must have been produced by.
+///
+/// This is not decoration. `ubuntu-24.04` ships LibreOffice 24.2.7.2, and
+/// LibreOffice's own text layout moved between that and 26.2.4.2 by **558-629
+/// twips** on three of this corpus's fixtures — an order of magnitude more than
+/// [`TOLERANCE_TWIPS`]. Measured directly: on `real-producer-hyperlinks` our
+/// right edge is 4869, LibreOffice 26.2.4.2 says 4867 (2 twips, inside
+/// tolerance), and 24.2.7.2 says 5468.
+///
+/// So "pinned LibreOffice" cannot mean "whatever the runner image happens to
+/// ship" — at this tolerance that is not an oracle, it is a moving target. The
+/// re-bless job records the build it used into `fixtures/oracle/.toolchain`, and
+/// a reference produced by a different one is refused below rather than compared.
+///
+/// Raising this constant is a deliberate act: it means re-blessing every
+/// reference against the new build and reviewing the geometry diff.
+const ORACLE_LIBREOFFICE_VERSION: &str = "26.2.4.2";
+
+/// Reads the committed oracle reference for `fixture_id`, or `None` if there is
+/// no **trustworthy** one yet.
+///
+/// Three things must hold, and each has already been violated once:
+///
+/// 1. The reference exists (the re-bless job has run).
+/// 2. `fixtures/oracle/.fonts` shows the producing container resolved every
+///    pinned family to **itself**. Installing a font package is not the same as
+///    fontconfig resolving it, and a reference shaped with a substitute measures
+///    the container's font cache rather than our fidelity.
+/// 3. `fixtures/oracle/.toolchain` names [`ORACLE_LIBREOFFICE_VERSION`]. See that
+///    constant for why a version mismatch is worse than no reference.
+///
+/// An unverified reference is worse than none, because it fails for reasons that
+/// have nothing to do with the engine and trains everyone to ignore the gate.
 fn oracle_reference(fixture_id: &str) -> Option<OracleReference> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/oracle")
-        .join(format!("{fixture_id}.geom.json"));
-    let text = std::fs::read_to_string(path).ok()?;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/oracle");
+
+    let fonts = std::fs::read_to_string(dir.join(".fonts")).ok()?;
+    if !font_provenance_is_trustworthy(&fonts) {
+        return None;
+    }
+    let toolchain = std::fs::read_to_string(dir.join(".toolchain")).ok()?;
+    if !toolchain_matches_the_pin(&toolchain) {
+        return None;
+    }
+
+    let text = std::fs::read_to_string(dir.join(format!("{fixture_id}.geom.json"))).ok()?;
     Some(parse_oracle_geometry(&text))
+}
+
+/// Whether the recorded `fc-match` provenance shows every pinned family resolved
+/// to itself rather than to a substitute.
+///
+/// The re-bless job writes one `<requested> => <resolved>` line per family. Any
+/// line whose resolved family differs from the requested one means LibreOffice
+/// shaped with something else, and the reference is void. An empty or unparsable
+/// file proves nothing, so it is not trust either.
+fn font_provenance_is_trustworthy(provenance: &str) -> bool {
+    let mut checked = 0_usize;
+    for line in provenance.lines() {
+        let Some((requested, resolved)) = line.split_once("=>") else {
+            continue;
+        };
+        let (requested, resolved) = (requested.trim(), resolved.trim());
+        if requested.is_empty() || resolved.is_empty() {
+            continue;
+        }
+        if !resolved.eq_ignore_ascii_case(requested) {
+            return false;
+        }
+        checked += 1;
+    }
+    checked >= 3
+}
+
+/// Whether the recorded `soffice --version` output names the pinned build.
+///
+/// Substring rather than equality: the real output carries a build hash and a
+/// build id after the version (`LibreOffice 26.2.4.2 0229ac93...`), and neither
+/// is stable enough to assert.
+fn toolchain_matches_the_pin(toolchain: &str) -> bool {
+    toolchain.contains(ORACLE_LIBREOFFICE_VERSION)
 }
 
 /// Parses the oracle geometry JSON (the shape `extract-geometry.sh` emits):
@@ -764,5 +837,65 @@ mod tests {
         assert!(!is_pinned_face(FontId(
             casual_doc_layout::font_registry::DYNAMIC_FONT_BASE
         )));
+    }
+}
+
+/// Guards on reference PROVENANCE — the two ways a reference can look valid and
+/// be worthless. Both have happened: a reference was produced with a substituted
+/// font, and a reference was produced by a LibreOffice two years older than the
+/// one the engine agrees with.
+#[cfg(test)]
+mod provenance_tests {
+    use super::{
+        ORACLE_LIBREOFFICE_VERSION, font_provenance_is_trustworthy, toolchain_matches_the_pin,
+    };
+
+    #[test]
+    fn every_family_resolving_to_itself_is_trusted() {
+        let ok = "Liberation Sans => Liberation Sans\n\
+                  Liberation Serif => Liberation Serif\n\
+                  Liberation Mono => Liberation Mono\n\
+                  Carlito => Carlito\n\
+                  Caladea => Caladea\n";
+        assert!(font_provenance_is_trustworthy(ok));
+    }
+
+    #[test]
+    fn a_single_substituted_face_voids_the_whole_reference() {
+        // What actually happened: the packages were installed, fontconfig
+        // resolved something else, and nothing noticed until the geometry came
+        // back ~17% wide.
+        let substituted = "Liberation Sans => DejaVu Sans\n\
+                           Liberation Serif => Liberation Serif\n\
+                           Liberation Mono => Liberation Mono\n\
+                           Carlito => Carlito\n\
+                           Caladea => Caladea\n";
+        assert!(!font_provenance_is_trustworthy(substituted));
+    }
+
+    #[test]
+    fn missing_or_unparsable_font_provenance_is_not_trust() {
+        assert!(!font_provenance_is_trustworthy(""));
+        assert!(!font_provenance_is_trustworthy(
+            "no arrows here\njust noise\n"
+        ));
+        // Too few families to be the real record.
+        assert!(!font_provenance_is_trustworthy("Carlito => Carlito\n"));
+    }
+
+    #[test]
+    fn the_pinned_libreoffice_build_is_accepted() {
+        let recorded = format!("LibreOffice {ORACLE_LIBREOFFICE_VERSION} 0229ac93fcf0d7cbc63\n");
+        assert!(toolchain_matches_the_pin(&recorded));
+    }
+
+    #[test]
+    fn a_different_libreoffice_build_voids_the_reference() {
+        // The exact build `ubuntu-24.04` ships, which produced references
+        // 558-629 twips wide on three fixtures.
+        assert!(!toolchain_matches_the_pin(
+            "LibreOffice 24.2.7.2 420(Build:2)\n"
+        ));
+        assert!(!toolchain_matches_the_pin(""));
     }
 }
