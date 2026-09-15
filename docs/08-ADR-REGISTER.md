@@ -412,12 +412,64 @@ splitting rarely-used format support out of the first payload), not from asking 
 compiler to pessimize the hot paths. Re-open only with numbers from the same
 benchmark, and only for a lever that does not tax runtime.
 
+## ADR-033 — Collaboration is operational transformation over the closed op set, with snapshot/replay versioning
+
+**Status:** Proposed (owner decision taken 2026-09-15). Designed in
+`107-COLLABORATION-OT-SNAPSHOT-REPLAY-DESIGN.md`.
+
+**Decision:** Collaborative editing uses **operational transformation**, carried by
+`casual-doc-transaction` transactions over the closed `casual-doc-edit` operation set, with a
+durable ordered operation log. **Versioning is snapshot-plus-replay** over that log: a
+snapshot (`25`) plus the operations after it reconstitutes any revision. Operations are
+transformed only against a **totally ordered** log supplied by an optional relay.
+
+**Why OT rather than the cheaper alternative.** The competitor this project is positioned
+against (`106`) uses neither OT nor a CRDT but a server-ordered change log plus pessimistic
+object locks, so matching it does not require OT. OT is chosen anyway because:
+
+- the hard prerequisite is already paid — the op set is closed (invariant I2) and **every
+  operation already returns its inverse**;
+- `PositionMap::map` already performs affinity-correct position transform;
+- pessimistic locks refuse the second writer and need an online lock authority, which is
+  structurally hostile to local-first operation;
+- OT makes offline-then-merge possible, and makes version history, restore, and document
+  compare/combine consequences of one mechanism rather than three separate features.
+
+**Tractability over 47 operations.** Operations are classified in three tiers: **T1
+positional** (~9 text/inline ops — full pairwise transform, the hot path); **T2
+node-addressed** (the bulk — addressed by `NodeId` per invariant I3, so they need anchor
+liveness plus a tombstone rule, not offset math); **T3 document-scope** (serialised,
+last-writer-wins). A tombstoned operation is **reported through the disposition taxonomy**
+(`35`), never silently dropped.
+
+**Consequences:**
+
+- The closed op set becomes load-bearing twice — undo *and* transform. Adding an operation
+  without a tier classification and transform rules must fail CI.
+- The operation log becomes persisted, versioned data, so the operation vocabulary becomes a
+  compatibility surface needing a schema-version policy.
+- TP1 convergence must be **proven by property test**, not asserted. TP2 is avoided by
+  construction via the totally ordered log.
+- The relay orders and fans out operations only. It does not parse documents, convert
+  formats, hold the authoritative model, or gate single-user editing — **no mandatory server**
+  (ADR-006 unchanged; invariants I1/I4).
+- **Editing must stay light** (owner constraint): `107` §4 states seven measurable budgets —
+  per-keystroke work O(1) in document size, transform cost O(concurrent ops since base),
+  typing coalesced per run, no paragraph-rewrite op on the typing path, periodic not
+  per-operation snapshots, incremental invalidation for remote operations, and a bounded log.
+- **Prerequisite:** the live editing path currently references `casual-doc-transaction` zero
+  times and applies `casual-doc-edit` operations directly, so ADR-005 is not honoured in
+  practice and there are two parallel operation sets. Unifying them (`107` §2.1) precedes any
+  OT work, and is debt owed regardless.
+- A CRDT adapter remains possible later behind the same seam for peer-to-peer or
+  partition-tolerant merge, which relay-ordered OT deliberately does not attempt.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;
-- collaboration operation model: OT vs CRDT (seams reserved by ADR-030 / doc 45);
+- ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
 - ~~PDF generation backend~~ — superseded by **ADR-031** (proposed; see doc 98);
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
