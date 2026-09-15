@@ -1258,6 +1258,8 @@ fn page_shell(
         separators: Vec::new(),
         // Filled by the post-pagination page-border pass, off the hot path.
         page_borders: None,
+        // Filled by the post-pagination line-number pass, off the hot path.
+        line_numbers: Vec::new(),
         start: at,
         end: at,
         flow,

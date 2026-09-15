@@ -60,6 +60,21 @@ pub struct Decoration {
     /// separate toggles; a run carries at most one in practice).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub double_strike: bool,
+    /// The emphasis mark (`w:em`) drawn once per non-blank cluster of this run —
+    /// above the text for `dot`/`comma`/`circle`, below it for `underDot`. Near
+    /// universal in Japanese typesetting (bōten), where it carries the same
+    /// weight italics carry in Latin text. `None` (and the explicit
+    /// [`EmphasisMark::None`](casual_doc_model::v1::EmphasisMark::None) clear)
+    /// draws nothing. Additive: serialized only when set (`docs/105` FID-L-14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emphasis: Option<casual_doc_model::v1::EmphasisMark>,
+    /// The run border (`w:bdr`) drawn as a box around this run's glyph box,
+    /// resolved through the same border pipeline as paragraph, cell, and page
+    /// edges (so its width, color, and pattern match). Common in forms and
+    /// key-term callouts. `None` = no box. Additive: serialized only when set
+    /// (`docs/105` FID-L-14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<crate::block::ResolvedEdge>,
 }
 
 /// A run of glyphs sharing one font, size, color, and bidi level, positioned at

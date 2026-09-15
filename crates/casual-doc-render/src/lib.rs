@@ -2353,6 +2353,7 @@ mod tests {
             double_strike: false,
             underline_color: None,
             underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
         });
         let plain_below = band_dark(&plain, baseline + 2, baseline + 10);
         let under_below = band_dark(&underlined, baseline + 2, baseline + 10);
@@ -2377,6 +2378,7 @@ mod tests {
             double_strike: false,
             underline_color: None,
             underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
         });
         // Search the mid-band between the baseline and ~cap height above it.
         let (y0, y1) = (baseline.saturating_sub(20), baseline);
@@ -2402,6 +2404,7 @@ mod tests {
             double_strike: false,
             underline_color: None,
             underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
         });
         let (double, _) = render_decorated(Decoration {
             underline: false,
@@ -2409,6 +2412,7 @@ mod tests {
             double_strike: true,
             underline_color: None,
             underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+            ..Decoration::default()
         });
         assert!(
             dark_pixel_count(&double) > dark_pixel_count(&single),

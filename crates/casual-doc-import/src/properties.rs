@@ -312,13 +312,23 @@ pub(crate) fn apply_paragraph_property(
     element: &BytesStart<'_>,
 ) -> bool {
     match local {
-        b"jc" => match attribute_value(element, b"val")
-            .as_deref()
-            .and_then(alignment_from)
-        {
-            Some(alignment) => properties.alignment = Some(alignment),
-            None => return false,
-        },
+        b"jc" => {
+            let raw = attribute_value(element, b"val");
+            match raw.as_deref().and_then(alignment_from) {
+                Some(alignment) => properties.alignment = Some(alignment),
+                None => return false,
+            }
+            // `distribute`/`thaiDistribute` keep the *closest* representable
+            // alignment (ordinary justification) so the paragraph still fills its
+            // measure, but they are NOT the same thing: Word stretches the gaps
+            // *between characters* and justifies the last line too. The model has
+            // no `Distribute` alignment, so the difference is a real loss — report
+            // it instead of letting `Justify` pass as a faithful mapping
+            // (`docs/105` FID-L-18).
+            if is_distributed_alignment(raw.as_deref()) {
+                return false;
+            }
+        }
         b"ind" => {
             let indentation = Indentation {
                 start_twips: indent_attr(element, &[b"start", b"left"]),
@@ -515,9 +525,24 @@ pub(crate) fn alignment_from(value: &str) -> Option<Alignment> {
         "start" | "left" => Some(Alignment::Start),
         "end" | "right" => Some(Alignment::End),
         "center" => Some(Alignment::Center),
-        "both" | "distribute" | "justify" => Some(Alignment::Justify),
+        "both" | "distribute" | "justify" | "thaiDistribute" => Some(Alignment::Justify),
         _ => None,
     }
+}
+
+/// Whether a `w:jc@w:val` token asks for *distributed* justification — the
+/// inter-character variant (`distribute`, and its Thai sibling
+/// `thaiDistribute`) rather than the inter-word `both`.
+///
+/// [`alignment_from`] deliberately maps both to [`Alignment::Justify`], because
+/// filling the measure is much closer to the author's intent than falling back
+/// to left alignment. But the model carries no `Distribute` alignment, so the
+/// *kind* of justification is lost: Word distributes the slack across every
+/// character (and justifies the final line), and the export writes `both` back.
+/// Callers use this to report the degradation rather than let `Justify` stand as
+/// a faithful mapping (`docs/105` FID-L-18).
+fn is_distributed_alignment(value: Option<&str>) -> bool {
+    matches!(value, Some("distribute" | "thaiDistribute"))
 }
 
 pub(crate) fn style_kind_from(value: &str) -> Option<StyleKind> {
@@ -738,4 +763,60 @@ pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
             .is_some_and(|value| value != "none");
     let degraded = !pattern_modeled || !pattern_color_default || theme_fill_unmapped;
     (Shading { fill, theme_fill }, degraded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `<w:jc w:val="…"/>` as the parser sees it.
+    fn jc(value: &str) -> BytesStart<'static> {
+        BytesStart::from_content(format!(r#"w:jc w:val="{value}""#), 4).into_owned()
+    }
+
+    /// `docs/105` FID-L-18. `w:jc="distribute"` asks for inter-*character*
+    /// distribution; the model has only inter-word `Justify`, and the exporter
+    /// writes `both` back. Keeping `Justify` is the right approximation, but the
+    /// element must still come back **not fully mapped** so the caller records a
+    /// compatibility entry — otherwise the loss is invisible to the user and to
+    /// the round-trip report.
+    #[test]
+    fn distributed_justification_keeps_justify_but_is_reported_as_not_fully_mapped() {
+        for token in ["distribute", "thaiDistribute"] {
+            let mut properties = ParagraphProperties::default();
+            let mapped = apply_paragraph_property(&mut properties, b"jc", &jc(token));
+            assert_eq!(
+                properties.alignment,
+                Some(Alignment::Justify),
+                "{token} still fills the measure — the closest representable alignment"
+            );
+            assert!(
+                !mapped,
+                "{token} is a lossy approximation and must be reported, not accepted silently"
+            );
+        }
+    }
+
+    /// The counterpart: ordinary inter-word justification IS fully represented,
+    /// so it must not be reported. Without this, "report everything" would pass
+    /// the test above while burying every justified paragraph in the report.
+    #[test]
+    fn ordinary_justification_and_the_other_alignments_are_fully_mapped() {
+        for (token, expected) in [
+            ("both", Alignment::Justify),
+            ("left", Alignment::Start),
+            ("start", Alignment::Start),
+            ("right", Alignment::End),
+            ("end", Alignment::End),
+            ("center", Alignment::Center),
+        ] {
+            let mut properties = ParagraphProperties::default();
+            let mapped = apply_paragraph_property(&mut properties, b"jc", &jc(token));
+            assert_eq!(properties.alignment, Some(expected), "{token}");
+            assert!(
+                mapped,
+                "{token} is fully represented and must not be reported"
+            );
+        }
+    }
 }
