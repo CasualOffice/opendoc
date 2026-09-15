@@ -20,7 +20,7 @@
 //! - a `nextPage` (and the unspecified default) section starts a fresh page;
 //! - an `evenPage`/`oddPage` section starts a fresh page **of that parity**,
 //!   padding with one blank page when the next page would have the wrong one
-//!   (`docs/105` FID-L-03) — see [`ColPaginator::pad_to_parity`];
+//!   (`docs/105` FID-L-03) — see `ColPaginator::pad_to_parity`;
 //! - a `continuous` (or `nextColumn`) section continues on the *same* page, its
 //!   column band beginning just below the previous section's deepest content — the
 //!   common, hard "column-set change mid-page" case the SDS exercises.
