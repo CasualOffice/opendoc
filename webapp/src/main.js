@@ -93,6 +93,15 @@ const ZOOM_MAX = 5;
 let zoomFactor = 1;
 let zoomMode = "custom";
 const pagesEl = document.getElementById("pages");
+/** The editable focus owner (docs/105 UX-001). `#pages` paints pixels and cannot
+ *  own text input: a non-editable element raises no soft keyboard on touch and
+ *  fires no `compositionstart/update/end`, so IME, dictation and platform text
+ *  services were all unreachable — and the IME spec was green only because it
+ *  dispatched synthetic composition events at `document`. This 1px transparent
+ *  textarea takes focus instead and rides the caret. It is never a source of
+ *  truth: the engine owns the text, keydown still does the inserting, and this
+ *  element's value is cleared on every input so it can never accumulate. */
+const editorTextInputEl = document.getElementById("editorTextInput");
 const dropEl = document.getElementById("drop");
 const viewportEl = document.getElementById("viewport");
 const fmtButtons = {
@@ -2469,7 +2478,35 @@ function focusEditorSurface() {
   // both call this, and either can land while a dialog is open; the dialog's
   // focus trap would then be fighting the editor for the caret.
   if (modalIsOpen()) return;
-  pagesEl.focus({ preventScroll: true });
+  // Focus the editable proxy, not `#pages`. Both are treated as the editor
+  // surface by `eventTargetsEditor`, so the existing document-level handlers are
+  // unaffected — but only a focused *editable* element raises the soft keyboard
+  // and delivers composition events (docs/105 UX-001).
+  const target = editorTextInputEl ?? pagesEl;
+  target.focus({ preventScroll: true });
+  positionEditorTextInput();
+}
+
+/** Moves the editable proxy to the caret. An IME candidate window and the iOS
+ *  autocorrect bar anchor to the focused element's box, so a proxy parked
+ *  off-screen would put the candidate list somewhere the user is not looking.
+ *  Viewport coordinates, because the proxy is `position: fixed` and must not
+ *  re-parent as pages mount and unmount under virtualization. */
+function positionEditorTextInput(focus = selection?.focus) {
+  if (!editorTextInputEl) return;
+  if (!doc || !focus) return;
+  const flat = doc.caretRect(focus.node, focus.offset);
+  if (!flat || flat.length < 5) return;
+  const [pageNumber, x, y, , h] = flat;
+  const page = pages[pageNumber - 1];
+  if (!page) return;
+  // `pages[]` holds page RECORDS, not elements — the sheet element is
+  // `page.wrap`, and `scaleOf` already measures it, so reuse that rect rather
+  // than taking a second one.
+  const { rect, sx, sy } = scaleOf(page);
+  editorTextInputEl.style.left = `${rect.left + x * sx}px`;
+  editorTextInputEl.style.top = `${rect.top + y * sy}px`;
+  editorTextInputEl.style.height = `${Math.max(1, h * sy)}px`;
 }
 
 function resetPointerGesture() {
@@ -2481,13 +2518,35 @@ function resetPointerGesture() {
 
 function isInteractiveChromeTarget(target) {
   if (!(target instanceof Element)) return false;
+  // The editable proxy IS the editor surface. It must be excluded before the
+  // selector below, which matches bare `textarea` — otherwise the proxy
+  // classifies itself as chrome and every composition event is rejected.
+  if (editorTextInputEl && target === editorTextInputEl) return false;
   return !!target.closest(
     "input, select, textarea, button, [contenteditable='true'], .context-menu, .settings-panel, .cmd-overlay, .find-panel, .link-chip",
   );
 }
 
+/** True when focus is anywhere on the editing surface — either the paint
+ *  surface itself or the editable proxy that now owns text input. Several call
+ *  sites used `document.activeElement === pagesEl` as shorthand for this; that
+ *  shorthand became wrong the moment the proxy started taking focus. */
+function editorSurfaceHasFocus() {
+  const active = document.activeElement;
+  return active === pagesEl || (!!editorTextInputEl && active === editorTextInputEl);
+}
+
 function eventTargetsEditor(event) {
-  return event.target === pagesEl || pagesEl.contains(event.target) || document.activeElement === pagesEl;
+  const active = document.activeElement;
+  return (
+    event.target === pagesEl ||
+    pagesEl.contains(event.target) ||
+    editorSurfaceHasFocus() ||
+    // The editable proxy (docs/105 UX-001) is the editor surface too. `#pages`
+    // stays valid so anything that focuses it directly — including the browser
+    // suite — behaves exactly as before.
+    (!!editorTextInputEl && (event.target === editorTextInputEl || active === editorTextInputEl))
+  );
 }
 
 function clientPointEvent(clientX, clientY) {
@@ -2780,10 +2839,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // state that is genuinely a lie: typing accepted, no caret painted. Decide
     // it here from the live focus instead of waiting for an event that has
     // already happened.
-    implicitCaretAt =
-      document.activeElement === pagesEl
-        ? null
-        : { node: startPosition.node, offset: startPosition.offset };
+    implicitCaretAt = editorSurfaceHasFocus()
+      ? null
+      : { node: startPosition.node, offset: startPosition.offset };
     startPosition.free();
     tableSelection = null;
     objectCropSession = null; // a new document invalidates any in-progress crop
@@ -5297,6 +5355,9 @@ function paintChecklistMarkers() {
 
 /** Paints the caret or highlight for `sel` from engine geometry. */
 function paintSelection({ anchor, focus }) {
+  // Keep the editable proxy on the caret so an IME candidate window and the iOS
+  // autocorrect bar anchor where the user is actually typing (docs/105 UX-001).
+  positionEditorTextInput(focus);
   const collapsed = anchor.node === focus.node && anchor.offset === focus.offset;
   if (!collapsed) {
     const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
@@ -5990,11 +6051,22 @@ pagesEl.addEventListener("pointerdown", (e) => {
 // caret is finally honest. This covers keyboard entry (Tab) as much as clicks,
 // and every `focusEditorSurface()` a command ends with — which is why an insert
 // run from the ribbon leaves a visible caret after the thing it inserted.
-pagesEl.addEventListener("focus", () => {
+/** Promotes the load-time insertion point to a real caret. Until the editing
+ *  surface has focus the caret is implicit and deliberately unpainted — a
+ *  blinking cursor you cannot type into is a lie (see `implicitCaretAt`).
+ *
+ *  Bound to BOTH focusable parts of the surface. It used to hang off `#pages`
+ *  alone, which silently stopped firing when the editable proxy took over focus
+ *  (docs/105 UX-001): the caret then stayed implicit forever and nothing was
+ *  painted, which broke every test that reads `.overlay .caret`. */
+function promoteImplicitCaret() {
   if (!implicitCaretAt) return;
   implicitCaretAt = null;
   if (doc) drawSelection();
-});
+}
+
+pagesEl.addEventListener("focus", promoteImplicitCaret);
+if (editorTextInputEl) editorTextInputEl.addEventListener("focus", promoteImplicitCaret);
 pagesEl.addEventListener("pointermove", (e) => {
   const page = pageFromEvent(e);
   if (page && !dragging) onPointerMove(page, e);
@@ -14629,6 +14701,61 @@ document.addEventListener("cut", (e) => {
 document.addEventListener("paste", (e) => {
   if (editorClipboardEvent(e)) paste(e);
 });
+// `#pages` stays in the tab order (it is the skip-link target and the document's
+// landmark), but it cannot accept text. Hand focus to the proxy when it lands
+// there, so reaching the document by keyboard gives a real text-input surface.
+pagesEl.addEventListener("focus", () => {
+  if (modalIsOpen()) return;
+  if (!editorTextInputEl) return;
+  if (document.activeElement === editorTextInputEl) return;
+  editorTextInputEl.focus({ preventScroll: true });
+  positionEditorTextInput();
+});
+
+// ---- Soft-keyboard / dictation text entry (docs/105 UX-001) ----------------
+// The keydown path below handles hardware keyboards, and it is still the only
+// thing that inserts a character there. It cannot carry touch input: Android
+// and iOS soft keyboards deliver printable characters as `keyCode 229` /
+// `key: "Unidentified"`, and swipe-typing, dictation and autocorrect emit no
+// usable keydown at all. `beforeinput` is the event those surfaces do fire.
+//
+// Deliberately narrow, so this does NOT become a second, divergent apply path —
+// the defect class HF-007 recorded when four copy-pasted edit paths drifted:
+//   * insertion reuses `pasteText(..., "typing")`, the exact primitive
+//     `commitComposedText` already uses, so review mode, selection replacement
+//     and history coalescing behave identically to an IME commit;
+//   * DELETION is intentionally left to keydown. Backspace and Delete are real
+//     named keys that soft keyboards do report, so there is no gap to close and
+//     every reason not to open a second delete path.
+// If you are here to add `deleteContentBackward`, first prove keydown misses it.
+document.addEventListener("beforeinput", async (e) => {
+  if (!editorTextInputEvent(e)) return;
+  // A composition in flight owns its own text; `compositionend` commits it.
+  if (composingText) return;
+  const type = e.inputType;
+  if (type === "insertText" || type === "insertFromPaste" || type === "insertReplacementText") {
+    const data = e.data ?? "";
+    if (!data) return;
+    e.preventDefault();
+    pendingFormat = null;
+    await pasteText(data, "typing");
+    return;
+  }
+  if (type === "insertLineBreak" || type === "insertParagraph") {
+    e.preventDefault();
+    await pasteText("\n", "typing");
+  }
+});
+
+// The proxy must never accumulate text: the engine is the source of truth, and
+// a textarea holding a stale value would resend it on the next composition.
+if (editorTextInputEl) {
+  editorTextInputEl.addEventListener("input", () => {
+    if (composingText) return; // clearing mid-composition cancels the IME
+    editorTextInputEl.value = "";
+  });
+}
+
 document.addEventListener("compositionstart", (e) => {
   if (!editorTextInputEvent(e)) return;
   breakTypingSession();
@@ -14648,6 +14775,9 @@ document.addEventListener("compositionend", async (e) => {
   }
   e.preventDefault();
   composingText = false;
+  // `preventDefault` on compositionend does not reliably stop the browser from
+  // leaving the composed text in the textarea, so clear it explicitly.
+  if (editorTextInputEl) editorTextInputEl.value = "";
   await commitComposedText(e.data || "");
 });
 

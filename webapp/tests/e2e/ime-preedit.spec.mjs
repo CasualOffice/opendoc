@@ -29,13 +29,20 @@ test("live preedit shows composing text without committing it, then commits on c
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
+  // Dispatch on the FOCUS OWNER, not on `document`. A real IME targets the
+  // focused editable element and lets the event bubble; dispatching at
+  // `document` is a shape no browser produces, and it is exactly why this spec
+  // stayed green for months while the feature was unreachable — the surface
+  // that held focus was a non-editable div, which fires no composition events
+  // at all (docs/105 UX-001/UX-002, CQ-003). `editable-focus-owner.spec.mjs`
+  // guards the precondition; this test now exercises the real path.
   await page.evaluate(() => {
-    document.dispatchEvent(
+    document.activeElement.dispatchEvent(
       new CompositionEvent("compositionstart", { data: "", bubbles: true, cancelable: true }),
     );
   });
   await page.evaluate(() => {
-    document.dispatchEvent(
+    document.activeElement.dispatchEvent(
       new CompositionEvent("compositionupdate", {
         data: "PREEDITWORD",
         bubbles: true,
@@ -48,7 +55,7 @@ test("live preedit shows composing text without committing it, then commits on c
   expect(await findStatusFor(page, "PREEDITWORD")).toBe("No match");
 
   await page.evaluate(() => {
-    document.dispatchEvent(
+    document.activeElement.dispatchEvent(
       new CompositionEvent("compositionend", {
         data: "PREEDITWORD",
         bubbles: true,

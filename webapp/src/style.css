@@ -5006,6 +5006,50 @@ body.is-format-painting .page-wrap * {
 
 /* Live IME composition preview: shows in-progress text at the caret without
  * ever touching the document — compositionend still owns the real commit. */
+/* The editable focus owner (docs/105 UX-001).
+ *
+ * `#pages` paints pixels and cannot own text input: a non-editable element
+ * raises no soft keyboard on touch and fires no composition events, so IME,
+ * dictation and platform text services were unreachable. This textarea holds
+ * focus instead and is moved to the caret on every repaint.
+ *
+ * Every rule here is load-bearing — the obvious ways to hide an element all
+ * break it:
+ *   - `display:none` / `visibility:hidden` / `width:0` cannot receive focus at
+ *     all, and iOS will not raise the keyboard for them. It stays a real, 1px,
+ *     transparent, focusable box.
+ *   - it must sit AT the caret, not off-screen: an IME candidate window and the
+ *     iOS autocorrect bar anchor to the focused element's box, so parking it at
+ *     -10000px puts the candidate list in the wrong place (or off-screen).
+ *   - `font-size` must be >= 16px or iOS Safari zooms the whole page on focus
+ *     (the same rule the coarse-pointer block applies to real inputs).
+ *   - the engine paints the caret, so this element's own caret is hidden. */
+.editor-text-input {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1em;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+  opacity: 0;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  font-size: 16px;
+  line-height: 1;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  /* Below the page chrome: it is never seen, and must never take a pointer
+   * event away from the surface it represents. */
+  z-index: 0;
+  pointer-events: none;
+}
+
 .overlay .ime-preedit {
   position: absolute;
   display: flex;

@@ -1070,6 +1070,20 @@
           </div>
         </div>
         <div id="pages" class="pages" tabindex="0" aria-label="Document editing surface"></div>
+        <!-- The editable focus owner (docs/105 UX-001). The pages surface above
+             paints pixels and cannot own text input: a non-editable element
+             raises no soft keyboard on touch, and `compositionstart/update/end`
+             never fire against it, so IME, dictation and platform text services
+             were all unreachable. This 1px transparent textarea takes focus
+             instead, is moved to the caret each repaint so an IME candidate
+             window anchors in the right place, and forwards its events by
+             bubbling to the existing document-level handlers. It is never a
+             source of truth — the engine owns the text; this element's value is
+             cleared on every input. -->
+        <textarea id="editorTextInput" class="editor-text-input"
+                  aria-label="Document text input" tabindex="-1"
+                  autocapitalize="off" autocorrect="off" autocomplete="off"
+                  spellcheck="false" wrap="off"></textarea>
         <!-- Read-only, model-derived accessibility tree (docs/67 row 9). The
              canvas above paints pixels only, so it exposes no structure to a
              screen reader; this off-screen region mirrors the document's
