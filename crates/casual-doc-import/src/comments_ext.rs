@@ -7,6 +7,12 @@
 //! Elements and attributes are matched by local name (namespace-agnostic), so a
 //! producer's exact `w14`/`w15`/`w16cid` prefixes do not matter. Every parser is
 //! bounded by the shared element/depth ceilings.
+//!
+//! These parts are *regenerated* by the semantic writer, never retained, so
+//! anything a parser skips is gone for good. Every element that reaches neither
+//! the model nor the writer is therefore reported (FID-R-04): the part roots and
+//! the fully mapped entries raise no finding, an entry dropped for a missing
+//! join key or an unmodeled element does.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +23,7 @@ use quick_xml::events::{BytesStart, Event};
 use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{attribute_value, is_true};
+use crate::report::Reporter;
 
 /// Maximum byte length of a durable hex token (`paraId`/`paraIdParent`/
 /// `durableId`); matches the model's `comment.threadId` domain.
@@ -59,6 +66,10 @@ fn bump(count: &mut u64, max: u64) -> Result<(), ImportError> {
 /// direct-child `w:p` elements are considered (matching the writer, which stamps
 /// the id on the comment's last top-level paragraph), so nested table paragraphs
 /// do not shadow it.
+///
+/// Deliberately reports nothing: this is a second, key-only pass over
+/// `word/comments.xml`, whose every element is already dispositioned by the body
+/// parser in `build_comments`. Reporting here would double-count that part.
 pub(crate) fn scan_comment_para_ids(
     xml: &[u8],
     config: ImportConfig,
@@ -131,45 +142,63 @@ fn record_para(
     }
 }
 
-/// Parses `commentsExtended.xml` into `paraId -> {parent, done}`.
+/// Parses `commentsExtended.xml` into `paraId -> {parent, done}`. A `w15:commentEx`
+/// is fully mapped (`paraId`, `paraIdParent` and `done` are its whole content),
+/// so a well-formed entry raises no finding; one without a usable `paraId` has no
+/// comment to join to and is reported as dropped, as is any other element.
 pub(crate) fn parse_comments_extended(
     xml: &[u8],
+    reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<BTreeMap<String, CommentExtended>, ImportError> {
     let mut out = BTreeMap::new();
     each_element(xml, config, |element| {
-        if element.local_name().as_ref() == b"commentEx"
-            && let Some(para_id) = token(element, b"paraId")
-        {
-            let parent_para_id = token(element, b"paraIdParent");
-            let done = attribute_value(element, b"done")
-                .map(|value| is_true(Some(value.as_str())))
-                .unwrap_or(false);
-            out.insert(
-                para_id,
-                CommentExtended {
-                    parent_para_id,
-                    done,
-                },
-            );
+        match element.local_name().as_ref() {
+            // The part root carries no data of its own.
+            b"commentsEx" => {}
+            b"commentEx" => match token(element, b"paraId") {
+                Some(para_id) => {
+                    let parent_para_id = token(element, b"paraIdParent");
+                    let done = attribute_value(element, b"done")
+                        .map(|value| is_true(Some(value.as_str())))
+                        .unwrap_or(false);
+                    out.insert(
+                        para_id,
+                        CommentExtended {
+                            parent_para_id,
+                            done,
+                        },
+                    );
+                }
+                None => reporter.report(b"commentEx"),
+            },
+            other => reporter.report(other),
         }
         Ok(())
     })?;
     Ok(out)
 }
 
-/// Parses `commentsIds.xml` into `paraId -> durableId`.
+/// Parses `commentsIds.xml` into `paraId -> durableId`. Both attributes are the
+/// whole of a `w16cid:commentId`, so a complete pair is fully mapped; an entry
+/// missing either half cannot be joined or rewritten and is reported.
 pub(crate) fn parse_comments_ids(
     xml: &[u8],
+    reporter: &mut Reporter,
     config: ImportConfig,
 ) -> Result<BTreeMap<String, String>, ImportError> {
     let mut out = BTreeMap::new();
     each_element(xml, config, |element| {
-        if element.local_name().as_ref() == b"commentId"
-            && let Some(para_id) = token(element, b"paraId")
-            && let Some(durable_id) = token(element, b"durableId")
-        {
-            out.insert(para_id, durable_id);
+        match element.local_name().as_ref() {
+            // The part root carries no data of its own.
+            b"commentsIds" => {}
+            b"commentId" => match (token(element, b"paraId"), token(element, b"durableId")) {
+                (Some(para_id), Some(durable_id)) => {
+                    out.insert(para_id, durable_id);
+                }
+                _ => reporter.report(b"commentId"),
+            },
+            other => reporter.report(other),
         }
         Ok(())
     })?;
@@ -177,7 +206,14 @@ pub(crate) fn parse_comments_ids(
 }
 
 /// Parses `people.xml` into the collaborator identity table, in document order.
-pub(crate) fn parse_people(xml: &[u8], config: ImportConfig) -> Result<Vec<Person>, ImportError> {
+/// `w15:person` (its `author`) and `w15:presenceInfo` (`providerId`/`userId`) are
+/// fully mapped; a person with no usable `author`, a presence record with no
+/// person to attach to, and any other element are dropped and reported.
+pub(crate) fn parse_people(
+    xml: &[u8],
+    reporter: &mut Reporter,
+    config: ImportConfig,
+) -> Result<Vec<Person>, ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut people = Vec::new();
@@ -198,37 +234,41 @@ pub(crate) fn parse_people(xml: &[u8], config: ImportConfig) -> Result<Vec<Perso
                 }
                 bump(&mut elements, config.max_elements)?;
                 match element.local_name().as_ref() {
+                    // The part root carries no data of its own.
+                    b"people" => {}
                     b"person" => {
                         pending = identity(&element, b"author").map(|author| Person {
                             author,
                             presence: None,
                         });
-                    }
-                    b"presenceInfo" => {
-                        if let Some(person) = pending.as_mut() {
-                            person.presence = Some(presence(&element));
+                        if pending.is_none() {
+                            reporter.report(b"person");
                         }
                     }
-                    _ => {}
+                    b"presenceInfo" => match pending.as_mut() {
+                        Some(person) => person.presence = Some(presence(&element)),
+                        None => reporter.report(b"presenceInfo"),
+                    },
+                    other => reporter.report(other),
                 }
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
                 match element.local_name().as_ref() {
-                    b"person" => {
-                        if let Some(author) = identity(&element, b"author") {
-                            people.push(Person {
-                                author,
-                                presence: None,
-                            });
-                        }
-                    }
-                    b"presenceInfo" => {
-                        if let Some(person) = pending.as_mut() {
-                            person.presence = Some(presence(&element));
-                        }
-                    }
-                    _ => {}
+                    // A childless `<w15:people/>` carries no data of its own.
+                    b"people" => {}
+                    b"person" => match identity(&element, b"author") {
+                        Some(author) => people.push(Person {
+                            author,
+                            presence: None,
+                        }),
+                        None => reporter.report(b"person"),
+                    },
+                    b"presenceInfo" => match pending.as_mut() {
+                        Some(person) => person.presence = Some(presence(&element)),
+                        None => reporter.report(b"presenceInfo"),
+                    },
+                    other => reporter.report(other),
                 }
             }
             Event::End(element) => {
@@ -256,6 +296,8 @@ fn presence(element: &BytesStart<'_>) -> PresenceInfo {
 
 /// Walks the flat companion parts (`commentsExtended`/`commentsIds`), invoking
 /// `visit` for each element (`Start` and `Empty`) under the shared ceilings.
+/// Both parts are two levels deep by schema, so a visitor that reports an
+/// unmodeled element sees it once rather than once per descendant.
 fn each_element(
     xml: &[u8],
     config: ImportConfig,

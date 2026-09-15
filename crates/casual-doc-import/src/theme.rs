@@ -8,6 +8,14 @@
 //! `a:` prefix is irrelevant. `latin`/`ea`/`cs`/`font` are only honored inside a
 //! `majorFont`/`minorFont` within the `fontScheme`, and colour slots only inside
 //! the `clrScheme`, so same-named elements elsewhere cannot leak in.
+//!
+//! Everything the part carries that is neither modeled nor retained is reported
+//! (FID-R-04). The theme part is *regenerated* by the semantic writer, so an
+//! unreported skip here is permanent, invisible loss: `a:objectDefaults`,
+//! `a:extraClrSchemeLst`, `a:custClrLst` and `a:extLst` are dropped, and the
+//! `a:theme`/`a:fontScheme` `@name` attributes are replaced by fixed writer
+//! defaults. A whole-subtree loss is reported once on its outermost element and
+//! its descendants are skipped, so one dropped construct is one finding.
 
 use std::io::Cursor;
 
@@ -20,6 +28,7 @@ use quick_xml::{Reader, Writer};
 use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{attribute_value, parse_rgb};
+use crate::report::Reporter;
 
 /// The modeled pieces of the theme part.
 #[derive(Default)]
@@ -30,6 +39,15 @@ pub(crate) struct ParsedTheme {
     pub color_scheme: Option<ColorScheme>,
     /// The theme format scheme (`a:fmtScheme`), retained verbatim, if present.
     pub format_scheme_xml: Option<String>,
+}
+
+/// Whether the traversal should descend into an element's children. An element
+/// whose entire subtree is a single unmapped construct is reported once and
+/// answered with `No`, so its descendants do not each raise a duplicate finding.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Descend {
+    Yes,
+    No,
 }
 
 #[derive(Clone, Copy)]
@@ -67,10 +85,17 @@ struct Parser {
     capture: Option<Writer<Cursor<Vec<u8>>>>,
     capture_depth: u32,
     format_scheme_xml: Option<String>,
+    /// Nesting level inside a reported-and-skipped subtree (0 when not in one).
+    skip_depth: u32,
 }
 
-/// Parses the theme part into its modeled schemes plus the retained format scheme.
-pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<ParsedTheme, ImportError> {
+/// Parses the theme part into its modeled schemes plus the retained format
+/// scheme, reporting every construct that reaches neither.
+pub(crate) fn parse(
+    xml: &[u8],
+    reporter: &mut Reporter,
+    config: ImportConfig,
+) -> Result<ParsedTheme, ImportError> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut parser = Parser::default();
@@ -93,21 +118,27 @@ pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<ParsedTheme, Imp
                 if parser.capture.is_some() {
                     parser.write_capture(&event)?;
                     parser.capture_depth += 1;
+                } else if parser.skip_depth > 0 {
+                    parser.skip_depth += 1;
                 } else if element.local_name().as_ref() == b"fmtScheme" {
                     parser.begin_capture(&event)?;
-                } else {
-                    parser.on_start(element);
+                } else if parser.on_start(element, reporter) == Descend::No {
+                    parser.skip_depth = 1;
                 }
             }
             Event::Empty(element) => {
                 bump(&mut elements, config.max_elements)?;
                 if parser.capture.is_some() {
                     parser.write_capture(&event)?;
+                } else if parser.skip_depth > 0 {
+                    // Inside a subtree already reported on its outermost element.
                 } else if element.local_name().as_ref() == b"fmtScheme" {
                     parser.begin_capture(&event)?;
                     parser.finish_capture();
                 } else {
-                    parser.on_start(element);
+                    // An empty element opens no subtree, so a `Descend::No`
+                    // answer has nothing to skip.
+                    parser.on_start(element, reporter);
                 }
             }
             Event::End(element) => {
@@ -117,6 +148,8 @@ pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<ParsedTheme, Imp
                     if parser.capture_depth == 0 {
                         parser.finish_capture();
                     }
+                } else if parser.skip_depth > 0 {
+                    parser.skip_depth -= 1;
                 } else {
                     parser.on_end(element.local_name().as_ref());
                 }
@@ -134,13 +167,28 @@ pub(crate) fn parse(xml: &[u8], config: ImportConfig) -> Result<ParsedTheme, Imp
 }
 
 impl Parser {
-    fn on_start(&mut self, element: &BytesStart<'_>) {
+    fn on_start(&mut self, element: &BytesStart<'_>, reporter: &mut Reporter) -> Descend {
         let local = element.local_name();
         let local = local.as_ref();
         match local {
+            // The part root. Its schemes are modeled below, but `@name` (the
+            // theme's display name) has nowhere to live in the model and the
+            // writer emits a fixed one, so a named theme loses its name. The
+            // report has no attribute vocabulary yet (FID-R-03), so the loss is
+            // recorded against an element-qualified pseudo-feature, matching the
+            // existing `alternateContent:noReadableBranch` style; it becomes a
+            // real attribute entry once FID-R-03 lands.
+            b"theme" => {
+                report_dropped_name(element, b"theme:nameAttribute", reporter);
+                Descend::Yes
+            }
+            // A pure container: everything it holds is dispositioned below.
+            b"themeElements" => Descend::Yes,
             b"fontScheme" => {
                 self.in_font_scheme = true;
                 self.found_font = true;
+                report_dropped_name(element, b"fontScheme:nameAttribute", reporter);
+                Descend::Yes
             }
             b"clrScheme" => {
                 self.in_clr_scheme = true;
@@ -148,46 +196,77 @@ impl Parser {
                 self.color_scheme.name = attribute_value(element, b"name")
                     .filter(|value| value.len() <= 255)
                     .unwrap_or_default();
+                Descend::Yes
             }
-            b"majorFont" if self.in_font_scheme => self.font_slot = Some(FontSlot::Major),
-            b"minorFont" if self.in_font_scheme => self.font_slot = Some(FontSlot::Minor),
+            b"majorFont" if self.in_font_scheme => {
+                self.font_slot = Some(FontSlot::Major);
+                Descend::Yes
+            }
+            b"minorFont" if self.in_font_scheme => {
+                self.font_slot = Some(FontSlot::Minor);
+                Descend::Yes
+            }
             b"latin" | b"ea" | b"cs" if self.in_font_scheme => {
-                if let Some(slot) = self.font_slot {
-                    let entry = theme_entry(element);
-                    let collection = collection_mut(&mut self.font_scheme, slot);
-                    match local {
-                        b"latin" => collection.latin = entry,
-                        b"ea" => collection.ea = entry,
-                        _ => collection.cs = entry,
+                match self.font_slot {
+                    Some(slot) => {
+                        let entry = theme_entry(element);
+                        let collection = collection_mut(&mut self.font_scheme, slot);
+                        match local {
+                            b"latin" => collection.latin = entry,
+                            b"ea" => collection.ea = entry,
+                            _ => collection.cs = entry,
+                        }
                     }
+                    // An `a:latin`/`a:ea`/`a:cs` outside a major/minor
+                    // collection has no slot to land in and is dropped.
+                    None => reporter.report(local),
                 }
+                Descend::Yes
             }
             b"font" if self.in_font_scheme => {
-                if let Some(slot) = self.font_slot
-                    && let (Some(script), Some(typeface)) = (
-                        attribute_value(element, b"script"),
-                        attribute_value(element, b"typeface"),
-                    )
-                    && !script.is_empty()
-                    && script.len() <= 32
-                    && typeface.len() <= 255
-                {
-                    collection_mut(&mut self.font_scheme, slot)
+                match (self.font_slot, script_font(element)) {
+                    (Some(slot), Some(font)) => collection_mut(&mut self.font_scheme, slot)
                         .script_overrides
-                        .push(ScriptFont { script, typeface });
+                        .push(font),
+                    // No enclosing collection, or a script/typeface pair outside
+                    // the modeled bounds: the override is dropped.
+                    _ => reporter.report(local),
                 }
+                Descend::Yes
             }
-            b"srgbClr" | b"sysClr" if self.in_clr_scheme => {
+            b"srgbClr" | b"sysClr" if self.in_clr_scheme && self.clr_slot.is_some() => {
                 if let Some(slot) = self.clr_slot {
                     *clr_slot_mut(&mut self.color_scheme, slot) = scheme_color(local, element);
                 }
+                Descend::Yes
             }
-            _ if self.in_clr_scheme => {
-                if let Some(slot) = clr_slot_from(local) {
+            _ if self.in_clr_scheme => match clr_slot_from(local) {
+                Some(slot) => {
                     self.clr_slot = Some(slot);
+                    Descend::Yes
                 }
+                // A colour choice the model does not carry (`a:scrgbClr`,
+                // `a:hslClr`, `a:prstClr`, a colour transform, `a:extLst`), or a
+                // colour outside any slot: the slot keeps its default, so the
+                // whole subtree is one loss.
+                None => {
+                    reporter.report(local);
+                    Descend::No
+                }
+            },
+            // An unmodeled child of the font scheme (`a:extLst`, foreign markup).
+            _ if self.in_font_scheme => {
+                reporter.report(local);
+                Descend::No
             }
-            _ => {}
+            // Everything else at theme scope: `a:objectDefaults`,
+            // `a:extraClrSchemeLst`, `a:custClrLst`, `a:extLst` and any foreign
+            // element. None is modeled and none is retained, so each is reported
+            // once and its subtree skipped.
+            _ => {
+                reporter.report(local);
+                Descend::No
+            }
         }
     }
 
@@ -239,6 +318,23 @@ impl Parser {
             format_scheme_xml: self.format_scheme_xml,
         }
     }
+}
+
+/// Reports `feature` when `element` carries a non-empty `@name` the model has no
+/// field for, so a regenerated default does not replace it silently.
+fn report_dropped_name(element: &BytesStart<'_>, feature: &[u8], reporter: &mut Reporter) {
+    if attribute_value(element, b"name").is_some_and(|value| !value.is_empty()) {
+        reporter.report(feature);
+    }
+}
+
+/// Builds a supplemental script font (`a:font`) from its attribute pair, or
+/// `None` when the pair is missing or outside the modeled bounds.
+fn script_font(element: &BytesStart<'_>) -> Option<ScriptFont> {
+    let script = attribute_value(element, b"script")?;
+    let typeface = attribute_value(element, b"typeface")?;
+    (!script.is_empty() && script.len() <= 32 && typeface.len() <= 255)
+        .then_some(ScriptFont { script, typeface })
 }
 
 fn scheme_color(local: &[u8], element: &BytesStart<'_>) -> SchemeColor {
