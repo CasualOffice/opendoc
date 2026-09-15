@@ -103,6 +103,26 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
             let mut placed = run.clone();
             placed.origin = Point::new(placed_x, baseline_y);
             list.push(PaintItem::Glyphs { run: placed });
+            // Run furniture painted OVER the glyphs (`docs/105` FID-L-14): the
+            // `w:bdr` box frames the run the way a page border frames the page,
+            // and `w:em` marks sit clear of the glyph box above or below it.
+            // Both are keyed off the same run box the shading/highlight use.
+            if run.decoration.border.is_some() || run.decoration.emphasis.is_some() {
+                let advance = run.glyphs.iter().fold(Twip::ZERO, |acc, g| acc + g.advance);
+                if let Some(edge) = run.decoration.border {
+                    compose_run_border(&mut list, run_box(advance), edge);
+                }
+                if let Some(mark) = run.decoration.emphasis {
+                    compose_emphasis_marks(
+                        &mut list,
+                        run,
+                        Point::new(placed_x, baseline_y),
+                        line.ascent,
+                        line.descent,
+                        mark,
+                    );
+                }
+            }
         }
         // Inline images (embedded pictures): the box's `origin` is already
         // paragraph-absolute; translate into page space and emit a blit. The
@@ -270,6 +290,15 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for placed in &page.footer {
         compose_fragment(&mut list, &placed.fragment, placed.rect.origin);
     }
+    // Margin line numbers (`w:lnNumType`): page furniture in the margin, already
+    // positioned in page-local twips by the post-pagination pass. Painted after
+    // the body — nothing overlaps them, the margin carries no glyphs — and before
+    // the page border, which frames everything (`docs/105` FID-L-09).
+    for stamp in &page.line_numbers {
+        list.push(PaintItem::Glyphs {
+            run: stamp.run.clone(),
+        });
+    }
     // Page borders (`w:pgBorders`) frame the page as furniture, painted on top of
     // the body so a text-offset frame over wide content still reads as a frame.
     if let Some(borders) = &page.page_borders {
@@ -368,6 +397,166 @@ fn compose_page_borders(list: &mut DisplayList, borders: &ResolvedPageBorders) {
             edge,
             BorderAxis::Vertical,
         );
+    }
+}
+
+/// Paints a run border (`w:bdr`) as a four-sided box around the run's glyph box,
+/// each side going through the shared [`paint_border`] so the authored width and
+/// pattern (double / dashed / dot-dash / …) are the same ink a paragraph, cell,
+/// or page border of that style produces.
+///
+/// The box is the run box — the run's advance by the line's ascent+descent — and
+/// is drawn inward from it, so a bordered run never grows the line box. Word
+/// insets the glyphs slightly from the frame; the engine does not reserve that
+/// padding (it would change line breaking), so a tight box is the deliberate
+/// difference (`docs/105` FID-L-14).
+fn compose_run_border(list: &mut DisplayList, rect: Rect, edge: ResolvedEdge) {
+    if rect.size.width <= Twip::ZERO || rect.size.height <= Twip::ZERO {
+        return;
+    }
+    paint_border(
+        list,
+        Rect::new(rect.origin, Size::new(rect.size.width, edge.width)),
+        edge,
+        BorderAxis::Horizontal,
+    );
+    paint_border(
+        list,
+        Rect::new(
+            Point::new(rect.origin.x, rect.bottom() - edge.width),
+            Size::new(rect.size.width, edge.width),
+        ),
+        edge,
+        BorderAxis::Horizontal,
+    );
+    paint_border(
+        list,
+        Rect::new(rect.origin, Size::new(edge.width, rect.size.height)),
+        edge,
+        BorderAxis::Vertical,
+    );
+    paint_border(
+        list,
+        Rect::new(
+            Point::new(rect.right() - edge.width, rect.origin.y),
+            Size::new(edge.width, rect.size.height),
+        ),
+        edge,
+        BorderAxis::Vertical,
+    );
+}
+
+/// The diameter of an emphasis mark as a fraction of the run's font size —
+/// Word's bōten is roughly a quarter em, small enough to read as a mark rather
+/// than a character.
+const EMPHASIS_MARK_EM_DIVISOR: i32 = 4;
+
+/// Paints an emphasis mark (`w:em`) once per non-blank cluster of `run`.
+///
+/// Word draws the mark per *character*, centered on the character's advance and
+/// clear of its em box — above the text for `dot`/`comma`/`circle`, below the
+/// baseline for `underDot`. Clusters are the unit, not glyphs: one mark belongs
+/// over one grapheme even when the shaper emitted several glyphs for it, so
+/// consecutive glyphs sharing a `cluster` offset are grouped. Blank clusters
+/// carry no mark (Word does not mark the spaces between words).
+///
+/// The marks are geometry, not glyphs, deliberately: the mark characters
+/// (`U+3001`, `U+25CB`, …) are missing from most bundled faces, so shaping them
+/// would render tofu on the deterministic build. `dot`/`underDot` are filled
+/// circles and `circle` is a hollow one, matching Word; `comma` (Word's sesame
+/// mark, a filled teardrop) is approximated by a narrow filled ellipse — the
+/// only one of the four that is not shape-exact, recorded as such rather than
+/// left ambiguous.
+///
+/// `list` receives nothing for a run with no measurable clusters (a marker or
+/// leader run, or an empty one), and marker/leader runs are skipped outright:
+/// they are rendering artifacts, not model text Word would mark.
+///
+/// **Partial, stated:** Word grows the line box so a marked line gains room for
+/// its marks; this pass does not. It is composition, downstream of the shaper's
+/// line metrics, so reserving the space would have to happen during shaping and
+/// would move line breaking and pagination. An above-text mark is therefore drawn
+/// just outside the run's ascent and can encroach on the descenders of the line
+/// above when line spacing is tight. Reserving the band is the follow-up; drawing
+/// the mark at the correct position relative to its own character is what makes
+/// the text readable, and that is what this does.
+fn compose_emphasis_marks(
+    list: &mut DisplayList,
+    run: &crate::text::GlyphRun,
+    origin: Point,
+    line_ascent: Twip,
+    line_descent: Twip,
+    mark: casual_doc_model::v1::EmphasisMark,
+) {
+    use casual_doc_model::v1::EmphasisMark;
+
+    if run.is_marker || run.is_leader || matches!(mark, EmphasisMark::None) {
+        return;
+    }
+    let diameter = Twip((run.size.raw() / EMPHASIS_MARK_EM_DIVISOR).max(1));
+    // A deliberately tight optical gap, and it is tight for a reason: the line box
+    // is NOT grown to reserve room for the mark (that would move line breaking and
+    // pagination), so every twip of clearance is a twip of intrusion into the line
+    // above. See the doc comment.
+    let gap = Twip((diameter.raw() / 4).max(1));
+    // The run's OWN metrics where the shaper recorded them, so a small run on a
+    // tall line marks its own text rather than the line's extremes.
+    let ascent = if run.ascent > Twip::ZERO {
+        run.ascent
+    } else {
+        line_ascent
+    };
+    let descent = if run.descent > Twip::ZERO {
+        run.descent
+    } else {
+        line_descent
+    };
+    let top = match mark {
+        EmphasisMark::UnderDot => origin.y + descent + gap,
+        _ => origin.y - ascent - gap - diameter,
+    };
+    // Narrower than tall for the sesame approximation; circular otherwise.
+    let width = match mark {
+        EmphasisMark::Comma => Twip((diameter.raw() * 3 / 5).max(1)),
+        _ => diameter,
+    };
+    let color = rgba(run.color);
+
+    let mut x = origin.x;
+    let mut index = 0;
+    while index < run.glyphs.len() {
+        let cluster = run.glyphs[index].cluster;
+        let mut advance = Twip::ZERO;
+        let mut blank = true;
+        while index < run.glyphs.len() && run.glyphs[index].cluster == cluster {
+            advance = advance + run.glyphs[index].advance;
+            blank &= run.glyphs[index].is_whitespace;
+            index += 1;
+        }
+        let next_x = x + advance;
+        if !blank && advance > Twip::ZERO {
+            let center = Twip(x.raw() + advance.raw() / 2);
+            let rect = Rect::new(
+                Point::new(Twip(center.raw() - width.raw() / 2), top),
+                Size::new(width, diameter),
+            );
+            match mark {
+                EmphasisMark::Circle => list.push(PaintItem::Ellipse {
+                    rect,
+                    fill: None,
+                    stroke: Some(Stroke {
+                        color,
+                        width: stroke_px(Twip((diameter.raw() / 5).max(1))),
+                    }),
+                }),
+                _ => list.push(PaintItem::Ellipse {
+                    rect,
+                    fill: Some(color),
+                    stroke: None,
+                }),
+            }
+        }
+        x = next_x;
     }
 }
 
@@ -2032,5 +2221,222 @@ mod tests {
             GradientKind::Linear { angle_deg } if (angle_deg - 90.0).abs() < 0.01
         ));
         assert!(matches!(outline.dash, DashStyle::DashDot));
+    }
+
+    // --- Emphasis marks and run borders (`docs/105` FID-L-14) ---------------
+    //
+    // These go through the real shaper on purpose. `w:em` and `w:bdr` are not
+    // `parley` decorations, so they have to ride the run brush across shaping to
+    // reach the glyph run at all; a test that hand-built a `GlyphRun` would paint
+    // correctly while the production path still dropped both at the shaping
+    // boundary. Shaping here means the guard fails if either the brush plumbing
+    // or the paint arm is missing.
+
+    /// Shapes `text` as one 11pt run carrying `decoration`, then composes it at a
+    /// 1-inch origin. Returns the display list and that origin.
+    fn compose_decorated(text: &str, decoration: Decoration) -> (DisplayList, Point) {
+        let shaper = ParleyShaper::new();
+        let node = NodeId::from_parts(7, 1).unwrap();
+        let layout = shaper.shape_paragraph(
+            &[StyledRun {
+                text: text.into(),
+                requested_family: None,
+                font: FontId(0),
+                size: Twip::from_points(11),
+                character_scale_percent: 100,
+                bold: false,
+                italic: false,
+                letter_spacing: Twip::ZERO,
+                color: [0, 0, 0, 255],
+                decoration,
+                highlight: None,
+                shading: None,
+                baseline_shift: Twip::ZERO,
+            }],
+            LineConstraints {
+                max_width: Twip::from_points(500),
+                ..LineConstraints::default()
+            },
+            ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0)),
+        );
+        let origin = Point::new(Twip::from_points(72), Twip::from_points(72));
+        (compose_paragraph(&layout, origin), origin)
+    }
+
+    /// Every ellipse in a composed list, as `(rect, filled, stroked)`.
+    fn ellipses(list: &DisplayList) -> Vec<(Rect, bool, bool)> {
+        list.items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Ellipse { rect, fill, stroke } => {
+                    Some((*rect, fill.is_some(), stroke.is_some()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The baseline y of the first composed glyph run.
+    fn first_baseline(list: &DisplayList) -> Twip {
+        list.items
+            .iter()
+            .find_map(|item| match item {
+                PaintItem::Glyphs { run } => Some(run.origin.y),
+                _ => None,
+            })
+            .expect("the text composed to at least one glyph run")
+    }
+
+    #[test]
+    fn a_dot_emphasis_mark_paints_once_per_non_blank_cluster_above_the_text() {
+        let (list, _) = compose_decorated(
+            "ab c",
+            Decoration {
+                emphasis: Some(casual_doc_model::v1::EmphasisMark::Dot),
+                ..Decoration::default()
+            },
+        );
+        let marks = ellipses(&list);
+        assert_eq!(
+            marks.len(),
+            3,
+            "one mark over each of a, b and c — the space carries none (got {marks:?})"
+        );
+        let baseline = first_baseline(&list);
+        for (rect, filled, stroked) in &marks {
+            assert!(*filled && !*stroked, "a `dot` mark is a filled circle");
+            assert!(
+                rect.bottom() < baseline,
+                "the mark sits entirely above the baseline ({:?} vs {baseline:?})",
+                rect.bottom()
+            );
+            assert!(rect.size.width > Twip::ZERO && rect.size.height > Twip::ZERO);
+        }
+        // Marks follow the text left to right, one per cluster, non-overlapping.
+        for pair in marks.windows(2) {
+            assert!(
+                pair[0].0.right() <= pair[1].0.origin.x,
+                "marks advance with their clusters and do not overlap: {:?}",
+                (pair[0].0, pair[1].0)
+            );
+        }
+    }
+
+    #[test]
+    fn an_under_dot_emphasis_mark_paints_below_the_baseline_and_a_circle_is_hollow() {
+        let (below, _) = compose_decorated(
+            "ab",
+            Decoration {
+                emphasis: Some(casual_doc_model::v1::EmphasisMark::UnderDot),
+                ..Decoration::default()
+            },
+        );
+        let baseline = first_baseline(&below);
+        let marks = ellipses(&below);
+        assert_eq!(marks.len(), 2);
+        for (rect, filled, _) in &marks {
+            assert!(*filled);
+            assert!(
+                rect.origin.y > baseline,
+                "`underDot` sits below the baseline ({:?} vs {baseline:?})",
+                rect.origin.y
+            );
+        }
+
+        let (hollow, _) = compose_decorated(
+            "ab",
+            Decoration {
+                emphasis: Some(casual_doc_model::v1::EmphasisMark::Circle),
+                ..Decoration::default()
+            },
+        );
+        let marks = ellipses(&hollow);
+        assert_eq!(marks.len(), 2);
+        for (_, filled, stroked) in &marks {
+            assert!(
+                !*filled && *stroked,
+                "a `circle` mark is an outline, not a filled dot"
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicit_emphasis_clear_and_an_unmarked_run_paint_no_marks() {
+        // `w:em="none"` is resolved to `None` upstream (in `flow::run_decoration`),
+        // and the paint arm refuses the variant too — belt and braces, because a
+        // cleared mark that painted would be worse than one that never painted.
+        for decoration in [
+            Decoration::default(),
+            Decoration {
+                emphasis: Some(casual_doc_model::v1::EmphasisMark::None),
+                ..Decoration::default()
+            },
+        ] {
+            let (list, _) = compose_decorated("ab", decoration);
+            assert!(
+                ellipses(&list).is_empty(),
+                "no emphasis mark is painted for {decoration:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_border_paints_a_four_sided_box_around_the_runs_glyph_box() {
+        let edge = ResolvedEdge {
+            color: [0x33, 0x55, 0xC4, 255],
+            width: Twip(20),
+            pattern: BorderPattern::Solid,
+        };
+        let (list, origin) = compose_decorated(
+            "boxed",
+            Decoration {
+                border: Some(edge),
+                ..Decoration::default()
+            },
+        );
+        let rects: Vec<Rect> = list
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect { rect, fill, .. } if *fill == Some(rgba(edge.color)) => {
+                    Some(*rect)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            rects.len(),
+            4,
+            "a solid `w:bdr` paints one band per side (got {rects:?})"
+        );
+        // Two horizontal bands one edge-width tall, two vertical bands one
+        // edge-width wide — and the box starts at the run's own left edge.
+        let horizontal = rects.iter().filter(|r| r.size.height == edge.width).count();
+        let vertical = rects.iter().filter(|r| r.size.width == edge.width).count();
+        assert_eq!((horizontal, vertical), (2, 2), "{rects:?}");
+        let left = rects.iter().map(|r| r.origin.x).min().unwrap();
+        let right = rects.iter().map(Rect::right).max().unwrap();
+        assert_eq!(left, origin.x, "the box hugs the run's leading edge");
+        assert!(
+            right > left,
+            "the box spans the run's advance: {left:?}..{right:?}"
+        );
+        // The box brackets the baseline (ascent above, descent below).
+        let baseline = first_baseline(&list);
+        assert!(rects.iter().map(|r| r.origin.y).min().unwrap() < baseline);
+        assert!(rects.iter().map(Rect::bottom).max().unwrap() > baseline);
+    }
+
+    #[test]
+    fn a_nil_run_border_paints_nothing() {
+        // `resolve_edge` suppresses a `nil`/`none` edge upstream, so the decoration
+        // arrives as `None` and the run composes exactly as an unbordered one does.
+        let (plain, _) = compose_decorated("boxed", Decoration::default());
+        let plain_rects = plain
+            .items
+            .iter()
+            .filter(|item| matches!(item, PaintItem::Rect { .. }))
+            .count();
+        assert_eq!(plain_rects, 0, "an unbordered run paints no border bands");
     }
 }

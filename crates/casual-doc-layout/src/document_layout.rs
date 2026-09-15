@@ -127,9 +127,19 @@ pub fn document_page_config(document: &Document) -> PageConfig {
 /// (`w:mirrorMargins`, which swaps the inside and outside margins on verso
 /// pages) is applied by [`crate::columns`] and [`mirrored_page_config`].
 ///
-/// Not closed: `w:gutterAtTop` (the gutter on the top edge instead of the
-/// inside edge) is a `w:settings` flag the importer does not read yet, so the
-/// gutter always lands on the inside edge.
+/// Not closed: `w:gutterAtTop` (the gutter on the **top** edge instead of the
+/// inside edge), so the gutter always lands on the inside edge. It is blocked
+/// upstream of layout, not here: `DocumentSettings` carries no field for it and
+/// the settings importer routes it to the compatibility report, so there is
+/// nothing for this function to read. Closing it is a three-crate change —
+/// `gutter_at_top` on `DocumentSettings`, an `apply_setting` arm in
+/// `casual-doc-import`'s `settings.rs`, and a writer arm in `casual-doc-export`
+/// in `w:settings` schema order — and it must land as one unit: consuming the
+/// element without writing it back would convert a *reported* loss into a silent
+/// one, which release behaviour forbids. Once the flag exists, the only change
+/// here is adding the gutter to `margin_top` instead of `margin_start`, and
+/// `mirrored_page_config` must then stop swapping it (a top gutter does not
+/// mirror). `docs/105` FID-L-16.
 fn section_page_config(section: &SectionBoundary) -> PageConfig {
     let gutter = Twip(section.page_margins.gutter_twips.unwrap_or(0).max(0));
     PageConfig {
@@ -813,6 +823,11 @@ fn finish_pagination_pass(
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
     resolve_anchored_fields_labeled(&mut layout, &page_labels, shaper);
+    // Margin line numbers (`w:lnNumType`) last: they stamp each numbered line's
+    // FINAL baseline, so they must follow the vertical-alignment shift above and
+    // cannot precede it. Inert unless a section declares line numbering
+    // (`docs/105` FID-L-09).
+    crate::line_number::place_line_numbers(&mut layout, document, shaper);
 
     layout
 }

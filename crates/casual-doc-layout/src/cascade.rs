@@ -513,6 +513,12 @@ fn overlay_paragraph(base: &mut ParagraphProperties, over: &ParagraphProperties)
         base.widow_control = over.widow_control;
     }
     base.contextual_spacing |= over.contextual_spacing;
+    // `w:suppressLineNumbers` had no arm here, so a *style* that suppressed line
+    // numbers lost the flag the moment `resolve_paragraph` ran — and a pleading
+    // template puts it on the style, not on every quotation paragraph. Same
+    // enabling-layer-wins rule as the toggles above: the model cannot represent
+    // an explicit re-enable (`docs/105` FID-L-09).
+    base.suppress_line_numbers |= over.suppress_line_numbers;
     if over.outline_level.is_some() {
         base.outline_level = over.outline_level;
     }

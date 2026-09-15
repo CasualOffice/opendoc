@@ -17,7 +17,7 @@ use crate::block::{BlockFragment, ResolvedEdge};
 // Separate `use` line to minimize import-block merge conflicts.
 use crate::display::ShapeTransform;
 use crate::model::ModelPos;
-use crate::text::TextBoxStroke;
+use crate::text::{GlyphRun, TextBoxStroke};
 use crate::units::{Point, Rect, Size, Twip};
 
 /// A position in the galley's flow: a fragment (by index) and a line offset
@@ -256,6 +256,25 @@ pub struct ResolvedPageBorders {
     pub end: Option<ResolvedEdge>,
 }
 
+/// One line number stamped in a page's margin (`w:lnNumType`).
+///
+/// Line numbers are page **furniture**, like the page border and the column
+/// separator: produced by a post-pagination pass, painted by
+/// [`compose_page`](crate::compose::compose_page), and part of neither the flow
+/// nor the caret/selection model — a click in the margin never lands "in" a line
+/// number, and selecting a paragraph never copies one.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PlacedLineNumber {
+    /// The counter value this run displays. Kept alongside the shaped glyphs so
+    /// the numbering *policy* (`countBy`/`start`/`restart`) is assertable without
+    /// decoding glyph ids, and so a host can expose the number to assistive
+    /// technology.
+    pub number: u32,
+    /// The shaped number, already positioned in page-local twips: right-aligned
+    /// to `distance` before the numbered line's column, on that line's baseline.
+    pub run: GlyphRun,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ColumnSeparator {
     /// The rule's x in page-local twips (the gap's horizontal center).
@@ -313,6 +332,13 @@ pub struct Page {
     /// header/footer and anchored floats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_borders: Option<ResolvedPageBorders>,
+    /// The margin line numbers (`w:lnNumType`) for this page, in flow order.
+    /// Empty unless this page's section declares line numbering; filled by the
+    /// post-pagination pass off the hot path so page reuse (the stabilization
+    /// halt) stays position-free, like the running header/footer, the page
+    /// border, and anchored floats.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_numbers: Vec<PlacedLineNumber>,
     /// First model position on this page (the stabilization-halt key).
     pub start: ModelPos,
     /// One-past-last model position on this page.
