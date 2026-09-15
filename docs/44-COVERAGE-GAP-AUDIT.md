@@ -1,5 +1,15 @@
 # 44 — Coverage Gap Audit (2026-07-26)
 
+> **Staleness banner — added 2026-09-15 (`105-AUDIT-2026-09-TRACKER.md` §3.4).**
+> This audit is pinned to the code baseline named above, **992 commits behind `main`**.
+> It is retained as the dated record of that baseline and is *not* the current state:
+> it systematically **understates** the engine, because capability has since shipped for
+> gaps it lists as open. The list of its now-stale gap claims is in `105` §3.4.
+> For current per-construct state read `webapp/src/fidelity.js` (the one artifact that is
+> both current and under an honesty guard); for what is unfinished read `99`; for ranked
+> defects read `104` and `105`. Do not cite this document as evidence of a present gap
+> without re-checking the code.
+
 ## Purpose
 
 A definitive, evidence-backed inventory of **what OpenDoc does not yet handle** — every

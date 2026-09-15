@@ -1,5 +1,23 @@
 # 60 — Fidelity Corpus Rendering and Pagination Audit
 
+> **Staleness banner — added 2026-09-15 (`105-AUDIT-2026-09-TRACKER.md` §3.4).**
+> This audit is pinned to the code baseline named above, **992 commits behind `main`**.
+> It is retained as the dated record of that baseline and is *not* the current state:
+> it systematically **understates** the engine, because capability has since shipped for
+> gaps it lists as open. The list of its now-stale gap claims is in `105` §3.4.
+> For current per-construct state read `webapp/src/fidelity.js` (the one artifact that is
+> both current and under an honesty guard); for what is unfinished read `99`; for ranked
+> defects read `104` and `105`. Do not cite this document as evidence of a present gap
+> without re-checking the code.
+>
+> **One exception, deliberately:** §"Baseline and post-fix result" is the *only* committed
+> source for the corpus page-count parity figures, and `webapp/fidelity.html` now cites it
+> by name and date. Those figures are **4/5 exact parity, worst delta +2** (Class notes
+> 1/1, Medical form 4/4, Chinese SDS 18 vs 16, Sample 26/26, demo 8/8), measured
+> 2026-07-27 and **not re-measured since**. Publishing any other number, or presenting
+> these as a live CI result, is the defect recorded as `105` EV-001/EV-002. Re-measure and
+> update here first; the page follows this table, never the reverse.
+
 **Status:** Implemented fidelity pass with verified residuals.
 **Audit date:** 2026-07-27
 **Code baseline:** `main@cde11ff`; implementation branch

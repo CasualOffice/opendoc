@@ -20,7 +20,27 @@ Sources of truth this consolidates, and which stay authoritative in their own
 areas: `14-EXECUTION-TRACKER.md` (per-slice status), `18-SUPPORT-MATRIX.md`
 (public support claims), `44-COVERAGE-GAP-AUDIT.md` (model/round-trip coverage),
 `46`/`55`/`60` (rendering fidelity), `67-EDITOR-UX-GAP-ANALYSIS.md` (editor UX),
-`85` §5.7/§5.9 (object-editing scope), `98` (PDF).
+`85` §5.7/§5.9 (object-editing scope), `98` (PDF), `104-HOTFIX-TRACKER.md` (the
+ranked defect queue), and `105-AUDIT-2026-09-TRACKER.md` (the 2026-09 audit round
+and the ONLYOFFICE fit-gap).
+
+> **Update — 2026-09-15.** The 2026-09 audit round (`105`) reached two conclusions that
+> bear directly on this document. First, `46`/`55`/`60`/`44` are all pinned to baselines
+> ~992 commits behind `main` and **understate** the engine; they now carry staleness
+> banners, and `webapp/src/fidelity.js` is the current artifact. Second, §6 below was
+> right about the failure mode and wrong about its extent: the public fidelity page
+> carried fabricated evidence a **second** time, because the first incident was corrected
+> in the page's content without ever bringing the page under test. `105` §1 records the
+> corrections and the rule that replaces the ad-hoc fix.
+>
+> A new theme this document should carry going forward: **modeled is not shipped.** Eight
+> constructs are typed, cascaded and round-tripped with no layout consumer at all —
+> footnote number format/restart/position, `w:lnNumType`, the `w:kern` threshold,
+> `w:kinsoku`, embedded `.odttf` faces, cell `noWrap`/`fitText`/`hideMark`/`textDirection`,
+> `w:gutter`/`w:mirrorMargins`, and `evenPage`/`oddPage` parity breaks. Each reads as
+> finished from the model side and is invisible to a user. §3's "render and round-trip;
+> the editor cannot create them" framing does not cover this class: these do not render
+> either. Tracked as `105` FID-P-04 and FID-L-01/03/05/09/13/15/16/17.
 
 ## Owner priority decision — editor first
 

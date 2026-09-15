@@ -31,13 +31,13 @@ const FIDELITY = [
   },
   {
     family: "Tables",
-    note: "Insert, row/column, merge/split, sort, formula, style, borders, sizing. Exact art/compound borders still partial.",
+    note: "Insert, row/column, merge/split, sort, formula, style, borders, sizing. Not yet reaching layout: floating tables (`w:tblpPr`, which render inline), cell `noWrap`, `fitText`, `hideMark` and cell `textDirection`, style-provided row properties/margins/spacing, and exact art/compound borders (which fall back to solid).",
     modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {
     family: "Lists & numbering",
-    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering now resolves per-instance level/start overrides, numStyleLink/styleLink indirection, and lvlRestart, and paints spelled-out formats — so multi-level and style-based lists label correctly. The only render remainder is niche bullet-picture glyphs (lvlPicBulletId); multilevel-gallery/checklist authoring is an editing (not rendering) gap.",
-    modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
+    note: "Numbering is fully modeled: multiLevelType, per-level restart, level→pStyle links, numStyleLink/styleLink indirection, full per-instance level/start overrides, and the numFmt vocabulary (incl. spelled-out cardinalText/ordinalText) are typed and round-trip. Rendering now resolves per-instance level/start overrides, numStyleLink/styleLink indirection, and lvlRestart, and paints spelled-out formats — so multi-level and style-based lists label correctly. The remainder is picture bullets: `w:lvlPicBulletId` and the `w:numPicBullet` definitions it points at are not modeled at all, so they are dropped on import without a finding and cannot be written back — a model and round-trip gap, not just a render one. Multilevel-gallery/checklist authoring is a separate editing gap.",
+    modeled: "partial", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {
     family: "Images & inline drawings",
@@ -91,8 +91,8 @@ const FIDELITY = [
   },
   {
     family: "Comments",
-    note: "Editor sidebar with anchored highlights; add, reply, resolve/reopen, edit, delete; Open/Resolved/All filtering; valid thread ids on export. Comments can be added in any surface, including headers, footers, notes and text boxes. Not Word/Docs parity — single-paragraph ranges only, and comments are not part of printed page output.",
-    modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
+    note: "Editor sidebar with anchored highlights; add, reply, resolve/reopen, edit, delete; Open/Resolved/All filtering; valid thread ids on export. Comments can be added in any surface, including headers, footers, notes and text boxes. Not Word/Docs parity — single-paragraph ranges only. The engine paints a comment highlight only under the read-only markup review view; in the default editing view the highlight and sidebar are host/DOM chrome, so comments contribute nothing to the display list or to printed page output.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Tracked changes",
@@ -108,6 +108,41 @@ const FIDELITY = [
     family: "Content controls (w:sdt)",
     note: "SDT wrappers model and round-trip; content flows and edits as ordinary paragraphs, and checkbox content-controls paint their checked/unchecked state glyph. Control bounding chrome, placeholder/prompt text, and dropdown/combo/date-picker chrome are not rendered.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
+  },
+  {
+    family: "Fonts, fallback & color glyphs",
+    note: "24 Latin faces ship bundled; hosts can register more through the font registry (the desktop story is OS fonts, the browser story is network-fetched faces). Whole-face substitution is name-based and deliberately metric-compatible with LibreOffice's choices (Arial\u2192Liberation Sans, Calibri\u2192Carlito, Cambria\u2192Caladea), and per-glyph coverage fallback runs through the face index. Color glyphs render: sbix/CBDT bitmap strikes and COLR v0/v1 paint graphs are tried before monochrome outlines. Two real gaps: fonts embedded in the document (`w:embedRegular`, the obfuscated `.odttf` parts) are modeled and imported but never de-obfuscated or used, and the modeled PANOSE/altName/signature hints are not consulted \u2014 substitution is name-string only. No CJK, Arabic, or Indic face is bundled, so those scripts need a host-registered font on the browser build.",
+    modeled: "partial", rendered: "full", editable: "none", roundtrips: "full",
+  },
+  {
+    family: "Hyphenation",
+    note: "Not implemented. There is no hyphenator, no dictionary, and no consumer for `w:autoHyphenation`, `w:hyphenationZone`, or `w:hyphenationRules`; only `w:suppressAutoHyphens` is cascaded, and it has nothing to suppress. A document authored with automatic hyphenation on will break its lines differently from Word and therefore paginate differently. The settings round-trip.",
+    modeled: "partial", rendered: "none", editable: "none", roundtrips: "partial",
+  },
+  {
+    family: "Line numbering (w:lnNumType)",
+    note: "Typed on the section and round-trips, but no consumer exists in layout \u2014 line numbers are never generated or painted. Common in legal pleadings and contracts.",
+    modeled: "full", rendered: "none", editable: "none", roundtrips: "full",
+  },
+  {
+    family: "Watermarks & WordArt",
+    note: "Not modeled as a watermark. A Word watermark is a header VML or DrawingML shape carrying warped text (`v:textpath` / `a:prstTxWarp`); neither text-path form is typed, so the shape box can paint but its text does not. Preserved for export where it lands in the retained/opaque path.",
+    modeled: "none", rendered: "none", editable: "none", roundtrips: "partial",
+  },
+  {
+    family: "Bidi, RTL & CJK grid",
+    note: "Paragraph base direction (`w:bidi`) drives the alignment edge, `w:bidiVisual` mirrors table grid/margin/border geometry, and the Unicode bidi algorithm runs per line through the shaper. Two known limits: the shaper exposes no way to force a paragraph's base level, so an RTL paragraph whose text carries no strong RTL character reorders LTR; and the resolved level is collapsed to a single RTL flag, discarding embedding depth. `w:docGrid` line pitch reaches layout with exact/paragraph/table precedence and is gated by `w:snapToGrid`; character-grid snapping (`w:charSpace`, linesAndChars) is not applied. `w:jc=\"distribute\"` currently collapses to ordinary justification, and there is no kashida or CJK inter-character distribution.",
+    modeled: "partial", rendered: "partial", editable: "partial", roundtrips: "partial",
+  },
+  {
+    family: "Vertical & rotated text",
+    note: "Not implemented. `w:textDirection` (tbRl/btLr on sections and table cells) and DrawingML `bodyPr` vertical writing are never consumed \u2014 there is only one writing-mode axis through flow, composition, hit-testing, and the caret. Rotated text-box content is likewise unpainted (the box itself rotates). Values round-trip.",
+    modeled: "partial", rendered: "none", editable: "none", roundtrips: "full",
+  },
+  {
+    family: "Drop caps",
+    note: "Implemented: a dropped cap becomes a real paragraph-float exclusion that following lines flow around, and margin-position drop caps offset instead. Gated to the Word-shaped case \u2014 a single-character drop-cap paragraph followed by a body paragraph. Not authorable from the editor.",
+    modeled: "full", rendered: "full", editable: "none", roundtrips: "full",
   },
 ];
 
