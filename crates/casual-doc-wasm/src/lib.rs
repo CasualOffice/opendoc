@@ -24256,6 +24256,15 @@ mod tests {
     /// Builds a `WasmDocument` around a constructed `Document` (paginated, so the
     /// float-placement pass runs and `object_boxes` can see anchored objects).
     fn wasm_document(document: Document) -> WasmDocument {
+        // A document under test carries the bytes for the pictures it declares.
+        // The DOCX writer no longer writes a zero-byte media part behind a live
+        // `/image` relationship (FID-R-06): a reference whose bytes it was not
+        // given is omitted from the package and reported, so a fixture with no
+        // resources would export without its drawings.
+        let mut resources = DocumentResources::default();
+        for (_, reference) in document.definitions().media.iter() {
+            resources.insert(reference.part_name.clone(), b"PNGDATA".to_vec());
+        }
         let shaper = ParleyShaper::new();
         let layout = paginate_document(&document, &shaper);
         let default_config = document_page_config(&document);
@@ -24266,7 +24275,7 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            resources: DocumentResources::default(),
+            resources,
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
