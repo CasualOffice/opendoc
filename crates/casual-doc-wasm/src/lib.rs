@@ -977,36 +977,44 @@ impl WasmDocument {
     /// which page the user was on, so the edit landed on pages the user was not
     /// looking at and the page they WERE looking at never changed (the
     /// body-vs-surface defect class, docs/104 T-01).
+    ///
+    /// There is deliberately **no fall-back to `default`** when the page's variant
+    /// is absent. The layout does not fall back either — `HeaderFooter::select`
+    /// returns the switched-on variant even when it is empty, because ECMA-376
+    /// §17.10.6 says `w:titlePg` with no `first` reference "shall create a new
+    /// blank header" rather than show the odd-page one. Falling back here returned
+    /// the `default` body's position for a page that paints its `first` variant,
+    /// and that position has no geometry on that page: the context opened,
+    /// `data-running-edit` was set, and NO CARET PAINTED, so the near-universal
+    /// "no header on page 1" document had a header the user could not type in.
+    /// `None` is the honest answer, and it is what routes the host to
+    /// [`createRunningContent`](Self::create_running_content) — the "shall create"
+    /// half of the same spec sentence.
     #[wasm_bindgen(js_name = runningContentCaret)]
     #[must_use]
     pub fn running_content_caret(&self, region: &str, page: u32) -> Option<HitPayload> {
-        let region = running_region(region)?;
+        let pos = first_pos_of_blocks(self.running_blocks_of(running_region(region)?, page)?)?;
+        Some(HitPayload {
+            node: pos.node.to_string(),
+            offset: pos.offset,
+            zone: "content",
+        })
+    }
+
+    /// The blocks a page's band actually shows: the variant that page applies,
+    /// resolved through link-to-previous inheritance. `None` when that variant has
+    /// no part anywhere in the chain; `Some(&[])` when it has one carrying no
+    /// blocks. Both paint a blank band.
+    fn running_blocks_of(&self, region: RunningRegion, page: u32) -> Option<&[BlockNode]> {
         let (index, _) = self.running_section(page)?;
+        let kind = self.running_kind_for_page(page, index);
+        let reference = self.effective_running_ref(index, region, kind)?;
         let definitions = self.document.definitions();
-        // The variant this page applies, then the default it falls back to when
-        // that variant is absent or empty — the same fallback the layout paints
-        // (`casual_doc_layout::running::HeaderFooter::select`).
-        for kind in [
-            self.running_kind_for_page(page, index),
-            HeaderFooterKind::Default,
-        ] {
-            let Some(reference) = self.effective_running_ref(index, region, kind) else {
-                continue;
-            };
-            let body = match region {
-                RunningRegion::Header => definitions.headers.get(&reference),
-                RunningRegion::Footer => definitions.footers.get(&reference),
-            };
-            let Some(pos) = body.and_then(|body| first_pos_of_blocks(&body.blocks)) else {
-                continue;
-            };
-            return Some(HitPayload {
-                node: pos.node.to_string(),
-                offset: pos.offset,
-                zone: "content",
-            });
-        }
-        None
+        let body = match region {
+            RunningRegion::Header => definitions.headers.get(&reference),
+            RunningRegion::Footer => definitions.footers.get(&reference),
+        }?;
+        Some(&body.blocks)
     }
 
     /// `(index, id)` of the section that owns `page`.
@@ -2815,19 +2823,58 @@ impl WasmDocument {
     /// page the user asked about — with nothing (docs/104 T-01). The variant is
     /// the one that page applies, so adding a header to the first page of a
     /// section with `w:titlePg` fills THAT page's band, as Word does.
+    ///
+    /// This is also the "shall create a new blank header" half of ECMA-376
+    /// §17.10.6, and it is why creation happens on ENTRY rather than on the first
+    /// keystroke: a caret is a model position, so until the paragraph exists there
+    /// is nothing for the caret — or the toolbar's property read, an arrow key, or
+    /// a click — to resolve against. Deferring would mean a second, phantom caret
+    /// representation that every geometry read had to know about. Word creates the
+    /// part on entry too, and this is one undoable step.
+    ///
+    /// Fails closed when the page's variant already resolves to a body with a
+    /// caret in it — including one it INHERITS from an earlier section, where
+    /// writing a reference onto this section would break the "Link to Previous"
+    /// chain and leave the band the user sees no longer following the one they
+    /// edited.
     #[wasm_bindgen(js_name = createRunningContent)]
     pub fn create_running_content(
         &mut self,
         region: &str,
         page: u32,
     ) -> Result<EditResult, JsValue> {
+        self.create_running_content_inner(region, page)
+            .map_err(to_js)
+    }
+
+    /// The plain-`String` body of [`createRunningContent`](Self::create_running_content),
+    /// so native tests can exercise its refusals — a `JsValue` error cannot even be
+    /// constructed off a wasm target.
+    fn create_running_content_inner(
+        &mut self,
+        region: &str,
+        page: u32,
+    ) -> Result<EditResult, String> {
         let region = running_region(region)
-            .ok_or_else(|| to_js("region must be \"header\" or \"footer\"".to_string()))?;
+            .ok_or_else(|| "region must be \"header\" or \"footer\"".to_string())?;
         let (index, section) = self
             .running_section(page)
-            .ok_or_else(|| to_js("the document has no section".to_string()))?;
+            .ok_or_else(|| "the document has no section".to_string())?;
         let kind = self.running_kind_for_page(page, index);
-        let exhausted = || to_js("id space exhausted".to_string());
+        if self
+            .running_blocks_of(region, page)
+            .and_then(first_pos_of_blocks)
+            .is_some()
+        {
+            return Err(format!(
+                "page {page} already has a {region_name} to edit",
+                region_name = match region {
+                    RunningRegion::Header => "header",
+                    RunningRegion::Footer => "footer",
+                }
+            ));
+        }
+        let exhausted = || "id space exhausted".to_string();
         let body = HeaderFooterId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let paragraph = self.edit_ids.next_id().map_err(|_| exhausted())?;
         self.apply_action_caret_as(
@@ -2851,7 +2898,6 @@ impl WasmDocument {
             Pos::new(paragraph, 0),
             HistoryKind::Edit,
         )
-        .map_err(to_js)
     }
 
     /// Inserts an endnote at the caret, the endnote counterpart of
@@ -27160,6 +27206,353 @@ mod tests {
         assert!(
             landscape.width_twip > landscape.height_twip,
             "page 5 landscape"
+        );
+    }
+
+    // ---- A running band the page legitimately paints BLANK -----------------------
+    //
+    // `sample.docx` is the ordinary shape of the near-universal "no header on page
+    // 1" document: `w:titlePg` is set and the only header/footer references are of
+    // type `default`. Page 1 therefore paints an EMPTY band, which is correct —
+    // ECMA-376 §17.10.6 gives a `w:titlePg` section with no `first` reference "a new
+    // blank header", NOT a fall-back to the odd-page one.
+    //
+    // The editor could not put a caret in such a band. Entry resolved the variant
+    // the page shows and then fell back to `default` when it was absent, handing the
+    // host a model position with no geometry on that page: the context opened,
+    // `data-running-edit` was set, and nothing painted. Every running-content test
+    // above uses a fixture whose applicable variant HAS content, which is why none
+    // of them saw it.
+
+    /// The block ids painted in one page's band, in paint order.
+    fn painted_band_ids(d: &WasmDocument, page: u32, region: RunningRegion) -> Vec<NodeId> {
+        let page = d
+            .painted_layout()
+            .pages
+            .iter()
+            .find(|candidate| candidate.number == page)
+            .expect("the page exists");
+        let placed = match region {
+            RunningRegion::Header => &page.header,
+            RunningRegion::Footer => &page.footer,
+        };
+        placed
+            .iter()
+            .map(|fragment| fragment.fragment.node_id())
+            .collect()
+    }
+
+    /// The block ids the model-side resolution names for one page's band.
+    fn resolved_band_ids(d: &WasmDocument, page: u32, region: RunningRegion) -> Vec<NodeId> {
+        d.running_blocks_of(region, page)
+            .unwrap_or_default()
+            .iter()
+            .map(|block| match block {
+                BlockNode::Paragraph(paragraph) => paragraph.id,
+                BlockNode::Table(table) => table.id,
+                BlockNode::Sdt(sdt) => sdt.id,
+                BlockNode::AltChunk(chunk) => chunk.id,
+            })
+            .collect()
+    }
+
+    /// Asserts the resolution and the painted band agree on every page, both regions.
+    fn assert_bands_agree(d: &WasmDocument, case: &str) {
+        let numbers: Vec<u32> = d.painted_layout().pages.iter().map(|p| p.number).collect();
+        assert!(numbers.len() > 1, "{case}: need several pages");
+        for number in numbers {
+            for region in [RunningRegion::Header, RunningRegion::Footer] {
+                assert_eq!(
+                    resolved_band_ids(d, number, region),
+                    painted_band_ids(d, number, region),
+                    "page {number} {region:?} ({case}): the variant the editor resolves \
+                     differs from the one the layout painted"
+                );
+            }
+        }
+    }
+
+    /// Clears one section's own reference for a variant — how OOXML spells "Link to
+    /// Previous", since inheritance is the ABSENCE of a reference.
+    fn unlink_section(d: &mut WasmDocument, index: usize, kind: HeaderFooterKind) {
+        let section = d.document.definitions().sections[index].id;
+        for region in [RunningRegion::Header, RunningRegion::Footer] {
+            d.apply(Operation::SetSectionRunningRef {
+                section,
+                region,
+                kind,
+                reference: None,
+            })
+            .expect("unlinking a variant succeeds");
+        }
+    }
+
+    /// THE ANTI-DRIFT GUARD. The band this crate resolves for a page must name the
+    /// very content the layout engine placed in that page's band — every page, both
+    /// regions, across `w:titlePg`, `w:evenAndOddHeaders`, and link-to-previous.
+    ///
+    /// The page × variant rule necessarily exists twice: the layout hands back a
+    /// borrowed fragment slice, which carries no section/variant identity for a new
+    /// part to be linked to. Divergence between the two copies IS the defect — an
+    /// editor putting a caret in a story the page does not show — so it is pinned
+    /// here rather than left to review.
+    #[test]
+    fn running_story_matches_the_painted_band() {
+        let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+        assert!(
+            d.document.definitions().sections.len() >= 3,
+            "sample.docx has three sections, which is what makes the chain testable"
+        );
+        assert_bands_agree(&d, "as authored");
+
+        d.set_even_odd_variant(true).expect("turn even/odd on");
+        assert_bands_agree(&d, "evenAndOddHeaders on");
+
+        // Link section 2 to previous. Nothing in sample.docx exercises inheritance
+        // as authored, so without this the inheritance walk is unguarded — and
+        // getting it wrong is worse than a missing caret: entering an inheriting
+        // section's band would CREATE a part and silently break the link.
+        unlink_section(&mut d, 1, HeaderFooterKind::Default);
+        assert_bands_agree(&d, "section 2 linked to previous");
+
+        // And transitively, through a silent section 2 (ECMA-376 §17.10.5).
+        unlink_section(&mut d, 2, HeaderFooterKind::Default);
+        assert_bands_agree(&d, "sections 2 and 3 linked to previous");
+        let section1_header = d.document.definitions().sections[0]
+            .headers
+            .iter()
+            .find(|entry| entry.kind == HeaderFooterKind::Default)
+            .expect("section 1 declares a default header")
+            .reference;
+        assert_eq!(
+            d.effective_running_ref(2, RunningRegion::Header, HeaderFooterKind::Default),
+            Some(section1_header),
+            "section 3 inherits section 1's default header through a silent section 2"
+        );
+
+        // A multi-section, orientation-changing document with its own first-page
+        // variant, so the guard also covers a `titlePg` section that is not page 1.
+        assert_bands_agree(
+            &wasm_document(orientation_change_document()),
+            "two sections",
+        );
+    }
+
+    /// The first page of a `w:titlePg` section with no `first` reference paints a
+    /// blank band — and entering it must give a caret that exists ON THAT PAGE and
+    /// accepts text. This is the shipped failure: the context opened, the caret had
+    /// no geometry on page 1, and the header could not be typed into.
+    ///
+    /// Asserted through `caret_rect` under the page's edit context, which is the
+    /// exact call whose empty answer left the overlay with no caret.
+    #[test]
+    fn a_blank_first_page_band_is_created_and_accepts_typing() {
+        for (band, region) in [
+            ("header", RunningRegion::Header),
+            ("footer", RunningRegion::Footer),
+        ] {
+            let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+            assert!(
+                painted_band_ids(&d, 1, region).is_empty(),
+                "{band}: page 1 of a titlePg section with no `first` reference paints blank"
+            );
+            assert!(
+                d.running_content_caret(band, 1).is_none(),
+                "{band}: a blank band has no caret to resolve — falling back to the `default` \
+                 body hands back a position with no geometry on this page"
+            );
+            // Page 2 shows the authored `default` variant, so the blankness under
+            // test is the PAGE's variant, not the document's.
+            assert!(
+                d.running_content_caret(band, 2).is_some(),
+                "{band}: page 2 still resolves the authored default body"
+            );
+
+            let created = d
+                .create_running_content_inner(band, 1)
+                .expect("creating the page's variant succeeds");
+            let node = created.node();
+            let offset = created.offset();
+
+            // THE POINT: the caret must resolve on page 1. Without this fix it is [].
+            d.set_edit_context(Some(band.to_owned()), Some(1));
+            let rect = d.caret_rect(&node, offset);
+            assert_eq!(
+                rect.first().copied(),
+                Some(1),
+                "{band}: the new caret must have geometry on page 1, got {rect:?}"
+            );
+            assert_eq!(
+                d.running_content_caret(band, 1).map(|hit| hit.node()),
+                Some(node.clone()),
+                "{band}: entry now finds the new paragraph"
+            );
+
+            // It is the `first` variant that was linked, not `default` — relinking
+            // `default` would have replaced the header every other page shows.
+            let (index, _) = d.running_section(1).expect("page 1 has a section");
+            assert_eq!(
+                d.running_kind_for_page(1, index),
+                HeaderFooterKind::First,
+                "{band}: page 1 shows `first`"
+            );
+            assert!(
+                d.effective_running_ref(index, region, HeaderFooterKind::First)
+                    .is_some(),
+                "{band}: the `first` variant is now declared"
+            );
+            assert_eq!(
+                resolved_band_ids(&d, 2, region),
+                painted_band_ids(&d, 2, region),
+                "{band}: page 2's default band is untouched"
+            );
+
+            // Typing lands in it.
+            d.insert_text(&node, offset, "TITLE".to_owned())
+                .expect("typing into the new band");
+            assert_eq!(
+                d.running_blocks_of(region, 1).map(sections_body_nodes),
+                Some(vec![NodeId::from_str(&node).expect("caret node")]),
+                "{band}: the new body holds exactly the paragraph that was typed into"
+            );
+
+            // One undoable step for the creation, one for the typing.
+            d.undo().expect("undo the typing");
+            d.undo().expect("undo the creation");
+            assert!(
+                d.running_content_caret(band, 1).is_none(),
+                "{band}: undo puts the document back to a blank first-page band"
+            );
+            assert!(
+                painted_band_ids(&d, 1, region).is_empty(),
+                "{band}: and the band paints blank again"
+            );
+            d.document.validate().expect("the document stays valid");
+        }
+    }
+
+    /// The even variant, by the same rule and with no page-1 special case: with
+    /// `w:evenAndOddHeaders` on and no `even` reference, every even page paints a
+    /// blank band, and entering one creates the `even` part for that page's section.
+    #[test]
+    fn a_blank_even_page_band_is_created_and_accepts_typing() {
+        for (band, region) in [
+            ("header", RunningRegion::Header),
+            ("footer", RunningRegion::Footer),
+        ] {
+            let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+            d.set_even_odd_variant(true).expect("turn even/odd on");
+            assert!(
+                painted_band_ids(&d, 2, region).is_empty(),
+                "{band}: page 2 paints blank once `evenAndOddHeaders` is on with no `even` ref"
+            );
+            let (index, _) = d.running_section(2).expect("page 2 has a section");
+            assert_eq!(
+                d.running_kind_for_page(2, index),
+                HeaderFooterKind::Even,
+                "{band}: page 2 shows `even`"
+            );
+            assert!(
+                d.running_content_caret(band, 2).is_none(),
+                "{band}: page 2's blank `even` band has no caret to resolve yet"
+            );
+            assert!(
+                d.running_content_caret(band, 3).is_some(),
+                "{band}: an odd page still resolves the authored default body"
+            );
+
+            let created = d
+                .create_running_content_inner(band, 2)
+                .expect("creating the even variant succeeds");
+            d.set_edit_context(Some(band.to_owned()), Some(2));
+            let rect = d.caret_rect(&created.node(), created.offset());
+            assert_eq!(
+                rect.first().copied(),
+                Some(2),
+                "{band}: the new caret must have geometry on page 2, got {rect:?}"
+            );
+            assert!(
+                d.effective_running_ref(index, region, HeaderFooterKind::Even)
+                    .is_some(),
+                "{band}: the `even` variant is now declared"
+            );
+            d.insert_text(&created.node(), created.offset(), "EVEN".to_owned())
+                .expect("typing into the new even band");
+            assert!(
+                d.running_content_caret(band, 3).is_some(),
+                "{band}: the odd pages' default body is untouched"
+            );
+            d.document.validate().expect("the document stays valid");
+        }
+    }
+
+    /// Fail closed: creating over a band that already has content would relink the
+    /// section and leave the real header unreachable. The host reads
+    /// `runningContentCaret` first; this is the guard that holds if it stops.
+    #[test]
+    fn creating_a_band_that_already_has_content_is_refused() {
+        let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let before = resolved_band_ids(&d, 2, RunningRegion::Header);
+        assert!(
+            !before.is_empty(),
+            "page 2 shows the authored default header"
+        );
+        assert!(
+            d.create_running_content_inner("header", 2).is_err(),
+            "creating over page 2's populated default header must be refused"
+        );
+        assert_eq!(
+            resolved_band_ids(&d, 2, RunningRegion::Header),
+            before,
+            "the refusal changed nothing"
+        );
+        assert!(
+            d.create_running_content_inner("margin", 1).is_err(),
+            "an unknown region is refused rather than treated as a header"
+        );
+    }
+
+    /// A band a section INHERITS is not a blank band. Entering it must open the
+    /// inherited body, never create a part — creating one would write a reference
+    /// onto this section and break the "Link to Previous" chain, so the band the
+    /// user is looking at would stop following the one they edited.
+    #[test]
+    fn an_inherited_band_is_entered_not_created() {
+        let mut d = open_document(SAMPLE_DOCX).expect("open sample docx");
+        unlink_section(&mut d, 1, HeaderFooterKind::Default);
+        let section2 = d.document.definitions().sections[1].id;
+        let page = d
+            .painted_layout()
+            .pages
+            .iter()
+            .find(|page| page.section == section2)
+            .map(|page| page.number)
+            .expect("section 2 owns a page");
+        let inherited = d.document.definitions().sections[0]
+            .headers
+            .iter()
+            .find(|entry| entry.kind == HeaderFooterKind::Default)
+            .expect("section 1 declares a default header")
+            .reference;
+        assert_eq!(
+            d.effective_running_ref(1, RunningRegion::Header, HeaderFooterKind::Default),
+            Some(inherited),
+            "section 2 inherits section 1's header once its own reference is gone"
+        );
+        assert!(
+            d.running_content_caret("header", page).is_some(),
+            "page {page} resolves the inherited header's caret"
+        );
+        assert!(
+            d.create_running_content_inner("header", page).is_err(),
+            "creating over an inherited header must be refused — it would break the link"
+        );
+        assert!(
+            d.document.definitions().sections[1]
+                .headers
+                .iter()
+                .all(|entry| entry.kind != HeaderFooterKind::Default),
+            "section 2 still declares no default header of its own"
         );
     }
 }
