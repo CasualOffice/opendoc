@@ -13,8 +13,17 @@
 //!
 //! The band geometry is reserved up front in the [`PageConfig`] (the body content
 //! area shrinks by the header/footer band heights, computed once per section from
-//! the tallest variant), so every page in the section shares one content area —
-//! which is what keeps the incremental paginator's page reuse valid.
+//! the tallest *selectable* variant), so every page in the section shares one
+//! content area — which is what keeps the incremental paginator's page reuse
+//! valid. See [`HeaderFooter::band_height`] for where that reservation is and is
+//! not Word's behavior.
+//!
+//! Which section's variants a page draws from is decided upstream, in
+//! [`crate::document_layout`]: every page carries an immutable
+//! [`Page::section`], link-to-previous inheritance is resolved per variant before
+//! flow, and the section-local page number drives `titlePg`. The full page ×
+//! variant decision matrix — and the two rules where this engine deliberately
+//! differs from Word — is on [`HeaderFooter::select`].
 
 use crate::block::BlockFragment;
 use crate::page::{Page, PaginatedLayout, PlacedFragment};
@@ -22,54 +31,123 @@ use crate::paginate::PageConfig;
 use crate::units::{Point, Rect, Size, Twip};
 
 /// One section's three header (or footer) variants, each a flowed galley (see
-/// [`crate::flow::flow_header_footer`]). A missing variant is an empty `Vec` and
-/// falls back to `default` at selection time.
+/// [`crate::flow::flow_header_footer`]).
+///
+/// The variants here are already **post-inheritance**: OOXML's "link to previous"
+/// is the *absence* of a `w:headerReference`/`w:footerReference` of a given type,
+/// and [`crate::document_layout`] resolves that per variant, transitively back
+/// through the earlier sections, before flowing anything. So an empty `Vec` here
+/// means "no reference of this type anywhere in this section's inheritance chain,
+/// or a reference to a part with no blocks" — both of which render as a **blank**
+/// band, never as a fall-back to `default` (ECMA-376 §17.10.5).
 #[derive(Clone, Debug, Default)]
 pub struct HeaderFooter {
     /// The default header/footer (`w:headerReference` / `w:footerReference` of type
-    /// `default`), shown on every page without a more specific variant.
+    /// `default`) — the *odd*-page variant in ECMA-376's wording, shown on every
+    /// page that does not select a more specific variant.
     pub default: Vec<BlockFragment>,
-    /// The first-page variant (type `first`), shown on page 1 when the section sets
-    /// `w:titlePg`.
+    /// The first-page variant (type `first`), shown on the section's first page
+    /// when the section sets `w:titlePg`, and on no other page.
     pub first: Vec<BlockFragment>,
-    /// The even-page variant (type `even`), shown on even pages when the document
-    /// sets `w:evenAndOddHeaders`.
+    /// The even-page variant (type `even`), shown on even-numbered pages when the
+    /// document sets `w:evenAndOddHeaders`, and on no other page.
     pub even: Vec<BlockFragment>,
 }
 
 impl HeaderFooter {
-    /// The reserved band height: the tallest stacked variant, so the band fits
-    /// whichever variant a page selects (keeping the body content area uniform).
+    /// The band height to reserve for a section: the tallest variant this section
+    /// can actually **select**, so the band fits whatever any of its pages shows
+    /// while every page keeps one uniform body content area.
+    ///
+    /// `title_page` (`w:titlePg`) and `even_and_odd` (`w:evenAndOddHeaders`) gate
+    /// which variants are reachable at all: with `w:titlePg` off no page can ever
+    /// show [`Self::first`], and without `w:evenAndOddHeaders` no page can ever
+    /// show [`Self::even`] (see [`Self::select`]). An unreachable variant must not
+    /// steal body area — a `header2.xml` left in the package by an earlier edit is
+    /// otherwise enough to push every page's text down.
+    ///
+    /// **Deliberately not Word, and why.** Word's band is per *page*: the body
+    /// starts at `max(topMargin, headerDistance + that page's header height)`, so a
+    /// tall `first`-page header pushes the text down on the section's first page
+    /// only. Here the tallest reachable variant is reserved across the whole
+    /// section, so a section whose remaining pages show a short `default` still
+    /// loses that body area. The reservation is what makes one content area per
+    /// section — and therefore the incremental paginator's page reuse — valid;
+    /// making it per page would move the reservation inside
+    /// [`crate::paginate`]. The visible difference is confined to sections whose
+    /// tallest reachable variant overflows `topMargin - headerDistance`
+    /// (`footerDistance` for footers); below that, `PageConfig::content_area`
+    /// clamps to the margin and the two models agree exactly.
     #[must_use]
-    pub fn band_height(&self) -> Twip {
+    pub fn band_height(&self, title_page: bool, even_and_odd: bool) -> Twip {
         let stacked = |frags: &[BlockFragment]| {
             frags
                 .iter()
                 .map(BlockFragment::height)
                 .fold(Twip::ZERO, |a, h| a + h)
         };
-        stacked(&self.default)
-            .max(stacked(&self.first))
-            .max(stacked(&self.even))
+        let mut height = stacked(&self.default);
+        if title_page {
+            height = height.max(stacked(&self.first));
+        }
+        if even_and_odd {
+            height = height.max(stacked(&self.even));
+        }
+        height
     }
 
-    /// The variant a page of the given `number` shows, given the section's
-    /// `title_page` (`w:titlePg`) and the document's `even_and_odd` setting. A
-    /// first-page header wins on page 1; otherwise an even-page header shows on even
-    /// pages when even/odd is on; otherwise the default. A selected variant that is
-    /// empty falls back to the default (Word's behavior when a reference is absent).
+    /// The variant one page shows — the whole page × variant decision.
+    ///
+    /// `number` is the page's final **document** page number (1-based, so page 1 is
+    /// odd), `is_section_first` marks the first page of the section that owns the
+    /// page, `title_page` is that section's `w:titlePg`, and `even_and_odd` is the
+    /// document-level `w:settings/w:evenAndOddHeaders`.
+    ///
+    /// | `titlePg` | `evenAndOddHeaders` | section's first page | other odd page | other even page |
+    /// |---|---|---|---|---|
+    /// | off | off     | `default` | `default` | `default` |
+    /// | off | **on**  | `default` on odd, `even` on even | `default` | `even` |
+    /// | **on** | off  | `first`   | `default` | `default` |
+    /// | **on** | **on** | `first` (wins even on an even page) | `default` | `even` |
+    ///
+    /// Read with the inheritance note on [`HeaderFooter`], that is ECMA-376
+    /// §17.10.5 (`headerReference`/`footerReference`) and §17.10.6 (`titlePg`):
+    ///
+    /// 1. A variant that is switched off is **never** selected. Without
+    ///    `w:titlePg`, "no first page header shall be shown, and the odd page
+    ///    header shall be used in its place"; without `w:evenAndOddHeaders`, the
+    ///    same for the even page header.
+    /// 2. A variant that is switched **on** is selected even when it is empty — it
+    ///    then paints a blank band. `w:titlePg` with no `first` reference anywhere
+    ///    in the inheritance chain "shall create a new blank header", *not* fall
+    ///    back to `default`; the same holds for `w:evenAndOddHeaders` with no
+    ///    `even` reference. This is why the emptiness of a variant is not consulted
+    ///    here.
+    /// 3. `first` outranks `even`: the section's first page shows `first` even when
+    ///    it is an even-numbered document page.
+    ///
+    /// **Deliberately not Word (two places).**
+    ///
+    /// - *Which page counts as "even"*: the physical document page number is used,
+    ///   so a section that restarts numbering with `w:pgNumType/@w:start` (or
+    ///   formats it as `i`, `ii`, `iii`) can show the `even` variant on a page
+    ///   whose printed number is odd. Word's own tie between `w:pgNumType` and
+    ///   odd/even band selection is not established here, so the physical number —
+    ///   which is what ECMA-376's "the first page of the document is an odd page"
+    ///   describes — is used and recorded rather than guessed at.
+    /// - *Band height*: see [`Self::band_height`].
     #[must_use]
-    fn select(
+    pub fn select(
         &self,
         number: u32,
         is_section_first: bool,
         title_page: bool,
         even_and_odd: bool,
     ) -> &[BlockFragment] {
-        if is_section_first && title_page && !self.first.is_empty() {
+        if is_section_first && title_page {
             return &self.first;
         }
-        if even_and_odd && number.is_multiple_of(2) && !self.even.is_empty() {
+        if even_and_odd && number.is_multiple_of(2) {
             return &self.even;
         }
         &self.default
@@ -93,12 +171,16 @@ pub struct RunningContent {
 
 impl RunningContent {
     /// The `(header, footer)` band heights to reserve in the [`PageConfig`] — each
-    /// the tallest of that band's variants. Feed these into
+    /// the tallest variant this section can actually select, under its own
+    /// `w:titlePg` and the document's `w:evenAndOddHeaders`. Feed these into
     /// `PageConfig::header_height`/`footer_height` before paginating so the body
     /// content area is reserved correctly.
     #[must_use]
     pub fn band_heights(&self) -> (Twip, Twip) {
-        (self.header.band_height(), self.footer.band_height())
+        (
+            self.header.band_height(self.title_page, self.even_and_odd),
+            self.footer.band_height(self.title_page, self.even_and_odd),
+        )
     }
 }
 
@@ -113,6 +195,13 @@ impl RunningContent {
 /// incremental [`crate::paginate::repaginate`] — `repaginate == paginate` still
 /// holds. Run it before [`crate::paginate::resolve_fields`], which resolves any
 /// `PAGE`/`NUMPAGES` fields the placed header/footer contains.
+///
+/// This entry point is the **single-section** one: it treats document page 1 as
+/// the section's first page, which is only correct when one section owns the whole
+/// layout. A multi-section document must go through
+/// [`crate::document_layout::paginate_document`], which places each page against
+/// the plan of the section that owns it and counts that section's own pages, so
+/// `w:titlePg` fires on every section's first page.
 pub fn place_running_content(
     layout: &mut PaginatedLayout,
     content: &RunningContent,
@@ -126,8 +215,15 @@ pub fn place_running_content(
 }
 
 /// Places one page from a section-aware driver. `section_page_number` is local to
-/// that section (1 for its first physical page), while odd/even selection still
-/// uses the page's final document page number.
+/// the section that owns the page (1 for its first physical page), which is what
+/// makes `w:titlePg` section-local; odd/even selection still uses the page's final
+/// document page number, because `w:evenAndOddHeaders` is a document-level flag
+/// about page parity.
+///
+/// `config` must be the owning section's geometry: a page inherits the *section's*
+/// page size, margins and header/footer distances, so a landscape section's band
+/// is laid at the landscape text width even when the content it shows was
+/// inherited from a portrait section.
 pub(crate) fn place_running_content_on_page(
     page: &mut Page,
     content: &RunningContent,

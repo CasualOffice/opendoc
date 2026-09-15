@@ -28,9 +28,11 @@ use casual_doc_import::{ImportConfig, ImportMode, import_package};
 #[cfg(test)]
 use casual_doc_io::formats;
 use casual_doc_io::{
-    CompatibilityReport as IoCompatibilityReport, DetectionRequest, DocumentResources, ExportMode,
-    ExportRequest, FormatId, FormatSelection, ModelOutcome as IoModelOutcome,
-    RetentionOutcome as IoRetentionOutcome, SourceEnvelope, builtin_registry_with_package_limits,
+    CompatibilityEntry as IoCompatibilityEntry, CompatibilityReport as IoCompatibilityReport,
+    DetectionRequest, DocumentResources, ExportMode, ExportRequest,
+    FeatureLocation as IoFeatureLocation, FormatId, FormatSelection,
+    ModelOutcome as IoModelOutcome, RetentionOutcome as IoRetentionOutcome, SourceEnvelope,
+    builtin_registry_with_package_limits,
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
@@ -39,6 +41,7 @@ use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_cached, paginate_document_view,
 };
 use casual_doc_layout::flow::{ReviewView, node_plain_text};
+use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::model::{ModelPos, ModelRange};
@@ -16498,12 +16501,24 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
         )
         .map_err(|error| format!("import document: {error}"))?;
     let source_format = imported.format.format.as_str().to_owned();
-    let import_report_json = compatibility_report_json(&imported.report)?;
+    let mut report = imported.report;
     let document = imported.document;
     let resources = imported.resources;
     let source = imported.source;
 
     let shaper = ParleyShaper::new();
+    // The document's OWN faces first (`40-FONT-MANAGEMENT-DESIGN.md` §3.2:
+    // embedded → bundled → host-enumerated). De-obfuscating the `.odttf` streams
+    // and registering them under the family names `fontTable.xml` declares makes
+    // a run naming an embedded family shape and rasterize with the face the
+    // document carried, instead of a metric substitute. Must happen BEFORE
+    // pagination: line breaking and page count depend on the face's advances.
+    let embedded_fonts = register_embedded_fonts(&shaper, &document, |part| resources.get(part));
+    // Appended after the adapter's own (already sorted) entries, in
+    // `fontTable.xml` order — deterministic without re-sorting a report whose
+    // ordering the adapter owns.
+    report_embedded_font_failures(&mut report, &embedded_fonts);
+    let import_report_json = compatibility_report_json(&report)?;
     // One call: per-section geometry, flowed headers/footers, anchored drawings,
     // and page-number fields — the same entry point the native renderer uses.
     let layout = paginate_document(&document, &shaper);
@@ -16567,6 +16582,36 @@ struct CompatibilityLocationJson<'a> {
     part_name: Option<&'a str>,
     namespace: Option<&'a str>,
     local_name: Option<&'a str>,
+}
+
+/// Records every embedded (`.odttf`) face the engine could not use on the
+/// import compatibility report.
+///
+/// A rejected face silently falls back to the metric substitute, which is a
+/// visible fidelity change the host must be able to see — the repository
+/// contract is that unsupported data is preserved where safe or reported
+/// explicitly, never silently discarded. The feature id names the failure mode
+/// (`docx.font.embedded.malformed-font-key`, `…not-sfnt`, …) and the location
+/// carries the `.odttf` part name and the `w:embed*` element it came from.
+fn report_embedded_font_failures(
+    report: &mut IoCompatibilityReport,
+    outcome: &EmbeddedFontOutcome,
+) {
+    for failure in &outcome.failures {
+        report.entries.push(IoCompatibilityEntry {
+            feature: format!("docx.font.embedded.{}", failure.error.as_str()),
+            occurrences: 1,
+            location: IoFeatureLocation {
+                part_name: Some(failure.part_name.clone()),
+                namespace: None,
+                local_name: Some(failure.slot.to_owned()),
+            },
+            // The face is modeled and round-trips; what is lost is its USE, so
+            // the run renders in a substitute — a degraded, not omitted, mapping.
+            model_outcome: IoModelOutcome::Degraded,
+            retention_outcome: IoRetentionOutcome::Preserved,
+        });
+    }
 }
 
 fn compatibility_report_json(report: &IoCompatibilityReport) -> Result<String, String> {
@@ -19230,6 +19275,132 @@ mod tests {
         );
         assert_eq!(doc.page_count(), before);
         assert!(doc.missing_coverage().is_empty());
+    }
+
+    /// A package embedding one `.odttf` face, obfuscated with `font_key` —
+    /// `KEY` for a face the viewer can use, anything else to simulate a corrupt
+    /// stream the engine must refuse.
+    fn docx_with_embedded_font(font_key: &str) -> Vec<u8> {
+        use casual_doc_model::v1::{
+            Definitions, EmbeddedFace, EmbeddedFontSet, FontDescriptor, FontSig,
+        };
+
+        // ECMA-376 Part 1 §17.8.1: XOR the first 32 bytes with the fontKey's
+        // hex bytes reversed. Written out here so the fixture is produced
+        // independently of the engine's de-obfuscation.
+        let digits: Vec<u32> = font_key.chars().filter_map(|c| c.to_digit(16)).collect();
+        let key: Vec<u8> = digits
+            .chunks(2)
+            .map(|pair| (pair[0] * 16 + pair[1]) as u8)
+            .rev()
+            .collect();
+        let mut face = casual_doc_layout::fonts::LIBERATION_MONO_REGULAR.to_vec();
+        for (index, byte) in face.iter_mut().take(32).enumerate() {
+            *byte ^= key[index % 16];
+        }
+
+        let id = |n: u64| NodeId::from_parts(n, 77).unwrap();
+        // The document always declares the REAL key; only the stream changes,
+        // so the corrupt case is exactly "this face will not decode".
+        let document = Document::new(
+            id(1),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: id(10),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: id(11),
+                    properties: RunProperties::default(),
+                    text: "iiiWWW".to_owned(),
+                })],
+            })],
+            Definitions {
+                font_table: vec![FontDescriptor {
+                    name: "Opendoc Embedded Probe".to_owned(),
+                    alt_name: None,
+                    panose1: None,
+                    charset: None,
+                    family: None,
+                    pitch: None,
+                    sig: FontSig::default(),
+                    not_true_type: false,
+                    embedded: EmbeddedFontSet {
+                        regular: Some(EmbeddedFace {
+                            font_key: "{3EEE3167-E5B8-4798-AE48-EA6B71E31D4D}".to_owned(),
+                            subsetted: false,
+                            relationship_id: "rIdF1".to_owned(),
+                            part_name: "word/fonts/font1.odttf".to_owned(),
+                        }),
+                        ..EmbeddedFontSet::default()
+                    },
+                }],
+                ..Definitions::default()
+            },
+        )
+        .expect("the probe document is valid");
+
+        let mut resources = BTreeMap::new();
+        resources.insert("word/fonts/font1.odttf".to_owned(), face);
+        write_document(&document, &resources).expect("write the probe package")
+    }
+
+    /// FID-L-01 at the viewer boundary: opening a document that embeds its own
+    /// face de-obfuscates that face and serves it to the renderer, instead of
+    /// paginating with a substitute.
+    #[test]
+    fn opening_a_document_with_an_embedded_font_registers_and_serves_that_face() {
+        let doc = open_document(&docx_with_embedded_font(
+            "{3EEE3167-E5B8-4798-AE48-EA6B71E31D4D}",
+        ))
+        .expect("open a document with an embedded font");
+
+        let served: Vec<Vec<u8>> = doc
+            .shaper
+            .registry()
+            .snapshot()
+            .into_iter()
+            .map(|(_, face)| face.bytes.as_slice().to_vec())
+            .collect();
+        assert!(
+            served
+                .iter()
+                .any(|bytes| bytes.as_slice() == casual_doc_layout::fonts::LIBERATION_MONO_REGULAR),
+            "the de-obfuscated embedded face is in the registry the renderer \
+             rasterizes from",
+        );
+        assert!(
+            !doc.import_report_json().contains("docx.font.embedded."),
+            "a usable embedded face raises no finding: {}",
+            doc.import_report_json(),
+        );
+    }
+
+    /// A corrupt embedded stream must degrade to substitution *and* say so on
+    /// the import report the viewer surfaces — never panic, never tofu, never
+    /// a silent swap.
+    #[test]
+    fn a_corrupt_embedded_font_is_reported_and_does_not_block_opening() {
+        let doc = open_document(&docx_with_embedded_font(
+            "{00000000-1111-2222-3333-444444444444}",
+        ))
+        .expect("a corrupt embedded face must not stop the document opening");
+
+        assert!(
+            doc.page_count() >= 1,
+            "the document still paginates with a substitute",
+        );
+        assert!(
+            doc.shaper.registry().snapshot().is_empty(),
+            "the unusable face was not registered",
+        );
+        let report = doc.import_report_json();
+        assert!(
+            report.contains("docx.font.embedded.not-sfnt"),
+            "the failure reason reaches the host: {report}",
+        );
+        assert!(
+            report.contains("word/fonts/font1.odttf") && report.contains("w:embedRegular"),
+            "the finding names the part and the slot: {report}",
+        );
     }
 
     #[test]

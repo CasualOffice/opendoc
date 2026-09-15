@@ -5,6 +5,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  expectEditorFocused,
 } from "./fixtures.mjs";
 
 async function selectTypedMarker(page, marker) {
@@ -55,7 +56,7 @@ test("right-click preserves a text selection and exposes context-aware commands"
 
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
-  await expect(page.locator("#pages")).toBeFocused();
+  await expectEditorFocused(page);
   await expect(page.locator(".overlay .highlight")).toHaveCount(highlightsBefore);
   expect(consoleErrors).toEqual([]);
 });
@@ -103,7 +104,7 @@ test("Shift+F10 supports menu keyboard navigation and theme-aware surfaces", asy
     "paragraph.properties",
   );
   await page.keyboard.press("Escape");
-  await expect(page.locator("#pages")).toBeFocused();
+  await expectEditorFocused(page);
   expect(consoleErrors).toEqual([]);
 });
 

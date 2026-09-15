@@ -43,16 +43,63 @@ jobs:
             fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
             libreoffice-writer-nogui poppler-utils python3
           soffice --version
+          mkdir -p fixtures/oracle
           # Record the exact versions into the reference set for provenance.
           soffice --version > fixtures/oracle/.toolchain 2>/dev/null || true
+
+      - name: Record which faces fontconfig actually resolved
+        run: |
+          set -euo pipefail
+          # Installing a font package is not the same as LibreOffice using it.
+          # This records what fontconfig resolved, so a reference can never be
+          # produced by a silently substituted face without that being visible
+          # in the diff.
+          #
+          # Scope, stated honestly: this guards the PINNED LATIN faces only. It
+          # is NOT the explanation for the H2 residual — on the corpus fixture
+          # the Latin runs already agree with LibreOffice to the twip (our 24pt
+          # heading ends at 6919, LibreOffice's at 6919.04). The real gap is the
+          # fixture's CJK/Arabic line, which NO pinned face covers, so every
+          # environment substitutes differently (container 7933, macOS 6953,
+          # ours 6885). docs/94's font-parity premise is Latin-only; the test
+          # and the extractor both exclude uncoverable lines and compare the
+          # excluded count exactly, which is what actually closes that hole.
+          sudo fc-cache -f >/dev/null
+          : > fixtures/oracle/.fonts
+          status=0
+          for family in "Liberation Sans" "Liberation Serif" "Liberation Mono" \
+                        "Carlito" "Caladea"; do
+            resolved="$(fc-match "$family" family | head -n1)"
+            echo "$family => $resolved" | tee -a fixtures/oracle/.fonts
+            if [ "$resolved" != "$family" ]; then
+              echo "::error::fontconfig substituted '$resolved' for '$family' — the oracle would shape Latin text with the wrong face"
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Extract per-fixture geometry references
         run: |
           set -euo pipefail
           mkdir -p fixtures/oracle
           # (id, path) pairs mirror the fixtures the oracle_geometry test targets.
+          # Latin-only fixtures ONLY, and that is a requirement (see the
+          # ORACLE_FIXTURES doc comment in crates/casual-doc-render/tests/
+          # oracle_geometry.rs). H2 determinism rests on both renderers shaping
+          # with the same metric-compatible faces, which holds only for the code
+          # points those faces cover. Substituted text of a different width also
+          # changes where the rest of the paragraph WRAPS, so excluding the
+          # offending line is not enough — downstream all-Latin lines diverge too.
+          # real-producer-libreoffice.docx (CJK + Arabic) is deliberately absent:
+          # pointing the gate at it measured which fonts the container happened to
+          # substitute, not our fidelity.
           declare -A FIXTURES=(
-            [docx-real-producer-libreoffice]="fixtures/corpus/real-producer-libreoffice.docx"
+            [docx-real-producer-footnotes]="fixtures/corpus/real-producer-footnotes.docx"
+            [docx-real-producer-header-footer]="fixtures/corpus/real-producer-header-footer.docx"
+            [docx-real-producer-hyperlinks]="fixtures/corpus/real-producer-hyperlinks.docx"
+            [docx-real-producer-rich]="fixtures/corpus/real-producer-rich.docx"
+            [docx-real-producer-table-list]="fixtures/corpus/real-producer-table-list.docx"
+            [docx-real-producer-table-merges]="fixtures/corpus/real-producer-table-merges.docx"
           )
           for id in "${!FIXTURES[@]}"; do
             echo "== $id =="

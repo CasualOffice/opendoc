@@ -12,7 +12,13 @@
 // must keep its indent / list-demote / next-cell meaning. That behaviour was
 // verified correct in the 2026-08-09 editing audit and this must not disturb it,
 // so it is asserted here too.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  expectEditorFocused,
+} from "./fixtures.mjs";
 
 // A 1x1 PNG, so a SECOND object can be inserted. The fixture ships exactly one
 // object ("Picture 1 of 1"), and with one object every traversal assertion is
@@ -106,7 +112,10 @@ test("Tab from a text caret still indents rather than jumping to an object", asy
   // It did not become an object selection, and focus stayed on the editor
   // surface rather than escaping to the browser's own tab order.
   expect(await selectedNode(page)).toBeNull();
-  expect(await page.evaluate(() => document.activeElement?.id)).toBe("pages");
+  // Focus is owned by the editable proxy, not `#pages` — a non-editable div
+  // cannot accept text (docs/105 UX-001). The question this asserts is "is the
+  // editing surface focused", which is what the helper answers.
+  await expectEditorFocused(page);
 
   expect(consoleErrors).toEqual([]);
 });

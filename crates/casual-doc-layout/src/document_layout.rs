@@ -34,6 +34,19 @@
 //! is evaluated against that section's first page rather than only document page
 //! one. Per-section balancing of the last column page remains a documented
 //! deferral (see [`crate::columns`]).
+//!
+//! Two consequences of keying on `Page::section` are worth naming, because they
+//! decide *which pages a header appears on*:
+//!
+//! - A blank page inserted for `evenPage`/`oddPage` parity is charged to the
+//!   **preceding** section (see [`crate::columns`]), so it keeps that section's
+//!   running content and that section's page geometry — which is Word's behavior
+//!   and the reason the pad is emitted before the new section's config is
+//!   entered.
+//! - When a `continuous` section shares a page with the section before it, the
+//!   page is charged to the **last** section that placed content on it, so that
+//!   section's bands are the ones painted. One page has one header, so some rule
+//!   has to break the tie; this one is recorded rather than accidental.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,7 +59,8 @@ use casual_doc_model::v1::{
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
 use crate::block::{BlockFragment, CellFragment, CellVerticalMerge};
 use crate::columns::{
-    ColumnLayout, SectionRun, column_layout, paginate_columns, section_starts_new_page,
+    ColumnLayout, SectionRun, column_layout, paginate_columns, section_start_parity,
+    section_starts_new_page,
 };
 use crate::flow::{
     ParagraphFloatExclusion, ParagraphFloatExclusions, ReviewView, build_galley_cached,
@@ -104,7 +118,20 @@ pub fn document_page_config(document: &Document) -> PageConfig {
 }
 
 /// The zero-band [`PageConfig`] for one section's page box and margins.
+///
+/// The binding gutter (`w:pgMar/@w:gutter`) is folded into the **inside**
+/// margin here — the start edge on a recto page — which is where Word adds it.
+/// Folding it once, at the single place page geometry is derived, is what puts
+/// it into the content area, the header/footer bands, and the column geometry
+/// together (`docs/105` FID-L-16). The per-page half of two-sided geometry
+/// (`w:mirrorMargins`, which swaps the inside and outside margins on verso
+/// pages) is applied by [`crate::columns`] and [`mirrored_page_config`].
+///
+/// Not closed: `w:gutterAtTop` (the gutter on the top edge instead of the
+/// inside edge) is a `w:settings` flag the importer does not read yet, so the
+/// gutter always lands on the inside edge.
 fn section_page_config(section: &SectionBoundary) -> PageConfig {
+    let gutter = Twip(section.page_margins.gutter_twips.unwrap_or(0).max(0));
     PageConfig {
         section: section.id,
         page_size: Size::new(
@@ -113,7 +140,7 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
         ),
         margin_top: Twip(section.page_margins.top_twips),
         margin_bottom: Twip(section.page_margins.bottom_twips),
-        margin_start: Twip(section.page_margins.start_twips),
+        margin_start: Twip(section.page_margins.start_twips) + gutter,
         margin_end: Twip(section.page_margins.end_twips),
         // The `w:header`/`w:footer` distances the header/footer bands nest at,
         // falling back to Word's 720-twip default when the attribute is absent.
@@ -135,11 +162,21 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
 /// uses (so a header holding a paragraph, table, or image lays out identically),
 /// plus the two flags that drive per-page variant selection.
 ///
+/// `section` must already carry this section's **effective** references — the
+/// per-variant link-to-previous merge in [`build_section_plans`] — because this
+/// function reads `section.headers`/`section.footers` verbatim and performs no
+/// inheritance of its own.
+///
 /// Each [`HeaderFooterRef`](casual_doc_model::v1::HeaderFooterRef) is resolved
 /// against the header/footer definition store; a reference that does not resolve
-/// contributes nothing (an empty variant falls back to the default at selection
-/// time, matching Word). `content_width` is the body content width (page width
-/// minus the side margins) — the same width the bands are laid out at.
+/// contributes nothing, leaving that variant empty — which renders as a blank
+/// band, not as a fall-back to `default` (see
+/// [`HeaderFooter::select`](crate::running::HeaderFooter::select)).
+///
+/// `content_width` is **this** section's body content width (its own page width
+/// minus its own side margins), so an inherited header is re-flowed at the
+/// inheriting section's width: an orientation change mid-document re-breaks the
+/// band's lines at the new width instead of keeping the donor section's.
 fn build_running_content(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -192,8 +229,21 @@ struct SectionPlan {
 }
 
 /// Resolves running-content inheritance and geometry for every section before
-/// body flow. In OOXML an omitted reference links to the previous section; an
-/// explicit reference (including one to an empty part) replaces that variant.
+/// body flow.
+///
+/// In OOXML "link to previous" is the *absence* of a reference: a section that
+/// omits a `w:headerReference`/`w:footerReference` of some type inherits the
+/// previous section's for that type, and an explicit reference (including one to
+/// an empty part) replaces it. Carrying `effective_headers`/`effective_footers`
+/// forward across the whole section list makes that inheritance **transitive** —
+/// section three inherits from section one through a silent section two — and
+/// [`merge_running_refs`] makes it **per variant**, so a section that declares
+/// only `default` still inherits the chain's `first` and `even`. Nothing shows
+/// only when no earlier section declared that type either.
+///
+/// Geometry is resolved here too, per section: each plan's [`PageConfig`] comes
+/// from its *own* `w:pgSz`/`w:pgMar`/`w:headerDistance`, and the running content
+/// is flowed at that section's content width.
 fn build_section_plans(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -311,6 +361,8 @@ fn build_section_runs_inner(
             galley,
             column_galleys: Vec::new(),
             starts_new_page: true,
+            start_parity: None,
+            mirror_margins: document.definitions().settings.mirror_margins,
         }];
     }
 
@@ -556,6 +608,8 @@ fn push_section_run(
         galley,
         column_galleys,
         starts_new_page: section_starts_new_page(boundary),
+        start_parity: section_start_parity(boundary),
+        mirror_margins: document.definitions().settings.mirror_margins,
     });
 }
 
@@ -727,12 +781,16 @@ fn finish_pagination_pass(
     // first so its fields exist to stamp, then the field pass resolves every
     // `PAGE`/`NUMPAGES` (body and running content), then anchored drawings are
     // placed onto the pages their paragraphs landed on.
+    let mirror_margins = document.definitions().settings.mirror_margins;
     let mut section_page_numbers: BTreeMap<SectionId, u32> = BTreeMap::new();
     for page in &mut layout.pages {
         let section_page_number = section_page_numbers.entry(page.section).or_default();
         *section_page_number = section_page_number.saturating_add(1);
         let plan = plan_for_section(plans, page.section);
-        place_running_content_on_page(page, &plan.running, &plan.config, *section_page_number);
+        // The header/footer bands span the text width, so they mirror with the
+        // body on a verso page of a two-sided document.
+        let config = mirrored_page_config(&plan.config, mirror_margins, page.number);
+        place_running_content_on_page(page, &plan.running, &config, *section_page_number);
         // Resolve this section's `w:pgBorders` into a per-page frame, off the hot
         // path like the running content above (docs/46 §F6c).
         page.page_borders = crate::page_border::resolve_page_borders(
@@ -757,6 +815,23 @@ fn finish_pagination_pass(
     resolve_anchored_fields_labeled(&mut layout, &page_labels, shaper);
 
     layout
+}
+
+/// The physical page geometry of page `number` under `w:mirrorMargins`: on a
+/// verso (even) page Word swaps the inside and outside margins, so everything
+/// aligned to the text width — the body band and the header/footer bands —
+/// moves with them. The binding gutter is already folded into the inside margin
+/// by [`section_page_config`], so it travels with the swap (`docs/105`
+/// FID-L-16).
+///
+/// A document that does not mirror (the overwhelming majority) gets the section
+/// geometry back unchanged, so this is inert on the common path.
+fn mirrored_page_config(config: &PageConfig, mirror_margins: bool, number: u32) -> PageConfig {
+    let mut config = *config;
+    if mirror_margins && number.is_multiple_of(2) {
+        core::mem::swap(&mut config.margin_start, &mut config.margin_end);
+    }
+    config
 }
 
 /// Applies each section's `w:vAlign` to its pages: shifts the placed body
@@ -1051,6 +1126,11 @@ fn build_section_runs_cached(
         galley,
         column_galleys: Vec::new(),
         starts_new_page: true,
+        // The cached fast path is the single-trailing-section body, which is the
+        // document's *first* section: it opens page 1 and can never need a
+        // parity pad (there is no page before it to pad after).
+        start_parity: None,
+        mirror_margins: document.definitions().settings.mirror_margins,
     }]
 }
 

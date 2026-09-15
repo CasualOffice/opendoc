@@ -1,7 +1,13 @@
 // Guards for a batch of fixes that shipped without any (docs/104 HF-059, HF-065,
 // HF-074, HF-076). They share one shape: a capability existed, and the user
 // could not reach it or could not tell it had failed.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  expectEditorFocused,
+} from "./fixtures.mjs";
 
 async function openContextMenu(page) {
   await gotoEditor(page);
@@ -98,7 +104,7 @@ test("the first Tab reaches a skip link that lands in the document", async ({
   await page.keyboard.press("Enter");
   // The link hands over to the editing surface itself, which is already a tab
   // stop — landing on the chrome again would defeat the whole point.
-  await expect(page.locator("#pages")).toBeFocused();
+  await expectEditorFocused(page);
 
   expect(consoleErrors).toEqual([]);
 });

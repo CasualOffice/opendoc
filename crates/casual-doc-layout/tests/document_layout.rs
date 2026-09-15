@@ -1391,3 +1391,100 @@ fn section_valign_positions_body_content_in_the_content_area() {
         "center sits between top ({top_y}) and bottom ({bottom_y}), got {center_y}"
     );
 }
+
+/// Word's "link to previous": a section that declares NO header/footer reference
+/// of a given type inherits the previous section's, and only a document whose
+/// *first* section lacks one shows nothing. Reference absence IS the link
+/// (docs/18 and `webapp/src/fidelity.js` both state this as the model).
+///
+/// Reported scenario: a document where page 5 changes orientation — so a section
+/// break sits before it — and the header edited on page 3 does not appear on
+/// page 5 or after. That is this rule missing at layout time: `build_running_content`
+/// resolved each section purely from its own `headers`/`footers`, so the second
+/// section got an EMPTY band and no amount of editing the first section's header
+/// could ever show there.
+#[test]
+fn a_section_without_its_own_header_inherits_the_previous_sections() {
+    let shaper = ParleyShaper::new();
+
+    let mut headers = DefinitionMap::default();
+    headers.insert(
+        HeaderFooterId::new(node(300)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(310, vec![run(311, "Inherited header")])],
+        },
+    );
+    let mut footers = DefinitionMap::default();
+    footers.insert(
+        HeaderFooterId::new(node(400)),
+        ModelHeaderFooter {
+            blocks: vec![paragraph(410, vec![run(411, "Inherited footer")])],
+        },
+    );
+
+    // Section 1: portrait, owns the header and footer.
+    let first = section(
+        9,
+        (12_240, 15_840),
+        1_440,
+        vec![href(HeaderFooterKind::Default, 300)],
+        vec![href(HeaderFooterKind::Default, 400)],
+        false,
+    );
+    // Section 2: LANDSCAPE, and declares no reference of its own — exactly what
+    // Word writes when the band is still linked to the previous section.
+    let second = section(10, (15_840, 12_240), 1_440, vec![], vec![], false);
+
+    let body = vec![
+        BlockNode::Paragraph(Paragraph {
+            id: node(100),
+            properties: ParagraphProperties {
+                section_break: Some(first.id),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![run(101, "portrait body")],
+        }),
+        paragraph(110, vec![run(111, "landscape body")]),
+    ];
+
+    let document = Document::new(
+        node(1),
+        body,
+        Definitions {
+            sections: vec![first, second],
+            headers,
+            footers,
+            ..Definitions::default()
+        },
+    )
+    .unwrap();
+
+    let layout = paginate_document(&document, &shaper);
+    assert!(
+        layout.page_count() >= 2,
+        "the section break produces a second page (got {})",
+        layout.page_count()
+    );
+
+    // The orientation really did change, so this is the reported configuration.
+    let last = layout.pages.last().expect("a last page");
+    assert!(
+        last.page_size.width > last.page_size.height,
+        "the second section is landscape ({:?})",
+        last.page_size
+    );
+
+    for (index, page) in layout.pages.iter().enumerate() {
+        assert!(
+            !page.header.is_empty(),
+            "page {} has no header; a section that declares no reference must \
+             inherit the previous section's (Word's link-to-previous)",
+            index + 1
+        );
+        assert!(
+            !page.footer.is_empty(),
+            "page {} has no footer; link-to-previous applies to footers too",
+            index + 1
+        );
+    }
+}

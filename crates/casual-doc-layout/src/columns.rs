@@ -17,11 +17,22 @@
 //! its column width, and paginates them in order while **carrying the page cursor
 //! across section boundaries**:
 //!
-//! - a `nextPage`/`evenPage`/`oddPage` (and the unspecified default) section starts
-//!   a fresh page;
+//! - a `nextPage` (and the unspecified default) section starts a fresh page;
+//! - an `evenPage`/`oddPage` section starts a fresh page **of that parity**,
+//!   padding with one blank page when the next page would have the wrong one
+//!   (`docs/105` FID-L-03) — see `ColPaginator::pad_to_parity`;
 //! - a `continuous` (or `nextColumn`) section continues on the *same* page, its
 //!   column band beginning just below the previous section's deepest content — the
 //!   common, hard "column-set change mid-page" case the SDS exercises.
+//!
+//! ## Two-sided (bound) geometry
+//!
+//! The binding gutter (`w:pgMar/@w:gutter`) is folded into the inside margin when
+//! the [`PageConfig`] is derived, so it is already part of the content area and
+//! the column x positions. `w:mirrorMargins` is the per-page half of that: on a
+//! verso (even) page Word swaps the inside and outside margins, which moves the
+//! whole body band horizontally without changing its width. This paginator
+//! applies that shift as it emits each page (`docs/105` FID-L-16).
 //!
 //! ## Documented approximations (deferred fidelity)
 //!
@@ -44,7 +55,9 @@ use casual_doc_model::v1::{SectionBoundary, SectionColumns};
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::page::{ColumnSeparator, FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
-use crate::paginate::{PageConfig, build_page, make_row_chunk, slice_paragraph, split_cells};
+use crate::paginate::{
+    PageConfig, build_blank_page, build_page, make_row_chunk, slice_paragraph, split_cells,
+};
 use crate::text::LineLayout;
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -210,6 +223,15 @@ pub struct SectionRun {
     /// `true` when the section starts on a fresh page (`nextPage`/`evenPage`/
     /// `oddPage`/default); `false` for `continuous`/`nextColumn`.
     pub starts_new_page: bool,
+    /// The page parity the section must start on (`w:type="evenPage"` /
+    /// `"oddPage"`), or `None` for every other start type. When the next page
+    /// has the wrong parity the paginator inserts one blank page before the
+    /// section, exactly as Word does.
+    pub start_parity: Option<PageParity>,
+    /// `w:mirrorMargins` — the document prints two-sided, so the inside and
+    /// outside margins swap on verso (even) pages. A document setting rather
+    /// than a section one, carried per run because page geometry is per section.
+    pub mirror_margins: bool,
 }
 
 impl SectionRun {
@@ -237,6 +259,41 @@ pub fn section_starts_new_page(section: &SectionBoundary) -> bool {
         section.section_type,
         Some(SectionType::Continuous | SectionType::NextColumn)
     )
+}
+
+/// The parity of a page number — which side of a two-sided sheet it falls on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PageParity {
+    /// An even page number (the verso, left-hand side of a spread).
+    Even,
+    /// An odd page number (the recto, right-hand side of a spread).
+    Odd,
+}
+
+impl PageParity {
+    /// Whether the (1-based) page `number` already has this parity.
+    #[must_use]
+    pub fn matches(self, number: u32) -> bool {
+        match self {
+            Self::Even => number.is_multiple_of(2),
+            Self::Odd => !number.is_multiple_of(2),
+        }
+    }
+}
+
+/// The page parity a [`SectionBoundary`] must start on: `w:type="evenPage"` and
+/// `"oddPage"` demand one, every other start type (including the `nextPage`
+/// default) accepts whichever page comes next.
+#[must_use]
+pub fn section_start_parity(section: &SectionBoundary) -> Option<PageParity> {
+    use casual_doc_model::v1::SectionType;
+    match section.section_type {
+        Some(SectionType::EvenPage) => Some(PageParity::Even),
+        Some(SectionType::OddPage) => Some(PageParity::Odd),
+        Some(SectionType::NextPage | SectionType::Continuous | SectionType::NextColumn) | None => {
+            None
+        }
+    }
 }
 
 /// Paginates an ordered list of section runs into a single [`PaginatedLayout`],
@@ -275,7 +332,11 @@ struct ColPaginator {
     placed: Vec<PlacedFragment>,
     /// The current section's page geometry (fixed while its run is processed).
     config: PageConfig,
-    /// The current section's body content area.
+    /// The document mirrors its margins for two-sided printing
+    /// (`w:mirrorMargins`), so verso pages swap the inside and outside margins.
+    mirror_margins: bool,
+    /// The current section's body content area, already shifted for the parity
+    /// of the page being built when the document mirrors its margins.
     content: Rect,
     /// The current section's column geometries.
     columns: Vec<ColumnGeom>,
@@ -328,6 +389,7 @@ impl ColPaginator {
                 header_height: Twip::ZERO,
                 footer_height: Twip::ZERO,
             },
+            mirror_margins: false,
             content: Rect::new(
                 Point::new(Twip::ZERO, Twip::ZERO),
                 Size::new(Twip::ZERO, Twip::ZERO),
@@ -364,8 +426,17 @@ impl ColPaginator {
         } else if !self.placed.is_empty() {
             self.close_band(self.page_max_y);
         }
+        // `w:type="evenPage"`/`"oddPage"`: pad with a blank page when the page
+        // this section would open on has the wrong parity. Emitted *before* the
+        // new geometry is adopted below, because Word charges the blank to the
+        // preceding section — it keeps that section's page setup and running
+        // content (`docs/105` FID-L-03).
+        if let Some(parity) = run.start_parity {
+            self.pad_to_parity(parity);
+        }
 
         self.config = run.config;
+        self.mirror_margins = run.mirror_margins;
         self.content = self.current_content_area();
         self.columns = run.layout.columns.clone();
         self.separator = run.layout.separator;
@@ -430,6 +501,54 @@ impl ColPaginator {
             }
             i = j;
         }
+    }
+
+    /// Emits the blank page an `evenPage`/`oddPage` section needs when the page
+    /// it would otherwise open on has the wrong parity (`docs/105` FID-L-03).
+    ///
+    /// At most one page is ever inserted, since parity alternates. Nothing is
+    /// inserted at the very start of the document: there is no preceding page to
+    /// pad after, and Word does not open a document with a blank sheet. The
+    /// inserted page belongs to the **preceding** section — it keeps that
+    /// section's [`PageConfig`] and, through [`Page::section`], is given that
+    /// section's header/footer by the running-content pass, which is what Word
+    /// paints on it.
+    fn pad_to_parity(&mut self, parity: PageParity) {
+        // A parity section always starts a new page, so the caller has already
+        // closed any open page: nothing is in flight here.
+        debug_assert!(self.placed.is_empty(), "parity pad with an open page");
+        let Some(anchor) = self.pages.last().map(|page| page.end) else {
+            return;
+        };
+        let next_number = self.pages.len() as u32 + 1;
+        if parity.matches(next_number) {
+            return;
+        }
+        let flow = FlowSpan {
+            start: self.at,
+            end: self.at,
+        };
+        let content = self.current_content_area();
+        let page = build_blank_page(self.pages.len(), &self.config, content, flow, anchor);
+        self.pages.push(page);
+        // A blank page carries no band, so no separator rule can be owed on it.
+        self.page_separators.clear();
+        self.reset_to_fresh_page();
+    }
+
+    /// Whether the page currently being built is a verso (even) page of a
+    /// document that mirrors its margins — where Word swaps the inside and
+    /// outside margins for two-sided printing.
+    fn building_verso(&self) -> bool {
+        self.mirror_margins && (self.pages.len() as u32 + 1).is_multiple_of(2)
+    }
+
+    /// The horizontal offset the page being built carries relative to the
+    /// section's recto geometry. Column x positions were resolved against the
+    /// recto content area, so every placement adds this; it is zero for every
+    /// page of a document that does not mirror its margins.
+    fn x_shift(&self) -> Twip {
+        self.content.origin.x - self.config.content_area().origin.x
     }
 
     /// Whether nothing has been placed yet on the current fresh page (guards
@@ -561,7 +680,10 @@ impl ColPaginator {
             self.page_start = self.at;
         }
         let col = self.column();
-        let rect = Rect::new(Point::new(col.x, self.y), Size::new(width, height));
+        let rect = Rect::new(
+            Point::new(col.x + self.x_shift(), self.y),
+            Size::new(width, height),
+        );
         self.placed.push(PlacedFragment {
             fragment,
             rect,
@@ -829,12 +951,13 @@ impl ColPaginator {
         if !self.separator || self.columns.len() < 2 || bottom.raw() <= self.band_top.raw() {
             return;
         }
+        let shift = self.x_shift().raw();
         for pair in self.columns.windows(2) {
             // The gap between the left column's trailing edge and the right column's
             // leading edge; the rule sits at its horizontal center.
             let gap_left = pair[0].x.raw() + pair[0].width.raw();
             let gap_right = pair[1].x.raw();
-            let x = Twip((gap_left + gap_right) / 2);
+            let x = Twip((gap_left + gap_right) / 2 + shift);
             self.page_separators.push(ColumnSeparator {
                 x,
                 top: self.band_top,
@@ -866,6 +989,14 @@ impl ColPaginator {
             // A page with no content carries no separators.
             self.page_separators.clear();
         }
+        self.reset_to_fresh_page();
+    }
+
+    /// Resets the placement cursor to a fresh full-height column band at the
+    /// content top of the page that comes next — re-deriving the content area,
+    /// since both the page-local footnote reservation and (under mirrored
+    /// margins) the horizontal band position depend on the page's index.
+    fn reset_to_fresh_page(&mut self) {
         self.col = 0;
         self.content = self.current_content_area();
         self.band_top = self.content.origin.y;
@@ -876,6 +1007,13 @@ impl ColPaginator {
 
     fn current_content_area(&self) -> Rect {
         let mut content = self.config.content_area();
+        if self.building_verso() {
+            // Mirrored margins: the inside margin (which carries the binding
+            // gutter) moves to the right-hand edge on a verso page, so the band
+            // starts at the outside margin instead. Its width is unchanged, which
+            // is why pagination itself is parity-independent.
+            content.origin.x = self.config.margin_end;
+        }
         let reserved = self
             .reservations
             .get(self.pages.len())
@@ -1013,6 +1151,8 @@ mod tests {
             galley,
             column_galleys: Vec::new(),
             starts_new_page: true,
+            start_parity: None,
+            mirror_margins: false,
         }
     }
 
@@ -1085,6 +1225,8 @@ mod tests {
             galley: vec![paragraph(1, Twip(1_000))],
             column_galleys: Vec::new(),
             starts_new_page: true,
+            start_parity: None,
+            mirror_margins: false,
         };
         let second = SectionRun {
             config,
@@ -1092,6 +1234,8 @@ mod tests {
             galley: vec![paragraph(2, Twip(1_000))],
             column_galleys: Vec::new(),
             starts_new_page: false,
+            start_parity: None,
+            mirror_margins: false,
         };
         let layout = paginate_columns(&[first, second]);
         assert_eq!(
@@ -1159,6 +1303,8 @@ mod tests {
             galley: vec![canonical],
             column_galleys: vec![vec![narrow], vec![wide]],
             starts_new_page: true,
+            start_parity: None,
+            mirror_margins: false,
         }])
         .pages;
 
@@ -1248,6 +1394,8 @@ mod tests {
             galley,
             column_galleys: Vec::new(),
             starts_new_page: true,
+            start_parity: None,
+            mirror_margins: false,
         };
         let layout = paginate_columns(&[run]);
         assert_eq!(layout.pages.len(), 1);
@@ -1273,6 +1421,189 @@ mod tests {
         assert!(
             layout.pages.iter().all(|p| p.separators.is_empty()),
             "no separator rules without w:cols/@w:sep"
+        );
+    }
+
+    /// A single-column run of one short paragraph, with an explicit start rule.
+    fn parity_run(
+        config: PageConfig,
+        id: u64,
+        start_parity: Option<PageParity>,
+        mirror_margins: bool,
+    ) -> SectionRun {
+        SectionRun {
+            config,
+            layout: ColumnLayout::single(config.content_area()),
+            galley: vec![paragraph(id, Twip(400))],
+            column_galleys: Vec::new(),
+            starts_new_page: true,
+            start_parity,
+            mirror_margins,
+        }
+    }
+
+    #[test]
+    fn a_parity_section_at_the_document_start_gets_no_leading_blank_page() {
+        let config = letter_config();
+        // Word does not open a document with a blank sheet, even when its first
+        // section declares `w:type="evenPage"`.
+        let layout = paginate_columns(&[parity_run(config, 1, Some(PageParity::Even), false)]);
+        assert_eq!(layout.pages.len(), 1);
+        assert_eq!(layout.pages[0].placed.len(), 1);
+    }
+
+    #[test]
+    fn a_parity_blank_page_stays_with_the_preceding_section() {
+        let first = letter_config();
+        let mut second = letter_config();
+        second.section = SectionId::new(NodeId::from_parts(77, 1).unwrap());
+        let layout = paginate_columns(&[
+            parity_run(first, 1, None, false),
+            parity_run(second, 2, Some(PageParity::Odd), false),
+        ]);
+
+        assert_eq!(layout.pages.len(), 3, "the parity blank page is missing");
+        let blank = &layout.pages[1];
+        assert!(blank.placed.is_empty());
+        assert_eq!(
+            blank.section, first.section,
+            "the blank page belongs to the section it follows, so that section's \
+             header/footer is painted on it"
+        );
+        assert_eq!(blank.number, 2);
+        // The blank collapses onto the last model position before it, keeping the
+        // page model ranges monotonic for hit testing.
+        assert_eq!(blank.start, blank.end);
+        assert_eq!(blank.start, layout.pages[0].end);
+        assert_eq!(layout.pages[2].section, second.section);
+    }
+
+    #[test]
+    fn section_start_parity_maps_only_the_two_parity_break_types() {
+        let mut section = SectionBoundary {
+            id: SectionId::new(NodeId::from_parts(5, 1).unwrap()),
+            page_size: casual_doc_model::v1::PageSize {
+                width_twips: 12_240,
+                height_twips: 15_840,
+            },
+            page_margins: casual_doc_model::v1::PageMargins {
+                top_twips: 1_440,
+                bottom_twips: 1_440,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+                gutter_twips: None,
+            },
+            columns: SectionColumns {
+                count: 1,
+                space_twips: None,
+                separator: None,
+                equal_width: None,
+                columns: Vec::new(),
+            },
+            headers: Vec::new(),
+            footers: Vec::new(),
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: Default::default(),
+            doc_grid: Default::default(),
+            orientation: None,
+            paper_source: Default::default(),
+            page_borders: Default::default(),
+            line_numbering: Default::default(),
+            footnote_props: Default::default(),
+            endnote_props: Default::default(),
+            text_direction: None,
+            bidi: false,
+            section_change: None,
+        };
+        use casual_doc_model::v1::SectionType;
+        for (start_type, expected) in [
+            (None, None),
+            (Some(SectionType::NextPage), None),
+            (Some(SectionType::Continuous), None),
+            (Some(SectionType::NextColumn), None),
+            (Some(SectionType::EvenPage), Some(PageParity::Even)),
+            (Some(SectionType::OddPage), Some(PageParity::Odd)),
+        ] {
+            section.section_type = start_type;
+            assert_eq!(section_start_parity(&section), expected, "{start_type:?}");
+        }
+    }
+
+    #[test]
+    fn mirrored_margins_move_the_band_to_the_outside_edge_on_verso_pages() {
+        let mut config = letter_config();
+        // Inside 1440 (the gutter is already folded in upstream), outside 2880.
+        config.margin_end = Twip(2_880);
+        let tall = config.content_area().size.height.raw();
+        let galley = vec![
+            paragraph(1, Twip(tall)),
+            paragraph(2, Twip(400)),
+            paragraph(3, Twip(400)),
+        ];
+        let run = SectionRun {
+            config,
+            layout: ColumnLayout::single(config.content_area()),
+            galley,
+            column_galleys: Vec::new(),
+            starts_new_page: true,
+            start_parity: None,
+            mirror_margins: true,
+        };
+        let layout = paginate_columns(&[run]);
+        assert_eq!(layout.pages.len(), 2);
+        assert_eq!(layout.pages[0].content_area.origin.x, config.margin_start);
+        assert_eq!(layout.pages[0].placed[0].rect.origin.x, config.margin_start);
+        assert_eq!(
+            layout.pages[1].content_area.origin.x, config.margin_end,
+            "the verso band starts at the outside margin"
+        );
+        assert_eq!(
+            layout.pages[1].placed[0].rect.origin.x, config.margin_end,
+            "placed content moves with the band"
+        );
+        assert_eq!(
+            layout.pages[1].content_area.size.width,
+            layout.pages[0].content_area.size.width
+        );
+    }
+
+    #[test]
+    fn mirrored_margins_move_the_column_separator_rules_too() {
+        let mut config = letter_config();
+        config.margin_end = Twip(2_880);
+        let content = config.content_area();
+        let cols = SectionColumns {
+            count: 2,
+            space_twips: Some(720),
+            separator: Some(true),
+            equal_width: None,
+            columns: Vec::new(),
+        };
+        let tall = content.size.height.raw();
+        let run = SectionRun {
+            config,
+            layout: column_layout(&cols, content),
+            galley: vec![
+                paragraph(1, Twip(tall)),
+                paragraph(2, Twip(tall)),
+                paragraph(3, Twip(400)),
+            ],
+            column_galleys: Vec::new(),
+            starts_new_page: true,
+            start_parity: None,
+            mirror_margins: true,
+        };
+        let layout = paginate_columns(&[run]);
+        assert_eq!(layout.pages.len(), 2);
+        let shift = config.margin_end.raw() - config.margin_start.raw();
+        assert_eq!(
+            layout.pages[1].separators[0].x.raw(),
+            layout.pages[0].separators[0].x.raw() + shift,
+            "the inter-column rule mirrors with the columns it divides"
         );
     }
 }
