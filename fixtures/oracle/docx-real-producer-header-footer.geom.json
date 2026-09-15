@@ -1,0 +1,18 @@
+{
+  "schema": 2,
+  "pages": [
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1136,
+        10,
+        2961,
+        16838
+      ],
+      "excludedLines": 1
+    }
+  ]
+}
