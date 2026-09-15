@@ -15,7 +15,9 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use fontique::{Blob, Script};
+// `FontStyle`/`FontWeight` are the same `parlance` types `parley` re-exports
+// below; taking them from one place keeps the two imports from colliding.
+use fontique::{Blob, FontInfoOverride, Script};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
     InlineBox, InlineBoxKind, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
@@ -175,6 +177,60 @@ impl ParleyShaper {
         let registered = {
             let mut fonts = self.fonts.borrow_mut();
             fonts.collection.register_fonts(blob.clone(), None)
+        };
+        let mut ids = Vec::new();
+        for (_family, infos) in &registered {
+            for info in infos {
+                ids.push(self.registry.intern(blob.clone(), info.index()));
+            }
+        }
+        ids
+    }
+
+    /// Registers a de-obfuscated document-embedded face under the family name the
+    /// document declares (`w:font/@w:name`), with the weight/style the
+    /// `w:embed*` slot it came from implies.
+    ///
+    /// This is the seam that puts document-embedded faces at the *top* of the
+    /// fallback chain (`40-FONT-MANAGEMENT-DESIGN.md` §3.2): family selection
+    /// prefers a run's requested family whenever the collection knows that name,
+    /// so registering the embedded face under the declared name makes the
+    /// document's own face beat the bundled metric substitute. The family name is
+    /// overridden rather than read from the face's own `name` table because a
+    /// subsetted embedded face frequently carries a different internal name than
+    /// the family the document references; the document's declaration is what
+    /// runs actually name.
+    ///
+    /// Returns the [`FontId`] of each registered face, empty if the collection
+    /// rejected the bytes.
+    pub fn register_embedded_face(
+        &self,
+        bytes: Vec<u8>,
+        family: &str,
+        bold: bool,
+        italic: bool,
+    ) -> Vec<FontId> {
+        let blob = Blob::new(Arc::new(bytes));
+        let registered = {
+            let mut fonts = self.fonts.borrow_mut();
+            fonts.collection.register_fonts(
+                blob.clone(),
+                Some(FontInfoOverride {
+                    family_name: Some(family),
+                    width: None,
+                    style: Some(if italic {
+                        FontStyle::Italic
+                    } else {
+                        FontStyle::Normal
+                    }),
+                    weight: Some(if bold {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::NORMAL
+                    }),
+                    axes: None,
+                }),
+            )
         };
         let mut ids = Vec::new();
         for (_family, infos) in &registered {

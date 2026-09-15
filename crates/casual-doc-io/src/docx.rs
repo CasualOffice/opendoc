@@ -108,7 +108,44 @@ impl FormatImporter for DocxAdapter {
                 Err(_) => {}
             }
         }
+        // Embedded font faces (`.odttf`). The model carries only the reference
+        // metadata (font key, relationship, part name), exactly as it does for
+        // images, so the obfuscated bytes must be carried alongside or the
+        // document's own faces are unreachable: layout de-obfuscates them from
+        // here (`casual-doc-layout` `font_registry::register_embedded_fonts`),
+        // and the semantic writer re-emits the `.odttf` parts from the same map
+        // — without this it wrote empty parts.
+        let mut unreadable_fonts: Vec<String> = Vec::new();
+        for font in &imported.document.definitions().font_table {
+            for (_, face) in font.embedded.faces() {
+                if resources.get(&face.part_name).is_some() {
+                    continue;
+                }
+                match package.read_part(&face.part_name) {
+                    Ok(bytes) => {
+                        resources.insert(face.part_name.clone(), bytes);
+                    }
+                    Err(_) if !unreadable_fonts.contains(&face.part_name) => {
+                        unreadable_fonts.push(face.part_name.clone());
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
         let mut report = convert_report(&imported.report);
+        for part_name in unreadable_fonts {
+            report.entries.push(CompatibilityEntry {
+                feature: "docx.font.embedded.unreadable-part".to_owned(),
+                occurrences: 1,
+                location: FeatureLocation {
+                    part_name: Some(part_name),
+                    namespace: None,
+                    local_name: None,
+                },
+                model_outcome: ModelOutcome::Omitted,
+                retention_outcome: RetentionOutcome::NotRetained,
+            });
+        }
         for part_name in unreadable {
             report.entries.push(CompatibilityEntry {
                 feature: "docx.media.unreadable-part".to_owned(),
@@ -362,6 +399,114 @@ mod tests {
         );
         assert_eq!(reported.model_outcome, ModelOutcome::Omitted);
         assert_eq!(reported.retention_outcome, RetentionOutcome::NotRetained);
+    }
+
+    /// Builds a package whose `fontTable.xml` embeds one `.odttf` face.
+    /// `include_face` controls whether the `.odttf` part is actually in the
+    /// archive, so the same builder produces the present and the missing case.
+    fn package_with_embedded_font(include_face: bool, face_bytes: &[u8]) -> Vec<u8> {
+        use std::io::{Cursor, Write as _};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="Embedded Probe"/></w:rPr><w:t>probe</w:t></w:r></w:p></w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/></Relationships>"#;
+        let font_table = br#"<w:fonts xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:font w:name="Embedded Probe"><w:embedRegular r:id="rIdF1" w:fontKey="{3EEE3167-E5B8-4798-AE48-EA6B71E31D4D}"/></w:font></w:fonts>"#;
+        let font_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdF1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.odttf"/></Relationships>"#;
+
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/document.xml", document.as_slice()),
+            ("word/_rels/document.xml.rels", doc_rels.as_slice()),
+            ("word/fontTable.xml", font_table.as_slice()),
+            ("word/_rels/fontTable.xml.rels", font_rels.as_slice()),
+        ];
+        if include_face {
+            parts.push(("word/fonts/font1.odttf", face_bytes));
+        }
+        for (name, bytes) in parts {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
+    fn import_docx(bytes: &[u8]) -> crate::ImportArtifact {
+        builtin_registry()
+            .import(
+                DetectionRequest {
+                    bytes,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: Some("embedded-font.docx"),
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("the package is valid and must open")
+    }
+
+    /// An embedded font's obfuscated bytes must be carried out of the package
+    /// alongside the reference metadata. The model holds only the part name, so
+    /// without this the document's own faces are unreachable: layout cannot
+    /// de-obfuscate them (FID-L-01) and the semantic writer re-emits an EMPTY
+    /// `.odttf` part.
+    #[test]
+    fn an_embedded_font_part_is_carried_into_the_resources() {
+        let face = b"OBFUSCATED-FACE-BYTES-0123456789abcdef".as_slice();
+        let imported = import_docx(&package_with_embedded_font(true, face));
+
+        let font = imported
+            .document
+            .definitions()
+            .font_table
+            .iter()
+            .find(|font| font.name == "Embedded Probe")
+            .expect("the font table entry is modeled");
+        let embedded = font
+            .embedded
+            .regular
+            .as_ref()
+            .expect("the embedded regular face is modeled");
+        assert_eq!(embedded.part_name, "word/fonts/font1.odttf");
+        assert_eq!(
+            imported.resources.get(&embedded.part_name),
+            Some(face),
+            "the obfuscated .odttf bytes travel with the import",
+        );
+        assert!(
+            imported
+                .report
+                .entries
+                .iter()
+                .all(|entry| !entry.feature.starts_with("docx.font.embedded.")),
+            "a readable face raises no finding",
+        );
+    }
+
+    /// A declared-but-absent `.odttf` is reported rather than silently dropped:
+    /// the run will render in a substitute and the host must be able to say so.
+    #[test]
+    fn a_missing_embedded_font_part_is_reported() {
+        let imported = import_docx(&package_with_embedded_font(false, b""));
+        assert!(
+            imported.resources.get("word/fonts/font1.odttf").is_none(),
+            "there are no bytes to carry",
+        );
+        let reported = imported
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == "docx.font.embedded.unreadable-part")
+            .expect("an unreadable embedded font part must be reported");
+        assert_eq!(
+            reported.location.part_name.as_deref(),
+            Some("word/fonts/font1.odttf"),
+        );
     }
 
     #[test]
