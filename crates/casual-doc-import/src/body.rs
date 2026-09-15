@@ -1741,6 +1741,17 @@ impl BodyParser<'_> {
         let text = std::mem::take(&mut self.math_text);
         self.math_in_t = false;
         let expression = crate::math::parse_math_expression(&omml);
+        // An equation whose structure has no typed projection is not in the model
+        // as mathematics — it renders as its fallback text — but its OMML is
+        // retained verbatim inside the model and re-emitted byte-for-byte on save.
+        // So it is `omitted` + `preserved` with a ledger record of its own, on the
+        // SEMANTIC path, where a per-mode retention constant could only ever say
+        // `not-retained` (FID-R-02). Reporting it is what lets a caller explain
+        // why an equation looks like text; the retention outcome is what stops
+        // that being mistaken for the equation having been thrown away.
+        if expression.is_none() {
+            self.reporter.report_retained_in_model(b"oMath", omml.len());
+        }
         self.push_segment(Segment::Math {
             omml,
             text,
@@ -1830,6 +1841,59 @@ impl BodyParser<'_> {
         })
     }
 
+    /// Dispositions the identity and bookkeeping **attributes** that Word writes
+    /// on revision-tracked elements and that the model does not carry (FID-R-03).
+    /// Before the report had an attribute vocabulary these could not be described
+    /// even in principle, and a save dropped them in silence.
+    ///
+    /// Two classes, deliberately treated differently:
+    ///
+    /// * `w:rsid*` — per-editing-session revision-save IDs, folded into one
+    ///   document-level class (see `Reporter::report_rsid` for the volume
+    ///   evidence). High volume, no document meaning.
+    /// * `w14:paraId` / `w14:textId` — durable paragraph and row identities. These
+    ///   are real: `commentsExtended.xml` and `commentsIds.xml` join to a comment
+    ///   through its anchor paragraph's `paraId`, and Word's co-authoring uses
+    ///   them to recognize a paragraph across saves. The model keeps a `para_id`
+    ///   only for a *comment's* anchor paragraph, so a body paragraph's identity
+    ///   is regenerated away. The paragraph itself is modeled, so the element is
+    ///   `degraded` and the attribute is named.
+    ///
+    /// Scanning is restricted to the four element names that actually carry these
+    /// attributes in Word output (`w:p`, `w:r`, `w:tr`, `w:sectPr`), so the common
+    /// path — `w:t`, `w:rPr`, every property element — pays nothing.
+    ///
+    /// `mc:Ignorable` is NOT reported here. It is a markup-compatibility
+    /// processing directive naming the prefixes a consumer may ignore, carries no
+    /// document content, and the writer emits its own correct value; it is
+    /// package plumbing in the same sense as `[Content_Types].xml`, which is also
+    /// not a data-loss disposition. `35-DISPOSITION-TAXONOMY.md` records this.
+    fn report_identity_attributes(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        if !matches!(local, b"p" | b"r" | b"tr" | b"sectPr") {
+            return;
+        }
+        for attribute in element.attributes().with_checks(false).flatten() {
+            let name = attribute.key.local_name();
+            let name = name.as_ref();
+            if crate::report::is_revision_save_id_attribute(name) {
+                self.reporter.report_rsid();
+            } else if matches!(name, b"paraId" | b"textId")
+                && self.note_container != Some(b"comment")
+            {
+                // Inside `word/comments.xml` a comment's ANCHOR paragraph keeps
+                // its `paraId` (modeled as `comment.para_id`, re-emitted by the
+                // writer, and the join key its companion parts use). Which
+                // paragraph is the anchor is only known at the comment's close —
+                // it is the last direct child — so a streaming pass cannot tell
+                // the anchor from its siblings, and charging the part here would
+                // report a loss that did not happen. The siblings' identities are
+                // still dropped; that narrower gap is recorded rather than
+                // papered over with a finding that is wrong for the anchor.
+                self.reporter.report_attribute(local, name);
+            }
+        }
+    }
+
     fn on_start(&mut self, local: &[u8], element: &BytesStart<'_>) -> Result<(), ImportError> {
         // While skipping a non-selected AlternateContent branch, ignore every
         // element (counting depth so the matching close ends the skip).
@@ -1843,6 +1907,7 @@ impl BodyParser<'_> {
                 limit: "xml_elements",
             });
         }
+        self.report_identity_attributes(local, element);
         match local {
             // Property-change tracked revisions carry a nested copy of the PREVIOUS
             // property container (e.g. `w:rPrChange > w:rPr`). We snapshot the
@@ -2486,6 +2551,13 @@ impl BodyParser<'_> {
                 // top) within the behind/front band.
                 let relative_height = attribute_value(element, b"relativeHeight")
                     .and_then(|value| value.parse::<u32>().ok());
+                // An out-of-range or unparseable wrap distance is an ATTRIBUTE
+                // finding on a modeled element: the anchor is imported, and only
+                // this distance's value is not carried across as written, so the
+                // anchor is `degraded`. It used to be reported as though `distT`
+                // were an element name (FID-R-03), which put a bare attribute name
+                // in a report whose other rows are elements — indistinguishable
+                // from an unknown `w:distT` element that does not exist.
                 let mut bounded_distance = |name: &[u8]| {
                     let Some(raw) = attribute_value(element, name) else {
                         return 0;
@@ -2493,11 +2565,11 @@ impl BodyParser<'_> {
                     match raw.parse::<i64>() {
                         Ok(value) if (0..=MAX_EMU).contains(&value) => value,
                         Ok(value) => {
-                            self.reporter.report(name);
+                            self.reporter.report_attribute(b"anchor", name);
                             value.clamp(0, MAX_EMU)
                         }
                         Err(_) => {
-                            self.reporter.report(name);
+                            self.reporter.report_attribute(b"anchor", name);
                             0
                         }
                     }

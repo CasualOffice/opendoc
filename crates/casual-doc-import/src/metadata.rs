@@ -491,7 +491,7 @@ mod tests {
                     .to_vec(),
             ),
         };
-        let mut reporter = Reporter::default();
+        let mut reporter = Reporter::new(crate::report::SourceRetention::Regenerated);
         let properties = parse(&sources, ImportConfig::default(), &mut reporter)
             .unwrap()
             .expect("properties");
@@ -509,7 +509,8 @@ mod tests {
             "the FIRST value is kept, not the last"
         );
 
-        let report = reporter.into_report(crate::report::RetentionOutcome::NotRetained);
+        let mut ledger = crate::report::PreservationLedger::default();
+        let report = reporter.into_report(&mut ledger);
         assert!(
             report
                 .entries
@@ -553,7 +554,7 @@ mod tests {
                     .to_vec(),
             ),
         };
-        let mut reporter = Reporter::default();
+        let mut reporter = Reporter::new(crate::report::SourceRetention::Regenerated);
         let properties = parse(&sources, ImportConfig::default(), &mut reporter)
             .unwrap()
             .expect("properties");

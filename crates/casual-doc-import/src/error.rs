@@ -6,6 +6,8 @@ use std::fmt;
 use casual_doc_model::ModelError;
 use casual_doc_ooxml::PackageError;
 
+use crate::report::DispositionViolation;
+
 /// A WordprocessingML import failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImportError {
@@ -22,6 +24,12 @@ pub enum ImportError {
     },
     /// The constructed model violated a v1 invariant.
     Model(ModelError),
+    /// The compatibility report violated the `35-DISPOSITION-TAXONOMY.md`
+    /// contract. `35` requires such a pairing to "fail import, not be reported",
+    /// because a report that claims a preservation nothing performed is worse
+    /// than no report: it is a false clean bill of health on the exact axis the
+    /// fidelity architecture exists to measure.
+    Disposition(DispositionViolation),
 }
 
 impl fmt::Display for ImportError {
@@ -34,6 +42,9 @@ impl fmt::Display for ImportError {
             Self::MalformedXml => formatter.write_str("document XML is malformed"),
             Self::LimitExceeded { limit } => write!(formatter, "import limit {limit} exceeded"),
             Self::Model(error) => write!(formatter, "imported model is invalid: {error}"),
+            Self::Disposition(violation) => {
+                write!(formatter, "disposition contract violated: {violation}")
+            }
         }
     }
 }

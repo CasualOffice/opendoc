@@ -174,12 +174,11 @@ impl Parser {
             // The part root. Its schemes are modeled below, but `@name` (the
             // theme's display name) has nowhere to live in the model and the
             // writer emits a fixed one, so a named theme loses its name. The
-            // report has no attribute vocabulary yet (FID-R-03), so the loss is
-            // recorded against an element-qualified pseudo-feature, matching the
-            // existing `alternateContent:noReadableBranch` style; it becomes a
-            // real attribute entry once FID-R-03 lands.
+            // theme itself IS modeled, so the element is `degraded` and the
+            // finding names the attribute whose meaning was not carried
+            // (FID-R-03) rather than an element-qualified pseudo-feature.
             b"theme" => {
-                report_dropped_name(element, b"theme:nameAttribute", reporter);
+                report_dropped_name(element, b"theme", reporter);
                 Descend::Yes
             }
             // A pure container: everything it holds is dispositioned below.
@@ -187,7 +186,7 @@ impl Parser {
             b"fontScheme" => {
                 self.in_font_scheme = true;
                 self.found_font = true;
-                report_dropped_name(element, b"fontScheme:nameAttribute", reporter);
+                report_dropped_name(element, b"fontScheme", reporter);
                 Descend::Yes
             }
             b"clrScheme" => {
@@ -320,11 +319,11 @@ impl Parser {
     }
 }
 
-/// Reports `feature` when `element` carries a non-empty `@name` the model has no
-/// field for, so a regenerated default does not replace it silently.
-fn report_dropped_name(element: &BytesStart<'_>, feature: &[u8], reporter: &mut Reporter) {
+/// Reports `element`'s dropped `@name` when it carries a non-empty one the model
+/// has no field for, so a regenerated default does not replace it silently.
+fn report_dropped_name(element: &BytesStart<'_>, local: &[u8], reporter: &mut Reporter) {
     if attribute_value(element, b"name").is_some_and(|value| !value.is_empty()) {
-        reporter.report(feature);
+        reporter.report_attribute(local, b"name");
     }
 }
 

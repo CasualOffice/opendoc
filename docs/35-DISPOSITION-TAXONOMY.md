@@ -84,6 +84,89 @@ legal **only** when the report references a validated ledger or source-snapshot
 record; emitting a warning without retaining the declared content is
 `not-retained`, never `preserved`.
 
+## What the report enumerates (and what it does not)
+
+Added 2026-09-16 with the implementation, because the earlier wording was read
+two ways and the two readings disagree about every healthy document.
+
+Every traversed construct **has** a disposition on both axes. The report
+**enumerates** only those whose model outcome is not `mapped`, plus any whose
+retention outcome is a refusal (`blocked` or `rejected`). A construct the model
+captures in full has the disposition `mapped` + `not-applicable`; that pair is the
+report's implicit default and is carried without being listed.
+
+The consequence is intended and load-bearing: **an ordinary document produces an
+empty report.** A report that fires on every healthy file is one that every caller
+learns to filter out, and a filtered report is worse than none — it converts a
+competitive advantage (loss is detected and named, which a converter pipeline
+cannot do) into noise. Diagnostic completeness is therefore a property of the
+*taxonomy*, not a demand that every element appear in the output.
+
+Two corollaries follow, and both are asserted by tests rather than left implied:
+
+- `mapped` is **unreachable in a report** by construction. A mapped construct has
+  no unrecovered meaning, so there is nothing to enumerate. `mapped` +
+  `preserved` remains a legal disposition — it describes a construct fully
+  understood whose incidental source detail is also kept — but it is not a
+  finding, so it is not listed either.
+- `not-applicable` is likewise unreachable in a report, since it pairs only with
+  `mapped`.
+
+## Non-content markup: what is outside the taxonomy
+
+A disposition describes the fate of *document meaning*. Some markup carries none,
+and dispositioning it would fill every report with rows a reader cannot act on.
+The exclusions are enumerated here, not decided per parser, so that "not
+reported" is a stated policy with a guard rather than an oversight.
+
+| Markup | Why it is not dispositioned |
+| --- | --- |
+| Pure OPC plumbing (`[Content_Types].xml`, `_rels/*`) | Regenerated deterministically from the model. Not data. |
+| `mc:Ignorable` (and the other markup-compatibility processing attributes) | A directive naming which namespace prefixes a consumer may ignore. It carries no document content, and a writer emits its own correct value. Plumbing, in the same sense as the content-type manifest. |
+
+### Revision-save IDs (`w:rsid*`) — reported once per document, as a class
+
+`w:rsid*` attributes (`rsidR`, `rsidRPr`, `rsidRDefault`, `rsidP`, `rsidDel`,
+`rsidTr`, `rsidSect`, …) and the `w:rsids`/`w:rsid`/`w:rsidRoot` table in
+`settings.xml` are per-editing-session bookkeeping tokens. Word's compare and
+merge heuristics are their only consumer; they have no effect on layout,
+rendering, text, or reopen fidelity.
+
+They are **dispositioned once per document as one class**, under the stable
+feature identifier `docx.rsid`, with an occurrence count. They are *not*
+dispositioned per construct, and they are *not* declared out of scope. The
+reasoning, with the measurements it rests on (a 14-document sample of real Word
+output plus this repository's own `sample.docx`):
+
+- **Volume.** Six of fifteen documents carry them, up to 1,055 attributes in one
+  file, across seven attribute names on four element types (`w:p` carries five,
+  `w:r` three, `w:tr` three, `w:sectPr` three).
+- **Per-construct reporting would cost ~14 rows per document** — the distinct
+  element-and-attribute pairs — against the 28-30 rows such a document's report
+  contains in total. A ~50% inflation of every report, carrying nothing a reader
+  can act on. That is how a report becomes something callers ignore.
+- **One class row costs nothing and is in fact a net reduction.** The `w:rsids`
+  table already raised two element findings (`rsid`, `rsids`) before the class
+  existed; folding those plus every attribute into one row leaves one. Measured
+  over the same fifteen documents, adding the whole attribute vocabulary changed
+  the total row count by **+2 rows across all fifteen** (median 0), where
+  per-construct rsid reporting would have added roughly a hundred.
+- **Declaring them out of scope would be a step backwards**, not a simplification:
+  the two element rows that exist today would have to be *removed*, so the
+  repository would report less than it does now about something a semantic save
+  genuinely drops. "No silent data loss" does not permit that.
+
+The class entry's disposition is per-mode-honest, not constant: `omitted` +
+`preserved` under a retention byte floor (the bytes really are kept), `omitted` +
+`not-retained` on a semantic save (they really are dropped).
+
+Durable identities are deliberately **not** in this class. `w14:paraId` and
+`w14:textId` have real consumers — `commentsExtended.xml` and `commentsIds.xml`
+join a comment through its anchor paragraph's `paraId`, and Word's co-authoring
+recognizes a paragraph across saves by it — so they are dispositioned as located
+attribute findings on the elements that carry them. The element is modeled, so
+the model outcome is `degraded`.
+
 ## Relationship to the fidelity vocabulary
 
 This taxonomy is per-construct disposition. It is distinct from, and feeds, the
@@ -93,8 +176,12 @@ eight fidelity **dimensions** in `34-OOXML-FIDELITY-ARCHITECTURE.md`:
   axis (how much reached the model).
 - **Preservation fidelity** is measured by the retention-outcome axis (how much
   unconsumed detail is recoverable).
-- **Diagnostic fidelity** requires that every traversed construct carries a
-  value on *both* axes in the compatibility report — completeness.
+- **Diagnostic fidelity** requires that every traversed construct *has* a value
+  on both axes, and that every construct whose disposition is not the trivial
+  `mapped` + `not-applicable` is enumerated in the compatibility report — see
+  "What the report enumerates (and what it does not)" above. Completeness is a
+  property of the taxonomy's coverage, not a demand that a healthy document
+  produce a non-empty report.
 
 A feature's support state (decode / semantic mapping / edit / export / reopen /
 layout / render / behavior) is a registry concern and is not collapsed into this
@@ -102,15 +189,52 @@ per-construct taxonomy.
 
 ## Compatibility-report and ledger encoding
 
-- Every compatibility-report entry carries a `model_outcome` field and a
-  `retention_outcome` field (replacing the former single `disposition` field).
-- A preservation-ledger entry exists **iff** some construct's
-  `retention_outcome` is `preserved`; the ledger entry ID is referenced by the
-  report entry.
-- Report completeness means every admitted part and every traversed unsupported
-  element, attribute, relationship, or markup-compatibility branch carries both
-  axis values. Repeated equivalent findings may be aggregated only when counts
-  and first bounded locations remain deterministic.
+- Every compatibility-report entry carries both axis values. They are encoded as
+  a single `disposition` naming one of the nine legal pairs, from which both axes
+  are derived, so **the six illegal pairs are unrepresentable rather than
+  validated after the fact**. There is no code path on which an import or an
+  export can build `mapped` + `rejected`. Both axes remain readable
+  individually (`model_outcome()`, `retention_outcome()`).
+- The disposition is chosen **per construct**, at the site that knows what
+  happened, never per import or export *mode*. A per-mode constant cannot express
+  the distinction this document exists to draw: within one semantic import,
+  different constructs are legitimately `not-retained`, `rejected`, `blocked`
+  and `preserved`.
+- A preservation-ledger record exists **iff** some construct's
+  `retention_outcome` is `preserved`, and the record's ID is referenced by the
+  report entry. Records name where the retained bytes live:
+  - `source-snapshot` — the retention-mode byte floor, which reproduces the
+    import input exactly;
+  - `opaque-part` — an admitted package part carried verbatim through the
+    semantic writer via the side-table;
+  - `model-subtree` — a source subtree retained inside the model and re-emitted
+    verbatim on save (an OMML equation with no typed projection, for example).
+- **Validation fails the import.** A `preserved` entry with no record, a dangling
+  record reference, a record that retains nothing, or a record reference on an
+  entry that does not claim preservation is an internal error, and the import
+  returns it as an error rather than reporting it. A `source-snapshot` or
+  `model-subtree` record of zero bytes retains nothing; an `opaque-part` record
+  is different, because its artifact is the part, which the writer re-emits with
+  its name and content type even when it is zero-length.
+- Every entry carries a **bounded location**: the package part it is charged to
+  where the importer knows it, and the XML **local** names of the element and —
+  when the finding is about an attribute rather than the element — of the
+  attribute. Namespace *prefixes* are not recorded: a prefix is whatever the
+  producer's `xmlns:` bound it to, so a prefix inside a stable feature identifier
+  would make the identifier a property of the writer instead of the construct.
+  A location is only populated where it is known; an invented location (a
+  conventional part name a package need not use) is worse than none.
+- **Known limitation.** The ledger is a format-adapter-level artifact: it travels
+  with the DOCX importer's own report, and the format-neutral adapter report
+  (`casual-doc-io`) does not carry it across the boundary yet. Validation
+  therefore happens where the claim is made — an import whose claims do not
+  resolve fails — but a host reading the neutral report cannot re-audit a
+  `preserved` claim itself. Plumbing the ledger through the adapter layer is
+  deliberately deferred, not overlooked.
+- Repeated equivalent findings are aggregated by feature **and disposition**,
+  keeping the count and the **first** bounded location. Two findings that share a
+  feature name but differ in what happened to the construct are different
+  fidelity facts and stay separate entries.
 
 ## Migration from the previous single-enum wording
 
@@ -127,6 +251,32 @@ For readers of earlier drafts, the previous single values map as:
 
 The ambiguous cases (`degraded`, `unsupported`) are exactly the ones the single
 enum could not express; the dual axis forces an explicit retention decision.
+
+## Implementation status
+
+Landed 2026-09-16 (`105` rows FID-R-02 and FID-R-03). Where the vocabulary is
+constructed today:
+
+| Value | Constructed by |
+| --- | --- |
+| `omitted` | Any element the model does not represent — the common case. |
+| `degraded` | An attribute of a modeled element whose meaning is not carried (`a:theme/@name`, `a:fontScheme/@name`, `w:p/@w14:paraId`, `w:p/@w14:textId`, `w:tr/@w14:paraId`), and a modeled value clamped to the model's bounds (`wp:anchor/@distT` and its siblings). |
+| `mapped` | Nothing, by construction — see "What the report enumerates". |
+| `preserved` | The retention byte floor (every finding, citing the source-snapshot record); an opaque side-table part (citing its own record); an OMML equation with no typed projection (citing its model-subtree record) — the last of these on the **semantic** path, which is the case a per-mode constant could not reach. |
+| `not-retained` | A regenerated part's unmapped element on the semantic path. |
+| `blocked` | A digital-signature part on the semantic path: retention is refused because a signature over regenerated content would assert an integrity nobody verified. "Nothing is trusted or stored" is the distinction from `not-retained`. |
+| `rejected` | A structurally unusable construct: a `w15:commentEx` with no `paraId` to join on, a `w16cid:commentId` missing half its pair, a `w15:person` with no author, a `w15:presenceInfo` with no person. |
+| `not-applicable` | Nothing, by construction — it pairs only with `mapped`. |
+
+`degraded` + `blocked` is legal and currently unconstructed: refusal happens at
+whole-part granularity in this implementation, and a whole part is never
+partially mapped. It is named here so its absence is a recorded fact rather than
+an assumed impossibility.
+
+The vocabulary has one home, `casual-doc-import`'s `report` module, from which
+`casual-doc-export` re-exports it. `casual-doc-io` deliberately keeps its own
+format-neutral adapter vocabulary and converts at the boundary; that separation is
+a layering decision, not drift.
 
 ## Acceptance status
 

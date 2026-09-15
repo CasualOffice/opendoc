@@ -795,8 +795,19 @@ pub fn export_document_with_retained_parts(
     // model and then dropped on every save. Emitting it is a fidelity fix owned by
     // FID-R-04; until then the loss is at least named rather than silent, exactly
     // as the ODT writer names its own (`odt.export.background`).
+    //
+    // The datum dropped is the background's sRGB colour, which the source carries
+    // as `w:background/@w:color`, so the finding names that element and attribute
+    // (FID-R-03) instead of leaving the stable id to imply it. The id itself is
+    // unchanged: a caller keying off `docx.export.background` keeps working.
     if document.background().is_some() {
-        reporter.record("docx.export.background", Disposition::OmittedNotRetained);
+        reporter.record_construct(
+            "docx.export.background",
+            "word/document.xml",
+            "background",
+            Some("color"),
+            Disposition::OmittedNotRetained,
+        );
     }
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
