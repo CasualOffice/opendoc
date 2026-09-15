@@ -83,8 +83,23 @@ jobs:
           set -euo pipefail
           mkdir -p fixtures/oracle
           # (id, path) pairs mirror the fixtures the oracle_geometry test targets.
+          # Latin-only fixtures ONLY, and that is a requirement (see the
+          # ORACLE_FIXTURES doc comment in crates/casual-doc-render/tests/
+          # oracle_geometry.rs). H2 determinism rests on both renderers shaping
+          # with the same metric-compatible faces, which holds only for the code
+          # points those faces cover. Substituted text of a different width also
+          # changes where the rest of the paragraph WRAPS, so excluding the
+          # offending line is not enough — downstream all-Latin lines diverge too.
+          # real-producer-libreoffice.docx (CJK + Arabic) is deliberately absent:
+          # pointing the gate at it measured which fonts the container happened to
+          # substitute, not our fidelity.
           declare -A FIXTURES=(
-            [docx-real-producer-libreoffice]="fixtures/corpus/real-producer-libreoffice.docx"
+            [docx-real-producer-footnotes]="fixtures/corpus/real-producer-footnotes.docx"
+            [docx-real-producer-header-footer]="fixtures/corpus/real-producer-header-footer.docx"
+            [docx-real-producer-hyperlinks]="fixtures/corpus/real-producer-hyperlinks.docx"
+            [docx-real-producer-rich]="fixtures/corpus/real-producer-rich.docx"
+            [docx-real-producer-table-list]="fixtures/corpus/real-producer-table-list.docx"
+            [docx-real-producer-table-merges]="fixtures/corpus/real-producer-table-merges.docx"
           )
           for id in "${!FIXTURES[@]}"; do
             echo "== $id =="

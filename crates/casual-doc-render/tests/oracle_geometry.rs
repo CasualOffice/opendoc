@@ -411,6 +411,64 @@ fn parse_oracle_geometry(text: &str) -> OracleReference {
     OracleReference { schema, pages }
 }
 
+/// The fixtures this gate compares, as `(reference id, bytes)`.
+///
+/// **Every one is Latin-only, and that is a requirement, not a coincidence.**
+///
+/// H2's determinism rests on both renderers shaping with the same
+/// metric-compatible faces, which only holds for code points those faces cover.
+/// The line-level coverage filter (see `excluded_lines`) was built to drop
+/// uncoverable text — and it is not sufficient on its own, which we learned by
+/// running it: substituted text of a *different width* changes where the rest of
+/// the paragraph WRAPS, so the lines after it differ too even when every word in
+/// them is Latin. Excluding the offending line still left a downstream all-Latin
+/// line 1014 twips wider in the oracle than in ours.
+///
+/// So `real-producer-libreoffice.docx` — the only corpus fixture containing CJK
+/// and Arabic (`日本語`, `العربية`) — is deliberately **not** in this table. It is
+/// not an oracle-comparable document, and pointing the gate at it measured which
+/// fonts each environment happened to substitute rather than our fidelity. The
+/// six Latin-only LibreOffice-produced fixtures below give H2 materially better
+/// coverage than that one file did: footnotes, running content, hyperlinks, rich
+/// formatting, lists in tables, and merged cells.
+///
+/// The coverage filter stays regardless: it is the guard that makes this
+/// requirement enforced rather than merely documented, and it fails loudly if
+/// uncoverable text ever appears in one of these fixtures.
+///
+/// Keep this list and the `FIXTURES` map in
+/// `.github/workflows/oracle-geometry.yml` in step; a reference is only produced
+/// for a fixture named there.
+const ORACLE_FIXTURES: &[(&str, &[u8])] = &[
+    (
+        "docx-real-producer-footnotes",
+        include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
+    ),
+    (
+        "docx-real-producer-header-footer",
+        include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
+    ),
+    (
+        "docx-real-producer-hyperlinks",
+        include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
+    ),
+    (
+        "docx-real-producer-rich",
+        include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
+    ),
+    (
+        "docx-real-producer-table-list",
+        include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
+    ),
+    (
+        "docx-real-producer-table-merges",
+        include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
+    ),
+];
+
+/// The mixed-script fixture, kept for the non-oracle tests below (extraction,
+/// reduction semantics, the coverage filter) which do not compare against an
+/// oracle and positively benefit from exercising substituted text.
 const LIBREOFFICE_CORPUS: &[u8] =
     include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx");
 
@@ -423,28 +481,39 @@ const LIBREOFFICE_CORPUS: &[u8] =
 #[test]
 #[allow(clippy::print_stderr)] // a stale-reference diagnostic, so a skip is not silent
 fn our_geometry_matches_the_libreoffice_oracle_within_tolerance() {
-    let Some(oracle) = oracle_reference("docx-real-producer-libreoffice") else {
-        // No committed reference yet: the pinned-LibreOffice re-bless job
-        // (.github/workflows/oracle-geometry.yml) has not run. Inert, not red.
-        return;
-    };
-    let gate = if oracle.schema == ORACLE_SCHEMA {
-        ContentGate::Live
-    } else {
-        eprintln!(
-            "oracle reference is at schema {} but this test produces schema {ORACLE_SCHEMA}; \
-             comparing page count and size only. Run the 'Oracle geometry re-bless' workflow \
-             (.github/workflows/oracle-geometry.yml) to regenerate fixtures/oracle/*.geom.json.",
-            oracle.schema
-        );
-        ContentGate::StaleReference
-    };
-    let ours = our_geometry(LIBREOFFICE_CORPUS);
-    let diffs = geometry_diffs(&ours, &oracle.pages, TOLERANCE_TWIPS, gate);
+    let mut compared = 0_usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (fixture_id, bytes) in ORACLE_FIXTURES {
+        let Some(oracle) = oracle_reference(fixture_id) else {
+            // No committed reference for this fixture yet: the pinned-LibreOffice
+            // re-bless job has not produced one. Inert, not red.
+            continue;
+        };
+        let gate = if oracle.schema == ORACLE_SCHEMA {
+            ContentGate::Live
+        } else {
+            eprintln!(
+                "{fixture_id}: oracle reference is at schema {} but this test produces schema \
+                 {ORACLE_SCHEMA}; comparing page count and size only. Run the 'Oracle geometry \
+                 re-bless' workflow (.github/workflows/oracle-geometry.yml) to regenerate \
+                 fixtures/oracle/*.geom.json.",
+                oracle.schema
+            );
+            ContentGate::StaleReference
+        };
+        compared += 1;
+        let ours = our_geometry(bytes);
+        for diff in geometry_diffs(&ours, &oracle.pages, TOLERANCE_TWIPS, gate) {
+            failures.push(format!("{fixture_id}: {diff}"));
+        }
+    }
+
     assert!(
-        diffs.is_empty(),
-        "layout geometry diverged from the LibreOffice oracle beyond {TOLERANCE_TWIPS} twips:\n  {}",
-        diffs.join("\n  ")
+        failures.is_empty(),
+        "layout geometry diverged from the LibreOffice oracle beyond {TOLERANCE_TWIPS} twips \
+         across {compared} fixture(s):\n  {}",
+        failures.join("\n  ")
     );
 }
 
