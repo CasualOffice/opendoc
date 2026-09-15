@@ -64,13 +64,13 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | P3 | 22 | 14 |
 | Behavioural audit — 2026-09-04 | 18 | 7 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
-| **Total** | **146** | **54** |
+| **Total** | **146** | **53** |
 
 "Still open" counts `Open`, `Partly fixed`, and `In progress`.
 
 ### Progress
 
-**54 of 146 rows remain open. Every P0 is closed.**
+**53 of 146 rows remain open. Every P0 is closed.** (HF-094 closed by #541; re-derive these counts, do not edit them by hand.)
 
 Four rows previously listed Open were re-read against the code on 2026-09-15 and are
 closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
@@ -237,7 +237,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-091 | Clipboard failure messages are styled as ordinary status text | css | S | Internal audit | Open |
 | HF-092 | Validation error text is unreadable in two of the six theme/OS combinations | css | S | Internal audit | Fixed |
 | HF-093 | Keyboard-shortcut hints and empty-state prose sit at ~3.3:1 in both themes | accessibility | M | Internal audit | Fixed |
-| HF-094 | Compact-chrome toggle is reachable only from the ribbon chevron — not in View, not in the palette | chrome | S | Sibling gap (docs (ProseMirror)) | Open |
+| HF-094 | Compact-chrome toggle is reachable only from the ribbon chevron — not in View, not in the palette | chrome | S | Sibling gap (docs (ProseMirror)) | Fixed (#541) — `view.compactRibbon` in the View menu and the palette, label reads back the current state, chevron reflects it, preference persisted |
 | HF-095 | Outline panel's active-row colour is defeated for Heading 3 and deeper | css | S | Internal audit | Fixed |
 | HF-096 | Left rail buttons have a no-op hover state | editor-ux | S | Internal audit | Fixed |
 | HF-098 | Image resize grips are 9px with no expanded hit area | editor-ux | S | Internal audit | Fixed |
