@@ -5,7 +5,14 @@
 // synthetic events during a PR and narrating the result (see P1G-FOCUS-001 /
 // P1G-SELECTION-ROBUST-001 in docs/14-EXECUTION-TRACKER.md); this suite makes
 // that check permanent and automatic.
-import { test, expect, gotoEditor, clickIntoFirstPage, typeMoveFindUndo } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  typeMoveFindUndo,
+  expectEditorFocused,
+} from "./fixtures.mjs";
 
 // Every recovery scenario proves the editor is still usable the same way:
 // after the interrupt, type a distinctive marker, find it, then undo it.
@@ -109,10 +116,10 @@ test.describe("focus ownership and stale gestures", () => {
   }) => {
     await gotoEditor(page);
     await clickIntoFirstPage(page);
-    await expect(page.locator("#pages")).toBeFocused();
+    await expectEditorFocused(page);
 
     await page.locator("#bold").click();
-    await expect(page.locator("#pages")).toBeFocused();
+    await expectEditorFocused(page);
 
     await assertRecovered(page, "OPDOC-TOOLBAR-4");
     expect(consoleErrors).toEqual([]);
@@ -121,7 +128,7 @@ test.describe("focus ownership and stale gestures", () => {
   test("clicking the canvas and typing works (baseline)", async ({ page, consoleErrors }) => {
     await gotoEditor(page);
     await clickIntoFirstPage(page);
-    await expect(page.locator("#pages")).toBeFocused();
+    await expectEditorFocused(page);
 
     await assertRecovered(page, "OPDOC-BASELINE-5");
     expect(consoleErrors).toEqual([]);
