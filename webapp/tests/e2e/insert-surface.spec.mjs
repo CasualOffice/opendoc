@@ -75,8 +75,6 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertLinkBtn",
     "insertBookmarkBtn",
     "insertFieldBtn",
-    "insertFootnoteBtn",
-    "insertEndnoteBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
     "insertSymbolBtn",
@@ -84,16 +82,18 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
   ]);
 
   // Word's Insert tab order: Tables ▸ Illustrations ▸ Links ▸ Text ▸ Symbols.
-  // Notes sit between Text and Header & footer: Word files footnotes under
-  // References, but this editor has no References tab, and Google Docs — the
-  // other reference point — puts Footnote on Insert. Burying them in a tab that
-  // does not exist would make them unreachable.
+  // Notes used to sit between Text and Header & footer, because this editor had
+  // no References tab and burying footnotes in a tab that did not exist would
+  // have made them unreachable. It has one now (docs/105 UX-010), so Notes moved
+  // to References ▸ Notes, which is the only place Word keeps them. The commands
+  // are unchanged and still in the Insert app menu and the palette; the tab that
+  // shows them moved, and the whole-ribbon parity test below is what proves they
+  // did not simply disappear.
   expect(await page.locator("#panelInsert .rgroup-label").allTextContents()).toEqual([
     "Table",
     "Illustrations",
     "Links",
     "Text",
-    "Notes",
     "Header & footer",
     "Symbols",
   ]);
@@ -109,8 +109,6 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertLinkBtn", "Add or edit link"],
     ["#insertBookmarkBtn", "Bookmark"],
     ["#insertFieldBtn", "Insert field"],
-    ["#insertFootnoteBtn", "Footnote"],
-    ["#insertEndnoteBtn", "Endnote"],
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertSymbolBtn", "Insert symbol"],
@@ -354,7 +352,15 @@ test("the load-time insertion point exists but paints no caret until the editor 
 // missing the other — which is exactly how Picture shipped with no ribbon
 // button. Comparing the two rosters through the DOM is what makes that omission
 // fail CI: each ribbon button carries the command id it runs.
-test("the Insert ribbon's command set is exactly the Insert menu's", async ({ page, consoleErrors }) => {
+//
+// Scoped to the whole ribbon, not to #panelInsert. Word keeps Footnote and
+// Endnote on References only, and Bookmark and Insert field on BOTH Insert and
+// References, so the question worth asking is "does every Insert command have a
+// ribbon face somewhere", which survives a command legitimately moving tabs.
+// Pinned to one panel, this guard would have forced the notes to stay on the
+// Insert tab to keep itself green — a test dictating the information
+// architecture instead of protecting reachability.
+test("every Insert command has a ribbon face on some tab", async ({ page, consoleErrors }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
 
@@ -366,13 +372,17 @@ test("the Insert ribbon's command set is exactly the Insert menu's", async ({ pa
     );
   await page.keyboard.press("Escape");
 
-  await openInsertTab(page);
+  // Hidden panels still hold their buttons, so no tab switching is needed — and
+  // reading them all at once is what makes this ribbon-wide rather than
+  // per-panel.
   const ribbonCommands = await page
-    .locator("#panelInsert .rgroup button[data-command]")
-    .evaluateAll((buttons) => buttons.map((button) => button.dataset.command));
+    .locator(".ribbon-panel .rgroup button[data-command]")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.dataset.command).filter((id) => id.startsWith("insert.")),
+    );
 
   expect(menuCommands.length).toBeGreaterThan(0);
-  expect([...ribbonCommands].sort()).toEqual([...menuCommands].sort());
+  expect([...new Set(ribbonCommands)].sort()).toEqual([...new Set(menuCommands)].sort());
 
   expect(consoleErrors).toEqual([]);
 });

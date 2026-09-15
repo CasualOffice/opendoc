@@ -203,6 +203,14 @@
       <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
         <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-controls="panelHome" aria-selected="true" tabindex="0">Home</button>
         <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
+        <!-- Layout and References sit where Word puts them (after Insert, before
+             the contextual tabs). Every command on them already shipped; they
+             were scattered across the View ribbon, the Tools menu and the Insert
+             menu, and the palette already declared a `group: "Layout"` with no
+             tab to live on (docs/105 UX-010, OO-001/OO-005). Review stays the
+             last tab — `End` on the tab strip is asserted to land there. -->
+        <button id="tabLayout" type="button" class="ribbon-tab" data-tab="layout" role="tab" aria-controls="panelLayout" aria-selected="false" tabindex="-1">Layout</button>
+        <button id="tabReferences" type="button" class="ribbon-tab" data-tab="references" role="tab" aria-controls="panelReferences" aria-selected="false" tabindex="-1">References</button>
         <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
         <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
         <button id="tabReview" type="button" class="ribbon-tab" data-tab="review" role="tab" aria-controls="panelReview" aria-selected="false" tabindex="-1">Review</button>
@@ -391,13 +399,11 @@
             </div>
             <span class="rgroup-label">Text</span>
           </div>
-          <div class="rgroup" data-group="insert-notes">
-            <div class="rgroup-ctl">
-              <button id="insertFootnoteBtn" type="button" class="fmt" title="Insert a footnote" aria-label="Footnote" disabled><span class="ms" aria-hidden="true">superscript</span></button>
-              <button id="insertEndnoteBtn" type="button" class="fmt" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span></button>
-            </div>
-            <span class="rgroup-label">Notes</span>
-          </div>
+          <!-- Footnote and Endnote moved to References ▸ Notes, which is where
+               Word keeps them and the only place it keeps them. They are still
+               in the Insert app menu and the palette, so the command set the
+               parity guard compares is unchanged; only the ribbon tab that shows
+               them moved. -->
           <div class="rgroup" data-group="insert-running">
             <div class="rgroup-ctl">
               <button id="insertHeaderBtn" type="button" class="fmt" title="Edit the page header" aria-label="Edit header" disabled><span class="ms" aria-hidden="true">vertical_align_top</span></button>
@@ -414,6 +420,82 @@
               <button id="insertEmojiBtn" type="button" class="fmt" title="Insert an emoji" aria-label="Insert emoji" aria-haspopup="region" aria-expanded="false" disabled><span class="ms" aria-hidden="true">mood</span></button>
             </div>
             <span class="rgroup-label">Symbols</span>
+          </div>
+        </div>
+
+        <!-- Layout band (docs/105 UX-010). Word's Layout tab, restricted to the
+             groups whose commands opendoc actually has: Page Setup, Paragraph,
+             Arrange. Nothing here is new engine work — Margins/Orientation/
+             Size/Columns are the four fieldsets of the page-setup dialog that
+             previously had ONE route (a `draft` icon parked on the View tab),
+             Paragraph is the indent pair plus the paragraph-properties panel
+             that owns the real indent and spacing fields, and Arrange is the
+             object inspector's wrap and geometry sections. Each button is the
+             ribbon face of a command declared once in `LAYOUT_SURFACE`
+             (main.js), the same seam the Insert and Review bands use. -->
+        <div id="panelLayout" class="ribbon-panel" data-panel="layout" role="tabpanel" aria-labelledby="tabLayout" hidden>
+          <div class="rgroup" data-group="page-setup" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button id="layoutMarginsBtn" type="button" class="fmt fmt-big" title="Page margins" aria-label="Page margins" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">border_outer</span><span class="fmt-big-label">Margins</span></button>
+              <button id="layoutOrientationBtn" type="button" class="fmt fmt-big" title="Page orientation" aria-label="Page orientation" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">stay_current_portrait</span><span class="fmt-big-label">Orientation</span></button>
+              <button id="layoutSizeBtn" type="button" class="fmt fmt-big" title="Page size" aria-label="Page size" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">straighten</span><span class="fmt-big-label">Size</span></button>
+              <button id="layoutColumnsBtn" type="button" class="fmt fmt-big" title="Text columns" aria-label="Text columns" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">view_column</span><span class="fmt-big-label">Columns</span></button>
+            </div>
+            <span class="rgroup-label">Page setup</span>
+          </div>
+          <div class="rgroup" data-group="layout-paragraph">
+            <div class="rgroup-ctl">
+              <button id="layoutIndentDecBtn" type="button" class="fmt" title="Decrease indent (⇧Tab)" aria-label="Decrease indent" disabled><span class="ms" aria-hidden="true">format_indent_decrease</span></button>
+              <button id="layoutIndentIncBtn" type="button" class="fmt" title="Increase indent (Tab)" aria-label="Increase indent" disabled><span class="ms" aria-hidden="true">format_indent_increase</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <button id="layoutIndentFieldsBtn" type="button" class="fmt fmt-big" title="Exact left, right and special indents" aria-label="Indentation fields" aria-controls="paragraphPropertiesPanel" disabled><span class="ms" aria-hidden="true">format_indent_increase</span><span class="fmt-big-label">Indent</span></button>
+              <button id="layoutSpacingFieldsBtn" type="button" class="fmt fmt-big" title="Line spacing and space before/after" aria-label="Spacing fields" aria-controls="paragraphPropertiesPanel" disabled><span class="ms" aria-hidden="true">format_line_spacing</span><span class="fmt-big-label">Spacing</span></button>
+            </div>
+            <span class="rgroup-label">Paragraph</span>
+          </div>
+          <div class="rgroup" data-group="arrange">
+            <div class="rgroup-ctl">
+              <button id="layoutWrapBtn" type="button" class="fmt fmt-big" title="How text wraps around the selected object" aria-label="Wrap text" disabled><span class="ms" aria-hidden="true">wrap_text</span><span class="fmt-big-label">Wrap text</span></button>
+              <button id="layoutPositionBtn" type="button" class="fmt fmt-big" title="Exact position and size of the selected object" aria-label="Object position" disabled><span class="ms" aria-hidden="true">open_with</span><span class="fmt-big-label">Position</span></button>
+              <!-- Z-order has no engine op: `objectOrder()` reads paint order and
+                   nothing writes it. Shown disabled with the reason rather than
+                   omitted, so the gap is legible instead of looking like an
+                   oversight, and never as a button that does nothing (docs/63). -->
+              <button id="layoutBringForwardBtn" type="button" class="fmt fmt-big" title="Bring forward needs a z-order operation the engine does not expose yet" aria-label="Bring forward" disabled><span class="ms" aria-hidden="true">flip_to_front</span><span class="fmt-big-label">Bring forward</span></button>
+            </div>
+            <span class="rgroup-label">Arrange</span>
+          </div>
+        </div>
+
+        <!-- References band — the IA half of OO-001/OO-005. Footnote, Endnote,
+             Bookmark and Insert field are existing commands that moved or gained
+             a second home here. Table of contents, Cross-reference and Update
+             fields need a field-evaluation engine that does not exist: they ship
+             DISABLED WITH A REASON, which is how this repo represents "real
+             command, not possible yet" — never as a control that silently does
+             nothing. -->
+        <div id="panelReferences" class="ribbon-panel" data-panel="references" role="tabpanel" aria-labelledby="tabReferences" hidden>
+          <div class="rgroup" data-group="ref-navigation" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button id="refTocBtn" type="button" class="fmt fmt-big" title="A table of contents needs field evaluation and update, which the engine does not expose yet" aria-label="Table of contents" disabled><span class="ms" aria-hidden="true">toc</span><span class="fmt-big-label">Contents</span></button>
+              <button id="refBookmarkBtn" type="button" class="fmt fmt-big" title="Create, rename, or go to a bookmark" aria-label="Bookmark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">bookmark</span><span class="fmt-big-label">Bookmarks</span></button>
+              <button id="refCrossRefBtn" type="button" class="fmt fmt-big" title="A cross-reference needs the REF field engine, which does not exist yet" aria-label="Cross-reference" disabled><span class="ms" aria-hidden="true">swap_calls</span><span class="fmt-big-label">Cross-reference</span></button>
+            </div>
+            <span class="rgroup-label">Navigation</span>
+          </div>
+          <div class="rgroup" data-group="ref-notes" data-ribbon-pinned>
+            <div class="rgroup-ctl">
+              <button id="refFootnoteBtn" type="button" class="fmt fmt-big" title="Insert a footnote" aria-label="Footnote" disabled><span class="ms" aria-hidden="true">superscript</span><span class="fmt-big-label">Footnote</span></button>
+              <button id="refEndnoteBtn" type="button" class="fmt fmt-big" title="Insert an endnote" aria-label="Endnote" disabled><span class="ms" aria-hidden="true">menu_book</span><span class="fmt-big-label">Endnote</span></button>
+            </div>
+            <span class="rgroup-label">Notes</span>
+          </div>
+          <div class="rgroup" data-group="ref-fields">
+            <div class="rgroup-ctl">
+              <button id="refFieldBtn" type="button" class="fmt fmt-big" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span><span class="fmt-big-label">Insert field</span></button>
+              <button id="refUpdateFieldsBtn" type="button" class="fmt fmt-big" title="Updating cached fields needs a field-evaluation pass the engine does not expose yet; page numbers already recompute at pagination" aria-label="Update fields" disabled><span class="ms" aria-hidden="true">refresh</span><span class="fmt-big-label">Update fields</span></button>
+            </div>
+            <span class="rgroup-label">Fields</span>
           </div>
         </div>
 
