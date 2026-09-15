@@ -507,17 +507,47 @@ fn compact_fallback_glyph_widow(
 ///
 /// `exact` takes precedence over `atLeast` if both are somehow set (they are
 /// mutually exclusive in a well-formed document).
+///
+/// # A line holding an inline box is floored at `ascent + descent`
+///
+/// `parley` reports a line's `ascent` grown to hold an inline box (an inline
+/// image, math box, or text box) but does **not** grow that line's `line_height`
+/// to match, so a tall inline box yields `line_height < ascent + descent`: the
+/// half-leading is negative, the box hangs out of the top of its own line, and the
+/// paragraph advances the page cursor by less than the content occupies. Word has
+/// no such state — a line is at least as tall as the content it holds — so
+/// `inline_box_height` (the tallest atomic inline box on the line, zero for a
+/// text-only line) opts the line into that floor.
+///
+/// The floor is **gated** on there being such a box, and that is not incidental: a
+/// `lineRule="auto"` multiple below one em (`w:line="168"`, 70%) legitimately
+/// compresses a text line below its own font box, and Word honors it. Flooring
+/// unconditionally undid exactly that, which is what
+/// `dense_auto_spacing_preserves_the_authored_sub_single_pitch` and
+/// `character_scale_changes_horizontal_advance_without_scaling_line_height` caught.
+///
+/// The oracle gate found the original defect (`docs/105` FID-L-21): on
+/// `fixtures/corpus/real-producer-rich.docx` our block advance for the 240-twip
+/// inline-image line was 26 twips short of LibreOffice 26.2.4.2's, the whole of
+/// that line's residual. `exact` is deliberately **not** floored: it pins the box
+/// regardless of content and Word clips there.
 pub(crate) fn apply_line_rule(
     ascent: Twip,
     descent: Twip,
     natural: Twip,
     constraints: &LineConstraints,
+    inline_box_height: Twip,
 ) -> (Twip, Twip, Twip) {
     if let Some(exact) = constraints.line_exact {
         let height = exact.raw().max(0);
         let ascent = ascent.raw().clamp(0, height);
         return (Twip(ascent), Twip((height - ascent).max(0)), Twip(height));
     }
+    let natural = if inline_box_height > Twip::ZERO {
+        natural.max(ascent + descent)
+    } else {
+        natural
+    };
     let required = constraints
         .line_at_least
         .filter(|at_least| at_least.raw() > natural.raw())
@@ -993,6 +1023,11 @@ impl ParleyShaper {
             let mut out_runs = Vec::new();
             let mut out_images = Vec::new();
             let mut out_rules = Vec::new();
+            // The tallest atomic inline box on this line (image, math, text box).
+            // `parley` grows the line's ascent for one of these but not its
+            // `line_height`, so this is what opts the line into the
+            // `ascent + descent` floor in `apply_line_rule` (`docs/105` FID-L-21).
+            let mut inline_box_height = Twip::ZERO;
             // A single `parley` shaping run is split into one `GlyphRun` per
             // contiguous style span — a brush (color/highlight) or decoration
             // change splits the run *without* re-shaping, so the spans keep their
@@ -1024,6 +1059,8 @@ impl ParleyShaper {
             for item in line.items() {
                 let glyph_run = match item {
                     PositionedLayoutItem::InlineBox(inline_box) => {
+                        inline_box_height =
+                            inline_box_height.max(Twip(inline_box.height.round() as i32));
                         if let Some(image) = objects.images.get(inline_box.id as usize) {
                             out_images.push(InlineImage {
                                 media: image.media.clone(),
@@ -1245,7 +1282,8 @@ impl ParleyShaper {
             // `LineHeight::FontSizeRelative` into it). The `atLeast`/`exact` rules
             // reshape it further below.
             let natural = Twip(metrics.line_height.round() as i32);
-            let (ascent, descent, height) = apply_line_rule(ascent, descent, natural, &constraints);
+            let (ascent, descent, height) =
+                apply_line_rule(ascent, descent, natural, &constraints, inline_box_height);
             let source_baseline = Twip(metrics.baseline.round() as i32);
             let baseline_in_line = if constraints.line_exact.is_some() {
                 ascent
@@ -1792,7 +1830,7 @@ mod tests {
             ..LineConstraints::default()
         };
         assert_eq!(
-            apply_line_rule(ascent, descent, natural, &one_unit),
+            apply_line_rule(ascent, descent, natural, &one_unit, Twip::ZERO),
             (Twip(180), Twip(180), Twip(360))
         );
 
@@ -1802,7 +1840,7 @@ mod tests {
             ..LineConstraints::default()
         };
         assert_eq!(
-            apply_line_rule(ascent, descent, natural, &two_units),
+            apply_line_rule(ascent, descent, natural, &two_units, Twip::ZERO),
             (Twip(180), Twip(540), Twip(720))
         );
 
@@ -1812,7 +1850,7 @@ mod tests {
             ..LineConstraints::default()
         };
         assert_eq!(
-            apply_line_rule(ascent, descent, natural, &exact),
+            apply_line_rule(ascent, descent, natural, &exact, Twip::ZERO),
             (Twip(180), Twip(20), Twip(200))
         );
     }

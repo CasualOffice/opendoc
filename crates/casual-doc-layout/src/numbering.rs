@@ -329,8 +329,18 @@ fn has_placeholder(template: &str) -> bool {
 /// Formats a single counter value through a `w:numFmt`. Unsupported/word-spelling
 /// formats fall back to decimal so a number always appears (see the module
 /// deferrals).
-fn format_number(value: u32, format: &NumberFormat) -> String {
+///
+/// Shared with note numbering (`crate::note_numbering`, `docs/105` FID-L-05):
+/// `w:footnotePr`/`w:endnotePr` `w:numFmt` draws on the same `ST_NumberFormat`
+/// vocabulary as a list level, so both go through this one formatter rather than
+/// each growing its own.
+pub(crate) fn format_number(value: u32, format: &NumberFormat) -> String {
     match format {
+        // `chicago` is the academic note sequence (*, †, ‡, §, then doubled), and
+        // `ST_NumberFormat` puts it in the same vocabulary as every other token,
+        // so it belongs here rather than in a note-only formatter. It arrives as
+        // `Other` because the typed enum covers only the common list formats.
+        NumberFormat::Other(token) if token == "chicago" => chicago(value),
         // A bullet carries no counter value (its glyph is the level text and is
         // handled before formatting); nothing to render here.
         NumberFormat::None | NumberFormat::Bullet => String::new(),
@@ -352,6 +362,20 @@ fn format_number(value: u32, format: &NumberFormat) -> String {
         // Unknown tokens: decimal fallback so the value is never lost.
         NumberFormat::Other(_) => value.to_string(),
     }
+}
+
+/// The `chicago` sequence: the four traditional reference marks `*`, `†`, `‡`,
+/// `§`, then each repeated once more per cycle (`**`, `††`, …), which is how Word
+/// continues past the fourth mark. `0` has no mark, so it renders as nothing.
+fn chicago(value: u32) -> String {
+    const MARKS: [char; 4] = ['*', '†', '‡', '§'];
+    if value == 0 {
+        return String::new();
+    }
+    let index = (value - 1) as usize;
+    let mark = MARKS[index % MARKS.len()];
+    let repeats = index / MARKS.len() + 1;
+    std::iter::repeat_n(mark, repeats).collect()
 }
 
 /// English cardinal words, title-cased as Word renders `cardinalText`
