@@ -992,7 +992,7 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
         },
         ..RunningContent::default()
     };
-    cfg.header_height = running.header.band_height();
+    cfg.header_height = running.band_heights().0;
     let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
     let mut layout = paginate(&galley, &cfg);
     place_running_content(&mut layout, &running, &cfg);
@@ -1345,7 +1345,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
         },
         ..RunningContent::default()
     };
-    cfg.header_height = running.header.band_height();
+    cfg.header_height = running.band_heights().0;
     let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
     let mut layout = paginate(&galley, &cfg);
     place_running_content(&mut layout, &running, &cfg);
@@ -1955,7 +1955,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
         },
         ..RunningContent::default()
     };
-    cfg.footer_height = running.footer.band_height();
+    cfg.footer_height = running.band_heights().1;
     let galley = build_galley(&doc, &shaper, cfg.content_area().size.width);
     let mut layout = paginate(&galley, &cfg);
     place_running_content(&mut layout, &running, &cfg);

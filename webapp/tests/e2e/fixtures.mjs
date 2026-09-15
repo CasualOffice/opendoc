@@ -67,6 +67,29 @@ export async function clickIntoFirstPage(page) {
   await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
 }
 
+/**
+ * Asserts the editing surface holds focus.
+ *
+ * Use this instead of `expect(page.locator("#pages")).toBeFocused()`. Focus is
+ * owned by the editable proxy `#editorTextInput`, not by `#pages` — a
+ * non-editable div cannot own text input, so it raises no soft keyboard and
+ * fires no composition events (docs/105 UX-001). `#pages` is still focusable
+ * and still the skip-link target; focus landing there is immediately handed to
+ * the proxy.
+ *
+ * Asserting either element is correct, because the question these tests are
+ * really asking is "can the editor receive text?" — which is why they should
+ * not name a specific element at all.
+ */
+export async function expectEditorFocused(page) {
+  const active = await page.evaluate(() => document.activeElement?.id ?? "");
+  if (active !== "pages" && active !== "editorTextInput") {
+    throw new Error(
+      `expected the editing surface to hold focus, but focus is on "${active || "(none)"}"`,
+    );
+  }
+}
+
 // Moves the caret to the very start of the document (⌘/Ctrl+Home), so
 // later assertions do not depend on where the initial click happened to land.
 export async function moveCaretToDocStart(page) {

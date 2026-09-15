@@ -13,7 +13,14 @@
 // the same four assertions. The last test closes the loop — if a new
 // `aria-modal` element appears in editor.html and is not in the table, this
 // spec fails, so the next dialog cannot ship without the contract either.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  MOD,
+  expectEditorFocused,
+} from "./fixtures.mjs";
 
 async function openPalette(page) {
   await page.keyboard.press(`${MOD}+Shift+P`);
@@ -40,6 +47,11 @@ async function insertTwoByTwoTable(page) {
 // come back to; null means the route leaves no focusable opener on screen (the
 // palette runs a command and closes itself), in which case the contract only
 // requires that focus lands somewhere inside the editor rather than on <body>.
+/** "Focus must return to the editing surface" — as opposed to a named opener
+ *  element. Which element actually holds it is `expectEditorFocused`'s business,
+ *  not each modal's. */
+const EDITOR_SURFACE = Symbol("editor surface");
+
 const MODALS = [
   {
     id: "propertiesPanel",
@@ -67,7 +79,7 @@ const MODALS = [
     id: "splitCellDialog",
     name: "Split cell",
     opener: null,
-    restore: "#pages",
+    restore: EDITOR_SURFACE,
     focus: "#splitCellColumns",
     async open(page) {
       await gotoEditor(page);
@@ -131,7 +143,7 @@ const MODALS = [
     // The object context bar is rebuilt on every repaint, so the button that
     // opened this is a detached node by the time it closes.
     opener: null,
-    restore: "#pages",
+    restore: EDITOR_SURFACE,
     focus: "#altTextInput",
     async open(page) {
       await page.goto("/editor.html?fixture=float");
@@ -191,6 +203,13 @@ for (const modal of MODALS) {
     await expect(dialog(page)).toBeHidden();
     if (modal.opener) {
       await expect(page.locator(modal.opener).first()).toBeFocused();
+    } else if (modal.restore === EDITOR_SURFACE) {
+      // The requirement is "focus returns to the editing surface", not "to
+      // `#pages`". Focus is owned by the editable proxy, since a non-editable
+      // div raises no soft keyboard and fires no composition events
+      // (docs/105 UX-001); naming the element here made the contract describe a
+      // mechanism instead of the guarantee.
+      await expectEditorFocused(page);
     } else if (modal.restore) {
       await expect(page.locator(modal.restore)).toBeFocused();
     } else {
