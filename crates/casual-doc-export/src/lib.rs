@@ -18,8 +18,16 @@ use casual_doc_import::RetainedSource;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
+mod report;
 mod semantic;
-pub use semantic::{write_document, write_document_with_retained_parts};
+pub use report::{
+    CompatibilityEntry, CompatibilityReport, Disposition, DocxExport, ModelOutcome,
+    RetentionOutcome,
+};
+pub use semantic::{
+    export_document, export_document_with_retained_parts, write_document,
+    write_document_with_retained_parts,
+};
 
 /// A package-writing failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +119,41 @@ mod semantic_tests {
         zw.finish().unwrap().into_inner()
     }
 
+    /// The binary parts a source package carries — image media and embedded
+    /// `.odttf` faces — keyed exactly as the writer's `media` argument expects.
+    ///
+    /// A round-trip test has to hand these back. The writer used to accept an
+    /// empty map and emit a zero-byte part beside a live relationship, so the
+    /// model round-tripped while the written package told Word about a picture it
+    /// could not supply; it now omits a reference whose bytes are missing and
+    /// reports the loss (FID-R-06). Supplying the bytes is what a real save does,
+    /// and it keeps these tests about the metadata they are actually checking.
+    fn binary_parts(source: &[u8]) -> BTreeMap<String, Vec<u8>> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(source.to_vec())).unwrap();
+        let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        let mut parts = BTreeMap::new();
+        for name in names {
+            if !name.starts_with("word/media/") && !name.ends_with(".odttf") {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut archive.by_name(&name).unwrap(), &mut bytes).unwrap();
+            parts.insert(name, bytes);
+        }
+        parts
+    }
+
+    /// Placeholder bytes for media parts a hand-built source declares by
+    /// relationship without carrying the part itself. The writer now omits a
+    /// media reference whose bytes it was not given (FID-R-06), so a test about
+    /// drawing *metadata* has to supply them or it stops testing the drawing.
+    fn media_bytes(part_names: &[&str]) -> BTreeMap<String, Vec<u8>> {
+        part_names
+            .iter()
+            .map(|name| ((*name).to_owned(), b"PNGDATA".to_vec()))
+            .collect()
+    }
+
     /// Opens a DOCX package and imports it in Semantic mode, returning the model.
     fn reopen(bytes: &[u8]) -> casual_doc_model::v1::Document {
         let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
@@ -161,7 +204,7 @@ mod semantic_tests {
     /// (the model holds only reference metadata).
     fn assert_corpus_round_trip(source: &[u8], name: &str) {
         let m1 = reopen(source);
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &binary_parts(source)).unwrap();
         let m2 = reopen(&written);
         assert_eq!(m1, m2, "{name}: real-producer doc survives write -> reopen");
     }
@@ -555,7 +598,7 @@ mod semantic_tests {
         assert_eq!(drawing.descr.as_deref(), Some("Company logo"));
 
         // Write it back and reopen: the model is a fixed point (ids included).
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
         let mut written_package =
             DocxPackage::open(&written, PackageLimits::default()).expect("written package");
         let written_xml = written_package
@@ -618,7 +661,7 @@ mod semantic_tests {
         );
 
         // The writer emits the contour inside the tight wrap in schema order.
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
         let mut written_package =
             DocxPackage::open(&written, PackageLimits::default()).expect("written package");
         let written_xml = written_package
@@ -673,7 +716,7 @@ mod semantic_tests {
         );
 
         // Write it back: the alt text and every crop edge re-emit.
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
         let mut written_package =
             DocxPackage::open(&written, PackageLimits::default()).expect("written package");
         let written_xml = written_package
@@ -957,7 +1000,7 @@ mod semantic_tests {
             })
         );
 
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
         let m2 = reopen(&written);
         assert_eq!(m1, m2, "inline picture border survives write -> reopen");
     }
@@ -987,7 +1030,7 @@ mod semantic_tests {
         assert!(drawing.flip_h);
         assert!(drawing.flip_v);
 
-        let written = write_document(&m1, &BTreeMap::new()).unwrap();
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).unwrap();
         let mut written_package =
             DocxPackage::open(&written, PackageLimits::default()).expect("written package");
         let written_xml = written_package
@@ -2474,7 +2517,7 @@ mod semantic_tests {
             font.embedded.regular.as_ref().unwrap().part_name,
             "word/fonts/font1.odttf"
         );
-        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let bytes = write_document(&m1, &binary_parts(&source)).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "embedded fonts survive write -> reopen");
     }
@@ -4006,9 +4049,11 @@ mod semantic_tests {
         ]);
         let m1 = reopen(&source);
         assert_eq!(m1.definitions().media.iter().count(), 1);
-        // The writer needs no bytes for the model to round-trip (MediaReference
-        // holds no bytes); it emits an empty media part.
-        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        // The model carries the reference, not the bytes, so the bytes are handed
+        // back from the source: a reference the writer cannot supply bytes for is
+        // now dropped and reported rather than written as an empty part
+        // (FID-R-06), and this test is about the reference surviving.
+        let bytes = write_document(&m1, &binary_parts(&source)).unwrap();
         let m2 = reopen(&bytes);
         assert_eq!(m1, m2, "an inline drawing survives write -> reopen");
     }

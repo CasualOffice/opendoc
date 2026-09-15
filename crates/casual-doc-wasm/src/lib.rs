@@ -966,42 +966,191 @@ impl WasmDocument {
         })
     }
 
-    /// Resolves the first caret in the existing default header/footer body.
+    /// Resolves the first caret in the header/footer body **the given page
+    /// shows** — the model-side answer to "which running story am I editing".
     /// This is deliberately model-based: a missed geometry probe must never be
     /// interpreted as permission to replace an existing running story.
+    ///
+    /// `page` is not decoration. Running content is per SECTION, and a document
+    /// whose page 5 changed orientation has more than one: resolving the body from
+    /// `sections.first()` meant every header command edited section 1 no matter
+    /// which page the user was on, so the edit landed on pages the user was not
+    /// looking at and the page they WERE looking at never changed (the
+    /// body-vs-surface defect class, docs/104 T-01).
     #[wasm_bindgen(js_name = runningContentCaret)]
     #[must_use]
-    pub fn running_content_caret(&self, region: &str) -> Option<HitPayload> {
-        let section = self.document.definitions().sections.first()?;
-        let body = match region {
-            "header" => section
-                .headers
-                .iter()
-                .find(|reference| reference.kind == HeaderFooterKind::Default)
-                .and_then(|reference| {
-                    self.document
-                        .definitions()
-                        .headers
-                        .get(&reference.reference)
-                }),
-            "footer" => section
-                .footers
-                .iter()
-                .find(|reference| reference.kind == HeaderFooterKind::Default)
-                .and_then(|reference| {
-                    self.document
-                        .definitions()
-                        .footers
-                        .get(&reference.reference)
-                }),
-            _ => None,
-        }?;
-        let pos = first_pos_of_blocks(&body.blocks)?;
-        Some(HitPayload {
-            node: pos.node.to_string(),
-            offset: pos.offset,
-            zone: "content",
-        })
+    pub fn running_content_caret(&self, region: &str, page: u32) -> Option<HitPayload> {
+        let region = running_region(region)?;
+        let (index, _) = self.running_section(page)?;
+        let definitions = self.document.definitions();
+        // The variant this page applies, then the default it falls back to when
+        // that variant is absent or empty — the same fallback the layout paints
+        // (`casual_doc_layout::running::HeaderFooter::select`).
+        for kind in [
+            self.running_kind_for_page(page, index),
+            HeaderFooterKind::Default,
+        ] {
+            let Some(reference) = self.effective_running_ref(index, region, kind) else {
+                continue;
+            };
+            let body = match region {
+                RunningRegion::Header => definitions.headers.get(&reference),
+                RunningRegion::Footer => definitions.footers.get(&reference),
+            };
+            let Some(pos) = body.and_then(|body| first_pos_of_blocks(&body.blocks)) else {
+                continue;
+            };
+            return Some(HitPayload {
+                node: pos.node.to_string(),
+                offset: pos.offset,
+                zone: "content",
+            });
+        }
+        None
+    }
+
+    /// `(index, id)` of the section that owns `page`.
+    ///
+    /// Falls back to the first section when the page number is stale — the host
+    /// can hold one across a repagination — because every command still has to do
+    /// something sane, and `None` here would silently disable the command.
+    fn running_section(&self, page: u32) -> Option<(usize, SectionId)> {
+        let sections = &self.document.definitions().sections;
+        let index = self
+            .page_by_number(page)
+            .map(|candidate| candidate.section)
+            .and_then(|owner| sections.iter().position(|section| section.id == owner))
+            .unwrap_or(0);
+        Some((index, sections.get(index)?.id))
+    }
+
+    /// The painted page with this 1-based number. Page numbers are contiguous from
+    /// 1, so the index is the answer; the scan is the fallback for a layout that
+    /// renumbers (`w:pgNumType`) rather than a per-page linear search — this is
+    /// called once per page while the running bands are drawn.
+    fn page_by_number(&self, page: u32) -> Option<&casual_doc_layout::page::Page> {
+        let pages = &self.painted_layout().pages;
+        let index = usize::try_from(page.saturating_sub(1)).ok()?;
+        pages
+            .get(index)
+            .filter(|candidate| candidate.number == page)
+            .or_else(|| pages.iter().find(|candidate| candidate.number == page))
+    }
+
+    /// The header/footer variant the section owning `page` APPLIES there: Word's
+    /// first-page variant on that section's own first page when `w:titlePg` is
+    /// set, the even variant on an even page when `w:evenAndOddHeaders` is set,
+    /// else the default.
+    ///
+    /// Mirrors the layout's per-page selection so the band the user clicks and the
+    /// body the edit lands in are the same one.
+    fn running_kind_for_page(&self, page: u32, section_index: usize) -> HeaderFooterKind {
+        let definitions = self.document.definitions();
+        let Some(section) = definitions.sections.get(section_index) else {
+            return HeaderFooterKind::Default;
+        };
+        // The section's OWN first page, not the document's: a section break makes
+        // page 5 a "first page" too, which is exactly what `w:titlePg` selects on.
+        // A section's pages are contiguous, so the page before it belonging to
+        // another section is what makes this one the section's first.
+        let is_section_first = self
+            .page_by_number(page)
+            .is_some_and(|current| current.section == section.id)
+            && self
+                .page_by_number(page.saturating_sub(1))
+                .is_none_or(|previous| previous.section != section.id);
+        if is_section_first && section.title_page.unwrap_or(false) {
+            return HeaderFooterKind::First;
+        }
+        if definitions.settings.even_and_odd_headers && page.is_multiple_of(2) {
+            return HeaderFooterKind::Even;
+        }
+        HeaderFooterKind::Default
+    }
+
+    /// The body a section's variant resolves to after OOXML's link-to-previous
+    /// inheritance: a section that OMITS a reference uses the previous section's
+    /// (docs/85 §8.4). The same merge the layout performs when it builds each
+    /// section's running content, so "which header does this page show" has one
+    /// answer on both sides of the boundary.
+    fn effective_running_ref(
+        &self,
+        section_index: usize,
+        region: RunningRegion,
+        kind: HeaderFooterKind,
+    ) -> Option<HeaderFooterId> {
+        self.document
+            .definitions()
+            .sections
+            .iter()
+            .take(section_index + 1)
+            .filter_map(|section| {
+                let references = match region {
+                    RunningRegion::Header => &section.headers,
+                    RunningRegion::Footer => &section.footers,
+                };
+                references
+                    .iter()
+                    .find(|reference| reference.kind == kind)
+                    .map(|reference| reference.reference)
+            })
+            // The nearest declaration at or before this section wins.
+            .next_back()
+    }
+
+    /// Whether the band this page shows is INHERITED from an earlier section
+    /// (Word's "Same as Previous"), rather than declared by the page's own section.
+    ///
+    /// A section that declares the applicable variant owns its band; so does one
+    /// that declares only the default the variant falls back to. The first section
+    /// has nothing to inherit from, so it is never "same as previous".
+    fn running_is_linked(&self, page: u32, section_index: usize, region: RunningRegion) -> bool {
+        if section_index == 0 {
+            return false;
+        }
+        let kind = self.running_kind_for_page(page, section_index);
+        let Some(section) = self.document.definitions().sections.get(section_index) else {
+            return false;
+        };
+        let references = match region {
+            RunningRegion::Header => &section.headers,
+            RunningRegion::Footer => &section.footers,
+        };
+        !references
+            .iter()
+            .any(|reference| reference.kind == kind || reference.kind == HeaderFooterKind::Default)
+    }
+
+    /// One page's own running-content context, as JSON
+    /// `{section, sectionCount, headerTwips, footerTwips, headerLinked, footerLinked}`:
+    /// the margin bands to draw the header/footer boundary in, the 1-based section
+    /// the page belongs to, and whether each band is inherited.
+    ///
+    /// The host used to derive the bands from [`page_setup`](Self::page_setup),
+    /// which is the FIRST section's geometry — so on a document whose later
+    /// section changes orientation or margins the dashed header boundary was drawn
+    /// in the wrong place on every page of that section, and the label could not
+    /// say which section's header was open.
+    #[wasm_bindgen(js_name = runningBands)]
+    #[must_use]
+    pub fn running_bands(&self, page: u32) -> String {
+        let Some((index, _)) = self.running_section(page) else {
+            return "null".to_string();
+        };
+        let definitions = self.document.definitions();
+        let Some(section) = definitions.sections.get(index) else {
+            return "null".to_string();
+        };
+        format!(
+            "{{\"section\":{},\"sectionCount\":{},\"headerTwips\":{},\"footerTwips\":{},\
+\"headerLinked\":{},\"footerLinked\":{}}}",
+            index + 1,
+            definitions.sections.len(),
+            section.page_margins.top_twips,
+            section.page_margins.bottom_twips,
+            self.running_is_linked(page, index, RunningRegion::Header),
+            self.running_is_linked(page, index, RunningRegion::Footer),
+        )
     }
 
     #[wasm_bindgen(js_name = objectAt)]
@@ -2594,16 +2743,19 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Whether the first page uses its own header/footer, and whether even pages
-    /// do, as JSON `{ firstPage, evenOdd }` — the read side of Word's two
-    /// running-content toggles (docs/85 Q6).
+    /// Whether the first page of the section owning `page` uses its own
+    /// header/footer, and whether even pages do, as JSON `{ firstPage, evenOdd }`
+    /// — the read side of Word's two running-content toggles (docs/85 Q6).
+    ///
+    /// `w:titlePg` is per SECTION, so the answer depends on which page the user is
+    /// on; `w:evenAndOddHeaders` is document-scoped, as OOXML carries it.
     #[wasm_bindgen(js_name = runningVariants)]
     #[must_use]
-    pub fn running_variants(&self) -> String {
+    pub fn running_variants(&self, page: u32) -> String {
         let definitions = self.document.definitions();
-        let first_page = definitions
-            .sections
-            .first()
+        let first_page = self
+            .running_section(page)
+            .and_then(|(index, _)| definitions.sections.get(index))
             .and_then(|section| section.title_page)
             .unwrap_or(false);
         format!(
@@ -2612,16 +2764,18 @@ impl WasmDocument {
         )
     }
 
-    /// Turns the distinct first-page header/footer on or off for the first
-    /// section (Word's "Different First Page").
+    /// Turns the distinct first-page header/footer on or off for the section that
+    /// owns `page` (Word's "Different First Page", which is per section — it used
+    /// to always flip the first section, so on a multi-section document the toggle
+    /// changed a page the user was not looking at).
     #[wasm_bindgen(js_name = setFirstPageVariant)]
-    pub fn set_first_page_variant(&mut self, enabled: bool) -> Result<EditResult, JsValue> {
-        let section = self
-            .document
-            .definitions()
-            .sections
-            .first()
-            .map(|boundary| boundary.id)
+    pub fn set_first_page_variant(
+        &mut self,
+        enabled: bool,
+        page: u32,
+    ) -> Result<EditResult, JsValue> {
+        let (_, section) = self
+            .running_section(page)
             .ok_or_else(|| to_js("the document has no section".to_string()))?;
         self.apply_action_as(
             vec![Operation::SetSectionTitlePage {
@@ -2644,30 +2798,35 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
-    /// Creates an empty header or footer for the section a page belongs to, and
-    /// links the section's default variant to it, as one undoable action. Returns
-    /// the `EditResult` whose caret is the new body's first paragraph, so the
-    /// host can enter the context it just created.
+    /// Creates an empty header or footer for the section the given page belongs
+    /// to, and links that section's applicable variant to it, as one undoable
+    /// action. Returns the `EditResult` whose caret is the new body's first
+    /// paragraph, so the host can enter the context it just created.
     ///
     /// `Edit header` on a document that has none previously had to refuse: the
     /// ops to make one (docs/85 §8.3) exist but nothing called them. The body is
     /// created carrying ONE empty paragraph rather than no blocks, because an
     /// empty `Vec<BlockNode>` has nowhere to put a caret — the user would enter a
     /// header they could not type in.
+    ///
+    /// The section comes from `page`, not from `sections.first()`: on a document
+    /// whose later section changed orientation, linking the first section meant
+    /// "add a header" on page 5 created one for pages 1-4 and left page 5 — the
+    /// page the user asked about — with nothing (docs/104 T-01). The variant is
+    /// the one that page applies, so adding a header to the first page of a
+    /// section with `w:titlePg` fills THAT page's band, as Word does.
     #[wasm_bindgen(js_name = createRunningContent)]
-    pub fn create_running_content(&mut self, region: &str) -> Result<EditResult, JsValue> {
-        let region = match region {
-            "header" => RunningRegion::Header,
-            "footer" => RunningRegion::Footer,
-            _ => return Err(to_js("region must be \"header\" or \"footer\"".to_string())),
-        };
-        let section = self
-            .document
-            .definitions()
-            .sections
-            .first()
-            .map(|boundary| boundary.id)
+    pub fn create_running_content(
+        &mut self,
+        region: &str,
+        page: u32,
+    ) -> Result<EditResult, JsValue> {
+        let region = running_region(region)
+            .ok_or_else(|| to_js("region must be \"header\" or \"footer\"".to_string()))?;
+        let (index, section) = self
+            .running_section(page)
             .ok_or_else(|| to_js("the document has no section".to_string()))?;
+        let kind = self.running_kind_for_page(page, index);
         let exhausted = || to_js("id space exhausted".to_string());
         let body = HeaderFooterId::new(self.edit_ids.next_id().map_err(|_| exhausted())?);
         let paragraph = self.edit_ids.next_id().map_err(|_| exhausted())?;
@@ -2685,7 +2844,7 @@ impl WasmDocument {
                 Operation::SetSectionRunningRef {
                     section,
                     region,
-                    kind: HeaderFooterKind::Default,
+                    kind,
                     reference: Some(body),
                 },
             ],
@@ -5897,9 +6056,15 @@ impl WasmDocument {
     }
 
     /// The first section's full page-setup geometry (page size, margins, and
-    /// orientation) as a JSON object — the "Page Setup" dialog's read side.
-    /// `null` if the document has no section (should not occur for an
-    /// imported DOCX, which always carries at least one).
+    /// orientation) as a JSON object — the document's OPENING geometry. `null` if
+    /// the document has no section (should not occur for an imported DOCX, which
+    /// always carries at least one).
+    ///
+    /// Not the answer to any question about a page the user is looking at: on a
+    /// document whose later section changes orientation or margins this describes
+    /// pages the user may never see. Use
+    /// [`pageSetupSections`](Self::page_setup_sections) for the dialog and
+    /// [`runningBands`](Self::running_bands) for a page's own bands.
     #[wasm_bindgen(js_name = pageSetup)]
     #[must_use]
     pub fn page_setup(&self) -> String {
@@ -16728,6 +16893,17 @@ const fn band_name(band: RunningBand) -> &'static str {
     }
 }
 
+/// The running region a host token names — the inverse of [`band_name`]. One
+/// parser, so every running-content entry point accepts exactly the same two
+/// tokens.
+fn running_region(region: &str) -> Option<RunningRegion> {
+    match region {
+        "header" => Some(RunningRegion::Header),
+        "footer" => Some(RunningRegion::Footer),
+        _ => None,
+    }
+}
+
 /// A shape colour from the host: `#rrggbb`, opaque. Shapes carry [`Rgba`] rather
 /// than the run-level [`RgbColor`], so this lifts the shared hex parser.
 fn shape_rgba(hex: &str) -> Result<Rgba, JsValue> {
@@ -24080,6 +24256,15 @@ mod tests {
     /// Builds a `WasmDocument` around a constructed `Document` (paginated, so the
     /// float-placement pass runs and `object_boxes` can see anchored objects).
     fn wasm_document(document: Document) -> WasmDocument {
+        // A document under test carries the bytes for the pictures it declares.
+        // The DOCX writer no longer writes a zero-byte media part behind a live
+        // `/image` relationship (FID-R-06): a reference whose bytes it was not
+        // given is omitted from the package and reported, so a fixture with no
+        // resources would export without its drawings.
+        let mut resources = DocumentResources::default();
+        for (_, reference) in document.definitions().media.iter() {
+            resources.insert(reference.part_name.clone(), b"PNGDATA".to_vec());
+        }
         let shaper = ParleyShaper::new();
         let layout = paginate_document(&document, &shaper);
         let default_config = document_page_config(&document);
@@ -24090,7 +24275,7 @@ mod tests {
             layout,
             markup_layout: None,
             shaper,
-            resources: DocumentResources::default(),
+            resources,
             format_state: FormatState::synthetic(),
             default_config,
             edit_ids: IdGenerator::new(0xf10a7),
@@ -26541,5 +26726,440 @@ mod tests {
         // Idempotent off.
         d.set_show_changes(false);
         assert!(!d.showing_changes());
+    }
+
+    // ---- Running content across a section break (orientation change) ----------
+    // Headers and footers are per SECTION. A document that turns landscape at
+    // page 5 has two, and every running-content command has to act on the section
+    // the user is LOOKING at: resolving the first section instead put the edit on
+    // pages the user could not see and left the page they asked about unchanged,
+    // which is the reported "change the header on page 3 and pages 5+ never
+    // change" (docs/104 T-01, the body-vs-surface class).
+
+    fn sections_id(id: u64) -> NodeId {
+        NodeId::from_parts(7, id).expect("fixture node id")
+    }
+
+    /// A section boundary with the given paper, margins and running-content refs.
+    fn sections_boundary(
+        id: u64,
+        size: (i32, i32),
+        vertical_margin: i32,
+        headers: Vec<casual_doc_model::v1::HeaderFooterRef>,
+        footers: Vec<casual_doc_model::v1::HeaderFooterRef>,
+        landscape: bool,
+    ) -> casual_doc_model::v1::SectionBoundary {
+        use casual_doc_model::v1::{
+            DocGrid, LineNumbering, NoteProperties, PageBorders, PageMargins, PageNumbering,
+            PageOrientation, PageSize as ModelPageSize, PaperSource, SectionBoundary,
+        };
+        SectionBoundary {
+            id: SectionId::new(sections_id(id)),
+            page_size: ModelPageSize {
+                width_twips: size.0,
+                height_twips: size.1,
+            },
+            page_margins: PageMargins {
+                top_twips: vertical_margin,
+                bottom_twips: vertical_margin,
+                start_twips: 1_440,
+                end_twips: 1_440,
+                header_twips: None,
+                footer_twips: None,
+                gutter_twips: None,
+            },
+            columns: default_section_columns(),
+            headers,
+            footers,
+            section_type: None,
+            title_page: None,
+            vertical_alignment: None,
+            page_numbering: PageNumbering::default(),
+            doc_grid: DocGrid::default(),
+            orientation: landscape.then_some(PageOrientation::Landscape),
+            paper_source: PaperSource::default(),
+            page_borders: PageBorders::default(),
+            line_numbering: LineNumbering::default(),
+            footnote_props: NoteProperties::default(),
+            endnote_props: NoteProperties::default(),
+            text_direction: None,
+            bidi: false,
+            section_change: None,
+        }
+    }
+
+    fn sections_paragraph(id: u64, run: u64, text: &str, page_break: bool) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: sections_id(id),
+            properties: ParagraphProperties {
+                page_break_before: page_break,
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![InlineNode::Run(Run {
+                id: sections_id(run),
+                properties: RunProperties::default(),
+                text: text.to_owned(),
+            })],
+        })
+    }
+
+    fn sections_break_paragraph(id: u64, run: u64, text: &str, section: u64) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: sections_id(id),
+            properties: ParagraphProperties {
+                page_break_before: true,
+                section_break: Some(SectionId::new(sections_id(section))),
+                ..ParagraphProperties::default()
+            },
+            inlines: vec![InlineNode::Run(Run {
+                id: sections_id(run),
+                properties: RunProperties::default(),
+                text: text.to_owned(),
+            })],
+        })
+    }
+
+    fn sections_running_body(id: u64, run: u64, text: &str) -> casual_doc_model::v1::HeaderFooter {
+        casual_doc_model::v1::HeaderFooter {
+            blocks: vec![sections_paragraph(id, run, text, false)],
+        }
+    }
+
+    fn sections_ref(kind: HeaderFooterKind, id: u64) -> casual_doc_model::v1::HeaderFooterRef {
+        casual_doc_model::v1::HeaderFooterRef {
+            kind,
+            reference: HeaderFooterId::new(sections_id(id)),
+        }
+    }
+
+    /// Four portrait pages owning a header/footer, then two LANDSCAPE pages whose
+    /// section owns its own header (default AND first-page) and footer with wider
+    /// vertical margins — the shape Word writes when the user turns part of a
+    /// document landscape and unlinks its running content.
+    fn orientation_change_document() -> Document {
+        let mut definitions = casual_doc_model::v1::Definitions::default();
+        definitions.headers.insert(
+            HeaderFooterId::new(sections_id(700)),
+            sections_running_body(701, 702, "PORTRAIT HEADER"),
+        );
+        definitions.footers.insert(
+            HeaderFooterId::new(sections_id(800)),
+            sections_running_body(801, 802, "PORTRAIT FOOTER"),
+        );
+        definitions.headers.insert(
+            HeaderFooterId::new(sections_id(710)),
+            sections_running_body(711, 712, "LANDSCAPE HEADER"),
+        );
+        definitions.headers.insert(
+            HeaderFooterId::new(sections_id(720)),
+            sections_running_body(721, 722, "LANDSCAPE TITLE PAGE HEADER"),
+        );
+        definitions.footers.insert(
+            HeaderFooterId::new(sections_id(810)),
+            sections_running_body(811, 812, "LANDSCAPE FOOTER"),
+        );
+        definitions.sections.push(sections_boundary(
+            900,
+            (12_240, 15_840),
+            1_440,
+            vec![sections_ref(HeaderFooterKind::Default, 700)],
+            vec![sections_ref(HeaderFooterKind::Default, 800)],
+            false,
+        ));
+        definitions.sections.push(sections_boundary(
+            901,
+            (15_840, 12_240),
+            2_880,
+            vec![
+                sections_ref(HeaderFooterKind::Default, 710),
+                sections_ref(HeaderFooterKind::First, 720),
+            ],
+            vec![sections_ref(HeaderFooterKind::Default, 810)],
+            true,
+        ));
+        let body = vec![
+            sections_paragraph(1, 11, "Portrait page one", false),
+            sections_paragraph(2, 12, "Portrait page two", true),
+            sections_paragraph(3, 13, "Portrait page three", true),
+            sections_break_paragraph(4, 14, "Portrait page four", 900),
+            sections_paragraph(5, 15, "Landscape page five", false),
+            sections_paragraph(6, 16, "Landscape page six", true),
+        ];
+        Document::new(sections_id(1000), body, definitions).expect("valid two-section document")
+    }
+
+    /// The node ids of every paragraph in a header/footer body, for asserting
+    /// WHICH running story a caret or an edit landed in.
+    fn sections_body_nodes(blocks: &[BlockNode]) -> Vec<NodeId> {
+        let mut nodes = Vec::new();
+        collect_block_text(blocks, &mut nodes);
+        nodes.into_iter().map(|(id, _)| id).collect()
+    }
+
+    fn sections_header_nodes(d: &WasmDocument, id: u64) -> Vec<NodeId> {
+        let body = d
+            .document
+            .definitions()
+            .headers
+            .get(&HeaderFooterId::new(sections_id(id)))
+            .expect("the fixture defines this header body");
+        sections_body_nodes(&body.blocks)
+    }
+
+    /// The caret "edit the header" resolves to must sit in the body the page the
+    /// user is on actually shows — page 3's portrait header, page 5's landscape
+    /// one — never in the first section's just because it is first.
+    #[test]
+    fn running_content_caret_resolves_the_page_s_own_section() {
+        let d = wasm_document(orientation_change_document());
+        assert_eq!(d.page_count(), 6, "four portrait pages then two landscape");
+
+        let on_page_3 = d
+            .running_content_caret("header", 3)
+            .expect("page 3 has a header");
+        let node_3 = NodeId::from_str(&on_page_3.node()).expect("caret node");
+        assert!(
+            sections_header_nodes(&d, 700).contains(&node_3),
+            "a page in section 1 edits section 1's header"
+        );
+
+        let on_page_5 = d
+            .running_content_caret("header", 5)
+            .expect("page 5 has a header");
+        let node_5 = NodeId::from_str(&on_page_5.node()).expect("caret node");
+        assert!(
+            sections_header_nodes(&d, 710).contains(&node_5),
+            "a page in the landscape section edits THAT section's header, not the first section's"
+        );
+
+        let footer_5 = d
+            .running_content_caret("footer", 5)
+            .expect("page 5 has a footer");
+        let footer_node = NodeId::from_str(&footer_5.node()).expect("caret node");
+        assert!(
+            sections_body_nodes(
+                &d.document
+                    .definitions()
+                    .footers
+                    .get(&HeaderFooterId::new(sections_id(810)))
+                    .expect("the landscape footer body")
+                    .blocks
+            )
+            .contains(&footer_node),
+            "the same rule for the footer"
+        );
+    }
+
+    /// A section that inherits its running content (OOXML omits the reference:
+    /// Word's "Link to Previous") resolves to the body it inherits, so editing the
+    /// header on any of its pages edits the shared story — the linked case must
+    /// keep working while the unlinked one is fixed.
+    #[test]
+    fn an_inherited_header_resolves_to_the_body_it_links_to() {
+        let mut document = orientation_change_document();
+        document.definitions_mut().sections[1].headers.clear();
+        document.definitions_mut().sections[1].footers.clear();
+        document.validate().expect("still a valid document");
+        let d = wasm_document(document);
+
+        let on_page_5 = d
+            .running_content_caret("header", 5)
+            .expect("the landscape section inherits a header");
+        let node = NodeId::from_str(&on_page_5.node()).expect("caret node");
+        assert!(
+            sections_header_nodes(&d, 700).contains(&node),
+            "link-to-previous resolves to the previous section's body"
+        );
+        // And the band says so, which is what Word puts on it ("Same as Previous")
+        // — the only thing on screen that can explain why editing one section's
+        // header changes another section's pages.
+        let page_5: serde_json::Value =
+            serde_json::from_str(&d.running_bands(5)).expect("page 5 bands");
+        assert_eq!(page_5["section"], 2);
+        assert_eq!(page_5["headerLinked"], true);
+        assert_eq!(page_5["footerLinked"], true);
+    }
+
+    /// Adding a header from a page in the landscape section links THAT section —
+    /// creating one for the first section left the page the user asked about
+    /// unchanged.
+    #[test]
+    fn creating_a_header_links_the_section_the_page_is_on() {
+        let mut document = orientation_change_document();
+        // A document with no header anywhere: the state "Edit header" creates in.
+        document.definitions_mut().sections[0].headers.clear();
+        document.definitions_mut().sections[1].headers.clear();
+        document.definitions_mut().headers = Default::default();
+        document
+            .validate()
+            .expect("a document with no header is valid");
+        let mut d = wasm_document(document);
+
+        let result = d
+            .create_running_content("header", 5)
+            .expect("create a header from page 5");
+        let caret = NodeId::from_str(&result.node()).expect("caret node");
+        let created = d.document.definitions().sections[1]
+            .headers
+            .iter()
+            .find(|reference| reference.kind == HeaderFooterKind::Default)
+            .map(|reference| reference.reference);
+        assert!(
+            created.is_some(),
+            "the landscape section — the one page 5 belongs to — is what got the header"
+        );
+        assert!(
+            d.document.definitions().sections[0].headers.is_empty(),
+            "the first section was left alone"
+        );
+        let body = d
+            .document
+            .definitions()
+            .headers
+            .get(&created.expect("reference"))
+            .expect("the created body");
+        assert!(
+            sections_body_nodes(&body.blocks).contains(&caret),
+            "the reported caret is the new body's paragraph"
+        );
+        // And the page the user asked about is the one that now shows it.
+        assert!(
+            !d.layout.pages[4].header.is_empty(),
+            "page 5 now has a placed header"
+        );
+        assert!(
+            d.layout.pages[0].header.is_empty(),
+            "page 1, in the section the user was not on, does not"
+        );
+    }
+
+    /// "Different first page" is per section (`w:titlePg`): toggling it from a page
+    /// in the landscape section must change THAT section — and that section's own
+    /// first page (page 5) is what then shows its first-page header.
+    #[test]
+    fn the_first_page_variant_toggles_the_section_the_page_is_on() {
+        let mut d = wasm_document(orientation_change_document());
+        assert_eq!(
+            d.running_variants(5),
+            "{\"firstPage\":false,\"evenOdd\":false}",
+            "the landscape section starts without a distinct first page"
+        );
+
+        d.set_first_page_variant(true, 5)
+            .expect("toggle the variant from page 5");
+        assert_eq!(
+            d.document.definitions().sections[1].title_page,
+            Some(true),
+            "the landscape section is the one that changed"
+        );
+        assert_eq!(
+            d.document.definitions().sections[0].title_page,
+            None,
+            "the first section was left alone"
+        );
+        assert_eq!(
+            d.running_variants(5),
+            "{\"firstPage\":true,\"evenOdd\":false}"
+        );
+        assert_eq!(
+            d.running_variants(1),
+            "{\"firstPage\":false,\"evenOdd\":false}",
+            "and the read side is per section too"
+        );
+        // Page 5 is the landscape section's FIRST page, so it is the page whose
+        // band changed — the whole point of the toggle.
+        let first_page_header = sections_header_nodes(&d, 720);
+        let placed = d.layout.pages[4]
+            .header
+            .iter()
+            .filter_map(|placed| match &placed.fragment {
+                casual_doc_layout::block::BlockFragment::Paragraph { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            placed.iter().any(|id| first_page_header.contains(id)),
+            "page 5 now paints the landscape section's first-page header"
+        );
+    }
+
+    /// With the variant on, "edit the header" on that section's first page opens
+    /// the FIRST-page body, and creating one there links the first-page variant —
+    /// the band the user clicked and the body the edit lands in must agree.
+    #[test]
+    fn the_first_page_band_edits_the_first_page_body() {
+        let mut d = wasm_document(orientation_change_document());
+        d.set_first_page_variant(true, 5).expect("variant on");
+
+        let caret = d
+            .running_content_caret("header", 5)
+            .expect("page 5 has a first-page header");
+        let node = NodeId::from_str(&caret.node()).expect("caret node");
+        assert!(
+            sections_header_nodes(&d, 720).contains(&node),
+            "the caret is in the first-page body, not the section default"
+        );
+        let on_page_6 = d
+            .running_content_caret("header", 6)
+            .expect("page 6 has a header");
+        let node_6 = NodeId::from_str(&on_page_6.node()).expect("caret node");
+        assert!(
+            sections_header_nodes(&d, 710).contains(&node_6),
+            "a later page in the same section still shows the default variant"
+        );
+    }
+
+    /// The band geometry a page draws its header/footer boundary in comes from the
+    /// page's OWN section: the landscape section's 2" vertical margins, not the
+    /// first section's 1".
+    #[test]
+    fn running_bands_report_each_page_s_own_section() {
+        let d = wasm_document(orientation_change_document());
+        let page_1: serde_json::Value =
+            serde_json::from_str(&d.running_bands(1)).expect("page 1 bands");
+        let page_5: serde_json::Value =
+            serde_json::from_str(&d.running_bands(5)).expect("page 5 bands");
+        assert_eq!(page_1["section"], 1);
+        assert_eq!(page_1["sectionCount"], 2);
+        assert_eq!(page_1["headerTwips"], 1_440);
+        assert_eq!(page_1["footerTwips"], 1_440);
+        assert_eq!(page_5["section"], 2, "page 5 belongs to the second section");
+        assert_eq!(
+            page_5["headerTwips"], 2_880,
+            "and reports that section's own top margin"
+        );
+        assert_eq!(page_5["footerTwips"], 2_880);
+        assert_eq!(page_5["headerLinked"], false, "its header is its own");
+    }
+
+    /// Emits `webapp/sections.docx` — the two-section, orientation-changing
+    /// document the header/footer e2e drives (no shipped sample has a section
+    /// break, let alone one that turns landscape). Run explicitly with
+    /// `--ignored`; regenerate if the fixture shape changes.
+    #[test]
+    #[ignore = "fixture generator; run with --ignored to (re)write webapp/sections.docx"]
+    fn generate_sections_fixture_docx() {
+        let d = wasm_document(orientation_change_document());
+        let bytes = d.export_docx().expect("export the sections fixture");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../webapp/sections.docx");
+        std::fs::write(&path, &bytes).expect("write webapp/sections.docx");
+        // Sanity: it reopens with both sections, both orientations and every
+        // running story intact — the fixture is only useful if it survives DOCX.
+        let reopened = open_document(&bytes).expect("reopen the fixture");
+        assert_eq!(reopened.page_count(), 6);
+        assert_eq!(reopened.document.definitions().sections.len(), 2);
+        assert_eq!(reopened.document.definitions().headers.iter().count(), 3);
+        assert_eq!(reopened.document.definitions().footers.iter().count(), 2);
+        let portrait = reopened.page_size_inner(0).expect("page 1 size");
+        let landscape = reopened.page_size_inner(4).expect("page 5 size");
+        assert!(
+            portrait.height_twip > portrait.width_twip,
+            "page 1 portrait"
+        );
+        assert!(
+            landscape.width_twip > landscape.height_twip,
+            "page 5 landscape"
+        );
     }
 }

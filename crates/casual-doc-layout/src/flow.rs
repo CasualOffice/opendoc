@@ -39,6 +39,8 @@ use casual_doc_model::v1::{BarPosition, GroupPosition, LimitPosition};
 use casual_doc_model::v1::NoteNumberMark;
 // Separate `use` line (anti-conflict): the legacy form-field checkbox payload.
 use casual_doc_model::v1::FormFieldKind;
+// Separate `use` line (anti-conflict): the run emphasis mark (`w:em`).
+use casual_doc_model::v1::EmphasisMark;
 
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
@@ -1988,12 +1990,18 @@ fn hash_decoration<H: std::hash::Hasher>(decoration: &crate::text::Decoration, h
         underline_color,
         strikethrough,
         double_strike,
+        emphasis,
+        border,
     } = decoration;
     underline.hash(hasher);
     (*underline_style as u8).hash(hasher);
     underline_color.hash(hasher);
     strikethrough.hash(hasher);
     double_strike.hash(hasher);
+    emphasis.map(|mark| mark as u8).hash(hasher);
+    border
+        .map(|edge| (edge.color, edge.width.raw(), edge.pattern as u8))
+        .hash(hasher);
 }
 
 /// How many grid columns a table actually occupies.
@@ -5398,13 +5406,7 @@ fn styled_owned_run(
             ctx.text_scale,
         ),
         color: run_color(effective.color, ctx.palette),
-        decoration: Decoration {
-            underline: effective.underline.unwrap_or(false),
-            strikethrough: effective.strike.unwrap_or(false),
-            double_strike: effective.double_strike.unwrap_or(false),
-            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
-            underline_style: effective.underline_style.unwrap_or_default(),
-        },
+        decoration: run_decoration(&effective),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
@@ -5441,13 +5443,7 @@ fn build_styled_run<'a>(
             ctx.text_scale,
         ),
         color: run_color(properties.color, ctx.palette),
-        decoration: Decoration {
-            underline: properties.underline.unwrap_or(false),
-            strikethrough: properties.strike.unwrap_or(false),
-            double_strike: properties.double_strike.unwrap_or(false),
-            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
-            underline_style: properties.underline_style.unwrap_or_default(),
-        },
+        decoration: run_decoration(properties),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
@@ -5522,13 +5518,7 @@ fn symbol_glyph_run(symbol: &Symbol, ctx: &mut FlowCtx) -> StyledRun<'static> {
             ctx.text_scale,
         ),
         color: run_color(effective.color, ctx.palette),
-        decoration: Decoration {
-            underline: effective.underline.unwrap_or(false),
-            strikethrough: effective.strike.unwrap_or(false),
-            double_strike: effective.double_strike.unwrap_or(false),
-            underline_color: effective.underline_color.map(|c| [c.r, c.g, c.b, 255]),
-            underline_style: effective.underline_style.unwrap_or_default(),
-        },
+        decoration: run_decoration(&effective),
         highlight: effective.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&effective.shading, ctx.palette),
         baseline_shift,
@@ -5748,13 +5738,7 @@ fn build_script_run<'a>(
             ctx.text_scale,
         ),
         color: run_color(properties.color, ctx.palette),
-        decoration: Decoration {
-            underline: properties.underline.unwrap_or(false),
-            strikethrough: properties.strike.unwrap_or(false),
-            double_strike: properties.double_strike.unwrap_or(false),
-            underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
-            underline_style: properties.underline_style.unwrap_or_default(),
-        },
+        decoration: run_decoration(properties),
         highlight: properties.highlight.and_then(highlight_rgba),
         shading: shading_rgba(&properties.shading, ctx.palette),
         baseline_shift,
@@ -5778,13 +5762,7 @@ fn push_small_caps_runs<'a>(
         ctx.text_scale,
     );
     let color = run_color(properties.color, ctx.palette);
-    let decoration = Decoration {
-        underline: properties.underline.unwrap_or(false),
-        strikethrough: properties.strike.unwrap_or(false),
-        double_strike: properties.double_strike.unwrap_or(false),
-        underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
-        underline_style: properties.underline_style.unwrap_or_default(),
-    };
+    let decoration = run_decoration(properties);
     let highlight = properties.highlight.and_then(highlight_rgba);
     let shading = shading_rgba(&properties.shading, ctx.palette);
     let family = requested_family(properties, ctx.scheme);
@@ -5837,6 +5815,41 @@ fn small_caps_spans(text: &str) -> Vec<(&str, bool)> {
         spans.push((&text[start..], g));
     }
     spans
+}
+
+/// Builds a run's [`Decoration`] from its **effective** (already cascaded) run
+/// properties.
+///
+/// One function for every styled-run producer (body text, small caps, symbols,
+/// script slots, table text) so a newly consumed decoration reaches all of them
+/// at once. `w:em` and `w:bdr` were modeled and cascaded for a long time with no
+/// paint arm anywhere — exactly the "modeled counts as done" class — and the
+/// reason was that each producer built the struct inline, so wiring one site
+/// looked complete while four others stayed blind (`docs/105` FID-L-14,
+/// FID-P-04).
+///
+/// `w:em="none"` is an explicit *clear*, so it resolves to `None` (draw nothing)
+/// rather than to a mark. The border goes through the shared
+/// [`resolve_edge`] so a `nil`/`none` edge suppresses the box and the width,
+/// color, and pattern match paragraph, cell, and page borders.
+///
+/// Still unconsumed from the same FID-L-14 group, deliberately: `w:outline`,
+/// `w:shadow`, `w:emboss`, and `w:imprint`. Those four are glyph-ink effects, not
+/// decoration geometry — they need outline stroking and offset/relief passes in
+/// the raster backend, not an arm here — so they are a separate piece of work
+/// rather than a line in this function.
+fn run_decoration(properties: &RunProperties) -> Decoration {
+    Decoration {
+        underline: properties.underline.unwrap_or(false),
+        strikethrough: properties.strike.unwrap_or(false),
+        double_strike: properties.double_strike.unwrap_or(false),
+        underline_color: properties.underline_color.map(|c| [c.r, c.g, c.b, 255]),
+        underline_style: properties.underline_style.unwrap_or_default(),
+        emphasis: properties
+            .emphasis
+            .filter(|mark| *mark != EmphasisMark::None),
+        border: resolve_edge(&[properties.border.as_ref()]),
+    }
 }
 
 /// Resolves a run's `w:color` to opaque RGBA: an explicit `w:color@val` sRGB is
@@ -6022,6 +6035,17 @@ fn requested_family(properties: &RunProperties, scheme: Option<&FontScheme>) -> 
 }
 
 /// Maps model paragraph alignment to the layout alignment.
+///
+/// `w:jc="distribute"` cannot be distinguished here: the model has no
+/// `Distribute` variant, so import already collapsed it to `Justify` (and now
+/// reports the degradation — `docs/105` FID-L-18). Real inter-character
+/// distribution therefore cannot be implemented in layout alone; it needs the
+/// model variant first, then a `TextAlignment::Distribute` the shaper honours by
+/// spreading the residual across every cluster boundary — including on the last
+/// line, which ordinary justification leaves ragged — plus an export arm that
+/// writes `distribute` back instead of `both`. Until then, a distributed
+/// paragraph fills its measure by widening word gaps, which is visibly looser
+/// than Word for CJK.
 fn alignment(properties: &ParagraphProperties) -> TextAlignment {
     match properties.alignment {
         Some(Alignment::Start) | None => TextAlignment::Start,
@@ -7263,6 +7287,66 @@ mod tests {
         }
     }
 
+    /// `docs/105` FID-L-14: `w:em` and `w:bdr` must reach the run decoration.
+    ///
+    /// Both were modeled, imported, and cascaded for a long time while nothing in
+    /// layout read them, so a Japanese document's bōten and a form's boxed field
+    /// simply did not exist on the page. This asserts the *mapping* — the paint
+    /// arms are guarded in `compose`, and the two together are what make the
+    /// construct reachable.
+    #[test]
+    fn a_runs_emphasis_mark_and_border_reach_its_decoration() {
+        use casual_doc_model::v1::BorderEdge;
+
+        let plain = run_decoration(&RunProperties::default());
+        assert_eq!(plain.emphasis, None, "an unmarked run carries no mark");
+        assert_eq!(plain.border, None, "an unbordered run carries no box");
+
+        let marked = run_decoration(&RunProperties {
+            emphasis: Some(EmphasisMark::Comma),
+            ..RunProperties::default()
+        });
+        assert_eq!(marked.emphasis, Some(EmphasisMark::Comma));
+
+        // `w:em="none"` is an explicit CLEAR, not a mark: it must resolve to no
+        // mark, otherwise a run that deliberately turns emphasis off would start
+        // painting sesame dots.
+        let cleared = run_decoration(&RunProperties {
+            emphasis: Some(EmphasisMark::None),
+            ..RunProperties::default()
+        });
+        assert_eq!(cleared.emphasis, None, "`w:em=\"none\"` clears the mark");
+
+        // The border goes through the shared edge resolution, so its width comes
+        // from `w:sz` eighth-points and a `nil` edge is suppressed.
+        let bordered = run_decoration(&RunProperties {
+            border: Some(BorderEdge {
+                style: "single".to_owned(),
+                size_eighth_points: Some(8),
+                color: Some(casual_doc_model::v1::RgbColor { r: 1, g: 2, b: 3 }),
+                space_points: None,
+            }),
+            ..RunProperties::default()
+        });
+        let edge = bordered.border.expect("a single-style `w:bdr` is drawable");
+        assert_eq!(edge.width, Twip(20), "8 eighth-points = 1pt = 20 twips");
+        assert_eq!(edge.color, [1, 2, 3, 255]);
+
+        let suppressed = run_decoration(&RunProperties {
+            border: Some(BorderEdge {
+                style: "nil".to_owned(),
+                size_eighth_points: Some(8),
+                color: None,
+                space_points: None,
+            }),
+            ..RunProperties::default()
+        });
+        assert_eq!(
+            suppressed.border, None,
+            "a `nil` edge is suppressed, not drawn as a hairline"
+        );
+    }
+
     /// Every field of `Decoration` must change the galley cache key.
     ///
     /// The cache answers one question — did anything the renderer reads change? —
@@ -7323,6 +7407,24 @@ mod tests {
                 "strikethrough",
                 Decoration {
                     strikethrough: false,
+                    ..base
+                },
+            ),
+            (
+                "emphasis",
+                Decoration {
+                    emphasis: Some(EmphasisMark::Dot),
+                    ..base
+                },
+            ),
+            (
+                "border",
+                Decoration {
+                    border: Some(ResolvedEdge {
+                        color: [0, 0, 0, 255],
+                        width: Twip(20),
+                        pattern: BorderPattern::Solid,
+                    }),
                     ..base
                 },
             ),

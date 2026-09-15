@@ -55,6 +55,12 @@ struct RunBrush {
     underline_color: [u8; 4],
     /// The run's underline line style (`w:u@val`).
     underline_style: casual_doc_model::v1::UnderlineStyle,
+    /// The run's emphasis mark (`w:em`); `None` = no mark. Not a `parley`
+    /// decoration, so like `double_strike` it rides the brush across shaping.
+    emphasis: Option<casual_doc_model::v1::EmphasisMark>,
+    /// The run's resolved border box (`w:bdr`); `None` = no box. Also not a
+    /// `parley` decoration, so it rides the brush.
+    border: Option<crate::block::ResolvedEdge>,
     /// Baseline shift in twips (positive = raised); subtracted from the run's
     /// glyph-run origin so super/subscript and `w:position` offsets survive shaping.
     baseline_shift: i32,
@@ -877,6 +883,8 @@ impl ParleyShaper {
                     double_strike: run.decoration.double_strike,
                     underline_color: run.decoration.underline_color.unwrap_or([0, 0, 0, 0]),
                     underline_style: run.decoration.underline_style,
+                    emphasis: run.decoration.emphasis,
+                    border: run.decoration.border,
                     baseline_shift: run.baseline_shift.raw(),
                 }),
                 *start..*end,
@@ -1204,6 +1212,8 @@ impl ParleyShaper {
                         underline_color: (style.brush.underline_color[3] != 0)
                             .then_some(style.brush.underline_color),
                         underline_style: style.brush.underline_style,
+                        emphasis: style.brush.emphasis,
+                        border: style.brush.border,
                     },
                     highlight,
                     shading,
@@ -1826,6 +1836,7 @@ mod tests {
                 double_strike: false,
                 underline_color: None,
                 underline_style: casual_doc_model::v1::UnderlineStyle::Single,
+                ..Decoration::default()
             },
             highlight: None,
             shading: None,
