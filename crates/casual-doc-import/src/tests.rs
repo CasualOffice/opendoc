@@ -492,7 +492,8 @@ fn theme_font_color_and_format_schemes_are_parsed() {
         </a:fontScheme>
         <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst></a:fmtScheme>
     </a:themeElements></a:theme>"#;
-    let parsed = crate::theme::parse(xml, ImportConfig::default()).unwrap();
+    let mut reporter = crate::report::Reporter::default();
+    let parsed = crate::theme::parse(xml, &mut reporter, ImportConfig::default()).unwrap();
     let scheme = parsed.font_scheme.unwrap();
     assert_eq!(scheme.major.latin.typeface, "Calibri Light");
     assert_eq!(scheme.major.latin.panose.as_deref(), Some("020F0302"));
@@ -528,8 +529,12 @@ fn theme_font_color_and_format_schemes_are_parsed() {
     let retained = parsed.format_scheme_xml.unwrap();
     assert!(retained.contains("fillStyleLst"));
     // A theme with no scheme parts yields all-None.
-    let none =
-        crate::theme::parse(br#"<a:theme xmlns:a="urn:a"/>"#, ImportConfig::default()).unwrap();
+    let none = crate::theme::parse(
+        br#"<a:theme xmlns:a="urn:a"/>"#,
+        &mut reporter,
+        ImportConfig::default(),
+    )
+    .unwrap();
     assert!(none.font_scheme.is_none());
     assert!(none.color_scheme.is_none());
     assert!(none.format_scheme_xml.is_none());
@@ -6390,6 +6395,395 @@ fn hyphen_glyphs_and_positional_tab_are_mapped_not_reported() {
         assert!(
             !features(&import).contains(&name),
             "{name} must not be reported as dropped"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FID-R-04: the silently-skipping parsers now report.
+//
+// The theme, comment-companion, style and numbering parts are all *regenerated*
+// by the semantic writer, never retained, so a construct a parser skips without
+// a finding is lost permanently and invisibly. These tests pin both halves of
+// the contract: every dropped construct raises exactly one finding, and every
+// fully mapped construct raises none.
+// ---------------------------------------------------------------------------
+
+/// A body with nothing to report, so a part's own findings stand alone.
+const PLAIN_BODY: &[u8] = br#"<w:document xmlns:w="urn:w"><w:body><w:p/></w:body></w:document>"#;
+
+fn import_with_theme(document: &[u8], theme: &[u8]) -> Import {
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        Some(theme),
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+fn import_with_comment_parts(
+    document: &[u8],
+    comments: &[u8],
+    extended: Option<&[u8]>,
+    ids: Option<&[u8]>,
+    people: Option<&[u8]>,
+) -> Import {
+    let comments = crate::PartSources {
+        xml: comments.to_vec(),
+        comments_extended: extended.map(<[u8]>::to_vec),
+        comments_ids: ids.map(<[u8]>::to_vec),
+        people: people.map(<[u8]>::to_vec),
+        ..Default::default()
+    };
+    import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        Some(&comments),
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+/// Total reported occurrences of one feature (0 when it is not reported).
+fn occurrences(import: &Import, feature: &str) -> u32 {
+    import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == feature)
+        .map(|entry| entry.occurrences)
+        .sum()
+}
+
+#[test]
+fn theme_children_the_writer_regenerates_away_are_each_reported_once() {
+    // `a:objectDefaults`, `a:extraClrSchemeLst`, `a:custClrLst` and `a:extLst`
+    // reach neither the model nor the retained `a:fmtScheme`, and the writer
+    // emits a fixed `a:theme`/`a:fontScheme` `@name`. Every one of those is a
+    // permanent loss on a semantic save, so every one must carry a finding.
+    let theme = br#"<a:theme xmlns:a="urn:a" name="Custom Theme">
+        <a:themeElements>
+            <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1></a:clrScheme>
+            <a:fontScheme name="Custom Fonts">
+                <a:majorFont><a:latin typeface="Calibri Light"/></a:majorFont>
+                <a:minorFont><a:latin typeface="Calibri"/></a:minorFont>
+            </a:fontScheme>
+            <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill/></a:fillStyleLst></a:fmtScheme>
+        </a:themeElements>
+        <a:objectDefaults><a:spDef><a:spPr/></a:spDef><a:lnDef><a:lnPr/></a:lnDef></a:objectDefaults>
+        <a:extraClrSchemeLst><a:extraClrScheme><a:clrScheme name="Bogus"/></a:extraClrScheme></a:extraClrSchemeLst>
+        <a:custClrLst><a:custClr name="Brand"><a:srgbClr val="FF0000"/></a:custClr></a:custClrLst>
+        <a:extLst><a:ext uri="{7E4A0A50}"><a:themeFamily name="x"/></a:ext></a:extLst>
+    </a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+
+    for feature in [
+        "objectDefaults",
+        "extraClrSchemeLst",
+        "custClrLst",
+        "extLst",
+        // The two dropped display names. The report has no attribute vocabulary
+        // yet (FID-R-03), so each is an element-qualified pseudo-feature.
+        "theme:nameAttribute",
+        "fontScheme:nameAttribute",
+    ] {
+        assert_eq!(
+            occurrences(&import, feature),
+            1,
+            "{feature} is dropped on save and must be reported exactly once; \
+             report: {:?}",
+            features(&import)
+        );
+    }
+
+    // One dropped construct is one finding: the skipped subtrees' descendants do
+    // not each raise their own, or the report becomes noise.
+    for descendant in [
+        "spDef",
+        "spPr",
+        "lnDef",
+        "lnPr",
+        "extraClrScheme",
+        "custClr",
+        "ext",
+        "themeFamily",
+    ] {
+        assert!(
+            !features(&import).contains(&descendant),
+            "{descendant} sits inside an already-reported subtree"
+        );
+    }
+
+    // Skipping those subtrees must not disturb the modeled schemes: the colour
+    // scheme is still the real one, not the `extraClrSchemeLst` decoy.
+    let definitions = import.document.definitions();
+    assert_eq!(
+        definitions.color_scheme.as_ref().unwrap().name,
+        "Office",
+        "the skipped extra scheme must not leak into the modeled one"
+    );
+    assert_eq!(
+        definitions
+            .font_scheme
+            .as_ref()
+            .unwrap()
+            .major
+            .latin
+            .typeface,
+        "Calibri Light"
+    );
+}
+
+#[test]
+fn a_fully_mapped_theme_reports_nothing() {
+    // The other half of the contract. `a:themeElements` is a pure container, the
+    // colour and font schemes are modeled, and `a:fmtScheme` is retained
+    // verbatim — so an ordinary theme must produce no findings at all, or users
+    // learn to ignore the report.
+    let theme = br#"<a:theme xmlns:a="urn:a">
+        <a:themeElements>
+            <a:clrScheme name="Office">
+                <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+                <a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>
+            </a:clrScheme>
+            <a:fontScheme>
+                <a:majorFont>
+                    <a:latin typeface="Calibri Light" panose="020F0302" pitchFamily="34" charset="0"/>
+                    <a:ea typeface=""/><a:cs typeface=""/>
+                    <a:font script="Hang" typeface="Malgun Gothic"/>
+                </a:majorFont>
+                <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+            </a:fontScheme>
+            <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill/></a:fillStyleLst></a:fmtScheme>
+        </a:themeElements>
+    </a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+    assert!(
+        features(&import).is_empty(),
+        "a mapped-or-retained theme must raise no finding, got {:?}",
+        features(&import)
+    );
+    assert!(
+        import
+            .document
+            .definitions()
+            .format_scheme_xml
+            .as_deref()
+            .unwrap()
+            .contains("fillStyleLst"),
+        "the format scheme is retained, which is why it is not reported"
+    );
+}
+
+#[test]
+fn theme_colour_values_the_model_cannot_carry_are_reported() {
+    // `SchemeColor` carries only sRGB and system colours, so any other DrawingML
+    // colour choice — or a colour transform on one — leaves the slot at its
+    // default. Silent today; a finding now.
+    let theme = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
+        <a:clrScheme name="Office">
+            <a:dk1><a:prstClr val="black"/></a:dk1>
+            <a:lt1><a:srgbClr val="FFFFFF"><a:alpha val="50000"/></a:srgbClr></a:lt1>
+        </a:clrScheme>
+    </a:themeElements></a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+    assert_eq!(occurrences(&import, "prstClr"), 1);
+    assert_eq!(occurrences(&import, "alpha"), 1);
+    // The mapped half of the same scheme is not reported.
+    assert!(!features(&import).contains(&"srgbClr"));
+    assert!(!features(&import).contains(&"clrScheme"));
+}
+
+#[test]
+fn an_unmodeled_child_of_the_font_scheme_is_reported() {
+    // `a:extLst` inside the font scheme, and a supplemental `a:font` whose
+    // script/typeface pair the model cannot carry, both vanish on save.
+    let theme = br#"<a:theme xmlns:a="urn:a"><a:themeElements>
+        <a:fontScheme>
+            <a:majorFont>
+                <a:latin typeface="Calibri Light"/>
+                <a:font script="" typeface="Nowhere"/>
+            </a:majorFont>
+            <a:minorFont><a:latin typeface="Calibri"/></a:minorFont>
+            <a:extLst><a:ext uri="{7E4A0A50}"/></a:extLst>
+        </a:fontScheme>
+    </a:themeElements></a:theme>"#;
+    let import = import_with_theme(PLAIN_BODY, theme);
+    assert_eq!(occurrences(&import, "extLst"), 1);
+    assert!(
+        !features(&import).contains(&"ext"),
+        "the skipped subtree is one finding, not one per descendant"
+    );
+    assert_eq!(
+        occurrences(&import, "font"),
+        1,
+        "the unusable script override is dropped and reported"
+    );
+    // The modeled collections in the same scheme raise nothing.
+    let scheme = import.document.definitions().font_scheme.clone().unwrap();
+    assert_eq!(scheme.major.latin.typeface, "Calibri Light");
+    assert!(scheme.major.script_overrides.is_empty());
+    for mapped in ["fontScheme", "majorFont", "minorFont", "latin"] {
+        assert!(!features(&import).contains(&mapped));
+    }
+}
+
+#[test]
+fn comment_companion_entries_that_cannot_be_joined_are_reported() {
+    // These three parts are regenerated on save. A `w15:commentEx` with no
+    // `paraId`, a `w16cid:commentId` missing half its pair, a `w15:person` with
+    // no author, and any unmodeled element are all dropped — reportably now.
+    let comments = br#"<w:comments xmlns:w="urn:w" xmlns:w14="urn:w14">
+        <w:comment w:id="1" w:author="Ada"><w:p w14:paraId="0A0A0A0A"><w:r><w:t>note</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let extended = br#"<w15:commentsEx xmlns:w15="urn:w15">
+        <w15:commentEx w15:paraId="0A0A0A0A" w15:done="1"/>
+        <w15:commentEx w15:done="1"/>
+        <w15:somethingElse/>
+    </w15:commentsEx>"#;
+    let ids = br#"<w16cid:commentsIds xmlns:w16cid="urn:w16cid">
+        <w16cid:commentId w16cid:paraId="0A0A0A0A" w16cid:durableId="11111111"/>
+        <w16cid:commentId w16cid:paraId="0B0B0B0B"/>
+    </w16cid:commentsIds>"#;
+    let people = br#"<w15:people xmlns:w15="urn:w15">
+        <w15:person w15:author="Ada"><w15:presenceInfo w15:providerId="AD" w15:userId="ada@example.com"/></w15:person>
+        <w15:person/>
+        <w15:person><w15:presenceInfo w15:providerId="AD" w15:userId="nobody@example.com"></w15:presenceInfo></w15:person>
+        <w15:presenceInfo w15:providerId="AD" w15:userId="orphan@example.com"/>
+        <w15:extLst/>
+    </w15:people>"#;
+    let import = import_with_comment_parts(
+        PLAIN_BODY,
+        comments,
+        Some(extended),
+        Some(ids),
+        Some(people),
+    );
+
+    assert_eq!(
+        occurrences(&import, "commentEx"),
+        1,
+        "the paraId-less commentEx is dropped and reported"
+    );
+    assert_eq!(occurrences(&import, "somethingElse"), 1);
+    assert_eq!(
+        occurrences(&import, "commentId"),
+        1,
+        "the durableId-less commentId is dropped and reported"
+    );
+    assert_eq!(
+        occurrences(&import, "person"),
+        2,
+        "both author-less people are dropped and reported (the empty-element \
+         form and the one with a child)"
+    );
+    assert_eq!(
+        occurrences(&import, "presenceInfo"),
+        2,
+        "both orphaned presence records are reported (the one under the dropped \
+         person and the stray one), never silently discarded"
+    );
+    assert_eq!(occurrences(&import, "extLst"), 1);
+
+    // The well-formed entries are fully mapped, so they add no findings: the
+    // joined comment really did keep its thread state, durable id and identity.
+    let comment = import
+        .document
+        .definitions()
+        .comments
+        .iter()
+        .next()
+        .unwrap()
+        .1;
+    assert!(comment.done);
+    assert_eq!(comment.durable_id.as_deref(), Some("11111111"));
+    assert_eq!(comment.person.as_deref(), Some("Ada"));
+    for mapped in ["commentsEx", "commentsIds", "people"] {
+        assert!(
+            !features(&import).contains(&mapped),
+            "{mapped} is mapped (or a pure part root) and must not be reported"
+        );
+    }
+}
+
+#[test]
+fn an_unmodeled_child_of_the_style_part_is_reported() {
+    // `styles.rs` reports densely inside a style, but skipped the subtree of an
+    // unknown `w:styles` child without a word.
+    let styles = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        <w:stylesFromOtherProducer><w:inner w:val="1"/></w:stylesFromOtherProducer>
+    </w:styles>"#;
+    let import = import_with_styles(PLAIN_BODY, styles);
+    assert_eq!(occurrences(&import, "stylesFromOtherProducer"), 1);
+    assert!(
+        !features(&import).contains(&"inner"),
+        "the skipped subtree is one finding, not one per descendant"
+    );
+    // The mapped part of the same file is untouched and unreported.
+    assert_eq!(import.document.definitions().styles.len(), 1);
+    for mapped in ["styles", "style", "name"] {
+        assert!(!features(&import).contains(&mapped));
+    }
+}
+
+#[test]
+fn a_picture_bullet_is_reported_rather_than_silently_dropped() {
+    // `w:numPicBullet` (an image used as the list marker) is not modeled and the
+    // numbering part is regenerated, so the bullet vanishes on save.
+    let numbering = br#"<w:numbering xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v">
+        <w:numPicBullet w:numPicBulletId="0">
+            <w:pict><v:shape id="_x0000_i1025" style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict>
+        </w:numPicBullet>
+        <w:abstractNum w:abstractNumId="0">
+            <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="&#9679;"/></w:lvl>
+        </w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+    let import = import_with_numbering(PLAIN_BODY, numbering);
+    assert_eq!(
+        occurrences(&import, "numPicBullet"),
+        1,
+        "the picture bullet is dropped and must be reported once; report: {:?}",
+        features(&import)
+    );
+    for descendant in ["pict", "shape", "imagedata"] {
+        assert!(
+            !features(&import).contains(&descendant),
+            "{descendant} sits inside the already-reported picture bullet"
+        );
+    }
+    // The rest of the part still parses, and the mapped level is not reported.
+    assert_eq!(import.document.definitions().numbering.len(), 1);
+    for mapped in ["abstractNum", "lvl", "numFmt", "lvlText", "num"] {
+        assert!(
+            !features(&import).contains(&mapped),
+            "{mapped} is mapped and must not be reported"
         );
     }
 }

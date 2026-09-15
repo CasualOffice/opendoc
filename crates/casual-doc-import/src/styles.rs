@@ -406,7 +406,10 @@ fn parse_raw(
                 b"style" => styles.push(empty_style(&element)),
                 // A childless `<w:latentStyles/>` still carries block defaults.
                 b"latentStyles" => latent_styles = Some(read_latent_styles(&element, &[])),
-                _ => {}
+                // An empty `<w:styles/>` root, or an empty `<w:docDefaults/>`,
+                // defines nothing: there is no content to lose.
+                b"styles" | b"docDefaults" => {}
+                other => ctx.report(other),
             },
             Node::Open(element) => match element.local_name().as_ref() {
                 // The `w:styles` root: fall through so its children are read by
@@ -423,7 +426,13 @@ fn parse_raw(
                     let exceptions = read_lsd_exceptions(&mut reader, &mut buffer, &mut ctx)?;
                     latent_styles = Some(read_latent_styles(&element, &exceptions));
                 }
-                _ => skip_subtree(&mut reader, &mut buffer, &mut ctx)?,
+                // An unmodeled child of `w:styles`. The style part is
+                // regenerated on save, so the subtree is lost: report it once
+                // (on its outermost element) before skipping it.
+                other => {
+                    ctx.report(other);
+                    skip_subtree(&mut reader, &mut buffer, &mut ctx)?;
+                }
             },
         }
     }

@@ -269,6 +269,10 @@ struct NumberingState {
     /// to the shared paragraph/run property parsers, mirroring the styles parser).
     ppr_depth: u32,
     rpr_depth: u32,
+    /// Nesting level inside a `w:numPicBullet` (0 when outside one). Picture
+    /// bullets are not modeled and the numbering part is regenerated, so the
+    /// whole subtree is one reported loss rather than one finding per child.
+    pic_bullet_depth: u32,
 }
 
 fn parse_raw(
@@ -342,6 +346,12 @@ fn on_start(
     local: &[u8],
     element: &BytesStart<'_>,
 ) {
+    // Inside a `w:numPicBullet`, the whole subtree belongs to the one loss
+    // already reported on the container.
+    if state.pic_bullet_depth > 0 {
+        state.pic_bullet_depth += 1;
+        return;
+    }
     // Inside the current level's rPr/pPr, delegate to the shared property parsers;
     // an unmapped property child is reported (no silent loss).
     if state.rpr_depth > 0 {
@@ -362,6 +372,14 @@ fn on_start(
     }
     match local {
         b"numbering" => {}
+        // A picture bullet (`w:numPicBullet`, a VML/DrawingML image used as the
+        // list marker). Neither the image nor the level's `w:lvlPicBulletId`
+        // reference is modeled, and the part is regenerated on save, so the
+        // bullet is dropped: report it once and skip its subtree.
+        b"numPicBullet" => {
+            reporter.report(local);
+            state.pic_bullet_depth = 1;
+        }
         b"abstractNum" => {
             state.current_abstract = Some(RawAbstract {
                 id: attribute_value(element, b"abstractNumId").unwrap_or_default(),
@@ -537,6 +555,12 @@ fn on_end(
     abstracts: &mut Vec<RawAbstract>,
     nums: &mut Vec<RawNum>,
 ) {
+    // Closing out of the reported `w:numPicBullet` subtree (its own close
+    // included); nothing inside it feeds the model.
+    if state.pic_bullet_depth > 0 {
+        state.pic_bullet_depth -= 1;
+        return;
+    }
     match local {
         b"pPr" => state.ppr_depth = state.ppr_depth.saturating_sub(1),
         b"rPr" => state.rpr_depth = state.rpr_depth.saturating_sub(1),

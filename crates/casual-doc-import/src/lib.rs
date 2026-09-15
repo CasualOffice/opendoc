@@ -904,15 +904,15 @@ fn build_comments(
         // commentsIds (durable id); people supplies author identity.
         let para_ids = comments_ext::scan_comment_para_ids(&part.xml, config)?;
         let extended = match &part.comments_extended {
-            Some(xml) => comments_ext::parse_comments_extended(xml, config)?,
+            Some(xml) => comments_ext::parse_comments_extended(xml, reporter, config)?,
             None => std::collections::BTreeMap::new(),
         };
         let durable = match &part.comments_ids {
-            Some(xml) => comments_ext::parse_comments_ids(xml, config)?,
+            Some(xml) => comments_ext::parse_comments_ids(xml, reporter, config)?,
             None => std::collections::BTreeMap::new(),
         };
         if let Some(xml) = &part.people {
-            people = comments_ext::parse_people(xml, config)?;
+            people = comments_ext::parse_people(xml, reporter, config)?;
         }
         for (source_id, comment_id, mut comment) in comments {
             if let Some(para_id) = para_ids.get(&source_id) {
@@ -1073,7 +1073,7 @@ pub(crate) fn import_with_sources(
         None => Vec::new(),
     };
     let theme = match theme_xml {
-        Some(xml) => theme::parse(xml, config)?,
+        Some(xml) => theme::parse(xml, &mut reporter, config)?,
         None => theme::ParsedTheme::default(),
     };
     let settings = match settings_xml {
