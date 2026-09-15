@@ -132,13 +132,30 @@ fn internal_targets(rels_part_name: &str, bytes: &[u8]) -> Vec<(String, String)>
         if !external {
             let resolved = match target.strip_prefix('/') {
                 Some(absolute) => absolute.to_owned(),
-                None => format!("{base}{target}"),
+                None => normalize(&format!("{base}{target}")),
             };
             targets.push((id, resolved));
         }
         buffer.clear();
     }
     targets
+}
+
+/// Collapses `.` and `..` segments in a resolved part name, so a relationship
+/// written as `../customXml/item1.xml` from inside `word/` is compared against
+/// the name the package actually uses.
+fn normalize(path: &str) -> String {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." | "" => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.join("/")
 }
 
 /// Asserts the package-level invariant: no relationship names a part the package
