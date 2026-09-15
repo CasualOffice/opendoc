@@ -512,7 +512,7 @@ pub fn export_document_with_retained_parts(
         .iter()
         .map(|(_, reference)| reference.relationship_id.clone())
         .collect();
-    for (id, _, _) in &embedded_rels {
+    for (id, _, _, _) in &embedded_rels {
         reserved_rel_ids.insert(id.clone());
     }
     let (document_xml, rels) = document_xml(document, &available_media, reserved_rel_ids)?;
@@ -870,18 +870,15 @@ fn report_embedded_object_parts(
     retained_parts: &RetainedParts,
     reporter: &mut Reporter,
 ) {
-    for (_, _, target) in embedded_rels {
-        // `document.xml.rels` targets are `word/`-relative; the side-table keys
-        // parts by their full package name.
-        let part_name = format!("word/{target}");
+    for (_, _, _, part_name) in embedded_rels {
         if !retained_parts
             .parts
             .iter()
-            .any(|part| part.part_name == part_name)
+            .any(|part| &part.part_name == part_name)
         {
             reporter.record_part(
                 "docx.export.embedded_object.missing_part",
-                &part_name,
+                part_name,
                 Disposition::OmittedNotRetained,
             );
         }
@@ -1391,7 +1388,7 @@ fn document_rels_xml(
     // ids, so the body's `r:id` and this relationship agree; the target part's
     // bytes are re-emitted from the side-table (P1F-2), which — coordinated on
     // import — does NOT also re-add this relationship as an orphan.
-    for (id, relationship_type, target) in embedded_rels {
+    for (id, relationship_type, target, _) in embedded_rels {
         reserved.insert(id.clone());
         let mut rel = start("Relationship");
         rel.push_attribute(("Id", id.as_str()));
@@ -4266,8 +4263,12 @@ fn write_drop_cap_frame(
 }
 
 /// One embedded-object part relationship to emit in `document.xml.rels`:
-/// (relationship id, relationship type URI, `word/`-relative target).
-type EmbeddedRelEntry = (String, String, String);
+/// (relationship id, relationship type URI, `word/`-relative target, full
+/// package part name). The part name is carried alongside the target because the
+/// target alone cannot be turned back into it — `media_target` only strips a
+/// `word/` prefix when there is one — and the loss report has to name the part,
+/// not the relationship's view of it.
+type EmbeddedRelEntry = (String, String, String, String);
 
 /// Collects every embedded-object part relationship in document order, deduped
 /// Every media entry a block list actually references.
@@ -4483,6 +4484,7 @@ fn push_embedded_part(
             part.relationship_id.clone(),
             part.relationship_type.clone(),
             media_target(&part.part_name).to_owned(),
+            part.part_name.clone(),
         ));
     }
 }
