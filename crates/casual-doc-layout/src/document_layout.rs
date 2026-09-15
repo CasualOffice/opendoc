@@ -34,6 +34,19 @@
 //! is evaluated against that section's first page rather than only document page
 //! one. Per-section balancing of the last column page remains a documented
 //! deferral (see [`crate::columns`]).
+//!
+//! Two consequences of keying on `Page::section` are worth naming, because they
+//! decide *which pages a header appears on*:
+//!
+//! - A blank page inserted for `evenPage`/`oddPage` parity is charged to the
+//!   **preceding** section (see [`crate::columns`]), so it keeps that section's
+//!   running content and that section's page geometry — which is Word's behavior
+//!   and the reason the pad is emitted before the new section's config is
+//!   entered.
+//! - When a `continuous` section shares a page with the section before it, the
+//!   page is charged to the **last** section that placed content on it, so that
+//!   section's bands are the ones painted. One page has one header, so some rule
+//!   has to break the tie; this one is recorded rather than accidental.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -149,11 +162,21 @@ fn section_page_config(section: &SectionBoundary) -> PageConfig {
 /// uses (so a header holding a paragraph, table, or image lays out identically),
 /// plus the two flags that drive per-page variant selection.
 ///
+/// `section` must already carry this section's **effective** references — the
+/// per-variant link-to-previous merge in [`build_section_plans`] — because this
+/// function reads `section.headers`/`section.footers` verbatim and performs no
+/// inheritance of its own.
+///
 /// Each [`HeaderFooterRef`](casual_doc_model::v1::HeaderFooterRef) is resolved
 /// against the header/footer definition store; a reference that does not resolve
-/// contributes nothing (an empty variant falls back to the default at selection
-/// time, matching Word). `content_width` is the body content width (page width
-/// minus the side margins) — the same width the bands are laid out at.
+/// contributes nothing, leaving that variant empty — which renders as a blank
+/// band, not as a fall-back to `default` (see
+/// [`HeaderFooter::select`](crate::running::HeaderFooter::select)).
+///
+/// `content_width` is **this** section's body content width (its own page width
+/// minus its own side margins), so an inherited header is re-flowed at the
+/// inheriting section's width: an orientation change mid-document re-breaks the
+/// band's lines at the new width instead of keeping the donor section's.
 fn build_running_content(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -206,8 +229,21 @@ struct SectionPlan {
 }
 
 /// Resolves running-content inheritance and geometry for every section before
-/// body flow. In OOXML an omitted reference links to the previous section; an
-/// explicit reference (including one to an empty part) replaces that variant.
+/// body flow.
+///
+/// In OOXML "link to previous" is the *absence* of a reference: a section that
+/// omits a `w:headerReference`/`w:footerReference` of some type inherits the
+/// previous section's for that type, and an explicit reference (including one to
+/// an empty part) replaces it. Carrying `effective_headers`/`effective_footers`
+/// forward across the whole section list makes that inheritance **transitive** —
+/// section three inherits from section one through a silent section two — and
+/// [`merge_running_refs`] makes it **per variant**, so a section that declares
+/// only `default` still inherits the chain's `first` and `even`. Nothing shows
+/// only when no earlier section declared that type either.
+///
+/// Geometry is resolved here too, per section: each plan's [`PageConfig`] comes
+/// from its *own* `w:pgSz`/`w:pgMar`/`w:headerDistance`, and the running content
+/// is flowed at that section's content width.
 fn build_section_plans(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
