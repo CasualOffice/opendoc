@@ -27,11 +27,22 @@ jobs:
   rebless:
     name: Regenerate LibreOffice geometry references
     runs-on: ubuntu-24.04
+    env:
+      # Must equal ORACLE_LIBREOFFICE_VERSION in
+      # crates/casual-doc-render/tests/oracle_geometry.rs. Changing it means
+      # re-blessing every reference and reviewing the geometry diff.
+      ORACLE_LIBREOFFICE_VERSION: "26.2.4.2"
     # Pin the toolchain image by digest when adopting this in earnest so the
     # oracle is reproducible; ubuntu-24.04 ships a fixed LibreOffice for now.
     steps:
       - uses: actions/checkout@v4
 
+      # The version the oracle_geometry test pins (ORACLE_LIBREOFFICE_VERSION).
+      # ubuntu-24.04 ships 24.2.7.2, whose text layout differs from 26.2.4.2 by
+      # 558-629 twips on three corpus fixtures — an order of magnitude past the
+      # gate's 40-twip tolerance. A reference blessed against the runner's stock
+      # build is therefore not an oracle, so the build is installed explicitly and
+      # asserted below.
       - name: Install pinned LibreOffice and the bundled metric-compatible fonts
         run: |
           set -euo pipefail
@@ -41,11 +52,25 @@ jobs:
           # packages here — extra faces would desync line breaking.
           sudo apt-get install -y --no-install-recommends \
             fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
-            libreoffice-writer-nogui poppler-utils python3
+            poppler-utils python3
+          # LibreOffice from the pinned upstream PPA rather than the distro stock
+          # build, so the oracle is the version the test expects.
+          sudo add-apt-repository -y ppa:libreoffice/ppa
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer-nogui
           soffice --version
           mkdir -p fixtures/oracle
           # Record the exact versions into the reference set for provenance.
           soffice --version > fixtures/oracle/.toolchain 2>/dev/null || true
+
+          # Fail HERE rather than emit references the test will refuse. Keep this
+          # in step with ORACLE_LIBREOFFICE_VERSION in
+          # crates/casual-doc-render/tests/oracle_geometry.rs.
+          expected="${ORACLE_LIBREOFFICE_VERSION}"
+          if ! grep -q "$expected" fixtures/oracle/.toolchain; then
+            echo "::error::LibreOffice $(cat fixtures/oracle/.toolchain) is not the pinned $expected — references produced by another build are refused by the gate"
+            exit 1
+          fi
 
       - name: Record which faces fontconfig actually resolved
         run: |
