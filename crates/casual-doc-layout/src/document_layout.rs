@@ -52,8 +52,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Document, GroupChild, HeaderFooterKind, HeaderFooterRef, InlineNode, NoteId,
-    NoteKind, PageBorders, PageVerticalAlignment, SectionBoundary,
+    BlockNode, Document, HeaderFooterKind, HeaderFooterRef, NoteId, NoteKind, NotePosition,
+    PageBorders, PageVerticalAlignment, SectionBoundary,
 };
 
 use crate::anchor::{body_wrap_rects, header_float_reserve_for_section, place_floats};
@@ -63,10 +63,14 @@ use crate::columns::{
     section_starts_new_page,
 };
 use crate::flow::{
-    ParagraphFloatExclusion, ParagraphFloatExclusions, ReviewView, build_galley_cached,
-    build_galley_for_blocks_inner, flow_header_footer, line_grid_for_section,
+    NoteFlow, ParagraphFloatExclusion, ParagraphFloatExclusions, ReviewView,
+    build_galley_cached_labeled, build_galley_for_blocks_inner, flow_header_footer_labeled,
+    line_grid_for_section,
 };
 use crate::incremental::{DirtySet, GalleyCache};
+use crate::note_numbering::{
+    NoteLabels, note_props_for_section, resolve_note_labels, visit_block_note_refs,
+};
 use crate::notes::{paginate_section_footnotes, run_has_body_footnotes};
 use crate::paginate::{
     PageConfig, page_number_labels, resolve_anchored_fields_labeled, resolve_fields_labeled,
@@ -192,6 +196,7 @@ fn build_running_content(
     shaper: &dyn crate::text::LineShaper,
     section: &SectionBoundary,
     content_width: Twip,
+    labels: &NoteLabels,
 ) -> RunningContent {
     let defs = document.definitions();
     let mut header = HeaderFooter::default();
@@ -199,13 +204,15 @@ fn build_running_content(
 
     for reference in &section.headers {
         if let Some(hf) = defs.headers.get(&reference.reference) {
-            let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
+            let flowed =
+                flow_header_footer_labeled(document, &hf.blocks, shaper, content_width, labels);
             *variant_mut(&mut header, reference.kind) = flowed;
         }
     }
     for reference in &section.footers {
         if let Some(hf) = defs.footers.get(&reference.reference) {
-            let flowed = flow_header_footer(document, &hf.blocks, shaper, content_width);
+            let flowed =
+                flow_header_footer_labeled(document, &hf.blocks, shaper, content_width, labels);
             *variant_mut(&mut footer, reference.kind) = flowed;
         }
     }
@@ -257,6 +264,7 @@ struct SectionPlan {
 fn build_section_plans(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
+    labels: &NoteLabels,
 ) -> Vec<SectionPlan> {
     let mut plans = Vec::new();
     let mut effective_headers: Vec<HeaderFooterRef> = Vec::new();
@@ -272,7 +280,8 @@ fn build_section_plans(
 
         let mut config = section_page_config(section);
         let content_width = config.content_area().size.width;
-        let running = build_running_content(document, shaper, &effective_section, content_width);
+        let running =
+            build_running_content(document, shaper, &effective_section, content_width, labels);
         let (header_height, footer_height) = running.band_heights();
         let header_float =
             header_float_reserve_for_section(document, shaper, &config, &effective_section);
@@ -328,8 +337,9 @@ fn build_section_runs(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     review_view: ReviewView,
+    labels: &NoteLabels,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, None, review_view)
+    build_section_runs_inner(document, shaper, plans, None, review_view, labels)
 }
 
 fn build_section_runs_with_exclusions(
@@ -338,8 +348,16 @@ fn build_section_runs_with_exclusions(
     plans: &[SectionPlan],
     exclusions: &ParagraphFloatExclusions,
     review_view: ReviewView,
+    labels: &NoteLabels,
 ) -> Vec<SectionRun> {
-    build_section_runs_inner(document, shaper, plans, Some(exclusions), review_view)
+    build_section_runs_inner(
+        document,
+        shaper,
+        plans,
+        Some(exclusions),
+        review_view,
+        labels,
+    )
 }
 
 fn build_section_runs_inner(
@@ -348,6 +366,7 @@ fn build_section_runs_inner(
     plans: &[SectionPlan],
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
+    labels: &NoteLabels,
 ) -> Vec<SectionRun> {
     let sections = &document.definitions().sections;
     let body = document.body();
@@ -355,7 +374,7 @@ fn build_section_runs_inner(
         let config = plans[0].config;
         let content = config.content_area();
         let layout = ColumnLayout::single(content);
-        let blocks = body_with_appended_endnotes(document, body, body);
+        let blocks = blocks_with_endnotes(document, body, &referenced_endnotes(body));
         let galley = build_body_galley(
             document,
             shaper,
@@ -364,6 +383,7 @@ fn build_section_runs_inner(
             exclusions,
             review_view,
             None,
+            labels,
         );
         return vec![SectionRun {
             config,
@@ -378,59 +398,101 @@ fn build_section_runs_inner(
 
     let mut runs = Vec::new();
     let mut start = 0usize;
+    // Endnote bodies already emitted, so one referenced from a `sectEnd` section
+    // and again later is still laid out exactly once.
+    let mut emitted: Vec<NoteId> = Vec::new();
     // Non-final sections each end at a paragraph carrying that section's break.
     for (end_excl, boundary) in section_break_points(body, sections) {
+        let slice = &body[start..end_excl];
+        // `w:endnotePr/w:pos="sectEnd"`: this section's endnote bodies are laid out
+        // at the end of *this* section rather than travelling to the document end
+        // (`docEnd`, Word's default). `docs/105` FID-L-05.
+        let section_endnotes = if section_ends_endnotes(document, boundary) {
+            take_unemitted(&referenced_endnotes(slice), &mut emitted)
+        } else {
+            Vec::new()
+        };
         push_section_run(
             document,
             shaper,
             plan_for_section(plans, boundary.id),
             boundary,
-            &body[start..end_excl],
+            &blocks_with_endnotes(document, slice, &section_endnotes),
             exclusions,
             review_view,
+            labels,
             &mut runs,
         );
         start = end_excl;
     }
-    // The trailing (body-level) final section covers everything left.
+    // The trailing (body-level) final section covers everything left, and carries
+    // every endnote no `sectEnd` section already placed.
     if let Some(last) = sections.last() {
-        let trailing = body_with_appended_endnotes(document, &body[start..], body);
+        let remaining = take_unemitted(&referenced_endnotes(body), &mut emitted);
         push_section_run(
             document,
             shaper,
             plan_for_section(plans, last.id),
             last,
-            &trailing,
+            &blocks_with_endnotes(document, &body[start..], &remaining),
             exclusions,
             review_view,
+            labels,
             &mut runs,
         );
     }
     runs
 }
 
-fn body_with_appended_endnotes(
+/// Whether `section` places its endnote bodies at its own end (`w:pos="sectEnd"`)
+/// rather than at the document end (`docEnd`, Word's default).
+fn section_ends_endnotes(document: &Document, section: &SectionBoundary) -> bool {
+    note_props_for_section(document, Some(section), NoteKind::Endnote).position
+        == NotePosition::SectionEnd
+}
+
+/// The subset of `wanted` not already in `emitted`, marking them emitted.
+fn take_unemitted(wanted: &[NoteId], emitted: &mut Vec<NoteId>) -> Vec<NoteId> {
+    let mut out = Vec::new();
+    for id in wanted {
+        if !emitted.contains(id) {
+            emitted.push(*id);
+            out.push(*id);
+        }
+    }
+    out
+}
+
+/// `blocks` with the listed endnote bodies appended, in the order given.
+fn blocks_with_endnotes(
     document: &Document,
     blocks: &[BlockNode],
-    reference_scope: &[BlockNode],
+    endnotes: &[NoteId],
 ) -> Vec<BlockNode> {
-    let endnotes = referenced_endnotes(reference_scope);
     if endnotes.is_empty() {
         return blocks.to_vec();
     }
     let mut out = blocks.to_vec();
     for id in endnotes {
-        if let Some(note) = document.definitions().endnotes.get(&id) {
+        if let Some(note) = document.definitions().endnotes.get(id) {
             out.extend(note.blocks.clone());
         }
     }
     out
 }
 
+/// Every endnote referenced by `blocks`, in first-reference order, through the one
+/// shared note-reference walker (`crate::note_numbering::visit_block_note_refs`) so
+/// a new container that can hold a reference is taught to both this and note
+/// numbering at once.
 fn referenced_endnotes(blocks: &[BlockNode]) -> Vec<NoteId> {
     let mut out = Vec::new();
     for block in blocks {
-        collect_block_endnotes(block, &mut out);
+        visit_block_note_refs(block, &mut |kind, note| {
+            if kind == NoteKind::Endnote {
+                push_unique_endnote(&mut out, note);
+            }
+        });
     }
     out
 }
@@ -438,89 +500,6 @@ fn referenced_endnotes(blocks: &[BlockNode]) -> Vec<NoteId> {
 fn push_unique_endnote(out: &mut Vec<NoteId>, note: NoteId) {
     if !out.contains(&note) {
         out.push(note);
-    }
-}
-
-fn collect_block_endnotes(block: &BlockNode, out: &mut Vec<NoteId>) {
-    match block {
-        BlockNode::Paragraph(paragraph) => collect_inline_endnotes(&paragraph.inlines, out),
-        BlockNode::Table(table) => {
-            for row in &table.rows {
-                for cell in &row.cells {
-                    for block in &cell.blocks {
-                        collect_block_endnotes(block, out);
-                    }
-                }
-            }
-        }
-        BlockNode::Sdt(sdt) => {
-            for block in &sdt.blocks {
-                collect_block_endnotes(block, out);
-            }
-        }
-        BlockNode::AltChunk(_) => {}
-    }
-}
-
-fn collect_inline_endnotes(inlines: &[InlineNode], out: &mut Vec<NoteId>) {
-    for inline in inlines {
-        match inline {
-            InlineNode::NoteReference(reference) if reference.kind == NoteKind::Endnote => {
-                push_unique_endnote(out, reference.note);
-            }
-            InlineNode::Hyperlink(hyperlink) => collect_inline_endnotes(&hyperlink.inlines, out),
-            InlineNode::Field(field) => collect_inline_endnotes(&field.inlines, out),
-            InlineNode::TextBox(text_box) => {
-                for block in &text_box.blocks {
-                    collect_block_endnotes(block, out);
-                }
-            }
-            InlineNode::Group(group) => collect_group_endnotes(&group.children, out),
-            InlineNode::Revision(revision)
-                if revision
-                    .kind
-                    .contributes_to(casual_doc_model::v1::ReviewProjection::FinalWithMarkup) =>
-            {
-                collect_inline_endnotes(&revision.inlines, out);
-            }
-            InlineNode::Revision(_) => {}
-            InlineNode::Sdt(sdt) => collect_inline_endnotes(&sdt.inlines, out),
-            InlineNode::Run(_)
-            | InlineNode::Tab(_)
-            | InlineNode::Break(_)
-            | InlineNode::Drawing(_)
-            | InlineNode::AnchoredDrawing(_)
-            | InlineNode::EmbeddedObject(_)
-            | InlineNode::CommentReference(_)
-            | InlineNode::CommentRangeStart(_)
-            | InlineNode::CommentRangeEnd(_)
-            | InlineNode::BookmarkStart(_)
-            | InlineNode::BookmarkEnd(_)
-            | InlineNode::MoveRangeStart(_)
-            | InlineNode::MoveRangeEnd(_)
-            | InlineNode::Math(_)
-            | InlineNode::Symbol(_)
-            | InlineNode::HorizontalRule(_)
-            | InlineNode::NoBreakHyphen(_)
-            | InlineNode::SoftHyphen(_)
-            | InlineNode::PositionalTab(_)
-            | InlineNode::NoteReference(_)
-            | InlineNode::NoteNumberMark(_) => {}
-        }
-    }
-}
-
-fn collect_group_endnotes(children: &[GroupChild], out: &mut Vec<NoteId>) {
-    for child in children {
-        match child {
-            GroupChild::TextBox(text_box) => {
-                for block in &text_box.blocks {
-                    collect_block_endnotes(block, out);
-                }
-            }
-            GroupChild::Group(group) => collect_group_endnotes(&group.children, out),
-            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
-        }
     }
 }
 
@@ -570,6 +549,7 @@ fn push_section_run(
     blocks: &[BlockNode],
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
+    labels: &NoteLabels,
     runs: &mut Vec<SectionRun>,
 ) {
     if blocks.is_empty() {
@@ -589,6 +569,7 @@ fn push_section_run(
             boundary,
             document.definitions().settings.adjust_line_height_in_table,
         ),
+        labels,
     );
     let column_galleys = if layout.has_unequal_widths() {
         layout
@@ -606,6 +587,7 @@ fn push_section_run(
                         boundary,
                         document.definitions().settings.adjust_line_height_in_table,
                     ),
+                    labels,
                 )
             })
             .collect()
@@ -623,6 +605,7 @@ fn push_section_run(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_body_galley(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
@@ -631,6 +614,7 @@ fn build_body_galley(
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
     line_grid: Option<crate::flow::LineGrid>,
+    labels: &NoteLabels,
 ) -> Vec<BlockFragment> {
     build_galley_for_blocks_inner(
         document,
@@ -639,7 +623,10 @@ fn build_body_galley(
         width,
         exclusions,
         review_view,
-        None,
+        NoteFlow {
+            label: None,
+            labels: Some(labels),
+        },
         line_grid,
     )
 }
@@ -686,12 +673,49 @@ pub fn paginate_document_view(
     shaper: &dyn crate::text::LineShaper,
     review_view: ReviewView,
 ) -> crate::page::PaginatedLayout {
-    let plans = build_section_plans(document, shaper);
+    // Note numbering first: the reference marker's *text* (`w:numFmt`/`w:numStart`/
+    // `w:numRestart`, `docs/105` FID-L-05) is an input to line breaking, so it has
+    // to be resolved before anything is flowed.
+    let mut labels = resolve_note_labels(document, None);
+    let mut layout = paginate_with_note_labels(document, shaper, review_view, &labels);
+    if !labels.restarts_each_page() {
+        return layout;
+    }
+    // `w:numRestart="eachPage"` is the one case whose numbers depend on the pages
+    // they are numbering, so it is a bounded fixed point: re-resolve the labels
+    // against the produced pages, re-flow, repaginate, and stop as soon as the
+    // labels stop moving. Three passes cover a marker whose width change
+    // (`1` → `12`) moves a reference across a page boundary and back; beyond that
+    // the last computed layout stands, so termination never depends on the
+    // document.
+    for _ in 0..NOTE_PAGE_RESTART_PASSES {
+        let next = resolve_note_labels(document, Some(&layout));
+        if next == labels {
+            return layout;
+        }
+        labels = next;
+        layout = paginate_with_note_labels(document, shaper, review_view, &labels);
+    }
+    layout
+}
+
+/// The bound on the `eachPage` note-renumbering fixed point (see
+/// [`paginate_document_view`]).
+const NOTE_PAGE_RESTART_PASSES: usize = 3;
+
+/// One full layout pass at a fixed set of resolved note labels.
+fn paginate_with_note_labels(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    review_view: ReviewView,
+    labels: &NoteLabels,
+) -> crate::page::PaginatedLayout {
+    let plans = build_section_plans(document, shaper, labels);
     // Build one paginated run per section, each flowed at its own column width,
     // then paginate them into shared pages (column-aware, section boundaries
     // carried across pages).
-    let runs = build_section_runs(document, shaper, &plans, review_view);
-    finish_pagination(document, shaper, &plans, &runs, review_view)
+    let runs = build_section_runs(document, shaper, &plans, review_view, labels);
+    finish_pagination(document, shaper, &plans, &runs, review_view, labels)
 }
 
 /// The incremental counterpart to [`paginate_document`]: identical output, but the
@@ -706,9 +730,11 @@ pub fn paginate_document_view(
 ///
 /// Documents with explicit section breaks or multi-column sections fall back to a
 /// full re-shape (each section's block slice would need its own cache); numbered
-/// and text-box paragraphs always re-shape (see [`build_galley_cached`]). Every
-/// post-pagination pass runs identically to [`paginate_document`], so the result is
-/// byte-for-byte the same.
+/// text-box, and note-referencing paragraphs always re-shape (see
+/// [`crate::flow::build_galley_cached`]), and so does a document whose notes restart
+/// numbering each page, which needs the pagination fixed point in
+/// [`paginate_document_view`]. Every post-pagination pass runs identically to
+/// [`paginate_document`], so the result is byte-for-byte the same.
 #[must_use]
 pub fn paginate_document_cached(
     document: &Document,
@@ -716,9 +742,24 @@ pub fn paginate_document_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> crate::page::PaginatedLayout {
-    let plans = build_section_plans(document, shaper);
-    let runs = build_section_runs_cached(document, shaper, &plans, cache, dirty);
-    finish_pagination(document, shaper, &plans, &runs, ReviewView::Editing)
+    let labels = resolve_note_labels(document, None);
+    if labels.restarts_each_page() {
+        // `eachPage` note numbering needs the pagination fixed point in
+        // [`paginate_document_view`]; a cached single pass could serve a marker
+        // numbered for a page the reference no longer sits on. Correctness over
+        // incrementality, on a rare path.
+        return paginate_document_view(document, shaper, ReviewView::Editing);
+    }
+    let plans = build_section_plans(document, shaper, &labels);
+    let runs = build_section_runs_cached(document, shaper, &plans, cache, dirty, &labels);
+    finish_pagination(
+        document,
+        shaper,
+        &plans,
+        &runs,
+        ReviewView::Editing,
+        &labels,
+    )
 }
 
 /// The shared pagination tail: paginate the section runs into pages, then run the
@@ -731,8 +772,9 @@ fn finish_pagination(
     plans: &[SectionPlan],
     runs: &[SectionRun],
     review_view: ReviewView,
+    labels: &NoteLabels,
 ) -> crate::page::PaginatedLayout {
-    let mut layout = finish_pagination_pass(document, shaper, plans, runs);
+    let mut layout = finish_pagination_pass(document, shaper, plans, runs, labels);
     let mut exclusions = paragraph_float_exclusions(document, shaper, plans, &layout);
     if exclusions.is_empty() {
         return layout;
@@ -744,9 +786,15 @@ fn finish_pagination(
     let mut previous_exclusions = exclusions.clone();
     for _ in 0..3 {
         let applied_exclusions = exclusions.clone();
-        let runs =
-            build_section_runs_with_exclusions(document, shaper, plans, &exclusions, review_view);
-        let next = finish_pagination_pass(document, shaper, plans, &runs);
+        let runs = build_section_runs_with_exclusions(
+            document,
+            shaper,
+            plans,
+            &exclusions,
+            review_view,
+            labels,
+        );
+        let next = finish_pagination_pass(document, shaper, plans, &runs, labels);
         let next_exclusions = paragraph_float_exclusions(document, shaper, plans, &next);
         if next_exclusions == exclusions {
             return next;
@@ -763,9 +811,15 @@ fn finish_pagination(
     // observed on either side persists for the greatest observed clearance. One
     // final pagination cannot paint text into a previously observed float band.
     let conservative = conservative_exclusions(&previous_exclusions, &exclusions);
-    let runs =
-        build_section_runs_with_exclusions(document, shaper, plans, &conservative, review_view);
-    finish_pagination_pass(document, shaper, plans, &runs)
+    let runs = build_section_runs_with_exclusions(
+        document,
+        shaper,
+        plans,
+        &conservative,
+        review_view,
+        labels,
+    );
+    finish_pagination_pass(document, shaper, plans, &runs, labels)
 }
 
 fn finish_pagination_pass(
@@ -773,10 +827,11 @@ fn finish_pagination_pass(
     shaper: &dyn crate::text::LineShaper,
     plans: &[SectionPlan],
     runs: &[SectionRun],
+    labels: &NoteLabels,
 ) -> crate::page::PaginatedLayout {
     let fallback_config = plans[0].config;
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
-        paginate_section_footnotes(document, shaper, runs)
+        paginate_section_footnotes(document, shaper, runs, labels)
     } else {
         paginate_columns(runs)
     };
@@ -1103,6 +1158,7 @@ fn build_section_runs_cached(
     plans: &[SectionPlan],
     cache: &mut GalleyCache,
     dirty: &DirtySet,
+    labels: &NoteLabels,
 ) -> Vec<SectionRun> {
     // The incremental cache used to be switched off whenever the document
     // declared ANY section — and every Word-produced file ends `w:body` with a
@@ -1125,7 +1181,7 @@ fn build_section_runs_cached(
         _ => false,
     };
     if !single_trailing_section || !referenced_endnotes(document.body()).is_empty() {
-        return build_section_runs(document, shaper, plans, ReviewView::Editing);
+        return build_section_runs(document, shaper, plans, ReviewView::Editing, labels);
     }
     // One full-width run over the whole body, built incrementally. Mirrors the
     // `sections.is_empty()` arm of `build_section_runs`, swapping
@@ -1134,7 +1190,17 @@ fn build_section_runs_cached(
         plan_for_section(plans, last.id).config
     });
     let layout = ColumnLayout::single(config.content_area());
-    let galley = build_galley_cached(document, shaper, layout.flow_width(), cache, dirty);
+    let galley = build_galley_cached_labeled(
+        document,
+        shaper,
+        layout.flow_width(),
+        cache,
+        dirty,
+        NoteFlow {
+            label: None,
+            labels: Some(labels),
+        },
+    );
     vec![SectionRun {
         config,
         layout,

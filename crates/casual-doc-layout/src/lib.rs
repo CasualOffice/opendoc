@@ -36,6 +36,7 @@ pub mod hittest;
 pub mod incremental;
 mod line_number;
 pub mod model;
+mod note_numbering;
 pub mod notes;
 pub mod numbering;
 pub mod page;

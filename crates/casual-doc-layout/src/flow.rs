@@ -53,6 +53,7 @@ use crate::cascade::{
 };
 use crate::incremental::{DirtySet, GalleyCache};
 use crate::model::{ModelPos, ModelRange};
+use crate::note_numbering::NoteLabels;
 use crate::numbering::{self, NumberingState, PreparedMarker};
 use crate::resolve::{FaceRequest, FontResolutionReport, FontResolver};
 use crate::script::{self, ScriptSlot};
@@ -209,11 +210,15 @@ struct FlowCtx<'a> {
     /// Page-derived exclusions from body floats that intersect top-level body
     /// paragraphs. `None` on the initial pagination and in running content.
     paragraph_float_exclusions: Option<&'a ParagraphFloatExclusions>,
-    /// The 1-based ordinal of the note whose body is being flowed, so an in-body
+    /// The display label of the note whose body is being flowed, so an in-body
     /// auto-number mark (`w:footnoteRef`/`w:endnoteRef`) prints that note's number
     /// (matching the reference marker). `None` outside a note body — the mark then
     /// stays inert, exactly as before.
-    note_number: Option<usize>,
+    note_label: Option<&'a str>,
+    /// Every referenced note's resolved display label (`w:numFmt`/`w:numStart`/
+    /// `w:numRestart`, `docs/105` FID-L-05). `None` for the standalone galley
+    /// builders, which then fall back to the note's decimal definition ordinal.
+    note_labels: Option<&'a NoteLabels>,
 }
 
 /// The resolved, layout-relevant portion of one section's document grid.
@@ -331,7 +336,8 @@ pub fn build_galley_with_report_view(
         line_grid: single_section_line_grid(document),
         table_depth: 0,
         paragraph_float_exclusions: None,
-        note_number: None,
+        note_label: None,
+        note_labels: None,
     };
     let (galley, _float_floor) = flow_blocks(document.body(), shaper, content_width, &mut ctx);
     (galley, report)
@@ -360,13 +366,26 @@ pub fn build_galley_for_blocks(
         content_width,
         None,
         ReviewView::Editing,
-        None,
+        NoteFlow::default(),
         single_section_line_grid(document),
     )
 }
 
+/// The note-numbering inputs of one galley build, bundled so every builder threads
+/// the same pair (`docs/105` FID-L-05).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NoteFlow<'a> {
+    /// The display label of the note whose *body* is being flowed, so its in-body
+    /// auto-number mark prints that label. `None` outside a note body.
+    pub(crate) label: Option<&'a str>,
+    /// Every referenced note's resolved display label, so a reference marker prints
+    /// the section's `w:numFmt`/`w:numStart`/`w:numRestart` number. `None` falls
+    /// back to the note's decimal definition ordinal.
+    pub(crate) labels: Option<&'a NoteLabels>,
+}
+
 /// Flows a note's own body blocks (`build_galley_for_blocks`), threading the
-/// note's 1-based `note_number` so its in-body auto-number mark
+/// note's display `label` so its in-body auto-number mark
 /// (`w:footnoteRef`/`w:endnoteRef`) prints that number — the superscript ordinal
 /// Word puts ahead of the note text, matching the body reference marker.
 #[must_use]
@@ -375,7 +394,8 @@ pub(crate) fn build_galley_for_note_blocks(
     shaper: &dyn LineShaper,
     blocks: &[BlockNode],
     content_width: Twip,
-    note_number: usize,
+    label: &str,
+    labels: Option<&NoteLabels>,
 ) -> Vec<BlockFragment> {
     build_galley_for_blocks_inner(
         document,
@@ -384,7 +404,10 @@ pub(crate) fn build_galley_for_note_blocks(
         content_width,
         None,
         ReviewView::Editing,
-        Some(note_number),
+        NoteFlow {
+            label: Some(label),
+            labels,
+        },
         None,
     )
 }
@@ -397,7 +420,7 @@ pub(crate) fn build_galley_for_blocks_inner(
     content_width: Twip,
     exclusions: Option<&ParagraphFloatExclusions>,
     review_view: ReviewView,
-    note_number: Option<usize>,
+    notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
@@ -426,7 +449,8 @@ pub(crate) fn build_galley_for_blocks_inner(
         line_grid,
         table_depth: 0,
         paragraph_float_exclusions: exclusions,
-        note_number,
+        note_label: notes.label,
+        note_labels: notes.labels,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -447,13 +471,48 @@ pub fn flow_header_footer(
     shaper: &dyn LineShaper,
     content_width: Twip,
 ) -> Vec<BlockFragment> {
-    flow_running_blocks(document, blocks, shaper, content_width, 100_000, 0)
+    flow_running_blocks(
+        document,
+        blocks,
+        shaper,
+        content_width,
+        100_000,
+        0,
+        NoteFlow::default(),
+    )
+}
+
+/// [`flow_header_footer`] with the document's resolved note labels threaded, so a
+/// note reference inside running content prints the same formatted number the body
+/// would (`docs/105` FID-L-05). The public entry point above keeps the
+/// label-free fallback for standalone callers.
+#[must_use]
+pub(crate) fn flow_header_footer_labeled(
+    document: &Document,
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+    labels: &NoteLabels,
+) -> Vec<BlockFragment> {
+    flow_running_blocks(
+        document,
+        blocks,
+        shaper,
+        content_width,
+        100_000,
+        0,
+        NoteFlow {
+            label: None,
+            labels: Some(labels),
+        },
+    )
 }
 
 /// Shared running-content/text-box flow constructor. A floating text box cannot
 /// borrow the body's live [`FlowCtx`], so its authored normal-autofit adjustments
 /// enter here while still using the same cascade, fonts, media, tables, and
 /// recursive block flow as a header/footer.
+#[allow(clippy::too_many_arguments)]
 fn flow_running_blocks(
     document: &Document,
     blocks: &[BlockNode],
@@ -461,6 +520,7 @@ fn flow_running_blocks(
     content_width: Twip,
     text_scale: u32,
     line_spacing_reduction: u32,
+    notes: NoteFlow<'_>,
 ) -> Vec<BlockFragment> {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
@@ -491,7 +551,8 @@ fn flow_running_blocks(
         line_grid: None,
         table_depth: 0,
         paragraph_float_exclusions: None,
-        note_number: None,
+        note_label: notes.label,
+        note_labels: notes.labels,
     };
     flow_blocks(blocks, shaper, content_width, &mut ctx).0
 }
@@ -519,11 +580,43 @@ pub fn build_galley_cached(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
 ) -> Vec<BlockFragment> {
+    build_galley_cached_labeled(
+        document,
+        shaper,
+        content_width,
+        cache,
+        dirty,
+        NoteFlow::default(),
+    )
+}
+
+/// [`build_galley_cached`] with the document's resolved note labels threaded, so
+/// the incremental path prints the same `w:numFmt` note numbers as the fresh one
+/// (`docs/105` FID-L-05). Without this the editor's own layout path would quietly
+/// keep the old decimal-ordinal behavior.
+#[must_use]
+pub(crate) fn build_galley_cached_labeled(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    content_width: Twip,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+    notes: NoteFlow<'_>,
+) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
     // rather than serving either half under a stale independent paragraph key.
     if contains_drop_cap_pair(document.body(), &StyleCascade::new(document.definitions())) {
-        return build_galley(document, shaper, content_width);
+        return build_galley_for_blocks_inner(
+            document,
+            shaper,
+            document.body(),
+            content_width,
+            None,
+            ReviewView::Editing,
+            notes,
+            single_section_line_grid(document),
+        );
     }
     // The cache path resolves fonts exactly like the fresh path so a reused
     // fragment is byte-for-byte identical to a freshly built one; the resolved
@@ -559,7 +652,8 @@ pub fn build_galley_cached(
         line_grid: single_section_line_grid(document),
         table_depth: 0,
         paragraph_float_exclusions: None,
-        note_number: None,
+        note_label: notes.label,
+        note_labels: notes.labels,
     };
     cache.begin_build(content_width);
     let mut galley = Vec::new();
@@ -604,7 +698,15 @@ pub fn build_galley_cached(
                 // reuse could serve stale nested content. Text boxes are rare, so
                 // always reshaping them is the correct, simple choice.
                 let has_text_box = items.iter().any(|i| matches!(i, FlowItem::TextBox { .. }));
-                let uncacheable = has_text_box || numbered;
+                // A paragraph carrying a note reference is never cached either, for
+                // the same reason as a numbered one: the marker's resolved label is
+                // not in the item hash, so an edit that inserts a note earlier in the
+                // document would leave this paragraph showing the old number
+                // (`docs/105` FID-L-05).
+                let has_note_reference = items
+                    .iter()
+                    .any(|i| matches!(i, FlowItem::NoteReference(_)));
+                let uncacheable = has_text_box || numbered || has_note_reference;
                 // The paragraph-mark size + effective style feed the empty-paragraph
                 // line height (synthesized below); folding them into the key keeps a
                 // reused fragment correct when only the mark/style changes.
@@ -2271,7 +2373,8 @@ fn block_intrinsic(
         line_grid: ctx.line_grid,
         table_depth: ctx.table_depth,
         paragraph_float_exclusions: None,
-        note_number: None,
+        note_label: None,
+        note_labels: None,
     };
     let mut min = 0;
     let mut preferred = 0;
@@ -2897,12 +3000,12 @@ fn collect_items_with_measure<'a>(
             // The note's own auto-number mark (`w:footnoteRef`/`w:endnoteRef`),
             // inside a note body: it prints the enclosing note's number ahead of
             // the note text (Word's default note style — a superscript ordinal
-            // matching the body reference marker). `ctx.note_number` carries that
-            // ordinal when a note body is being flowed; outside a note body it is
+            // matching the body reference marker). `ctx.note_label` carries that
+            // label when a note body is being flowed; outside a note body it is
             // `None` and the mark stays inert (the model still round-trips it).
             InlineNode::NoteNumberMark(mark) => {
-                if let Some(number) = ctx.note_number {
-                    out.push(FlowItem::Run(note_number_run(mark, number, ctx)));
+                if let Some(label) = ctx.note_label.map(str::to_owned) {
+                    out.push(FlowItem::Run(note_number_run(mark, &label, ctx)));
                 }
             }
             // `w:commentReference` is a zero-width model marker. Its visible
@@ -3042,12 +3145,23 @@ fn embedded_object_label(object: &EmbeddedObject) -> &'static str {
     }
 }
 
+/// Builds the in-body reference marker run: the referenced note's **resolved
+/// display label** (`w:numFmt`/`w:numStart`/`w:numRestart`, `docs/105` FID-L-05)
+/// when the driver threaded one, else the note's decimal definition ordinal — the
+/// fallback the standalone galley builders use, which is what this produced before
+/// note numbering was resolved.
 fn note_reference_run(reference: &NoteReference, ctx: &mut FlowCtx) -> StyledRun<'static> {
-    let ordinal = match reference.kind {
-        NoteKind::Footnote => note_ordinal(&ctx.definitions.footnotes, reference.note),
-        NoteKind::Endnote => note_ordinal(&ctx.definitions.endnotes, reference.note),
-    };
-    let text = ordinal.map_or_else(|| "?".to_owned(), |n| n.to_string());
+    let label = ctx
+        .note_labels
+        .and_then(|labels| labels.label(reference.kind, reference.note))
+        .map(str::to_owned);
+    let text = label.unwrap_or_else(|| {
+        let ordinal = match reference.kind {
+            NoteKind::Footnote => note_ordinal(&ctx.definitions.footnotes, reference.note),
+            NoteKind::Endnote => note_ordinal(&ctx.definitions.endnotes, reference.note),
+        };
+        ordinal.map_or_else(|| "?".to_owned(), |n| n.to_string())
+    });
     styled_owned_run(text, &note_reference_properties(), ctx)
 }
 
@@ -3068,17 +3182,17 @@ fn note_reference_properties() -> RunProperties {
     }
 }
 
-/// Builds the in-body note auto-number run: the note's own `number` printed with
-/// the mark's authored run formatting, forced to superscript (Word's default note
-/// style) unless the mark already specifies a vertical alignment. This mirrors
-/// [`note_reference_run`] so the note body's leading number matches the body-side
+/// Builds the in-body note auto-number run: the note's own display `label` printed
+/// with the mark's authored run formatting, forced to superscript (Word's default
+/// note style) unless the mark already specifies a vertical alignment. This mirrors
+/// `note_reference_run` so the note body's leading number matches the body-side
 /// reference marker.
-fn note_number_run(mark: &NoteNumberMark, number: usize, ctx: &mut FlowCtx) -> StyledRun<'static> {
+fn note_number_run(mark: &NoteNumberMark, label: &str, ctx: &mut FlowCtx) -> StyledRun<'static> {
     let mut properties = mark.properties.clone();
     if properties.vertical_alignment.is_none() {
         properties.vertical_alignment = Some(VerticalAlignment::Superscript);
     }
-    styled_owned_run(number.to_string(), &properties, ctx)
+    styled_owned_run(label.to_owned(), &properties, ctx)
 }
 
 /// Converts a paragraph-local anchored object into its non-painting flow marker.
@@ -3409,6 +3523,7 @@ pub(crate) fn flow_anchored_text_box(
         inner_width,
         text_scale,
         line_spacing_reduction,
+        NoteFlow::default(),
     );
     finish_text_box(blocks, outer_width, authored_height, insets, properties)
 }
@@ -5223,7 +5338,7 @@ fn layout_fielded_line(
 
     let natural = ascent + descent;
     let (ascent, descent, height) =
-        crate::shape::apply_line_rule(ascent, descent, natural, &constraints);
+        crate::shape::apply_line_rule(ascent, descent, natural, &constraints, Twip::ZERO);
     let baseline_delta = ascent - baseline;
     if baseline_delta != Twip::ZERO {
         for run in &mut runs {
@@ -6810,7 +6925,8 @@ mod tests {
             line_grid: None,
             table_depth: 0,
             paragraph_float_exclusions: None,
-            note_number: None,
+            note_label: None,
+            note_labels: None,
         };
         let mut items = Vec::new();
         collect_items(
@@ -6866,7 +6982,8 @@ mod tests {
             line_grid: None,
             table_depth: 0,
             paragraph_float_exclusions: None,
-            note_number: None,
+            note_label: None,
+            note_labels: None,
         };
         let mut out = Vec::new();
         push_styled_runs(text, &properties, &mut ctx, &mut out);
@@ -10391,7 +10508,8 @@ mod tests {
                 line_grid: None,
                 table_depth: 0,
                 paragraph_float_exclusions: None,
-                note_number: None,
+                note_label: None,
+                note_labels: None,
             };
             block_intrinsic(&[paragraph(700, inlines)], &ParleyShaper::new(), &ctx, None)
         }
@@ -12315,6 +12433,112 @@ mod tests {
             rect.size,
             Size::new(Twip(300), Twip(200)),
             "the paint rect carries the extent-derived size"
+        );
+    }
+
+    /// A line holding an inline box must never be shorter than its own
+    /// ascent + descent, and the oracle gate is how we found out it could be
+    /// (`docs/105` FID-L-21).
+    ///
+    /// `parley` grows a line's **ascent** to fit an inline box but does not grow its
+    /// `line_height`, so a tall inline image produced a line whose stored height was
+    /// less than `ascent + descent`: the half-leading went negative and the paragraph
+    /// advanced the page cursor by less than the image occupies. Measured against
+    /// LibreOffice 26.2.4.2 on `fixtures/corpus/real-producer-rich.docx`, our block
+    /// advance for that fixture's 240-twip image line was 276 twips against its 302 —
+    /// 26 short, and the whole of that line's residual. On this synthetic paragraph
+    /// (default face and size) the same defect read `height 290 < ascent 240 +
+    /// descent 60`.
+    #[test]
+    fn a_tall_inline_image_line_is_at_least_as_tall_as_its_own_ascent_plus_descent() {
+        use casual_doc_model::v1::{Drawing, Extent, MediaId, MediaReference};
+
+        let media_id = MediaId::new(NodeId::from_parts(80, 1).unwrap());
+        let mut media = DefinitionMap::default();
+        media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: "rId8".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/tall.png".to_owned(),
+            },
+        );
+        let definitions = Definitions {
+            media,
+            ..Definitions::default()
+        };
+        // 152400 EMU = 240 twips tall, the extent `real-producer-rich.docx` uses.
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(20, 1).unwrap(),
+            properties: ParagraphProperties::default(),
+            inlines: vec![
+                run_node(22, "Paragraph with an image: ", RunProperties::default()),
+                InlineNode::Drawing(Drawing {
+                    id: NodeId::from_parts(21, 1).unwrap(),
+                    extent: Some(Extent {
+                        width_emu: 152_400,
+                        height_emu: 152_400,
+                    }),
+                    media: media_id,
+                    descr: None,
+                    crop: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                }),
+            ],
+        });
+        let doc =
+            Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&doc, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph { lines, .. } = &galley[0] else {
+            panic!("expected a paragraph fragment");
+        };
+        let line = lines
+            .lines
+            .iter()
+            .find(|line| !line.images.is_empty())
+            .expect("the inline image was placed on a line");
+
+        assert!(
+            line.ascent >= Twip(240),
+            "the line's ascent grows to hold the 240-twip image (ascent {})",
+            line.ascent.raw()
+        );
+        assert!(
+            line.height >= line.ascent + line.descent,
+            "a line box shorter than its own ascent + descent means negative half-leading: height {} < ascent {} + descent {}",
+            line.height.raw(),
+            line.ascent.raw(),
+            line.descent.raw()
+        );
+        assert!(
+            line.height >= Twip(240) + line.descent,
+            "the line advances by the image plus the text descent (height {})",
+            line.height.raw()
+        );
+        let image = &line.images[0];
+        assert!(
+            image.origin.y + image.size.height <= line.height,
+            "the image's bottom is inside its line box (image bottom {} vs line height {})",
+            (image.origin.y + image.size.height).raw(),
+            line.height.raw()
+        );
+        // The image's bottom sits on the baseline `parley` computed, and that
+        // baseline (235 here) is 5 twips *above* the ascent parley reports for the
+        // same line (240), so the image's top overhangs the line top by 5. That is a
+        // separate, pre-existing inconsistency between `LineMetrics::ascent` and
+        // `LineMetrics::baseline` on an inline-box line, not something this floor
+        // introduces or fixes: it moves paint, not the page cursor, and closing it
+        // needs parley's inline-box baseline alignment rather than the line rule.
+        // Recorded here rather than asserted, so it is not mistaken for correct.
+        assert!(
+            image.origin.y > Twip::ZERO - line.height,
+            "the image is still anchored to this line, not an earlier one (origin.y {})",
+            image.origin.y.raw()
         );
     }
 

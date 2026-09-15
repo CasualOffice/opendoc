@@ -719,7 +719,9 @@ fn assembled_line_metrics(
         }
         _ => (ascent, descent, natural),
     };
-    crate::shape::apply_line_rule(ascent, descent, natural, &constraints)
+    // A synthesized empty line holds no atomic inline box, so it never needs the
+    // inline-box line-box floor.
+    crate::shape::apply_line_rule(ascent, descent, natural, &constraints, Twip::ZERO)
 }
 
 /// Shifts a segment's shaped runs by `dx` horizontally and onto `baseline`,
