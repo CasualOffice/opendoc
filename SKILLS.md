@@ -1,6 +1,11 @@
 # Skills and Working Practices
 
-This document defines the recurring skills needed to build the Casual Document Runtime.
+This document defines the recurring **domain** skills needed to build the Casual Document
+Runtime — what a contributor needs to know about formats, layout, and editor semantics.
+
+For the **working contract** an agent must load before making changes — the product goal,
+the exact gate commands, PR and branching rules, parallelisation, known-flaky tests, and
+the traps specific to this repository — see `.claude/skills/opendoc/SKILL.md`.
 
 ## Core Skills
 

@@ -11,7 +11,11 @@ node_modules/
 *.log
 
 # Claude Code local worktrees and session data
-.claude/
+# Agent-local state is ignored, but the checked-in repo SKILL (the working
+# contract every agent must load) is not — it is shared with the team.
+.claude/*
+!.claude/skills/
+.claude/worktrees/
 
 # Local-only fidelity-probe docs (not redistributable; kept out of the repo)
 /fixtures/corpus/Class notes.docx
