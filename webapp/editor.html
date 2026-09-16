@@ -27,7 +27,6 @@
     <header class="bar">
       <div class="brand">
         <img class="brand-logo" src="./opendoc-mark.svg" alt="" width="24" height="24" />
-        <span class="mark">OpenDoc</span>
       </div>
       <div id="documentChrome" class="document-chrome" hidden>
         <div class="document-title-row">
@@ -40,10 +39,6 @@
             aria-label="Document name"
             title="Rename document"
           />
-          <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
-            <span class="ms" aria-hidden="true">check_circle</span>
-            <span id="documentStateText">Opened</span>
-          </span>
         </div>
         <nav id="appMenuBar" class="app-menu-bar" aria-label="Application menus">
           <button type="button" class="app-menu-button" data-menu="file" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">File</button>
@@ -56,38 +51,24 @@
           <button type="button" class="app-menu-button" data-menu="help" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Help</button>
         </nav>
       </div>
-      <button
-        id="searchTrigger"
-        type="button"
-        class="search-trigger"
-        title="Search commands (⌘⇧P)"
-        aria-haspopup="dialog"
-        aria-controls="cmdPalette"
-        aria-expanded="false"
-      >
-        <span class="ms" aria-hidden="true">search</span>
-        <span class="search-label">Search</span>
-        <kbd>⌘⇧P</kbd>
-      </button>
       <div class="controls">
-        <!-- Open is the app's main entry point, so it is a real button: as a
-             label wrapping a hidden input it was skipped by Tab and had no
-             keydown wiring, which left a freshly loaded editor with no
-             keyboard-reachable way in at all (the File menu is inside
-             #documentChrome, hidden until a document exists). The picker stays
-             `hidden` — the button opens it — so it is out of the tab order and
-             cannot become a second, dead focus stop. -->
-        <button id="openBtn" type="button" class="btn btn-primary file" title="Open a document" disabled>
-          <span class="ms" aria-hidden="true">upload_file</span>
-          <span class="btn-label">Open</span>
-        </button>
+        <!-- Document state reads as status, not as part of the title, so it
+             belongs with the other right-hand chrome rather than wedged between
+             the filename and the menus. -->
+        <span id="documentState" class="document-state" data-state="opened" aria-live="polite">
+          <span class="ms" aria-hidden="true">check_circle</span>
+          <span id="documentStateText">Opened</span>
+        </span>
+        <div class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
+          <button type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
+                  aria-checked="false" tabindex="-1">Compact</button>
+          <button type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
+                  aria-checked="true" tabindex="0">Ribbon</button>
+        </div>
+
         <input id="file" type="file" accept=".docx,.odt,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/json,text/plain" hidden />
-        <select id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled></select>
+        <select id="saveFormat" class="save-format" aria-label="Save format" title="Save format" disabled hidden></select>
         <span id="compatibilityStatus" class="compatibility-status" role="status" hidden></span>
-        <button id="save" type="button" class="btn" disabled title="Download the edited document">
-          <span class="ms" aria-hidden="true">save</span>
-          <span class="btn-label">Save</span>
-        </button>
         <button id="propertiesBtn" type="button" class="btn icon-only" title="Document properties" aria-label="Document properties" aria-haspopup="dialog" aria-expanded="false" disabled>
           <span class="ms" aria-hidden="true">info</span>
         </button>
@@ -198,6 +179,20 @@
         <button type="button" id="settingsReset" class="link">Reset</button>
       </div>
     </div>
+
+    <!-- COMPACT CHROME — the Google-Docs-shaped alternative to the ribbon, from
+         the owner's prototype. The two are MUTUALLY EXCLUSIVE: `body.compact-mode`
+         shows this and hides `.ribbon`, `body.ribbon-mode` does the reverse.
+
+         Its toolbar is EMPTY in markup on purpose. Every control is rendered from
+         `COMPACT_TOOLBAR` in main.js, which names command ids that already exist
+         in `editorCommands()` — so a command has one enablement path, one
+         activation path and one pressed-state source whichever chrome is showing.
+         Hand-binding a control here would recreate the drift docs/105 UX-004/005
+         records, and `compact-parity.spec.mjs` fails the build if any compact
+         control resolves to something the registry does not have. -->
+    <div class="compact-toolbar" id="compactToolbar" role="toolbar"
+         aria-label="Formatting toolbar" aria-controls="pages" hidden></div>
 
     <div class="ribbon">
       <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">

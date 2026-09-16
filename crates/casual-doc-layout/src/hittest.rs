@@ -922,7 +922,7 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     // The distinct model offsets on the line, so a run's trailing boundary can be
     // resolved as "the next offset after the last cluster".
     let mut offsets = vec![line.range.start.offset, line.range.end.offset];
-    for run in &line.runs {
+    for run in line.runs.iter().filter(|run| !run.is_marker) {
         for glyph in &run.glyphs {
             offsets.push(glyph.cluster);
         }
@@ -938,7 +938,11 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     };
 
     let mut stops = Vec::new();
-    for (run_idx, run) in line.runs.iter().enumerate() {
+    // Markers are excluded: a list marker is furniture drawn ahead of the text
+    // and owns no model position, so a caret stop at its glyphs maps a click
+    // (and an arrow key) onto an offset the marker does not represent. That is
+    // what made the first characters of every list item unreachable.
+    for (run_idx, run) in line.runs.iter().filter(|run| !run.is_marker).enumerate() {
         // A tab-leader fill (tiled dot/underscore glyphs) is decoration, not model
         // text: every glyph carries the paragraph's start offset, so admitting it
         // would scatter that one offset across the whole leader underline and make
@@ -1071,7 +1075,7 @@ fn caret_metrics(line: &Line, offset: u32) -> (Twip, Twip) {
 /// at the right margin that the user cannot see and did not click on.
 fn visual_line_end(line: &Line) -> Option<u32> {
     let mut last = None;
-    for run in &line.runs {
+    for run in line.runs.iter().filter(|run| !run.is_marker) {
         for glyph in &run.glyphs {
             if !glyph.is_whitespace {
                 last = Some(glyph.cluster);
@@ -1086,6 +1090,7 @@ fn visual_line_end(line: &Line) -> Option<u32> {
     let mut offsets: Vec<u32> = line
         .runs
         .iter()
+        .filter(|run| !run.is_marker)
         .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.cluster))
         .collect();
     offsets.sort_unstable();
@@ -2425,5 +2430,80 @@ mod tests {
             rules: Vec::new(),
         };
         assert_eq!(caret_metrics(&line, 0), (Twip(200), Twip(40)));
+    }
+
+    // The list-marker caret contract — reported as "the cursor skips the first ~4
+    // characters of every list item, for clicks and for arrow keys alike".
+    //
+    // A bullet or number is drawn ahead of the text and owns NO model position:
+    // there is nothing in the document between the start of the paragraph and its
+    // first character. `GlyphRun::is_marker` exists to say so — and was never set
+    // to `true` anywhere in the repo, so the marker's glyphs were shaped, placed
+    // and hit-tested exactly like body text. `stops_for` therefore emitted a caret
+    // stop per marker glyph, and those stops shadowed the real first offsets: a
+    // `"1. "` marker is roughly four glyph slots, which is precisely the reported
+    // symptom.
+
+    /// A marker run of `glyphs` glyphs, flagged as one, sitting left of the text.
+    fn marker_run(glyphs: u32, x: i32) -> GlyphRun {
+        GlyphRun {
+            is_marker: true,
+            is_leader: false,
+            font: FontId(0),
+            size: Twip(240),
+            ascent: Twip(0),
+            descent: Twip(0),
+            character_scale_percent: 100,
+            color: [0, 0, 0, 255],
+            origin: Point::new(Twip(x), Twip(240)),
+            bidi_level: 0,
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            // Marker glyphs carry cluster 0 because they belong to no model
+            // offset — which is exactly why counting them as stops collapsed
+            // the paragraph's leading offsets onto the marker's x positions.
+            glyphs: (0..glyphs)
+                .map(|_| Glyph {
+                    id: 1,
+                    advance: Twip(100),
+                    cluster: 0,
+                    is_whitespace: false,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_list_markers_glyphs_contribute_no_caret_stops() {
+        // One paragraph line of 6 text glyphs, preceded by a 4-glyph marker —
+        // the "1. " shape the report describes.
+        let mut para = ltr_para(100, &[6]);
+        let BlockFragment::Paragraph { lines, .. } = &mut para else {
+            panic!("paragraph");
+        };
+        let line = lines.lines.first_mut().expect("one line");
+        let mut runs = vec![marker_run(4, -400)];
+        runs.append(&mut line.runs);
+        line.runs = runs;
+
+        let stops = stops_for(line, Twip::ZERO);
+
+        // Every stop must resolve to a real text offset in `0..=6`. Before the
+        // fix the marker contributed four stops at cluster 0, so the leading
+        // offsets were unreachable — a click or an arrow key aimed at offset 1
+        // landed on a marker stop instead.
+        assert!(
+            stops.iter().all(|stop| stop.offset <= 6),
+            "a caret stop resolved past the line's text: {stops:?}",
+        );
+        let at_zero = stops.iter().filter(|stop| stop.offset == 0).count();
+        assert_eq!(
+            at_zero, 1,
+            "offset 0 must have exactly ONE stop; the marker's {} glyphs were \
+             each contributing their own, which is what made the first \
+             characters of a list item unreachable. Stops: {stops:?}",
+            4,
+        );
     }
 }

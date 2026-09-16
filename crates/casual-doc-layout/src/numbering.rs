@@ -663,6 +663,16 @@ impl PreparedMarker {
         let mut runs = self.runs;
         for run in &mut runs {
             run.origin = Point::new(run.origin.x, baseline);
+            // Flag the run as a MARKER. `GlyphRun::is_marker` existed and was
+            // never set to `true` anywhere in the repo, so a bullet or number
+            // was indistinguishable from body text everywhere downstream —
+            // which is why the caret could not reach the first characters of a
+            // list item: `hittest::stops_for` builds a caret stop from every
+            // glyph on the line, and the marker's glyphs were contributing
+            // stops of their own. It also left `PaintedLayout::marker_rects`
+            // (the API for making a checkbox marker clickable) returning empty
+            // forever, since it filters on exactly this flag.
+            run.is_marker = true;
         }
         runs.append(&mut first.runs);
         first.runs = runs;
