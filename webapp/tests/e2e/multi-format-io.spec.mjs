@@ -6,6 +6,7 @@ import {
   gotoEditor,
   expectSaveEnabled,
   saveDocument,
+  runAppMenuCommand,
 } from "./fixtures.mjs";
 
 const ODT = "org.oasis.opendocument.text";
@@ -32,6 +33,11 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
   });
   await waitForOpenedDocument(page, "notes.txt");
 
+  // `#saveFormat` is no longer a control the user operates — Save keeps the
+  // source format, the way Word's Save does, and CHANGING format is File ▸
+  // Export as <format>, which is Word's Save As. The select survives as the
+  // state holder Save reads, so it is still the honest place to assert which
+  // format a round trip landed on, and which exporters are registered.
   const format = page.locator("#saveFormat");
   await expect(format).toHaveValue(TEXT);
   await expect(format.locator("option")).toHaveText([
@@ -40,10 +46,9 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
     "DOCX",
     "Plain text",
   ]);
-  await format.selectOption(ODT);
 
   const downloadPromise = page.waitForEvent("download");
-  await saveDocument(page);
+  await runAppMenuCommand(page, "file", "file.export.odt");
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("notes.odt");
   const path = await download.path();
@@ -65,10 +70,9 @@ test("cross-format browser Save visibly reports compatibility findings", async (
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  await page.locator("#saveFormat").selectOption(ODT);
 
   const downloadPromise = page.waitForEvent("download");
-  await saveDocument(page);
+  await runAppMenuCommand(page, "file", "file.export.odt");
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("opendoc-demo.odt");
   await expect(page.locator("#compatibilityStatus")).toBeVisible();
