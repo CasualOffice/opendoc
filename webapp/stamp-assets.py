@@ -8,7 +8,7 @@ script for up to four hours. The Table menu shipped in #546 is how it surfaced:
 the new `editor.html` drew a Table button, the cached `main.js` had no Table
 rows, and the menu opened empty in production while every test passed.
 
-Three things have to carry the version, because three different mechanisms fetch:
+Four things have to carry the version, because four different mechanisms fetch:
 
 1. `<script src>`, `<link href>`, `modulepreload` and the wasm preload in each
    page — rewritten.
@@ -19,6 +19,11 @@ Three things have to carry the version, because three different mechanisms fetch
 3. The wasm binary, which wasm-bindgen's glue fetches with
    `new URL('casual_doc_wasm_bg.wasm', import.meta.url)` — also query-less, so the
    literal in the glue is rewritten.
+4. Static files — the logo, the touch icon, fonts — referenced from page markup
+   and from `url()` inside the stylesheets. The first version of this script left
+   them out, and the new logo shipped in #548 kept showing as the OLD one for four
+   hours: `opendoc-mark.svg` is served `max-age=14400` from a fixed URL, exactly
+   the defect this script exists to prevent, one file type over.
 
 Run on the deploy artifact only (see .github/workflows/pages.yml). It rewrites
 files in place, so running it in a working tree would dirty tracked pages;
@@ -36,6 +41,11 @@ from pathlib import Path
 
 GLUE = "pkg/casual_doc_wasm.js"
 WASM = "casual_doc_wasm_bg.wasm"
+
+# Static file types a page or stylesheet can reference. Page links (`.html`) are
+# deliberately absent: they are navigations with canonical URLs, not assets, and
+# Pages already caches HTML for only ten minutes.
+STATIC = r"svg|png|jpe?g|gif|webp|ico|woff2?|ttf|otf"
 
 
 def module_files(root: Path) -> list[str]:
@@ -63,6 +73,13 @@ def stamp_page(html: str, build: str, modules: list[str]) -> str:
         versioned,
         html,
     )
+    # Static files named in markup: the favicon, the touch icon, the logo image.
+    html = re.sub(
+        r'\b(src|href)="(\./[^"?#]+\.(?:' + STATIC + r'))(?:\?[^"]*)?"',
+        versioned,
+        html,
+    )
+
     # The wasm is also preloaded, from markup and from an inline script on the
     # homepage. A preload that names a different URL from the one the glue then
     # fetches is a wasted download of a possibly stale binary, so both forms
@@ -87,6 +104,24 @@ def stamp_page(html: str, build: str, modules: list[str]) -> str:
     return html
 
 
+def stamp_stylesheet(css: str, build: str) -> str:
+    """Versions every relative `url()` to a static file inside a stylesheet.
+
+    The stylesheet itself is versioned from the page, but a `url()` inside it
+    resolves against the stylesheet's path and drops its query, exactly like a
+    module import — so `url("../opendoc-mark.svg")` fetched the cached logo."""
+
+    def versioned(match: re.Match[str]) -> str:
+        quote, path = match.group(1), match.group(2)
+        return f"url({quote}{path}?v={build}{quote})"
+
+    return re.sub(
+        r"url\((['\"]?)((?!data:|https?:|//)[^'\")?#]+\.(?:" + STATIC + r"))(?:\?v=[^'\")]*)?\1\)",
+        versioned,
+        css,
+    )
+
+
 def stamp_glue(js: str, build: str) -> str:
     pattern = re.compile(r"(['\"])" + re.escape(WASM) + r"(?:\?v=[^'\"]*)?\1")
     stamped, count = pattern.subn(lambda m: f"{m.group(1)}{WASM}?v={build}{m.group(1)}", js)
@@ -105,10 +140,16 @@ def main() -> None:
         raise SystemExit(f"stamp-assets: no pages in {root}")
     for page in pages:
         page.write_text(stamp_page(page.read_text(encoding="utf-8"), build, modules), encoding="utf-8")
+    stylesheets = sorted((root / "src").glob("*.css"))
+    for sheet in stylesheets:
+        sheet.write_text(stamp_stylesheet(sheet.read_text(encoding="utf-8"), build), encoding="utf-8")
     glue = root / GLUE
     if glue.exists():
         glue.write_text(stamp_glue(glue.read_text(encoding="utf-8"), build), encoding="utf-8")
-    print(f"stamp-assets: {len(pages)} page(s), {len(modules)} module(s), build {build}")
+    print(
+        f"stamp-assets: {len(pages)} page(s), {len(stylesheets)} stylesheet(s), "
+        f"{len(modules)} module(s), build {build}"
+    )
 
 
 if __name__ == "__main__":
