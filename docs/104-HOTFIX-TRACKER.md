@@ -66,7 +66,8 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
-| **Total** | **153** | **52** |
+| Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
+| **Total** | **157** | **52** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -76,7 +77,7 @@ was one out for exactly as long as no such guard existed.
 
 ### Progress
 
-**52 of 153 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
+**52 of 157 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
 
 Four rows previously listed Open were re-read against the code on 2026-09-15 and are
 closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
@@ -358,6 +359,18 @@ through the SDK cannot reach them.
 The prototype also had to add a **Table menu** to the app menu bar: its absence from
 the shipped bar is precisely why every structural table command is right-click-only,
 which is the same parity defect recorded as HF-118 for objects.
+
+### Paragraph-level revision mapping — 2026-09-17
+
+Found while mapping the code for `108` (paragraph-level tracked changes). The first two are
+defects in ordinary editing, not in review.
+
+| ID | Finding | Evidence | Sev | Status |
+| --- | --- | --- | --- | --- |
+| HF-154 | **Undoing Backspace returned the joined paragraph with the wrong formatting.** Joining two paragraphs keeps the first's properties, and its inverse split copied the FIRST's properties onto the restored second. Backspace a heading, a list item or a centred paragraph into the paragraph above, press undo, and it came back as body text — silently, with no way to recover the formatting short of redoing it. | `casual-doc-edit` `JoinParagraphs` apply returned `SplitParagraph { at, new_id }`, whose apply cloned the leading paragraph's properties; reproduced at the op level and through `WasmDocument::undo` | P1 | Fixed (this PR) — split and join carry an optional exact-properties payload and every inverse carries `Some`, so undo is exact in both directions (`108` Decision 1). Guards: `undoing_a_join_restores_the_second_paragraphs_own_properties`, `split_and_join_payloads_are_exact_and_invert_exactly`, and through the real history `undoing_backspace_restores_the_joined_paragraphs_own_properties`, each driven red by restoring the old inverse |
+| HF-155 | **Enter duplicated an imported tracked paragraph-mark revision onto both halves.** The mark ends the paragraph, so its `w:ins`/`w:del` belongs to the trailing half only. With both carrying a deletion, accepting the leading one would re-join what the user had just split. | `split_paragraph` cloned all properties, including `mark_revision` | P2 | Fixed (this PR) — the leading half's mark is new and carries none. Guard: `enter_moves_a_tracked_mark_revision_to_the_trailing_half_only`, driven red by restoring the clone |
+| HF-156 | **A Word document whose only tracked changes are paragraph-level opens looking clean.** Paragraph-mark insertions/deletions and `w:pPrChange` are imported and exported but never listed, painted, navigable or decidable: no cards, and Accept All reports "no tracked revisions" while the file still carries them. Table row, cell and table-property revisions have the same gap. | `collect_review_revisions` walks runs only; `mark_revision` has zero references in `casual-doc-wasm` | P1 | Fixed (this PR) — `108` phase 1: paragraph-mark insertions and deletions and `w:pPrChange` are listed with kind-qualified ids, labelled in Word's terms, drawn (a pilcrow at the mark, a margin bar for formatting), reachable with Next/Previous, and decided per card and in Accept/Reject All with Word's join rule — the following paragraph's properties survive. One undo step each. Guards: 7 engine tests and `paragraph-revisions.spec.mjs` (3), each driven red. **Still open:** table row, cell and table-property revisions are still unlisted |
+| HF-157 | **Every ungrouped tracked-change marker rendered in its "active" state as soon as a document opened.** A marker is active when the selected review item's id is in its list of ids; that list holds `null` for any revision that is neither a move nor in a group, and `null` is also what the selection holds when nothing is selected, so `includes` matched. | `webapp/src/main.js` `paintReviewMarkers` | P3 | Fixed (this PR) — only a real selected id activates a marker. Guard: `paragraph-revisions.spec.mjs` asserts no active marker on open, driven red by restoring the old check |
 
 ### Deliberately refuted
 

@@ -4916,6 +4916,15 @@ body.is-format-painting .page-wrap * {
 .overlay .review-revision-marker { --review-author-color: var(--paper-insert); position: absolute; pointer-events: auto; }
 .overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 .overlay .review-deletion-marker { background: color-mix(in srgb, var(--review-author-color) 18%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
+/* Paragraph-level revisions (docs/108). A mark revision is the pilcrow that ends
+   the paragraph, drawn in the author's colour — underlined when a break was
+   added, struck through when one was deleted, matching the run markers above.
+   A formatting change is a bar in the margin, Word's "changed lines" bar. */
+.overlay .review-paragraph-mark-marker { display: flex; align-items: center; color: color-mix(in srgb, var(--review-author-color) 90%, var(--ink)); font-weight: 700; line-height: 1; }
+.overlay .review-paragraph-mark-marker::after { content: "¶"; font-size: 0.8em; }
+.overlay .review-paragraph-mark-inserted { border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
+.overlay .review-paragraph-mark-deleted { text-decoration: line-through; background: color-mix(in srgb, var(--review-author-color) 18%, transparent); }
+.overlay .review-paragraph-format-bar { background: color-mix(in srgb, var(--review-author-color) 85%, transparent); border-radius: 1px; }
 .overlay .review-revision-marker-active { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent); }
 
 .overlay .table-cell-selection {

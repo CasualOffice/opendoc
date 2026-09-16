@@ -239,3 +239,36 @@ export function makeReviewDocx(pageCount = 20, { paragraphsPerPage = 6, commentE
     },
   ]);
 }
+
+// ---- Paragraph-level tracked changes fixture (docs/108) ----------------------
+// Four paragraphs in the exact XML shapes Word writes (ISO 29500 §17.13.5.15,
+// §17.13.5.20, §17.13.5.29; element order per CT_PPr: base properties, then the
+// mark's rPr, then pPrChange):
+//   Alpha — its paragraph mark is a tracked DELETION (Delete at the end of Alpha)
+//   Beta  — centred, with a w:pPrChange whose prior had no alignment
+//   Gamma — right-aligned; its paragraph mark is a tracked INSERTION (Enter)
+//   Delta — justified, no revision
+function paragraphRevisionsDocumentXml() {
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const by = 'w:author="Word Reviewer" w:date="2026-09-17T00:00:00Z"';
+  const sectPr = `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W}"><w:body>` +
+    `<w:p><w:pPr><w:rPr><w:del w:id="3" ${by}/></w:rPr></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>` +
+    `<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="4" ${by}><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Beta</w:t></w:r></w:p>` +
+    `<w:p><w:pPr><w:jc w:val="right"/><w:rPr><w:ins w:id="5" ${by}/></w:rPr></w:pPr><w:r><w:t>Gamma</w:t></w:r></w:p>` +
+    `<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t>Delta</w:t></w:r></w:p>` +
+    `${sectPr}</w:body></w:document>`;
+}
+
+/** A .docx carrying only paragraph-level tracked changes — the shape that used to
+ *  open looking clean, with no review cards at all (docs/104 HF-156). */
+export function makeParagraphRevisionsDocx() {
+  const enc = new TextEncoder();
+  return storedZip([
+    { name: "[Content_Types].xml", data: enc.encode(CONTENT_TYPES) },
+    { name: "_rels/.rels", data: enc.encode(ROOT_RELS) },
+    { name: "word/_rels/document.xml.rels", data: enc.encode(DOC_RELS) },
+    { name: "word/document.xml", data: enc.encode(paragraphRevisionsDocumentXml()) },
+  ]);
+}

@@ -255,6 +255,17 @@ impl CommonField {
     }
 }
 
+/// Both halves of a paragraph split, set exactly by
+/// [`Operation::SplitParagraph`]. This is how the inverse of a join restores each
+/// paragraph's own properties rather than copying the first's onto both.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitProperties {
+    /// The leading paragraph (it keeps the original id).
+    pub leading: ParagraphProperties,
+    /// The trailing paragraph (it takes `new_id`).
+    pub trailing: ParagraphProperties,
+}
+
 /// The closed editing op set (I2). Slice 1 carries the two text ops; structural
 /// and object ops are additive variants (doc 59).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -278,15 +289,26 @@ pub enum Operation {
         at: Pos,
         /// The id of the new trailing paragraph.
         new_id: NodeId,
+        /// Both halves' properties, set exactly. `None` is Enter: the trailing
+        /// half holds the original paragraph mark and inherits every property,
+        /// including `mark_revision`; the leading half's mark is new, so it gets
+        /// the same properties without one (docs/108 Decision 1). The inverse of a
+        /// join always carries `Some`, which is what makes undo exact.
+        properties: Option<Box<SplitProperties>>,
     },
     /// Join `second` (which must immediately follow `first` in the same
     /// container) into the end of `first`, removing `second` (Backspace at a
-    /// paragraph start). `first` keeps its own paragraph properties.
+    /// paragraph start).
     JoinParagraphs {
         /// The paragraph that receives the content.
         first: NodeId,
         /// The paragraph appended and removed.
         second: NodeId,
+        /// The merged paragraph's properties, set exactly. `None` keeps `first`'s
+        /// own, which is Word's Backspace. Accepting a deleted paragraph mark uses
+        /// `Some(second's)`, because the surviving mark is the following one
+        /// (docs/108 Decision 2). The inverse of a split always carries `Some`.
+        properties: Option<Box<ParagraphProperties>>,
     },
     /// Apply a run-property change over a range within one paragraph (bold,
     /// italic, …). Runs straddling the range are split so the change lands
@@ -925,23 +947,37 @@ pub fn apply(
                 inlines: old,
             })
         }
-        Operation::SplitParagraph { at, new_id } => {
+        Operation::SplitParagraph {
+            at,
+            new_id,
+            properties,
+        } => {
+            // Captured first: the inverse restores this paragraph exactly, whatever
+            // the split does to either half's properties.
+            let original = find_paragraph_any(doc, at.node)
+                .ok_or(EditError::NodeNotFound)?
+                .properties
+                .clone();
             // Word's `w:next` (`Style::next`): pressing Enter at the END of a
             // paragraph starts the style that one is declared to be followed by —
             // which is why a heading is followed by body text rather than another
             // heading. Splitting in the MIDDLE keeps the style on both halves,
             // because that is one paragraph becoming two, not a new one starting.
-            // Resolved before the mutable borrow of the body below.
-            let next_style = find_paragraph_any(doc, at.node).and_then(|para| {
-                if at.offset != paragraph_text_len(para) {
-                    return None;
-                }
-                let current = para.properties.style_ref?;
-                let next = doc.definitions().styles.get(&current)?.next?;
-                // A style that follows itself (the common case for body styles)
-                // means "carry on", so there is nothing to change.
-                (next != current).then_some(next)
-            });
+            // An explicit payload is an exact restore, so the rule does not apply.
+            let next_style = if properties.is_some() {
+                None
+            } else {
+                find_paragraph_any(doc, at.node).and_then(|para| {
+                    if at.offset != paragraph_text_len(para) {
+                        return None;
+                    }
+                    let current = para.properties.style_ref?;
+                    let next = doc.definitions().styles.get(&current)?.next?;
+                    // A style that follows itself (the common case for body styles)
+                    // means "carry on", so there is nothing to change.
+                    (next != current).then_some(next)
+                })
+            };
             if !split_paragraph(
                 blocks_owning_mut(doc, at.node)?,
                 at.node,
@@ -951,22 +987,77 @@ pub fn apply(
             )? {
                 return Err(EditError::NodeNotFound);
             }
-            if let Some(next) = next_style
-                && let Some(para) = find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
-            {
-                para.properties.style_ref = Some(next);
+            match properties {
+                Some(both) => {
+                    if let Some(para) =
+                        find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
+                    {
+                        para.properties = both.leading.clone();
+                    }
+                    if let Some(para) =
+                        find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
+                    {
+                        para.properties = both.trailing.clone();
+                    }
+                }
+                None => {
+                    // The paragraph mark ends the paragraph, so the ORIGINAL mark —
+                    // and any tracked insertion or deletion of it — now ends the
+                    // trailing half. The leading half's mark is new. Copying the
+                    // revision onto both meant accepting a deleted mark on the
+                    // leading half re-joined what the user had just split.
+                    if let Some(para) =
+                        find_paragraph_mut(blocks_owning_mut(doc, at.node)?, at.node)
+                    {
+                        para.properties.mark_revision = None;
+                    }
+                    if let Some(next) = next_style
+                        && let Some(para) =
+                            find_paragraph_mut(blocks_owning_mut(doc, *new_id)?, *new_id)
+                    {
+                        para.properties.style_ref = Some(next);
+                    }
+                }
             }
             Ok(Operation::JoinParagraphs {
                 first: at.node,
                 second: *new_id,
+                properties: Some(Box::new(original)),
             })
         }
-        Operation::JoinParagraphs { first, second } => {
+        Operation::JoinParagraphs {
+            first,
+            second,
+            properties,
+        } => {
+            // Both captured BEFORE the merge. The join keeps one paragraph's
+            // properties and discards the other's; the inverse split has to put
+            // both back, or undoing Backspace returns a heading as body text.
+            let first_before = find_paragraph_any(doc, *first)
+                .ok_or(EditError::NodeNotFound)?
+                .properties
+                .clone();
+            let second_before = find_paragraph_any(doc, *second)
+                .ok_or(EditError::Unsupported)?
+                .properties
+                .clone();
             match join_paragraphs(blocks_owning_mut(doc, *first)?, *first, *second)? {
-                Some(split_at) => Ok(Operation::SplitParagraph {
-                    at: Pos::new(*first, split_at),
-                    new_id: *second,
-                }),
+                Some(split_at) => {
+                    if let Some(merged) = properties
+                        && let Some(para) =
+                            find_paragraph_mut(blocks_owning_mut(doc, *first)?, *first)
+                    {
+                        para.properties = merged.as_ref().clone();
+                    }
+                    Ok(Operation::SplitParagraph {
+                        at: Pos::new(*first, split_at),
+                        new_id: *second,
+                        properties: Some(Box::new(SplitProperties {
+                            leading: first_before,
+                            trailing: second_before,
+                        })),
+                    })
+                }
                 None => Err(EditError::NodeNotFound),
             }
         }
@@ -6957,7 +7048,11 @@ mod tests {
         let inverse = apply(
             &mut d,
             &mut ids,
-            &Operation::JoinParagraphs { first, second },
+            &Operation::JoinParagraphs {
+                first,
+                second,
+                properties: None,
+            },
         )
         .unwrap();
 
@@ -6974,6 +7069,196 @@ mod tests {
         d.validate().expect("the inverse also leaves it valid");
     }
 
+    /// The paragraph with id `id`, wherever it is in the body.
+    fn para_props(d: &Document, id: NodeId) -> ParagraphProperties {
+        d.body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(p) if p.id == id => Some(p.properties.clone()),
+                _ => None,
+            })
+            .expect("paragraph present")
+    }
+
+    fn para_with(id: u64, text_id: u64, text: &str, properties: ParagraphProperties) -> BlockNode {
+        BlockNode::Paragraph(Paragraph {
+            id: n(id),
+            properties,
+            inlines: vec![run(text_id, text)],
+        })
+    }
+
+    fn centered_with_deleted_mark() -> ParagraphProperties {
+        use casual_doc_model::v1::{Alignment, MarkRevision, MarkRevisionKind};
+        ParagraphProperties {
+            alignment: Some(Alignment::Center),
+            mark_revision: Some(MarkRevision {
+                kind: MarkRevisionKind::Deletion,
+                author: Some("Reviewer".to_owned()),
+                date: None,
+                revision_id: Some("7".to_owned()),
+            }),
+            ..ParagraphProperties::default()
+        }
+    }
+
+    /// docs/108 Decision 1. Backspace a centred paragraph into a left-aligned one,
+    /// then undo: the centred paragraph must come back centred. The inverse split
+    /// used to copy the FIRST paragraph's properties onto both halves, so a heading
+    /// or a list item came back as body text and nothing said so.
+    #[test]
+    fn undoing_a_join_restores_the_second_paragraphs_own_properties() {
+        let (first, second) = (n(2), n(4));
+        let original = centered_with_deleted_mark();
+        let mut d = doc(vec![
+            para(2, vec![run(3, "Hello")]),
+            para_with(4, 5, "World", original.clone()),
+        ]);
+        let mut ids = IdGenerator::new(9);
+        let before_first = para_props(&d, first);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::JoinParagraphs {
+                first,
+                second,
+                properties: None,
+            },
+        )
+        .unwrap();
+        // Backspace keeps the first paragraph's properties (Word; pinned elsewhere).
+        assert_eq!(para_props(&d, first), before_first);
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(text_of(&d, first), "Hello");
+        assert_eq!(text_of(&d, second), "World");
+        assert_eq!(
+            para_props(&d, first),
+            before_first,
+            "the first paragraph is unchanged"
+        );
+        assert_eq!(
+            para_props(&d, second),
+            original,
+            "undo must restore the second paragraph's own alignment AND its tracked mark",
+        );
+    }
+
+    /// Enter inside a paragraph whose mark carries a tracked deletion: the mark ends
+    /// the paragraph, so the revision belongs to the trailing half only. Copying it
+    /// onto both meant accepting the leading one re-joined what was just split.
+    #[test]
+    fn enter_moves_a_tracked_mark_revision_to_the_trailing_half_only() {
+        let (node, new) = (n(2), n(50));
+        let original = centered_with_deleted_mark();
+        let mut d = doc(vec![para_with(2, 3, "HelloWorld", original.clone())]);
+        let mut ids = IdGenerator::new(9);
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(node, 5),
+                new_id: new,
+                properties: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            para_props(&d, new),
+            original,
+            "the trailing half holds the original mark"
+        );
+        let leading = para_props(&d, node);
+        assert_eq!(
+            leading.mark_revision, None,
+            "the leading half's mark is new"
+        );
+        assert_eq!(
+            leading.alignment, original.alignment,
+            "every other property carries over"
+        );
+
+        // And undoing the Enter restores the one original paragraph exactly.
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d.body().len(), 1);
+        assert_eq!(text_of(&d, node), "HelloWorld");
+        assert_eq!(para_props(&d, node), original);
+    }
+
+    /// Explicit payloads set properties exactly, and each operation's inverse
+    /// restores the state before it — the property half of "split and join are
+    /// inverses", which `split_and_join_are_inverses` never checked.
+    #[test]
+    fn split_and_join_payloads_are_exact_and_invert_exactly() {
+        use casual_doc_model::v1::Alignment;
+        let (first, second) = (n(2), n(4));
+        let right = ParagraphProperties {
+            alignment: Some(Alignment::End),
+            ..ParagraphProperties::default()
+        };
+        let original_second = centered_with_deleted_mark();
+        let mut d = doc(vec![
+            para(2, vec![run(3, "Hello")]),
+            para_with(4, 5, "World", original_second.clone()),
+        ]);
+        let mut ids = IdGenerator::new(9);
+        let snapshot = d.clone();
+
+        // Accepting a deleted mark: the SECOND paragraph's properties survive.
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::JoinParagraphs {
+                first,
+                second,
+                properties: Some(Box::new(original_second.clone())),
+            },
+        )
+        .unwrap();
+        assert_eq!(para_props(&d, first), original_second);
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        // Text and properties, not whole-document equality: a split gives the
+        // trailing run a fresh id, as it always has.
+        assert_eq!(
+            (text_of(&d, first), text_of(&d, second)),
+            ("Hello".into(), "World".into())
+        );
+        assert_eq!(para_props(&d, first), para_props(&snapshot, first));
+        assert_eq!(
+            para_props(&d, second),
+            original_second,
+            "undo of a join with a payload is exact"
+        );
+
+        let mut d = doc(vec![para(2, vec![run(3, "HelloWorld")])]);
+        let snapshot = d.clone();
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SplitParagraph {
+                at: Pos::new(first, 5),
+                new_id: second,
+                properties: Some(Box::new(SplitProperties {
+                    leading: right.clone(),
+                    trailing: original_second.clone(),
+                })),
+            },
+        )
+        .unwrap();
+        assert_eq!(para_props(&d, first), right);
+        assert_eq!(para_props(&d, second), original_second);
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(d.body().len(), 1);
+        assert_eq!(text_of(&d, first), "HelloWorld");
+        assert_eq!(
+            para_props(&d, first),
+            para_props(&snapshot, first),
+            "undo of a split with a payload is exact"
+        );
+    }
+
     #[test]
     fn split_and_join_are_inverses() {
         let p = n(2);
@@ -6987,17 +7272,21 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 5),
                 new_id: new,
+                properties: None,
             },
         )
         .unwrap();
         assert_eq!(d.body().len(), 2, "one paragraph became two");
         assert_eq!(text_of(&d, p), "Hello");
         assert_eq!(text_of(&d, new), "World");
+        // The inverse carries the original paragraph's properties, so undo restores
+        // them exactly rather than trusting whatever the leading half ended up with.
         assert_eq!(
             inverse,
             Operation::JoinParagraphs {
                 first: p,
-                second: new
+                second: new,
+                properties: Some(Box::new(ParagraphProperties::default())),
             }
         );
 
@@ -7823,6 +8112,7 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 5),
                 new_id: new,
+                properties: None,
             },
         )
         .unwrap();
@@ -7871,6 +8161,7 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 2),
                 new_id: new,
+                properties: None,
             },
         )
         .unwrap();
@@ -7912,6 +8203,7 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 4),
                 new_id: new,
+                properties: None,
             },
         )
         .unwrap();
@@ -7938,6 +8230,7 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 0),
                 new_id: new,
+                properties: None,
             },
         )
         .unwrap();
@@ -7959,7 +8252,8 @@ mod tests {
                 &mut ids,
                 &Operation::JoinParagraphs {
                     first: n(2),
-                    second: n(6), // not adjacent to 2
+                    second: n(6), // not adjacent to 2,
+                    properties: None,
                 }
             ),
             Err(EditError::Unsupported)
@@ -8949,6 +9243,7 @@ mod tests {
             &Operation::SplitParagraph {
                 at: Pos::new(p, 2),
                 new_id: new,
+                properties: None,
             },
         )
         .expect("split inside a hyperlink succeeds");
