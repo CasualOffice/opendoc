@@ -4,7 +4,12 @@
 // sheets. The Print command instead renders EVERY page independently into an
 // off-DOM `#printContainer` (one canvas per page), opens the print dialog, then
 // tears the container down — leaving the live virtualized viewport untouched.
-import { test, expect, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  MOD,
+  shortcutHint,
+} from "./fixtures.mjs";
 
 // Open the default editor on the shipped sample (multi-page, so page-canvas
 // virtualization is genuinely in play — only on-screen pages have a live
@@ -93,7 +98,7 @@ test("Print is reachable from the command palette with its ⌘P hint", async ({
 
   const item = page.locator(".cmd-item", { hasText: "Print" }).first();
   await expect(item).toBeVisible();
-  await expect(item.locator(".cmd-hint")).toHaveText("⌘P");
+  await expect(item.locator(".cmd-hint")).toHaveText(shortcutHint("⌘P"));
   await item.click();
 
   const pageCount = await page.locator(".page-wrap").count();

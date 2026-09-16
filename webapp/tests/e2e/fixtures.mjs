@@ -168,3 +168,23 @@ export async function expectSaveEnabled(page) {
   await expect(row).toBeEnabled();
   await page.keyboard.press("Escape");
 }
+
+// --- Platform-correct shortcut hints -----------------------------------------
+// Specs asserted hint text as a literal "⌘P". That is the Mac rendering; on
+// Linux the same command renders "Ctrl+P", so those assertions passed on the
+// author's machine and failed in CI — the browser-smoke job has been red on
+// `main` for exactly this. It is also docs/105 UX-009 showing through: the
+// product hardcodes Mac glyphs in 71 places, so a test that hardcodes one is
+// reproducing the defect rather than catching it.
+//
+// `formatShortcut` is the function the app itself renders hints with, so
+// deriving the expectation from it means the spec cannot disagree with the UI
+// about what a chord looks like on the platform it is running on.
+import { formatShortcut, APPLE_PLATFORM, STANDARD_PLATFORM } from "../../src/keyboard.mjs";
+
+const TEST_PLATFORM = process.platform === "darwin" ? APPLE_PLATFORM : STANDARD_PLATFORM;
+
+/** The hint text the editor will render for a Mac-notation chord, here. */
+export function shortcutHint(appleNotation) {
+  return formatShortcut(appleNotation, TEST_PLATFORM);
+}
