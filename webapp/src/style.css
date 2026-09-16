@@ -107,14 +107,15 @@
      user act on chrome the modal has taken control of. */
   --z-tooltip: 1000;
 
-  /* Canvas / grid aesthetic (redesign): the shell reads as a flat gridded
-     surface split by hairlines, not a stack of rounded cards — so the chrome
-     radii are near-square. Floating popovers keep a small radius so they still
+  /* Rounded shell, from the owner's prototype (Downloads/preview (1).html).
+     This SUPERSEDES the earlier near-square pass recorded in docs/63: the shell
+     reads as softly rounded rather than flat-gridded. 6px on controls keeps a
+     34px button in proportion; 8px on surfaces. Floating popovers keep a small radius so they still
      detach from the surface (and #outlinePanel stays 10px, asserted by
      shell-reference-polish.spec). */
-  --radius: 3px;
-  --radius-sm: 3px;
-  --radius-md: 3px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
   /* Floating surfaces keep their own radius so they detach from the flat
      canvas — and both are asserted by tests (#outlinePanel 10px in
      shell-reference-polish; dialog cards 12px in header-menu). */
@@ -147,6 +148,24 @@
      arithmetic; responsive-shell.spec.mjs asserts the panels below actually
      clear the ribbon's measured bottom edge. */
   --h-ribbon-band: 92px;
+  /* The compact toolbar's height — the prototype's --toolbar-h. Declared here
+     so `--chrome-bottom` and the bar itself read the same number. */
+  --h-compact-bar: clamp(38px, 3.4vh, 46px);
+
+  /* Chrome card: the ribbon band and the compact bar are the same object at
+     different densities, so they share one radius and one inset. Both scale —
+     a fixed 16px reads heavy on a small window and mean on a large one. */
+  --chrome-card-radius: clamp(10px, 1.1vw, 18px);
+  --chrome-card-inset-y: clamp(1px, 0.25vh, 4px);
+  --chrome-card-inset-x: clamp(4px, 0.6vw, 12px);
+
+  /* Dialog rhythm. One scale for every dialog and panel, so tightening the
+     density is one edit rather than thirty. The old values were a flat 18-20px
+     on head, body and foot alike, which made every dialog tall without making
+     any of it more legible. */
+  --dlg-pad-x: clamp(12px, 1.4vw, 20px);
+  --dlg-pad-y: clamp(10px, 1.1vh, 16px);
+  --dlg-gap: clamp(8px, 0.9vh, 14px);
   /* Bottom edge of the fixed shell chrome: header bar + ribbon tab strip +
      ribbon band. Anything that floats over the workarea from a viewport-fixed
      position anchors to THIS, never to a literal, so the ribbon's right-hand
@@ -174,24 +193,33 @@
      canvas (#FBFAF8), quiet stone surfaces (#F2F1ED), warm-grey hairlines
      (#EDEBE6 / #DEDBD4), and graphite ink (#14161A). Everything downstream is
      tokenized, so this single block re-skins the whole chrome. */
-  --bg: #fbfaf8;
-  --bg-2: #f2f1ed;
-  --surface: #ffffff;
-  --surface-alt: #fcfcfb;
-  --ink: #14161a;
+  /* Google-Docs-family cool greys, from the owner's prototype. The previous
+     scale was a WARM cream (#fbfaf8 / #f2f1ed / #edebe6) which read bright and
+     flat and looked nothing like Docs.
+     Regions separate by SHADE, not by hairline: canvas is the darkest, chrome
+     and panels are white on top of it, and the page is white against the darker
+     canvas so it reads as paper. Borders are a last resort, not the mechanism. */
+  --bg: #eef1f7;         /* app chrome strip — the header/toolbar band */
+  --bg-2: #f4f6fb;       /* sunken panes and the toolbar pill */
+  --surface: #ffffff;    /* panels, dialogs, dropdowns, the page */
+  --surface-alt: #f4f6fb;
+  --ink: #1f1f1f;
   /* Like their dark counterparts, --muted and --faint are pinned to clear WCAG
      AA (4.5:1) against the darkest surface they are painted on — here --bg-2,
      not --surface. --faint was #6f747c, which passes on white (4.70:1) and fails
      on --bg-2 (4.16:1), so the search box's "⌘⇧P" hint and the footer's "Mode"
      label were the two places it showed. Guarded by theme-contrast.spec.mjs. */
-  --muted: #565a61;
+  --muted: #5f6368;
   /* --faint was #8a8e95 = 3.29:1 on --surface, below the 4.5:1 body-text floor,
      and it is the colour of every menu shortcut hint and empty state — the prose
      a first-time user needs most (docs/104 HF-093). #6f747c measures 4.70:1 on
      --surface and 4.51:1 on --bg. */
-  --faint: #666b73;
-  --line: #edebe6;
-  --line-strong: #dedbd4;
+  /* #686b70 is the LIGHTEST value that still clears AA (4.5:1) on the darkest
+     surface it is painted on — the #eceef1 canvas, where it measures 4.60:1.
+     The prototype's own #747775 measures 3.90:1 there and would fail. */
+  --faint: #686b70;
+  --line: #e3e8f1;
+  --line-strong: #cfd6e4;
   --scrollbar-thumb: rgba(74, 78, 85, 0.3);
   --scrollbar-thumb-hover: rgba(74, 78, 85, 0.52);
   --shadow-sm: 0 1px 2px rgba(20, 22, 26, 0.05);
@@ -413,9 +441,11 @@ input {
   gap: 12px;
   height: var(--h-header);
   padding: 5px 14px 4px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  box-shadow: var(--shadow-sm);
+  /* Same grey as the toolbar, status bar and desk — one field, separated from
+     the page by SHADE rather than by a rule. */
+  background: var(--bg);
+  border-bottom: 0;
+  box-shadow: none;
   z-index: var(--z-bar);
 }
 
@@ -2861,10 +2891,11 @@ body.modal-open {
    card. It is one horizontal band of the shell grid, separated from the bar
    above and the workarea below by single hairlines. */
 .ribbon {
-  background: var(--surface);
+  background: var(--bg);
+  border-radius: var(--radius);
   margin: 0;
   border: none;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
   border-radius: 0;
   overflow: hidden;
   z-index: 2;
@@ -2926,6 +2957,20 @@ body:has(.ribbon.is-collapsed) {
   --chrome-bottom: calc(var(--h-header) + var(--h-tab) + 1px);
 }
 
+/* Compact chrome replaces the whole ribbon — tab strip AND band — with one
+   44px toolbar, so the chrome's bottom edge moves up by more than the collapsed
+   case above and every `--chrome-bottom`-anchored panel has to follow. Without
+   this the object/size, paragraph and table panels sit ~80px too low, hanging
+   off their own top edge.
+
+   Matches the sibling rule's approach: read the state that is actually on
+   screen (`body.compact-mode`, set by `setChromeMode`) so the token cannot
+   disagree with the rendered chrome. */
+body.compact-mode {
+  /* Header plus the compact toolbar's own height and bottom hairline. */
+  --chrome-bottom: calc(var(--h-header) + var(--h-compact-bar) + 14px);
+}
+
 .ribbon-tab {
   height: var(--h-tab);
   padding: 0 14px;
@@ -2960,9 +3005,13 @@ body:has(.ribbon.is-collapsed) {
 .ribbon-panel {
   display: flex;
   align-items: stretch;
-  /* Redesign: the captioned band sits on a quieter surface than the white tab
-     strip above it, so the divider-separated groups read as one grouped band. */
-  background: var(--surface-alt);
+  /* The band is a rounded card floating on the grey chrome field — the same
+     treatment the compact toolbar gets, so the two modes read as one system
+     rather than one pill and one full-bleed strip. White on grey, so it
+     separates by SHADE and needs no border. */
+  background: var(--surface);
+  margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x);
+  border-radius: var(--chrome-card-radius);
   padding: 6px 10px 5px;
   /* No horizontal scrollbar ever (docs/64): a single no-wrap row whose
      overflowing groups collapse into the "⋯" menu instead. */
@@ -3645,8 +3694,11 @@ body.is-format-painting .page-wrap * {
   align-items: center;
   gap: 4px;
   padding: 8px 7px;
-  background: var(--bg-2);
-  border-right: 1px solid var(--line);
+  /* The rail is chrome, so it shares the one grey field rather than sitting on
+     its own tint with an edge — the tint is what made it read as a separate bar
+     glued to the header. */
+  background: transparent;
+  border-right: 0;
 }
 
 /* A text caption under the icon (doc 69 §1.2/§1.4.4): every rail destination
@@ -3724,15 +3776,16 @@ body.is-format-painting .page-wrap * {
    unclickable for as long as an object was selected (HF-084). It now starts
    below the chrome, from the same expression the 900px block already uses for
    the properties and glyph panels — one token, so the two cannot drift apart. */
+/* An in-flow flex item in `.workarea`, like every other side panel — NOT a
+   fixed overlay. As a fixed body child it painted over the canvas (the page
+   never shifted aside for it) and over the status bar. Being a flex item also
+   removes the need to anchor its top to `--chrome-bottom`: the row already
+   starts below the chrome, in whichever chrome mode is showing. */
 .object-inspector {
-  position: fixed;
-  z-index: var(--z-inspector);
-  top: calc(var(--chrome-bottom) + 8px);
-  right: 8px;
-  bottom: 8px;
+  flex: 0 0 280px;
   width: 280px;
-  max-width: min(280px, calc(100vw - 16px));
-  margin: 0;
+  max-width: min(280px, calc(100vw - 52px));
+  z-index: var(--z-inspector);
 }
 
 .property-grid-2 {
@@ -5050,6 +5103,129 @@ body.is-format-painting .page-wrap * {
   pointer-events: none;
 }
 
+/* ---- Chrome modes: compact vs ribbon --------------------------------------
+ * Two mutually exclusive toolbars. `body` carries exactly one of
+ * `.compact-mode` / `.ribbon-mode`, so neither can be half-shown. */
+body.compact-mode .ribbon { display: none; }
+body.ribbon-mode .compact-toolbar { display: none; }
+
+.compact-toolbar {
+  /* The raised pill within the grey field — lighter than the chrome behind it,
+     so it separates by SHADE with no border, exactly as Docs and the sister app
+     draw it (`rounded-full bg-[--doc-bg-subtle] mx-2 mb-1`). */
+  background: var(--surface);
+  border-radius: var(--chrome-card-radius);
+  margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x)
+    calc(var(--chrome-card-inset-y) + 4px);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 8px;
+  min-height: 40px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.compact-toolbar::-webkit-scrollbar { display: none; }
+
+/* One control size for the whole bar, so the rhythm does not drift the way
+ * ad-hoc per-button sizes did. 34px matches the prototype's `.tool`. */
+.compact-toolbar .ctool {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2, var(--ink));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.compact-toolbar .ctool:hover:not(:disabled) { background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent)); }
+.compact-toolbar .ctool:disabled { opacity: 0.38; cursor: default; }
+.compact-toolbar .ctool[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+/* 3:1 non-text focus indicator, not a tint (WCAG 1.4.11). */
+.compact-toolbar .ctool:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+.compact-toolbar .ctool .ms { font-size: 20px; line-height: 1; }
+.compact-toolbar .cadopted {
+  height: 30px;
+  flex: 0 0 auto;
+  align-self: center;
+}
+/* Adopted combos read as Docs-style borderless controls in the compact bar —
+ * the ribbon draws them with a box, which is right in a grouped band and wrong
+ * in a single dense strip. Border appears on hover/focus, as Docs does. */
+.compact-toolbar .cadopted,
+.compact-toolbar .cadopted:not(:hover):not(:focus-visible) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.compact-toolbar .cadopted:hover {
+  background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
+  border-color: transparent;
+}
+.compact-toolbar .cadopted:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+  border-color: transparent;
+}
+.compact-sep {
+  width: 1px;
+  height: 24px;
+  margin: 0 4px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+/* Header mode switch */
+.chrome-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface-2, color-mix(in srgb, var(--ink) 6%, transparent));
+  margin-right: 8px;
+}
+.chrome-mode-btn {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 11px);
+  font-weight: 600;
+}
+.chrome-mode-btn[aria-checked="true"] {
+  /* Selected must be unmistakable: the accent fill, not a white chip whose only
+     cue was a 1px shadow on an already-light field. */
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+.chrome-mode-btn[aria-checked="false"]:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.chrome-mode-btn:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+/* Touch: the same 44px floor the coarse-pointer block applies elsewhere. */
+@media (pointer: coarse) {
+  .compact-toolbar .ctool { min-width: 44px; height: 44px; }
+  .chrome-mode-btn { height: 36px; padding: 0 14px; }
+}
+
 .overlay .ime-preedit {
   position: absolute;
   display: flex;
@@ -5168,8 +5344,8 @@ body:not(.doc-loaded) .drop-title {
   padding: 0 12px 0 16px;
   font-size: var(--fs-small);
   color: var(--muted);
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
+  border-top: 0;
+  background: var(--bg);
   z-index: 2;
   min-width: 0;
 }
