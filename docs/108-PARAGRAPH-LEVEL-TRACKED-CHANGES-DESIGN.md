@@ -1,6 +1,6 @@
 # 108 — Paragraph-level tracked changes
 
-**Status:** Design, phase 1 in implementation.
+**Status:** Phase 1 implemented (foundation and read side). Phase 2 (authoring) not started.
 **Closes (across both phases):** `104` HF-130, HF-131. Also three defects found while
 mapping, recorded as new `104` rows: lossy undo of a paragraph join, split duplicating an
 imported mark revision, and paragraph-only tracked changes reading as a clean document.
@@ -116,11 +116,13 @@ review decision below is expressible as one split or join. The alternative — a
 Every decision runs through `apply_action_caret_as(.., HistoryKind::Review)`, so it is one
 undo step and rolls back atomically.
 
-**A join that cannot happen fails closed with a reason.** A deleted mark with no following
-paragraph in the same container (the last paragraph of a cell or surface, or before a table)
-has nothing to merge into. Word does not write that shape; files that contain it came from
-other producers. Accept reports "This paragraph mark has no following paragraph to merge
-into" rather than deleting content the user can see.
+**A merge that cannot happen clears the revision instead.** A merging mark with no following
+paragraph in the same container (the last paragraph of a cell or surface, or one before a
+table) has nothing to merge into. Word does not write that shape; files that contain it came
+from other producers. Deciding it clears the revision and deletes nothing. This was first
+designed as a refusal and changed during implementation: a refusal would make Accept All fail
+for the whole document over one malformed mark, and clearing loses no content the user can
+see. Guard: `a_merging_mark_with_nothing_after_it_clears_instead_of_deleting`.
 
 ### Decision 3: review item identity
 
@@ -160,6 +162,21 @@ paragraph-level suggestions are visible and decidable, and undo after Backspace 
 second table above: tracked Enter, Delete/Backspace at a boundary, cross-paragraph deletion,
 and paragraph formatting through the `apply_paragraph_props_as` choke point. Replaces the 17
 refusals.
+
+## Phase 1 as built
+
+Beyond the design above, implementation found and fixed:
+
+- **Caret decisions picked the wrong revision.** A formatting change spans its paragraph and
+  lists first, so accepting at the caret inside an inline insertion resolved to the paragraph
+  change. `reviewContextAt` now prefers the most specific revision: inline, then mark, then
+  paragraph formatting.
+- **Every ungrouped marker rendered active on open** (`104` HF-157). Each marker's list of ids it
+  answers to held `null` for any revision that is not a move or a group, and `null` is also
+  "nothing selected".
+- **The formatting bar belongs in the margin.** Drawn beside the paragraph's own text, it sat
+  mid-page for centred and right-aligned paragraphs. It anchors to the owning section's text
+  column start.
 
 ## Test matrix
 

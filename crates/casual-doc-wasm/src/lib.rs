@@ -7549,6 +7549,9 @@ impl WasmDocument {
     /// Accepts or rejects a tracked revision by inline node id.
     #[wasm_bindgen(js_name = decideRevision)]
     pub fn decide_revision(&mut self, revision: &str, accept: bool) -> Result<EditResult, JsValue> {
+        if let Some((paragraph, part)) = parse_paragraph_revision_id(revision) {
+            return self.decide_paragraph_revision(paragraph, part, accept);
+        }
         let id = node_id(revision)?;
         if let Some((node, start, end)) = find_review_format_anchor_all(&self.document, id) {
             if find_review_format_change(self.document.body(), id)
@@ -7602,6 +7605,81 @@ impl WasmDocument {
             HistoryKind::Review,
         )
         .map_err(to_js)
+    }
+
+    /// Accepts or rejects one paragraph-level revision (docs/108 Decision 2).
+    ///
+    /// A formatting change resolves in place. A paragraph mark that survives —
+    /// an accepted insertion or a rejected deletion — clears its revision. A mark
+    /// that goes — an accepted deletion or a rejected insertion — merges this
+    /// paragraph into the next, and the merged paragraph keeps the NEXT one's
+    /// properties, because the mark that survives is the following paragraph's
+    /// (ISO 29500 §17.13.5.15; Word-saved fixtures RP005, RP052).
+    fn decide_paragraph_revision(
+        &mut self,
+        paragraph: &str,
+        part: ParagraphRevisionPart,
+        accept: bool,
+    ) -> Result<EditResult, JsValue> {
+        let node = node_id(paragraph)?;
+        let Some(current) = find_paragraph_any(&self.document, node) else {
+            return Err(to_js("revision not found".to_string()));
+        };
+        let properties = current.properties.clone();
+        let end = self.paragraph_text(node).len() as u32;
+        let ops = match part {
+            ParagraphRevisionPart::Format => {
+                let Some(change) = &properties.prop_change else {
+                    return Err(to_js("revision not found".to_string()));
+                };
+                let mut decided = if accept {
+                    properties.clone()
+                } else {
+                    paragraph_properties_before_change(&properties, change.prior.as_ref())
+                };
+                decided.prop_change = None;
+                vec![Operation::SetParagraphProperties {
+                    node,
+                    properties: Box::new(decided),
+                }]
+            }
+            ParagraphRevisionPart::Mark => {
+                let Some(mark) = &properties.mark_revision else {
+                    return Err(to_js("revision not found".to_string()));
+                };
+                let stays_separate =
+                    matches!(mark.kind, casual_doc_model::v1::MarkRevisionKind::Insertion)
+                        == accept;
+                match (
+                    stays_separate,
+                    adjacent_next_paragraph(&self.document, node),
+                ) {
+                    (false, Some(next)) => {
+                        let survivor = find_paragraph_any(&self.document, next)
+                            .map(|paragraph| paragraph.properties.clone())
+                            .ok_or_else(|| to_js("revision not found".to_string()))?;
+                        vec![Operation::JoinParagraphs {
+                            first: node,
+                            second: next,
+                            properties: Some(Box::new(survivor)),
+                        }]
+                    }
+                    // A mark with nothing after it cannot merge. Word never writes
+                    // that shape; clearing the revision honours what can be honoured
+                    // and deletes nothing the user can see (docs/108 Decision 2).
+                    _ => {
+                        let mut cleared = properties.clone();
+                        cleared.mark_revision = None;
+                        vec![Operation::SetParagraphProperties {
+                            node,
+                            properties: Box::new(cleared),
+                        }]
+                    }
+                }
+            }
+        };
+        self.apply_action_caret_as(ops, Pos::new(node, end), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Accepts or rejects one imported tracked move as an atomic source /
@@ -7709,7 +7787,8 @@ impl WasmDocument {
         collect_review_revision_ids_all(&self.document, &mut ids);
         let mut format_ids = Vec::new();
         collect_review_format_ids_all(&self.document, &mut format_ids);
-        if ids.is_empty() && format_ids.is_empty() {
+        let paragraph_revisions = collect_paragraph_revisions_all(&self.document);
+        if ids.is_empty() && format_ids.is_empty() && paragraph_revisions.is_empty() {
             return Err(to_js("no tracked revisions".to_string()));
         }
         let pairs = collect_review_move_pairs_all(&self.document);
@@ -7754,14 +7833,19 @@ impl WasmDocument {
                 remove_review_move_markers(blocks, &marker_ids);
             }
         }
-        let operation =
-            update_review_operation_across(&self.document, &surfaces, None).map_err(to_js)?;
-        self.apply_action_caret_as(
-            vec![operation],
-            Pos::new(self.document.id(), 0),
-            HistoryKind::Review,
-        )
-        .map_err(to_js)
+        let mut ops = Vec::new();
+        if !ids.is_empty() || !format_ids.is_empty() {
+            ops.push(
+                update_review_operation_across(&self.document, &surfaces, None).map_err(to_js)?,
+            );
+        }
+        ops.extend(paragraph_decision_ops(
+            &self.document,
+            &paragraph_revisions,
+            accept,
+        ));
+        self.apply_action_caret_as(ops, Pos::new(self.document.id(), 0), HistoryKind::Review)
+            .map_err(to_js)
     }
 
     /// Replaces the document's core properties from a JSON object in the same
@@ -12070,6 +12154,13 @@ fn collect_review_revisions(
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // A paragraph formatting change covers the whole paragraph, so it
+                // lists before the paragraph's inline changes; a paragraph-mark
+                // revision sits where the mark is — at the end — so it lists after
+                // them. Neither has a node id of its own and one paragraph can
+                // carry both, so their ids are the paragraph id qualified by kind
+                // (docs/108 Decision 3).
+                let format_at = out.len();
                 let mut offset = 0;
                 collect_review_inline(
                     &paragraph.inlines,
@@ -12079,6 +12170,47 @@ fn collect_review_revisions(
                     move_links,
                     out,
                 );
+                let properties = &paragraph.properties;
+                if let Some(change) = &properties.prop_change {
+                    out.insert(
+                        format_at,
+                        serde_json::json!({
+                            "id": paragraph_revision_id(paragraph.id, ParagraphRevisionPart::Format),
+                            "kind": "paragraph_format",
+                            "author": change.author,
+                            "date": change.date,
+                            "revisionId": change.revision_id,
+                            "text": "",
+                            "formattingDelta": paragraph_formatting_delta_json(
+                                properties,
+                                change.prior.as_ref(),
+                            ),
+                            "anchor": {
+                                "node": paragraph.id.to_string(),
+                                "start": 0,
+                                "end": offset,
+                            },
+                        }),
+                    );
+                }
+                if let Some(mark) = &properties.mark_revision {
+                    out.push(serde_json::json!({
+                        "id": paragraph_revision_id(paragraph.id, ParagraphRevisionPart::Mark),
+                        "kind": match mark.kind {
+                            casual_doc_model::v1::MarkRevisionKind::Insertion => "paragraph_mark_insertion",
+                            casual_doc_model::v1::MarkRevisionKind::Deletion => "paragraph_mark_deletion",
+                        },
+                        "author": mark.author,
+                        "date": mark.date,
+                        "revisionId": mark.revision_id,
+                        "text": "",
+                        "anchor": {
+                            "node": paragraph.id.to_string(),
+                            "start": offset,
+                            "end": offset,
+                        },
+                    }));
+                }
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
@@ -13446,6 +13578,24 @@ fn collect_review_revision_serial_ids(blocks: &[BlockNode], out: &mut Vec<String
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // Paragraph-level revisions carry a `w:id` too. Seeding from inline
+                // revisions alone let a new suggestion reuse an id an imported
+                // `w:pPrChange` or paragraph-mark revision already held (docs/108).
+                let properties = &paragraph.properties;
+                if let Some(id) = properties
+                    .mark_revision
+                    .as_ref()
+                    .and_then(|mark| mark.revision_id.as_ref())
+                {
+                    out.push(id.clone());
+                }
+                if let Some(id) = properties
+                    .prop_change
+                    .as_ref()
+                    .and_then(|change| change.revision_id.as_ref())
+                {
+                    out.push(id.clone());
+                }
                 collect_review_inline_serial_ids(&paragraph.inlines, out);
             }
             BlockNode::Table(table) => {
@@ -14640,6 +14790,308 @@ fn collect_review_inline(
             _ => {}
         }
     }
+}
+
+/// The operations that decide every paragraph-level revision at once.
+///
+/// Order matters, and follows Word's own Accept All: formatting and surviving
+/// marks resolve first, as property changes that leave the paragraph count
+/// alone; merges run last and bottom-up, so each join's following paragraph
+/// still exists when it runs. A run of consecutive merging marks chains — each
+/// merge carries the properties of whatever paragraph finally survives.
+fn paragraph_decision_ops(
+    document: &Document,
+    revisions: &[ParagraphRevisionEntry],
+    accept: bool,
+) -> Vec<Operation> {
+    let mut property_ops = Vec::new();
+    let mut merges: Vec<(NodeId, NodeId)> = Vec::new();
+    let mut decided: BTreeMap<NodeId, ParagraphProperties> = BTreeMap::new();
+    for entry in revisions {
+        let (properties, stays_separate) = decide_paragraph_properties(&entry.properties, accept);
+        let next = (!stays_separate)
+            .then(|| adjacent_next_paragraph(document, entry.node))
+            .flatten();
+        match next {
+            Some(next) => merges.push((entry.node, next)),
+            None => {
+                let mut properties = properties;
+                // A mark that should merge but has nothing to merge into clears.
+                properties.mark_revision = None;
+                decided.insert(entry.node, properties.clone());
+                property_ops.push(Operation::SetParagraphProperties {
+                    node: entry.node,
+                    properties: Box::new(properties),
+                });
+            }
+        }
+    }
+    let mut ops = property_ops;
+    for (first, second) in merges.into_iter().rev() {
+        let survivor = decided.get(&second).cloned().or_else(|| {
+            find_paragraph_any(document, second).map(|paragraph| paragraph.properties.clone())
+        });
+        let Some(survivor) = survivor else { continue };
+        decided.insert(first, survivor.clone());
+        ops.push(Operation::JoinParagraphs {
+            first,
+            second,
+            properties: Some(Box::new(survivor)),
+        });
+    }
+    ops
+}
+
+/// Which paragraph-level revision a review item refers to (docs/108 Decision 3)./// Which paragraph-level revision a review item refers to (docs/108 Decision 3).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParagraphRevisionPart {
+    /// `w:pPr/w:rPr/w:ins|w:del` — the paragraph mark itself.
+    Mark,
+    /// `w:pPrChange` — a tracked paragraph formatting change.
+    Format,
+}
+
+/// The review id of a paragraph-level revision: the paragraph id qualified by
+/// kind, because the paragraph id alone is shared by both kinds.
+fn paragraph_revision_id(paragraph: NodeId, part: ParagraphRevisionPart) -> String {
+    match part {
+        ParagraphRevisionPart::Mark => format!("{paragraph}:mark"),
+        ParagraphRevisionPart::Format => format!("{paragraph}:format"),
+    }
+}
+
+/// Parses a review id produced by [`paragraph_revision_id`].
+fn parse_paragraph_revision_id(id: &str) -> Option<(&str, ParagraphRevisionPart)> {
+    let (paragraph, part) = id.rsplit_once(':')?;
+    match part {
+        "mark" => Some((paragraph, ParagraphRevisionPart::Mark)),
+        "format" => Some((paragraph, ParagraphRevisionPart::Format)),
+        _ => None,
+    }
+}
+
+/// The paragraph properties Reject restores from a `w:pPrChange` snapshot.
+///
+/// The snapshot is `CT_PPrBase` (ISO 29500 §17.13.5.29): it never holds the
+/// paragraph mark's own run properties, a tracked revision of that mark, or the
+/// section properties. Those are separate revisions or not revisions at all, so
+/// they keep their CURRENT values rather than being wiped by the restore.
+fn paragraph_properties_before_change(
+    current: &ParagraphProperties,
+    prior: &ParagraphProperties,
+) -> ParagraphProperties {
+    let mut restored = prior.clone();
+    restored.mark_run = current.mark_run.clone();
+    restored.mark_revision = current.mark_revision.clone();
+    restored.section_break = current.section_break;
+    restored.prop_change = None;
+    restored
+}
+
+/// The paragraph that immediately follows `id` in the same block list, when that
+/// next block is a paragraph. `None` when `id` is last in its container or is
+/// followed by a table — there is then nothing a paragraph mark can merge into.
+fn adjacent_next_paragraph(document: &Document, id: NodeId) -> Option<NodeId> {
+    fn walk(blocks: &[BlockNode], id: NodeId) -> Option<Option<NodeId>> {
+        for (index, block) in blocks.iter().enumerate() {
+            match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id == id => {
+                    return Some(match blocks.get(index + 1) {
+                        Some(BlockNode::Paragraph(next)) => Some(next.id),
+                        _ => None,
+                    });
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            if let Some(found) = walk(&cell.blocks, id) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => {
+                    if let Some(found) = walk(&sdt.blocks, id) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+    surface_block_lists(document)
+        .into_iter()
+        .find_map(|blocks| walk(blocks, id))
+        .flatten()
+}
+
+/// One paragraph carrying a paragraph-level revision, in document order.
+struct ParagraphRevisionEntry {
+    node: NodeId,
+    properties: ParagraphProperties,
+}
+
+/// Every paragraph with a mark revision or a formatting change, on every surface,
+/// in document order within each surface.
+fn collect_paragraph_revisions_all(document: &Document) -> Vec<ParagraphRevisionEntry> {
+    fn walk(blocks: &[BlockNode], out: &mut Vec<ParagraphRevisionEntry>) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => {
+                    let properties = &paragraph.properties;
+                    if properties.mark_revision.is_some() || properties.prop_change.is_some() {
+                        out.push(ParagraphRevisionEntry {
+                            node: paragraph.id,
+                            properties: properties.clone(),
+                        });
+                    }
+                }
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            walk(&cell.blocks, out);
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => walk(&sdt.blocks, out),
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for blocks in surface_block_lists(document) {
+        walk(blocks, &mut out);
+    }
+    out
+}
+
+/// A paragraph's properties after deciding its formatting change, and whether its
+/// mark revision survives as a separate paragraph (`true`) or is merged into the
+/// following paragraph (`false`). Merging is decided by the caller, which knows
+/// whether there is a paragraph to merge into.
+fn decide_paragraph_properties(
+    properties: &ParagraphProperties,
+    accept: bool,
+) -> (ParagraphProperties, bool) {
+    let mut decided = match &properties.prop_change {
+        Some(change) if !accept => {
+            paragraph_properties_before_change(properties, change.prior.as_ref())
+        }
+        _ => {
+            let mut kept = properties.clone();
+            kept.prop_change = None;
+            kept
+        }
+    };
+    let stays_separate = match &properties.mark_revision {
+        // Accepting an inserted mark keeps the split; rejecting a deleted mark keeps
+        // the paragraphs apart. Either way the revision itself is resolved.
+        Some(mark) => {
+            matches!(mark.kind, casual_doc_model::v1::MarkRevisionKind::Insertion) == accept
+        }
+        None => true,
+    };
+    if stays_separate {
+        decided.mark_revision = None;
+    }
+    (decided, stays_separate)
+}
+
+/// A tracked paragraph formatting change as a list of changed properties, the
+/// paragraph counterpart of [`formatting_delta_json`]. Only the base properties a
+/// `w:pPrChange` snapshot can hold are compared.
+fn paragraph_formatting_delta_json(
+    current: &ParagraphProperties,
+    prior: &ParagraphProperties,
+) -> serde_json::Value {
+    let mut changes = Vec::new();
+    let mut push = |property: &str, before: serde_json::Value, after: serde_json::Value| {
+        if before != after {
+            changes.push(serde_json::json!({
+                "property": property,
+                "before": before,
+                "after": after,
+            }));
+        }
+    };
+    let value = |v: serde_json::Result<serde_json::Value>| v.unwrap_or(serde_json::Value::Null);
+    push(
+        "style",
+        value(serde_json::to_value(prior.style_ref)),
+        value(serde_json::to_value(current.style_ref)),
+    );
+    push(
+        "alignment",
+        value(serde_json::to_value(prior.alignment)),
+        value(serde_json::to_value(current.alignment)),
+    );
+    push(
+        "numbering",
+        value(serde_json::to_value(prior.numbering)),
+        value(serde_json::to_value(current.numbering)),
+    );
+    push(
+        "indentation",
+        value(serde_json::to_value(prior.indentation)),
+        value(serde_json::to_value(current.indentation)),
+    );
+    push(
+        "spacing",
+        value(serde_json::to_value(prior.spacing)),
+        value(serde_json::to_value(current.spacing)),
+    );
+    push(
+        "keepNext",
+        serde_json::json!(prior.keep_next),
+        serde_json::json!(current.keep_next),
+    );
+    push(
+        "keepLines",
+        serde_json::json!(prior.keep_lines),
+        serde_json::json!(current.keep_lines),
+    );
+    push(
+        "pageBreakBefore",
+        serde_json::json!(prior.page_break_before),
+        serde_json::json!(current.page_break_before),
+    );
+    push(
+        "widowControl",
+        value(serde_json::to_value(prior.widow_control)),
+        value(serde_json::to_value(current.widow_control)),
+    );
+    push(
+        "outlineLevel",
+        value(serde_json::to_value(prior.outline_level)),
+        value(serde_json::to_value(current.outline_level)),
+    );
+    push(
+        "contextualSpacing",
+        serde_json::json!(prior.contextual_spacing),
+        serde_json::json!(current.contextual_spacing),
+    );
+    push(
+        "borders",
+        value(serde_json::to_value(&prior.borders)),
+        value(serde_json::to_value(&current.borders)),
+    );
+    push(
+        "shading",
+        value(serde_json::to_value(prior.shading)),
+        value(serde_json::to_value(current.shading)),
+    );
+    push(
+        "tabs",
+        value(serde_json::to_value(&prior.tabs)),
+        value(serde_json::to_value(&current.tabs)),
+    );
+    push(
+        "bidi",
+        value(serde_json::to_value(prior.bidi)),
+        value(serde_json::to_value(current.bidi)),
+    );
+    serde_json::Value::Array(changes)
 }
 
 fn formatting_delta_json(current: &RunProperties, prior: &RunProperties) -> serde_json::Value {
@@ -19583,6 +20035,360 @@ mod tests {
         );
         assert_eq!(doc.page_count(), before);
         assert!(doc.missing_coverage().is_empty());
+    }
+
+    // ---- docs/108 phase 1: paragraph-level revisions from Word files ----------
+
+    /// A document shaped the way Word writes paragraph-level suggestions, written by
+    /// the real exporter and re-opened through the real importer:
+    ///
+    ///   P1 "Alpha"  — its mark is a tracked DELETION (Delete at the end of Alpha)
+    ///   P2 "Beta"   — centred, with a `w:pPrChange` whose prior had no alignment
+    ///   P3 "Gamma"  — right-aligned; its mark is a tracked INSERTION (Enter)
+    ///   P4 "Delta"  — justified, no revision
+    fn docx_with_paragraph_revisions() -> Vec<u8> {
+        use casual_doc_model::v1::{
+            Alignment, Definitions, MarkRevision, MarkRevisionKind, PropChange,
+        };
+        let id = |n: u64| NodeId::from_parts(n, 108).unwrap();
+        let mark = |kind, revision: &str| MarkRevision {
+            kind,
+            author: Some("Word Reviewer".to_owned()),
+            date: Some("2026-09-17T00:00:00Z".to_owned()),
+            revision_id: Some(revision.to_owned()),
+        };
+        let paragraph = |n: u64, text: &str, properties: ParagraphProperties| {
+            BlockNode::Paragraph(Paragraph {
+                id: id(n),
+                properties,
+                inlines: vec![InlineNode::Run(Run {
+                    id: id(n + 1),
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            })
+        };
+        let document = Document::new(
+            id(1),
+            vec![
+                paragraph(
+                    10,
+                    "Alpha",
+                    ParagraphProperties {
+                        mark_revision: Some(mark(MarkRevisionKind::Deletion, "3")),
+                        ..ParagraphProperties::default()
+                    },
+                ),
+                paragraph(
+                    20,
+                    "Beta",
+                    ParagraphProperties {
+                        alignment: Some(Alignment::Center),
+                        prop_change: Some(PropChange {
+                            author: Some("Word Reviewer".to_owned()),
+                            date: Some("2026-09-17T00:00:00Z".to_owned()),
+                            revision_id: Some("4".to_owned()),
+                            editor_group: None,
+                            prior: Box::new(ParagraphProperties::default()),
+                        }),
+                        ..ParagraphProperties::default()
+                    },
+                ),
+                paragraph(
+                    30,
+                    "Gamma",
+                    ParagraphProperties {
+                        alignment: Some(Alignment::End),
+                        mark_revision: Some(mark(MarkRevisionKind::Insertion, "5")),
+                        ..ParagraphProperties::default()
+                    },
+                ),
+                paragraph(
+                    40,
+                    "Delta",
+                    ParagraphProperties {
+                        alignment: Some(Alignment::Justify),
+                        ..ParagraphProperties::default()
+                    },
+                ),
+            ],
+            Definitions::default(),
+        )
+        .expect("the probe document is valid");
+        write_document(&document, &BTreeMap::new()).expect("write the probe package")
+    }
+
+    /// `(text, alignment, has mark revision, has formatting change)` per body paragraph.
+    fn paragraph_states(
+        d: &WasmDocument,
+    ) -> Vec<(String, Option<casual_doc_model::v1::Alignment>, bool, bool)> {
+        d.document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(p) => Some((
+                    p.inlines
+                        .iter()
+                        .filter_map(|inline| match inline {
+                            InlineNode::Run(run) => Some(run.text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<String>(),
+                    p.properties.alignment,
+                    p.properties.mark_revision.is_some(),
+                    p.properties.prop_change.is_some(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn revision_items(d: &WasmDocument) -> Vec<serde_json::Value> {
+        serde_json::from_str(&d.list_revisions()).expect("typed revision list")
+    }
+
+    fn body_paragraph_ids(d: &WasmDocument) -> Vec<String> {
+        d.document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(p) => Some(p.id.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// HF-156. A Word document whose only tracked changes are paragraph-level used
+    /// to list nothing: no cards, and Accept All said "no tracked revisions".
+    #[test]
+    fn paragraph_level_revisions_from_a_word_document_are_listed() {
+        let d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let ids = body_paragraph_ids(&d);
+        let items = revision_items(&d);
+        let kinds: Vec<(String, String)> = items
+            .iter()
+            .map(|item| {
+                (
+                    item["id"].as_str().unwrap().to_owned(),
+                    item["kind"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (
+                    format!("{}:mark", ids[0]),
+                    "paragraph_mark_deletion".to_owned()
+                ),
+                (format!("{}:format", ids[1]), "paragraph_format".to_owned()),
+                (
+                    format!("{}:mark", ids[2]),
+                    "paragraph_mark_insertion".to_owned()
+                ),
+            ],
+        );
+        // The mark sits at the end of its paragraph, where the pilcrow is.
+        assert_eq!(items[0]["anchor"]["start"], 5);
+        assert_eq!(items[0]["anchor"]["end"], 5);
+        assert_eq!(items[0]["author"], "Word Reviewer");
+        // The formatting change names what changed.
+        let delta = items[1]["formattingDelta"]
+            .as_array()
+            .expect("a delta list");
+        assert_eq!(delta.len(), 1, "only alignment changed: {delta:?}");
+        assert_eq!(delta[0]["property"], "alignment");
+        assert_eq!(delta[0]["before"], serde_json::Value::Null);
+        assert_eq!(delta[0]["after"], "center");
+    }
+
+    /// Accepting a deleted paragraph mark merges the paragraph into the next, and
+    /// the merged paragraph keeps the NEXT one's properties — the surviving mark.
+    /// One undo restores both paragraphs and the pending deletion exactly.
+    #[test]
+    fn accepting_a_deleted_paragraph_mark_merges_into_the_next_with_its_properties() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let before = paragraph_states(&d);
+        let first = body_paragraph_ids(&d)[0].clone();
+
+        d.decide_revision(&format!("{first}:mark"), true)
+            .expect("accept the deletion");
+        let after = paragraph_states(&d);
+        assert_eq!(after.len(), 3, "two paragraphs became one");
+        assert_eq!(after[0].0, "AlphaBeta");
+        assert_eq!(
+            after[0].1,
+            Some(Alignment::Center),
+            "the following paragraph's alignment survives"
+        );
+        assert!(
+            !after[0].2,
+            "the merged paragraph carries no mark revision of its own"
+        );
+        assert!(
+            after[0].3,
+            "Beta's pending formatting change is untouched by the merge"
+        );
+
+        d.undo().expect("one undo step");
+        assert_eq!(
+            paragraph_states(&d),
+            before,
+            "undo restores both paragraphs exactly"
+        );
+    }
+
+    /// Rejecting an inserted mark is the same merge; accepting it keeps the split.
+    #[test]
+    fn an_inserted_paragraph_mark_merges_on_reject_and_stays_on_accept() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let third = body_paragraph_ids(&d)[2].clone();
+
+        d.decide_revision(&format!("{third}:mark"), false)
+            .expect("reject the insertion");
+        let rejected = paragraph_states(&d);
+        assert_eq!(rejected.len(), 3);
+        assert_eq!(rejected[2].0, "GammaDelta");
+        assert_eq!(
+            rejected[2].1,
+            Some(Alignment::Justify),
+            "the original mark was Delta's"
+        );
+        d.undo().expect("undo");
+
+        d.decide_revision(&format!("{third}:mark"), true)
+            .expect("accept the insertion");
+        let accepted = paragraph_states(&d);
+        assert_eq!(accepted.len(), 4, "the split stays");
+        assert_eq!(
+            accepted[2],
+            ("Gamma".to_owned(), Some(Alignment::End), false, false)
+        );
+    }
+
+    /// A formatting change: Reject restores the prior exactly, Accept keeps the
+    /// current properties; both resolve the revision.
+    #[test]
+    fn a_paragraph_formatting_change_restores_on_reject_and_keeps_on_accept() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let second = body_paragraph_ids(&d)[1].clone();
+
+        d.decide_revision(&format!("{second}:format"), false)
+            .expect("reject");
+        assert_eq!(
+            paragraph_states(&d)[1],
+            ("Beta".to_owned(), None, false, false)
+        );
+        d.undo().expect("undo");
+        assert_eq!(
+            paragraph_states(&d)[1],
+            ("Beta".to_owned(), Some(Alignment::Center), false, true)
+        );
+
+        d.decide_revision(&format!("{second}:format"), true)
+            .expect("accept");
+        assert_eq!(
+            paragraph_states(&d)[1],
+            ("Beta".to_owned(), Some(Alignment::Center), false, false)
+        );
+    }
+
+    /// Accept All and Reject All decide paragraph-level revisions too, in one undo
+    /// step, and leave none behind.
+    #[test]
+    fn accept_all_and_reject_all_decide_paragraph_level_revisions() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let before = paragraph_states(&d);
+
+        d.decide_all_revisions(true).expect("accept all");
+        assert_eq!(
+            paragraph_states(&d),
+            vec![
+                (
+                    "AlphaBeta".to_owned(),
+                    Some(Alignment::Center),
+                    false,
+                    false
+                ),
+                ("Gamma".to_owned(), Some(Alignment::End), false, false),
+                ("Delta".to_owned(), Some(Alignment::Justify), false, false),
+            ],
+        );
+        assert!(
+            revision_items(&d).is_empty(),
+            "Accept All leaves no revision behind"
+        );
+        d.undo().expect("one undo step");
+        assert_eq!(paragraph_states(&d), before);
+
+        d.decide_all_revisions(false).expect("reject all");
+        assert_eq!(
+            paragraph_states(&d),
+            vec![
+                ("Alpha".to_owned(), None, false, false),
+                ("Beta".to_owned(), None, false, false),
+                (
+                    "GammaDelta".to_owned(),
+                    Some(Alignment::Justify),
+                    false,
+                    false
+                ),
+            ],
+        );
+        assert!(revision_items(&d).is_empty());
+    }
+
+    /// A mark with no following paragraph cannot merge. Word never writes that
+    /// shape; deciding it clears the revision and deletes nothing.
+    #[test]
+    fn a_merging_mark_with_nothing_after_it_clears_instead_of_deleting() {
+        use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
+        let mut d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let last = body_paragraph_ids(&d)[3].clone();
+        let node = node_id(&last).unwrap();
+        let mut properties = find_paragraph_any(&d.document, node)
+            .unwrap()
+            .properties
+            .clone();
+        properties.mark_revision = Some(MarkRevision {
+            kind: MarkRevisionKind::Deletion,
+            author: None,
+            date: None,
+            revision_id: None,
+        });
+        d.apply_action_as(
+            vec![Operation::SetParagraphProperties {
+                node,
+                properties: Box::new(properties),
+            }],
+            HistoryKind::Review,
+        )
+        .expect("give the last paragraph a deleted mark");
+
+        d.decide_revision(&format!("{last}:mark"), true)
+            .expect("accept");
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 4, "no paragraph was removed");
+        assert_eq!(states[3].0, "Delta", "no text was removed");
+        assert!(!states[3].2, "the revision is resolved");
+    }
+
+    /// A new suggestion must not reuse a `w:id` an imported paragraph revision holds.
+    #[test]
+    fn revision_ids_are_not_reused_from_paragraph_level_revisions() {
+        let d = open_document(&docx_with_paragraph_revisions()).expect("open");
+        let mut allocator = RevisionIdAllocator::from_document(&d.document);
+        let allocated: Vec<String> = (0..8).map(|_| allocator.allocate().unwrap()).collect();
+        for taken in ["3", "4", "5"] {
+            assert!(
+                !allocated.iter().any(|id| id == taken),
+                "allocated {taken}, already used by an imported paragraph revision: {allocated:?}",
+            );
+        }
     }
 
     /// A package embedding one `.odttf` face, obfuscated with `font_key` —

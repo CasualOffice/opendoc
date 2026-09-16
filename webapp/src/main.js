@@ -1380,6 +1380,85 @@ function reviewAuthorDisplay(item) {
 }
 
 /** The change-type label used in an attribution tooltip. */
+/** Revision kinds that are real, visitable changes despite carrying no text. */
+const REVIEW_TEXTLESS_KINDS = new Set([
+  "formatting",
+  "paragraph_format",
+  "paragraph_mark_insertion",
+  "paragraph_mark_deletion",
+]);
+
+/** Where a paragraph-level revision is drawn (docs/108 Decision 4).
+ *
+ *  A paragraph mark revision is a pilcrow-sized marker at the end of the
+ *  paragraph, where the mark is. A paragraph formatting change is a bar in the
+ *  margin beside the whole paragraph, one per page it spans — Word's "changed
+ *  lines" bar — because the change applies to the paragraph, not to a span of
+ *  its text. Returns flat `[page, x, y, w, h]` rects in twips, like the engine's
+ *  own rect calls. */
+function paragraphRevisionRects(revision) {
+  const { node, start, end } = revision.anchor ?? {};
+  if (!node) return [];
+  const caret = () => doc.caretRect(node, Number(end) || 0);
+  if (revision.kind !== "paragraph_format") {
+    const at = caret();
+    if (at.length < 5) return [];
+    // A glyph-wide box starting at the caret, so the pilcrow has room to show.
+    return [at[0], at[1], at[2], Math.max(at[4] * 0.6, 120), at[4]];
+  }
+  const lines = doc.selectionRects(node, Number(start) || 0, node, Number(end) || 0);
+  const pagesSeen = new Map();
+  const include = (page, x, y, h) => {
+    const box = pagesSeen.get(page) ?? { left: x, top: y, bottom: y + h };
+    box.left = Math.min(box.left, x);
+    box.top = Math.min(box.top, y);
+    box.bottom = Math.max(box.bottom, y + h);
+    pagesSeen.set(page, box);
+  };
+  for (let i = 0; i + 4 < lines.length; i += 5) include(lines[i], lines[i + 1], lines[i + 2], lines[i + 4]);
+  if (!pagesSeen.size) {
+    // An empty paragraph selects nothing; its caret still has a line box.
+    const at = caret();
+    if (at.length >= 5) include(at[0], at[1], at[2], at[4]);
+  }
+  // The bar belongs in the page margin, beside the text column, wherever the
+  // paragraph's own text happens to sit. Anchoring it to the text's left edge put
+  // it mid-page for any centred or right-aligned paragraph — the very paragraphs a
+  // formatting change most often touches. The margin is the paragraph's own
+  // section's, because a document can change margins between sections.
+  const BAR_OFFSET = 200; // twips out from the text column
+  const BAR_WIDTH = 40;
+  const columnStart = paragraphColumnStart(node);
+  const flat = [];
+  for (const [page, box] of pagesSeen) {
+    const edge = Number.isFinite(columnStart) ? columnStart : box.left;
+    flat.push(page, Math.max(edge - BAR_OFFSET, 0), box.top, BAR_WIDTH, box.bottom - box.top);
+  }
+  return flat;
+}
+
+// Per-paint memo for `paragraphColumnStart`: `pageSetupSections` walks every
+// paragraph, and a heavily reviewed document can carry a formatting change on
+// most of them. Reset at the start of each marker paint.
+let reviewColumnStartMemo = new Map();
+
+/** The text column's start edge (twips from the page edge) for the section that
+ *  owns `node`, or NaN when the engine cannot say. */
+function paragraphColumnStart(node) {
+  if (reviewColumnStartMemo.has(node)) return reviewColumnStartMemo.get(node);
+  let start = Number.NaN;
+  try {
+    const raw = doc.pageSetupSections(node);
+    const list = raw === "null" ? null : JSON.parse(raw);
+    const section = list?.sections?.find((item) => item.section === list.current) ?? list?.sections?.[0];
+    start = Number(section?.pageMargins?.startTwips);
+  } catch {
+    start = Number.NaN;
+  }
+  reviewColumnStartMemo.set(node, start);
+  return start;
+}
+
 function reviewChangeTypeLabel(kind) {
   switch (kind) {
     case "insertion": return "Insertion";
@@ -1389,6 +1468,12 @@ function reviewChangeTypeLabel(kind) {
     case "move": return "Move";
     case "move_from": return "Move (source)";
     case "move_to": return "Move (destination)";
+    // Paragraph-level revisions (docs/108). A paragraph mark is the pilcrow that
+    // ends a paragraph, so inserting one is a new paragraph break and deleting
+    // one joins the paragraph to the next when accepted.
+    case "paragraph_mark_insertion": return "Paragraph break added";
+    case "paragraph_mark_deletion": return "Paragraph break deleted";
+    case "paragraph_format": return "Paragraph formatting";
     default: return "Change";
   }
 }
@@ -1501,6 +1586,10 @@ function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
 
 function reviewFormattingValue(property, value) {
   if (value == null) return "inherited";
+  // The model's logical alignment names, in Word's words ("Formatted: Centered").
+  if (property === "alignment") {
+    return { start: "Left", end: "Right", center: "Centered", justify: "Justified" }[value] ?? String(value);
+  }
   if (typeof value === "boolean") return value ? "on" : "off";
   if (property === "sizeHalfPoints" && Number.isFinite(Number(value))) {
     return `${Number(value) / 2} pt`;
@@ -1524,6 +1613,22 @@ function reviewFormattingDescription(changes) {
     color: "Text color",
     highlight: "Highlight",
     verticalAlignment: "Vertical alignment",
+    // Paragraph properties, from a tracked `w:pPrChange` (docs/108).
+    style: "Style",
+    alignment: "Alignment",
+    numbering: "List",
+    indentation: "Indent",
+    spacing: "Spacing",
+    keepNext: "Keep with next",
+    keepLines: "Keep lines together",
+    pageBreakBefore: "Page break before",
+    widowControl: "Widow/orphan control",
+    outlineLevel: "Outline level",
+    contextualSpacing: "Contextual spacing",
+    borders: "Borders",
+    shading: "Shading",
+    tabs: "Tab stops",
+    bidi: "Right-to-left",
   };
   return (changes ?? []).map((change) => {
     const property = String(change?.property || "");
@@ -1986,6 +2091,15 @@ function renderReviewMarginItems() {
         body.textContent = `Changed formatting for “${target}”${details ? `\n${details}` : ""}`;
       } else if (item.data.kind === "move") {
         body.textContent = `Moved “${item.data.newText || item.data.oldText}”`;
+      } else if (item.data.kind === "paragraph_format") {
+        const details = reviewFormattingDescription(item.data.formattingDelta);
+        body.textContent = `Formatted paragraph${details ? `\n${details}` : ""}`;
+      } else if (item.data.kind === "paragraph_mark_insertion") {
+        body.textContent = "Added a paragraph break";
+      } else if (item.data.kind === "paragraph_mark_deletion") {
+        // Say what accepting will do: the break goes and the paragraph joins the
+        // next one, which is not obvious from "deleted" alone.
+        body.textContent = "Deleted a paragraph break — accepting joins this paragraph to the next";
       } else {
         const verb = item.data.kind === "deletion"
           ? "Deleted"
@@ -3928,6 +4042,7 @@ function syncActiveReviewCommentToCaret(anchor) {
  * caret placement (REVIEW-GAP-005). */
 function paintReviewMarkers() {
   if (!doc) return;
+  reviewColumnStartMemo = new Map();
   const summary = readReviewData(doc);
   for (const comment of summary.comments ?? []) {
     const explicitlyOpen = activeReviewItemId === `comment:${comment.id}`;
@@ -3948,9 +4063,16 @@ function paintReviewMarkers() {
   for (const revision of summary.revisions ?? []) {
     const range = revisionRange(revision);
     if (!range) continue;
-    const deletionLike = revision.kind === "deletion" || revision.kind === "move_from";
-    let rects = doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
-    if (rects.length < 5 && deletionLike && range.startNode === range.endNode) {
+    const paragraphLevel = revision.kind === "paragraph_format"
+      || revision.kind === "paragraph_mark_insertion"
+      || revision.kind === "paragraph_mark_deletion";
+    const deletionLike = revision.kind === "deletion"
+      || revision.kind === "move_from"
+      || revision.kind === "paragraph_mark_deletion";
+    let rects = paragraphLevel
+      ? paragraphRevisionRects(revision)
+      : doc.selectionRects(range.startNode, range.startOffset, range.endNode, range.endOffset);
+    if (!paragraphLevel && rects.length < 5 && deletionLike && range.startNode === range.endNode) {
       rects = doc.caretRect(range.startNode, range.startOffset);
     }
     const moveItemId = revision.movePair?.fromStart && revision.movePair?.toStart
@@ -3967,12 +4089,20 @@ function paintReviewMarkers() {
       revision.groupId ? `revision:${revision.groupId}` : null,
       `revision:${revision.id}`,
     ];
-    const active = activeIds.includes(activeReviewItemId)
+    // `activeIds` holds `null` for any revision that is not a move or in a group,
+    // and `null` is also what `activeReviewItemId` holds when NOTHING is active —
+    // so `includes` matched and every such marker rendered active the moment a
+    // document opened. Only a real, selected id may activate a marker.
+    const active = activeReviewItemId != null && activeIds.filter(Boolean).includes(activeReviewItemId)
       ? " review-revision-marker-active"
       : "";
-    const kind = `${deletionLike
-      ? "review-revision-marker review-deletion-marker"
-      : "review-revision-marker review-insertion-marker"}${active}`;
+    const kind = `${revision.kind === "paragraph_format"
+      ? "review-revision-marker review-paragraph-format-bar"
+      : paragraphLevel
+        ? `review-revision-marker review-paragraph-mark-marker ${deletionLike ? "review-paragraph-mark-deleted" : "review-paragraph-mark-inserted"}`
+        : deletionLike
+          ? "review-revision-marker review-deletion-marker"
+          : "review-revision-marker review-insertion-marker"}${active}`;
     const color = reviewAuthorColor(reviewAuthorKey(revision));
     const tooltip = reviewRevisionTooltip(revision);
     for (let i = 0; i < rects.length; i += 5) {
@@ -6795,9 +6925,16 @@ function reviewContextAt(anchor) {
     anchor.offset >= (Number(item.anchor.start) || 0) &&
     anchor.offset <= (Number(item.anchor.end) || Number(item.anchor.start) || 0),
   ) ?? null;
-  const revision = (summary.revisions ?? []).find((item) =>
-    anchorInsideRange(anchor, revisionRange(item)),
-  ) ?? null;
+  // The most specific revision at the caret wins. A paragraph formatting change
+  // spans its whole paragraph and lists first, so a plain `find` resolved a caret
+  // inside an inline insertion to the paragraph change instead, and Accept at the
+  // caret decided the wrong suggestion (docs/108). Inline revisions first, then
+  // the paragraph mark, then the paragraph formatting change.
+  const specificity = (item) =>
+    item.kind === "paragraph_format" ? 2 : item.kind?.startsWith("paragraph_mark_") ? 1 : 0;
+  const revision = (summary.revisions ?? [])
+    .filter((item) => anchorInsideRange(anchor, revisionRange(item)))
+    .sort((a, b) => specificity(a) - specificity(b))[0] ?? null;
   return { comment, revision };
 }
 
@@ -11701,6 +11838,9 @@ function reviewRevisionSummary(revision) {
     case "deletion": return `Deleted ${quoted}`.trim();
     case "insertion": return `Added ${quoted}`.trim();
     case "formatting": return `Formatting change ${quoted}`.trim();
+    case "paragraph_format": return "Formatted paragraph";
+    case "paragraph_mark_insertion": return "Added a paragraph break";
+    case "paragraph_mark_deletion": return "Deleted a paragraph break";
     case "move_from": case "move_to": case "move": return `Moved ${quoted}`.trim();
     case "replacement": return `Replaced ${quoted}`.trim();
     default: return `Changed ${quoted}`.trim();
@@ -11885,7 +12025,11 @@ function reviewNavTargets() {
   // hide them only under the comment-only Resolved filter (mirrors the sidebar).
   if (reviewFilter !== "resolved") {
     for (const revision of revisions ?? []) {
-      if (!String(revision.text || "").length && revision.kind !== "formatting") continue;
+      // A zero-length revision is normally nothing to visit. Formatting changes
+      // and paragraph-level revisions are the exceptions: a paragraph mark has no
+      // text of its own, and skipping it made Next/Previous step straight past
+      // every paragraph break a reviewer suggested (docs/108).
+      if (!String(revision.text || "").length && !REVIEW_TEXTLESS_KINDS.has(revision.kind)) continue;
       const range = revisionRange(revision);
       if (!range) continue;
       const rect = reviewRangeClientRect(range.startNode, range.startOffset, range.endNode, range.endOffset);

@@ -96,7 +96,7 @@ const FIDELITY = [
   },
   {
     family: "Tracked changes",
-    note: "Inline markup with per-author color; suggesting mode, accept/reject single/group/all, a review sidebar with Open/Resolved/All filtering and next/previous navigation, and round-trip with numeric ids. Changes can be authored in any surface, including headers, footers, notes and text boxes. Not Word/Docs parity — the view control is a binary show/hide of markup rather than Word\u2019s Simple Markup / Original views, and only inline (not structural: paragraph/table/list) changes can be authored.",
+    note: "Inline markup with per-author color; suggesting mode, accept/reject single/group/all, a review sidebar with Open/Resolved/All filtering and next/previous navigation, and round-trip with numeric ids. Changes can be authored in any surface, including headers, footers, notes and text boxes. Paragraph-level changes from Word documents — an added or deleted paragraph break (`w:pPr/w:rPr/w:ins|w:del`) and a paragraph formatting change (`w:pPrChange`) — are listed, drawn (a pilcrow at the mark, a margin bar for formatting), reachable with next/previous, and decided with Word\u2019s rule that a join keeps the following paragraph\u2019s formatting. Not Word/Docs parity: the view control is a binary show/hide of markup rather than Word\u2019s Simple Markup / Original views; Suggesting mode still cannot author structural changes (Enter, joining paragraphs, paragraph formatting, table/list structure); and table row, cell and table-property revisions are neither listed nor decidable.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
