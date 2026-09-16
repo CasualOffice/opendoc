@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenDoc — Rust DOCX engine and embeddable WebAssembly editor</title>
+    <title>OpenDoc — build documents on an engine you control</title>
     <meta
       name="description"
       content="OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework."
@@ -16,6 +16,7 @@
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
     <meta name="theme-color" content="#fbfaf8" />
     <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="canonical" href="https://opendoc.casualoffice.org/" />
     <link rel="stylesheet" href="./src/fonts.css" />
 
@@ -88,7 +89,7 @@
       <div class="site-header-inner">
         <a class="brand" href="./" aria-label="OpenDoc home">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-name">OpenDoc</span>
+          <span class="brand-name">Open<span class="brand-d">D</span>oc</span>
           <span class="brand-badge">Pre-release</span>
         </a>
         <nav class="site-nav" aria-label="Primary navigation">
@@ -105,72 +106,77 @@
     </header>
 
     <main class="home">
-      <!-- Hero + live-editor embed -->
+      <!-- Hero -->
       <section class="home-hero">
         <div class="wrap">
           <div class="home-hero-copy">
-            <p class="home-eyebrow">Open-source DOCX infrastructure · Apache-2.0</p>
-            <h1>The document engine,<br />not the dependency.</h1>
+            <p class="home-eyebrow"><span class="home-dot" aria-hidden="true"></span> Open-source DOCX infrastructure</p>
+            <h1>Build documents on an engine <em class="home-serif">you control.</em></h1>
             <p class="home-lede">
-              A deterministic Word-document runtime written in Rust. Import, edit, lay
-              out, render, and write <code>.docx</code> on native, WebAssembly, and
-              headless hosts — with no required server, DOM, or UI framework.
+              OpenDoc is a deterministic, loss-aware document engine written in Rust. Import,
+              edit, lay out, render, and write <code>.docx</code> across browser, desktop, and
+              headless environments — with one authoritative model.
             </p>
             <div class="home-cta-row">
-              <a class="btn btn--ink" href="./editor.html?demo=1">
+              <a class="btn btn--accent" href="./editor.html?demo=1">
                 Try the live editor <span aria-hidden="true">→</span>
               </a>
-              <a class="btn btn--outline" href="https://github.com/CasualOffice/opendoc">
-                Read the source
-              </a>
+              <a class="btn btn--outline" href="#developers">See how it works</a>
             </div>
-            <p class="home-privacy">
-              Your document never leaves the browser. The demo below runs the same Rust
-              engine, compiled to WebAssembly.
-            </p>
+            <ul class="home-checks" aria-label="Project facts">
+              <li><span class="home-check" aria-hidden="true">✓</span> Apache-2.0</li>
+              <li><span class="home-check" aria-hidden="true">✓</span> Rust → WebAssembly</li>
+              <li><span class="home-check" aria-hidden="true">✓</span> No required server</li>
+            </ul>
           </div>
 
-          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc live editor preview">
+          <!-- The embed is a STATIC poster until clicked: booting the WASM editor on
+               page load would spend ~100 MB of a marketing tab's memory before anyone
+               asked for it (tests/e2e/memory-budget.spec.mjs). The poster is drawn in
+               the real editor's chrome so it reads as the product, and it says it is a
+               preview rather than claiming to be the live application. -->
+          <div class="home-embed" id="homeEmbed" aria-label="OpenDoc editor preview">
             <div class="home-embed-chrome">
               <span class="home-embed-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-              <span class="home-embed-url"><span>opendoc.casualoffice.org/editor.html?demo=1</span></span>
-              <a class="home-embed-full" href="./editor.html?demo=1">Full editor <span aria-hidden="true">↗</span></a>
-            </div>
-
-            <div class="home-embed-toolbar" aria-hidden="true">
-              <span class="tb-btn" style="font-weight: 700">B</span>
-              <span class="tb-btn italic">I</span>
-              <span class="tb-sep"></span>
-              <span class="tb-chip">Body text <span class="caret">▾</span></span>
-              <span class="tb-chip">11 <span class="caret">▾</span></span>
-              <span class="tb-sep"></span>
-              <span class="tb-align">Align: Left</span>
-              <span class="tb-spacer"></span>
-              <span class="tb-meta">wasm · 68 words</span>
+              <span class="home-embed-url"><span>editor.html?demo=1</span></span>
+              <a class="home-embed-full" href="./editor.html?demo=1">Open full screen <span aria-hidden="true">↗</span></a>
             </div>
 
             <div class="home-embed-stage">
-              <div class="home-embed-poster">
-                <div class="home-embed-page">
-                  <div class="home-embed-title">Quarterly Fidelity Report</div>
-                  <div class="home-embed-eyebrow">CasualOffice · Engine Working Group</div>
-                  <div class="home-embed-body">
-                    Layout is measured against LibreOffice as the oracle: three of five
-                    corpus documents match page counts exactly, and the remaining two land
-                    within a single page. Click into this paragraph and type — the caret,
-                    selection, and glyph positions are drawn from the engine's own
-                    geometry, not the browser's.<span class="home-caret" aria-hidden="true"></span>
+              <div class="home-embed-poster" aria-hidden="true">
+                <div class="od-topbar">
+                  <span class="od-logo"></span>
+                  <div class="od-doc-chrome">
+                    <div class="od-doc-title">Quarterly engineering report.docx</div>
+                    <div class="od-menus"><span>File</span><span>Edit</span><span>View</span><span>Insert</span><span>Format</span><span>Table</span><span>Review</span><span>Tools</span><span>Help</span></div>
                   </div>
-                  <div class="home-embed-mock-table">
-                    <div class="row head">
-                      <div class="c doc">Corpus document</div>
-                      <div class="c num">Pages</div>
-                      <div class="c num">Δ oracle</div>
-                    </div>
-                    <div class="row">
-                      <div class="c doc">tables-nested.docx</div>
-                      <div class="c num">14</div>
-                      <div class="c num">0</div>
+                  <span class="od-state"><i>●</i> Saved locally</span>
+                </div>
+                <div class="od-tabs">
+                  <span class="is-active">Home</span><span>Insert</span><span>Layout</span><span>References</span><span>Table</span><span>View</span><span>Review</span>
+                </div>
+                <div class="od-band">
+                  <div class="od-group"><div class="od-stack"><b>↶</b><b>↷</b></div><span>Undo</span></div>
+                  <div class="od-group"><div class="od-font"><div class="od-row"><span class="od-field od-family">Instrument Sans</span><span class="od-field od-size">11</span></div><div class="od-row"><b>B</b><b><i>I</i></b><b><u>U</u></b><b><s>S</s></b></div></div><span>Font</span></div>
+                  <div class="od-group"><div class="od-font"><div class="od-row"><b>≡</b><b>≣</b><b>☰</b></div><div class="od-row"><b>⇤</b><b>⇥</b><b>¶</b></div></div><span>Paragraph</span></div>
+                  <div class="od-group od-hide-narrow"><div class="od-styles"><span class="od-style"><em>Aa</em>Normal</span><span class="od-style"><em>Aa</em>Heading 1</span><span class="od-style"><em>Aa</em>Title</span></div><span>Styles</span></div>
+                </div>
+                <div class="od-work">
+                  <div class="od-rail"><b class="is-active">▤</b><b>☷</b><b>✎</b></div>
+                  <div class="od-stage">
+                    <div class="od-page">
+                      <div class="od-meta">Engine working group</div>
+                      <div class="od-h">Quarterly engineering report</div>
+                      <p>
+                        This page is a static preview. Run the live editor and the same
+                        paragraph becomes editable: the caret, selection, and glyph positions
+                        are drawn from the engine's own geometry, not the browser's.<span class="home-caret"></span>
+                      </p>
+                      <div class="od-table">
+                        <div class="od-tr od-th"><span>Construct family</span><span>Rendered</span><span>Editable</span></div>
+                        <div class="od-tr"><span>Paragraphs &amp; text</span><span>Full</span><span>Full</span></div>
+                        <div class="od-tr"><span>Tables</span><span>Partial</span><span>Full</span></div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -184,265 +190,283 @@
         </div>
       </section>
 
-      <!-- Metrics quad -->
-      <section class="home-metrics">
-        <div class="wrap">
-          <div class="home-metrics-grid">
-            <div>
-              <div class="home-metric-title">Rust → WASM</div>
-              <div class="home-metric-sub">One engine across every host</div>
-            </div>
-            <div>
-              <div class="home-metric-title">Byte-identical</div>
-              <div class="home-metric-sub">Unedited packages reconstruct exactly</div>
-            </div>
-            <div>
-              <div class="home-metric-title">No server</div>
-              <div class="home-metric-sub">Host owns storage, network, policy</div>
-            </div>
-            <div>
-              <div class="home-metric-title">Loss-aware</div>
-              <div class="home-metric-sub">Preserved or reported — never dropped</div>
-            </div>
-          </div>
+      <!-- Rail -->
+      <section class="home-rail" aria-label="Where the engine runs">
+        <div class="wrap home-rail-grid">
+          <div><b>Rust core</b><span>One document model</span></div>
+          <div><b>WebAssembly</b><span>Runs in the browser</span></div>
+          <div><b>Native</b><span>macOS and Windows in CI</span></div>
+          <div><b>Headless</b><span>Automation and rendering</span></div>
+          <div><b>Loss-aware</b><span>Preserved or reported</span></div>
         </div>
       </section>
 
-      <!-- Capabilities -->
-      <section class="home-cap">
+      <!-- Why -->
+      <section class="home-section home-section--alt" id="why">
         <div class="wrap">
-          <div class="home-section-intro">
-            <span class="home-kicker">Built for document systems</span>
-            <h2>A runtime beneath your product — not another iframe around someone else's.</h2>
-            <p>
-              The normalized model and deterministic layout engine stay authoritative.
-              The canvas is a rendering surface, never the source of truth.
-            </p>
-          </div>
-          <div class="home-cap-grid">
-            <article class="cap-card">
-              <div class="cap-card-num">01</div>
-              <h3>Loss-aware DOCX</h3>
+          <div class="home-head">
+            <span class="home-kicker">Why OpenDoc</span>
+            <div>
+              <h2>A document runtime, not a web-editor wrapper.</h2>
               <p>
-                OOXML parses into a typed editable model. Unsupported package data is
-                retained verbatim or surfaced explicitly — it does not vanish on save.
+                The document itself is the source of truth. The canvas is a rendering
+                surface; UI, storage, authentication, and network policy stay yours.
               </p>
-              <ul class="cap-card-list">
+            </div>
+          </div>
+          <div class="home-cards">
+            <article class="home-card">
+              <div class="home-card-num">01</div>
+              <h3>Own the document model</h3>
+              <p>DOCX parses into a typed, editable model instead of being flattened into browser markup.</p>
+              <ul>
                 <li>Semantic import and export</li>
-                <li>Byte-identical reconstruction</li>
-                <li>Compatibility dispositions</li>
+                <li>Byte-identical save of unedited packages</li>
+                <li>Unsupported data retained or reported</li>
               </ul>
             </article>
-            <article class="cap-card">
-              <div class="cap-card-num">02</div>
+            <article class="home-card">
+              <div class="home-card-num">02</div>
               <h3>Deterministic layout</h3>
-              <p>
-                Shape, paginate, compose, and rasterize through one Rust pipeline with
-                pinned inputs and regression gates on geometry and page output.
-              </p>
-              <ul class="cap-card-list">
-                <li>Paragraphs, tables, sections, floats</li>
+              <p>One Rust pipeline shapes, paginates, hit-tests, and renders across every host.</p>
+              <ul>
+                <li>Engine-owned caret and selection geometry</li>
+                <li>Tables, sections, columns, floats, math</li>
                 <li>Backend-neutral display list</li>
-                <li>CPU fidelity oracle</li>
               </ul>
             </article>
-            <article class="cap-card">
-              <div class="cap-card-num">03</div>
-              <h3>Embeddable editing</h3>
+            <article class="home-card">
+              <div class="home-card-num">03</div>
+              <h3>Bring your own product</h3>
+              <p>Every edit routes through a closed command set with undo. Everything around it is yours.</p>
+              <ul>
+                <li>No mandatory UI framework</li>
+                <li>No required cloud service</li>
+                <li>Browser, native, and headless targets</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- Architecture -->
+      <section class="home-arch" id="architecture">
+        <div class="wrap">
+          <div class="home-head home-head--dark">
+            <span class="home-kicker">Architecture</span>
+            <div>
+              <h2>One engine. Clear boundaries.</h2>
               <p>
-                Every mutation routes through a closed command set with inverses,
-                selection anchors, and undo/redo. Network, storage, and auth stay yours.
+                Document semantics live inside OpenDoc. Product policy lives inside your
+                host. That line is the whole design, so it is drawn rather than described.
               </p>
-              <ul class="cap-card-list">
-                <li>Native, web, and headless targets</li>
-                <li>No mandatory React or provider</li>
-                <li>Sub-10 ms incremental repaint</li>
-              </ul>
-            </article>
+            </div>
+          </div>
+          <div class="home-pipeline" role="img" aria-label="DOCX flows into the typed model, through layout, to pixels. OpenDoc owns document state, transactions, selection, layout and serialization; the host owns files, fonts, network, authentication, telemetry and product UI.">
+            <div class="home-pipeline-top">
+              <b>OpenDoc core</b>
+              <div class="home-hosts"><span>WebAssembly</span><span>Native</span><span>Headless</span></div>
+            </div>
+            <div class="home-flow">
+              <div class="home-node"><strong>DOCX</strong><span>package + OOXML</span></div>
+              <div class="home-arrow" aria-hidden="true">→</div>
+              <div class="home-node"><strong>Model</strong><span>typed document state</span></div>
+              <div class="home-arrow" aria-hidden="true">→</div>
+              <div class="home-node"><strong>Layout</strong><span>paginate + hit-test</span></div>
+              <div class="home-arrow" aria-hidden="true">→</div>
+              <div class="home-node home-node--accent"><strong>Pixels</strong><span>display list</span></div>
+            </div>
+            <div class="home-boundary">
+              <div><b>OpenDoc owns</b>Document state · transactions · selection · layout · serialization</div>
+              <div><b>Your host owns</b>Files · fonts · network · auth · telemetry · product UI</div>
+            </div>
+          </div>
+          <a class="home-arch-link" href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md">
+            Read the architecture <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </section>
+
+      <!-- Fidelity. Every number here has a committed source, and the guard in
+           webapp/tests/site_claims.test.mjs fails if one drifts from it. -->
+      <section class="home-section" id="fidelity">
+        <div class="wrap">
+          <div class="home-head">
+            <span class="home-kicker">Evidence, not promises</span>
+            <div>
+              <h2>Fidelity you can check.</h2>
+              <p>
+                What is supported, how it was measured, and where the gaps still are —
+                including the ones we have not closed.
+              </p>
+            </div>
+          </div>
+          <div class="home-proof">
+            <div class="home-proof-card">
+              <div class="home-proof-top">
+                <span class="home-tag">Page-count parity</span>
+                <span class="home-proof-when">Measured 2026-07-27</span>
+              </div>
+              <div class="home-metric" data-claim="page-parity">4 / 5</div>
+              <p class="home-metric-label">
+                corpus documents matching LibreOffice's page count exactly; worst delta
+                <span data-claim="page-delta">+2</span>. A manual measurement, not yet a CI gate.
+              </p>
+              <div class="home-matrix" role="table" aria-label="Sample of the per-family grades">
+                <div class="home-matrix-row home-matrix-head" role="row">
+                  <span role="columnheader">Construct family</span><span role="columnheader">Rendered</span><span role="columnheader">Editable</span>
+                </div>
+                <div class="home-matrix-row" role="row" data-family="Paragraphs &amp; text">
+                  <span role="cell">Paragraphs &amp; text</span><span role="cell" class="is-full">Full</span><span role="cell" class="is-full">Full</span>
+                </div>
+                <div class="home-matrix-row" role="row" data-family="Tables">
+                  <span role="cell">Tables</span><span role="cell" class="is-partial">Partial</span><span role="cell" class="is-full">Full</span>
+                </div>
+                <div class="home-matrix-row" role="row" data-family="Tracked changes">
+                  <span role="cell">Tracked changes</span><span role="cell" class="is-partial">Partial</span><span role="cell" class="is-partial">Partial</span>
+                </div>
+                <div class="home-matrix-row" role="row" data-family="Vertical &amp; rotated text">
+                  <span role="cell">Vertical &amp; rotated text</span><span role="cell" class="is-none">None</span><span role="cell" class="is-none">None</span>
+                </div>
+              </div>
+              <a class="home-proof-link" href="./fidelity.html">
+                All <span data-claim="families">26</span> construct families <span aria-hidden="true">→</span>
+              </a>
+            </div>
+            <div class="home-proof-card home-proof-card--dark">
+              <div class="home-proof-top">
+                <span class="home-tag home-tag--dark">Design principle</span>
+                <span class="home-proof-when">Loss-aware</span>
+              </div>
+              <blockquote class="home-quote">
+                “Preserved or reported — never silently dropped.”
+              </blockquote>
+              <p class="home-quote-note">
+                Content the engine does not understand is carried through untouched or named
+                in a compatibility report. Of <span data-claim="families">26</span> graded
+                families, <span data-claim="roundtrip-full">22</span> round-trip in full.
+              </p>
+              <!-- How the same 26 families render today, straight from src/fidelity.js.
+                   The gaps are drawn at the same weight as the wins on purpose. -->
+              <div class="home-dist">
+                <div class="home-dist-label">How they render today</div>
+                <div class="home-dist-bar" aria-hidden="true">
+                  <span class="is-full" style="--n: 7"></span><span class="is-partial" style="--n: 14"></span><span class="is-preserved" style="--n: 2"></span><span class="is-none" style="--n: 3"></span>
+                </div>
+                <ul class="home-dist-legend">
+                  <li><i class="is-full" aria-hidden="true"></i><b data-claim="rendered-full">7</b> fully</li>
+                  <li><i class="is-partial" aria-hidden="true"></i><b data-claim="rendered-partial">14</b> partially</li>
+                  <li><i class="is-preserved" aria-hidden="true"></i><b data-claim="rendered-preserved">2</b> kept, not drawn</li>
+                  <li><i class="is-none" aria-hidden="true"></i><b data-claim="rendered-none">3</b> not yet</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Architecture — hard host boundary (dark, full-bleed) -->
-      <section class="home-arch">
-        <div class="wrap">
-          <div class="home-arch-copy">
-            <span class="home-kicker">A hard host boundary</span>
-            <h2>Document semantics in Rust. Product policy in your hands.</h2>
-            <p>
-              The engine owns document state, transactions, selection, pagination, hit
-              testing, and serialization. Your host owns files, fonts, network access,
-              telemetry, permissions, and product UI.
-            </p>
-            <a
-              class="home-arch-link"
-              href="https://github.com/CasualOffice/opendoc/blob/main/docs/02-ARCHITECTURE.md"
-            >
-              Read the architecture <span aria-hidden="true">→</span>
-            </a>
-          </div>
-          <div class="home-arch-panel" role="img" aria-label="OpenDoc core: DOCX flows through Model and Layout to Pixels, with commands, transactions, and semantic DOCX export, targeting WebAssembly, native, and headless hosts.">
-            <div class="home-arch-panel-label">OpenDoc core</div>
-            <div class="home-arch-flow">
-              <span class="node">DOCX</span>
-              <span class="arrow" aria-hidden="true">→</span>
-              <span class="node">Model</span>
-              <span class="arrow" aria-hidden="true">→</span>
-              <span class="node">Layout</span>
-              <span class="arrow" aria-hidden="true">→</span>
-              <span class="node accent">Pixels</span>
-            </div>
-            <div class="home-arch-branch">
-              <span>Commands + transactions</span>
-              <span>Semantic DOCX export</span>
-            </div>
-            <div class="home-arch-hosts">
-              <span>WEBASSEMBLY</span>
-              <span>NATIVE</span>
-              <span>HEADLESS</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Quickstart -->
-      <section class="home-quickstart">
-        <div class="wrap">
-          <div class="home-quickstart-copy">
-            <span class="home-kicker">Inspect the real thing</span>
-            <h2>Clone it, run the gates, open a document.</h2>
-            <p>
-              No account, no hosted backend, no opaque cloud service. Every pull request
-              runs build, test, lint, docs, and WASM gates on the pinned toolchain.
-            </p>
+      <!-- Developers -->
+      <section class="home-section home-section--alt" id="developers">
+        <div class="wrap home-dev">
+          <div class="home-dev-copy">
+            <span class="home-kicker">Developer first</span>
+            <h2>Clone it. Run it. Inspect the engine.</h2>
+            <p>No account, no hosted backend. Every pull request runs the same gates you can run locally.</p>
+            <ol class="home-steps">
+              <li><b>Clone the repository</b><span>Apache-2.0 and source-first.</span></li>
+              <li><b>Run the quality gates</b><span>Build, test, lint, docs, and WebAssembly.</span></li>
+              <li><b>Open a real DOCX</b><span>In the browser editor, or embed the runtime.</span></li>
+            </ol>
           </div>
           <div class="home-terminal">
-            <div class="home-terminal-head"><span>quickstart</span></div>
-            <pre><code><span class="prompt">$</span> git clone https://github.com/CasualOffice/opendoc.git
+            <div class="home-terminal-head">
+              <span>quickstart</span>
+              <div class="home-terminal-tabs" role="tablist" aria-label="Quickstart examples">
+                <button type="button" role="tab" id="qsTabShell" aria-controls="qsShell" aria-selected="true">shell</button>
+                <button type="button" role="tab" id="qsTabEmbed" aria-controls="qsEmbed" aria-selected="false" tabindex="-1">embed</button>
+              </div>
+            </div>
+            <pre id="qsShell" role="tabpanel" aria-labelledby="qsTabShell"><code><span class="prompt">$</span> git clone https://github.com/CasualOffice/opendoc.git
 <span class="prompt">$</span> cd opendoc
 <span class="prompt">$</span> cargo test --workspace --all-features --locked
 
-<span class="comment"># run the same browser editor locally</span>
+<span class="comment"># run the browser editor locally</span>
 <span class="prompt">$</span> ./webapp/build.sh
 <span class="prompt">$</span> ./webapp/serve.py</code></pre>
+            <!-- The real WebAssembly surface, not an idealised one: every call below is an
+                 export of crates/casual-doc-wasm, and site_claims.test.mjs checks that. -->
+            <pre id="qsEmbed" role="tabpanel" aria-labelledby="qsTabEmbed" hidden><code><span class="kw">import</span> init, { open } <span class="kw">from</span> <span class="str">"./pkg/casual_doc_wasm.js"</span>;
+
+<span class="kw">await</span> init();
+<span class="kw">const</span> doc = open(<span class="kw">new</span> Uint8Array(<span class="kw">await</span> file.arrayBuffer()));
+
+<span class="comment">// a page-local point (twips, page 1) → a model anchor</span>
+<span class="kw">const</span> at = doc.hitTest(<span class="num">1</span>, <span class="num">1440</span>, <span class="num">1440</span>);
+doc.insertText(at.node, at.offset, <span class="str">"Hello from OpenDoc"</span>);
+
+<span class="kw">const</span> rgba = doc.renderPage(<span class="num">0</span>, <span class="num">96</span>);  <span class="comment">// RGBA8888, page 0 at 96 dpi</span>
+<span class="kw">const</span> docx = doc.exportDocx();          <span class="comment">// bytes, ready to save</span></code></pre>
           </div>
         </div>
       </section>
 
-      <!-- Status / honest support claims -->
-      <section class="home-status">
+      <!-- Roadmap. Phases name real tracker documents so a reader can check them. -->
+      <section class="home-section" id="roadmap">
         <div class="wrap">
-          <div class="home-status-card">
-            <div class="home-status-top">
-              <div>
-                <span class="home-status-badge">Pre-release</span>
-                <h2>Serious architecture. Honest support claims.</h2>
-              </div>
-              <div>
-                <p class="home-status-lede">
-                  OpenDoc already imports, edits, lays out, renders, and writes real DOCX
-                  files. It is not yet a stable SDK or a pixel-perfect replacement for
-                  Word — fidelity is tracked with generated fixtures, LibreOffice
-                  comparisons, and CI gates rather than feature checkboxes.
-                </p>
-                <div class="home-status-cols">
-                  <div class="home-status-col works">
-                    <h3>Works today</h3>
-                    <p>
-                      Semantic import → model → write-back · Layout, tables,
-                      headers/footers, floats · Browser editor with hit-testing, caret,
-                      undo/redo, save
-                    </p>
-                  </div>
-                  <div class="home-status-col next">
-                    <h3>Not yet</h3>
-                    <p>
-                      Text wrap around floats · Inline math (OMML) · Multi-column layout ·
-                      GPU backend, desktop shell, stable public SDK
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="home-status-foot">
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/18-SUPPORT-MATRIX.md">Support matrix <span aria-hidden="true">→</span></a>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/06-ROADMAP-AND-DELIVERY.md">Roadmap <span aria-hidden="true">→</span></a>
-              <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/14-EXECUTION-TRACKER.md">Execution tracker <span aria-hidden="true">→</span></a>
+          <div class="home-head">
+            <span class="home-kicker">Delivery</span>
+            <div>
+              <h2>Where it is, and where it is going.</h2>
+              <p>Shipped, active, and planned are kept separate, so a pre-release reads as a status rather than a promise.</p>
             </div>
           </div>
+          <div class="home-roadmap">
+            <div class="home-phase is-done">
+              <span class="home-state">Shipped</span>
+              <h3>Loss-aware DOCX</h3>
+              <p>Semantic import and export, and byte-identical save of unedited packages.</p>
+            </div>
+            <div class="home-phase is-done">
+              <span class="home-state">Shipped</span>
+              <h3>Deterministic layout</h3>
+              <p>Paragraphs, tables, sections and columns, floats with text wrap, and math.</p>
+            </div>
+            <div class="home-phase is-now">
+              <span class="home-state">In progress</span>
+              <h3>Editing to Word parity</h3>
+              <p>Comments, tracked changes, and every editing surface held to the Word and Docs standard.</p>
+            </div>
+            <div class="home-phase">
+              <span class="home-state">Planned</span>
+              <h3>Real-time collaboration</h3>
+              <p>Operational transformation over the same transactions, with snapshot and replay versioning.</p>
+            </div>
+          </div>
+          <!-- Each gap names its source: a fidelity.js family graded "none", or a
+               docs/105 row that is still open. site_claims.test.mjs checks both. -->
+          <p class="home-gaps">
+            <b>Not yet:</b>
+            <span data-gap-family="Hyphenation">hyphenation</span> ·
+            <span data-gap-family="Vertical &amp; rotated text">vertical and rotated text</span> ·
+            <span data-gap-family="Watermarks &amp; WordArt">watermarks and WordArt</span> ·
+            <span data-gap-row="FID-L-04">custom shape paths</span> ·
+            <span data-gap-row="FID-L-07">floating tables</span>.
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/docs/106-ONLYOFFICE-ALTERNATIVE-ROADMAP.md">Full roadmap <span aria-hidden="true">→</span></a>
+          </p>
         </div>
       </section>
 
-      <!-- Roadmap -->
-      <section class="home-roadmap">
+      <!-- CTA -->
+      <section class="home-cta">
         <div class="wrap">
-          <div class="home-section-intro">
-            <span class="home-kicker">Capability-gated delivery</span>
-            <h2>DOCX fidelity first. A broader document platform next.</h2>
-          </div>
-          <div class="home-roadmap-list">
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P0</div>
-              <div>
-                <div class="home-roadmap-title">Loss-aware DOCX round-trip</div>
-                <div class="home-roadmap-detail">Semantic import and export with byte-identical reconstruction of unedited packages</div>
-              </div>
-              <div class="home-roadmap-status">Shipped</div>
+          <div class="home-cta-box">
+            <div>
+              <h2>Open a document. Inspect the engine.</h2>
+              <p>No account required for the demo. No opaque hosted backend.</p>
             </div>
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P1</div>
-              <div>
-                <div class="home-roadmap-title">Deterministic layout and pagination</div>
-                <div class="home-roadmap-detail">Paragraphs, tables, sections, and floats measured against a LibreOffice oracle</div>
-              </div>
-              <div class="home-roadmap-status">Shipped</div>
-            </div>
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P2</div>
-              <div>
-                <div class="home-roadmap-title">Embeddable browser editor</div>
-                <div class="home-roadmap-detail">Hit-testing, caret, selection, formatting, undo/redo, and DOCX save — all client-side</div>
-              </div>
-              <div class="home-roadmap-status">Shipped</div>
-            </div>
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P3</div>
-              <div>
-                <div class="home-roadmap-title">Review and collaboration surface</div>
-                <div class="home-roadmap-detail">Comments, tracked changes, and suggestions over the same closed command set</div>
-              </div>
-              <div class="home-roadmap-status">In progress</div>
-            </div>
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P4</div>
-              <div>
-                <div class="home-roadmap-title">Fidelity hardening</div>
-                <div class="home-roadmap-detail">Text wrap around floats, inline math (OMML), and multi-column layout</div>
-              </div>
-              <div class="home-roadmap-status">Next</div>
-            </div>
-            <div class="home-roadmap-row">
-              <div class="home-roadmap-phase">P5</div>
-              <div>
-                <div class="home-roadmap-title">Stable SDK and platform</div>
-                <div class="home-roadmap-detail">Versioned Rust and WASM APIs, GPU backend, desktop shell, and more document formats</div>
-              </div>
-              <div class="home-roadmap-status">Planned</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Final CTA -->
-      <section class="home-final">
-        <div class="wrap">
-          <div class="home-final-panel">
-            <span class="home-kicker">See the engine, not a mockup</span>
-            <h2>Open the live editor with a real DOCX.</h2>
-            <p>Rendering, selection, formatting, tables, links, undo/redo, and save — all client-side.</p>
-            <div class="home-final-actions">
+            <div class="home-cta-actions">
               <a class="btn btn--light" href="./editor.html?demo=1">Load the sample <span aria-hidden="true">→</span></a>
-              <a class="btn btn--outline-dark" href="https://github.com/CasualOffice/opendoc">View source on GitHub</a>
+              <a class="btn btn--outline-dark" href="https://github.com/CasualOffice/opendoc">Read the source</a>
             </div>
           </div>
         </div>

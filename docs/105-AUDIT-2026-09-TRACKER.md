@@ -93,12 +93,12 @@ HF-094. FID-L-16 and FID-L-18 are partly closed with the remainder stated in the
 
 | Class | Rows | Open | Closed this session |
 | --- | ---: | ---: | --- |
-| EV — evidence and public claims | 6 | 1 | 5 (#528) |
+| EV — evidence and public claims | 7 | 1 | 6 (#528, this PR) |
 | UX — editor UI/UX | 24 | 20 | 4 (#537, #542) |
 | CQ — engineering quality | 10 | 10 | 0 |
 | FID — fidelity and round-trip | 34 | 29 | 5 (#534, #536, #541) |
 | OO — ONLYOFFICE fit-gap | 21 | 21 | 0 — analysis only, no implementation yet |
-| **Total** | **95** | **81** | **14** |
+| **Total** | **96** | **81** | **15** |
 
 **These counts are derived from the rows, not maintained by hand** — re-derive them rather
 than editing them, per CQ-007. (The first draft of this table said 55 rows and understated
@@ -122,6 +122,7 @@ that the code does not support, or a guard that cannot fail.
 | EV-004 | **"No silent data loss" was a total claim over a partial mechanism,** and image attribution was wrong ("Comparison images are produced locally by `tools/opendoc-fidelity`" — that tool is a text-only word-multiset differential that produces no images and no page counts). Silent-loss counterexamples are FID-R-01…FID-R-06. | P0 | S | `webapp/fidelity.page.html:57, 209`; `tools/opendoc-fidelity/src/main.rs:1-10` | Fixed (this PR) |
 | EV-005 | **The matrix drift guard cannot detect an overstatement, and does not cover the page.** `fidelity_data.test.mjs` pinned ~15 named cells and the family list — a shape check. A newly-raised cell on any unpinned row passed green, and the guard never loaded `fidelity.page.html`, which is where both fabrication incidents occurred. Partly closed: this PR adds per-family honesty invariants that each name the code fact that must change first, and proves three of them go red under mutation. **Still open:** nothing asserts the *page's* prose or stat tiles against a generated artifact, and nothing asserts the oracle gate is armed. | P1 | M | `webapp/tests/fidelity_data.test.mjs`; `webapp/tests/e2e/fidelity-page.spec.mjs` | In progress |
 | EV-006 | **Seven construct families were absent from the public matrix, and absence read as coverage.** Hyphenation, line numbering, watermarks/WordArt, vertical/rotated text, bidi/RTL/CJK grid, fonts/fallback/colour glyphs, and drop caps had no row. A reader seeing 19 rows dominated by full/partial infers breadth the engine does not have. Six of the seven are `none` or weak. | P2 | S | `webapp/src/fidelity.js` | Fixed (this PR) |
+| EV-007 | **The landing page published claims the code contradicts, in both directions.** It said "three of five corpus documents match page counts exactly" while the fidelity page said 4/5 and `60` records 4/5 as the only committed figure; it showed a corpus row for `tables-nested.docx`, which is not in `fixtures/manifest.json`; it advertised "Sub-10 ms incremental repaint" with no repaint benchmark (CQ-006); and it listed text wrap around floats, inline math and multi-column layout under "Not yet" although all three render. The same audit found the fidelity page understating two families: line numbering graded `rendered: none` ("never generated or painted") and embedded fonts "never de-obfuscated" — both shipped (#541, #534), and `fidelity_data.test.mjs` was pinning the false grades. | P1 | S | `webapp/index.page.html` (pre-redesign) lines 140, 153, 241, 344; `webapp/src/fidelity.js` line numbering and fonts rows; `crates/casual-doc-layout/src/line_number.rs`, `font_registry.rs:339` | Fixed (this PR) — every figure on the page is tagged `data-claim` and re-derived by `webapp/tests/site_claims.test.mjs` from `fidelity.js`, `60` and the wasm exports; each "Not yet" item must cite a family graded `none` or an open `105` row; timings are rejected without a benchmark; 8 guards, each driven red by restoring the defect it covers. Fidelity grades corrected with evidence |
 
 ### EV corrective actions taken in this PR
 

@@ -83,3 +83,37 @@ if (embed) {
 
   runBtn?.addEventListener("click", boot);
 }
+
+// Quickstart tabs — "shell" and "embed". Both panels are in the markup and are
+// shown or hidden, rather than swapped in through innerHTML the way the design
+// prototype did it: the embed snippet then stays greppable, which is how
+// tests/site_claims.test.mjs holds it to the engine's real exports. Arrow keys
+// rove between tabs, as the WAI-ARIA tabs pattern requires.
+const quickstartTabs = [...document.querySelectorAll('.home-terminal-tabs [role="tab"]')];
+
+function selectQuickstartTab(tab) {
+  for (const other of quickstartTabs) {
+    const selected = other === tab;
+    other.setAttribute("aria-selected", String(selected));
+    other.tabIndex = selected ? 0 : -1;
+    const panel = document.getElementById(other.getAttribute("aria-controls"));
+    if (panel) panel.hidden = !selected;
+  }
+}
+
+for (const tab of quickstartTabs) {
+  tab.addEventListener("click", () => selectQuickstartTab(tab));
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const at = quickstartTabs.indexOf(tab);
+    const last = quickstartTabs.length - 1;
+    const next =
+      event.key === "Home" ? 0
+      : event.key === "End" ? last
+      : event.key === "ArrowRight" ? (at === last ? 0 : at + 1)
+      : at === 0 ? last : at - 1;
+    selectQuickstartTab(quickstartTabs[next]);
+    quickstartTabs[next].focus();
+  });
+}

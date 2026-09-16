@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="webapp/opendoc-mark.svg" width="96" height="96" alt="OpenDoc logo" />
+</p>
+
 # OpenDoc
 
 [![Live demo](https://img.shields.io/badge/demo-opendoc.casualoffice.org-3355c4.svg)](https://opendoc.casualoffice.org)

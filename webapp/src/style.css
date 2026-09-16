@@ -1073,6 +1073,14 @@ body.modal-open {
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
    `auto auto` so neither column is wider than the text it holds. */
+/* The brand mark in place of a generic info glyph: About is the one dialog
+   whose subject IS the product. */
+.about-mark {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+
 .about-facts {
   display: grid;
   grid-template-columns: auto auto;
