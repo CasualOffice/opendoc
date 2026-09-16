@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  expectSaveEnabled,
+  saveDocument,
+} from "./fixtures.mjs";
 
 const ODT = "org.oasis.opendocument.text";
 const TEXT = "text.plain";
@@ -10,7 +16,7 @@ async function waitForOpenedDocument(page, name) {
   await expect(page.locator(".page-wrap")).not.toHaveCount(0, {
     timeout: 45_000,
   });
-  await expect(page.locator("#save")).toBeEnabled();
+  await expectSaveEnabled(page);
 }
 
 test("browser Open and Save dispatch text through the generic ODT exporter", async ({
@@ -37,7 +43,7 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
   await format.selectOption(ODT);
 
   const downloadPromise = page.waitForEvent("download");
-  await page.locator("#save").click();
+  await saveDocument(page);
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("notes.odt");
   const path = await download.path();
@@ -62,7 +68,7 @@ test("cross-format browser Save visibly reports compatibility findings", async (
   await page.locator("#saveFormat").selectOption(ODT);
 
   const downloadPromise = page.waitForEvent("download");
-  await page.locator("#save").click();
+  await saveDocument(page);
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("opendoc-demo.odt");
   await expect(page.locator("#compatibilityStatus")).toBeVisible();

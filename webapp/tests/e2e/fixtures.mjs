@@ -119,3 +119,52 @@ export async function typeMoveFindUndo(page, marker) {
   await page.keyboard.press("Escape");
   await page.locator("#undoBtn").click();
 }
+
+// --- Reaching capabilities that left the top bar ------------------------------
+// Open, Save and the Search box were removed from the header: they duplicated
+// the File menu and the command palette, which is where Word and Docs put them.
+// Specs that clicked `#openBtn` / `#save` / `#searchTrigger` were asserting that
+// a BUTTON existed, not that the capability was reachable — so when the button
+// went, they failed while the capability was fine. These helpers drive the
+// surviving surface instead, which is the thing actually worth guarding: if a
+// command stops being reachable from its menu, every spec using them fails.
+
+/** Opens one of the application menus and returns its popover locator. */
+export async function openAppMenu(page, menu) {
+  await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+  const popover = page.locator("#appMenuPopover");
+  await expect(popover).toBeVisible();
+  return popover;
+}
+
+/** Runs a command through its application-menu row, by command id. Asserts the
+ *  row is actually present and enabled, so an unreachable command fails loudly
+ *  rather than silently doing nothing. */
+export async function runAppMenuCommand(page, menu, commandId) {
+  await openAppMenu(page, menu);
+  const row = page.locator(`#appMenuPopover .app-menu-item[data-command="${commandId}"]`);
+  await expect(row, `${commandId} should be reachable from the ${menu} menu`).toBeVisible();
+  await expect(row, `${commandId} should be enabled in the ${menu} menu`).toBeEnabled();
+  await row.click();
+}
+
+/** Opens the command palette through the Help menu — a real, clickable surface,
+ *  not the keyboard chord, so this still proves a pointer user can get there. */
+export async function openCommandPalette(page) {
+  await runAppMenuCommand(page, "help", "help.commands");
+  await expect(page.locator("#cmdInput")).toBeFocused();
+}
+
+/** Saves the open document through File ▸ Save. */
+export async function saveDocument(page) {
+  await runAppMenuCommand(page, "file", "file.save");
+}
+
+/** Asserts File ▸ Save is present and enabled without invoking it. */
+export async function expectSaveEnabled(page) {
+  await openAppMenu(page, "file");
+  const row = page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]');
+  await expect(row).toBeVisible();
+  await expect(row).toBeEnabled();
+  await page.keyboard.press("Escape");
+}

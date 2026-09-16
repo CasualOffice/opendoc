@@ -157,7 +157,15 @@
      a fixed 16px reads heavy on a small window and mean on a large one. */
   --chrome-card-radius: clamp(10px, 1.1vw, 18px);
   --chrome-card-inset-y: clamp(1px, 0.25vh, 4px);
-  --chrome-card-inset-x: clamp(4px, 0.6vw, 12px);
+  /* The card inset is CONTENT WIDTH the band no longer has. The Home band needs
+     1254px of groups at 1280px, so the whole chrome overhead — this inset plus
+     the panel's own padding — has to stay under 26px or the overflow pass
+     exiles a group. The first version of this token cost 15.4px on its own and
+     put the band 9px over, which is how Styles ended up in the "⋯" menu on an
+     ordinary 1280px desktop. Keep it small at desktop widths and let it grow
+     only where there is width to spare. `webapp/tests/e2e/ribbon-home.spec.mjs`
+     guards the budget. */
+  --chrome-card-inset-x: clamp(2px, 0.3vw, 10px);
 
   /* Dialog rhythm. One scale for every dialog and panel, so tightening the
      density is one edit rather than thirty. The old values were a flat 18-20px
@@ -3064,7 +3072,11 @@ body.compact-mode {
   background: var(--surface);
   margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x);
   border-radius: var(--chrome-card-radius);
-  padding: 6px 10px 5px;
+  /* Vertical padding is free; horizontal padding is not — it comes straight out
+     of the band's group budget (see --chrome-card-inset-x). The groups carry
+     their own inline padding, so the panel needs only enough to keep the first
+     control off the card's rounded edge. */
+  padding: 6px clamp(2px, 0.35vw, 8px) 5px;
   /* No horizontal scrollbar ever (docs/64): a single no-wrap row whose
      overflowing groups collapse into the "⋯" menu instead. */
   overflow: hidden;

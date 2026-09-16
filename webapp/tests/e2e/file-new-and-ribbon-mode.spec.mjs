@@ -18,6 +18,7 @@ import {
   clickIntoFirstPage,
   expectEditorFocused,
   MOD,
+  saveDocument,
 } from "./fixtures.mjs";
 
 async function runFromMenu(page, menu, commandId) {
@@ -119,7 +120,7 @@ test("a new blank document saves as DOCX by default", async ({ page, consoleErro
   );
 
   const download = page.waitForEvent("download");
-  await page.locator("#save").click();
+  await saveDocument(page);
   const file = await download;
   expect(file.suggestedFilename()).toMatch(/\.docx$/);
 

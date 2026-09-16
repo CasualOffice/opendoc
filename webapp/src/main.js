@@ -873,6 +873,12 @@ function updateRibbonOverflow() {
   const style = getComputedStyle(active);
   const avail =
     active.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  // An unmeasurable band is not a narrow band. If the panel is display:none or
+  // zero-width (mode switch mid-flight, ribbon collapsed, first paint), every
+  // unpinned group would "not fit" and be exiled to the overflow menu on no
+  // evidence at all. Leave the inline composition alone and wait to be called
+  // again once there is a width to measure against.
+  if (!(avail > 0)) return;
   const widths = new Map(groups.map((group) => [group, group.offsetWidth]));
   const total = groups.reduce((sum, group) => sum + widths.get(group), 0);
   if (total <= avail + 0.5) return; // everything fits — no overflow control
@@ -953,6 +959,15 @@ if (ribbonOverflowBtn && ribbonOverflowMenu) {
   } else {
     window.addEventListener("resize", scheduleRibbonOverflow);
   }
+  // The band is measured in whatever face is available at first paint. Until
+  // Inter arrives that is a fallback with wider metrics, so the groups measure
+  // wider than they will ever actually be drawn — enough, on a 1280px Home
+  // band with about 55px of slack, to exile Styles to the overflow menu. The
+  // ResizeObserver above cannot save us: `.ribbon-body` stays exactly as wide
+  // as the viewport, so swapping the face resizes the GROUPS without ever
+  // resizing the observed element, and the wrong decision stood permanently.
+  // Re-decide when the real metrics are in.
+  if (document.fonts?.ready) document.fonts.ready.then(scheduleRibbonOverflow).catch(() => {});
 }
 
 // --- Ribbon keyboard navigation (WAI-ARIA toolbar pattern) -------------------

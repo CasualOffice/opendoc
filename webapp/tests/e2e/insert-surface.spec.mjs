@@ -14,7 +14,13 @@
 //
 // Accordingly, no test in this file clicks into the page. `gotoEditor` alone is
 // the precondition, exactly as it is for a user who has just opened a file.
-import { test, expect, gotoEditor, setReviewMode } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  setReviewMode,
+  openCommandPalette,
+} from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
 // exercises the real file-picker → decode → insert path without shipping a
@@ -182,7 +188,7 @@ test("the Insert menu and the command palette agree with the ribbon on a freshly
 
   // The palette: the same commands are runnable, and their hint column no
   // longer teaches a precondition that does not exist.
-  await page.locator("#searchTrigger").click();
+  await openCommandPalette(page);
   await expect(page.locator("#cmdPalette")).toBeVisible();
   for (const label of ["Picture…", "Symbol…", "Emoji…", "Field…", "Bookmark…"]) {
     await page.locator("#cmdInput").fill(label.replace("…", ""));

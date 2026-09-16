@@ -236,3 +236,41 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
     );
   }
 });
+
+// EV-002. The "Construct families graded below" tile is a number typed into the
+// page by hand. It read 19 against 26 families in `fidelity.js` — a figure that
+// contradicted the table printed directly beneath it, on a page that is
+// `robots: index,follow`. A number on a public page must be generated from, or
+// at minimum checked against, a committed artifact; this is the check.
+test("the fidelity page's family-count tile matches the data it renders", () => {
+  for (const page of ["../fidelity.page.html", "../fidelity.html"]) {
+    const html = readFileSync(new URL(page, import.meta.url), "utf8");
+    const match = html.match(
+      /<div class="fid-stat-num">(\d+)<\/div>\s*<div class="fid-stat-label">Construct families graded below<\/div>/,
+    );
+    assert.ok(match, `${page} must carry the families tile`);
+    assert.equal(
+      Number(match[1]),
+      FIDELITY.length,
+      `${page} claims ${match[1]} construct families; fidelity.js defines ${FIDELITY.length}`,
+    );
+  }
+});
+
+// EV-001. The same page advertised the grades as "CI-enforced" in its meta
+// description long after the body prose was corrected to say the oracle gate is
+// manual and inert. The meta is what search results and link previews quote, so
+// it is the half of the page most likely to be read.
+test("the fidelity page does not advertise a CI gate it does not have", () => {
+  for (const page of ["../fidelity.page.html", "../fidelity.html"]) {
+    const html = readFileSync(new URL(page, import.meta.url), "utf8");
+    const meta = html.match(/<meta\s+name="description"[^>]*content="([^"]*)"/s);
+    assert.ok(meta, `${page} must carry a meta description`);
+    assert.doesNotMatch(
+      meta[1],
+      /(?<!not )CI-enforced/,
+      `${page}'s meta description claims the grades are CI-enforced; the oracle ` +
+        `geometry gate is workflow_dispatch-only and skips every fixture`,
+    );
+  }
+});
