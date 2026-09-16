@@ -4,7 +4,15 @@
 // (VS Code convention) and ⌘K authors a link on the current selection; a batch
 // of previously mouse-only commands (review mode, add comment, accept/reject
 // all, super/subscript) gained command-palette entries with shortcut hints.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  MOD,
+  shortcutHint,
+} from "./fixtures.mjs";
 
 async function typeAndSelect(page, marker) {
   await clickIntoFirstPage(page);
@@ -77,7 +85,7 @@ test("a previously mouse-only command (Add comment) is reachable and executable 
   const item = page.locator(".cmd-item", { hasText: "Add comment" }).first();
   await expect(item).toBeVisible();
   // The palette teaches the shortcut in the hint column.
-  await expect(item.locator(".cmd-hint")).toHaveText("⌘⌥M");
+  await expect(item.locator(".cmd-hint")).toHaveText(shortcutHint("⌘⌥M"));
   await item.click();
 
   // Running it opens the review composer over the selection — the same action
