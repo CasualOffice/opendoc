@@ -11,6 +11,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   MOD,
+  openCommandPalette,
 } from "./fixtures.mjs";
 
 test("Restart then Continue numbering splits and rejoins a numbered list", async ({
@@ -89,7 +90,7 @@ test("Continue numbering is reachable from the command palette", async ({
   await page.locator("#restartList").click();
   await expect(page.locator("#continueList")).toBeEnabled();
 
-  await page.locator("#searchTrigger").click();
+  await openCommandPalette(page);
   const palette = page.locator("#cmdInput");
   await expect(palette).toBeFocused();
   await palette.fill("Continue numbering");

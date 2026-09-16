@@ -492,7 +492,7 @@ fn theme_font_color_and_format_schemes_are_parsed() {
         </a:fontScheme>
         <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst></a:fmtScheme>
     </a:themeElements></a:theme>"#;
-    let mut reporter = crate::report::Reporter::default();
+    let mut reporter = crate::report::Reporter::new(crate::report::SourceRetention::Regenerated);
     let parsed = crate::theme::parse(xml, &mut reporter, ImportConfig::default()).unwrap();
     let scheme = parsed.font_scheme.unwrap();
     assert_eq!(scheme.major.latin.typeface, "Calibri Light");
@@ -1642,8 +1642,8 @@ fn retention_mode_retains_source_and_marks_unmapped_preserved() {
     assert!(features(&import).contains(&"tblStyle"));
     assert!(!import.report.entries.is_empty());
     for entry in &import.report.entries {
-        assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-        assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+        assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+        assert_eq!(entry.retention_outcome(), RetentionOutcome::Preserved);
     }
 
     // Semantic mode retains nothing and reports not-retained.
@@ -1654,7 +1654,7 @@ fn retention_mode_retains_source_and_marks_unmapped_preserved() {
             .report
             .entries
             .iter()
-            .all(|entry| entry.retention_outcome == RetentionOutcome::NotRetained)
+            .all(|entry| entry.retention_outcome() == RetentionOutcome::NotRetained)
     );
 }
 
@@ -2408,10 +2408,26 @@ fn invalid_anchor_wrap_distances_are_bounded_and_reported() {
     assert_eq!(drawing.anchor.wrap_distances.bottom_emu, MAX_EMU);
     assert_eq!(drawing.anchor.wrap_distances.start_emu, 0);
     assert_eq!(drawing.anchor.wrap_distances.end_emu, 50_800);
+    // The clamped distances are ATTRIBUTE findings on the modeled `wp:anchor`,
+    // located by element and attribute (FID-R-03), not bare names that read like
+    // elements `w:distT`/`w:distB` which do not exist.
     let reported = features(&import);
-    assert!(reported.contains(&"distT"));
-    assert!(reported.contains(&"distB"));
-    assert!(reported.contains(&"distL"));
+    assert!(reported.contains(&"anchor/@distT"), "{reported:?}");
+    assert!(reported.contains(&"anchor/@distB"), "{reported:?}");
+    assert!(reported.contains(&"anchor/@distL"), "{reported:?}");
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "anchor/@distT")
+        .expect("the clamped distT is reported");
+    assert_eq!(entry.location.element.as_deref(), Some("anchor"));
+    assert_eq!(entry.location.attribute.as_deref(), Some("distT"));
+    assert_eq!(
+        entry.model_outcome(),
+        ModelOutcome::Degraded,
+        "the anchor IS modeled; only this attribute's value was not carried"
+    );
 }
 
 #[test]
@@ -6096,8 +6112,8 @@ fn semantic_import_reports_each_unconsumed_admitted_part_once() {
         .unwrap();
     assert_eq!(entry.feature, "customXml/item1.xml");
     assert_eq!(entry.occurrences, 1);
-    assert_eq!(entry.model_outcome, ModelOutcome::Omitted);
-    assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+    assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+    assert_eq!(entry.retention_outcome(), RetentionOutcome::Preserved);
 
     // The side-table carries the part's bytes and declared content type.
     let retained = &import.retained_parts;
@@ -6147,7 +6163,7 @@ fn retention_mode_preserves_unconsumed_parts_and_reports_them_preserved() {
         .find(|entry| entry.part.is_some())
         .unwrap();
     assert_eq!(entry.feature, "customXml/item1.xml");
-    assert_eq!(entry.retention_outcome, RetentionOutcome::Preserved);
+    assert_eq!(entry.retention_outcome(), RetentionOutcome::Preserved);
 
     // Retention keeps every admitted part byte-for-byte, including the one the
     // semantic model drops.
@@ -6507,10 +6523,11 @@ fn theme_children_the_writer_regenerates_away_are_each_reported_once() {
         "extraClrSchemeLst",
         "custClrLst",
         "extLst",
-        // The two dropped display names. The report has no attribute vocabulary
-        // yet (FID-R-03), so each is an element-qualified pseudo-feature.
-        "theme:nameAttribute",
-        "fontScheme:nameAttribute",
+        // The two dropped display names, now real attribute findings on the
+        // elements that carry them (FID-R-03) rather than element-qualified
+        // pseudo-features.
+        "theme/@name",
+        "fontScheme/@name",
     ] {
         assert_eq!(
             occurrences(&import, feature),
@@ -6786,4 +6803,554 @@ fn a_picture_bullet_is_reported_rather_than_silently_dropped() {
             "{mapped} is mapped and must not be reported"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// FID-R-02 / FID-R-03 — the disposition axes as per-construct facts, the
+// preservation ledger, and the attribute vocabulary.
+// ---------------------------------------------------------------------------
+
+/// An ordinary document must import with an **empty** report.
+///
+/// This is the guard against the whole class of over-reporting, and it is the one
+/// that matters most for the attribute vocabulary: a report that fires on healthy
+/// documents is one every caller learns to ignore, at which point the loss
+/// reporting that is meant to be a competitive advantage becomes noise.
+///
+/// The document is deliberately attribute-DENSE and entirely mapped. A bare
+/// fixture would not do: `minimal-valid.docx` is `<w:document/>` with no
+/// attributes anywhere, so it stays green no matter how badly an attribute pass
+/// over-reports — the first version of this guard was exactly that, and a mutation
+/// that reported every unrecognized attribute on every element did not move it.
+/// Every attribute below (`xmlns:*`, `w:val`, `w:left`, `w:after`) is either
+/// namespace plumbing or fully consumed, so any of them appearing in the report is
+/// a defect.
+#[test]
+fn an_ordinary_document_imports_with_an_empty_report() {
+    let bytes = include_bytes!("../../../fixtures/generated/minimal-valid.docx");
+    let import = import_bytes(bytes);
+    assert!(
+        import.report.is_empty(),
+        "a document the model captures in full raises nothing, got {:?}",
+        features(&import)
+    );
+    assert!(
+        import.ledger.records().is_empty(),
+        "nothing claimed preservation, so nothing needed a record"
+    );
+
+    let dense = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p>
+            <w:pPr>
+                <w:jc w:val="center"/>
+                <w:ind w:left="720" w:firstLine="360"/>
+                <w:spacing w:before="60" w:after="120" w:line="240" w:lineRule="auto"/>
+            </w:pPr>
+            <w:r>
+                <w:rPr><w:b/><w:i/><w:sz w:val="24"/><w:color w:val="FF0000"/></w:rPr>
+                <w:t>mapped</w:t>
+            </w:r>
+        </w:p>
+    </w:body></w:document>"#;
+    let dense = import_main_document_xml(dense, ImportConfig::default()).unwrap();
+    assert!(
+        dense.report.is_empty(),
+        "every construct and attribute here is mapped, got {:?}",
+        features(&dense)
+    );
+}
+
+/// Revision-save IDs are **one** class entry however many of them a document
+/// carries and on however many elements and attributes they appear.
+///
+/// The alternative — a finding per element-and-attribute pair — would add roughly
+/// fourteen rows to every Word document's report (measured over a 14-document
+/// sample of real Word output: `w:p` alone carries five distinct `rsid*`
+/// attributes, `w:r` three, `w:tr` three, `w:sectPr` three) against the 28-30 rows
+/// such a document raises in total. Driven red by reporting each attribute through
+/// `report_attribute` instead of `report_rsid`.
+#[test]
+fn revision_save_ids_are_one_class_entry_not_one_per_attribute() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w">
+        <w:body>
+            <w:p w:rsidR="00A" w:rsidRDefault="00B" w:rsidRPr="00C" w:rsidP="00D" w:rsidDel="00E">
+                <w:r w:rsidR="00F" w:rsidRPr="010" w:rsidDel="011"><w:t>x</w:t></w:r>
+            </w:p>
+            <w:tbl><w:tr w:rsidR="012" w:rsidTr="013" w:rsidRPr="014">
+                <w:tc><w:p w:rsidR="015"><w:r><w:t>y</w:t></w:r></w:p></w:tc>
+            </w:tr></w:tbl>
+            <w:sectPr w:rsidR="016" w:rsidSect="017" w:rsidRPr="018"/>
+        </w:body>
+    </w:document>"#;
+    let settings = br#"<?xml version="1.0"?><w:settings xmlns:w="urn:w">
+        <w:rsids><w:rsidRoot w:val="00A"/><w:rsid w:val="00B"/><w:rsid w:val="00C"/></w:rsids>
+    </w:settings>"#;
+    let import = import_with_settings(document, settings);
+
+    let rsid_entries: Vec<&str> = import
+        .report
+        .entries
+        .iter()
+        .map(|entry| entry.feature.as_str())
+        .filter(|feature| feature.to_lowercase().contains("rsid"))
+        .collect();
+    assert_eq!(
+        rsid_entries,
+        vec![crate::RSID_CLASS_FEATURE],
+        "the whole class is one entry; full report: {:?}",
+        features(&import)
+    );
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == crate::RSID_CLASS_FEATURE)
+        .expect("the class is reported");
+    assert!(
+        entry.occurrences >= 15,
+        "every member is counted, not just the first: {}",
+        entry.occurrences
+    );
+    assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+    assert_eq!(
+        entry.retention_outcome(),
+        RetentionOutcome::NotRetained,
+        "a semantic save really does drop them, and the report says so"
+    );
+}
+
+/// `mc:Ignorable` is a markup-compatibility processing directive, not document
+/// content: it names the prefixes a consumer may ignore, the writer emits its own
+/// correct value, and nothing about the document changes if it differs. It is
+/// therefore deliberately NOT dispositioned. Driven red by reporting every
+/// unrecognized attribute the identity scan sees.
+#[test]
+fn markup_compatibility_ignorable_is_not_dispositioned() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:mc="urn:mc" mc:Ignorable="w14 w15">
+        <w:body><w:p><w:r><w:t>x</w:t></w:r></w:p></w:body>
+    </w:document>"#;
+    let import = import(document);
+    assert!(
+        import.report.is_empty(),
+        "mc:Ignorable is plumbing, not a disposition: {:?}",
+        features(&import)
+    );
+}
+
+/// A body paragraph's durable identity (`w14:paraId`/`w14:textId`) is lost on a
+/// semantic save, and that loss is now expressible: it is an attribute finding on
+/// a paragraph that IS modeled, so the paragraph is `degraded` and the location
+/// names which part of its meaning went missing. Before FID-R-03 the report had no
+/// way to say this at all.
+#[test]
+fn a_body_paragraph_durable_identity_is_reported_as_a_located_attribute_loss() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:w14="urn:w14">
+        <w:body>
+            <w:p w14:paraId="0A0A0A0A" w14:textId="0B0B0B0B"><w:r><w:t>x</w:t></w:r></w:p>
+            <w:tbl><w:tr w14:paraId="0C0C0C0C">
+                <w:tc><w:p><w:r><w:t>y</w:t></w:r></w:p></w:tc>
+            </w:tr></w:tbl>
+        </w:body>
+    </w:document>"#;
+    let import = import(document);
+    for (feature, element, attribute) in [
+        ("p/@paraId", "p", "paraId"),
+        ("p/@textId", "p", "textId"),
+        ("tr/@paraId", "tr", "paraId"),
+    ] {
+        let entry = import
+            .report
+            .entries
+            .iter()
+            .find(|entry| entry.feature == feature)
+            .unwrap_or_else(|| panic!("{feature} is reported; got {:?}", features(&import)));
+        assert_eq!(entry.location.element.as_deref(), Some(element));
+        assert_eq!(entry.location.attribute.as_deref(), Some(attribute));
+        assert_eq!(
+            entry.model_outcome(),
+            ModelOutcome::Degraded,
+            "{feature}: the element is modeled, the attribute is not"
+        );
+        assert_eq!(entry.retention_outcome(), RetentionOutcome::NotRetained);
+    }
+}
+
+/// The over-report counterpart: a comment's anchor paragraph keeps its `paraId`
+/// (it is the join key the companion parts use and the writer re-emits it), so
+/// the comments part must NOT be charged with losing it. Reporting a loss that did
+/// not happen is the same defect as not reporting one that did.
+#[test]
+fn a_comment_paragraph_identity_is_not_reported_as_lost() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:commentRangeStart w:id="0"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id="0"/>
+        <w:r><w:commentReference w:id="0"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<?xml version="1.0"?><w:comments xmlns:w="urn:w" xmlns:w14="urn:w14">
+        <w:comment w:id="0" w:author="Ada"><w:p w14:paraId="00000001"><w:r><w:t>note</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let import = import_with_comments(document, comments);
+    let reported = features(&import);
+    assert!(
+        !reported.contains(&"p/@paraId"),
+        "the anchor paragraph's identity is modeled and re-emitted: {reported:?}"
+    );
+}
+
+/// An equation whose structure has no typed projection is `omitted` from the
+/// model as mathematics but its OMML is retained verbatim **inside** the model and
+/// re-emitted on save — so it is `omitted` + `preserved`, with a ledger record of
+/// its own, on the SEMANTIC path. A per-mode retention constant could only ever
+/// have said `not-retained` here; this is the clearest demonstration that
+/// retention is now a per-construct fact (FID-R-02).
+#[test]
+fn an_unprojected_equation_is_omitted_but_preserved_against_a_ledger_record() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>
+        <w:p><m:oMath><m:phant><m:e><m:r><m:t>x</m:t></m:r></m:e></m:phant></m:oMath></w:p>
+    </w:body></w:document>"#;
+    let import = import(document);
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "oMath")
+        .unwrap_or_else(|| {
+            panic!(
+                "the unprojected equation is reported: {:?}",
+                features(&import)
+            )
+        });
+    assert_eq!(entry.model_outcome(), ModelOutcome::Omitted);
+    assert_eq!(
+        entry.retention_outcome(),
+        RetentionOutcome::Preserved,
+        "the raw OMML is kept in the model and written back out"
+    );
+    let record = import
+        .ledger
+        .get(entry.ledger_id.expect("a preserved finding cites a record"))
+        .expect("the cited record exists");
+    assert_eq!(record.kind, crate::PreservationKind::ModelSubtree);
+    assert_eq!(record.covers.as_deref(), Some("oMath"));
+    assert!(
+        record.retained_bytes > 0,
+        "a record that retains nothing is not preservation"
+    );
+
+    // The counterpart: an equation the model DOES project raises nothing, so this
+    // finding cannot become a row on every document that contains mathematics.
+    let projected = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>
+        <w:p><m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p>
+    </w:body></w:document>"#;
+    let projected = import_main_document_xml(projected, ImportConfig::default()).unwrap();
+    assert!(
+        !features(&projected).contains(&"oMath"),
+        "a projected equation is not a finding: {:?}",
+        features(&projected)
+    );
+}
+
+/// A structurally unusable companion entry is `rejected`, not `not-retained`:
+/// there is no comment to join it to and nothing to rewrite it as, so it is
+/// refused. `not-retained` would claim a deliberate drop of something that could
+/// have been carried. Two different retention outcomes inside one Semantic import
+/// is the property a per-mode constant could not have.
+#[test]
+fn an_unusable_comment_companion_entry_is_rejected_not_merely_dropped() {
+    let document = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:commentRangeStart w:id="1"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id="1"/>
+        <w:r><w:commentReference w:id="1"/></w:r></w:p>
+    </w:body></w:document>"#;
+    let comments = br#"<?xml version="1.0"?><w:comments xmlns:w="urn:w" xmlns:w14="urn:w14">
+        <w:comment w:id="1" w:author="Ada"><w:p w14:paraId="0A0A0A0A"><w:r><w:t>note</w:t></w:r></w:p></w:comment>
+    </w:comments>"#;
+    let extended = br#"<?xml version="1.0"?><w15:commentsEx xmlns:w15="urn:w15">
+        <w15:commentEx w15:done="1"/>
+        <w15:unknownThing/>
+    </w15:commentsEx>"#;
+    let mut sources = part_sources(comments);
+    sources.comments_extended = Some(extended.to_vec());
+    let import = import_with_sources(
+        document,
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        Some(&sources),
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+
+    let rejected = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "commentEx")
+        .unwrap_or_else(|| panic!("the keyless entry is reported: {:?}", features(&import)));
+    assert_eq!(
+        rejected.retention_outcome(),
+        RetentionOutcome::Rejected,
+        "structurally unusable, so refused rather than declined"
+    );
+    let dropped = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "unknownThing")
+        .unwrap_or_else(|| panic!("the unknown element is reported: {:?}", features(&import)));
+    assert_eq!(
+        dropped.retention_outcome(),
+        RetentionOutcome::NotRetained,
+        "merely unmodeled, in the SAME import and the same mode"
+    );
+}
+
+/// In Retention mode every `preserved` finding cites the source-snapshot record,
+/// and that record really accounts for retained bytes. Doc 35 permits `preserved`
+/// only against "a validated preservation-ledger or source-snapshot record", and
+/// before this there was no ledger at all — so every `preserved` the importer had
+/// ever emitted was unlicensed.
+#[test]
+fn retention_mode_preserved_findings_cite_the_source_snapshot_record() {
+    let xml = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body>
+        <w:tbl><w:tblPr><w:tblStyle w:val="Grid"/></w:tblPr>
+            <w:tr><w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr>
+        </w:tbl>
+    </w:body></w:document>"#;
+    let config = ImportConfig {
+        mode: ImportMode::Retention,
+        ..ImportConfig::default()
+    };
+    let import = import_main_document_xml(xml, config).unwrap();
+    let snapshot = import
+        .ledger
+        .source_snapshot()
+        .expect("Retention mode retains a source snapshot");
+    assert_eq!(
+        import.ledger.get(snapshot).map(|record| record.kind),
+        Some(crate::PreservationKind::SourceSnapshot)
+    );
+    assert_eq!(
+        import
+            .ledger
+            .get(snapshot)
+            .map(|record| record.retained_bytes),
+        Some(xml.len()),
+        "the record accounts for the bytes actually retained"
+    );
+    assert!(!import.report.is_empty());
+    for entry in &import.report.entries {
+        assert_eq!(
+            entry.retention_outcome(),
+            RetentionOutcome::Preserved,
+            "{} under a total byte floor",
+            entry.feature
+        );
+        assert_eq!(
+            entry.ledger_id,
+            Some(snapshot),
+            "{} must cite the record that licenses its claim",
+            entry.feature
+        );
+    }
+}
+
+/// On the package path the snapshot record accounts for the WHOLE package, not
+/// the main document twice.
+///
+/// The record is created during the main-document pass, before the package loop
+/// has retained anything else, so the figure has to be restated afterwards. Adding
+/// to it instead would count `word/document.xml` twice and make the one number a
+/// caller uses to audit a `preserved` claim wrong — quietly, since nothing else
+/// reads it.
+#[test]
+fn the_source_snapshot_record_accounts_for_the_whole_package_exactly_once() {
+    let bytes = package_with_extra_part();
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(
+        &mut package,
+        ImportConfig {
+            mode: ImportMode::Retention,
+            ..ImportConfig::default()
+        },
+    )
+    .unwrap();
+    let retained = import.retained_source.as_ref().expect("a byte floor");
+    let expected: usize = retained.parts.values().map(Vec::len).sum();
+    let snapshot = import
+        .ledger
+        .source_snapshot()
+        .expect("Retention mode retains a source snapshot");
+    assert_eq!(
+        import
+            .ledger
+            .get(snapshot)
+            .map(|record| record.retained_bytes),
+        Some(expected),
+        "the record must equal the retained parts' total, not that plus the main \
+         document a second time"
+    );
+    assert!(expected > 0);
+}
+
+/// On the semantic path a preserved *part* cites its own opaque-side-table
+/// record, not the snapshot — the claim is auditable against the bytes that
+/// specific part contributed.
+#[test]
+fn a_semantically_preserved_part_cites_its_own_ledger_record() {
+    let bytes = package_with_extra_part();
+    let mut package =
+        DocxPackage::open(&bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    assert!(
+        import.ledger.source_snapshot().is_none(),
+        "Semantic mode retains no snapshot, so a claim cannot lean on one"
+    );
+    let entry = import
+        .report
+        .entries
+        .iter()
+        .find(|entry| entry.feature == "customXml/item1.xml")
+        .expect("the unconsumed part is dispositioned");
+    let record = import
+        .ledger
+        .get(entry.ledger_id.expect("a preserved part cites a record"))
+        .expect("the cited record exists");
+    assert_eq!(record.kind, crate::PreservationKind::OpaquePart);
+    assert_eq!(record.covers.as_deref(), Some("customXml/item1.xml"));
+    assert_eq!(record.retained_bytes, EXTRA_CUSTOM_XML.len());
+}
+
+/// The report enumerates unrecovered meaning, so a fully `mapped` construct has
+/// nothing to enumerate: `ModelOutcome::Mapped` is unreachable in an import report
+/// by construction, not by nobody having written it. Asserted over the corpus in
+/// both modes so it is a property of the importer rather than of one fixture —
+/// plus a document that really does raise a `degraded` finding on both retention
+/// paths, because the corpus fixtures raise none, and without one a mutation
+/// turning `degraded` into `mapped` slipped through green.
+#[test]
+fn the_import_report_never_enumerates_a_mapped_construct() {
+    let assert_no_mapped = |name: &str, mode: ImportMode, report: &crate::CompatibilityReport| {
+        for entry in &report.entries {
+            assert_ne!(
+                entry.model_outcome(),
+                ModelOutcome::Mapped,
+                "{name} ({mode:?}) enumerates {} as mapped, which is not a finding",
+                entry.feature
+            );
+        }
+    };
+    for (name, bytes) in corpus() {
+        for mode in [ImportMode::Semantic, ImportMode::Retention] {
+            let mut package =
+                DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+            let import = import_package(
+                &mut package,
+                ImportConfig {
+                    mode,
+                    ..ImportConfig::default()
+                },
+            )
+            .unwrap();
+            assert_no_mapped(name, mode, &import.report);
+        }
+    }
+    // A paragraph carrying a durable identity the model does not keep: the
+    // paragraph IS modeled, so the finding is `degraded` — in both modes.
+    let degraded_source =
+        br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:w14="urn:w14"><w:body>
+        <w:p w14:paraId="0A0A0A0A"><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    for mode in [ImportMode::Semantic, ImportMode::Retention] {
+        let import = import_main_document_xml(
+            degraded_source,
+            ImportConfig {
+                mode,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            import
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.model_outcome() == ModelOutcome::Degraded),
+            "{mode:?}: this document must actually raise a degraded finding, or the \
+             assertion below cannot fail: {:?}",
+            features(&import)
+        );
+        assert_no_mapped("degraded-identity", mode, &import.report);
+    }
+}
+
+/// Every report the importer produces satisfies the doc-35 preservation rule
+/// against its own ledger — over the corpus, in both modes. This is the
+/// end-to-end form of the validator `import_package` already runs; it exists so a
+/// future call site that invents an entry cannot slip a `preserved` claim past the
+/// check by not going through the reporter.
+#[test]
+fn every_corpus_report_validates_against_its_own_ledger() {
+    for (name, bytes) in corpus() {
+        for mode in [ImportMode::Semantic, ImportMode::Retention] {
+            let mut package =
+                DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+            let import = import_package(
+                &mut package,
+                ImportConfig {
+                    mode,
+                    ..ImportConfig::default()
+                },
+            )
+            .unwrap();
+            import
+                .report
+                .validate(&import.ledger)
+                .unwrap_or_else(|violation| panic!("{name} ({mode:?}): {violation}"));
+        }
+    }
+}
+
+/// The fixtures used by the corpus-wide disposition guards.
+///
+/// `unknown-safe-part.docx` is in the list on purpose: the real-producer packages
+/// have no unconsumed non-plumbing part, so a corpus without it cannot notice a
+/// whole-part `preserved` claim losing its ledger record. That gap was found by
+/// mutation, not by reading.
+fn corpus() -> [(&'static str, &'static [u8]); 6] {
+    [
+        (
+            "real-producer-libreoffice",
+            include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx").as_slice(),
+        ),
+        (
+            "real-producer-rich",
+            include_bytes!("../../../fixtures/corpus/real-producer-rich.docx").as_slice(),
+        ),
+        (
+            "real-producer-table-merges",
+            include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx").as_slice(),
+        ),
+        (
+            "real-producer-header-footer",
+            include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx").as_slice(),
+        ),
+        (
+            "synthetic-rich-metadata",
+            include_bytes!("../../../fixtures/corpus/synthetic-rich-metadata.docx").as_slice(),
+        ),
+        (
+            "unknown-safe-part",
+            include_bytes!("../../../fixtures/generated/unknown-safe-part.docx").as_slice(),
+        ),
+    ]
 }

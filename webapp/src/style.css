@@ -157,7 +157,15 @@
      a fixed 16px reads heavy on a small window and mean on a large one. */
   --chrome-card-radius: clamp(10px, 1.1vw, 18px);
   --chrome-card-inset-y: clamp(1px, 0.25vh, 4px);
-  --chrome-card-inset-x: clamp(4px, 0.6vw, 12px);
+  /* The card inset is CONTENT WIDTH the band no longer has. The Home band needs
+     1254px of groups at 1280px, so the whole chrome overhead — this inset plus
+     the panel's own padding — has to stay under 26px or the overflow pass
+     exiles a group. The first version of this token cost 15.4px on its own and
+     put the band 9px over, which is how Styles ended up in the "⋯" menu on an
+     ordinary 1280px desktop. Keep it small at desktop widths and let it grow
+     only where there is width to spare. `webapp/tests/e2e/ribbon-home.spec.mjs`
+     guards the budget. */
+  --chrome-card-inset-x: clamp(2px, 0.3vw, 10px);
 
   /* Dialog rhythm. One scale for every dialog and panel, so tightening the
      density is one edit rather than thirty. The old values were a flat 18-20px
@@ -1037,6 +1045,58 @@ body.modal-open {
   min-height: 0;
   overflow: auto;
   padding: 18px var(--space-5) var(--space-5);
+}
+
+/* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
+   whole keymap is scannable without scrolling past the group you want; one
+   column as soon as that would squeeze the key chips. */
+.shortcuts-dialog {
+  width: min(var(--dialog-width-wide), 100%);
+}
+
+.shortcuts-body {
+  columns: 2;
+  column-gap: var(--space-6);
+}
+
+.shortcuts-group {
+  break-inside: avoid;
+  margin: 0 0 var(--space-5);
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-small);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 3px 0;
+}
+
+.shortcuts-row span:first-child {
+  color: var(--ink);
+}
+
+.shortcuts-keys {
+  flex: 0 0 auto;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .shortcuts-body {
+    columns: 1;
+  }
 }
 
 .dialog-foot {
@@ -3012,7 +3072,11 @@ body.compact-mode {
   background: var(--surface);
   margin: var(--chrome-card-inset-y) var(--chrome-card-inset-x);
   border-radius: var(--chrome-card-radius);
-  padding: 6px 10px 5px;
+  /* Vertical padding is free; horizontal padding is not — it comes straight out
+     of the band's group budget (see --chrome-card-inset-x). The groups carry
+     their own inline padding, so the panel needs only enough to keep the first
+     control off the card's rounded edge. */
+  padding: 6px clamp(2px, 0.35vw, 8px) 5px;
   /* No horizontal scrollbar ever (docs/64): a single no-wrap row whose
      overflowing groups collapse into the "⋯" menu instead. */
   overflow: hidden;

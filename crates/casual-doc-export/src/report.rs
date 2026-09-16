@@ -10,10 +10,12 @@
 //! the fidelity story rather than hygiene.
 //!
 //! The vocabulary is the one `35-DISPOSITION-TAXONOMY.md` mandates and the DOCX
-//! importer already speaks: two orthogonal axes on every entry. Both enums are
-//! re-exported from `casual-doc-import` rather than redeclared, so the import
-//! and export halves of the same format cannot drift into two spellings of one
-//! fact.
+//! importer already speaks. Every one of its types — the two axes, the nine-pair
+//! [`Disposition`], and [`FeatureLocation`] — is re-exported from
+//! `casual-doc-import` rather than redeclared, so the import and export halves of
+//! the same format cannot drift into two spellings of one fact. `Disposition`
+//! was first written here and then moved to that shared home when the import side
+//! needed it too (FID-R-02): one definition, two users, no conversion.
 //!
 //! Two properties are deliberate:
 //!
@@ -28,72 +30,11 @@
 
 use std::collections::BTreeMap;
 
-pub use casual_doc_import::{ModelOutcome, RetentionOutcome};
+pub use casual_doc_import::{Disposition, FeatureLocation, ModelOutcome, RetentionOutcome};
 
 /// Distinct-finding ceiling; excess folds into an `(overflow)` bucket so a
 /// pathological document cannot make the report grow without bound.
 const MAX_REPORT_FINDINGS: usize = 4_096;
-
-/// One of the nine per-construct dispositions `35-DISPOSITION-TAXONOMY.md`
-/// admits, as a single value.
-///
-/// The taxonomy is two orthogonal axes, but only nine of their fifteen pairs are
-/// meaningful; doc 35 says any other pairing "is an internal error and must fail
-/// import, not be reported". Naming the legal pairs makes the illegal ones
-/// impossible to construct, which is stronger than checking for them: there is
-/// no code path on which an export can emit `mapped` + `rejected`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Disposition {
-    /// Fully understood; nothing left to retain.
-    MappedComplete,
-    /// Fully understood; incidental source detail also kept for exact save.
-    MappedPreserved,
-    /// Partially understood; the remainder is kept verbatim.
-    DegradedPreserved,
-    /// Partially understood; the remainder is reportably dropped.
-    DegradedNotRetained,
-    /// Partially understood; the remainder was refused by policy.
-    DegradedBlocked,
-    /// Not modeled, but retained verbatim for save or inspection.
-    OmittedPreserved,
-    /// Not modeled and reportably dropped.
-    OmittedNotRetained,
-    /// Not modeled; retention refused by policy.
-    OmittedBlocked,
-    /// Structurally invalid or over-limit; reported, not modeled, not retained.
-    OmittedRejected,
-}
-
-impl Disposition {
-    /// This disposition's axis-A (model) outcome.
-    #[must_use]
-    pub const fn model_outcome(self) -> ModelOutcome {
-        match self {
-            Self::MappedComplete | Self::MappedPreserved => ModelOutcome::Mapped,
-            Self::DegradedPreserved | Self::DegradedNotRetained | Self::DegradedBlocked => {
-                ModelOutcome::Degraded
-            }
-            Self::OmittedPreserved
-            | Self::OmittedNotRetained
-            | Self::OmittedBlocked
-            | Self::OmittedRejected => ModelOutcome::Omitted,
-        }
-    }
-
-    /// This disposition's axis-B (retention) outcome.
-    #[must_use]
-    pub const fn retention_outcome(self) -> RetentionOutcome {
-        match self {
-            Self::MappedComplete => RetentionOutcome::NotApplicable,
-            Self::MappedPreserved | Self::DegradedPreserved | Self::OmittedPreserved => {
-                RetentionOutcome::Preserved
-            }
-            Self::DegradedNotRetained | Self::OmittedNotRetained => RetentionOutcome::NotRetained,
-            Self::DegradedBlocked | Self::OmittedBlocked => RetentionOutcome::Blocked,
-            Self::OmittedRejected => RetentionOutcome::Rejected,
-        }
-    }
-}
 
 /// One aggregated export finding: a construct the written package does not
 /// carry in full.
@@ -103,8 +44,12 @@ pub struct CompatibilityEntry {
     pub feature: String,
     /// Bounded occurrence count (references to the same lost part aggregate).
     pub occurrences: u32,
-    /// The package part the finding is charged to, when it is about one.
-    pub part_name: Option<String>,
+    /// Where the finding is: the package part it is charged to, and — when the
+    /// loss is of one element or one attribute rather than of a whole part — the
+    /// element and attribute local names (FID-R-03). Before the report had an
+    /// attribute vocabulary, an attribute-level loss could only be spelled as a
+    /// feature-level pseudo-name.
+    pub location: FeatureLocation,
     /// The per-construct disposition; both taxonomy axes derive from it.
     pub disposition: Disposition,
 }
@@ -149,21 +94,16 @@ pub struct DocxExport {
 }
 
 /// Aggregating sink used by the semantic writer. Findings are keyed by
-/// `(feature, part name)` so repeated references to one lost part become a
+/// `(feature, location)` so repeated references to one lost part become a
 /// single entry with a count, and the disposition travels with each record
 /// rather than being a property of the run.
 #[derive(Debug, Default)]
 pub(crate) struct Reporter {
-    counts: BTreeMap<(String, Option<String>), (u32, Disposition)>,
+    counts: BTreeMap<(String, FeatureLocation), (u32, Disposition)>,
     overflow: u32,
 }
 
 impl Reporter {
-    /// Records a finding that is not about a specific package part.
-    pub(crate) fn record(&mut self, feature: &'static str, disposition: Disposition) {
-        self.insert(feature, None, disposition);
-    }
-
     /// Records a finding charged to a package part, naming it so the loss is
     /// auditable against the written package.
     pub(crate) fn record_part(
@@ -172,16 +112,47 @@ impl Reporter {
         part_name: &str,
         disposition: Disposition,
     ) {
-        self.insert(feature, Some(part_name.to_owned()), disposition);
+        self.insert(
+            feature,
+            FeatureLocation {
+                part_name: Some(part_name.to_owned()),
+                element: None,
+                attribute: None,
+            },
+            disposition,
+        );
+    }
+
+    /// Records a finding about one element, or one attribute of it, that the
+    /// written package does not carry. The element and attribute local names make
+    /// the loss addressable in the source vocabulary instead of only by a stable
+    /// finding id (FID-R-03).
+    pub(crate) fn record_construct(
+        &mut self,
+        feature: &'static str,
+        part_name: &str,
+        element: &'static str,
+        attribute: Option<&'static str>,
+        disposition: Disposition,
+    ) {
+        self.insert(
+            feature,
+            FeatureLocation {
+                part_name: Some(part_name.to_owned()),
+                element: Some(element.to_owned()),
+                attribute: attribute.map(str::to_owned),
+            },
+            disposition,
+        );
     }
 
     fn insert(
         &mut self,
         feature: &'static str,
-        part_name: Option<String>,
+        location: FeatureLocation,
         disposition: Disposition,
     ) {
-        let key = (feature.to_owned(), part_name);
+        let key = (feature.to_owned(), location);
         if let Some((count, _)) = self.counts.get_mut(&key) {
             *count = count.saturating_add(1);
         } else if self.counts.len() < MAX_REPORT_FINDINGS {
@@ -192,16 +163,16 @@ impl Reporter {
     }
 
     /// Builds the report. `BTreeMap` iteration already orders entries by feature
-    /// and then by part name, so the output is deterministic without a sort.
+    /// and then by location, so the output is deterministic without a sort.
     pub(crate) fn finish(self) -> CompatibilityReport {
         let mut entries: Vec<CompatibilityEntry> = self
             .counts
             .into_iter()
             .map(
-                |((feature, part_name), (occurrences, disposition))| CompatibilityEntry {
+                |((feature, location), (occurrences, disposition))| CompatibilityEntry {
                     feature,
                     occurrences,
-                    part_name,
+                    location,
                     disposition,
                 },
             )
@@ -210,7 +181,7 @@ impl Reporter {
             entries.push(CompatibilityEntry {
                 feature: "docx.export.report.overflow".to_owned(),
                 occurrences: self.overflow,
-                part_name: None,
+                location: FeatureLocation::default(),
                 disposition: Disposition::OmittedNotRetained,
             });
         }
@@ -222,54 +193,9 @@ impl Reporter {
 mod tests {
     use super::*;
 
-    /// Every [`Disposition`] must project onto exactly one of the nine pairs
-    /// `35-DISPOSITION-TAXONOMY.md` lists as legal, and the nine must all be
-    /// reachable. This is the guard that keeps the enum an encoding of the
-    /// contract rather than a set of names that drifted away from it.
-    #[test]
-    fn every_disposition_is_one_of_the_nine_legal_pairs() {
-        // Transcribed from `35-DISPOSITION-TAXONOMY.md` "Legal combinations".
-        let legal = [
-            (ModelOutcome::Mapped, RetentionOutcome::NotApplicable),
-            (ModelOutcome::Mapped, RetentionOutcome::Preserved),
-            (ModelOutcome::Degraded, RetentionOutcome::Preserved),
-            (ModelOutcome::Degraded, RetentionOutcome::NotRetained),
-            (ModelOutcome::Degraded, RetentionOutcome::Blocked),
-            (ModelOutcome::Omitted, RetentionOutcome::Preserved),
-            (ModelOutcome::Omitted, RetentionOutcome::NotRetained),
-            (ModelOutcome::Omitted, RetentionOutcome::Blocked),
-            (ModelOutcome::Omitted, RetentionOutcome::Rejected),
-        ];
-        let all = [
-            Disposition::MappedComplete,
-            Disposition::MappedPreserved,
-            Disposition::DegradedPreserved,
-            Disposition::DegradedNotRetained,
-            Disposition::DegradedBlocked,
-            Disposition::OmittedPreserved,
-            Disposition::OmittedNotRetained,
-            Disposition::OmittedBlocked,
-            Disposition::OmittedRejected,
-        ];
-        let mut projected: Vec<(ModelOutcome, RetentionOutcome)> = Vec::new();
-        for disposition in all {
-            let pair = (disposition.model_outcome(), disposition.retention_outcome());
-            assert!(
-                legal.contains(&pair),
-                "{disposition:?} projects onto {pair:?}, which doc 35 does not admit"
-            );
-            assert!(
-                !projected.contains(&pair),
-                "{disposition:?} duplicates the pair {pair:?} of an earlier variant"
-            );
-            projected.push(pair);
-        }
-        assert_eq!(
-            projected.len(),
-            legal.len(),
-            "every legal pair must be reachable through exactly one Disposition"
-        );
-    }
+    // The guard that every `Disposition` projects onto exactly one of doc 35's
+    // nine legal pairs lives with the definition, in `casual-doc-import`'s
+    // `report` module: the enum has one home, so its contract test has one home.
 
     /// Repeated references to one lost part are one finding with a count, and
     /// two different parts stay two findings.
@@ -295,7 +221,7 @@ mod tests {
         assert_eq!(report.entries.len(), 2);
         assert_eq!(report.entries[0].occurrences, 2);
         assert_eq!(
-            report.entries[0].part_name.as_deref(),
+            report.entries[0].location.part_name.as_deref(),
             Some("word/media/image1.png")
         );
         assert_eq!(report.entries[1].occurrences, 1);

@@ -76,6 +76,21 @@ const MODALS = [
     },
   },
   {
+    id: "shortcutsDialog",
+    name: "Keyboard shortcuts",
+    opener: null,
+    // EDITOR_SURFACE, not the literal "#pages": focus is owned by the editable
+    // proxy, not the page container (docs/105 UX-001). Naming the element would
+    // make this row assert a mechanism rather than the guarantee, and it fails
+    // for a reason that has nothing to do with this dialog.
+    restore: EDITOR_SURFACE,
+    focus: "#shortcutsClose",
+    async open(page) {
+      await gotoEditor(page);
+      await runFromPalette(page, "keyboard shortcuts", "Keyboard shortcuts");
+    },
+  },
+  {
     id: "splitCellDialog",
     name: "Split cell",
     opener: null,

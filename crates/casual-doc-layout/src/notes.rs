@@ -7,11 +7,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use casual_doc_model::v1::{Document, NoteId, NoteKind, SectionId};
+use casual_doc_model::v1::{Document, NoteId, NoteKind, NotePosition, SectionId};
 
 use crate::block::{BlockFragment, CellFragment};
 use crate::columns::{SectionRun, paginate_columns_with_reservations};
 use crate::flow::build_galley_for_note_blocks;
+use crate::note_numbering::{NoteLabels, note_props_for_section_id};
 use crate::page::{Page, PaginatedLayout, PlacedFragment};
 use crate::paginate::PageConfig;
 use crate::text::{LineLayout, LineShaper, NoteMarker};
@@ -57,8 +58,9 @@ pub(crate) fn paginate_section_footnotes(
     document: &Document,
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
+    labels: &NoteLabels,
 ) -> PaginatedLayout {
-    let notes = build_section_footnote_galleys(document, shaper, runs);
+    let notes = build_section_footnote_galleys(document, shaper, runs, labels);
     if notes.is_empty() {
         return paginate_columns_with_reservations(runs, &[]);
     }
@@ -69,7 +71,7 @@ pub(crate) fn paginate_section_footnotes(
         let next = page_reservations(&layout, &notes, runs);
         let merged = merge_reservations(&reservations, &next);
         if merged == reservations {
-            place_footnotes(&mut layout, &notes, &next);
+            place_footnotes(document, &mut layout, &notes, &next);
             return layout;
         }
         reservations = merged;
@@ -80,7 +82,7 @@ pub(crate) fn paginate_section_footnotes(
         merge_reservations(&reservations, &page_reservations(&layout, &notes, runs));
     let mut layout = paginate_columns_with_reservations(runs, &final_reservations);
     let placed_reservations = page_reservations(&layout, &notes, runs);
-    place_footnotes(&mut layout, &notes, &placed_reservations);
+    place_footnotes(document, &mut layout, &notes, &placed_reservations);
     layout
 }
 
@@ -101,6 +103,7 @@ fn build_footnote_galleys(
     document: &Document,
     shaper: &dyn LineShaper,
     width: Twip,
+    labels: &NoteLabels,
 ) -> BTreeMap<NoteId, Vec<BlockFragment>> {
     document
         .definitions()
@@ -108,13 +111,25 @@ fn build_footnote_galleys(
         .iter()
         .enumerate()
         .map(|(index, (id, note))| {
-            // The note's 1-based ordinal matches the body reference marker
-            // (`flow::note_ordinal`), so the in-body auto-number prints the same
-            // number Word shows at the reference.
-            let note_number = index + 1;
+            // The note's resolved display label matches the body reference marker
+            // (`w:numFmt`/`w:numStart`/`w:numRestart`, `docs/105` FID-L-05), so the
+            // in-body auto-number prints the same string Word shows at the
+            // reference. A note no body reference reaches has no resolved label;
+            // its decimal definition ordinal stands in so a band that is somehow
+            // still placed is never blank.
+            let label = labels
+                .label(NoteKind::Footnote, *id)
+                .map_or_else(|| (index + 1).to_string(), str::to_owned);
             (
                 *id,
-                build_galley_for_note_blocks(document, shaper, &note.blocks, width, note_number),
+                build_galley_for_note_blocks(
+                    document,
+                    shaper,
+                    &note.blocks,
+                    width,
+                    &label,
+                    Some(labels),
+                ),
             )
         })
         .collect()
@@ -124,6 +139,7 @@ fn build_section_footnote_galleys(
     document: &Document,
     shaper: &dyn LineShaper,
     runs: &[SectionRun],
+    labels: &NoteLabels,
 ) -> BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>> {
     let mut out = BTreeMap::new();
     for run in runs {
@@ -132,7 +148,7 @@ fn build_section_footnote_galleys(
                 section: run.config.section,
                 width,
             })
-            .or_insert_with(|| build_footnote_galleys(document, shaper, width));
+            .or_insert_with(|| build_footnote_galleys(document, shaper, width, labels));
         }
     }
     out
@@ -243,6 +259,7 @@ fn footnote_cap_for_area(content: Rect) -> Twip {
 }
 
 fn place_footnotes(
+    document: &Document,
     layout: &mut PaginatedLayout,
     notes: &BTreeMap<NoteFlowKey, BTreeMap<NoteId, Vec<BlockFragment>>>,
     reservations: &[Twip],
@@ -256,13 +273,36 @@ fn place_footnotes(
         if band_height <= Twip::ZERO {
             continue;
         }
-        page.footnotes = stack_note_galleys(
-            &mut queues,
-            page.content_area.bottom(),
-            band_height,
-            index + 1 == page_count,
-        );
+        let band_top = footnote_band_top(document, page);
+        page.footnotes =
+            stack_note_galleys(&mut queues, band_top, band_height, index + 1 == page_count);
     }
+}
+
+/// Where this page's footnote band starts (`w:pos`, `docs/105` FID-L-05).
+///
+/// `pageBottom` (Word's default) puts the band immediately under the reserved body
+/// area, so the band's *bottom* sits on the bottom margin however short the page's
+/// text is. `beneathText` instead hangs it off the last line of body text, so on an
+/// under-full page the notes ride up with the text; a full page is identical under
+/// both, which is why the reservation itself is unchanged.
+///
+/// The band never rises above the body area's top, so a page whose body placed
+/// nothing still has a well-defined band origin.
+fn footnote_band_top(document: &Document, page: &Page) -> Twip {
+    let default = page.content_area.bottom();
+    if note_props_for_section_id(document, page.section, NoteKind::Footnote).position
+        != NotePosition::BeneathText
+    {
+        return default;
+    }
+    page.placed
+        .iter()
+        .map(|placed| placed.rect.bottom())
+        .max()
+        .map_or(default, |bottom| {
+            bottom.max(page.content_area.origin.y).min(default)
+        })
 }
 
 fn stack_note_galleys(
@@ -349,7 +389,13 @@ fn collect_fragment_notes(
     });
 }
 
-fn collect_fragment_note_markers(fragment: &BlockFragment, f: &mut impl FnMut(NoteMarker)) {
+/// Visits every note reference marker a laid-out fragment carries, recursing
+/// through table cells. Shared with `crate::note_numbering`, which reads the same
+/// markers off a produced layout to resolve `eachPage` note numbering.
+pub(crate) fn collect_fragment_note_markers(
+    fragment: &BlockFragment,
+    f: &mut impl FnMut(NoteMarker),
+) {
     match fragment {
         BlockFragment::Paragraph { lines, .. } => collect_line_notes(lines, f),
         BlockFragment::TableRow { cells, .. } => {
@@ -1276,7 +1322,8 @@ mod tests {
             &recorder,
             &[note_number_mark_paragraph(2_201, "auto numbered body")],
             width,
-            7,
+            "7",
+            None,
         );
         assert!(!galley.is_empty(), "the note body flows to a fragment");
 

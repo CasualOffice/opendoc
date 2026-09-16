@@ -1,4 +1,12 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  MOD,
+  openCommandPalette,
+  openAppMenu,
+} from "./fixtures.mjs";
 
 test("the reference typography and icons load locally", async ({ page, consoleErrors }) => {
   const chromeFontRequests = [];
@@ -31,25 +39,30 @@ test("the reference typography and icons load locally", async ({ page, consoleEr
   expect(consoleErrors).toEqual([]);
 });
 
-test("the visible Search control opens the real command palette and restores focus", async ({
+test("the command palette opens from the Help menu and restores focus on close", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
 
-  const trigger = page.locator("#searchTrigger");
-  await expect(trigger).toBeVisible();
-  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  // There is no longer a Search box in the top bar — it duplicated the palette,
+  // which is the surface Word and Docs both use. What must survive is the
+  // contract the box was guarding: a POINTER user can open the palette, and
+  // closing it puts focus back where it came from rather than on <body>.
+  const helpMenu = page.locator('.app-menu-button[data-menu="help"]');
+  await expect(helpMenu).toBeVisible();
+  await expect(helpMenu).toHaveAttribute("aria-expanded", "false");
 
-  await trigger.click();
+  await openCommandPalette(page);
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await expect(page.locator("#cmdInput")).toBeFocused();
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
 
   await page.keyboard.press("Escape");
   await expect(page.locator("#cmdPalette")).toBeHidden();
-  await expect(trigger).toBeFocused();
-  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  // Focus returns to the menu button that opened it, not to the document body —
+  // the regression this test has always existed to catch.
+  await expect(helpMenu).toBeFocused();
+  await expect(helpMenu).toHaveAttribute("aria-expanded", "false");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -57,15 +70,30 @@ test("the no-document state keeps only useful top-bar actions", async ({ page, c
   await page.goto("/editor.html?blank=1");
 
   await expect(page.locator("body")).not.toHaveClass(/doc-loaded/);
-  await expect(page.locator(".file")).toBeVisible();
+  // `.file` was the label wrapping the hidden file input — removed with the Open
+  // button it belonged to. The menu bar is what must be present with no document
+  // loaded, because it is the only way to load one.
+  await expect(page.locator(".app-menu-bar")).toBeVisible();
   await expect(page.locator("#settingsBtn")).toBeVisible();
-  await expect(page.locator("#searchTrigger")).toBeHidden();
-  await expect(page.locator("#save")).toBeHidden();
+  // Open, Save and Search are no longer top-bar controls at all: they duplicated
+  // the File menu and the palette. Assert they are ABSENT rather than hidden —
+  // `toBeHidden()` also passes for a node that does not exist, so it would have
+  // gone green either way and proved nothing.
+  await expect(page.locator("#searchTrigger")).toHaveCount(0);
+  await expect(page.locator("#openBtn")).toHaveCount(0);
+  await expect(page.locator("#save")).toHaveCount(0);
   await expect(page.locator("#propertiesBtn")).toBeHidden();
+  // The capabilities are still reachable, which is the half that matters: the
+  // File menu is present and offers Open even with no document loaded.
+  await openAppMenu(page, "file");
+  await expect(
+    page.locator('#appMenuPopover .app-menu-item[data-command="file.open"]'),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
   expect(consoleErrors).toEqual([]);
 });
 
-test("the selection formatting toolbar follows light and dark editor surfaces", async ({
+test("the selection formatting toolbar follows light and dark panel surfaces", async ({
   page,
   consoleErrors,
 }) => {
@@ -76,22 +104,47 @@ test("the selection formatting toolbar follows light and dark editor surfaces", 
   const toolbar = page.locator("#selToolbar");
   await expect(toolbar).toBeVisible();
 
+  // This test used to compare the floating toolbar against the HEADER. That
+  // stopped being the right comparison when the chrome adopted one grey field:
+  // header, ribbon, status bar and desk share `--bg`, and `--surface` is
+  // reserved for the page and for things that FLOAT over it. The toolbar is one
+  // of those, so the rule to guard is that it uses the floating-panel surface —
+  // comparing it to the header would now assert the opposite of the design.
   const colors = async () =>
-    page.evaluate(() => ({
-      toolbarBackground: getComputedStyle(document.getElementById("selToolbar")).backgroundColor,
-      toolbarColor: getComputedStyle(document.getElementById("selToolbar")).color,
-      surfaceBackground: getComputedStyle(document.querySelector(".bar")).backgroundColor,
-      documentColor: getComputedStyle(document.body).color,
-    }));
+    page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const bar = getComputedStyle(document.getElementById("selToolbar"));
+      return {
+        toolbarBackground: bar.backgroundColor,
+        toolbarColor: bar.color,
+        surface: root.getPropertyValue("--surface").trim(),
+        chromeField: getComputedStyle(document.querySelector(".bar")).backgroundColor,
+        documentColor: getComputedStyle(document.body).color,
+      };
+    });
+
+  // A token name in CSS and a resolved rgb() string are not comparable, so
+  // resolve the token through a throwaway element painted with it.
+  const resolve = (token) =>
+    page.evaluate((t) => {
+      const probe = document.createElement("div");
+      probe.style.backgroundColor = `var(${t})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return value;
+    }, token);
 
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   const light = await colors();
-  expect(light.toolbarBackground).toBe(light.surfaceBackground);
+  expect(light.toolbarBackground).toBe(await resolve("--surface"));
   expect(light.toolbarColor).toBe(light.documentColor);
+  // And it is NOT the chrome field — that is the whole point of a floating panel.
+  expect(light.toolbarBackground).not.toBe(light.chromeField);
 
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   const dark = await colors();
-  expect(dark.toolbarBackground).toBe(dark.surfaceBackground);
+  expect(dark.toolbarBackground).toBe(await resolve("--surface"));
   expect(dark.toolbarColor).toBe(dark.documentColor);
   expect(dark.toolbarBackground).not.toBe(light.toolbarBackground);
   expect(consoleErrors).toEqual([]);
@@ -194,7 +247,11 @@ for (const width of [720, 390]) {
     expect(metrics.footer.scroll).toBeLessThanOrEqual(metrics.footer.client);
     expect(metrics.footRight.scroll).toBeLessThanOrEqual(metrics.footRight.client);
     expect(metrics.footRight.right).toBeLessThanOrEqual(metrics.viewport);
-    await expect(page.locator("#searchTrigger")).toBeVisible();
+    // The header must still offer its essential affordance at this width. That
+    // used to be the Search box; it is now the menu bar, which is the only route
+    // to Open, Save and the palette, so dropping it at a narrow width would
+    // strand the user completely.
+    await expect(page.locator('.app-menu-button[data-menu="file"]')).toBeVisible();
     await expect(page.locator("#railOutline")).toContainText("Outline");
     expect(consoleErrors).toEqual([]);
   });

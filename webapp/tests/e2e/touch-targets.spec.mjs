@@ -5,7 +5,14 @@
 // ratchet: the first block runs the shell under real touch emulation, where
 // `(pointer: coarse)` matches, and the second measures a hit area that must
 // hold for every pointer.
-import { test, expect, stableBox, gotoEditor, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  stableBox,
+  gotoEditor,
+  MOD,
+  openCommandPalette,
+} from "./fixtures.mjs";
 
 // The iOS Safari floor: anything under 16px zooms the page on focus.
 const IOS_NO_ZOOM_PX = 16;
@@ -75,7 +82,7 @@ test.describe("with a coarse pointer", () => {
     await page.keyboard.press("Escape");
 
     // The command palette — the documented keyboard/AT fallback surface.
-    await page.locator("#searchTrigger").click();
+    await openCommandPalette(page);
     const cmdRow = page.locator(".cmd-item").first();
     await expect(cmdRow).toBeVisible();
     expect((await stableBox(cmdRow)).height).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);

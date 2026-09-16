@@ -1,0 +1,212 @@
+// The trackers tell the reader four separate times to "re-derive these counts,
+// do not edit them by hand" — and nothing checked that anyone did. Both
+// documents drifted anyway: `104`'s P3 cell claimed 14 rows still open against
+// 13 actually open, so the Still-open column no longer summed to its own Total,
+// and `105` carried two §3.2 rows with a missing cell, which silently shifted
+// their Pri, Eff and Status one column to the left.
+//
+// This is docs/105 CQ-007. A tracker whose summary is hand-maintained is a
+// tracker that will eventually lie about how much work is left, which is the
+// one thing it exists to be trusted about. So: parse the rows, recompute every
+// summary cell, and fail on any disagreement.
+//
+// Buildless on purpose — it runs in the existing `npm run test:unit` lane
+// (`node --test tests/*.test.mjs`), which CI already invokes.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const read = (name) => readFileSync(join(repoRoot, "docs", name), "utf8");
+
+// A table cell may legally contain a pipe inside a `code span`. Splitting on
+// every pipe miscounts exactly those rows, which is how a malformed row hides:
+// it looks wide enough while its cells are off by one.
+// A sentinel that cannot occur in Markdown. Written as an escape, not as a
+// literal NUL byte: a raw NUL makes git classify this file as binary and
+// silently stop showing its diffs.
+const SENTINEL = "\u0000";
+
+function cells(row) {
+  const masked = row.replace(/`[^`]*`/g, (m) => m.replaceAll("|", SENTINEL));
+  return masked
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.replaceAll(SENTINEL, "|").trim());
+}
+
+// "Still open" is a PREFIX test, not equality: real statuses qualify themselves
+// ("Open (owner decision)", "Partly fixed (the declaration is now read…)").
+// Anything else — Fixed, Re-opened, Closed — is not open.
+const OPEN_PREFIXES = ["Open", "Partly fixed", "Partly", "In progress", "Re-opened"];
+// A status may be emphasised (`**Partly fixed** (#541) — …`), so strip markdown
+// emphasis before testing the prefix; otherwise a bolded status reads as closed.
+const normalise = (status) => status.replace(/^[*_\s]+/, "");
+const isOpen = (status) => OPEN_PREFIXES.some((p) => normalise(status).startsWith(p));
+
+/** Every `| ID | … |` row in a document, with its id and last cell. */
+function rows(text, idPattern) {
+  const out = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("|")) continue;
+    const c = cells(line);
+    if (!c.length || !idPattern.test(c[0])) continue;
+    out.push({ id: c[0], status: c[c.length - 1], cells: c, line });
+  }
+  return out;
+}
+
+test("docs/104: every summary cell is what the rows actually say", () => {
+  const text = read("104-HOTFIX-TRACKER.md");
+  const all = rows(text, /^HF-\d+$/);
+
+  // Ids are the spine of the table: a duplicate double-counts and a gap means a
+  // row was dropped without anyone noticing.
+  const ids = all.map((r) => Number(r.id.slice(3)));
+  assert.equal(new Set(ids).size, ids.length, "duplicate HF ids");
+  const sorted = [...ids].sort((a, b) => a - b);
+  assert.deepEqual(
+    sorted,
+    Array.from({ length: sorted.length }, (_, i) => i + 1),
+    "HF ids must run 1..N with no gaps",
+  );
+
+  // The summary table's own Total must equal the sum of its own section rows —
+  // the invariant that broke, and that no amount of careful editing preserves.
+  const summary = all.length;
+  const open = all.filter((r) => isOpen(r.status)).length;
+
+  const totalRow = text
+    .split("\n")
+    .find((l) => l.startsWith("| **Total** |"));
+  assert.ok(totalRow, "docs/104 must carry a Total row");
+  const [, totalRows, totalOpen] = cells(totalRow).map((c) => c.replaceAll("*", "").trim());
+  assert.equal(
+    Number(totalRows),
+    summary,
+    `Total rows says ${totalRows}, the table holds ${summary}`,
+  );
+  assert.equal(
+    Number(totalOpen),
+    open,
+    `Total still-open says ${totalOpen}, the rows say ${open}`,
+  );
+
+  // And each section cell must sum to that Total.
+  // Every row of the summary table between its header and its Total — named by
+  // whatever sections the document actually has, so appending a new audit
+  // section without adding it here fails instead of quietly vanishing from the
+  // total. That is precisely how 7 rows went missing.
+  const summaryLines = text.split("\n");
+  const headerAt = summaryLines.findIndex((l) => l.startsWith("| Section | Rows |"));
+  assert.ok(headerAt > 0, "docs/104 must carry a Section/Rows summary table");
+  const sectionOpen = [];
+  const sectionRows = [];
+  for (let i = headerAt + 2; i < summaryLines.length; i++) {
+    const line = summaryLines[i];
+    if (!line.startsWith("|")) break;
+    if (line.startsWith("| **Total**")) break;
+    const c = cells(line);
+    sectionRows.push(Number(c[1]));
+    sectionOpen.push(Number(c[2]));
+  }
+  assert.ok(
+    sectionOpen.every((n) => Number.isFinite(n)),
+    "every summary section must carry a numeric Still-open cell",
+  );
+  assert.equal(
+    sectionRows.reduce((a, b) => a + b, 0),
+    summary,
+    `the per-section Rows column sums to ${sectionRows.reduce((a, b) => a + b, 0)}, ` +
+      `but the document holds ${summary} rows — a section is missing from the summary`,
+  );
+  assert.equal(
+    sectionOpen.reduce((a, b) => a + b, 0),
+    open,
+    `the per-section Still-open column sums to ${sectionOpen.reduce((a, b) => a + b, 0)}, ` +
+      `but the rows say ${open} — this is exactly the P3-cell drift`,
+  );
+
+  const prose = text.match(/\*\*(\d+) of (\d+) rows remain open/);
+  assert.ok(prose, "the progress line must state 'N of M rows remain open'");
+  assert.equal(Number(prose[1]), open, "progress line's open count");
+  assert.equal(Number(prose[2]), summary, "progress line's total");
+});
+
+test("docs/105: every class count is derived, and no row is malformed", () => {
+  const text = read("105-AUDIT-2026-09-TRACKER.md");
+  const classes = {
+    EV: /^EV-\d+$/,
+    UX: /^UX-\d+$/,
+    CQ: /^CQ-\d+$/,
+    FID: /^FID-[PLR]-\d+$/,
+    OO: /^OO-\d+$/,
+  };
+
+  const counts = {};
+  for (const [name, pattern] of Object.entries(classes)) {
+    const rs = rows(text, pattern);
+    assert.ok(rs.length > 0, `${name} rows must parse`);
+    counts[name] = { total: rs.length, open: rs.filter((r) => isOpen(r.status)).length };
+
+    // Uniform width within a section. A row missing a cell shifts every later
+    // column left, so its Status is read out of the Evidence position and the
+    // derived counts silently go wrong while the table still renders.
+    const widths = new Map();
+    for (const r of rs) widths.set(r.cells.length, (widths.get(r.cells.length) ?? 0) + 1);
+    if (name === "FID") {
+      // FID spans three sub-tables with different shapes; group by sub-class.
+      for (const sub of ["FID-P", "FID-L", "FID-R"]) {
+        const w = new Set(rs.filter((r) => r.id.startsWith(sub)).map((r) => r.cells.length));
+        assert.equal(w.size, 1, `${sub} rows disagree on column count: ${[...w].join(", ")}`);
+      }
+    } else {
+      assert.equal(
+        widths.size,
+        1,
+        `${name} rows disagree on column count: ${[...widths.keys()].join(", ")}`,
+      );
+    }
+  }
+
+  // Every class must carry a real Status cell. OO used to have none and its
+  // "21 open" rested on a sentence of prose, which would go false the moment one
+  // OO row closed.
+  for (const [name, c] of Object.entries(counts)) {
+    assert.ok(
+      c.open <= c.total,
+      `${name} cannot have more open rows (${c.open}) than rows (${c.total})`,
+    );
+  }
+
+  const summaryRows = text
+    .split("\n")
+    .filter((l) => /^\| (EV|UX|CQ|FID|OO) [—-]/.test(l));
+  assert.equal(summaryRows.length, 5, "the summary table must carry all five classes");
+  for (const line of summaryRows) {
+    const c = cells(line);
+    const name = c[0].split(" ")[0];
+    assert.equal(
+      Number(c[1]),
+      counts[name].total,
+      `${name} row count: summary says ${c[1]}, rows say ${counts[name].total}`,
+    );
+    assert.equal(
+      Number(c[2]),
+      counts[name].open,
+      `${name} open count: summary says ${c[2]}, rows say ${counts[name].open}`,
+    );
+  }
+
+  const totalLine = text.split("\n").find((l) => l.startsWith("| **Total**"));
+  assert.ok(totalLine, "docs/105 must carry a Total row");
+  const t = cells(totalLine).map((x) => x.replaceAll("*", "").trim());
+  const allRows = Object.values(counts).reduce((a, c) => a + c.total, 0);
+  const allOpen = Object.values(counts).reduce((a, c) => a + c.open, 0);
+  assert.equal(Number(t[1]), allRows, `Total rows: says ${t[1]}, derived ${allRows}`);
+  assert.equal(Number(t[2]), allOpen, `Total open: says ${t[2]}, derived ${allOpen}`);
+});

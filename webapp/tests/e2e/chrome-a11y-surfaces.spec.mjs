@@ -6,7 +6,11 @@
 //   HF-029  the status line was the only error channel and was not a live region
 //   HF-031  the palette announced nothing while arrowing through results
 //   HF-032  the insert-table grid was pointer-only and had 80 unnamed buttons
-//   HF-034  the header Open button could not be focused or activated by keyboard
+//   HF-034  Open could not be focused or activated by keyboard. The control has
+//           since moved off the top bar into File ▸ Open (it duplicated the menu),
+//           so the contract is now that the MENU route is fully keyboard-driven —
+//           the defect was never about the button, it was about there being no
+//           keyboard way into a freshly loaded editor.
 //   HF-072  the floating selection toolbar never showed Bold/Italic/Underline state
 import {
   test,
@@ -20,30 +24,45 @@ import {
 
 // ---- HF-034 -----------------------------------------------------------------
 
-test("the header Open button is a real control the keyboard can reach and press", async ({
+test("Open is reachable and activatable by keyboard alone, with no pointer", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
-  const open = page.locator("#openBtn");
 
-  // A `<label>` wrapping a hidden input takes no focus and has no keydown
-  // wiring, which is what left a freshly loaded editor with no keyboard route in.
-  await expect(open).toBeVisible();
-  await expect(open).toBeEnabled();
-  expect(await open.evaluate((el) => el.tagName)).toBe("BUTTON");
+  // The original defect was a `<label>` wrapping a hidden input: it takes no
+  // focus and has no keydown wiring, so a freshly loaded editor had no keyboard
+  // route in at all. Open now lives in the File menu, so the whole route has to
+  // work from the keyboard — the menu button, the menu, and the row.
+  const fileMenu = page.locator('.app-menu-button[data-menu="file"]');
+  await expect(fileMenu).toBeVisible();
+  expect(await fileMenu.evaluate((el) => el.tagName)).toBe("BUTTON");
 
-  await open.focus();
-  await expect(open).toBeFocused();
+  await fileMenu.focus();
+  await expect(fileMenu).toBeFocused();
 
-  // Enter on the focused button opens the real file picker — the whole point of
-  // the control, and the half a `tabindex` alone would not have delivered.
+  await page.keyboard.press("Enter");
+  const row = page.locator('#appMenuPopover .app-menu-item[data-command="file.open"]');
+  await expect(row).toBeVisible();
+  await expect(row).toBeEnabled();
+
+  // Focus must land INSIDE the menu on open, or arrowing to the row is
+  // impossible and the menu is a pointer-only surface wearing menu semantics.
+  await expect(page.locator("#appMenuPopover")).toContainText("Open");
+  const focusedInMenu = await page.evaluate(
+    () => !!document.activeElement?.closest("#appMenuPopover"),
+  );
+  expect(focusedInMenu, "opening the File menu must move focus into it").toBe(true);
+
+  // Enter on the row opens the real file picker — the whole point of the
+  // control, and the half that a `tabindex` alone would not have delivered.
   const chooser = page.waitForEvent("filechooser");
+  await row.focus();
   await page.keyboard.press("Enter");
   expect(await chooser).toBeTruthy();
 
-  // The picker itself stays out of the tab order rather than becoming a second,
-  // dead stop next to the button.
+  // The input itself stays out of the tab order rather than becoming a second,
+  // dead stop.
   await expect(page.locator("#file")).toBeHidden();
 
   expect(consoleErrors).toEqual([]);

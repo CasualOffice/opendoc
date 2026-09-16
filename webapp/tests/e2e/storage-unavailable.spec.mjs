@@ -8,7 +8,15 @@
 // The browser cannot be told to block site data from Playwright, so this spec
 // reproduces the exact failure mode by making every localStorage access throw
 // the SecurityError a blocking browser raises, before any script runs.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  MOD,
+  expectSaveEnabled,
+} from "./fixtures.mjs";
 
 async function blockSiteData(page) {
   await page.addInitScript(() => {
@@ -31,7 +39,7 @@ test("the editor is fully live with site data blocked", async ({ page, consoleEr
   // Chrome is wired: a document opened and rendered at all, which already
   // requires the module to have finished evaluating.
   await expect(page.locator(".page-wrap")).not.toHaveCount(0);
-  await expect(page.locator("#save")).toBeEnabled();
+  await expectSaveEnabled(page);
 
   // Editing is wired: type, then undo through the ribbon control.
   await clickIntoFirstPage(page);
