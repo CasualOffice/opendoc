@@ -1,7 +1,19 @@
 import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
 
 // Review sits after Format, mirroring where Word puts its Review tab.
-const MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Review", "Tools", "Help"];
+const MENU_LABELS = [
+  "File",
+  "Edit",
+  "View",
+  "Insert",
+  "Format",
+  // Table sits where Word and LibreOffice put it — every structural table
+  // command used to have no menu home at all (docs/105 UX-012).
+  "Table",
+  "Review",
+  "Tools",
+  "Help",
+];
 
 test("the Vellum-style title block exposes real menus and honest local document state", async ({
   page,
@@ -152,7 +164,9 @@ test("document dialogs share the standard type and sizing system", async ({
   expect(propertiesMetrics.fontFamily).toContain("Inter");
   await page.locator("#propertiesClose").click();
 
-  await page.locator('.app-menu-button[data-menu="tools"]').click();
+  // Page setup moved out of Tools, where nobody looks for paper size, into
+  // File — where Google Docs keeps it.
+  await page.locator('.app-menu-button[data-menu="file"]').click();
   await page.locator('#appMenuPopover [data-command="layout.pageSetup"]').click();
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
   const pageSetupMetrics = await page.locator(".page-setup-dialog").evaluate((card) => ({
@@ -163,14 +177,22 @@ test("document dialogs share the standard type and sizing system", async ({
     fieldHeight: card.querySelector(".dialog-select").getBoundingClientRect().height,
     actionHeight: card.querySelector(".dialog-button").getBoundingClientRect().height,
   }));
-  expect(pageSetupMetrics).toEqual({
-    width: 760,
+  // Width is deliberately NOT part of the shared system any more. Pinning every
+  // dialog to one of three constants is what made a six-row list as wide as a
+  // twenty-field form with the middle left empty; each card is now sized by its
+  // content under a ceiling. What must stay uniform is the type scale and the
+  // control heights, which is what "shared sizing system" was really about.
+  const { width, ...shared } = pageSetupMetrics;
+  expect(shared).toEqual({
     radius: 12,
     titleSize: 16,
     closeSize: 30,
     fieldHeight: 36,
     actionHeight: 34,
   });
+  expect(width).toBeGreaterThan(360);
+  expect(width, "a content-sized card must not reach the old wide constant")
+    .toBeLessThan(760);
   await page.locator("#pageSetupClose").click();
 
   await expect(page.locator("#splitCellDialog .dialog-card")).toHaveClass(

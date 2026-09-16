@@ -118,18 +118,31 @@ test("the tracking toggles reflect and drive the engine's own state", async ({
 // The drift guard, same shape as the Insert surface's: the ribbon's command set
 // must equal the Review menu's, so a review command cannot reach one surface and
 // miss the other the way accept/reject did.
-test("the Review ribbon's command set is exactly the Review menu's", async ({
+test("every Review ribbon command is reachable from the menu bar", async ({
   page,
   consoleErrors,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
 
-  await page.locator('.app-menu-button[data-menu="review"]').click();
-  const menuCommands = await page
-    .locator("#appMenuPopover .app-menu-item[data-command]")
-    .evaluateAll((items) => items.map((item) => item.dataset.command));
-  await page.keyboard.press("Escape");
+  // This used to require the Review MENU specifically. That was an
+  // implementation detail standing in for the real rule, which is docs/105's
+  // command-surface parity: no capability may be reachable from only one
+  // surface. Pinning it to one menu also forced duplication — editing mode had
+  // to sit in both View and Review to satisfy this test and Docs' taxonomy at
+  // once — so the guard was arguing for the repetition it was not written to
+  // cause. The requirement is that a ribbon command has a menu home, not which
+  // menu that is; the home is reported below so a failure names it.
+  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review", "tools", "help"];
+  const home = new Map();
+  for (const menu of MENUS) {
+    await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+    const ids = await page
+      .locator("#appMenuPopover .app-menu-item[data-command]")
+      .evaluateAll((items) => items.map((item) => item.dataset.command));
+    for (const id of ids) if (!home.has(id)) home.set(id, menu);
+    await page.keyboard.press("Escape");
+  }
 
   await openReviewTab(page);
   const ribbonCommands = await page
@@ -137,10 +150,20 @@ test("the Review ribbon's command set is exactly the Review menu's", async ({
     .evaluateAll((buttons) => buttons.map((button) => button.dataset.command));
 
   expect(ribbonCommands.length).toBeGreaterThan(0);
-  // The menu carries the three explicit mode rows the ribbon expresses as one
-  // Track-changes toggle; every other ribbon command must appear in the menu.
-  for (const command of ribbonCommands) {
-    expect(menuCommands).toContain(command);
+  const homeless = ribbonCommands.filter((id) => !home.has(id));
+  expect(
+    homeless,
+    "a Review ribbon command with no menu home is reachable from the ribbon " +
+      "and the palette only — the single-surface defect this guard exists for",
+  ).toEqual([]);
+
+  // Tracked-change OPERATIONS must still live in Review; only mode selection
+  // and Add comment were moved (to View and Insert, following Docs), so this
+  // pins the part of the taxonomy that should not drift again.
+  for (const id of ["review.acceptAll", "review.rejectAll", "review.next", "review.previous"]) {
+    if (ribbonCommands.includes(id)) {
+      expect(home.get(id), `${id} belongs in the Review menu`).toBe("review");
+    }
   }
 
   expect(consoleErrors).toEqual([]);

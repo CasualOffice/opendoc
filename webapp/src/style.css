@@ -171,8 +171,13 @@
      density is one edit rather than thirty. The old values were a flat 18-20px
      on head, body and foot alike, which made every dialog tall without making
      any of it more legible. */
-  --dlg-pad-x: clamp(12px, 1.4vw, 20px);
-  --dlg-pad-y: clamp(10px, 1.1vh, 16px);
+  /* Dialog rhythm. These were declared and referenced NOWHERE — every dialog
+     hardcoded `18px var(--space-5) 14px` instead — so the responsive padding
+     the design called for never reached a pixel. They are wired into
+     .dialog-head/.dialog-body/.dialog-foot below, and `dialog_density`
+     fails if a dialog goes back to hardcoding its chrome padding. */
+  --dlg-pad-x: clamp(14px, 2.2vw, 22px);
+  --dlg-pad-y: clamp(10px, 1.4vh, 16px);
   --dlg-gap: clamp(8px, 0.9vh, 14px);
   /* Bottom edge of the fixed shell chrome: header bar + ribbon tab strip +
      ribbon band. Anything that floats over the workarea from a viewport-fixed
@@ -981,7 +986,7 @@ body.modal-open {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: 18px var(--space-5) 14px;
+  padding: var(--dlg-pad-y) var(--dlg-pad-x);
   border-bottom: 1px solid var(--line);
 }
 
@@ -1044,7 +1049,7 @@ body.modal-open {
 .dialog-body {
   min-height: 0;
   overflow: auto;
-  padding: 18px var(--space-5) var(--space-5);
+  padding: var(--dlg-pad-y) var(--dlg-pad-x);
 }
 
 /* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
@@ -1060,7 +1065,10 @@ body.modal-open {
    keeps it honest at every viewport, including 390px. */
 .about-dialog {
   width: min(fit-content, 100%);
-  max-width: var(--dialog-width-standard);
+  /* Three facts and three links. A `ch` ceiling keeps the description from
+     dragging the card out to the 640px standard constant, which is nearly
+     three times what the content needs. */
+  max-inline-size: min(100%, 46ch);
 }
 
 /* Two columns: term and value on one line, the way a properties sheet reads.
@@ -1095,7 +1103,11 @@ body.modal-open {
 }
 
 .shortcuts-body {
-  columns: 2;
+  /* Column COUNT derives from the width available, rather than being fixed at
+     two and overridden at one breakpoint: three fit at 1280, one at 390, and
+     nothing in between has to be enumerated. */
+  columns: auto;
+  column-width: clamp(15rem, 22vw, 17rem);
   column-gap: var(--space-6);
 }
 
@@ -1114,10 +1126,15 @@ body.modal-open {
 }
 
 .shortcuts-row {
-  display: flex;
+  /* `space-between` pushed the key chip to the far edge of a fixed 347px
+     column, so the gap between a label's last glyph and its chord measured a
+     median of 235px — 68% of every row was empty. The pair now sits together
+     and the row is as wide as it needs to be. */
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: start;
   align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
+  column-gap: clamp(8px, 1vw, 16px);
   padding: 3px 0;
 }
 
@@ -1133,18 +1150,14 @@ body.modal-open {
   white-space: nowrap;
 }
 
-@media (max-width: 720px) {
-  .shortcuts-body {
-    columns: 1;
-  }
-}
-
 .dialog-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-5);
+  /* The action row needs less vertical air than the body: it holds one line of
+     buttons. On the compact dialogs head+foot were eating 55% of the card. */
+  padding: calc(var(--dlg-pad-y) * 0.7) var(--dlg-pad-x);
   border-top: 1px solid var(--line);
   background: var(--bg-2);
 }
@@ -1314,18 +1327,43 @@ body.modal-open {
 
 /* ---- Page setup dialog ----------------------------------------------------- */
 .page-setup-dialog {
-  width: min(var(--dialog-width-wide), 100%);
+  /* Driven by what it holds, not by the "wide" constant. With the preview
+     sized to its thumbnail and the spinners sized to five characters, the
+     content no longer fills 760px, and a dialog that stays wide after its
+     contents shrink is exactly the "bigger but not more useful" complaint.
+     The ch ceiling keeps a long margin label from stretching it back out. */
+  width: min(fit-content, 100%);
+  max-inline-size: min(100%, 68ch);
+}
+
+/* `.field-dialog` declared no width at all, so it inherited the 640px standard
+   constant for a six-row list whose widest row measures 268px — 330px of every
+   row was empty. Two columns of content-sized cards instead. */
+.field-dialog {
+  width: min(fit-content, 100%);
+  max-inline-size: min(100%, 52ch);
+}
+
+.field-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(clamp(13rem, 20vw, 17rem), 1fr));
+  gap: var(--space-2);
 }
 
 .page-setup-body {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
-  gap: 24px;
+  /* The preview column was a hard 250px and stretched to the full row height —
+     587px of box around a 150x212 sheet, about a fifth of the whole dialog.
+     It is now sized by the thumbnail and pinned to the top, as Word's is. */
+  grid-template-columns: clamp(140px, 16vw, 190px) minmax(0, 1fr);
+  gap: clamp(12px, 1.6vw, 24px);
+  align-items: start;
 }
 
 .page-preview {
   display: flex;
-  min-height: 330px;
+  align-self: start;
+  block-size: fit-content;
   align-items: center;
   justify-content: center;
   flex-direction: column;
@@ -2047,8 +2085,14 @@ body.modal-open {
 
 .dialog-field-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  /* Pairs (Top/Bottom, Left/Right) stay side by side wherever two will fit,
+     and the cells are as wide as their content rather than half the dialog.
+     The old `@media (max-width: 620px) { 1fr }` override made phones WORSE by
+     stacking two 5-character fields into one 302px-wide column each; Word and
+     Docs keep those pairs paired at phone widths. */
+  grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 20vw, 9rem), max-content));
+  justify-content: start;
+  gap: clamp(8px, 1vw, 12px);
 }
 
 .orientation-segmented button {
@@ -2064,7 +2108,12 @@ body.modal-open {
 
 .number-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  /* A margin or a column count is at most five characters wide. Stretching the
+     box to `1fr` made it 182px at 1280 and 302px at 390 — wider on the phone,
+     where space is scarcest. Sized to its content instead, with the stepper
+     keeping its own fixed column. */
+  inline-size: fit-content;
+  grid-template-columns: calc(5ch + 1.25rem) 32px;
   height: var(--h-field);
   overflow: hidden;
   border: 1px solid var(--line-strong);
@@ -5819,9 +5868,12 @@ body:not(.doc-loaded) .drop-title {
     display: none;
   }
 
+  /* `.dialog-field-grid` is deliberately NOT collapsed here any more: forcing
+     one column turned a pair of five-character fields into two 302px boxes
+     stacked, which is worse on the narrowest screen, not better. Its auto-fit
+     track already falls to one column when one no longer fits. */
   .properties-grid,
   .table-properties-grid,
-  .dialog-field-grid,
   .metadata-facts {
     grid-template-columns: 1fr;
   }
