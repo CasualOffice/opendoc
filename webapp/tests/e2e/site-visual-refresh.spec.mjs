@@ -6,14 +6,22 @@ test("the developer landing page exposes the redesigned hero and real editor rou
 }) => {
   await page.goto("/");
 
-  // Newsreader/Instrument display headline of the approved redesign. The <br>
-  // carries no whitespace, so match tolerantly across the line break.
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    /The document engine,\s*not the dependency\./,
-  );
+  // The 2026-09 redesign's headline, with its serif phrase as a real <em> so the
+  // emphasis survives for assistive technology and not only for the eye.
+  const h1 = page.getByRole("heading", { level: 1 });
+  await expect(h1).toHaveText(/Build documents on an engine\s*you control\./);
+  await expect(h1.locator("em")).toHaveText("you control.");
+
+  // The primary route into the product stays same-origin and relative. The
+  // design prototype linked the absolute production URL, which breaks every
+  // preview deployment and every local serve.
   await expect(page.getByRole("link", { name: "Try the live editor" })).toHaveAttribute(
     "href",
     "./editor.html?demo=1",
+  );
+  await expect(page.getByRole("link", { name: "See how it works" })).toHaveAttribute(
+    "href",
+    "#developers",
   );
   await expect(page.getByRole("link", { name: "Read the source" })).toHaveAttribute(
     "href",
@@ -82,5 +90,33 @@ test("the refreshed landing page has no narrow-viewport page overflow", async ({
   }));
   expect(metrics.document).toBeLessThanOrEqual(metrics.viewport);
   await expect(page.getByRole("link", { name: "Open the editor" })).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the quickstart switches between the shell and embed examples as real tabs", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto("/");
+  const shell = page.getByRole("tab", { name: "shell" });
+  const embed = page.getByRole("tab", { name: "embed" });
+  await expect(shell).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#qsShell")).toBeVisible();
+  await expect(page.locator("#qsEmbed")).toBeHidden();
+
+  await embed.click();
+  await expect(embed).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#qsEmbed")).toBeVisible();
+  await expect(page.locator("#qsShell")).toBeHidden();
+  await expect(page.locator("#qsEmbed")).toContainText("doc.exportDocx()");
+
+  // Arrow keys rove, as the WAI-ARIA tabs pattern requires — a tablist you can
+  // only click is a pointer-only control wearing tab semantics.
+  await embed.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(shell).toBeFocused();
+  await expect(shell).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#qsShell")).toBeVisible();
+
   expect(consoleErrors).toEqual([]);
 });

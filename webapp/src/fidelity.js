@@ -111,8 +111,8 @@ const FIDELITY = [
   },
   {
     family: "Fonts, fallback & color glyphs",
-    note: "24 Latin faces ship bundled; hosts can register more through the font registry (the desktop story is OS fonts, the browser story is network-fetched faces). Whole-face substitution is name-based and deliberately metric-compatible with LibreOffice's choices (Arial\u2192Liberation Sans, Calibri\u2192Carlito, Cambria\u2192Caladea), and per-glyph coverage fallback runs through the face index. Color glyphs render: sbix/CBDT bitmap strikes and COLR v0/v1 paint graphs are tried before monochrome outlines. Two real gaps: fonts embedded in the document (`w:embedRegular`, the obfuscated `.odttf` parts) are modeled and imported but never de-obfuscated or used, and the modeled PANOSE/altName/signature hints are not consulted \u2014 substitution is name-string only. No CJK, Arabic, or Indic face is bundled, so those scripts need a host-registered font on the browser build.",
-    modeled: "partial", rendered: "full", editable: "none", roundtrips: "full",
+    note: "24 Latin faces ship bundled; hosts can register more through the font registry (the desktop story is OS fonts, the browser story is network-fetched faces). Whole-face substitution is name-based and deliberately metric-compatible with LibreOffice's choices (Arial\u2192Liberation Sans, Calibri\u2192Carlito, Cambria\u2192Caladea), and per-glyph coverage fallback runs through the face index. Color glyphs render: sbix/CBDT bitmap strikes and COLR v0/v1 paint graphs are tried before monochrome outlines. Fonts embedded in the document (`w:embedRegular` and its bold/italic slots, the obfuscated `.odttf` parts) are de-obfuscated and registered under the document\u2019s own family name, so they outrank the metric substitute; a corrupt or missing embedded face falls back to substitution and is reported. One real gap: the modeled PANOSE/altName/signature hints are not consulted \u2014 substitution is name-string only. No CJK, Arabic, or Indic face is bundled, so those scripts need a host-registered font on the browser build.",
+    modeled: "full", rendered: "full", editable: "none", roundtrips: "full",
   },
   {
     family: "Hyphenation",
@@ -121,8 +121,8 @@ const FIDELITY = [
   },
   {
     family: "Line numbering (w:lnNumType)",
-    note: "Typed on the section and round-trips, but no consumer exists in layout \u2014 line numbers are never generated or painted. Common in legal pleadings and contracts.",
-    modeled: "full", rendered: "none", editable: "none", roundtrips: "full",
+    note: "Painted in the margin by a post-pagination pass (`line_number.rs`), honouring start, count-by, distance, restart per page / section / continuous, and `w:suppressLineNumbers` from a paragraph or its style. Numbers are page furniture, not text: a click in the margin lands in the body and copying a paragraph never copies its number. One deliberate gap: lines inside table cells are not numbered yet (Word numbers them), because that needs a row-wise ordering rule rather than a guess. Not authorable from the editor. Common in legal pleadings and contract redlines.",
+    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
   },
   {
     family: "Watermarks & WordArt",

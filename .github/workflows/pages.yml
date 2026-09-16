@@ -58,6 +58,14 @@ jobs:
       - name: Build the site and WASM editor
         run: ./webapp/build.sh
 
+      # Pages caches .html for 10 minutes but .js/.css/.wasm for 4 hours, and the
+      # site loaded them by fixed URL — so after a deploy a browser ran the new
+      # page against the old script for hours (the Table menu opened empty in
+      # production after #546). Version every script, stylesheet, module import
+      # and the wasm binary with this commit, so they can only change together.
+      - name: Version the site's assets with this commit
+        run: ./webapp/stamp-assets.py webapp "${GITHUB_SHA::12}"
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

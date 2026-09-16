@@ -222,6 +222,19 @@ ADRs current.
    done, check a user can reach it.
 5. Dated audits (`44`/`46`/`55`/`60`) are ~1000 commits stale and **understate** the engine.
    `webapp/src/fidelity.js` is the current artifact and is under an honesty guard.
+6. **The landing page lied a third time, in both directions** (`105` EV-007): a "three of
+   five" parity figure contradicting the fidelity page's sourced 4/5, a corpus file that does
+   not exist, a "sub-10 ms" repaint claim with no benchmark, and three shipped features
+   listed as "Not yet". Every number on `index.page.html` is now tagged `data-claim` and
+   re-derived by `tests/site_claims.test.mjs`; every "Not yet" item must cite a family graded
+   `none` or an open `105` row. **Understating is also false** — check a gap is still open
+   before you publish it. And a guard can pin a lie: `fidelity_data.test.mjs` was holding two
+   grades at values the code had already outgrown, so re-verify a pinned cell before
+   trusting it.
+7. **Design prototypes are not evidence.** A prototype's numbers, API snippets and
+   "live application" labels are placeholders. Its `doc.transaction()`/`doc.writeDocx()`
+   APIs did not exist, and it booted a live editor iframe on page load. Adopt the visual
+   system; re-derive every claim.
 
 ## 10. Enterprise-grade means fixing the class, not the instance
 
@@ -263,6 +276,21 @@ The owner asked for production/enterprise quality in code **and** UI/UX. Concret
   different width changes where the rest of the paragraph *wraps*, so excluding the
   offending line is not enough.
 - `.docm` is rejected at open; that policy is undecided, not an oversight.
+- **Never symlink `node_modules` into a worktree.** `.gitignore`'s `node_modules/` matches a
+  *directory*; git treats a symlink as a file, so `git add -A` commits it as a `120000` blob
+  pointing at one machine's absolute path. CI stays green, and the Pages deploy dies in
+  `tar: ./node_modules: File removed before we read it`. Worse, checking out a branch that
+  carries the blob replaces the real `node_modules` with a self-referential link. Run
+  `npm ci` in the worktree instead. `repository-policy` now refuses any tracked symlink.
+- **`webapp/pkg` is not committed.** The browser suite silently runs against whatever engine
+  was last built; after a rebase or a Rust change, `./webapp/build.sh` before trusting an
+  e2e result. A spec failed here for no reason but a stale wasm.
+- **Run Playwright from `webapp/`.** From the repo root it picks up no config and fails to
+  collect with "did not expect test() to be called here".
+- **Specs must not assert Mac glyphs.** `formatShortcut` renders `⌘P` as `Ctrl+P` on the
+  Linux runner; derive expectations with the `shortcutHint` fixture (`105` UX-009).
+- **Relative worktree paths land inside the repo.** `git -C <repo> worktree add name` creates
+  `<repo>/name`. Use absolute scratchpad paths.
 
 ## 12. Engineering priority order
 

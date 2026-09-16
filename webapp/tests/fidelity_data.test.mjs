@@ -199,10 +199,15 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // w:hyphenationZone exists; only w:suppressAutoHyphens is cascaded
   // (casual-doc-layout/src/cascade.rs:560-561).
   assert.equal(by["Hyphenation"].rendered, "none");
-  // w:lnNumType is typed on the section, but every layout reference is
-  // `line_numbering: Default::default()` in test scaffolding — no generator.
+  // This cell used to be pinned to "none" with the justification "no
+  // generator" — a guard holding a public page to a claim that had gone FALSE.
+  // `place_line_numbers` runs after pagination (document_layout.rs, the call
+  // before compose) and `compose_page` paints the stamps, with 16 integration
+  // tests in casual-doc-layout/tests/line_numbering.rs. Partial, not full,
+  // because lines inside table cells are deliberately not numbered yet; the
+  // grade must move again only when that gap closes.
   assert.equal(by["Line numbering (w:lnNumType)"].modeled, "full");
-  assert.equal(by["Line numbering (w:lnNumType)"].rendered, "none");
+  assert.equal(by["Line numbering (w:lnNumType)"].rendered, "partial");
   // `grep -ri watermark crates/` finds no watermark concept, and neither
   // v:textpath nor a:prstTxWarp is typed, so warped watermark text cannot paint.
   assert.equal(by["Watermarks & WordArt"].modeled, "none");
@@ -210,10 +215,13 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // One writing-mode axis only: every layout reference to text_direction is
   // `None` in test scaffolding.
   assert.equal(by["Vertical & rotated text"].rendered, "none");
-  // Embedded .odttf faces are modeled and imported but never de-obfuscated or
-  // registered — there is no deobfuscation code in layout, render, or wasm — so
-  // the model side of font support is partial however well fallback works.
-  assert.equal(by["Fonts, fallback & color glyphs"].modeled, "partial");
+  // Previously pinned to "partial" on the grounds that embedded .odttf faces
+  // were never de-obfuscated. That shipped: `deobfuscate_odttf` and
+  // `register_embedded_fonts` (casual-doc-layout/src/font_registry.rs), wired
+  // at wasm open, with 7 tests in tests/embedded_fonts.rs. The remaining gap —
+  // PANOSE/altName hints not consulted — is a consumption gap, and the hints
+  // themselves are typed, so the MODEL side is full.
+  assert.equal(by["Fonts, fallback & color glyphs"].modeled, "full");
   // Colour glyphs DO render (sbix/CBDT strikes then COLR v0/v1 in
   // casual-doc-render/src/lib.rs:593-605). This asserts the page does not
   // regress to denying a shipped feature, as it did until this audit.

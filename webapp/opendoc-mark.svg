@@ -1,13 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
-  <title id="title">OpenDoc mark</title>
-  <desc id="desc">A blue document app tile with a paper sheet.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 108 1056 1056" role="img" aria-labelledby="odm-title">
+  <title id="odm-title">OpenDoc</title>
+  <!-- Three stacked pages, back to front. The geometry is fitted to the brand
+       source art by overlap (0.92 mean IoU against the 1254px original) rather
+       than placed by eye, and every page shares one shear, so the stack reads as
+       a single object in perspective. -->
   <defs>
-    <linearGradient id="odc-blue" x1="10" y1="5" x2="54" y2="59" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#3b5fd0"/>
-      <stop offset="1" stop-color="#22409e"/>
-    </linearGradient>
+    <rect id="odm-back" width="431" height="570" rx="54" transform="matrix(1 0.47 0 1 586 128)"/>
+    <rect id="odm-mid" width="430" height="570" rx="54" transform="matrix(1 0.47 0 1 476 246)"/>
+    <rect id="odm-front" width="512" height="590" rx="54" transform="matrix(1 0.47 0 1 238 312)"/>
+    <!-- The gaps are CUT OUT, not painted: a white stroke would only read on a
+         white page, while a mask leaves real transparency, so the same file works
+         on the dark theme and on the site's dark architecture band. -->
+    <mask id="odm-cut-back" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+      <rect width="1254" height="1254" fill="#fff"/>
+      <use href="#odm-mid" fill="#000" stroke="#000" stroke-width="60"/>
+      <use href="#odm-front" fill="#000" stroke="#000" stroke-width="60"/>
+    </mask>
+    <mask id="odm-cut-mid" maskUnits="userSpaceOnUse" x="0" y="0" width="1254" height="1254">
+      <rect width="1254" height="1254" fill="#fff"/>
+      <use href="#odm-front" fill="#000" stroke="#000" stroke-width="60"/>
+    </mask>
   </defs>
-  <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#odc-blue)"/>
-  <rect x="20.5" y="16.5" width="23" height="31" rx="4" fill="#fbfaf8"/>
-  <path d="M26 26h12M26 32h12M26 38h8" fill="none" stroke="#c3cff5" stroke-width="2.4" stroke-linecap="round"/>
+  <use href="#odm-back" fill="#31436f" mask="url(#odm-cut-back)"/>
+  <use href="#odm-mid" fill="#5199fc" mask="url(#odm-cut-mid)"/>
+  <use href="#odm-front" fill="#266bfc"/>
 </svg>
