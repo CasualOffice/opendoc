@@ -76,6 +76,20 @@ const MODALS = [
     },
   },
   {
+    id: "aboutDialog",
+    name: "About",
+    // Opened from the Help MENU rather than the palette, because the menu is
+    // the surface the product previously lacked entirely — there was no About
+    // anywhere, so a bug report could not name its build.
+    opener: '.app-menu-button[data-menu="help"]',
+    focus: "#aboutClose",
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator('.app-menu-button[data-menu="help"]').click();
+      await page.locator('#appMenuPopover .app-menu-item[data-command="help.about"]').click();
+    },
+  },
+  {
     id: "shortcutsDialog",
     name: "Keyboard shortcuts",
     opener: null,
