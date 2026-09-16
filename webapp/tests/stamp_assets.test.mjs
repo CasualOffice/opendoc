@@ -40,7 +40,13 @@ test("every local script, stylesheet, module preload and wasm preload is version
   const { dir } = stampedCopy();
   for (const page of readdirSync(dir).filter((n) => n.endsWith(".html"))) {
     const html = readFileSync(join(dir, page), "utf8");
-    const refs = [...html.matchAll(/(?:src|href)="(\.\/(?:src|pkg)\/[^"]+\.(?:m?js|css|wasm)[^"]*)"/g)];
+    const refs = [
+      ...html.matchAll(/(?:src|href)="(\.\/(?:src|pkg)\/[^"]+\.(?:m?js|css|wasm)[^"]*)"/g),
+      // Static files at the site root too: the favicon, touch icon and logo. The
+      // first version of the stamper skipped these, and the new logo kept showing
+      // as the old one for hours after it deployed.
+      ...html.matchAll(/(?:src|href)="(\.\/[^"]+\.(?:svg|png|jpe?g|gif|webp|ico|woff2?)[^"]*)"/g),
+    ];
     const stale = refs.map((m) => m[1]).filter((url) => !url.endsWith(`?v=${BUILD}`));
     assert.deepEqual(stale, [], `${page} still loads unversioned assets`);
     const scripted = [...html.matchAll(/["']\.\/pkg\/casual_doc_wasm_bg\.wasm[^"']*["']/g)].map((m) => m[0]);
@@ -48,6 +54,24 @@ test("every local script, stylesheet, module preload and wasm preload is version
       assert.ok(literal.includes(`?v=${BUILD}`), `${page}: wasm preload ${literal} is unversioned`);
     }
   }
+});
+
+test("every url() inside a stylesheet is versioned", () => {
+  // A stylesheet's url() resolves against the stylesheet and drops its query,
+  // like a module import — so versioning marketing.css did not version the logo
+  // it draws with `url("../opendoc-mark.svg")`.
+  const { dir } = stampedCopy();
+  const sheets = readdirSync(join(dir, "src")).filter((n) => n.endsWith(".css"));
+  let checked = 0;
+  for (const sheet of sheets) {
+    const css = readFileSync(join(dir, "src", sheet), "utf8");
+    for (const [, url] of css.matchAll(/url\(["']?((?!data:|https?:)[^"')]+)["']?\)/g)) {
+      checked += 1;
+      assert.ok(url.endsWith(`?v=${BUILD}`), `${sheet}: url(${url}) is unversioned`);
+      assert.ok(!url.includes(`?v=${BUILD}?v=`), `${sheet}: url(${url}) was stamped twice`);
+    }
+  }
+  assert.ok(checked > 0, "the stylesheets reference at least the logo and the fonts");
 });
 
 test("the import map covers every module one module imports from another", () => {
