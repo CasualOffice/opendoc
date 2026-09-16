@@ -306,6 +306,23 @@ jobs:
               )
             )
           ' fixtures/manifest.json
+      - name: Reject tracked symlinks
+        run: |
+          # A symlink named `node_modules` was committed as a 120000 blob
+          # pointing at one developer machine's absolute path. `.gitignore` had
+          # `node_modules/`, which matches a DIRECTORY and not a symlink, so
+          # `git add` took it. On a runner that link dangles and the Pages job
+          # dies in `tar: ./node_modules: File removed before we read it` —
+          # a green CI and a broken deploy.
+          #
+          # No tracked file in this repository is a symlink, and none needs to
+          # be, so the rule is simply: none.
+          symlinks="$(git ls-files -s | awk '$1 == "120000" { print $4 }')"
+          if [ -n "${symlinks}" ]; then
+            echo "::error::tracked symlink(s) found; they break the Pages tarball:"
+            printf '  %s\n' ${symlinks}
+            exit 1
+          fi
       - name: Reject unmanifested or missing fixtures
         run: |
           jq -r '.fixtures[].path' fixtures/manifest.json | sort > "${RUNNER_TEMP}/manifest-paths"

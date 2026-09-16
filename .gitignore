@@ -5,7 +5,12 @@ fuzz/corpus/
 fuzz/coverage/
 fuzz/target/
 dist/
+# Both spellings on purpose. `node_modules/` matches only a DIRECTORY, so a
+# SYMLINK named node_modules slipped past it and was committed as a 120000 blob
+# pointing at one machine's absolute path. On CI that link dangles and the Pages
+# job dies in `tar: ./node_modules: File removed before we read it`.
 node_modules/
+node_modules
 .idea/
 .vscode/
 *.log
