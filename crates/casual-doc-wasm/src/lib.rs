@@ -458,6 +458,19 @@ pub fn open(bytes: &[u8]) -> Result<WasmDocument, JsValue> {
     open_document(bytes).map_err(to_js)
 }
 
+/// The engine's version, taken from the crate manifest at compile time.
+///
+/// The About dialog needs a version to show, and a string typed into the HTML
+/// would be a number on a user-facing surface that no committed artifact backs
+/// — the failure mode `105` EV-002 exists for, where a page claimed 19
+/// construct families against 26 in the data. `CARGO_PKG_VERSION` cannot drift
+/// from the manifest, because it IS the manifest.
+#[wasm_bindgen(js_name = engineVersion)]
+#[must_use]
+pub fn engine_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Imports bytes through one explicitly selected stable format identifier.
 #[wasm_bindgen(js_name = openAs)]
 pub fn open_as(bytes: &[u8], format_id: &str) -> Result<WasmDocument, JsValue> {

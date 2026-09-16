@@ -46,6 +46,10 @@
           <button type="button" class="app-menu-button" data-menu="view" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">View</button>
           <button type="button" class="app-menu-button" data-menu="insert" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Insert</button>
           <button type="button" class="app-menu-button" data-menu="format" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Format</button>
+          <!-- Table sits between Format and Review, the slot Word and LibreOffice
+               both use. Its rows are the same commands the right-click menu and
+               the palette run (docs/105 UX-012). -->
+          <button type="button" class="app-menu-button" data-menu="table" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Table</button>
           <button type="button" class="app-menu-button" data-menu="review" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Review</button>
           <button type="button" class="app-menu-button" data-menu="tools" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Tools</button>
           <button type="button" class="app-menu-button" data-menu="help" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Help</button>
@@ -633,6 +637,42 @@
           </button>
         </header>
         <div id="shortcutsBody" class="dialog-body shortcuts-body"></div>
+      </section>
+    </div>
+
+    <!-- About. The product had no About anywhere — no version, no licence, no
+         way to tell which build you are looking at when reporting a bug. The
+         version is read from the engine (`engineVersion()`, compiled from the
+         crate manifest) rather than typed here, so it cannot drift. -->
+    <div id="aboutDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="aboutTitle" aria-describedby="aboutDescription">
+      <section class="dialog-card about-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">info</span>
+            <div>
+              <h2 id="aboutTitle">About OpenDoc</h2>
+              <p id="aboutDescription">An Apache-2.0 document editor that runs entirely in this browser.</p>
+            </div>
+          </div>
+          <button id="aboutClose" type="button" class="dialog-close" title="Close" aria-label="Close about">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body about-body">
+          <dl class="about-facts">
+            <dt>Engine version</dt>
+            <dd id="aboutVersion">—</dd>
+            <dt>Licence</dt>
+            <dd>Apache-2.0</dd>
+            <dt>Rendering</dt>
+            <dd>Local — the document never leaves this device</dd>
+          </dl>
+          <p class="about-links">
+            <a href="https://github.com/CasualOffice/opendoc" rel="noreferrer noopener" target="_blank">Source code</a>
+            <a href="https://github.com/CasualOffice/opendoc/blob/main/LICENSE" rel="noreferrer noopener" target="_blank">Licence</a>
+            <a href="https://github.com/CasualOffice/opendoc/issues" rel="noreferrer noopener" target="_blank">Report an issue</a>
+          </p>
+        </div>
       </section>
     </div>
 

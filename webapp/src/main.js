@@ -5,7 +5,7 @@
 // browser-first surface the viewer→editor is built and fine-tuned on (docs 56/57);
 // no server, deployable as static files (e.g. GitHub Pages).
 
-import init, { open } from "../pkg/casual_doc_wasm.js";
+import init, { open, engineVersion } from "../pkg/casual_doc_wasm.js";
 import {
   NAMED_WEB_FONT_FACES,
   SCRIPT_FALLBACK_FONTS,
@@ -12463,6 +12463,7 @@ function editorCommands(context = { surface: "palette" }) {
     })),
     { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
     { id: "help.shortcuts", label: "Keyboard shortcuts", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => toggleShortcutsReference(true) },
+    { id: "help.about", label: "About OpenDoc", group: "Help", kw: "about version licence license apache build source repository issue report credits", noDoc: true, run: () => toggleAbout(true) },
     {
       id: "review.comment",
       label: "Add comment",
@@ -12655,7 +12656,14 @@ function editorCommands(context = { surface: "palette" }) {
           ? flatten(entry.submenu, trail ? `${trail} ${entry.label}` : entry.label)
           : [{
             id: entry.id,
-            label: trail ? `Table: ${trail} ${entry.label}` : `Table: ${entry.label}`,
+            // In the Table MENU the noun is already supplied by the menu the row
+            // sits in, so the palette's "Table:" prefix would read as a stutter.
+            label:
+              context.surface === "menu" && TABLE_MENU_LABELS.has(entry.id)
+                ? TABLE_MENU_LABELS.get(entry.id)
+                : trail
+                  ? `Table: ${trail} ${entry.label}`
+                  : `Table: ${entry.label}`,
             group: "Table",
             kw: `table ${trail} ${entry.label}`.toLowerCase(),
             enabled: entry.enabled,
@@ -12664,6 +12672,26 @@ function editorCommands(context = { surface: "palette" }) {
           }],
       );
     cmds.push(...flatten(tableToolCommands(contextAt(selection.anchor)), ""));
+  } else if (context.surface === "menu") {
+    // The Table MENU must exist even when the caret is not in a table. Building
+    // it only from a live table context meant browsing to Table with the caret
+    // in a paragraph opened an EMPTY popover — which says the editor cannot
+    // edit tables, the same thing having no Table menu at all said (UX-012).
+    // Word and Docs both show the rows greyed with the reason. The labels come
+    // from the same map the live rows use, and `menu_taxonomy` fails if that
+    // map and the real command set ever disagree, so these placeholders cannot
+    // drift away from the commands they stand in for.
+    for (const [id, label] of TABLE_MENU_LABELS) {
+      cmds.push({
+        id,
+        label,
+        group: "Table",
+        kw: `table ${label}`.toLowerCase(),
+        enabled: false,
+        disabledReason: doc ? "Place the caret in a table" : "Open a document first",
+        run: () => {},
+      });
+    }
   }
   // Object commands, on the same terms. Everything a selected image, shape or
   // text box can do lived on the floating bar and (mostly) the right-click menu
@@ -12729,35 +12757,42 @@ const appMenuPopover = document.getElementById("appMenuPopover");
 let activeAppMenu = null;
 let activeAppMenuTrigger = null;
 
+// The menu bar's taxonomy. One command has ONE menu home: eight ids used to sit
+// in two menus each (the three review modes, `review.toggle`, `view.showChanges`,
+// `review.comment`, `layout.paragraph`, `file.properties`), which is what made
+// browsing the bar feel repetitive — the same row answered twice and the menus
+// stopped telling you where a thing lives. Reachability from more than one
+// SURFACE is a requirement here (docs/105 command-surface parity) and is
+// unaffected: every command below is still in the palette, and most are on the
+// ribbon. What is fixed is duplication WITHIN the bar.
+//
+// Where the split was a judgement call it follows Google Docs, which is the
+// stated bar: editing mode is View ▸ Mode, a comment is Insert ▸ Comment, page
+// setup is File ▸ Page setup. Tracked-change OPERATIONS stay in Review.
 const APP_MENU_SECTIONS = {
   file: [
     ["file.new"],
     ["file.open", "file.save"],
     ["file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
-    ["file.print"],
+    // Page setup was under Tools, which is where nobody looks for paper size —
+    // Docs files it under File and Word under Layout. It is on the Layout
+    // ribbon too; this gives it a menu home that matches the competition.
+    ["layout.pageSetup", "file.print"],
     ["file.properties"],
   ],
   edit: [
     ["edit.undo", "edit.redo"],
     ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
     ["edit.selectAll", "edit.find"],
-    ["format.painter"],
   ],
   view: [
-    ["view.outline", "review.toggle", "view.showChanges"],
+    ["view.outline", "view.showChanges"],
     ["view.zoomIn", "view.zoomOut"],
     // The ribbon-density switch belongs in View, next to the other things that
     // change what the window shows rather than what the document says.
     ["view.compactRibbon"],
+    // Editing mode is View ▸ Mode in Docs. It was in both View and Review.
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
-  ],
-  review: [
-    ["review.comment", "review.toggle"],
-    ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
-    ["view.showChanges"],
-    ["review.previous", "review.next"],
-    ["review.acceptNext", "review.rejectNext"],
-    ["review.acceptAll", "review.rejectAll"],
   ],
   insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
@@ -12772,11 +12807,63 @@ const APP_MENU_SECTIONS = {
     ["paragraph.list.bullet", "paragraph.list.numbered", "paragraph.list.checklist"],
     ["paragraph.list.restart", "paragraph.list.continue"],
     ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
+    // Copying formatting is a FORMAT action. Filing it under Edit put it next to
+    // cut/paste, where it reads as clipboard behaviour.
+    ["format.painter"],
     ["style.updateFromSelection", "style.createFromSelection"],
   ],
-  tools: [["layout.pageSetup", "layout.paragraph"], ["tools.smartQuotes"], ["file.properties", "view.settings"]],
-  help: [["help.commands", "help.shortcuts"]],
+  // Every structural table command already ran through `tableToolCommands` and
+  // was reachable from the right-click menu and the palette — and from no menu
+  // at all (docs/105 UX-012), so a user browsing the bar was told the editor
+  // could not edit tables. The rows below are the SAME command objects, so
+  // gating, disabled reasons and the transactions they run cannot drift.
+  table: [
+    ["table.insert.rowAbove", "table.insert.rowBelow", "table.insert.columnLeft", "table.insert.columnRight"],
+    ["table.delete.row", "table.delete.column", "table.delete.table"],
+    ["table.select.row", "table.select.column", "table.select.table"],
+    ["table.merge", "table.split"],
+    ["table.distribute.rows", "table.distribute.columns"],
+    ["table.sort.ascending", "table.sort.descending"],
+    ["table.cellFormat", "table.properties"],
+  ],
+  review: [
+    ["review.toggle"],
+    ["review.previous", "review.next"],
+    ["review.acceptNext", "review.rejectNext"],
+    ["review.acceptAll", "review.rejectAll"],
+  ],
+  tools: [["tools.smartQuotes"], ["view.settings"]],
+  help: [["help.commands", "help.shortcuts"], ["help.about"]],
 };
+
+// Menu labels for the table rows. `tableToolCommands` supplies behaviour; only
+// the LABEL differs by surface. The palette needs its "Table:" prefix because it
+// is one flat global list, while a row inside the Table menu already has that
+// noun from the menu it sits in. This map is explicit rather than derived from
+// the submenu trail because the trails do not compose into readable text
+// ("Delete Delete row", "Autofit & sort Distribute rows"). `menu-taxonomy`
+// fails if this map and the command set disagree in either direction.
+const TABLE_MENU_LABELS = new Map([
+  ["table.insert.rowAbove", "Insert row above"],
+  ["table.insert.rowBelow", "Insert row below"],
+  ["table.insert.columnLeft", "Insert column left"],
+  ["table.insert.columnRight", "Insert column right"],
+  ["table.delete.row", "Delete row"],
+  ["table.delete.column", "Delete column"],
+  ["table.delete.table", "Delete table"],
+  ["table.select.row", "Select row"],
+  ["table.select.column", "Select column"],
+  ["table.select.table", "Select table"],
+  ["table.merge", "Merge cells"],
+  ["table.split", "Split cell…"],
+  ["table.distribute.rows", "Distribute rows"],
+  ["table.distribute.columns", "Distribute columns"],
+  ["table.sort.ascending", "Sort ascending"],
+  ["table.sort.descending", "Sort descending"],
+  ["table.cellFormat", "Cell formatting…"],
+  ["table.properties", "Table properties…"],
+]);
+
 
 function appMenuFocusableItems() {
   return [...appMenuPopover.querySelectorAll(".app-menu-item:not(:disabled)")];
@@ -12998,6 +13085,43 @@ function toggleShortcutsReference(open) {
   }
 }
 shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
+
+// ---- About -----------------------------------------------------------------
+// There was no About anywhere in the product: no version, no licence, no way
+// for someone reporting a bug to say which build they were on. The version
+// comes from `engineVersion()`, which the engine compiles from its own crate
+// manifest, so it cannot drift from what actually shipped.
+const aboutDialog = document.getElementById("aboutDialog");
+const aboutClose = document.getElementById("aboutClose");
+const aboutModal = aboutDialog
+  ? registerModal(aboutDialog, {
+      initialFocus: () => aboutClose,
+      fallbackFocus: () => pagesEl,
+    })
+  : null;
+
+function toggleAbout(open) {
+  if (!aboutModal) return;
+  if (open) {
+    const slot = document.getElementById("aboutVersion");
+    if (slot) {
+      // The engine may not have booted yet — About is a `noDoc` command, so it
+      // is reachable from the very first frame. Say so rather than printing a
+      // placeholder that reads like a version.
+      let version = "";
+      try {
+        version = engineVersion();
+      } catch {
+        version = "";
+      }
+      slot.textContent = version || "not loaded yet";
+    }
+    aboutModal.open();
+  } else {
+    aboutModal.close();
+  }
+}
+aboutClose?.addEventListener("click", () => toggleAbout(false));
 
 // ---- Bookmark manager ------------------------------------------------------
 // A Word/Docs-style bookmark surface over the engine's create/rename/delete ops

@@ -1054,6 +1054,46 @@ body.modal-open {
   width: min(var(--dialog-width-wide), 100%);
 }
 
+/* About is a short fact list, so it is sized by its CONTENT rather than by a
+   dialog-width constant — the habit that makes a four-field dialog as wide as
+   a twenty-field one and leaves the middle empty. `fit-content` with a ceiling
+   keeps it honest at every viewport, including 390px. */
+.about-dialog {
+  width: min(fit-content, 100%);
+  max-width: var(--dialog-width-standard);
+}
+
+/* Two columns: term and value on one line, the way a properties sheet reads.
+   `auto auto` so neither column is wider than the text it holds. */
+.about-facts {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  align-items: baseline;
+}
+
+.about-facts dt {
+  color: var(--ink-2, var(--ink));
+  font-size: var(--fs-caption, 12px);
+}
+
+.about-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: var(--space-5) 0 0;
+}
+
+.about-links a {
+  color: var(--accent-text);
+}
+
 .shortcuts-body {
   columns: 2;
   column-gap: var(--space-6);
