@@ -2057,7 +2057,11 @@ impl WasmDocument {
                     .edit_ids
                     .next_id()
                     .map_err(|_| to_js("id space exhausted".into()))?;
-                ops.push(Operation::SplitParagraph { at: cursor, new_id });
+                ops.push(Operation::SplitParagraph {
+                    at: cursor,
+                    new_id,
+                    properties: None,
+                });
                 cursor = Pos::new(new_id, 0);
                 continue;
             }
@@ -2267,7 +2271,11 @@ impl WasmDocument {
                 .edit_ids
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?;
-            ops.push(Operation::SplitParagraph { at: start, new_id });
+            ops.push(Operation::SplitParagraph {
+                at: start,
+                new_id,
+                properties: None,
+            });
             block_index as u32 + 1
         };
         ops.push(Operation::InsertBlocks {
@@ -2356,7 +2364,11 @@ impl WasmDocument {
                 .edit_ids
                 .next_id()
                 .map_err(|_| to_js("id space exhausted".into()))?;
-            ops.push(Operation::SplitParagraph { at: start, new_id });
+            ops.push(Operation::SplitParagraph {
+                at: start,
+                new_id,
+                properties: None,
+            });
             block_index as u32 + 1
         };
         ops.push(Operation::InsertBlocks {
@@ -3076,6 +3088,7 @@ impl WasmDocument {
         self.apply(Operation::SplitParagraph {
             at: Pos::new(nid, offset),
             new_id,
+            properties: None,
         })
         .map_err(to_js)
     }
@@ -3130,6 +3143,7 @@ impl WasmDocument {
                         vec![Operation::JoinParagraphs {
                             first: paras[i - 1].0,
                             second: nid,
+                            properties: None,
                         }],
                         HistoryKind::Delete,
                     )
@@ -3163,6 +3177,7 @@ impl WasmDocument {
                         vec![Operation::JoinParagraphs {
                             first: nid,
                             second: paras[i + 1].0,
+                            properties: None,
                         }],
                         HistoryKind::Delete,
                     )
@@ -9002,7 +9017,11 @@ impl WasmDocument {
                     .edit_ids
                     .next_id()
                     .map_err(|_| "id space exhausted".to_owned())?;
-                ops.push(Operation::SplitParagraph { at: cursor, new_id });
+                ops.push(Operation::SplitParagraph {
+                    at: cursor,
+                    new_id,
+                    properties: None,
+                });
                 cursor = Pos::new(new_id, 0);
             }
             if line.is_empty() {
@@ -9607,6 +9626,7 @@ impl WasmDocument {
                 ops.push(Operation::JoinParagraphs {
                     first: anchor,
                     second: *id,
+                    properties: None,
                 });
             } else {
                 anchor = *id;
@@ -22893,6 +22913,48 @@ mod tests {
             d.list_style_at(&node),
             "",
             "the surviving (first) paragraph keeps its own non-list properties"
+        );
+    }
+
+    /// The user-facing half of docs/108 Decision 1, through the real history:
+    /// Backspace a bulleted paragraph into a plain one, then undo. The list item
+    /// must come back as a list item. The inverse split used to copy the first
+    /// paragraph's properties onto both halves, so this returned body text with no
+    /// error and no way to get the bullet back short of redoing the edit.
+    #[test]
+    fn undoing_backspace_restores_the_joined_paragraphs_own_properties() {
+        let mut d = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut nodes = Vec::new();
+        collect_block_text(d.document.body(), &mut nodes);
+        let node = nodes
+            .iter()
+            .find(|(_, t)| !t.is_empty())
+            .map(|(id, _)| id.to_string())
+            .expect("a non-empty paragraph");
+
+        let split_at = d.copy_text(&node, 0, &node, 1).len() as u32;
+        let second = d.split_paragraph(&node, split_at).expect("split").node();
+        d.toggle_list(&second, 0, &second, 1, "bullet")
+            .expect("make the second paragraph a bullet item");
+        assert_eq!(d.list_style_at(&second), "bullet");
+
+        d.delete_backward(&second, 0).expect("join via backspace");
+        assert_eq!(
+            d.list_style_at(&node),
+            "",
+            "Backspace keeps the first paragraph's properties"
+        );
+
+        d.undo().expect("undo the join");
+        assert_eq!(
+            d.list_style_at(&second),
+            "bullet",
+            "undo must restore the joined paragraph as the list item it was",
+        );
+        assert_eq!(
+            d.list_style_at(&node),
+            "",
+            "and leave the first paragraph as it was"
         );
     }
 
