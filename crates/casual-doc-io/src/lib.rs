@@ -22,7 +22,10 @@ pub use artifact::{
     DocumentResources, ExportArtifact, ExportMode, ExportRequest, FormatProfile, ImportArtifact,
     ImportRequest, SourceEnvelope,
 };
-pub use docx::{DocxAdapter, builtin_registry, builtin_registry_with_package_limits};
+pub use docx::{
+    DocxAdapter, builtin_registry, builtin_registry_with_limits,
+    builtin_registry_with_package_limits,
+};
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
 pub use normalized_json::NormalizedJsonAdapter;

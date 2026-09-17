@@ -15,8 +15,8 @@ use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
     FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, ModelOutcome,
-    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, ProbeRequest, ProbeResult,
-    RetentionOutcome, SourceEnvelope, formats,
+    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, ProbeRequest,
+    ProbeResult, RetentionOutcome, SourceEnvelope, formats,
 };
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -277,6 +277,21 @@ pub fn builtin_registry() -> FormatRegistry {
 /// Creates the built-in registry with one host-selected ZIP admission policy
 /// shared by the DOCX and ODT package adapters.
 pub fn builtin_registry_with_package_limits(package_limits: PackageLimits) -> FormatRegistry {
+    builtin_registry_with_limits(package_limits, PlainTextLimits::default())
+}
+
+/// Creates the built-in registry with BOTH admission policies a host sets: the
+/// ZIP policy the DOCX and ODT package adapters share, and the plain-text
+/// policy.
+///
+/// The text policy was previously always [`PlainTextLimits::default`], which is
+/// sized for a 64-bit native host. The browser build therefore admitted a text
+/// file with up to two million paragraphs, and a 2 MB one was enough to exhaust
+/// wasm32 linear memory and abort the module (`docs/104` HF-158).
+pub fn builtin_registry_with_limits(
+    package_limits: PackageLimits,
+    text_limits: PlainTextLimits,
+) -> FormatRegistry {
     let mut registry = FormatRegistry::new();
     let adapter = Arc::new(DocxAdapter::new(package_limits, ImportConfig::default()));
     registry
@@ -292,7 +307,7 @@ pub fn builtin_registry_with_package_limits(package_limits: PackageLimits) -> Fo
     registry
         .register_exporter(adapter)
         .expect("built-in normalized JSON exporter registration is unique");
-    let adapter = Arc::new(PlainTextAdapter::default());
+    let adapter = Arc::new(PlainTextAdapter::new(text_limits));
     registry
         .register_importer(adapter.clone())
         .expect("built-in text importer registration is unique");

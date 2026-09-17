@@ -100,6 +100,10 @@ npm run test:e2e                                               # playwright
 
 **The two that bite:**
 
+- **Never pipe a gate into `tail`/`grep` and then `&& echo OK`.** `a | tail -2 && echo OK`
+  tests TAIL's exit code, not the gate's, so a failing gate prints OK. That is how a
+  formatting failure reached CI green-looking locally (#552). Run each gate as its own
+  command and branch on its real status: `if cargo +1.96.0 fmt --all --check; then …`.
 - **`cargo +1.96.0 fmt`, not plain `cargo fmt`.** Plain fmt passes locally and fails CI —
   the pinned toolchain formats differently.
 - **`RUSTDOCFLAGS="-D warnings" cargo doc`.** A public doc comment must **not** link to a
