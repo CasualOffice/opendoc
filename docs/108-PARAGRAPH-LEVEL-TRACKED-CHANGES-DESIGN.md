@@ -1,6 +1,6 @@
 # 108 — Paragraph-level tracked changes
 
-**Status:** Phase 1 implemented (foundation and read side). Phase 2 (authoring) not started.
+**Status:** Phases 1 and 2 implemented. Table and list STRUCTURE changes remain refused while suggesting.
 **Closes (across both phases):** `104` HF-130, HF-131. Also three defects found while
 mapping, recorded as new `104` rows: lossy undo of a paragraph join, split duplicating an
 imported mark revision, and paragraph-only tracked changes reading as a clean document.
@@ -193,7 +193,28 @@ Beyond the design above, implementation found and fixed:
   restores them.
 - Every new guard driven red by reverting the code it covers.
 
-## Open questions (need a Word 365 probe before phase 2 locks)
+## Phase 2 as built
+
+The 17 refusals are replaced by tracked suggestions. Two decisions changed during
+implementation:
+
+- **Tracking follows the MODE, not each command.** The design scoped
+  `setParagraphTracking` to one command at a time. In practice ~35 call sites reach
+  the engine's paragraph-properties choke point, and wrapping each one is a defect
+  waiting to happen. Tracking is now switched on entering Suggesting and off when
+  leaving, in `setReviewMode`. It cannot leak: review decisions build their own
+  operations and never pass through that choke point, which a guard pins.
+- **The refusal gate learned a `paragraphLevel` flag** rather than being deleted.
+  Table and list structure, page setup, and object insertion are still genuinely
+  untrackable, and must keep failing closed.
+
+A paragraph mark already carrying another reviewer's insertion is refused with a
+reason rather than overwritten — the model holds one revision per mark, so
+replacing theirs would erase their suggestion silently. The author's own pending
+break is removed outright instead, the paragraph-mark counterpart of docs/86
+decision 2.
+
+## Open questions (still unverified against Word 365)
 
 1. A single-key join of two differently formatted paragraphs: does Word write a `pPrChange`
    on the second paragraph? (ONLYOFFICE does; unverified in Word.)

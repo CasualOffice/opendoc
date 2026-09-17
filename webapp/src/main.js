@@ -587,7 +587,7 @@ function makeStyleCard(name, index, { fromPanel = false } = {}) {
   card.appendChild(label);
   card.addEventListener("click", () => {
     if (card.disabled) return;
-    runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
+    runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
     if (fromPanel) closeStylesMorePanel({ restoreFocus: true });
   });
   return card;
@@ -1556,6 +1556,11 @@ function setReviewMode(mode) {
   if (reviewMode === "suggesting" && !showingChanges) {
     void setShowingChanges(true);
   }
+  // Paragraph formatting is tracked for as long as Suggesting is on (HF-131).
+  // Every paragraph formatting command funnels through one engine choke point,
+  // and review decisions build their own operations, so this cannot accidentally
+  // track an Editing-mode change or a decision. Dated per command by the engine.
+  doc?.setParagraphTracking(reviewMode === "suggesting", undefined);
   updateReviewControls();
   drawSelection();
   // Toolbar controls must not retain focus after changing mode: clipboard,
@@ -7379,7 +7384,7 @@ function buildContextCommands(context) {
       group: "list",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")),
+      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet"), { paragraphLevel: true }),
     },
     {
       id: "paragraph.numbering",
@@ -7387,7 +7392,7 @@ function buildContextCommands(context) {
       group: "list",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
-      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")),
+      run: () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered"), { paragraphLevel: true }),
     },
     {
       // The engine has had checklists as long as the ribbon button has, but the
@@ -8119,7 +8124,7 @@ function buildRuler() {
     const pos = Math.max(0, Math.round(e.offsetX / rulerScale));
     e.preventDefault();
     e.stopPropagation();
-    runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, tabInsertCode));
+    runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, tabInsertCode), { paragraphLevel: true });
     updateRulerMarkers();
   });
   rulerTrack.appendChild(content);
@@ -8242,11 +8247,11 @@ function startTabDrag(pos, code, glyph, ev) {
     window.removeEventListener("pointerup", onUp);
     const offRuler = e.clientY > trackRect.bottom + 14 || e.clientY < trackRect.top - 14;
     if (offRuler) {
-      runToolbarEdit((a, b, c, d) => doc.removeTabStop(a, b, c, d, pos));
+      runToolbarEdit((a, b, c, d) => doc.removeTabStop(a, b, c, d, pos), { paragraphLevel: true });
     } else if (moved && curPos !== pos) {
-      runToolbarEdit((a, b, c, d) => doc.moveTabStop(a, b, c, d, pos, curPos));
+      runToolbarEdit((a, b, c, d) => doc.moveTabStop(a, b, c, d, pos, curPos), { paragraphLevel: true });
     } else {
-      runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, (code + 1) % TAB_LETTER.length));
+      runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, (code + 1) % TAB_LETTER.length), { paragraphLevel: true });
     }
     updateRulerMarkers();
   };
@@ -8817,8 +8822,11 @@ document.addEventListener("pointerdown", breakTypingSession, { capture: true });
  *  fail-closed gate shared by every mutation path (`runEdit`, `runNodeEdit`,
  *  `runToolbarEdit`): a command that bypasses tracking must never silently
  *  apply while the mode still reads Suggesting (REVIEW-GAP-004). */
-function blockUntrackedInSuggesting() {
+function blockUntrackedInSuggesting({ paragraphLevel = false } = {}) {
   if (reviewMode !== "suggesting") return false;
+  // Paragraph formatting IS trackable now: the engine records a `w:pPrChange`
+  // holding the prior while Suggesting is on (docs/108 phase 2, HF-131).
+  if (paragraphLevel) return false;
   setStatus("This command cannot be tracked yet; switch to Editing to apply it", "error");
   focusEditorSurface();
   return true;
@@ -8910,10 +8918,49 @@ function selEndpoints() {
 /** Runs a toolbar edit thunk `(sNode, sOff, eNode, eOff) => EditResult`,
  *  preserving the selection (formatting does not collapse it) and repainting
  *  only the dirty pages. */
-async function runToolbarEdit(thunk, { allowInSuggesting = false } = {}) {
+/** The selection's two endpoints in document order. Ordering across paragraphs
+ *  is the engine's answer, not the offsets': offsets are per-paragraph, so a
+ *  backwards selection across paragraphs cannot be ordered by comparing them. */
+function orderedSelectionEnds() {
+  const { anchor, focus } = selection;
+  if (anchor.node === focus.node) {
+    const forward = anchor.offset <= focus.offset;
+    return forward ? [{ ...anchor }, { ...focus }] : [{ ...focus }, { ...anchor }];
+  }
+  const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
+  const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
+  const ends = [{ node: s.node, offset: s.offset }, { node: e.node, offset: e.offset }];
+  s.free();
+  e.free();
+  return ends;
+}
+
+/** A cross-paragraph edit while Suggesting, tracked (docs/108 phase 2).
+ *
+ *  `text` replaces the range; omit it for a plain deletion. The engine writes the
+ *  shape Word writes: the covered text struck, every paragraph mark in the range
+ *  except the last one suggested deleted, and the later paragraphs given the first
+ *  one's shape with a `w:pPrChange` holding their own — so accepting leaves one
+ *  paragraph and rejecting restores them all. One undo step.
+ *
+ *  Returns false, having said why, when the engine refuses (a range that would
+ *  cross a table, or another reviewer's paragraph break in the way). */
+async function suggestAcrossParagraphs(start, end, text) {
+  try {
+    await runEdit(() => text == null
+      ? doc.suggestDeleteRange(start.node, start.offset, end.node, end.offset, undefined, new Date().toISOString())
+      : doc.suggestReplaceRange(start.node, start.offset, end.node, end.offset, text, undefined, new Date().toISOString()));
+    return true;
+  } catch (error) {
+    setStatus(String(error?.message ?? error), "error");
+    return false;
+  }
+}
+
+async function runToolbarEdit(thunk, { allowInSuggesting = false, paragraphLevel = false } = {}) {
   if (blockMutationInViewing()) return;
   breakTypingSession();
-  if (!allowInSuggesting && blockUntrackedInSuggesting()) return;
+  if (!allowInSuggesting && blockUntrackedInSuggesting({ paragraphLevel })) return;
   const ends = selEndpoints();
   if (!ends) return;
   let res;
@@ -9498,7 +9545,7 @@ async function applyPaintedFormat() {
     return false;
   }
   // Paragraph style first, so painted direct formatting overrides the style.
-  if (fmt.paraStyle) await runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, fmt.paraStyle));
+  if (fmt.paraStyle) await runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, fmt.paraStyle), { paragraphLevel: true });
   await runToolbarEdit((a, b, c, d) =>
     doc.formatSelection(a, b, c, d, fmt.bold, fmt.italic, fmt.underline, fmt.strike),
   );
@@ -9516,8 +9563,8 @@ async function applyPaintedFormat() {
   }
   if (fmt.highlight) await runToolbarEdit((a, b, c, d) => doc.setHighlight(a, b, c, d, fmt.highlight));
   if (fmt.vertAlign) await runToolbarEdit((a, b, c, d) => doc.setVertAlign(a, b, c, d, fmt.vertAlign));
-  if (fmt.align) await runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, fmt.align));
-  if (fmt.lineSpacing) await runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, fmt.lineSpacing));
+  if (fmt.align) await runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, fmt.align), { paragraphLevel: true });
+  if (fmt.lineSpacing) await runToolbarEdit((a, b, c, d) => doc.setLineSpacing(a, b, c, d, fmt.lineSpacing), { paragraphLevel: true });
   updateToolbar();
   return true;
 }
@@ -9646,7 +9693,7 @@ onButton(subBtn, () => {
   );
 });
 for (const [key, btn] of Object.entries(alignBtns)) {
-  onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key)));
+  onButton(btn, () => runToolbarEdit((a, b, c, d) => doc.setAlignment(a, b, c, d, key), { paragraphLevel: true }));
 }
 /** Word-style indent commands: list items change numbering level, while ordinary
  * paragraphs retain the existing 0.25in paragraph-indent behavior. */
@@ -9656,19 +9703,18 @@ function adjustIndentCommand(delta) {
   runToolbarEdit((a, b, c, d) =>
     listKind
       ? doc.adjustListLevel(a, b, c, d, delta > 0 ? 1 : -1)
-      : doc.adjustIndent(a, b, c, d, delta),
-  );
+      : doc.adjustIndent(a, b, c, d, delta), { paragraphLevel: true });
 }
 onButton(indentDecBtn, () => adjustIndentCommand(-360));
 onButton(indentIncBtn, () => adjustIndentCommand(360));
-onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet")));
-onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered")));
+onButton(bulletListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "bullet"), { paragraphLevel: true }));
+onButton(numberedListBtn, () => runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "numbered"), { paragraphLevel: true }));
 /** Toggles the caret's paragraphs into (or out of) a checklist. Shared by the
  *  ribbon button and the `paragraph.list.checklist` command, so the two cannot
  *  diverge — the command used not to exist at all, which left the checklist
  *  reachable only by finding one button on the Home tab. */
 function toggleChecklistCommand() {
-  runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "checklist"));
+  runToolbarEdit((a, b, c, d) => doc.toggleList(a, b, c, d, "checklist"), { paragraphLevel: true });
   // A brand-new checklist introduces the `☐` marker glyph; fetch its covering
   // symbol font (once) so it renders instead of a .notdef box, then re-render.
   void ensureGlyphCoverage("checklist");
@@ -10707,7 +10753,7 @@ registerPopover(spacingBtn, spacingMenu, reflectSpacingMenu);
 
 for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
   onButton(b, () => {
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, Number(b.dataset.percent)));
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, Number(b.dataset.percent)), { paragraphLevel: true });
     reflectSpacingMenu();
   });
 }
@@ -10737,11 +10783,11 @@ function applyCustomLineSpacing() {
   const mode = lineSpacingMode.value;
   if (mode === "multiple") {
     const percent = Math.round(v * 100);
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, percent));
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacing(a, x, c, d, percent), { paragraphLevel: true });
   } else {
     const twips = Math.max(0, Math.round(v * TWIPS_PER_POINT));
     const atLeast = mode === "atLeast";
-    runToolbarEdit((a, x, c, d) => doc.setLineSpacingExact(a, x, c, d, twips, atLeast));
+    runToolbarEdit((a, x, c, d) => doc.setLineSpacingExact(a, x, c, d, twips, atLeast), { paragraphLevel: true });
   }
   reflectSpacingMenu();
 }
@@ -10931,21 +10977,18 @@ for (const b of paragraphPropertiesPanel.querySelectorAll(".border-btn")) {
 }
 paraPanelStyle.addEventListener("change", () =>
   runToolbarEdit((a, b, c, d) =>
-    doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value),
-  ),
+    doc.setParagraphStyle(a, b, c, d, paraPanelStyle.value), { paragraphLevel: true }),
 );
 for (const button of paraPanelAlign.querySelectorAll("button[data-palign]")) {
   onButton(button, () =>
     runToolbarEdit((a, b, c, d) =>
-      doc.setAlignment(a, b, c, d, button.dataset.palign),
-    ),
+      doc.setAlignment(a, b, c, d, button.dataset.palign), { paragraphLevel: true }),
   );
 }
 paraLineSpacing.addEventListener("change", () => {
   if (!paraLineSpacing.value) return;
   runToolbarEdit((a, b, c, d) =>
-    doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)),
-  );
+    doc.setLineSpacing(a, b, c, d, Number(paraLineSpacing.value)), { paragraphLevel: true });
 });
 paraSpaceBefore.addEventListener("change", () =>
   applySpace(paraSpaceBefore, (a, b, c, d, twips) =>
@@ -12371,7 +12414,7 @@ function numberedListAtCaret() {
 
 function editorCommands(context = { surface: "palette" }) {
   const fmt = (k) => () => toggleFormat(k);
-  const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a));
+  const align = (a) => () => runToolbarEdit((s, o, e, f) => doc.setAlignment(s, o, e, f, a), { paragraphLevel: true });
   const cmds = [
     // `noDoc`, and first: with no document open this is the only File command
     // that can run, and it is the one a user arriving with nothing to open needs.
@@ -12510,8 +12553,8 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "paragraph.align.center", label: "Align center", group: "Paragraph", kw: "centre", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("center") },
     { id: "paragraph.align.end", label: "Align right", group: "Paragraph", kw: "", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("end") },
     { id: "paragraph.align.justify", label: "Justify", group: "Paragraph", kw: "align", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: align("justify") },
-    { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet")) },
-    { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered")) },
+    { id: "paragraph.list.bullet", label: "Bullet list", group: "Paragraph", kw: "unordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "bullet"), { paragraphLevel: true }) },
+    { id: "paragraph.list.numbered", label: "Numbered list", group: "Paragraph", kw: "ordered", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => runToolbarEdit((s, o, e, f) => doc.toggleList(s, o, e, f, "numbered"), { paragraphLevel: true }) },
     { id: "paragraph.list.checklist", label: "Checklist", group: "Paragraph", kw: "checklist checkbox todo task tick check box", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleChecklistCommand() },
     // Restart/continue take the SAME predicate the ribbon buttons take
     // (`updateToolbar`), so a row can never be live in the menu while the button
@@ -12675,7 +12718,7 @@ function editorCommands(context = { surface: "palette" }) {
         kw: "line spacing leading single double space",
         enabled: !!selection,
         disabledReason: "Place the caret in a paragraph",
-        run: () => runToolbarEdit((a, o, e, f) => doc.setLineSpacing(a, o, e, f, percent)),
+        run: () => runToolbarEdit((a, o, e, f) => doc.setLineSpacing(a, o, e, f, percent), { paragraphLevel: true }),
       });
     }
     for (const [menu, noun] of [[bulletGalleryMenu, "Bullet style"], [numberGalleryMenu, "Numbering format"]]) {
@@ -12779,7 +12822,7 @@ function editorCommands(context = { surface: "palette" }) {
         label: `Style: ${name}`,
         group: "Style",
         kw: "paragraph heading",
-        run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name)),
+        run: () => runToolbarEdit((s, o, e, f) => doc.setParagraphStyle(s, o, e, f, name), { paragraphLevel: true }),
       });
     }
   }
@@ -15035,26 +15078,26 @@ document.addEventListener("keydown", (e) => {
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
 indentLeftInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput))),
+  runToolbarEdit((a, b, c, d) => doc.setLeftIndent(a, b, c, d, inchTwips(indentLeftInput)), { paragraphLevel: true }),
 );
 indentRightInput.addEventListener("change", () =>
-  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput))),
+  runToolbarEdit((a, b, c, d) => doc.setRightIndent(a, b, c, d, inchTwips(indentRightInput)), { paragraphLevel: true }),
 );
 function applyIndentSpecial() {
   const by = inchTwips(indentSpecialByInput);
   const kind = indentSpecialSel.value;
   const twips = kind === "first" ? by : kind === "hanging" ? -by : 0;
-  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips));
+  runToolbarEdit((a, b, c, d) => doc.setFirstLineIndent(a, b, c, d, twips), { paragraphLevel: true });
 }
 indentSpecialSel.addEventListener("change", applyIndentSpecial);
 indentSpecialByInput.addEventListener("change", applyIndentSpecial);
 
 paraShade.addEventListener("change", () => {
   const [r, g, b] = hexToRgb(paraShade.value);
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false));
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, r, g, b, false), { paragraphLevel: true });
 });
 onButton(paraShadeNone, () =>
-  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true)),
+  runToolbarEdit((a, x, c, d) => doc.setParagraphShading(a, x, c, d, 0, 0, 0, true), { paragraphLevel: true }),
 );
 for (const [box, setter] of [
   [pgKeepNext, (a, b, c, d, on) => doc.setKeepWithNext(a, b, c, d, on)],
@@ -15145,7 +15188,7 @@ function applyFontFamily(family) {
 }
 paragraphStyleSel.addEventListener("change", () => {
   const name = paragraphStyleSel.value;
-  runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name));
+  runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
 });
 
 /** Surfaces the compatibility-finding count from an import or export in the
@@ -16192,7 +16235,7 @@ document.addEventListener("keydown", async (e) => {
         ),
       );
     } else {
-      await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360));
+      await runToolbarEdit((a, b, c, d) => doc.adjustIndent(a, b, c, d, e.shiftKey ? -360 : 360), { paragraphLevel: true });
     }
     return;
   }
@@ -16216,8 +16259,8 @@ document.addEventListener("keydown", async (e) => {
           : focus;
       if (start.node === end.node && start.offset < end.offset) {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-      } else {
-        setStatus("This word deletion crosses a paragraph and cannot be tracked yet", "error");
+      } else if (start.node !== end.node) {
+        await suggestAcrossParagraphs(start, end, null);
       }
       return;
     }
@@ -16256,12 +16299,10 @@ document.addEventListener("keydown", async (e) => {
     if (reviewMode === "suggesting") {
       if (start.node === end.node && start.offset < end.offset) {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
-      } else if (!range) {
-        // A no-op (caret already at the line boundary) is fine to swallow; a
-        // cross-paragraph span has no tracked representation yet.
-        if (start.node !== end.node) setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
-      } else {
-        setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      } else if (start.node !== end.node) {
+        // A no-op (the caret is already at the line boundary) is swallowed; a real
+        // cross-paragraph span is now a tracked suggestion.
+        await suggestAcrossParagraphs(start, end, null);
       }
       return;
     }
@@ -16285,8 +16326,7 @@ document.addEventListener("keydown", async (e) => {
         await runToolbarEdit((a, b, c, d) =>
           level > 0
             ? doc.adjustListLevel(a, b, c, d, -1)
-            : doc.toggleList(a, b, c, d, listKind),
-        );
+            : doc.toggleList(a, b, c, d, listKind), { paragraphLevel: true });
         return;
       }
     }
@@ -16297,7 +16337,17 @@ document.addEventListener("keydown", async (e) => {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
         return;
       }
-      setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      // Backspace at a paragraph start suggests deleting the PREVIOUS paragraph's
+      // mark: that mark is the break being removed.
+      if (!range && start.node !== end.node) {
+        try {
+          await runEdit(() => doc.suggestDeleteParagraphMark(start.node, undefined, new Date().toISOString()));
+        } catch (error) {
+          setStatus(String(error?.message ?? error), "error");
+        }
+        return;
+      }
+      if (start.node !== end.node) await suggestAcrossParagraphs(start, end, null);
       return;
     }
     await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteBackward(focus.node, focus.offset));
@@ -16312,7 +16362,16 @@ document.addEventListener("keydown", async (e) => {
         await runEdit(() => doc.suggestDelete(start.node, start.offset, end.offset, undefined, new Date().toISOString()));
         return;
       }
-      setStatus("This deletion crosses a paragraph and cannot be tracked yet", "error");
+      // Delete at a paragraph end suggests deleting THIS paragraph's mark.
+      if (!range && start.node !== end.node) {
+        try {
+          await runEdit(() => doc.suggestDeleteParagraphMark(start.node, undefined, new Date().toISOString()));
+        } catch (error) {
+          setStatus(String(error?.message ?? error), "error");
+        }
+        return;
+      }
+      if (start.node !== end.node) await suggestAcrossParagraphs(start, end, null);
       return;
     }
     await runEdit(() => range ? doc.deleteSelection(anchor.node, anchor.offset, focus.node, focus.offset) : doc.deleteForward(focus.node, focus.offset));
@@ -16334,7 +16393,21 @@ document.addEventListener("keydown", async (e) => {
       return;
     }
     if (reviewMode === "suggesting") {
-      setStatus("Paragraph breaks cannot be tracked yet; switch to Editing to insert one", "error");
+      // A tracked Enter. Over a selection the range goes first, as its own
+      // suggestion, then the break — the order Word writes them in.
+      if (range) {
+        const [s, e] = orderedSelectionEnds();
+        const ok = s.node === e.node
+          ? await runEdit(() => doc.suggestDelete(s.node, s.offset, e.offset, undefined, new Date().toISOString())).then(() => true)
+          : await suggestAcrossParagraphs(s, e, null);
+        if (!ok) return;
+      }
+      const at = selection?.focus ?? focus;
+      try {
+        await runEdit(() => doc.suggestSplit(at.node, at.offset, undefined, new Date().toISOString()));
+      } catch (error) {
+        setStatus(String(error?.message ?? error), "error");
+      }
       return;
     }
     // Word/Docs convention: Enter on an empty list item exits the list instead
@@ -16347,8 +16420,7 @@ document.addEventListener("keydown", async (e) => {
         await runToolbarEdit((a, b, c, d) =>
           level > 0
             ? doc.adjustListLevel(a, b, c, d, -1)
-            : doc.toggleList(a, b, c, d, listKind),
-        );
+            : doc.toggleList(a, b, c, d, listKind), { paragraphLevel: true });
         return;
       }
     }
@@ -16383,7 +16455,8 @@ document.addEventListener("keydown", async (e) => {
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       if (reviewMode === "suggesting" && anchor.node !== focus.node) {
-        setStatus("Cross-paragraph replacement cannot be tracked yet; switch to Editing", "error");
+        const [s, e] = orderedSelectionEnds();
+        await suggestAcrossParagraphs(s, e, typed);
         return;
       }
       await runEdit(

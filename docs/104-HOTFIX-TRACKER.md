@@ -60,14 +60,14 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
 | P1 | 33 | 10 |
-| P2 | 52 | 23 |
+| P2 | 52 | 21 |
 | P3 | 22 | 13 |
 | Behavioural audit — 2026-09-04 | 18 | 6 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
-| **Total** | **157** | **52** |
+| **Total** | **157** | **50** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -77,7 +77,7 @@ was one out for exactly as long as no such guard existed.
 
 ### Progress
 
-**52 of 157 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
+**50 of 157 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
 
 Four rows previously listed Open were re-read against the code on 2026-09-15 and are
 closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
@@ -288,8 +288,8 @@ reproduction and the responsible `file:line` already identified.
 | HF-127 | Ctrl/Cmd+Enter (page break) is inert — the chord is swallowed before the Enter branch and no inline page-break op exists | rust-core | P3 | Open |
 | HF-128 | In Suggesting mode the caret, click target and selection are offset by the width of any struck-out text: selecting 7 characters struck 5 the user never touched. Extends HF-022 from "misplaced caret" to a content-integrity defect | wasm | P0 | Fixed (#519) |
 | HF-129 | A second reviewer cannot edit the first reviewer's pending suggestion — the keystrokes are silently dropped. `docs/86` already specifies the intended behaviour | wasm | P0 | Fixed (#520) |
-| HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Open |
-| HF-131 | Paragraph-level formatting (style, list, indent, alignment, spacing) is refused rather than tracked in Suggesting mode; Word records `w:pPrChange` | wasm | P1 | Open |
+| HF-130 | Enter and every cross-paragraph deletion are refused in Suggesting mode, so a reviewer cannot really author | wasm | P1 | Fixed (this PR) — `108` phase 2: Enter suggests a paragraph break (the LEADING half's mark, as Word writes it), Backspace/Delete at a boundary suggests deleting that mark, and a deletion or replacement across paragraphs writes Word's RP040 shape — text struck, every mark but the last suggested deleted, later paragraphs given the first one's shape with a `w:pPrChange` holding their own. One undo step each. Another reviewer's pending break is refused with a reason; the author's own is removed outright. Guards: 6 engine tests, 3 browser tests, each driven red |
+| HF-131 | Paragraph-level formatting (style, list, indent, alignment, spacing) is refused rather than tracked in Suggesting mode; Word records `w:pPrChange` | wasm | P1 | Fixed (this PR) — paragraph formatting while Suggesting records a `w:pPrChange` holding the prior, applied at the engine's one paragraph-properties choke point so all ~35 commands are covered. A second change keeps the FIRST prior, so Reject returns the paragraph to where review started; a change back to the prior records nothing. Tracking follows the mode and is off in Editing. Guards: 2 engine tests, 2 browser tests, each driven red |
 | HF-132 | The emoji picker offers 355 glyphs against ~1,900 in Word/Docs/Slack, and its search is near-useless: "smile" returns 3, "party" 1, "fire"/"check"/"star" 2 each. Gated on a bundle-size and font-coverage decision | webapp | P2 | Open (owner decision) |
 
 ### Layout-space audit — 2026-09-09
