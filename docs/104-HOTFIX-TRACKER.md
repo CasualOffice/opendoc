@@ -67,7 +67,8 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
-| **Total** | **157** | **50** |
+| Large-document admission — 2026-09-18 | 1 | 0 |
+| **Total** | **158** | **50** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -77,7 +78,7 @@ was one out for exactly as long as no such guard existed.
 
 ### Progress
 
-**50 of 157 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
+**50 of 158 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
 
 Four rows previously listed Open were re-read against the code on 2026-09-15 and are
 closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
@@ -371,6 +372,12 @@ defects in ordinary editing, not in review.
 | HF-155 | **Enter duplicated an imported tracked paragraph-mark revision onto both halves.** The mark ends the paragraph, so its `w:ins`/`w:del` belongs to the trailing half only. With both carrying a deletion, accepting the leading one would re-join what the user had just split. | `split_paragraph` cloned all properties, including `mark_revision` | P2 | Fixed (this PR) — the leading half's mark is new and carries none. Guard: `enter_moves_a_tracked_mark_revision_to_the_trailing_half_only`, driven red by restoring the clone |
 | HF-156 | **A Word document whose only tracked changes are paragraph-level opens looking clean.** Paragraph-mark insertions/deletions and `w:pPrChange` are imported and exported but never listed, painted, navigable or decidable: no cards, and Accept All reports "no tracked revisions" while the file still carries them. Table row, cell and table-property revisions have the same gap. | `collect_review_revisions` walks runs only; `mark_revision` has zero references in `casual-doc-wasm` | P1 | Fixed (this PR) — `108` phase 1: paragraph-mark insertions and deletions and `w:pPrChange` are listed with kind-qualified ids, labelled in Word's terms, drawn (a pilcrow at the mark, a margin bar for formatting), reachable with Next/Previous, and decided per card and in Accept/Reject All with Word's join rule — the following paragraph's properties survive. One undo step each. Guards: 7 engine tests and `paragraph-revisions.spec.mjs` (3), each driven red. **Still open:** table row, cell and table-property revisions are still unlisted |
 | HF-157 | **Every ungrouped tracked-change marker rendered in its "active" state as soon as a document opened.** A marker is active when the selected review item's id is in its list of ids; that list holds `null` for any revision that is neither a move nor in a group, and `null` is also what the selection holds when nothing is selected, so `includes` matched. | `webapp/src/main.js` `paintReviewMarkers` | P3 | Fixed (this PR) — only a real selected id activates a marker. Guard: `paragraph-revisions.spec.mjs` asserts no active marker on open, driven red by restoring the old check |
+
+### Large-document admission — 2026-09-18
+
+| ID | Finding | Evidence | Sev | Status |
+| --- | --- | --- | --- | --- |
+| HF-158 | **A large document aborted the WebAssembly module instead of opening or being refused.** A 40 MB file spent 17 seconds being imported and then trapped: `RuntimeError: unreachable`, with the word "unreachable" shown to the user. Two causes. (1) Admission limits sized for a 64-bit native host: `builtin_registry_with_package_limits` threaded the viewer's ZIP policy to the DOCX and ODT adapters but left plain text on `PlainTextLimits::default` — 64 MiB and two million paragraphs — and the package limit itself was 64 MiB, so a 200 MiB document was refused outright. (2) The accessibility mirror projected EVERY block: the whole document serialized to JSON, marshalled across the boundary, parsed, and materialized as one DOM node per block. Measured at 16,385 paragraphs it was 87% of the time to open (6.9 s of 7.9 s); at 65,537 it exhausted wasm32 memory. Page canvases were virtualized for this exact reason; the mirror never was. | reported by the owner; reproduced with `~/Downloads/40mb.docx` | P1 | Fixed (this PR) — the mirror is a 600-block window that follows the caret (`accessibilityTreeWindow`, `blockIndexOf`); package admission is 200 MiB; text admission is the viewer's own; and a document past the measured ceiling is refused before it is parsed, with its real size and what to do. 16,385 paragraphs 6.2 s → 0.94 s, 32,769 24 s → 1.8 s, 65,537 died → 3.9 s, and 262,145 now opens at all. 7 engine guards and 2 browser guards, each driven red |
 
 ### Deliberately refuted
 

@@ -3407,13 +3407,18 @@ async function openBytes(bytes, name, onOpened, onRendered) {
       document.body.dataset.fontsReady = "true";
     });
   } catch (err) {
-    console.error(err);
+    // An admission refusal ("this document is too large for the browser") is an
+    // expected answer, not a fault: logging it as a console error made a handled
+    // case look like a crash, and every spec that asserts a clean console would
+    // fail on a deliberately oversized file.
+    const message = String(err?.message ?? err);
+    if (!/browser editor can hold in memory/.test(message)) console.error(err);
     // `doc` is only ever reassigned after a successful parse, so if one was open
     // it is still open, still painted and still editable. Say so: the failure
     // message is the only thing the user gets, and "could not open" alone reads
     // like the editor is now empty.
     const kept = doc ? " — the document you had open is still here" : "";
-    setStatus(`Could not open ${name}: ${err.message ?? err}${kept}`, "error");
+    setStatus(`Could not open ${name}: ${message}${kept}`, "error");
   }
 }
 
@@ -11522,15 +11527,44 @@ const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () =
  * never an editing surface — the model stays the source of truth (docs/67 Open
  * Risks). Rebuilt on the same coalesced content-change frame as the outline.
  */
+/** How many top-level blocks the accessibility mirror projects at once.
+ *
+ *  Large enough that an ordinary document (sample.docx is 433 blocks) is still
+ *  mirrored whole, small enough that a million-block document costs the same as
+ *  a small one. */
+const A11Y_WINDOW_BLOCKS = 600;
+
+/** Where the current mirror window starts, so it stays put when there is no
+ *  caret to anchor it to (a freshly opened document). */
+let a11yWindowStart = 0;
+
 function buildAccessibilityTree() {
   if (!a11yDocument) return;
   if (!doc) {
     a11yDocument.replaceChildren();
     return;
   }
-  let nodes;
+  // A WINDOW of the document, not all of it. The mirror used to project every
+  // block: for a 16,000-paragraph document that was 16,384 DOM nodes and 87% of
+  // the time to open it (6.9 s of 7.9 s), and a 65,000-paragraph one exhausted
+  // wasm32 memory and killed the tab — the whole document was serialized to
+  // JSON, marshalled, parsed and materialized (docs/104 HF-158). Page canvases
+  // were virtualized for exactly this reason; this never was.
+  //
+  // The window follows the caret, so assistive technology reads the part of the
+  // document being edited, and the engine only projects those blocks.
+  let nodes = [];
+  let total = 0;
+  let windowStart = 0;
   try {
-    nodes = JSON.parse(doc.accessibilityTree());
+    const caretBlock = selection?.focus?.node ? doc.blockIndexOf(selection.focus.node) : -1;
+    const anchor = caretBlock >= 0 ? caretBlock : a11yWindowStart;
+    windowStart = Math.max(0, anchor - Math.floor(A11Y_WINDOW_BLOCKS / 2));
+    const payload = JSON.parse(doc.accessibilityTreeWindow(windowStart, A11Y_WINDOW_BLOCKS));
+    total = Number(payload.total) || 0;
+    windowStart = Number(payload.start) || 0;
+    nodes = Array.isArray(payload.blocks) ? payload.blocks : [];
+    a11yWindowStart = windowStart;
   } catch {
     nodes = [];
   }
@@ -11640,6 +11674,16 @@ function buildAccessibilityTree() {
     }
   }
   flushList();
+  // Say so when the mirror is a window, so a screen reader is not told a
+  // 6,000-block document is 300 blocks long.
+  if (total > nodes.length) {
+    const note = document.createElement("p");
+    note.className = "sr-only";
+    note.textContent =
+      `Showing blocks ${windowStart + 1} to ${windowStart + nodes.length} of ${total}. ` +
+      "Move the cursor to read another part of the document.";
+    frag.insertBefore(note, frag.firstChild);
+  }
   a11yDocument.replaceChildren(frag);
 }
 

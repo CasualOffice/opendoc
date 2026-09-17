@@ -26,6 +26,7 @@ use casual_doc_edit::{object_descr, text_box_body_properties};
 use casual_doc_export::write_document;
 #[cfg(test)]
 use casual_doc_import::{ImportConfig, ImportMode, import_package};
+use casual_doc_io::PlainTextLimits;
 #[cfg(test)]
 use casual_doc_io::formats;
 use casual_doc_io::{
@@ -33,7 +34,7 @@ use casual_doc_io::{
     DetectionRequest, DocumentResources, ExportMode, ExportRequest,
     FeatureLocation as IoFeatureLocation, FormatId, FormatSelection,
     ModelOutcome as IoModelOutcome, RetentionOutcome as IoRetentionOutcome, SourceEnvelope,
-    builtin_registry_with_package_limits,
+    builtin_registry_with_limits,
 };
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
@@ -89,11 +90,97 @@ use wasm_bindgen::prelude::*;
 /// values.
 fn viewer_limits() -> PackageLimits {
     PackageLimits {
-        max_input_bytes: 64 * 1024 * 1024,
-        max_total_expanded_bytes: 256 * 1024 * 1024,
-        max_single_expanded_bytes: 64 * 1024 * 1024,
+        // 200 MiB of input, the size the product commits to opening. A large
+        // real document is large because of its images, not its text: at these
+        // limits a 200 MiB DOCX of photographs opens, while the thing that
+        // actually bounds the editor is how many BLOCKS a document has, which
+        // `MAX_VIEWER_BLOCKS` bounds separately and honestly.
+        max_input_bytes: 200 * 1024 * 1024,
+        max_total_expanded_bytes: 512 * 1024 * 1024,
+        max_single_expanded_bytes: 200 * 1024 * 1024,
         ..PackageLimits::default()
     }
+}
+
+/// The largest document the browser editor will admit, in top-level blocks.
+///
+/// Measured on this build, opening plain text in Chromium, after the
+/// accessibility mirror was virtualized:
+///
+/// | blocks  | 16,385 | 32,769 | 65,537 | 131,073 | 262,145 |
+/// |---------|--------|--------|--------|---------|---------|
+/// | open    | 0.9 s  | 1.8 s  | 3.9 s  | 10.9 s  | 23.2 s  |
+/// | JS heap | 33 MB  | 39 MB  | 36 MB  | 53 MB   | 73 MB   |
+///
+/// Cost is linear in blocks and memory stays modest, so this is a patience
+/// ceiling rather than the memory cliff it used to be: before the mirror was
+/// windowed, 32,769 blocks took 24 s and 65,537 aborted the module outright
+/// (`docs/104` HF-158). The value is the largest size actually measured to
+/// open, not an extrapolation. Past it a document is refused with its real
+/// size and the limit.
+///
+/// This does NOT bound file SIZE. A 200 MiB DOCX is large because of its
+/// images, and its block count is ordinary; `viewer_limits` admits it.
+const MAX_VIEWER_BLOCKS: usize = 262_144;
+
+/// Plain-text admission for the viewer. [`PlainTextLimits::default`] is sized
+/// for a 64-bit native host; the browser needs its own ceiling for the same
+/// reason the package limits do.
+fn viewer_text_limits() -> PlainTextLimits {
+    PlainTextLimits {
+        max_input_bytes: 200 * 1024 * 1024,
+        max_output_bytes: 200 * 1024 * 1024,
+        max_paragraphs: MAX_VIEWER_BLOCKS,
+        ..PlainTextLimits::default()
+    }
+}
+
+/// Refuses an input the editor cannot open, before any of it is parsed.
+///
+/// Only the cheap, certain case: a non-package input whose newline count alone
+/// puts it past [`MAX_VIEWER_BLOCKS`]. Counting newlines in 200 MiB takes
+/// milliseconds, where importing it would spend seconds and then abort.
+/// Packages (`PK\x03\x04`) are left to the adapters, which must decompress
+/// before any count is meaningful.
+fn viewer_admission_error(bytes: &[u8]) -> Option<String> {
+    if bytes.starts_with(b"PK\x03\x04") {
+        return None;
+    }
+    let lines = bytes.iter().filter(|byte| **byte == b'\n').count() + 1;
+    (lines > MAX_VIEWER_BLOCKS).then(|| too_many_blocks(lines))
+}
+
+/// The one message for a document too large to open here. Says what was found,
+/// what the limit is, and what to do — never a trap name.
+fn too_many_blocks(found: usize) -> String {
+    format!(
+        "This document has {} paragraphs, more than the {} the browser editor can hold in \
+         memory. Split it into smaller documents, or open it in a desktop word processor.",
+        thousands(found),
+        thousands(MAX_VIEWER_BLOCKS),
+    )
+}
+
+/// `1303306` as `1,303,306`. A seven-digit number with no separators is the kind
+/// of detail that makes an honest message look like a stack trace.
+fn thousands(value: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// Every top-level block, which is what [`MAX_VIEWER_BLOCKS`] bounds. Counted
+/// after import and before layout, so a package that expands past the ceiling is
+/// refused with the same message as an oversized text file rather than aborting
+/// the module.
+fn count_blocks(blocks: &[BlockNode]) -> usize {
+    blocks.len()
 }
 
 /// Host font batch admission: enough for several variable families while
@@ -505,7 +592,7 @@ impl WasmDocument {
                 );
             }
         };
-        let registry = builtin_registry_with_package_limits(viewer_limits());
+        let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
         let artifact = registry
             .export(
                 &format,
@@ -8974,10 +9061,99 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = accessibilityTree)]
     #[must_use]
     pub fn accessibility_tree(&self) -> String {
+        // Unchanged shape: a bare array of blocks. The windowed call below is
+        // additive, so an existing caller keeps the contract it was written to.
         let cascade = StyleCascade::new(self.document.definitions());
         let mut out = Vec::new();
         self.collect_a11y_blocks(self.document.body(), &cascade, &mut out);
         serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// A WINDOW of the accessibility projection: at most `count` blocks starting
+    /// at `start`, plus the document's total block count so the host can report
+    /// position and rebuild the window as the caret moves.
+    ///
+    /// The whole-document projection is why a large document could not be opened
+    /// in a browser at all. Every block was serialized to JSON, marshalled across
+    /// the wasm boundary, parsed, and turned into a DOM node — for a 16,000
+    /// paragraph document that was 16,384 nodes and 87% of the open time (6.9 s
+    /// of 7.9 s), and a 65,000 paragraph one exhausted wasm32 memory and aborted
+    /// the module (`docs/104` HF-158). Page canvases were virtualized for exactly
+    /// this reason; the mirror never was.
+    ///
+    /// The returned JSON is `{ "total": n, "start": i, "blocks": [...] }`.
+    #[wasm_bindgen(js_name = accessibilityTreeWindow)]
+    #[must_use]
+    pub fn accessibility_tree_window(&self, start: u32, count: u32) -> String {
+        let cascade = StyleCascade::new(self.document.definitions());
+        let mut out = Vec::new();
+        let mut seen = 0_usize;
+        let start = start as usize;
+        let limit = start.saturating_add(count as usize);
+        self.collect_a11y_window(
+            self.document.body(),
+            &cascade,
+            start,
+            limit,
+            &mut seen,
+            &mut out,
+        );
+        serde_json::to_string(&serde_json::json!({
+            "total": seen,
+            "start": start.min(seen),
+            "blocks": out,
+        }))
+        .unwrap_or_else(|_| "{\"total\":0,\"start\":0,\"blocks\":[]}".to_string())
+    }
+
+    /// The 0-based index, among the document's top-level blocks, of the block
+    /// containing `node` — what the host anchors the accessibility window to, so
+    /// the window follows the caret instead of being pinned to the start.
+    /// `-1` when the node is not in the body.
+    #[wasm_bindgen(js_name = blockIndexOf)]
+    #[must_use]
+    pub fn block_index_of(&self, node: &str) -> i32 {
+        let Ok(id) = NodeId::from_str(node) else {
+            return -1;
+        };
+        fn contains(block: &BlockNode, id: NodeId) -> bool {
+            match block {
+                BlockNode::Paragraph(paragraph) => paragraph.id == id,
+                BlockNode::Table(table) => table.rows.iter().any(|row| {
+                    row.cells
+                        .iter()
+                        .any(|cell| cell.blocks.iter().any(|inner| contains(inner, id)))
+                }),
+                BlockNode::Sdt(sdt) => sdt.blocks.iter().any(|inner| contains(inner, id)),
+                BlockNode::AltChunk(_) => false,
+            }
+        }
+        self.document
+            .body()
+            .iter()
+            .position(|block| contains(block, id))
+            .and_then(|index| i32::try_from(index).ok())
+            .unwrap_or(-1)
+    }
+
+    /// [`Self::accessibility_tree_window`]'s walk: counts every block so `total`
+    /// is the document's real size, and projects only those inside the window.
+    fn collect_a11y_window(
+        &self,
+        blocks: &[BlockNode],
+        cascade: &StyleCascade,
+        start: usize,
+        limit: usize,
+        seen: &mut usize,
+        out: &mut Vec<A11yBlockJson>,
+    ) {
+        for block in blocks {
+            let index = *seen;
+            *seen += 1;
+            if index >= start && index < limit {
+                self.collect_a11y_blocks(std::slice::from_ref(block), cascade, out);
+            }
+        }
     }
 
     fn collect_a11y_blocks(
@@ -9138,7 +9314,7 @@ impl WasmDocument {
     /// Returns stable format identifiers currently available for export.
     #[wasm_bindgen(js_name = availableExportFormats)]
     pub fn available_export_formats(&self) -> Vec<String> {
-        builtin_registry_with_package_limits(viewer_limits())
+        builtin_registry_with_limits(viewer_limits(), viewer_text_limits())
             .export_formats()
             .into_iter()
             .map(|format| format.as_str().to_owned())
@@ -17665,7 +17841,10 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
 }
 
 fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocument, String> {
-    let registry = builtin_registry_with_package_limits(viewer_limits());
+    if let Some(refusal) = viewer_admission_error(bytes) {
+        return Err(refusal);
+    }
+    let registry = builtin_registry_with_limits(viewer_limits(), viewer_text_limits());
     let imported = registry
         .import(
             DetectionRequest {
@@ -17677,6 +17856,10 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
             true,
         )
         .map_err(|error| format!("import document: {error}"))?;
+    let blocks = count_blocks(imported.document.body());
+    if blocks > MAX_VIEWER_BLOCKS {
+        return Err(too_many_blocks(blocks));
+    }
     let source_format = imported.format.format.as_str().to_owned();
     let mut report = imported.report;
     let document = imported.document;
@@ -20471,6 +20654,166 @@ mod tests {
         );
         assert_eq!(doc.page_count(), before);
         assert!(doc.missing_coverage().is_empty());
+    }
+
+    // ---- docs/104 HF-158: admission limits the browser can honour --------------
+
+    /// Text with `lines` paragraphs, the shape of the file that broke the editor.
+    fn text_of_lines(lines: usize) -> Vec<u8> {
+        "examplefile.com - Sample Files\r\n"
+            .repeat(lines)
+            .into_bytes()
+    }
+
+    /// A document past the ceiling is refused BEFORE it is parsed, with its real
+    /// size, the limit and what to do — never a trap name. It used to be admitted
+    /// and abort the module with `RuntimeError: unreachable`.
+    #[test]
+    fn an_oversized_text_document_is_refused_with_a_readable_reason() {
+        // Each line ends in a newline, so `n` lines are `n + 1` paragraphs — the
+        // trailing empty one included, exactly as the importer counts them.
+        let lines = MAX_VIEWER_BLOCKS + 1;
+        let bytes = text_of_lines(lines);
+        let error = open_document(&bytes).expect_err("must refuse");
+        assert!(
+            error.contains(&thousands(lines + 1)),
+            "no real size: {error}"
+        );
+        assert!(
+            error.contains(&thousands(MAX_VIEWER_BLOCKS)),
+            "no limit: {error}"
+        );
+        assert!(
+            error.contains("Split it into smaller documents"),
+            "no way out: {error}"
+        );
+        assert!(
+            !error.to_lowercase().contains("unreachable"),
+            "leaks a trap name: {error}"
+        );
+        assert!(
+            !error.contains("limit text_paragraphs"),
+            "leaks an internal limit name: {error}"
+        );
+    }
+
+    /// The pre-check is cheap: it counts newlines rather than importing, so the
+    /// refusal is immediate even for a file far past the ceiling. The real report
+    /// was a 40 MB file that took 17 seconds to fail.
+    #[test]
+    fn an_absurdly_large_input_is_refused_quickly() {
+        let bytes = text_of_lines(1_303_305);
+        let started = std::time::Instant::now();
+        let error = open_document(&bytes).expect_err("must refuse");
+        assert!(error.contains("1,303,306 paragraphs"), "{error}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "refusing took {:?}; it must not import first",
+            started.elapsed(),
+        );
+    }
+
+    /// The package path has its own guard, because the cheap newline pre-check
+    /// deliberately skips packages: a ZIP's paragraph count is unknowable until
+    /// it is decompressed. Without this, a DOCX past the ceiling was admitted and
+    /// aborted the module exactly as the text file did.
+    #[test]
+    fn an_oversized_package_is_refused_after_import() {
+        use casual_doc_model::v1::Definitions;
+        let id = |n: u64| NodeId::from_parts(n, 158).unwrap();
+        let blocks: Vec<BlockNode> = (0..=(MAX_VIEWER_BLOCKS as u64))
+            .map(|n| {
+                BlockNode::Paragraph(Paragraph {
+                    id: id(n + 2),
+                    properties: ParagraphProperties::default(),
+                    inlines: Vec::new(),
+                })
+            })
+            .collect();
+        let document = Document::new(id(1), blocks, Definitions::default()).expect("valid");
+        let package = write_document(&document, &BTreeMap::new()).expect("write");
+        assert!(
+            package.starts_with(b"PK"),
+            "the guard under test is the package one"
+        );
+
+        let error = open_document(&package).expect_err("must refuse");
+        assert!(
+            error.contains(&thousands(MAX_VIEWER_BLOCKS + 1)),
+            "no real size: {error}"
+        );
+        assert!(
+            error.contains("browser editor can hold in memory"),
+            "{error}"
+        );
+    }
+
+    /// A document just inside the ceiling still opens — the limit refuses what is
+    /// too large, not everything large.
+    #[test]
+    fn a_document_just_inside_the_ceiling_opens() {
+        let doc = open_document(&text_of_lines(1_000)).expect("must open");
+        assert!(doc.page_count() > 0);
+    }
+
+    /// The ceiling is on BLOCKS, not bytes: the package limits admit a 200 MiB
+    /// file, because a large real document is large because of its images.
+    #[test]
+    fn the_package_limits_admit_a_200_mib_file() {
+        let limits = viewer_limits();
+        assert!(
+            limits.max_input_bytes >= 200 * 1024 * 1024,
+            "a 200 MiB document must be admitted; input limit is {}",
+            limits.max_input_bytes,
+        );
+        assert!(u128::from(limits.max_total_expanded_bytes) >= limits.max_input_bytes as u128);
+    }
+
+    /// The accessibility projection is a WINDOW. Projecting every block is what
+    /// made a large document unopenable: it was serialized, marshalled, parsed and
+    /// turned into one DOM node per block.
+    #[test]
+    fn the_accessibility_projection_is_windowed_and_reports_the_whole_size() {
+        let doc = open_document(&text_of_lines(5_000)).expect("open");
+        let payload: serde_json::Value =
+            serde_json::from_str(&doc.accessibility_tree_window(0, 600)).expect("json");
+        assert_eq!(
+            payload["total"].as_u64(),
+            Some(5_001),
+            "total is the document's real size"
+        );
+        assert_eq!(
+            payload["blocks"].as_array().map(Vec::len),
+            Some(600),
+            "the window is bounded, whatever the document's size",
+        );
+
+        // And it can start anywhere, so the host can follow the caret.
+        let later: serde_json::Value =
+            serde_json::from_str(&doc.accessibility_tree_window(4_900, 600)).expect("json");
+        assert_eq!(
+            later["start"].as_u64(),
+            Some(4_900),
+            "the window starts where asked"
+        );
+        let tail = later["blocks"].as_array().map(Vec::len).expect("blocks");
+        // At most the remainder of the document. Not exactly it: the projection
+        // omits blocks with nothing to announce, such as the empty paragraph a
+        // trailing newline leaves behind.
+        assert!(
+            (1..=101).contains(&tail),
+            "tail window projected {tail} blocks"
+        );
+    }
+
+    /// The window follows the caret only if the host can locate it.
+    #[test]
+    fn block_index_of_locates_a_paragraph_and_rejects_a_stranger() {
+        let doc = open_document(&text_of_lines(50)).expect("open");
+        let ids = body_paragraph_ids(&doc);
+        assert_eq!(doc.block_index_of(&ids[0]), 0);
+        assert_eq!(doc.block_index_of(&ids[10]), 10);
+        assert_eq!(doc.block_index_of("not-a-node"), -1);
     }
 
     // ---- docs/108 phase 2: authoring paragraph-level suggestions (HF-130/131) ----
