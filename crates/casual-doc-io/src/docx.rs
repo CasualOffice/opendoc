@@ -15,8 +15,8 @@ use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
     ExportMode, ExportRequest, FeatureLocation, FormatDescriptor, FormatExporter, FormatId,
     FormatImporter, FormatProfile, FormatRegistry, ImportArtifact, ImportRequest, ModelOutcome,
-    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, ProbeRequest, ProbeResult,
-    RetentionOutcome, SourceEnvelope, formats,
+    NormalizedJsonAdapter, OdtAdapter, PlainTextAdapter, PlainTextLimits, ProbeRequest,
+    ProbeResult, RetentionOutcome, SourceEnvelope, formats,
 };
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
