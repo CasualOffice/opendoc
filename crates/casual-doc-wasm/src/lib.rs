@@ -13,6 +13,7 @@
 //! boundary (doc 57 §3): `render_page(i, dpi)` rasterizes at `dpi`, where
 //! `device_px = twip / 1440 * dpi`.
 
+use casual_doc_edit::SplitProperties;
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
     CommonField, FormatDelta, Operation, Pos, Range as EditRange, ReviewParagraphState,
@@ -70,6 +71,7 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{GroupChild, HeaderFooterId, HeaderFooterKind};
+use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
@@ -203,6 +205,12 @@ pub struct WasmDocument {
     /// `author`/`initials` arguments are omitted. Never serialized itself; only
     /// its `name`/`initials` strings flow into authored comments/revisions.
     active_author: Option<ActiveAuthor>,
+    /// docs/108 phase 2 (HF-131). While `Some`, paragraph formatting applied through
+    /// `apply_paragraph_props_as` or `apply_indent_props` is recorded as a tracked
+    /// `w:pPrChange`, dated with the inner value. The host scopes it to ONE command
+    /// — set, run, clear — so it can never track an Editing-mode change or a review
+    /// decision by being left on.
+    paragraph_tracking: Option<Option<String>>,
 }
 
 #[derive(Debug)]
@@ -7379,69 +7387,69 @@ impl WasmDocument {
         validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
         let node = node_id(node)?;
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
-        if remove_authored_review_insertion(&mut body, node, start, end, author.as_deref()) {
-            let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
-            return self
-                .apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
-                .map_err(to_js);
+        self.suggest_deletion_into_body(&mut body, node, start, end, author, date)
+            .map_err(to_js)?;
+        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
+        self.apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
+            .map_err(to_js)
+    }
+
+    /// One paragraph's share of a suggested deletion, applied to a review body that
+    /// may hold several paragraphs. Single- and cross-paragraph deletion share it,
+    /// so both follow docs/86 decision 2 the same way: the author's own pending
+    /// insertions are removed outright and only accepted text is suggested deleted.
+    fn suggest_deletion_into_body(
+        &mut self,
+        body: &mut Vec<BlockNode>,
+        node: NodeId,
+        start: u32,
+        end: u32,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<(), String> {
+        if remove_authored_review_insertion(body, node, start, end, author.as_deref()) {
+            return Ok(());
         }
-        // docs/86 decision 2: a mixed delete (the author's own pending insertions
-        // plus accepted text) strips the not-yet-accepted insertions outright,
-        // then suggests-deletion of the accepted remainder — which is contiguous
-        // once the insertions are removed. A range with no own insertion, or one
-        // holding another author's revision, returns None and falls through to
-        // the plain deletion path below (unchanged).
+        let mut mixed = body.clone();
+        if let Some(removed) =
+            strip_authored_insertions_in_range(&mut mixed, node, start, end, author.as_deref())
         {
-            let mut mixed = review_paragraph_body(&self.document, node).map_err(to_js)?;
-            if let Some(removed) =
-                strip_authored_insertions_in_range(&mut mixed, node, start, end, author.as_deref())
-            {
-                let new_end = end.saturating_sub(removed);
-                if new_end > start {
-                    let revision = self
-                        .edit_ids
-                        .next_id()
-                        .map_err(|_| to_js("id space exhausted".to_string()))?;
-                    let revision_id = self.revision_ids.allocate().map_err(to_js)?;
-                    if !wrap_review_deletion(
-                        &mut mixed,
-                        node,
-                        start,
-                        new_end,
-                        Revision {
-                            id: revision,
-                            kind: RevisionKind::Deletion,
-                            author: author.clone(),
-                            date: date.clone(),
-                            revision_id: Some(revision_id),
-                            editor_group: None,
-                            inlines: Vec::new(),
-                        },
-                        &mut self.edit_ids,
-                    ) {
-                        return Err(to_js(
-                            "suggested deletion requires top-level paragraph text".to_string(),
-                        ));
-                    }
+            let new_end = end.saturating_sub(removed);
+            if new_end > start {
+                let revision = self
+                    .edit_ids
+                    .next_id()
+                    .map_err(|_| "id space exhausted".to_string())?;
+                let revision_id = self.revision_ids.allocate()?;
+                if !wrap_review_deletion(
+                    &mut mixed,
+                    node,
+                    start,
+                    new_end,
+                    Revision {
+                        id: revision,
+                        kind: RevisionKind::Deletion,
+                        author: author.clone(),
+                        date: date.clone(),
+                        revision_id: Some(revision_id),
+                        editor_group: None,
+                        inlines: Vec::new(),
+                    },
+                    &mut self.edit_ids,
+                ) {
+                    return Err("suggested deletion requires top-level paragraph text".to_string());
                 }
-                let operation =
-                    update_review_operation(&self.document, &mixed, None).map_err(to_js)?;
-                return self
-                    .apply_action_caret_as(
-                        vec![operation],
-                        Pos::new(node, start),
-                        HistoryKind::Review,
-                    )
-                    .map_err(to_js);
             }
+            *body = mixed;
+            return Ok(());
         }
         let revision = self
             .edit_ids
             .next_id()
-            .map_err(|_| to_js("id space exhausted".to_string()))?;
-        let revision_id = self.revision_ids.allocate().map_err(to_js)?;
+            .map_err(|_| "id space exhausted".to_string())?;
+        let revision_id = self.revision_ids.allocate()?;
         if !wrap_review_deletion(
-            &mut body,
+            body,
             node,
             start,
             end,
@@ -7456,13 +7464,420 @@ impl WasmDocument {
             },
             &mut self.edit_ids,
         ) {
+            return Err("suggested deletion requires top-level paragraph text".to_string());
+        }
+        Ok(())
+    }
+
+    /// Scopes paragraph-formatting tracking to the commands that follow, until it
+    /// is cleared: `enabled` with the change's `date` while Suggesting, then
+    /// `false`. The host wraps ONE command in set/clear (docs/108 phase 2), so the
+    /// flag cannot leak into Editing mode or into a review decision.
+    #[wasm_bindgen(js_name = setParagraphTracking)]
+    pub fn set_paragraph_tracking(&mut self, enabled: bool, date: Option<String>) {
+        self.paragraph_tracking = enabled.then_some(date);
+    }
+
+    /// Records a paragraph formatting change as a tracked `w:pPrChange` when
+    /// tracking is on; otherwise returns `next` unchanged.
+    ///
+    /// The snapshot is the paragraph as it was before ANY pending formatting
+    /// suggestion: a second change keeps the first one's prior, so Reject returns
+    /// the paragraph to where review started rather than to an intermediate state.
+    /// A change that lands back on the prior leaves no revision at all.
+    fn track_paragraph_change(
+        &mut self,
+        current: &ParagraphProperties,
+        mut next: ParagraphProperties,
+    ) -> Result<ParagraphProperties, String> {
+        let Some(date) = self.paragraph_tracking.clone() else {
+            return Ok(next);
+        };
+        let author = self.resolve_author(None);
+        validate_authored_revision_author(author.as_deref())?;
+        let (prior, revision_id) = match &current.prop_change {
+            Some(change) => (change.prior.as_ref().clone(), change.revision_id.clone()),
+            None => (paragraph_base(current), None),
+        };
+        if paragraph_base(&next) == prior {
+            next.prop_change = None;
+            return Ok(next);
+        }
+        let revision_id = match revision_id {
+            Some(id) => Some(id),
+            None => Some(self.revision_ids.allocate()?),
+        };
+        next.prop_change = Some(PropChange {
+            author,
+            date,
+            revision_id,
+            editor_group: None,
+            prior: Box::new(prior),
+        });
+        Ok(next)
+    }
+
+    /// Enter while Suggesting (docs/108 phase 2, HF-130): splits the paragraph and
+    /// marks the LEADING half's paragraph mark as a tracked insertion, as Word does
+    /// — the trailing half keeps the original mark. Rejecting it later joins the two
+    /// halves back with the original properties.
+    #[wasm_bindgen(js_name = suggestSplit)]
+    pub fn suggest_split(
+        &mut self,
+        node: &str,
+        offset: u32,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        let author = self.resolve_author(author);
+        validate_authored_revision_author(author.as_deref()).map_err(to_js)?;
+        let node = node_id(node)?;
+        let current = paragraph_properties(&self.document, node)
+            .ok_or_else(|| to_js("paragraph not found".to_string()))?;
+        let len = self.paragraph_text(node).len() as u32;
+        if offset > len {
             return Err(to_js(
-                "suggested deletion requires top-level paragraph text".to_string(),
+                "the split is past the end of the paragraph".to_string(),
             ));
         }
-        let operation = update_review_operation(&self.document, &body, None).map_err(to_js)?;
-        self.apply_action_caret_as(vec![operation], Pos::new(node, start), HistoryKind::Review)
+        let revision_id = self.revision_ids.allocate().map_err(to_js)?;
+        let mut leading = current.clone();
+        leading.mark_revision = Some(MarkRevision {
+            kind: MarkRevisionKind::Insertion,
+            author,
+            date,
+            revision_id: Some(revision_id),
+        });
+        let mut trailing = current.clone();
+        // Word's `w:next`: Enter at the END of a heading starts its follow-on style.
+        if offset == len
+            && let Some(style) = current.style_ref
+            && let Some(next) = self
+                .document
+                .definitions()
+                .styles
+                .get(&style)
+                .and_then(|definition| definition.next)
+            && next != style
+        {
+            trailing.style_ref = Some(next);
+        }
+        let new_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("id space exhausted".to_string()))?;
+        self.apply_action_caret_as(
+            vec![Operation::SplitParagraph {
+                at: Pos::new(node, offset),
+                new_id,
+                properties: Some(Box::new(SplitProperties { leading, trailing })),
+            }],
+            Pos::new(new_id, 0),
+            HistoryKind::Review,
+        )
+        .map_err(to_js)
+    }
+
+    /// Delete at a paragraph's end, or Backspace at the start of the next, while
+    /// Suggesting: marks `node`'s paragraph mark as a tracked deletion (HF-130).
+    ///
+    /// The author's own pending break is removed outright instead — the paragraph
+    /// mark counterpart of docs/86 decision 2. A break another reviewer inserted is
+    /// refused: the model holds one revision per mark, and replacing theirs would
+    /// silently erase their suggestion. A mark already suggested for deletion moves
+    /// the caret and changes nothing.
+    #[wasm_bindgen(js_name = suggestDeleteParagraphMark)]
+    pub fn suggest_delete_paragraph_mark(
+        &mut self,
+        node: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.suggest_delete_paragraph_mark_inner(node, author, date)
             .map_err(to_js)
+    }
+
+    /// Native-error core of
+    /// [`suggest_delete_paragraph_mark`](Self::suggest_delete_paragraph_mark). Split
+    /// out so its refusal paths are unit-testable off-wasm, where constructing a
+    /// `JsValue` error panics — the same shape as `continue_list_inner`.
+    fn suggest_delete_paragraph_mark_inner(
+        &mut self,
+        node: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let author = self.resolve_author(author);
+        validate_authored_revision_author(author.as_deref())?;
+        let node = NodeId::from_str(node).map_err(|_| "invalid node".to_string())?;
+        let current = paragraph_properties(&self.document, node)
+            .ok_or_else(|| "paragraph not found".to_string())?;
+        let caret = Pos::new(node, self.paragraph_text(node).len() as u32);
+        let Some(next) = adjacent_next_paragraph(&self.document, node) else {
+            return Err("There is no following paragraph to join this one to".to_string());
+        };
+        let operation = match &current.mark_revision {
+            Some(mark) if mark.kind == MarkRevisionKind::Insertion && mark.author == author => {
+                let survivor = paragraph_properties(&self.document, next)
+                    .ok_or_else(|| "paragraph not found".to_string())?;
+                Operation::JoinParagraphs {
+                    first: node,
+                    second: next,
+                    properties: Some(Box::new(survivor)),
+                }
+            }
+            Some(mark) if mark.kind == MarkRevisionKind::Deletion => {
+                return Ok(self.finish_edit(caret));
+            }
+            Some(_) => {
+                return Err(
+                    "Another reviewer suggested this paragraph break; accept or reject it first"
+                        .to_string(),
+                );
+            }
+            None => {
+                let mut deleted = current.clone();
+                deleted.mark_revision = Some(MarkRevision {
+                    kind: MarkRevisionKind::Deletion,
+                    author,
+                    date,
+                    revision_id: Some(self.revision_ids.allocate()?),
+                });
+                Operation::SetParagraphProperties {
+                    node,
+                    properties: Box::new(deleted),
+                }
+            }
+        };
+        self.apply_action_caret_as(vec![operation], caret, HistoryKind::Review)
+    }
+
+    /// A deletion across paragraphs while Suggesting (HF-130).
+    #[wasm_bindgen(js_name = suggestDeleteRange)]
+    pub fn suggest_delete_range(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        self.suggest_range_edit(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            None,
+            author,
+            date,
+        )
+        .map_err(to_js)
+    }
+
+    /// Typing over a selection that spans paragraphs while Suggesting (HF-130): the
+    /// cross-paragraph deletion plus the typed text as an insertion at its start, in
+    /// one undo step.
+    #[wasm_bindgen(js_name = suggestReplaceRange)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn suggest_replace_range(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: &str,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, JsValue> {
+        if text.is_empty() {
+            return Err(to_js("suggested replacement requires text".to_string()));
+        }
+        self.suggest_range_edit(
+            start_node,
+            start_offset,
+            end_node,
+            end_offset,
+            Some(text),
+            author,
+            date,
+        )
+        .map_err(to_js)
+    }
+
+    /// The shape Word writes for a tracked deletion from inside paragraph A to
+    /// inside paragraph B (Word-saved fixture RP040): covered text wrapped as
+    /// deletions; A's mark and every middle mark deleted, B's not; and, when A is
+    /// only partly deleted, every paragraph after A given A's properties with a
+    /// `w:pPrChange` holding its own — so that accepting leaves one paragraph that
+    /// looks like A, and rejecting restores every paragraph exactly.
+    #[allow(clippy::too_many_arguments)]
+    fn suggest_range_edit(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        text: Option<&str>,
+        author: Option<String>,
+        date: Option<String>,
+    ) -> Result<EditResult, String> {
+        let author = self.resolve_author(author);
+        validate_authored_revision_author(author.as_deref())?;
+        let (start, end) = self.order_endpoints(start_node, start_offset, end_node, end_offset)?;
+        let nodes = self.paragraphs_in_selection(start, end);
+        if nodes.len() < 2 {
+            return Err("a cross-paragraph suggestion needs a range across paragraphs".to_string());
+        }
+        for pair in nodes.windows(2) {
+            if adjacent_next_paragraph(&self.document, pair[0]) != Some(pair[1]) {
+                return Err(
+                    "A tracked deletion cannot cross a table or leave its container".to_string(),
+                );
+            }
+        }
+        let last = nodes.len() - 1;
+        let mut body = Vec::new();
+        for node in &nodes {
+            body.extend(review_paragraph_body(&self.document, *node)?);
+        }
+        for (index, node) in nodes.iter().enumerate() {
+            let from = if index == 0 { start.offset } else { 0 };
+            let to = if index == last {
+                end.offset
+            } else {
+                self.paragraph_text(*node).len() as u32
+            };
+            if to > from {
+                self.suggest_deletion_into_body(
+                    &mut body,
+                    *node,
+                    from,
+                    to,
+                    author.clone(),
+                    date.clone(),
+                )?;
+            }
+        }
+        if let Some(text) = text {
+            let insertion = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| "id space exhausted".to_string())?;
+            let run = self
+                .edit_ids
+                .next_id()
+                .map_err(|_| "id space exhausted".to_string())?;
+            let revision_id = self.revision_ids.allocate()?;
+            if !insert_review_revision(
+                &mut body,
+                start.node,
+                start.offset,
+                Revision {
+                    id: insertion,
+                    kind: RevisionKind::Insertion,
+                    author: author.clone(),
+                    date: date.clone(),
+                    revision_id: Some(revision_id),
+                    editor_group: None,
+                    inlines: vec![InlineNode::Run(Run {
+                        id: run,
+                        properties: RunProperties::default(),
+                        text: text.to_owned(),
+                    })],
+                },
+                &mut self.edit_ids,
+            ) {
+                return Err("suggested replacement insertion failed".to_string());
+            }
+        }
+        let mut ops = Vec::new();
+        match update_review_operation(&self.document, &body, None) {
+            Ok(operation) => ops.push(operation),
+            Err(message) if message == "review command made no change" => {}
+            Err(message) => return Err(message),
+        }
+        let first = paragraph_properties(&self.document, nodes[0])
+            .ok_or_else(|| "paragraph not found".to_string())?;
+        let partial_first = start.offset > 0;
+        let mut decided: BTreeMap<NodeId, ParagraphProperties> = BTreeMap::new();
+        let mut merges = Vec::new();
+        for (index, node) in nodes.iter().enumerate() {
+            let current = paragraph_properties(&self.document, *node)
+                .ok_or_else(|| "paragraph not found".to_string())?;
+            let mut next = current.clone();
+            if index < last {
+                match &current.mark_revision {
+                    Some(mark)
+                        if mark.kind == MarkRevisionKind::Insertion && mark.author == author =>
+                    {
+                        merges.push(index);
+                    }
+                    Some(mark) if mark.kind == MarkRevisionKind::Deletion => {}
+                    Some(_) => {
+                        return Err("A paragraph break in this range is another reviewer's suggestion; accept or reject it first".to_string());
+                    }
+                    None => {
+                        next.mark_revision = Some(MarkRevision {
+                            kind: MarkRevisionKind::Deletion,
+                            author: author.clone(),
+                            date: date.clone(),
+                            revision_id: Some(self.revision_ids.allocate()?),
+                        });
+                    }
+                }
+            }
+            if index > 0 && partial_first {
+                let (prior, revision_id) = match &current.prop_change {
+                    Some(change) => (change.prior.as_ref().clone(), change.revision_id.clone()),
+                    None => (paragraph_base(&current), None),
+                };
+                let mut shaped = paragraph_base(&first);
+                shaped.mark_run = next.mark_run.clone();
+                shaped.mark_revision = next.mark_revision.clone();
+                shaped.section_break = next.section_break;
+                if paragraph_base(&shaped) != prior {
+                    let revision_id = match revision_id {
+                        Some(id) => Some(id),
+                        None => Some(self.revision_ids.allocate()?),
+                    };
+                    shaped.prop_change = Some(PropChange {
+                        author: author.clone(),
+                        date: date.clone(),
+                        revision_id,
+                        editor_group: None,
+                        prior: Box::new(prior),
+                    });
+                }
+                next = shaped;
+            }
+            if next != current {
+                ops.push(Operation::SetParagraphProperties {
+                    node: *node,
+                    properties: Box::new(next.clone()),
+                });
+            }
+            decided.insert(*node, next);
+        }
+        for index in merges.into_iter().rev() {
+            let (first_node, second) = (nodes[index], nodes[index + 1]);
+            let survivor = decided
+                .get(&second)
+                .cloned()
+                .ok_or_else(|| "paragraph not found".to_string())?;
+            decided.insert(first_node, survivor.clone());
+            ops.push(Operation::JoinParagraphs {
+                first: first_node,
+                second,
+                properties: Some(Box::new(survivor)),
+            });
+        }
+        if ops.is_empty() {
+            return Err("review command made no change".to_string());
+        }
+        let typed = text.map_or(0, |text| text.len() as u32);
+        let caret = Pos::new(start.node, start.offset + typed);
+        self.apply_action_caret_as(ops, caret, HistoryKind::Review)
     }
 
     /// Tracks a character-formatting change as standard `w:rPrChange` metadata:
@@ -9821,7 +10236,11 @@ impl WasmDocument {
         let mut ops = Vec::new();
         for node in self.paragraphs_in_selection(start, end) {
             if let Some(mut props) = paragraph_properties(&self.document, node) {
+                let current = props.clone();
                 f(&mut props);
+                let props = self
+                    .track_paragraph_change(&current, props)
+                    .map_err(to_js)?;
                 ops.push(Operation::SetParagraphProperties {
                     node,
                     properties: Box::new(props),
@@ -9886,7 +10305,11 @@ impl WasmDocument {
                 continue; // never indent a table-cell paragraph from the ruler
             }
             if let Some(mut props) = paragraph_properties(&self.document, node) {
+                let current = props.clone();
                 f(&mut props);
+                let props = self
+                    .track_paragraph_change(&current, props)
+                    .map_err(to_js)?;
                 ops.push(Operation::SetParagraphProperties {
                     node,
                     properties: Box::new(props),
@@ -14870,6 +15293,18 @@ fn parse_paragraph_revision_id(id: &str) -> Option<(&str, ParagraphRevisionPart)
     }
 }
 
+/// The base paragraph properties a `w:pPrChange` snapshot can hold (`CT_PPrBase`,
+/// ISO 29500 §17.13.5.29): everything except the mark's own run properties, a
+/// revision of the mark, the section properties and a nested change.
+fn paragraph_base(properties: &ParagraphProperties) -> ParagraphProperties {
+    let mut base = properties.clone();
+    base.mark_run = None;
+    base.mark_revision = None;
+    base.section_break = None;
+    base.prop_change = None;
+    base
+}
+
 /// The paragraph properties Reject restores from a `w:pPrChange` snapshot.
 ///
 /// The snapshot is `CT_PPrBase` (ISO 29500 §17.13.5.29): it never holds the
@@ -17299,6 +17734,7 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
         checklist_unchecked: None,
         checklist_checked: None,
         active_author: None,
+        paragraph_tracking: None,
     })
 }
 
@@ -20037,6 +20473,299 @@ mod tests {
         assert!(doc.missing_coverage().is_empty());
     }
 
+    // ---- docs/108 phase 2: authoring paragraph-level suggestions (HF-130/131) ----
+
+    /// Four plain paragraphs, written and re-opened through the real package path,
+    /// with a review identity set — the state a reviewer is in when Suggesting.
+    fn docx_for_suggesting() -> Vec<u8> {
+        use casual_doc_model::v1::Definitions;
+        let id = |n: u64| NodeId::from_parts(n, 208).unwrap();
+        let paragraph = |n: u64, text: &str| {
+            BlockNode::Paragraph(Paragraph {
+                id: id(n),
+                properties: ParagraphProperties::default(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: id(n + 1),
+                    properties: RunProperties::default(),
+                    text: text.to_owned(),
+                })],
+            })
+        };
+        let document = Document::new(
+            id(1),
+            vec![
+                paragraph(10, "Alpha"),
+                paragraph(20, "Beta"),
+                paragraph(30, "Gamma"),
+                paragraph(40, "Delta"),
+            ],
+            Definitions::default(),
+        )
+        .expect("valid");
+        write_document(&document, &BTreeMap::new()).expect("write")
+    }
+
+    fn open_for_suggesting() -> WasmDocument {
+        let mut d = open_document(&docx_for_suggesting()).expect("open");
+        d.set_active_author("Reviewer", None, None)
+            .expect("set the review identity");
+        d
+    }
+
+    /// HF-130. Enter while Suggesting splits the paragraph and marks the LEADING
+    /// half's paragraph mark inserted, as Word does — the trailing half keeps the
+    /// original mark. Rejecting it puts the paragraph back.
+    #[test]
+    fn suggested_enter_marks_the_leading_paragraph_mark_inserted() {
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        d.suggest_split(&ids[0], 2, None, None)
+            .expect("suggest a split");
+
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 5, "one paragraph became two");
+        assert_eq!(states[0].0, "Al");
+        assert_eq!(states[1].0, "pha");
+        assert!(states[0].2, "the leading half's mark is the suggestion");
+        assert!(!states[1].2, "the trailing half keeps the original mark");
+
+        let items = revision_items(&d);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "paragraph_mark_insertion");
+        assert_eq!(items[0]["author"], "Reviewer");
+
+        // Rejecting joins the halves back into the original paragraph.
+        let id = items[0]["id"].as_str().unwrap().to_owned();
+        d.decide_revision(&id, false).expect("reject");
+        let after = paragraph_states(&d);
+        assert_eq!(after.len(), 4);
+        assert_eq!(after[0].0, "Alpha");
+        assert!(revision_items(&d).is_empty());
+    }
+
+    /// Delete at a paragraph's end (or Backspace at the next one's start) suggests
+    /// deleting that paragraph mark; accepting later merges the two.
+    #[test]
+    fn suggested_paragraph_mark_deletion_merges_only_when_accepted() {
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        d.suggest_delete_paragraph_mark(&ids[0], None, None)
+            .expect("suggest");
+
+        assert_eq!(paragraph_states(&d).len(), 4, "nothing is merged yet");
+        let items = revision_items(&d);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "paragraph_mark_deletion");
+
+        let id = items[0]["id"].as_str().unwrap().to_owned();
+        d.decide_revision(&id, true).expect("accept");
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 3);
+        assert_eq!(states[0].0, "AlphaBeta");
+    }
+
+    /// docs/86 decision 2 for paragraph marks: deleting the author's own pending
+    /// break removes it outright rather than stacking a deletion on an insertion.
+    /// Another reviewer's break is refused instead of being overwritten.
+    #[test]
+    fn deleting_a_pending_break_removes_it_and_another_authors_is_refused() {
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        d.suggest_split(&ids[0], 2, None, None).expect("split");
+        assert_eq!(paragraph_states(&d).len(), 5);
+
+        // The same author removes their own suggestion: back to one paragraph, no
+        // revision left behind.
+        let leading = body_paragraph_ids(&d)[0].clone();
+        d.suggest_delete_paragraph_mark(&leading, None, None)
+            .expect("remove own break");
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 4);
+        assert_eq!(states[0].0, "Alpha");
+        assert!(
+            revision_items(&d).is_empty(),
+            "no revision remains: {:?}",
+            revision_items(&d)
+        );
+
+        // Another reviewer's break is theirs to decide.
+        d.suggest_split(&ids[0], 2, Some("Other".to_owned()), None)
+            .expect("their split");
+        let leading = body_paragraph_ids(&d)[0].clone();
+        let error = d
+            .suggest_delete_paragraph_mark_inner(&leading, None, None)
+            .expect_err("must not overwrite another reviewer's suggestion");
+        assert!(
+            error.contains("Another reviewer"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A tracked deletion from inside A to inside B (Word fixture RP040): the text
+    /// is struck, A's mark is deleted, B's is not, and the paragraphs after A carry
+    /// A's properties with a `w:pPrChange` holding their own — so accepting leaves
+    /// one paragraph that looks like A.
+    #[test]
+    fn a_cross_paragraph_suggested_deletion_writes_words_shape() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        d.set_alignment(&ids[0], 0, &ids[0], 0, "center")
+            .expect("centre Alpha");
+
+        d.suggest_delete_range(&ids[0], 2, &ids[1], 2, None, None)
+            .expect("suggest a cross-paragraph deletion");
+
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 4, "nothing is merged until it is accepted");
+        assert!(states[0].2, "Alpha's mark is suggested deleted");
+        assert!(!states[1].2, "Beta's mark is untouched");
+        assert!(
+            states[1].3,
+            "Beta carries a pPrChange holding its own prior"
+        );
+        assert_eq!(
+            states[1].1,
+            Some(Alignment::Center),
+            "Beta takes Alpha's shape"
+        );
+
+        // Markup keeps every character; the final view drops the struck text.
+        d.set_show_changes(false);
+        assert_eq!(d.paragraph_text(node_id(&ids[0]).unwrap()), "Al");
+        assert_eq!(d.paragraph_text(node_id(&ids[1]).unwrap()), "ta");
+
+        d.decide_all_revisions(true).expect("accept all");
+        let accepted = paragraph_states(&d);
+        assert_eq!(accepted.len(), 3);
+        assert_eq!(accepted[0].0, "Alta");
+        assert_eq!(
+            accepted[0].1,
+            Some(Alignment::Center),
+            "the survivor looks like Alpha"
+        );
+    }
+
+    /// Rejecting a cross-paragraph deletion restores every paragraph exactly, and
+    /// the whole suggestion is one undo step.
+    #[test]
+    fn a_cross_paragraph_suggestion_rejects_and_undoes_to_the_original() {
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        let before = paragraph_states(&d);
+
+        d.suggest_delete_range(&ids[0], 2, &ids[2], 3, None, None)
+            .expect("suggest");
+        d.undo().expect("one undo step");
+        assert_eq!(paragraph_states(&d), before, "undo restores the document");
+        assert!(revision_items(&d).is_empty());
+
+        d.suggest_delete_range(&ids[0], 2, &ids[2], 3, None, None)
+            .expect("suggest again");
+        d.decide_all_revisions(false).expect("reject all");
+        assert_eq!(paragraph_states(&d), before, "reject restores the document");
+    }
+
+    /// Typing over a cross-paragraph selection: one deletion plus one insertion.
+    #[test]
+    fn typing_over_a_cross_paragraph_selection_is_one_suggestion() {
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+        d.suggest_replace_range(&ids[0], 2, &ids[1], 2, "X", None, None)
+            .expect("suggest a replacement");
+
+        let kinds: Vec<String> = revision_items(&d)
+            .iter()
+            .map(|item| item["kind"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(kinds.contains(&"insertion".to_owned()), "kinds: {kinds:?}");
+        assert!(kinds.contains(&"deletion".to_owned()), "kinds: {kinds:?}");
+
+        d.decide_all_revisions(true).expect("accept all");
+        let states = paragraph_states(&d);
+        assert_eq!(states.len(), 3);
+        assert_eq!(states[0].0, "AlXta");
+    }
+
+    /// HF-131. Paragraph formatting while tracking records a `w:pPrChange` holding
+    /// the prior; rejecting restores it. A second change keeps the FIRST prior, so
+    /// Reject returns the paragraph to where review started.
+    #[test]
+    fn suggested_paragraph_formatting_records_and_keeps_the_first_prior() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+
+        d.set_paragraph_tracking(true, Some("2026-09-17T00:00:00Z".to_owned()));
+        d.set_alignment(&ids[0], 0, &ids[0], 0, "center")
+            .expect("centre");
+        d.set_paragraph_tracking(false, None);
+
+        let states = paragraph_states(&d);
+        assert_eq!(
+            states[0].1,
+            Some(Alignment::Center),
+            "the change is applied"
+        );
+        assert!(states[0].3, "and recorded as a tracked change");
+        let items = revision_items(&d);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["kind"], "paragraph_format");
+        assert_eq!(items[0]["author"], "Reviewer");
+
+        // A second tracked change keeps the original prior.
+        d.set_paragraph_tracking(true, Some("2026-09-17T00:01:00Z".to_owned()));
+        d.set_alignment(&ids[0], 0, &ids[0], 0, "right")
+            .expect("right-align");
+        d.set_paragraph_tracking(false, None);
+        assert_eq!(revision_items(&d).len(), 1, "still one suggestion, not two");
+
+        let id = revision_items(&d)[0]["id"].as_str().unwrap().to_owned();
+        d.decide_revision(&id, false).expect("reject");
+        let rejected = paragraph_states(&d);
+        assert_eq!(
+            rejected[0].1, None,
+            "reject restores the alignment review started from"
+        );
+        assert!(!rejected[0].3);
+    }
+
+    /// Formatting back to the prior leaves no suggestion at all, and tracking is
+    /// scoped to the command the host wraps: with it off, the same command applies
+    /// untracked.
+    ///
+    /// "Back to the prior" means the properties genuinely match again. Setting
+    /// alignment to Start after Center does NOT qualify: the prior had no `w:jc` at
+    /// all, and explicitly-left differs from inherited, which is why Word records
+    /// that as a change too. `keep_next` is a plain boolean, so toggling it on and
+    /// off is a real round trip.
+    #[test]
+    fn formatting_back_to_the_prior_clears_the_suggestion_and_tracking_is_scoped() {
+        use casual_doc_model::v1::Alignment;
+        let mut d = open_for_suggesting();
+        let ids = body_paragraph_ids(&d);
+
+        d.set_paragraph_tracking(true, None);
+        d.set_keep_with_next(&ids[0], 0, &ids[0], 0, true)
+            .expect("keep with next");
+        assert!(paragraph_states(&d)[0].3, "the change is tracked");
+        d.set_keep_with_next(&ids[0], 0, &ids[0], 0, false)
+            .expect("and back off");
+        d.set_paragraph_tracking(false, None);
+        assert!(
+            !paragraph_states(&d)[0].3,
+            "a change back to the prior tracks nothing"
+        );
+        assert!(revision_items(&d).is_empty());
+
+        // Tracking off: the same command applies with no revision.
+        d.set_alignment(&ids[0], 0, &ids[0], 0, "center")
+            .expect("centre untracked");
+        assert_eq!(paragraph_states(&d)[0].1, Some(Alignment::Center));
+        assert!(!paragraph_states(&d)[0].3);
+        assert!(revision_items(&d).is_empty());
+    }
+
     // ---- docs/108 phase 1: paragraph-level revisions from Word files ----------
 
     /// A document shaped the way Word writes paragraph-level suggestions, written by
@@ -21415,6 +22144,7 @@ mod tests {
             checklist_unchecked: None,
             checklist_checked: None,
             active_author: None,
+            paragraph_tracking: None,
         };
         let node = paragraph.to_string();
 
@@ -21845,6 +22575,7 @@ mod tests {
             checklist_unchecked: None,
             checklist_checked: None,
             active_author: None,
+            paragraph_tracking: None,
         };
         let node = paragraph.to_string();
 
@@ -22111,6 +22842,7 @@ mod tests {
             checklist_unchecked: None,
             checklist_checked: None,
             active_author: None,
+            paragraph_tracking: None,
         };
 
         let summary: serde_json::Value =
@@ -25270,6 +26002,7 @@ mod tests {
             checklist_unchecked: None,
             checklist_checked: None,
             active_author: None,
+            paragraph_tracking: None,
         }
     }
 
@@ -27230,6 +27963,7 @@ mod tests {
             checklist_unchecked: None,
             checklist_checked: None,
             active_author: None,
+            paragraph_tracking: None,
         };
 
         let paragraph =

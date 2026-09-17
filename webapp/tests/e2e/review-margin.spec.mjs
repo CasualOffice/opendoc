@@ -210,8 +210,15 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await page.keyboard.press("Shift+ArrowLeft");
   await page.keyboard.press("Shift+ArrowLeft");
   await setReviewMode(page, "suggesting");
+  // Centring used to be refused here ("cannot be tracked"). It is now a tracked
+  // paragraph formatting suggestion of its own (docs/108 phase 2, HF-131), so it
+  // adds a card rather than a status error — and it must not disturb the
+  // replacement pairing this test is about.
   await page.locator("#alignCenter").click();
-  await expect(page.locator("#status")).toContainText("cannot be tracked");
+  const paragraphFormat = page
+    .locator("#reviewSidebar .review-margin-card.review-margin-paragraph-format");
+  await expect(paragraphFormat).toHaveCount(1);
+  await expect(page.locator("#status")).not.toContainText("cannot be tracked");
   await page.keyboard.type("NEW");
 
   const sidebar = page.locator("#reviewSidebar");
@@ -234,6 +241,12 @@ test("replacement and formatting pairs are one atomic suggestion card", async ({
   await formatting.click();
   await formatting.getByRole("button", { name: "Reject" }).click();
   await expect(formatting).toHaveCount(0);
+
+  // Reject the paragraph formatting suggestion too, and the paragraph returns to
+  // the alignment it had before review started.
+  await paragraphFormat.click();
+  await paragraphFormat.getByRole("button", { name: "Reject" }).click();
+  await expect(paragraphFormat).toHaveCount(0);
 
   await page.locator("#suggestingBanner").getByRole("button", { name: "Switch to editing" }).click();
   await expect(
