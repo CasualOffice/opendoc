@@ -115,6 +115,114 @@ impl ParagraphBorders {
     }
 }
 
+/// The shared empty border set an absent [`BoxedParagraphBorders`] reads as.
+static NO_PARAGRAPH_BORDERS: ParagraphBorders = ParagraphBorders {
+    top: None,
+    bottom: None,
+    start: None,
+    end: None,
+    between: None,
+    bar: None,
+};
+
+/// A [`ParagraphBorders`] stored out of line, because essentially every
+/// paragraph in a document has none.
+///
+/// `ParagraphBorders` is 288 bytes and was held by value on every paragraph's
+/// properties; `docs/111` measured that as the single largest item in a
+/// paragraph's 1,565-byte model cost. Absent borders now cost one null pointer
+/// (8 bytes on a 64-bit host) and a bordered paragraph pays one small
+/// allocation.
+///
+/// It behaves as the value it wraps rather than as an option, so reading code is
+/// unchanged: it derefs to a `&ParagraphBorders` (borrowing a shared empty set
+/// when absent), and `Debug`, `PartialEq` and the serialized form are all
+/// identical to the plain value it replaced. In particular **absent and present
+/// but empty compare equal and serialize the same** — nothing observable
+/// distinguishes them, so no caller has to care which one it holds.
+///
+/// Mutating through [`DerefMut`](std::ops::DerefMut) (`properties.borders.top =
+/// …`) allocates on demand.
+#[derive(Clone, Default)]
+pub struct BoxedParagraphBorders(Option<Box<ParagraphBorders>>);
+
+impl BoxedParagraphBorders {
+    /// Whether no edge is set (serializes to nothing) — true both when the set
+    /// is absent and when an allocated set has had every edge cleared.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.as_ref().is_none_or(|borders| borders.is_empty())
+    }
+
+    /// Whether an allocation is held. Not part of the value's meaning — an
+    /// allocated but empty set is still [`is_empty`](Self::is_empty) — this is
+    /// for memory assertions only.
+    #[must_use]
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl From<ParagraphBorders> for BoxedParagraphBorders {
+    /// Stores `borders`, keeping an empty set out of line (so an empty set never
+    /// allocates, whichever way it was built).
+    fn from(borders: ParagraphBorders) -> Self {
+        if borders.is_empty() {
+            Self(None)
+        } else {
+            Self(Some(Box::new(borders)))
+        }
+    }
+}
+
+impl std::ops::Deref for BoxedParagraphBorders {
+    type Target = ParagraphBorders;
+
+    fn deref(&self) -> &ParagraphBorders {
+        self.0.as_deref().unwrap_or(&NO_PARAGRAPH_BORDERS)
+    }
+}
+
+impl std::ops::DerefMut for BoxedParagraphBorders {
+    /// Allocates an empty set on first mutable access.
+    fn deref_mut(&mut self) -> &mut ParagraphBorders {
+        self.0.get_or_insert_with(Box::default)
+    }
+}
+
+impl std::fmt::Debug for BoxedParagraphBorders {
+    /// Prints the border set itself, so diagnostics are unchanged by the boxing.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl PartialEq for BoxedParagraphBorders {
+    /// Compares the border sets, so absent equals present-but-empty exactly as
+    /// two empty by-value sets compared equal before.
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl Eq for BoxedParagraphBorders {}
+
+impl Serialize for BoxedParagraphBorders {
+    /// Serializes as the border set itself (the field is skipped when empty), so
+    /// the JSON shape is byte-identical to the unboxed value's.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (**self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BoxedParagraphBorders {
+    /// Accepts exactly what the unboxed value accepted; an explicitly empty
+    /// `{}` is stored out of line.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ParagraphBorders::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// A custom tab stop's alignment (`w:tab/@w:val`).
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -910,9 +1018,11 @@ pub struct ParagraphProperties {
     /// Outline (heading) level, `0..=9` (`w:outlineLvl`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_level: Option<u8>,
-    /// Paragraph borders (`w:pBdr`).
-    #[serde(default, skip_serializing_if = "ParagraphBorders::is_empty")]
-    pub borders: ParagraphBorders,
+    /// Paragraph borders (`w:pBdr`). Stored out of line — see
+    /// [`BoxedParagraphBorders`] — because almost no paragraph has any; it reads
+    /// and writes as a plain [`ParagraphBorders`].
+    #[serde(default, skip_serializing_if = "BoxedParagraphBorders::is_empty")]
+    pub borders: BoxedParagraphBorders,
     /// Paragraph background shading (`w:shd`).
     #[serde(default, skip_serializing_if = "Shading::is_empty")]
     pub shading: Shading,
@@ -976,13 +1086,20 @@ pub struct ParagraphProperties {
     /// Paragraph-properties format-change revision (`w:pPrChange`): the prior
     /// paragraph properties plus author/date/id. Additive, omitted when absent;
     /// re-emitted as the last child of `w:pPr`.
+    ///
+    /// Boxed (like `mark_run`) because only a tracked format change carries one:
+    /// absent it costs a pointer instead of 112 bytes on every paragraph in the
+    /// document (`docs/111`). `Option<Box<T>>` serializes as `Option<T>` does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prop_change: Option<PropChange<ParagraphProperties>>,
+    pub prop_change: Option<Box<PropChange<ParagraphProperties>>>,
     /// Tracked insertion/deletion of the paragraph mark itself
     /// (`w:pPr > w:rPr > w:ins` / `w:del`). Additive, omitted when absent;
     /// re-emitted as the first child of the mark's `w:rPr`.
+    ///
+    /// Boxed for the same reason as `prop_change`: only a tracked paragraph mark
+    /// carries one, and 80 bytes per paragraph is not worth paying for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mark_revision: Option<MarkRevision>,
+    pub mark_revision: Option<Box<MarkRevision>>,
 }
 
 /// Run vertical alignment (`w:vertAlign`).
@@ -1216,8 +1333,12 @@ pub struct RunProperties {
     /// Run-properties format-change revision (`w:rPrChange`): the prior run
     /// properties plus author/date/id. Additive, omitted when absent; re-emitted
     /// as the last child of `w:rPr`.
+    ///
+    /// Boxed because only a tracked format change carries one, and every run in
+    /// the document paid 112 bytes for the empty case (`docs/111`).
+    /// `Option<Box<T>>` serializes as `Option<T>` does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prop_change: Option<PropChange<RunProperties>>,
+    pub prop_change: Option<Box<PropChange<RunProperties>>>,
 }
 
 /// Run language tags (`w:lang`). Each tag is a producer-written language string
