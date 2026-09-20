@@ -1,6 +1,9 @@
 # 113 — Windowed layout: laying out only the pages someone is looking at
 
-**Status:** Steps 1-5 landed in the engine; host wiring open (§8). **Opened:** 2026-09-20.
+**Status:** Steps 1-5 landed in the engine and the host now holds a window (§8);
+`MAX_VIEWER_BLOCKS` moved 262,144 → **700,000** on a browser measurement, and the
+owner's 1,303,306-paragraph file now opens in the browser (2,476 MB, §8.4) but is still
+refused because the host cannot scroll to all of it (§8.4-8.5). **Opened:** 2026-09-20.
 **Owner:** unassigned.
 **Row:** `109` **HF-162** (P1, L). **Depends on:** HF-161 / HF-163 (`docs/111`).
 **Supersedes:** `docs/111` §4 "stage 2", which sketched this and listed four open
@@ -352,26 +355,154 @@ largest size actually measured to open" — so raising it now would trade an hon
 for `RuntimeError: unreachable`, the regression HF-158 exists for. What has to happen
 first is recorded in §8.
 
-## 8. What is still owed before the constant moves
+## 8. The host side, as landed — and the ceiling that is left
 
-Both are host work, outside the layout engine:
+### 8.1 What was owed
 
-1. **`WasmDocument` must hold a window, not a whole `PaginatedLayout`.** The facade keeps
-   `layout: PaginatedLayout` and answers `pageCount`, `renderPage`, hit-testing, selection
-   geometry and export from it. The narrow part is that only `compose.rs` and `hittest.rs`
-   read `Page::placed` at all, so the surface is smaller than the file's size suggests; the
-   wide part is that every consumer that iterates *all* pages (export, find-all, the
-   accessibility mirror) needs an explicit answer, because a page that is silently empty
-   because it is outside the window is silent data loss.
-2. **The browser-side open cost is a separate ceiling.** The table on `MAX_VIEWER_BLOCKS`
-   measures 23.2 s to open 262,145 blocks in Chromium, linear in blocks. At 1.3M that is
-   minutes, whatever the engine costs. That is `docs/104` HF-077 (budget, progress,
-   cancel), and until it is addressed a raised block limit would replace a clear refusal
-   with a frozen tab.
+1. **`WasmDocument` must hold a window, not a whole `PaginatedLayout`.** **Landed** —
+   §8.2.
+2. **The browser-side open cost is a separate ceiling.** **Still true, and it is now the
+   *second* ceiling rather than the first** — §8.4.
 
-The scroll seam itself is ready: `window_of` returns a `ViewportLayout` and
-`ScrollCoalescer` decides when to ask for one. Neither has a host consumer yet, which is
-named here rather than left to be discovered (`docs/105` §9 rule 4).
+### 8.2 `WasmDocument` holds a `BodyLayout`
+
+`crates/casual-doc-wasm/src/window.rs`. The field is now
+
+```rust
+enum BodyLayout { Whole(PaginatedLayout), Windowed(Box<WindowedBody>) }
+```
+
+and `WindowedBody` holds the `DocumentMeasures`, a `WindowPolicy`, the materialized
+window, and the **absolute** page range that window covers.
+
+**The surface really was narrower than the file's size suggests, but not for the reason
+§8 gave, and the difference is worth writing down because the original claim reads as
+broader than it is.** Checked rather than taken on trust: `grep -rn '\.placed' crates`
+finds it in **eleven** non-test source files, not two — `paginate.rs` (52 references),
+`columns.rs` (24), `document_layout.rs` (11), `notes.rs` (9), plus `line_number.rs`,
+`anchor.rs`, `note_numbering.rs` and `windowed.rs`. What is true, and is what §8 meant,
+is that every one of those is a **producer**: they are the pipeline that fills a page.
+The only downstream **consumers** of a finished page's placed content are `compose.rs`
+(one site) and `hittest.rs` (four), and `casual-doc-wasm` itself has exactly one.
+
+The thing that actually made this tractable is a different one. `casual-doc-wasm`'s
+30,000 lines reach the page list through exactly **three** accessors —
+`painted_layout`, `editing_layout`, and now `body_page_at` — because an earlier defect
+cluster (answering a pixel question from the layout that did not paint it) had already
+forced that discipline. Twenty-six call sites, every one of them through one of the
+three. That is what made this a reviewable change rather than a rewrite, and it is worth
+protecting.
+
+Three properties the type enforces:
+
+- **`page_count` is the document's, always.** A windowed body answers from the measure
+  tier. Reporting the window would tell a host with 25,556 pages that it had five, and
+  the other 25,551 would not exist for the scrollbar, printing, `NUMPAGES` or the status
+  bar.
+- **`page_at(index)` is `Option`, and `None` means "not resident", never "empty page".**
+  The callers that must not fail — `renderPage` — move the window first.
+- **`pageSize(index)` does not move the window.** It is answered from the page's
+  `PageOutline`. This is not an optimization, it is the difference between working and
+  not: a host builds one sheet per page and asks each one's size *before* rendering
+  anything, so routing that through the window re-flowed and re-paginated once per page
+  of the document — **121.1 s to open 262,146 blocks, against 35.8 s for the whole
+  path**. Fixed, the same open is 17.3 s.
+
+### 8.3 Every all-pages consumer, and what it does now
+
+The full table lives in `window.rs`'s module documentation, next to the code, and is
+exhaustive by construction (three accessors, every call site is one of them). In
+summary:
+
+| kind | consumers | answer |
+| --- | --- | --- |
+| **Re-materialised** | `renderPage` (moves the window), `pageSize` (from the outline), print, thumbnails | every page of the document, in any order |
+| **Answered from the measure tier** | `pageCount`, `documentStats().pages`, `NUMPAGES` | the document's real count, not the window's |
+| **Unaffected — model-derived** | export (`exportDocx`, `exportAs`), find (`findText`), the accessibility mirror, word and paragraph counts | the model stays whole; these never read the layout |
+| **Refused loudly** | every edit (one line at `apply_group`, the atomic choke point, so all 47 operations), the show-changes preview | a sentence naming the size, the limit and what to do |
+| **Re-measured** | font registration → `repaginate` | one more shaping pass at the bounded peak |
+| **Window-local by definition** | caret and selection rectangles, hit-testing, table and checklist chrome, object boxes, running bands | they convert between *painted pixels* and the model; they look pages up by `Page::number`, so they can never answer about the wrong page |
+
+**Editing is refused, not approximated, and that is a deliberate product decision.**
+A windowed body cannot re-paginate: `finish_edit` re-runs the whole document — the peak
+this path exists to avoid — and re-measuring is a full shaping pass, 85-110 s on a
+document this size, per keystroke. So a windowed document is **read-only**, and says so.
+The alternative considered and rejected was to let the edit land and leave the layout
+stale, which is the silent version of the same limitation.
+
+**What "refused loudly" does not yet reach.** The engine's sentence stops at the host:
+`webapp/src/edit_errors.mjs` maps every engine refusal to one generic line, *"That edit
+isn't supported for this selection yet"*, which for a read-only document is actively
+misleading — it sends the user to look at their selection. A getter,
+`editingUnavailableReason`, now exists for the host to read so a control can be
+**disabled with a reason** rather than look live and refuse (`SKILL.md` §10). Nothing in
+`webapp/src` consumes it yet. Named here rather than left to be discovered
+(`docs/105` §9 rule 4).
+
+### 8.4 The constant moved: 262,144 → 700,000, and where it stopped
+
+Measured **through the browser** with the committed probe
+`webapp/tests/e2e/viewer-ceiling-measurement.spec.mjs`
+(`MEASURE_VIEWER_CEILING=1 npx playwright test viewer-ceiling-measurement`; macOS arm64,
+headless Chromium, release wasm, the owner's own 32-byte line repeated). "wasm" is
+`WebAssembly.Memory.buffer.byteLength` after the open — linear memory never shrinks, so
+that reading *is* the high-water mark, and it is the number that decides whether a
+document opens at all. "last page" is whether the host can scroll to the final page and
+find ink on it.
+
+| blocks | path | open | wasm | JS heap | pages | last page |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 65,537 | whole | 9.1 s | 359 MB | 38 MB | 1,286 | reached |
+| 262,144 | whole | 26.3-42.2 s | 1,222 MB | 57 MB | 5,141 | reached |
+| 262,146 | windowed | 17.3-31.2 s | **592 MB** | 33 MB | 5,141 | reached |
+| 600,000 | windowed | 21.6-73.0 s | 1,230 MB | 67 MB | 11,765 | reached |
+| **700,000** | windowed | 85.9-95.0 s | 1,314 MB | 74 MB | 13,726 | reached |
+| 800,000 | windowed | 118.7 s | 1,442 MB | 91 MB | 15,687 | **NOT reached** |
+| **1,303,306 — the owner's own file** | windowed | **110.5 s** | **2,476 MB** | 139 MB | **25,556** | **NOT reached** |
+
+The last row is the owner's real 41 MB file, fed through the picker, not a synthetic
+stand-in.
+
+**Windowing is what moved the constant.** At the same block count the windowed path
+holds **592 MB against 1,222 MB** and opens no slower, which is what makes 700,000
+blocks — 2.7× the old ceiling — something a browser can hold.
+
+**The owner's file now opens.** 1,303,306 paragraphs, 2,476 MB of linear memory inside a
+wasm32 address space where the whole-layout path needed 4.14 GiB and could not be
+attempted, 25,556 pages reported correctly, every one of them individually rasterizable
+through `renderPage`, exportable, findable, printable.
+
+**And it is still refused, for a reason that is no longer the engine's.** The viewer
+builds one sheet per page, so its scroll container is pages × ~1,078 px, and a browser
+stops scrolling at 2^24 = 16,777,216 CSS px. Measured: at 800,000 blocks the container
+is 16,910,594 px and the final pages cannot be scrolled to; at 1,303,306 it is
+27,549,376 px and the last third cannot. Admitting a document whose final third is
+silently unreachable is the failure mode this whole document is written against, so the
+ceiling is set at the largest size measured to open **and be wholly reachable**:
+700,000.
+
+Note what that ceiling is really a function of: **pages, not blocks.** A block count
+cannot bound a page count — a document of long paragraphs makes more pages per block —
+so 700,000 is the measured answer for this shape and not a proof for every shape. The
+hazard is not new (262,144 blocks of one-page-each blocks was already past the browser's
+limit), but it is now the thing in the way.
+
+### 8.5 What is owed next, in the order it blocks the owner
+
+1. **A virtualized scroll container in the host** (`webapp/src`). One sheet per page is
+   what puts a 25,556-page document past the browser's scroll limit. Until it is fixed,
+   no engine work raises the ceiling past ~15,500 pages. This is the single thing between
+   the owner and their file.
+2. **`editingUnavailableReason` has no consumer** (§8.3). A read-only document currently
+   looks fully editable and then refuses with a sentence about the selection.
+3. **Open is still slow and gives no feedback**: 110.5 s for the owner's file, linear in
+   blocks, with no budget, progress or cancel. `docs/104` HF-077. Windowing did not
+   change this and was never going to — both paths pay the same single shaping pass.
+4. **`ScrollCoalescer` still has no host consumer.** `window_of` returns a
+   `ViewportLayout` and the coalescer decides when to ask for one; the facade instead
+   moves its window from `renderPage`, which is correct and is what the existing host
+   drives, but it means a drag across 25,556 pages is bounded by the host's
+   virtualization rather than by the coalescer built for it.
 
 ## 7. Known unknowns
 

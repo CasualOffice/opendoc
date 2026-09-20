@@ -269,9 +269,35 @@ own 30-character paragraphs the production path costs 3,378 B, which is the numb
 matters for that file. The 4.14 GiB peak is the measured reason it is refused: it does
 not fit a wasm32 address space.
 
-**The ceiling has not moved yet**, because `casual-doc-wasm`'s open path still calls
-`paginate_document`. `docs/113` §8 lists the two things owed before `MAX_VIEWER_BLOCKS`
-can change, and the constant's own doc comment carries the table above.
+#### The ceiling has moved: 262,144 → 700,000
+
+`casual-doc-wasm` now holds a `BodyLayout` that is either the whole document's pages or
+one window of them (`docs/113` §8.2), so the browser no longer pays the left-hand column
+above. Re-measured **through the browser**, with the committed probe
+`webapp/tests/e2e/viewer-ceiling-measurement.spec.mjs` — `wasm` is
+`WebAssembly.Memory.buffer.byteLength` after the open, which is the high-water mark
+because linear memory never shrinks:
+
+| blocks | path | open | wasm | pages | last page reachable |
+| --- | --- | ---: | ---: | ---: | --- |
+| 262,144 | whole | 26.3-42.2 s | 1,222 MB | 5,141 | yes |
+| 262,146 | windowed | 17.3-31.2 s | **592 MB** | 5,141 | yes |
+| **700,000** | windowed | 85.9-95.0 s | 1,314 MB | 13,726 | yes |
+| 800,000 | windowed | 118.7 s | 1,442 MB | 15,687 | **no** |
+| **1,303,306 — the owner's file** | windowed | **110.5 s** | **2,476 MB** | **25,556** | **no** |
+
+At the same block count the windowed path holds **592 MB against 1,222 MB**, which is
+what pays for a 2.7× higher ceiling.
+
+**The owner's file now opens in the browser** — 2,476 MB inside a wasm32 address space
+where the whole-layout path needed 4.14 GiB and could not be attempted, with all 25,556
+pages reported, rasterizable, exportable and findable. It is nonetheless still refused,
+and the reason is no longer the engine's: the viewer builds one sheet per page, so its
+scroll container is 27,549,376 px and a browser stops scrolling at 2^24 = 16,777,216 px,
+leaving the last third unreachable. Admitting a document whose final third is silently
+unreachable is the failure this work exists to prevent, so the constant is the largest
+size measured to open **and be wholly reachable**. `docs/113` §8.5 lists what is owed
+next, starting with a virtualized scroll container in the host.
 
 ### Result after stages 1a and 1b, measured
 
@@ -287,7 +313,9 @@ would have left the model at ≈1.89 GB, which does not fit once a window is add
 
 - **Raising `MAX_VIEWER_BLOCKS` without stage 2.** The constant is a measured cliff. A
   larger number buys a module abort instead of an honest refusal, which is strictly
-  worse (HF-158 exists because that is what used to happen).
+  worse (HF-158 exists because that is what used to happen). *(Stage 2 landed, the
+  constant was re-measured through the browser, and it moved to 700,000 — see §4. The
+  rule stands: it moved because a measurement moved.)*
 - **Removing the refusal path.** Even after stage 2 there is a ceiling; it must keep
   saying what was found, what the limit is, and what to do.
 - **Streaming the model to disk / IndexedDB.** Out of scope; local-first and
@@ -302,7 +330,30 @@ and prints both halves of the measurement — the `size_of` table, every `BlockN
 named rather than guessed at), and the resident bytes per paragraph as an RSS delta over
 a synthetic body. The committed `edit_latency` example produces the pagination timings.
 
-The §2 and §3.1 probes predate it and were temporary examples that were not committed,
-so **those numbers remain design input, not a public claim.** Per `docs/105` EV-rules a
-published number must derive from a committed artifact — which stage 1b's now do, and
-§2/§3.1's do not.
+**The stage-2 layout figures come from the committed `layout_footprint` example** in
+the same crate (`cargo run --release --example layout_footprint [paragraphs]`), which
+runs each phase in its own child process and samples the child's peak RSS, because peak
+is what fails an allocation.
+
+**The browser figures come from the committed probe**
+`webapp/tests/e2e/viewer-ceiling-measurement.spec.mjs`. It is skipped in a normal run —
+the largest row takes minutes — and produced deliberately:
+
+```sh
+cd webapp && ./build.sh
+MEASURE_VIEWER_CEILING=1 npx playwright test viewer-ceiling-measurement
+# one size, or a sweep:
+MEASURE_VIEWER_CEILING=1 VIEWER_CEILING_BLOCKS=262146,700000 npx playwright test viewer-ceiling-measurement
+# or a real file, which never enters the repository:
+MEASURE_VIEWER_CEILING=1 VIEWER_CEILING_FILE=~/Downloads/40mb.docx npx playwright test viewer-ceiling-measurement
+```
+
+It prints one row per size: whether the document opened or was refused, the wall time,
+`WebAssembly.Memory.buffer.byteLength` (the high-water mark — linear memory never
+shrinks), the JS heap, the page count, and whether the host can scroll to the last page
+and find ink on it. That last column is the one that set the ceiling.
+
+The §2 and §3.1 probes predate all of this and were temporary examples that were not
+committed, so **those numbers remain design input, not a public claim.** Per `docs/105`
+EV-rules a published number must derive from a committed artifact — which stage 1b's,
+stage 2's and the browser figures now do, and §2/§3.1's do not.

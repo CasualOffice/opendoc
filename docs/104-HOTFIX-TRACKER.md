@@ -67,7 +67,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 6 |
+| P1 | 33 | 4 |
 | P2 | 52 | 22 |
 | P3 | 22 | 13 |
 | Behavioural audit — 2026-09-04 | 18 | 4 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **45** |
+| **Total** | **158** | **43** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**45 of 158 rows remain open. Every P0 is closed** — the last two, HF-011 (no crash recovery) and HF-045 (a half-applied edit), closed with #554. (Re-derive these counts, do not edit them by hand.)
+**43 of 158 rows remain open. Every P0 is closed.** HF-025 and HF-088 closed with #556. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -196,7 +196,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Fixed (verified 2026-09-20) |
 | HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Fixed |
 | HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Fixed |
-| HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
+| HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Fixed (#556) |
 | HF-026 | Everything pasted from Google Docs arrives bold | import-export | S | Internal audit | Fixed |
 | HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Fixed |
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Fixed |
@@ -207,7 +207,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Fixed |
 | HF-032 | Insert-table grid picker is pointer-only and exposes 80 unnamed buttons | accessibility | S | Internal audit | Fixed |
 | HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Fixed |
-| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Partly fixed |
+| HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Fixed (#556) |
 | HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Fixed (#508 + verified 2026-09-20) |
 | HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Open |
 
