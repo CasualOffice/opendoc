@@ -1,7 +1,9 @@
 # 111 — Large-document memory: why a 1.3M-paragraph file is refused, and what it costs to admit it
 
-**Status:** Design; stages 1a, 1b and 2 landed, and the file in the title now opens with
-all 25,556 of its pages reachable (§4, `docs/113` §8.6). **Opened:** 2026-09-20.
+**Status:** Design; stages 1a, 1b, 1c and 2 landed. The file in the title opens with all
+of its pages reachable (§4, `docs/113` §8.6), and after 1c its model costs **142 bytes
+per paragraph against 2,046** — a 346-403 MB peak against 2,674 MB (§4, stage 1c).
+**Opened:** 2026-09-20.
 **Owner:** unassigned.
 **Supersedes nothing.** Extends the admission work landed in #552 (`docs/104` HF-158).
 
@@ -206,6 +208,169 @@ model, not the 1.17 GB §4 projected — still inside a 4 GB address space, stil
 dependent on stage 2 for the galley and display list, and with correspondingly less
 headroom. Stage 1a alone would have been ≈1.89 GB.
 
+### Stage 1c — store formatting once, not once per node (landed)
+
+Stages 1a and 1b shrank the property structs and then boxed the enum variants
+that were absorbing the saving. Both were the same idea — make a node smaller —
+and both under-delivered against their projection, 1a by 4.7% of a paragraph and
+1b by 11.6% of its own. Stage 1c is a different idea, and it is the one the
+owner named: **normalization**.
+
+A document stored its formatting **per node**. Every `Paragraph` owned a
+`ParagraphProperties` (304 B) and every `Run` a `RunProperties` (352 B), by
+value. The owner's file has 1,303,306 paragraphs and exactly **one distinct
+value of each** — and stored 1.3 million copies of both. That is not a struct
+that is too big; it is the same value written down 1.3 million times.
+
+`v1::Shared<T>` (`crates/casual-doc-model/src/v1/intern.rs`) replaces the
+by-value field with an `Arc` to a shared entry:
+
+- **Reads are unchanged.** `Shared<T>` dereferences to `T`, so
+  `paragraph.properties.alignment` still compiles and still reads a field, and
+  `&run.properties` still coerces to `&RunProperties`. This is what kept the
+  change reviewable: of ~700 workspace sites that touch these fields, **six**
+  needed a decision, and the rest were the compiler asking for `.into()`.
+- **Writes are copy-on-write.** `DerefMut` and the named `make_mut` seam both
+  call `Arc::make_mut`, so a node sharing its formatting with a million others
+  gets its own copy the moment it is edited and the million are untouched. There
+  is no way to write through a shared entry: in safe Rust with an `Arc` the
+  aliasing bug is not expressible, which is why this shape was chosen over a
+  side table plus `u32` handles.
+- **Nothing accumulates and there is no table to compact.** An entry is freed
+  when the last node referencing it drops — the answer to "eviction policy" is
+  refcounting.
+- **Two interning mechanisms, both cheap.** One process-wide default entry per
+  type (one comparison, and the hit for nearly every node of nearly every
+  document), then a bounded eight-entry most-recently-interned cache per type
+  per thread, which catches the locality real documents have — consecutive runs
+  in a paragraph share formatting — without hashing a 352-byte struct per node.
+
+**The property structs did not shrink and are not meant to.** `ParagraphProperties`
+is still 304 B and `RunProperties` still 352 B; a document with a thousand
+distinct formats holds a thousand of them. What changed is the multiplier.
+
+#### Interning alone would have bought almost nothing, and the reason is §4's again
+
+Measured, not assumed: with formatting shared but the enums untouched,
+`InlineNode` went from 416 B only to **384 B**, because `InlineSdt` (384 B) —
+which carries no run properties — then set its size. A `Vec` pays for the
+largest variant, so the saving landed in the slot and stayed there, exactly as
+in 1a. So 1c also stores out of line every `InlineNode` payload larger than a
+`Run` (`Sdt`, `Field`, `TextBox`, `AnchoredDrawing`, `Group`, `EmbeddedObject`,
+`Revision`, `Drawing`, `Math`, `MoveRangeStart`, `Hyperlink`, `Symbol`) and the
+last `BlockNode` one (`AltChunk`, 96 B). `Run` stays inline: it is the common
+case and it is now 48 bytes.
+
+| type | after 1b | after 1c |
+| --- | ---: | ---: |
+| `BlockNode` | 352 B | **48 B** |
+| `InlineNode` | 416 B | **64 B** |
+| `Paragraph` | 352 B | **48 B** |
+| `Run` | 400 B | **48 B** |
+| `ParagraphProperties` | 304 B | 304 B (one copy per distinct value) |
+| `RunProperties` | 352 B | 352 B (one copy per distinct value) |
+
+#### Stage 1a — the largest single item was not a struct at all
+
+The probes were extended before anything was changed, and they found something
+no `size_of` table can see and no value-inspecting test can reach.
+
+`Vec::push` onto an empty vector does not allocate one element. It allocates
+`RawVec::MIN_NON_ZERO_CAP`, which is **four** elements for any element of 1,024
+bytes or less. Every importer builds a paragraph's `inlines` by pushing, and
+almost every paragraph holds one inline — so almost every paragraph carried
+**three empty `InlineNode` slots**. At 416 B a slot that is **1,248 bytes per
+paragraph of capacity holding nothing: 56% of what a paragraph cost, and 1.6 GB
+on the owner's file.** The body vector's own doubling added 109 B more.
+
+This is why `docs/111` §4's own 1,004 B/paragraph was never the production
+figure: the probe built its body with `vec![one_inline]` and a sized `collect`,
+which pays neither cost. Measured through the real plain-text adapter the same
+document shape cost **2,353 B/paragraph**, not 1,004.
+
+Two fixes, because they answer different questions:
+
+- `Document::new` releases spare capacity in the body it is handed
+  (`BlockNode::shrink_to_fit`). One choke point rather than five importers, and
+  it covers DOCX, ODT and RTF as well.
+- the plain-text adapter counts first and sizes exactly, so on the owner's own
+  path the allocation is never made and **peak** never reaches for it either.
+
+#### Measured, on the owner's own file at its own size
+
+`crates/casual-doc-io/examples/import_footprint.rs` (committed; macOS arm64,
+release), 1,303,306 paragraphs of 30 characters fed through the registry the way
+the browser feeds a picked file — detection, then import with `retain_source`.
+Peak is a sampled RSS high-water mark of a child process, because peak is what
+fails an allocation.
+
+| 1,303,306 paragraphs | before 1c | after 1c |
+| --- | ---: | ---: |
+| `BlockNode` slots | 352 B/para | 48 B/para |
+| `InlineNode` slots, used | 416 B/para | 64 B/para |
+| `InlineNode` slots, **capacity holding nothing** | **1,248 B/para** | **0** |
+| run text | 30 B/para | 30 B/para |
+| **itemised total** | **2,046 B/para** | **142 B/para** |
+| resident (RSS delta) | 1,870 MB | **187-361 MB** |
+| **peak RSS (sampled)** | **2,674 MB** | **346-403 MB** |
+| import time | 9.1 s | **1.7-2.0 s** |
+
+**A paragraph holding 30 characters costs 142 bytes of model, against 2,046.**
+The itemised figure is exact — it is read off `Vec::capacity` and
+`String::capacity` on the live structure — and it is the number to quote; the
+resident and peak ranges are the same measurement taken three times and carry
+the OS's reclaim behaviour on freed 40 MB buffers, which is why they are given
+as ranges rather than as a single figure. Nothing here is extrapolated: every
+row was measured at 1,303,306 paragraphs.
+
+**Peak, not resident, is what killed the tab, and it was steady-state rather
+than transient.** Before 1c the sampled peak (2,674 MB) matched the *sum of
+everything the model allocated* (2,666 MB itemised) to 0.3%: there was no
+transient spike to blame, the model simply needed 2.7 GB. That figure also
+matches, and explains, `docs/113` §8.4's browser reading of **2,476-2,504 MB of
+wasm linear memory** for this file — the 2.5 GB the tab was holding was the
+model, and the layout tiers windowing had already bounded were a rounding error
+next to it.
+
+**What is left in the gap between 187 MB resident and 403 MB peak** is no longer
+per-paragraph: it is four 40 MB-sized buffers of the same file — the source
+bytes, the normalized UTF-8 copy `normalize_text` builds, the second such copy
+`probe` builds and throws away during detection, and the permanent copy
+`retain_source: true` keeps in the source envelope. Named here rather than left
+to be discovered (`docs/105` §9 rule 4); it is `casual-doc-io`/`casual-doc-wasm`
+work, not the model's, and it is now the largest remaining item on this path.
+
+#### What stage 1c means for the ceiling
+
+`MAX_VIEWER_BLOCKS` is 1,800,000 and was set by a browser measurement of wasm
+linear memory (`docs/113` §8.6), of which the model was ~2.5 GB at 1.3M blocks.
+The model is now ~0.2 GB there. **That constant is therefore stale in the
+conservative direction and must be re-measured through the committed browser
+probe before it is moved** — the rule that it moves only when a measurement
+moves has held twice and holds here.
+
+#### The guards, and what drives them red
+
+In `crates/casual-doc-model/src/v1/tests.rs`, extending the existing ratchet.
+Each was mutation-proved; the two that matter most:
+
+- `a_node_costs_less_than_the_formatting_it_carries` — written as a
+  relationship (`Paragraph` must be **smaller than** `ParagraphProperties`),
+  which no by-value arrangement of the same data can satisfy. Mutating
+  `Shared<T>` to hold its value inline as well as by reference turns it red at
+  `a paragraph's handle on its formatting must be one pointer, not 320 bytes`.
+- `editing_one_node_leaves_every_node_that_shared_its_formatting_untouched` —
+  the copy-on-write guard. Replacing `Arc::make_mut` with
+  `Arc::get_mut(..).expect("unique")`, which is what a `properties_mut` that
+  forgot to copy would look like, turns it red.
+
+One mutation is worth recording because it **passed**, which is the failure mode
+`SKILL.md` §4 exists for: deleting the default-entry fast path from
+`Shared::new` left the sharing guard green, because the recent-entry cache
+re-shared the default anyway. The guard now also requires the shared entry to be
+the one `Shared::default()` hands out, so the two mechanisms are
+distinguishable and losing either is red.
+
 ### Stage 2 — window the layout (this is the architecture)
 
 Only a bounded set of pages may hold a galley and a display list at once. The model stays
@@ -307,7 +472,7 @@ window of sheets inside one 8,000,090 px band, so the container is the same heig
 every document size and the constant is again what it says it is — the largest size
 measured to open **and be wholly reachable**.
 
-### Result after stages 1a and 1b, measured
+### Result after stages 1a and 1b, measured — superseded by 1c
 
 For the owner's file (short paragraphs, so per-paragraph glyph cost is well below the
 130-character probe): model **1,004 B measured** × 1.3M ≈ **1.31 GB** resident, plus the
@@ -316,6 +481,14 @@ either earlier draft of this document claimed — the ~900 B this section projec
 stage 1b was 11.6% low, which is the third projection here to miss and the reason the
 number above is quoted from a committed probe rather than reasoned about. Stage 1a alone
 would have left the model at ≈1.89 GB, which does not fit once a window is added.
+
+**And 1,004 B was still not the production figure.** It was measured on a body built
+with `vec![one_inline]`; through the real import path the same document shape cost
+**2,353 B/paragraph**, because of `Vec` capacity no `size_of` table can see. Stage 1c
+measured the import path, fixed both halves, and brought a 30-character paragraph to
+**142 B** itemised and the whole file to a **346-403 MB** peak. That is the fourth
+projection in this document to be wrong, and the first to be wrong in the useful
+direction: the problem was bigger than the struct table said, and so was the fix.
 
 ## 5. What is deliberately NOT proposed
 
@@ -332,8 +505,20 @@ would have left the model at ≈1.89 GB, which does not fit once a window is add
 
 ## 6. Reproducing these numbers
 
-**§4 stage 1b's numbers are reproducible: `cargo run --release --example
-model_footprint [paragraphs]`** in `crates/casual-doc-layout`. That example is committed
+**§4 stage 1c's import-path numbers come from the committed `casual-doc-io`
+`import_footprint` example**: `cargo run --release --example import_footprint
+[paragraphs] [chars]` in `crates/casual-doc-io`. It feeds a synthetic file of the
+owner's own shape through the registry exactly as the browser feeds a picked file
+(detection, then import with `retain_source`), runs the import in a child process whose
+resident set the parent samples so **peak** and resident come from the same run, and
+itemises the result off `Vec::capacity` on the live structure. `1303306 30` is the
+owner's file.
+
+**§4 stage 1b's and 1c's `size_of` numbers are reproducible: `cargo run --release
+--example model_footprint [paragraphs] [chars] [shape]`** in `crates/casual-doc-layout`.
+`shape` is `push` (how an importer builds a body) or `collect` (sized exactly — a floor,
+and what the pre-1c 1,004 B figure was measured on); the default run does both and
+reports a sampled peak for each. That example is committed
 and prints both halves of the measurement — the `size_of` table, every `BlockNode` and
 `InlineNode` payload sorted largest-first (so the variant that sets an enum's size is
 named rather than guessed at), and the resident bytes per paragraph as an RSS delta over

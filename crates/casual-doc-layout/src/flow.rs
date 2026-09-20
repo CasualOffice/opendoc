@@ -7052,7 +7052,7 @@ mod tests {
     fn run_node(id: u64, text: &str, properties: RunProperties) -> InlineNode {
         InlineNode::Run(Run {
             id: NodeId::from_parts(id, 1).unwrap(),
-            properties,
+            properties: properties.into(),
             text: text.to_owned(),
         })
     }
@@ -7060,7 +7060,7 @@ mod tests {
     fn paragraph(id: u64, inlines: Vec<InlineNode>) -> BlockNode {
         BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(id, 1).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines,
         })
     }
@@ -7107,7 +7107,8 @@ mod tests {
                     }),
                     contextual_spacing: true,
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![run_node(
                     id + 5_000_000,
                     "a paragraph that collapses its spacing against its neighbours",
@@ -7218,7 +7219,8 @@ mod tests {
                     }),
                     contextual_spacing: contextual,
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![run_node(id * 10, "x", RunProperties::default())],
             })
         };
@@ -7669,7 +7671,7 @@ mod tests {
         };
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(10, 1).unwrap(),
-            properties,
+            properties: properties.into(),
             inlines: vec![
                 run_node(11, "A", RunProperties::default()),
                 InlineNode::Tab(Tab {
@@ -8099,7 +8101,7 @@ mod tests {
         // near-zero `posOffset`), followed by the tagline paragraph. The tagline's
         // line must start to the RIGHT of the logo — not under it.
         let logo_width = Twip(2000);
-        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+        let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
             extent: Extent {
@@ -8127,7 +8129,7 @@ mod tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         let build = |include_float: bool| {
             // The logo paragraph holds only the anchored drawing (the empty run the
             // authoring tool wrote is dropped at import); the control is an empty
@@ -8217,7 +8219,7 @@ mod tests {
         let logo_height = Twip(1400);
         let logo_width = Twip(2000);
         let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
-        let float = InlineNode::AnchoredDrawing(AnchoredDrawing {
+        let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
             extent: Extent {
@@ -8245,7 +8247,7 @@ mod tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         let tagline = paragraph(
             63,
             vec![
@@ -8887,7 +8889,8 @@ mod tests {
                     ..Indentation::default()
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run_node(11, text, RunProperties::default())],
         })]);
         let shaper = ParleyShaper::new();
@@ -9040,15 +9043,15 @@ mod tests {
         use casual_doc_model::v1::{
             Hyperlink, HyperlinkTarget, InternalTarget, Revision, RevisionKind,
         };
-        let link = InlineNode::Hyperlink(Hyperlink {
+        let link = InlineNode::Hyperlink(Box::new(Hyperlink {
             id: NodeId::from_parts(30, 1).unwrap(),
             target: HyperlinkTarget::Internal(InternalTarget {
                 anchor: "a".to_owned(),
             }),
             tooltip: None,
             inlines: vec![run_node(31, "linked", RunProperties::default())],
-        });
-        let rev = InlineNode::Revision(Revision {
+        }));
+        let rev = InlineNode::Revision(Box::new(Revision {
             id: NodeId::from_parts(40, 1).unwrap(),
             kind: RevisionKind::Insertion,
             author: None,
@@ -9056,7 +9059,7 @@ mod tests {
             revision_id: None,
             editor_group: None,
             inlines: vec![run_node(41, " inserted", RunProperties::default())],
-        });
+        }));
         let doc = document(vec![paragraph(10, vec![link, rev])]);
         let shaper = ParleyShaper::new();
         let galley = build_galley(&doc, &shaper, Twip::from_points(400));
@@ -9080,7 +9083,7 @@ mod tests {
         use casual_doc_model::v1::{Revision, RevisionKind};
 
         let revision = |id, run_id, kind, text| {
-            InlineNode::Revision(Revision {
+            InlineNode::Revision(Box::new(Revision {
                 id: NodeId::from_parts(id, 1).unwrap(),
                 kind,
                 author: Some("Reviewer".to_owned()),
@@ -9088,7 +9091,7 @@ mod tests {
                 revision_id: Some(id.to_string()),
                 editor_group: None,
                 inlines: vec![run_node(run_id, text, RunProperties::default())],
-            })
+            }))
         };
         let inlines = vec![
             run_node(11, "A", RunProperties::default()),
@@ -9142,12 +9145,12 @@ mod tests {
         );
 
         let inlines = vec![
-            InlineNode::Math(Math {
+            InlineNode::Math(Box::new(Math {
                 id: NodeId::from_parts(10, 1).unwrap(),
                 omml: "<m:oMath/>".to_owned(),
                 text: "x+y".to_owned(),
                 expression: None,
-            }),
+            })),
             InlineNode::NoBreakHyphen(NoBreakHyphen {
                 id: NodeId::from_parts(11, 1).unwrap(),
             }),
@@ -9192,7 +9195,7 @@ mod tests {
         use casual_doc_model::v1::{CommentRangeEnd, CommentRangeStart, Revision, RevisionKind};
 
         let rev = |id: u64, run_id: u64, kind: RevisionKind, text: &str| {
-            InlineNode::Revision(Revision {
+            InlineNode::Revision(Box::new(Revision {
                 id: NodeId::from_parts(id, 1).unwrap(),
                 kind,
                 author: Some("Ada".to_owned()),
@@ -9200,7 +9203,7 @@ mod tests {
                 revision_id: None,
                 editor_group: None,
                 inlines: vec![run_node(run_id, text, RunProperties::default())],
-            })
+            }))
         };
         let comment = CommentId::new(NodeId::from_parts(50, 1).unwrap());
         let inlines = vec![
@@ -9273,7 +9276,7 @@ mod tests {
 
     #[test]
     fn typed_fraction_is_an_atomic_inline_box_with_a_painted_rule() {
-        let math = InlineNode::Math(Math {
+        let math = InlineNode::Math(Box::new(Math {
             id: NodeId::from_parts(12, 1).unwrap(),
             omml: "<m:oMath><m:f/></m:oMath>".to_owned(),
             text: "a/b".to_owned(),
@@ -9285,7 +9288,7 @@ mod tests {
                     value: "b".to_owned(),
                 }),
             }),
-        });
+        }));
         let doc = document(vec![paragraph(
             10,
             vec![
@@ -9360,12 +9363,12 @@ mod tests {
             ],
         };
         let definitions = Definitions::default();
-        let inlines = [InlineNode::Math(Math {
+        let inlines = [InlineNode::Math(Box::new(Math {
             id: NodeId::from_parts(20, 1).unwrap(),
             omml: "<m:oMath/>".to_owned(),
             text: "xi2√y[z]".to_owned(),
             expression: Some(expression),
-        })];
+        }))];
         let items = collected_items(&definitions, &inlines);
         let [FlowItem::Math { size, runs, rules }] = items.as_slice() else {
             panic!("supported expression should build one math box");
@@ -9394,12 +9397,12 @@ mod tests {
 
     /// A `Math` inline wrapping a typed `expression` (opaque OMML placeholder).
     fn math_inline(id: u64, text: &str, expression: MathExpression) -> InlineNode {
-        InlineNode::Math(Math {
+        InlineNode::Math(Box::new(Math {
             id: NodeId::from_parts(id, 1).unwrap(),
             omml: "<m:oMath/>".to_owned(),
             text: text.to_owned(),
             expression: Some(expression),
-        })
+        }))
     }
 
     /// The single math box a typed expression builds, or a panic if it degraded
@@ -9646,7 +9649,7 @@ mod tests {
                     .to_owned(),
             part_name: "word/charts/chart1.xml".to_owned(),
         };
-        let preview = InlineNode::EmbeddedObject(EmbeddedObject {
+        let preview = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
             id: NodeId::from_parts(202, 1).unwrap(),
             kind: EmbeddedKind::Chart,
             part: part.clone(),
@@ -9657,8 +9660,8 @@ mod tests {
                 height_emu: 317_500,
             },
             prog_id: None,
-        });
-        let placeholder = InlineNode::EmbeddedObject(EmbeddedObject {
+        }));
+        let placeholder = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
             id: NodeId::from_parts(203, 1).unwrap(),
             kind: EmbeddedKind::Chart,
             part,
@@ -9669,7 +9672,7 @@ mod tests {
                 height_emu: 317_500,
             },
             prog_id: None,
-        });
+        }));
 
         let preview_inlines = [preview];
         let preview_items = collected_items(&definitions, &preview_inlines);
@@ -9722,7 +9725,7 @@ mod tests {
         // A `w:sym` (the Medical form's Wingdings-2 checkbox, `F0A3`) must produce
         // a styled run bearing a visible box glyph — not be silently dropped as it
         // was before symbol layout existed.
-        let checkbox = InlineNode::Symbol(Symbol {
+        let checkbox = InlineNode::Symbol(Box::new(Symbol {
             id: NodeId::from_parts(9, 1).unwrap(),
             font: "Wingdings 2".to_owned(),
             char: 0xF0A3,
@@ -9734,17 +9737,18 @@ mod tests {
                     b: 121,
                 })),
                 ..RunProperties::default()
-            },
-        });
+            }
+            .into(),
+        }));
         // An unmapped glyph in a non-bundled face still yields a visible placeholder
         // run rather than nothing.
-        let unknown = InlineNode::Symbol(Symbol {
+        let unknown = InlineNode::Symbol(Box::new(Symbol {
             id: NodeId::from_parts(10, 1).unwrap(),
             // A byte with no table entry (Wingdings 3 stops at 0xF0) → placeholder.
             font: "Wingdings 3".to_owned(),
             char: 0xF0FE,
-            properties: RunProperties::default(),
-        });
+            properties: RunProperties::default().into(),
+        }));
         let inlines = vec![checkbox, unknown];
         let definitions = Definitions::default();
         let items = collected_items(&definitions, &inlines);
@@ -9787,7 +9791,7 @@ mod tests {
             unchecked_val: Option<&str>,
             cached_glyph: &str,
         ) -> InlineNode {
-            InlineNode::Sdt(InlineSdt {
+            InlineNode::Sdt(Box::new(InlineSdt {
                 id: NodeId::from_parts(11, 1).unwrap(),
                 properties: SdtProperties {
                     control_kind: Some(SdtControlKind::Checkbox),
@@ -9806,10 +9810,10 @@ mod tests {
                 },
                 inlines: vec![InlineNode::Run(Run {
                     id: NodeId::from_parts(11, 2).unwrap(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: cached_glyph.to_owned(),
                 })],
-            })
+            }))
         }
 
         let definitions = Definitions::default();
@@ -9866,7 +9870,7 @@ mod tests {
             InlineSdt, SdtCheckbox, SdtControlData, SdtControlKind, SdtProperties,
         };
         let definitions = Definitions::default();
-        let sdt = InlineNode::Sdt(InlineSdt {
+        let sdt = InlineNode::Sdt(Box::new(InlineSdt {
             id: NodeId::from_parts(12, 1).unwrap(),
             properties: SdtProperties {
                 control_kind: Some(SdtControlKind::Checkbox),
@@ -9879,10 +9883,10 @@ mod tests {
             },
             inlines: vec![InlineNode::Run(Run {
                 id: NodeId::from_parts(12, 2).unwrap(),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "\u{2611}".to_owned(),
             })],
-        });
+        }));
         let items = collected_items(&definitions, std::slice::from_ref(&sdt));
         let runs: Vec<_> = items
             .iter()
@@ -9907,7 +9911,7 @@ mod tests {
         // field sits, styled by its cached-result run. Before this it flowed only
         // its empty text result, so the boxes vanished.
         fn checkbox_field(checked: Option<bool>, default: Option<bool>) -> InlineNode {
-            InlineNode::Field(Field {
+            InlineNode::Field(Box::new(Field {
                 id: NodeId::from_parts(20, 1).unwrap(),
                 instruction: " FORMCHECKBOX ".to_owned(),
                 kind: casual_doc_model::v1::FieldKind::default(),
@@ -9923,7 +9927,8 @@ mod tests {
                             b: 30,
                         })),
                         ..RunProperties::default()
-                    },
+                    }
+                    .into(),
                     text: String::new(),
                 })],
                 form: Some(FormFieldData {
@@ -9940,7 +9945,7 @@ mod tests {
                         checked,
                     }),
                 }),
-            })
+            }))
         }
 
         let definitions = Definitions::default();
@@ -10033,7 +10038,8 @@ mod tests {
             properties: ParagraphProperties {
                 style_ref: Some(sid),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run_node(31, "Heading", RunProperties::default())],
         });
         let document =
@@ -10916,10 +10922,10 @@ mod tests {
                 part_name: "word/media/intrinsic.png".to_owned(),
             },
         );
-        let picture = InlineNode::Sdt(InlineSdt {
+        let picture = InlineNode::Sdt(Box::new(InlineSdt {
             id: node(714),
             properties: SdtProperties::default(),
-            inlines: vec![InlineNode::Drawing(Drawing {
+            inlines: vec![InlineNode::Drawing(Box::new(Drawing {
                 id: node(702),
                 media,
                 extent: Some(Extent {
@@ -10932,9 +10938,9 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
-            })],
-        });
-        let preview = InlineNode::EmbeddedObject(EmbeddedObject {
+            }))],
+        }));
+        let preview = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
             id: node(703),
             kind: EmbeddedKind::Chart,
             part: EmbeddedPart {
@@ -10949,8 +10955,8 @@ mod tests {
                 height_emu: 635_000,
             },
             prog_id: None,
-        });
-        let math = InlineNode::Math(Math {
+        }));
+        let math = InlineNode::Math(Box::new(Math {
             id: node(704),
             omml: "<m:oMath/>".to_owned(),
             text: "fraction".to_owned(),
@@ -10962,8 +10968,8 @@ mod tests {
                     value: "denominator".to_owned(),
                 }),
             }),
-        });
-        let field = InlineNode::Field(Field {
+        }));
+        let field = InlineNode::Field(Box::new(Field {
             id: node(705),
             instruction: "DOCPROPERTY Title".to_owned(),
             kind: casual_doc_model::v1::FieldKind::parse("DOCPROPERTY Title"),
@@ -10973,8 +10979,8 @@ mod tests {
                 RunProperties::default(),
             )],
             form: None,
-        });
-        let authored_box = InlineNode::TextBox(TextBox {
+        }));
+        let authored_box = InlineNode::TextBox(Box::new(TextBox {
             id: node(707),
             anchor: None,
             relative_height: None,
@@ -10989,8 +10995,8 @@ mod tests {
                 708,
                 vec![run_node(709, "boxed", RunProperties::default())],
             )],
-        });
-        let widthless_box = InlineNode::TextBox(TextBox {
+        }));
+        let widthless_box = InlineNode::TextBox(Box::new(TextBox {
             id: node(710),
             anchor: None,
             relative_height: None,
@@ -11014,7 +11020,7 @@ mod tests {
                     RunProperties::default(),
                 )],
             )],
-        });
+        }));
 
         assert!(measure(&definitions, vec![picture]).0 >= 3_000);
         assert!(measure(&definitions, vec![preview]).0 >= 2_500);
@@ -11056,7 +11062,7 @@ mod tests {
             properties: TableCellProperties::default(),
             blocks: vec![paragraph(
                 722,
-                vec![InlineNode::Drawing(Drawing {
+                vec![InlineNode::Drawing(Box::new(Drawing {
                     id: node(723),
                     media,
                     extent: Some(Extent {
@@ -11069,7 +11075,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                })],
+                }))],
             )],
         };
         let table = Table {
@@ -12747,10 +12753,10 @@ mod tests {
         };
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(10, 1).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 run_node(12, "before ", RunProperties::default()),
-                InlineNode::Drawing(Drawing {
+                InlineNode::Drawing(Box::new(Drawing {
                     id: NodeId::from_parts(11, 1).unwrap(),
                     media: media_id,
                     // 190500 × 127000 EMU (635 EMU/twip) → 300 × 200 twips.
@@ -12764,7 +12770,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                }),
+                })),
                 run_node(13, " after", RunProperties::default()),
             ],
         });
@@ -12864,10 +12870,10 @@ mod tests {
         // 152400 EMU = 240 twips tall, the extent `real-producer-rich.docx` uses.
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(20, 1).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 run_node(22, "Paragraph with an image: ", RunProperties::default()),
-                InlineNode::Drawing(Drawing {
+                InlineNode::Drawing(Box::new(Drawing {
                     id: NodeId::from_parts(21, 1).unwrap(),
                     extent: Some(Extent {
                         width_emu: 152_400,
@@ -12880,7 +12886,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                }),
+                })),
             ],
         });
         let doc =
@@ -12968,8 +12974,8 @@ mod tests {
         let drawing = |id: u64, crop: Option<CropRect>| {
             BlockNode::Paragraph(Paragraph {
                 id: NodeId::from_parts(id, 1).unwrap(),
-                properties: ParagraphProperties::default(),
-                inlines: vec![InlineNode::Drawing(Drawing {
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Drawing(Box::new(Drawing {
                     id: NodeId::from_parts(id + 100, 1).unwrap(),
                     media: media_id,
                     extent: Some(Extent {
@@ -12982,7 +12988,7 @@ mod tests {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                })],
+                }))],
             })
         };
         let doc = Document::new(
@@ -13048,7 +13054,7 @@ mod tests {
 
         // A paragraph whose only inline is an authored-size text box holding one
         // paragraph, fill, and a 30-twip outline.
-        let text_box = InlineNode::TextBox(TextBox {
+        let text_box = InlineNode::TextBox(Box::new(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13079,7 +13085,7 @@ mod tests {
                 21,
                 vec![run_node(22, "boxed", RunProperties::default())],
             )],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
             &document(vec![paragraph(10, vec![text_box])]),
@@ -13170,7 +13176,7 @@ mod tests {
                 cells: vec![cell(60, "a"), cell(61, "b")],
             }],
         }));
-        let text_box = InlineNode::TextBox(TextBox {
+        let text_box = InlineNode::TextBox(Box::new(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13179,7 +13185,7 @@ mod tests {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![table],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
             &document(vec![paragraph(10, vec![text_box])]),
@@ -13242,8 +13248,8 @@ mod tests {
         };
         let inner_para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(21, 1).unwrap(),
-            properties: ParagraphProperties::default(),
-            inlines: vec![InlineNode::Drawing(Drawing {
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Drawing(Box::new(Drawing {
                 id: NodeId::from_parts(22, 1).unwrap(),
                 media: media_id,
                 extent: Some(Extent {
@@ -13256,12 +13262,12 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
-            })],
+            }))],
         });
         let para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(10, 1).unwrap(),
-            properties: ParagraphProperties::default(),
-            inlines: vec![InlineNode::TextBox(TextBox {
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::TextBox(Box::new(TextBox {
                 id: NodeId::from_parts(20, 1).unwrap(),
                 anchor: None,
                 relative_height: None,
@@ -13270,7 +13276,7 @@ mod tests {
                 border: None,
                 body_properties: TextBoxBodyProperties::default(),
                 blocks: vec![inner_para],
-            })],
+            }))],
         });
         let doc =
             Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap();
@@ -13317,7 +13323,7 @@ mod tests {
             21,
             vec![run_node(22, "body properties", RunProperties::default())],
         )];
-        let fixed = InlineNode::TextBox(TextBox {
+        let fixed = InlineNode::TextBox(Box::new(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13340,7 +13346,7 @@ mod tests {
                 auto_fit: TextBoxAutoFit::None,
             },
             blocks: inner.clone(),
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(
             &document(vec![paragraph(10, vec![fixed])]),
@@ -13442,7 +13448,7 @@ mod tests {
             TextBoxVerticalAnchor,
         };
 
-        let text_box = InlineNode::TextBox(TextBox {
+        let text_box = InlineNode::TextBox(Box::new(TextBox {
             id: NodeId::from_parts(30, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13466,7 +13472,7 @@ mod tests {
                 31,
                 vec![run_node(32, "cell box", RunProperties::default())],
             )],
-        });
+        }));
         let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(40, 1).unwrap(),
             grid: vec![GridColumn {
@@ -13660,7 +13666,8 @@ mod tests {
                     level: 0,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run_node(11, "Body", RunProperties::default())],
         });
         Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap()
@@ -13729,7 +13736,7 @@ mod tests {
         // be a regression).
         let plain_para = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(10, 1).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run_node(11, "Body", RunProperties::default())],
         });
         let plain_doc = Document::new(
@@ -13832,7 +13839,8 @@ mod tests {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run_node(
                 71,
                 "D",
@@ -13844,7 +13852,7 @@ mod tests {
         });
         let body = BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(72, 1).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run_node(
                 73,
                 &"rop cap body text wraps beside the initial ".repeat(40),
@@ -13921,7 +13929,8 @@ mod tests {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run_node(75, "D", RunProperties::default())],
         });
         let body = paragraph(

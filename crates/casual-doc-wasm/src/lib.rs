@@ -2025,7 +2025,7 @@ impl WasmDocument {
         self.apply_action_as(
             vec![Operation::InsertInlineObject {
                 at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::Drawing(drawing)),
+                node: Box::new(InlineNode::Drawing(Box::new(drawing))),
             }],
             HistoryKind::ObjectInsert,
         )
@@ -2080,14 +2080,14 @@ impl WasmDocument {
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph_id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: Vec::new(),
             })],
         };
         self.apply_action_caret_as(
             vec![Operation::InsertInlineObject {
                 at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::TextBox(text_box)),
+                node: Box::new(InlineNode::TextBox(Box::new(text_box))),
             }],
             Pos::new(paragraph_id, 0),
             HistoryKind::ObjectInsert,
@@ -2182,7 +2182,7 @@ impl WasmDocument {
         self.apply_action_as(
             vec![Operation::InsertInlineObject {
                 at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::Group(group)),
+                node: Box::new(InlineNode::Group(Box::new(group))),
             }],
             HistoryKind::ObjectInsert,
         )
@@ -2692,7 +2692,7 @@ impl WasmDocument {
                 let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
                 Ok(BlockNode::Paragraph(Paragraph {
                     id,
-                    properties,
+                    properties: properties.into(),
                     inlines,
                 }))
             }
@@ -2737,7 +2737,7 @@ impl WasmDocument {
                     let pid = self.edit_ids.next_id().map_err(|_| exhausted())?;
                     blocks.push(BlockNode::Paragraph(Paragraph {
                         id: pid,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: Vec::new(),
                     }));
                 }
@@ -2819,7 +2819,7 @@ impl WasmDocument {
             let run_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
             let run_node = InlineNode::Run(Run {
                 id: run_id,
-                properties: props,
+                properties: props.into(),
                 text: run.text.clone(),
             });
             if let Some(href) = &run.href {
@@ -2834,12 +2834,12 @@ impl WasmDocument {
                     })
                 };
                 let hid = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                out.push(InlineNode::Hyperlink(Hyperlink {
+                out.push(InlineNode::Hyperlink(Box::new(Hyperlink {
                     id: hid,
                     target,
                     tooltip: None,
                     inlines: vec![run_node],
-                }));
+                })));
             } else {
                 out.push(run_node);
             }
@@ -3200,7 +3200,7 @@ impl WasmDocument {
                     id: body,
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: paragraph,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: Vec::new(),
                     })],
                 },
@@ -5258,7 +5258,7 @@ impl WasmDocument {
                     },
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: para_id,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: Vec::new(),
                     })],
                 });
@@ -5978,7 +5978,7 @@ impl WasmDocument {
             );
         paragraph.inlines = vec![InlineNode::Run(Run {
             id: run_id,
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text: format_number(result),
         })];
         self.apply_action_as(
@@ -7076,10 +7076,10 @@ impl WasmDocument {
             Comment {
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: body_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![InlineNode::Run(Run {
                         id: run_id,
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: text.to_owned(),
                     })],
                 })],
@@ -7177,10 +7177,10 @@ impl WasmDocument {
             Comment {
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: body_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![InlineNode::Run(Run {
                         id: run_id,
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: text.to_owned(),
                     })],
                 })],
@@ -7334,7 +7334,7 @@ impl WasmDocument {
             .map_err(|_| to_js("id space exhausted".to_string()))?;
         let addition = vec![InlineNode::Run(Run {
             id: run,
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text: text.to_owned(),
         })];
         let mut body = review_paragraph_body(&self.document, node).map_err(to_js)?;
@@ -7466,7 +7466,7 @@ impl WasmDocument {
             .map_err(|_| to_js("id space exhausted".to_string()))?;
         let mut inlines = vec![InlineNode::Run(Run {
             id: run,
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text: text.to_owned(),
         })];
         apply_review_delta(
@@ -7638,7 +7638,7 @@ impl WasmDocument {
                 editor_group: Some(group),
                 inlines: vec![InlineNode::Run(Run {
                     id: run,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.to_owned(),
                 })],
             },
@@ -8080,7 +8080,7 @@ impl WasmDocument {
                     editor_group: None,
                     inlines: vec![InlineNode::Run(Run {
                         id: run,
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: text.to_owned(),
                     })],
                 },
@@ -8338,7 +8338,7 @@ impl WasmDocument {
         let Some(current) = find_paragraph_any(&self.document, node) else {
             return Err(to_js("revision not found".to_string()));
         };
-        let properties = current.properties.clone();
+        let properties = current.properties.get().clone();
         let end = self.paragraph_text(node).len() as u32;
         let ops = match part {
             ParagraphRevisionPart::Format => {
@@ -8369,7 +8369,7 @@ impl WasmDocument {
                 ) {
                     (false, Some(next)) => {
                         let survivor = find_paragraph_any(&self.document, next)
-                            .map(|paragraph| paragraph.properties.clone())
+                            .map(|paragraph| paragraph.properties.get().clone())
                             .ok_or_else(|| to_js("revision not found".to_string()))?;
                         vec![Operation::JoinParagraphs {
                             first: node,
@@ -9712,10 +9712,10 @@ impl WasmDocument {
             .map_err(|_| "id space exhausted".to_string())?;
         value.blocks = vec![BlockNode::Paragraph(Paragraph {
             id: body_id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Run(Run {
                 id: run_id,
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: text.to_owned(),
             })],
         })];
@@ -9973,7 +9973,7 @@ impl WasmDocument {
             if numbering.instance != checked {
                 return None;
             }
-            (paragraph.properties.clone(), numbering.level)
+            (paragraph.properties.get().clone(), numbering.level)
         };
         if at.offset != self.paragraph_text(at.node).len() as u32 {
             return None;
@@ -10121,7 +10121,7 @@ impl WasmDocument {
         let body_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
         let blocks = vec![BlockNode::Paragraph(Paragraph {
             id: body_id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: Vec::new(),
         })];
         self.apply_action_caret_as(
@@ -10947,7 +10947,7 @@ impl WasmDocument {
                             let pid = self.edit_ids.next_id().map_err(|_| exhausted())?;
                             blocks.push(BlockNode::Paragraph(Paragraph {
                                 id: pid,
-                                properties: ParagraphProperties::default(),
+                                properties: ParagraphProperties::default().into(),
                                 inlines: Vec::new(),
                             }));
                         }
@@ -11011,12 +11011,12 @@ impl WasmDocument {
                         continue;
                     }
                     let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    out.push(InlineNode::Hyperlink(Hyperlink {
+                    out.push(InlineNode::Hyperlink(Box::new(Hyperlink {
                         id,
                         target: h.target.clone(),
                         tooltip: h.tooltip.clone(),
                         inlines: inner,
-                    }));
+                    })));
                 }
                 _ => {}
             }
@@ -11389,7 +11389,7 @@ impl WasmDocument {
                 properties: cell.properties.clone(),
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: para_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: Vec::new(),
                 })],
             });
@@ -11432,7 +11432,7 @@ impl WasmDocument {
                 properties: TableCellProperties::default(),
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: para_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: Vec::new(),
                 })],
             });
@@ -13552,7 +13552,7 @@ fn insert_review_revision(
                     if cursor == offset {
                         paragraph
                             .inlines
-                            .insert(index, InlineNode::Revision(revision));
+                            .insert(index, InlineNode::Revision(Box::new(revision)));
                         return true;
                     }
                     if let Some(inline) = paragraph.inlines.get(index) {
@@ -13841,10 +13841,10 @@ fn wrap_review_deletion_in_inlines(
     let children = inlines.drain(first..=last).collect();
     inlines.insert(
         first,
-        InlineNode::Revision(Revision {
+        InlineNode::Revision(Box::new(Revision {
             inlines: children,
             ..revision
-        }),
+        })),
     );
     true
 }
@@ -13918,10 +13918,10 @@ fn wrap_review_deletion(
                 let children = paragraph.inlines.drain(first..=last).collect();
                 paragraph.inlines.insert(
                     first,
-                    InlineNode::Revision(Revision {
+                    InlineNode::Revision(Box::new(Revision {
                         inlines: children,
                         ..revision
-                    }),
+                    })),
                 );
                 return true;
             }
@@ -14212,7 +14212,7 @@ fn apply_review_format_change(
                         date: date.clone(),
                         revision_id: Some(revision_ids.allocate()?),
                         editor_group: Some(group),
-                        prior: Box::new(prior),
+                        prior: Box::new(prior.get().clone()),
                     }));
                     let InlineNode::Run(run) = &mut paragraph.inlines[index] else {
                         return Ok(false);
@@ -14407,7 +14407,7 @@ fn decide_all_review_inlines(inlines: &mut Vec<InlineNode>, accept: bool) {
                 {
                     let mut prior = *change.prior;
                     prior.prop_change = None;
-                    run.properties = prior;
+                    run.properties = prior.into();
                 }
                 index += 1;
             }
@@ -14947,7 +14947,7 @@ fn decide_review_inline_format_change(
                 if !accept {
                     let mut prior = *change.prior;
                     prior.prop_change = None;
-                    run.properties = prior;
+                    run.properties = prior.into();
                 }
                 return true;
             }
@@ -15816,7 +15816,7 @@ fn paragraph_decision_ops(
     let mut ops = property_ops;
     for (first, second) in merges.into_iter().rev() {
         let survivor = decided.get(&second).cloned().or_else(|| {
-            find_paragraph_any(document, second).map(|paragraph| paragraph.properties.clone())
+            find_paragraph_any(document, second).map(|paragraph| paragraph.properties.get().clone())
         });
         let Some(survivor) = survivor else { continue };
         decided.insert(first, survivor.clone());
@@ -15942,7 +15942,7 @@ fn collect_paragraph_revisions_all(document: &Document) -> Vec<ParagraphRevision
                     if properties.mark_revision.is_some() || properties.prop_change.is_some() {
                         out.push(ParagraphRevisionEntry {
                             node: paragraph.id,
-                            properties: properties.clone(),
+                            properties: properties.get().clone(),
                         });
                     }
                 }
@@ -19481,7 +19481,7 @@ fn empty_paragraph_block(ids: &mut IdGenerator) -> Result<BlockNode, String> {
     let para_id = ids.next_id().map_err(|_| "id space exhausted".to_owned())?;
     Ok(BlockNode::Paragraph(Paragraph {
         id: para_id,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: Vec::new(),
     }))
 }
@@ -21193,7 +21193,7 @@ mod tests {
             .map(|n| {
                 BlockNode::Paragraph(Paragraph {
                     id: id(n + 2),
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: Vec::new(),
                 })
             })
@@ -21683,10 +21683,10 @@ mod tests {
         let paragraph = |n: u64, text: &str| {
             BlockNode::Paragraph(Paragraph {
                 id: id(n),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: id(n + 1),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.to_owned(),
                 })],
             })
@@ -21992,10 +21992,10 @@ mod tests {
         let paragraph = |n: u64, text: &str, properties: ParagraphProperties| {
             BlockNode::Paragraph(Paragraph {
                 id: id(n),
-                properties,
+                properties: properties.into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: id(n + 1),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.to_owned(),
                 })],
             })
@@ -22295,7 +22295,7 @@ mod tests {
         d.apply_action_as(
             vec![Operation::SetParagraphProperties {
                 node,
-                properties: Box::new(properties),
+                properties: Box::new(properties.get().clone()),
             }],
             HistoryKind::Review,
         )
@@ -22352,10 +22352,10 @@ mod tests {
             id(1),
             vec![BlockNode::Paragraph(Paragraph {
                 id: id(10),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: id(11),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "iiiWWW".to_owned(),
                 })],
             })],
@@ -22968,8 +22968,8 @@ mod tests {
             vec![
                 BlockNode::Paragraph(Paragraph {
                     id: source_id,
-                    properties: ParagraphProperties::default(),
-                    inlines: vec![InlineNode::Hyperlink(Hyperlink {
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![InlineNode::Hyperlink(Box::new(Hyperlink {
                         id: NodeId::from_parts(70, 4).unwrap(),
                         target: HyperlinkTarget::Internal(InternalTarget {
                             anchor: "Heading_1".to_owned(),
@@ -22980,15 +22980,15 @@ mod tests {
                             properties: Default::default(),
                             text: "Go".to_owned(),
                         })],
-                    })],
+                    }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
                     id: target_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![
                         InlineNode::Run(Run {
                             id: NodeId::from_parts(70, 6).unwrap(),
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "Before ".to_owned(),
                         }),
                         InlineNode::BookmarkStart(BookmarkStart {
@@ -23000,7 +23000,8 @@ mod tests {
                             properties: RunProperties {
                                 bold: Some(true),
                                 ..RunProperties::default()
-                            },
+                            }
+                            .into(),
                             text: "Heading".to_owned(),
                         }),
                     ],
@@ -23024,10 +23025,10 @@ mod tests {
             NodeId::from_parts(70, 1).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph_id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: NodeId::from_parts(70, 3).unwrap(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "Hello world".to_owned(),
                 })],
             })],
@@ -23098,10 +23099,10 @@ mod tests {
             NodeId::from_parts(71, 1).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph_id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: NodeId::from_parts(71, 3).unwrap(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "Page ".to_owned(),
                 })],
             })],
@@ -23302,11 +23303,11 @@ mod tests {
             NodeId::from_parts(94, 9).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![
                     InlineNode::Run(Run {
                         id: NodeId::from_parts(94, 2).unwrap(),
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: "A".to_owned(),
                     }),
                     InlineNode::Run(Run {
@@ -23314,7 +23315,8 @@ mod tests {
                         properties: RunProperties {
                             italic: Some(true),
                             ..RunProperties::default()
-                        },
+                        }
+                        .into(),
                         text: "B".to_owned(),
                     }),
                 ],
@@ -23622,23 +23624,23 @@ mod tests {
             editor_group: None,
             inlines: vec![InlineNode::Run(Run {
                 id: NodeId::from_parts(91, 5).unwrap(),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "nested".to_owned(),
             })],
         };
         let inlines = vec![
-            InlineNode::Revision(Revision {
+            InlineNode::Revision(Box::new(Revision {
                 id: NodeId::from_parts(91, 2).unwrap(),
                 kind: RevisionKind::Deletion,
                 author: Some("Reviewer".to_owned()),
                 date: None,
                 revision_id: Some("1".to_owned()),
                 editor_group: None,
-                inlines: vec![InlineNode::Revision(nested)],
-            }),
+                inlines: vec![InlineNode::Revision(Box::new(nested))],
+            })),
             InlineNode::Run(Run {
                 id: NodeId::from_parts(91, 6).unwrap(),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "A".to_owned(),
             }),
         ];
@@ -23666,7 +23668,7 @@ mod tests {
     fn comment_inside_hidden_deletion_has_a_collapsed_projected_anchor() {
         let paragraph = NodeId::from_parts(93, 1).unwrap();
         let comment = CommentId::new(NodeId::from_parts(93, 2).unwrap());
-        let inlines = vec![InlineNode::Revision(Revision {
+        let inlines = vec![InlineNode::Revision(Box::new(Revision {
             id: NodeId::from_parts(93, 3).unwrap(),
             kind: RevisionKind::Deletion,
             author: Some("Reviewer".to_owned()),
@@ -23680,7 +23682,7 @@ mod tests {
                 }),
                 InlineNode::Run(Run {
                     id: NodeId::from_parts(93, 5).unwrap(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "hidden".to_owned(),
                 }),
                 InlineNode::CommentRangeEnd(CommentRangeEnd {
@@ -23688,7 +23690,7 @@ mod tests {
                     comment,
                 }),
             ],
-        })];
+        }))];
         let para_len = inlines.iter().map(inline_anchor_len_for_review).sum();
         let mut offset = 0;
         let mut starts = BTreeMap::new();
@@ -23720,9 +23722,10 @@ mod tests {
                 properties: ParagraphProperties {
                     outline_level: Some(0),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![
-                    InlineNode::Revision(Revision {
+                    InlineNode::Revision(Box::new(Revision {
                         id: NodeId::from_parts(92, 2).unwrap(),
                         kind: RevisionKind::Deletion,
                         author: Some("Reviewer".to_owned()),
@@ -23731,11 +23734,11 @@ mod tests {
                         editor_group: None,
                         inlines: vec![InlineNode::Run(Run {
                             id: NodeId::from_parts(92, 3).unwrap(),
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "obsolete words".to_owned(),
                         })],
-                    }),
-                    InlineNode::Revision(Revision {
+                    })),
+                    InlineNode::Revision(Box::new(Revision {
                         id: NodeId::from_parts(92, 4).unwrap(),
                         kind: RevisionKind::Insertion,
                         author: Some("Reviewer".to_owned()),
@@ -23744,10 +23747,10 @@ mod tests {
                         editor_group: None,
                         inlines: vec![InlineNode::Run(Run {
                             id: NodeId::from_parts(92, 5).unwrap(),
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "final heading".to_owned(),
                         })],
-                    }),
+                    })),
                 ],
             })],
             Definitions::default(),
@@ -23953,17 +23956,17 @@ mod tests {
             vec![
                 BlockNode::Paragraph(Paragraph {
                     id: source_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![
-                        InlineNode::MoveRangeStart(MoveRangeStart {
+                        InlineNode::MoveRangeStart(Box::new(MoveRangeStart {
                             id: from_start,
                             kind: MoveKind::From,
                             move_id: "0".to_owned(),
                             name: "move-review-pair".to_owned(),
                             author: Some("Ada".to_owned()),
                             date: Some("2026-07-31T00:00:00Z".to_owned()),
-                        }),
-                        InlineNode::Revision(Revision {
+                        })),
+                        InlineNode::Revision(Box::new(Revision {
                             id: NodeId::from_parts(91, 4).unwrap(),
                             kind: RevisionKind::MoveFrom,
                             author: Some("Ada".to_owned()),
@@ -23972,10 +23975,10 @@ mod tests {
                             editor_group: None,
                             inlines: vec![InlineNode::Run(Run {
                                 id: NodeId::from_parts(91, 5).unwrap(),
-                                properties: RunProperties::default(),
+                                properties: RunProperties::default().into(),
                                 text: "relocated".to_owned(),
                             })],
-                        }),
+                        })),
                         InlineNode::MoveRangeEnd(MoveRangeEnd {
                             id: NodeId::from_parts(91, 6).unwrap(),
                             kind: MoveKind::From,
@@ -23985,17 +23988,17 @@ mod tests {
                 }),
                 BlockNode::Paragraph(Paragraph {
                     id: destination_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![
-                        InlineNode::MoveRangeStart(MoveRangeStart {
+                        InlineNode::MoveRangeStart(Box::new(MoveRangeStart {
                             id: to_start,
                             kind: MoveKind::To,
                             move_id: "2".to_owned(),
                             name: "move-review-pair".to_owned(),
                             author: Some("Ada".to_owned()),
                             date: Some("2026-07-31T00:00:00Z".to_owned()),
-                        }),
-                        InlineNode::Revision(Revision {
+                        })),
+                        InlineNode::Revision(Box::new(Revision {
                             id: NodeId::from_parts(91, 8).unwrap(),
                             kind: RevisionKind::MoveTo,
                             author: Some("Ada".to_owned()),
@@ -24004,10 +24007,10 @@ mod tests {
                             editor_group: None,
                             inlines: vec![InlineNode::Run(Run {
                                 id: NodeId::from_parts(91, 9).unwrap(),
-                                properties: RunProperties::default(),
+                                properties: RunProperties::default().into(),
                                 text: "relocated".to_owned(),
                             })],
-                        }),
+                        })),
                         InlineNode::MoveRangeEnd(MoveRangeEnd {
                             id: NodeId::from_parts(91, 10).unwrap(),
                             kind: MoveKind::To,
@@ -25324,14 +25327,14 @@ mod tests {
             NodeId::from_parts(90, 9).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph_id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![
                     InlineNode::Run(Run {
                         id: NodeId::from_parts(90, 2).unwrap(),
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: "Plain ".to_owned(),
                     }),
-                    InlineNode::Revision(Revision {
+                    InlineNode::Revision(Box::new(Revision {
                         id: NodeId::from_parts(90, 3).unwrap(),
                         kind: RevisionKind::Insertion,
                         author: Some("Reviewer".to_owned()),
@@ -25343,10 +25346,11 @@ mod tests {
                             properties: RunProperties {
                                 bold: Some(true),
                                 ..RunProperties::default()
-                            },
+                            }
+                            .into(),
                             text: "Bold".to_owned(),
                         })],
-                    }),
+                    })),
                 ],
             })],
             Definitions::default(),
@@ -25412,10 +25416,11 @@ mod tests {
                 properties: ParagraphProperties {
                     style_ref: Some(style_id),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: NodeId::from_parts(82, 4).unwrap(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "Styled".to_owned(),
                 })],
             })],
@@ -27228,14 +27233,14 @@ mod tests {
             NodeId::from_parts(9, 1).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: NodeId::from_parts(9, 2).unwrap(),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![
                     InlineNode::Run(Run {
                         id: NodeId::from_parts(9, 3).unwrap(),
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: "anchor paragraph".to_owned(),
                     }),
-                    InlineNode::AnchoredDrawing(AnchoredDrawing {
+                    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
                         id: float_id,
                         media,
                         extent: Extent {
@@ -27250,7 +27255,7 @@ mod tests {
                         flip_h: false,
                         flip_v: false,
                         rotation: None,
-                    }),
+                    })),
                 ],
             })],
             definitions,
@@ -27316,8 +27321,8 @@ mod tests {
             NodeId::from_parts(9, 1).unwrap(),
             vec![BlockNode::Paragraph(Paragraph {
                 id: NodeId::from_parts(9, 2).unwrap(),
-                properties: ParagraphProperties::default(),
-                inlines: vec![InlineNode::Group(WordprocessingGroup {
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Group(Box::new(WordprocessingGroup {
                     id: NodeId::from_parts(9, 3).unwrap(),
                     anchor: None,
                     relative_height: None,
@@ -27344,7 +27349,7 @@ mod tests {
                         flip_v: false,
                         rotation: None,
                     })],
-                })],
+                }))],
             })],
             Definitions::default(),
         )
@@ -28492,16 +28497,16 @@ mod tests {
         let text_paragraph = |id: NodeId, run: NodeId, text: &str| {
             BlockNode::Paragraph(Paragraph {
                 id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: run,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.to_owned(),
                 })],
             })
         };
         let drawing = |id: NodeId, descr: Option<&str>| {
-            InlineNode::Drawing(Drawing {
+            InlineNode::Drawing(Box::new(Drawing {
                 id,
                 media,
                 extent: Some(Extent {
@@ -28514,7 +28519,7 @@ mod tests {
                 flip_h: false,
                 flip_v: false,
                 rotation: None,
-            })
+            }))
         };
         let cell = |id: NodeId, paragraph: NodeId, run: NodeId, text: &str| TableCell {
             id,
@@ -28553,7 +28558,7 @@ mod tests {
                 // The figure: a paragraph whose only content is the drawing.
                 BlockNode::Paragraph(Paragraph {
                     id: figure,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![drawing(figure_drawing, Some("Quarterly revenue"))],
                 }),
                 text_paragraph(p2, r2, "After the chart"),
@@ -28561,11 +28566,11 @@ mod tests {
                 // with prose: still a graphic the reader must be told about.
                 BlockNode::Paragraph(Paragraph {
                     id: p3,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![
                         InlineNode::Run(Run {
                             id: r3,
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "Our logo".to_owned(),
                         }),
                         drawing(unlabelled, None),
@@ -29097,8 +29102,8 @@ mod tests {
             vec![
                 BlockNode::Paragraph(Paragraph {
                     id: source_id,
-                    properties: ParagraphProperties::default(),
-                    inlines: vec![InlineNode::Hyperlink(Hyperlink {
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![InlineNode::Hyperlink(Box::new(Hyperlink {
                         id: NodeId::from_parts(90, 5).unwrap(),
                         target: HyperlinkTarget::Internal(InternalTarget {
                             anchor: "_Toc1".to_owned(),
@@ -29119,11 +29124,11 @@ mod tests {
                                 text: "3".to_owned(),
                             }),
                         ],
-                    })],
+                    }))],
                 }),
                 BlockNode::Paragraph(Paragraph {
                     id: target_id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![
                         InlineNode::BookmarkStart(BookmarkStart {
                             id: NodeId::from_parts(90, 9).unwrap(),
@@ -29202,7 +29207,7 @@ mod tests {
     fn wrun(id: u64, text: &str) -> InlineNode {
         InlineNode::Run(Run {
             id: wn(id),
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text: text.to_owned(),
         })
     }
@@ -29216,10 +29221,10 @@ mod tests {
         });
         let blocks = vec![BlockNode::Paragraph(Paragraph {
             id: node,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 wrun(2, "AB"),
-                InlineNode::Revision(Revision {
+                InlineNode::Revision(Box::new(Revision {
                     id: wn(3),
                     kind: RevisionKind::Insertion,
                     author: author.map(str::to_owned),
@@ -29227,7 +29232,7 @@ mod tests {
                     revision_id: Some("1".to_owned()),
                     editor_group: group,
                     inlines: vec![wrun(4, "CD")],
-                }),
+                })),
                 wrun(5, "EF"),
             ],
         })];
@@ -29242,7 +29247,7 @@ mod tests {
             .inlines
             .iter()
             .filter_map(|i| match i {
-                InlineNode::Revision(r) => Some(r),
+                InlineNode::Revision(r) => Some(r.as_ref()),
                 _ => None,
             })
             .collect();
@@ -29401,7 +29406,7 @@ mod tests {
         let node = wn(1);
         let mut blocks = vec![BlockNode::Paragraph(Paragraph {
             id: node,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![wrun(2, "ABCDEF")],
         })];
         assert_eq!(
@@ -29530,8 +29535,8 @@ mod tests {
             HeaderFooter {
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: header_para,
-                    properties: ParagraphProperties::default(),
-                    inlines: vec![InlineNode::Revision(Revision {
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![InlineNode::Revision(Box::new(Revision {
                         id: NodeId::from_parts(93, 3).unwrap(),
                         kind: RevisionKind::Insertion,
                         author: Some("Ada".to_owned()),
@@ -29540,19 +29545,19 @@ mod tests {
                         editor_group: None,
                         inlines: vec![InlineNode::Run(Run {
                             id: NodeId::from_parts(93, 4).unwrap(),
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "inserted in the header".to_owned(),
                         })],
-                    })],
+                    }))],
                 })],
             },
         );
         let body = vec![BlockNode::Paragraph(Paragraph {
             id: NodeId::from_parts(93, 10).unwrap(),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Run(Run {
                 id: NodeId::from_parts(93, 11).unwrap(),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "body".to_owned(),
             })],
         })];
@@ -29775,10 +29780,11 @@ mod tests {
             properties: ParagraphProperties {
                 page_break_before: page_break,
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![InlineNode::Run(Run {
                 id: sections_id(run),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: text.to_owned(),
             })],
         })
@@ -29791,10 +29797,11 @@ mod tests {
                 page_break_before: true,
                 section_break: Some(SectionId::new(sections_id(section))),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![InlineNode::Run(Run {
                 id: sections_id(run),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: text.to_owned(),
             })],
         })

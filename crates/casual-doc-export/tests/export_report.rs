@@ -420,7 +420,7 @@ fn document_with_chart() -> Document {
     };
 
     let node = |counter| NodeId::from_parts(1, counter).unwrap();
-    let object = InlineNode::EmbeddedObject(EmbeddedObject {
+    let object = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
         id: node(3),
         kind: EmbeddedKind::Chart,
         part: EmbeddedPart {
@@ -437,7 +437,7 @@ fn document_with_chart() -> Document {
             height_emu: 685_800,
         },
         prog_id: None,
-    });
+    }));
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: node(2),
         properties: Default::default(),

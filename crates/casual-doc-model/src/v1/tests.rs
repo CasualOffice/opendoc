@@ -849,7 +849,7 @@ fn tid(counter: u64) -> NodeId {
 fn paragraph_block(id: NodeId) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: Vec::new(),
     })
 }
@@ -1428,7 +1428,7 @@ fn document_with_paragraph(paragraph: crate::Paragraph) -> V0Document {
 fn run_inline(id: NodeId, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id,
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -1436,10 +1436,10 @@ fn run_inline(id: NodeId, text: &str) -> InlineNode {
 fn run_with_props(id: NodeId, properties: RunProperties) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::Run(Run {
             id,
-            properties,
+            properties: properties.into(),
             text: "x".to_owned(),
         })],
     })
@@ -1510,10 +1510,10 @@ fn run_metrics_and_language_round_trip_and_bound() {
     };
     let block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::Run(Run {
             id: tid(2),
-            properties,
+            properties: properties.into(),
             text: "x".to_owned(),
         })],
     });
@@ -1529,10 +1529,10 @@ fn run_metrics_and_language_round_trip_and_bound() {
     };
     let bad_block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::Run(Run {
             id: tid(2),
-            properties: bad,
+            properties: bad.into(),
             text: "x".to_owned(),
         })],
     });
@@ -1574,7 +1574,7 @@ fn paragraph_long_tail_properties_round_trip() {
     };
     let block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties,
+        properties: properties.into(),
         inlines: vec![run_inline(tid(2), "x")],
     });
     let document = table_document(vec![block]).unwrap();
@@ -1603,7 +1603,8 @@ fn drop_cap_frame_round_trips_and_is_bounded() {
         properties: ParagraphProperties {
             drop_cap_frame: Some(frame),
             ..ParagraphProperties::default()
-        },
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "D")],
     });
     let document = table_document(vec![block]).unwrap();
@@ -1616,7 +1617,8 @@ fn drop_cap_frame_round_trips_and_is_bounded() {
         properties: ParagraphProperties {
             drop_cap_frame: Some(DropCapFrame { lines: 0, ..frame }),
             ..ParagraphProperties::default()
-        },
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "D")],
     });
     assert!(matches!(
@@ -1653,7 +1655,7 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
     };
     let block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties,
+        properties: properties.into(),
         inlines: vec![run_inline(tid(2), "x")],
     });
     let document = table_document(vec![block]).unwrap();
@@ -1674,7 +1676,7 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
     };
     let bad_block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: bad,
+        properties: bad.into(),
         inlines: vec![run_inline(tid(2), "x")],
     });
     assert!(matches!(
@@ -1692,7 +1694,8 @@ fn out_of_range_outline_level_is_rejected() {
         properties: ParagraphProperties {
             outline_level: Some(10),
             ..ParagraphProperties::default()
-        },
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "x")],
     });
     assert!(matches!(
@@ -1706,8 +1709,8 @@ fn out_of_range_outline_level_is_rejected() {
 fn field_paragraph(field: Field) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Field(field)],
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Field(Box::new(field))],
     })
 }
 
@@ -1839,8 +1842,8 @@ fn field_kind_parses_each_common_kind() {
 fn symbol_paragraph(symbol: Symbol) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Symbol(symbol)],
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Symbol(Box::new(symbol))],
     })
 }
 
@@ -1852,7 +1855,7 @@ fn symbol_validates_and_round_trips_json() {
         id: tid(10),
         font: "Wingdings".to_owned(),
         char: 0xF0FC,
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
     };
     let document = table_document(vec![symbol_paragraph(symbol)]).unwrap();
     let json = document.to_json().unwrap();
@@ -1875,7 +1878,7 @@ fn empty_symbol_font_is_rejected() {
         id: tid(10),
         font: String::new(),
         char: 0xF0FC,
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
     };
     assert!(matches!(
         table_document(vec![symbol_paragraph(symbol)]),
@@ -1891,7 +1894,7 @@ fn over_long_symbol_font_is_rejected() {
         id: tid(10),
         font: "W".repeat(MAX_SYMBOL_FONT_LEN + 1),
         char: 0x2022,
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
     };
     assert!(matches!(
         table_document(vec![symbol_paragraph(symbol)]),
@@ -1903,24 +1906,24 @@ fn over_long_symbol_font_is_rejected() {
 
 #[test]
 fn field_inside_a_hyperlink_is_rejected() {
-    let inner_field = InlineNode::Field(Field {
+    let inner_field = InlineNode::Field(Box::new(Field {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
-    });
-    let link = InlineNode::Hyperlink(Hyperlink {
+    }));
+    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(10),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "top".to_owned(),
         }),
         tooltip: None,
         inlines: vec![inner_field],
-    });
+    }));
     let block = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![link],
     });
     assert!(matches!(
@@ -1931,14 +1934,14 @@ fn field_inside_a_hyperlink_is_rejected() {
 
 #[test]
 fn hyperlink_inside_a_field_is_rejected() {
-    let inner_link = InlineNode::Hyperlink(Hyperlink {
+    let inner_link = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(12),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "top".to_owned(),
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "x")],
-    });
+    }));
     let field = Field {
         id: tid(10),
         instruction: " REF a ".to_owned(),
@@ -1956,13 +1959,13 @@ fn hyperlink_inside_a_field_is_rejected() {
 
 #[test]
 fn nested_field_inside_a_field_is_rejected() {
-    let inner = InlineNode::Field(Field {
+    let inner = InlineNode::Field(Box::new(Field {
         id: tid(12),
         instruction: " PAGE ".to_owned(),
         kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
-    });
+    }));
     let field = Field {
         id: tid(10),
         instruction: " = ".to_owned(),
@@ -2084,8 +2087,8 @@ fn form_field_overlong_name_is_rejected() {
 fn textbox_paragraph(para_id: NodeId, text_box: TextBox) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: para_id,
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::TextBox(text_box)],
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::TextBox(Box::new(text_box))],
     })
 }
 
@@ -2290,8 +2293,8 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
     };
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Group(group)],
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Group(Box::new(group))],
     });
     let document = table_document(vec![paragraph]).unwrap();
     let json = document.to_json().unwrap();
@@ -2321,7 +2324,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
     };
     paragraph
         .inlines
-        .push(InlineNode::Group(WordprocessingGroup {
+        .push(InlineNode::Group(Box::new(WordprocessingGroup {
             id: tid(30),
             anchor: None,
             relative_height: None,
@@ -2363,7 +2366,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 flip_v: false,
                 rotation: None,
             })],
-        }));
+        })));
     document.validate().unwrap();
 
     let mut preset_on_typed_geometry = document.clone();
@@ -2448,8 +2451,8 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
     let para_id = tid(*counter);
     BlockNode::Paragraph(Paragraph {
         id: para_id,
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::TextBox(TextBox {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::TextBox(Box::new(TextBox {
             id: box_id,
             anchor: None,
             relative_height: None,
@@ -2458,7 +2461,7 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
             border: None,
             body_properties: TextBoxBodyProperties::default(),
             blocks: vec![inner],
-        })],
+        }))],
     })
 }
 
@@ -2499,7 +2502,7 @@ fn document_with_footnote(
     );
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![note_reference(tid(2), reference_kind, ref_note)],
     })];
     Document::new(NoteId::new(tid(99)).node_id(), body, definitions)
@@ -2538,7 +2541,7 @@ fn footnote_reference_does_not_resolve_against_endnotes() {
     );
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![note_reference(tid(2), NoteKind::Footnote, note)],
     })];
     assert!(matches!(
@@ -2559,7 +2562,7 @@ fn duplicate_id_inside_a_note_is_rejected() {
     );
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![note_reference(tid(2), NoteKind::Footnote, note)],
     })];
     assert!(matches!(
@@ -2690,7 +2693,7 @@ fn header_reference_does_not_resolve_against_footers() {
 fn comment_paragraph(reference: NodeId, comment: CommentId) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::CommentReference(CommentReference {
             id: reference,
             comment,
@@ -2738,7 +2741,7 @@ fn comment_range_markers_bracket_a_span_and_round_trip() {
     );
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             InlineNode::CommentRangeStart(CommentRangeStart {
                 id: tid(2),
@@ -2747,7 +2750,7 @@ fn comment_range_markers_bracket_a_span_and_round_trip() {
             InlineNode::Run(Run {
                 id: tid(3),
                 text: "commented".to_owned(),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
             }),
             InlineNode::CommentRangeEnd(CommentRangeEnd {
                 id: tid(4),
@@ -2784,7 +2787,7 @@ fn comment_range_markers_span_two_paragraphs_and_round_trip() {
     let body = vec![
         BlockNode::Paragraph(Paragraph {
             id: tid(1),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 InlineNode::CommentRangeStart(CommentRangeStart {
                     id: tid(2),
@@ -2793,18 +2796,18 @@ fn comment_range_markers_span_two_paragraphs_and_round_trip() {
                 InlineNode::Run(Run {
                     id: tid(3),
                     text: "first".to_owned(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                 }),
             ],
         }),
         BlockNode::Paragraph(Paragraph {
             id: tid(4),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 InlineNode::Run(Run {
                     id: tid(5),
                     text: "second".to_owned(),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                 }),
                 InlineNode::CommentRangeEnd(CommentRangeEnd {
                     id: tid(6),
@@ -2861,7 +2864,7 @@ fn comment_threading_and_identity_round_trip_through_json() {
     });
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             InlineNode::CommentReference(CommentReference {
                 id: tid(2),
@@ -2961,7 +2964,7 @@ fn empty_comment_author_is_rejected() {
 fn revision_paragraph(paragraph_id: NodeId, inline: InlineNode) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: paragraph_id,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![inline],
     })
 }
@@ -2975,7 +2978,7 @@ fn wrap_in_revisions(depth: u32, counter: &mut u64) -> InlineNode {
         return run_inline(id, "leaf");
     }
     let inner = wrap_in_revisions(depth - 1, counter);
-    InlineNode::Revision(Revision {
+    InlineNode::Revision(Box::new(Revision {
         id,
         kind: RevisionKind::Insertion,
         author: None,
@@ -2983,12 +2986,12 @@ fn wrap_in_revisions(depth: u32, counter: &mut u64) -> InlineNode {
         revision_id: None,
         editor_group: None,
         inlines: vec![inner],
-    })
+    }))
 }
 
 #[test]
 fn insertion_revision_round_trips_with_metadata() {
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: Some("Bob".to_owned()),
@@ -2999,7 +3002,7 @@ fn insertion_revision_round_trips_with_metadata() {
             kind: RevisionGroupKind::Replacement,
         }),
         inlines: vec![run_inline(tid(11), "added")],
-    });
+    }));
     let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
     let json = document.to_json().unwrap();
     let json_text = std::str::from_utf8(&json).unwrap();
@@ -3012,7 +3015,7 @@ fn insertion_revision_round_trips_with_metadata() {
 
 #[test]
 fn deletion_revision_preserves_deleted_text() {
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Deletion,
         author: None,
@@ -3020,7 +3023,7 @@ fn deletion_revision_preserves_deleted_text() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run_inline(tid(11), "gone")],
-    });
+    }));
     let document = table_document(vec![revision_paragraph(tid(1), revision)]).unwrap();
     let reloaded =
         Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
@@ -3040,7 +3043,7 @@ fn deletion_revision_preserves_deleted_text() {
 
 #[test]
 fn empty_revision_is_rejected() {
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3048,7 +3051,7 @@ fn empty_revision_is_rejected() {
         revision_id: None,
         editor_group: None,
         inlines: Vec::new(),
-    });
+    }));
     assert!(matches!(
         table_document(vec![revision_paragraph(tid(1), revision)]),
         Err(ModelError::EmptyRevision(_))
@@ -3057,7 +3060,7 @@ fn empty_revision_is_rejected() {
 
 #[test]
 fn nested_insertion_around_deletion_is_accepted() {
-    let inner = InlineNode::Revision(Revision {
+    let inner = InlineNode::Revision(Box::new(Revision {
         id: tid(12),
         kind: RevisionKind::Deletion,
         author: None,
@@ -3065,8 +3068,8 @@ fn nested_insertion_around_deletion_is_accepted() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run_inline(tid(13), "x")],
-    });
-    let outer = InlineNode::Revision(Revision {
+    }));
+    let outer = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3074,7 +3077,7 @@ fn nested_insertion_around_deletion_is_accepted() {
         revision_id: None,
         editor_group: None,
         inlines: vec![inner],
-    });
+    }));
     assert!(table_document(vec![revision_paragraph(tid(1), outer)]).is_ok());
 }
 
@@ -3097,7 +3100,7 @@ fn revision_nesting_beyond_bound_is_rejected() {
 
 #[test]
 fn oversized_revision_date_is_rejected() {
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3105,7 +3108,7 @@ fn oversized_revision_date_is_rejected() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
-    });
+    }));
     assert!(matches!(
         table_document(vec![revision_paragraph(tid(1), revision)]),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -3118,7 +3121,7 @@ fn oversized_revision_date_is_rejected() {
 fn oversized_revision_id_is_rejected() {
     // The producer `w:id` grouping key is bounded at 64 bytes (the importer's
     // capture filter and the design contract), separate from author's 255.
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3126,7 +3129,7 @@ fn oversized_revision_id_is_rejected() {
         revision_id: Some("9".repeat(65)),
         editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
-    });
+    }));
     assert!(matches!(
         table_document(vec![revision_paragraph(tid(1), revision)]),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -3139,7 +3142,7 @@ fn oversized_revision_id_is_rejected() {
 fn long_revision_author_within_bound_is_accepted() {
     // Author keeps its 255-byte bound (wider than id/date), so a 200-byte author
     // is valid.
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: Some("a".repeat(200)),
@@ -3147,7 +3150,7 @@ fn long_revision_author_within_bound_is_accepted() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run_inline(tid(11), "t")],
-    });
+    }));
     assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
 }
 
@@ -3156,15 +3159,15 @@ fn revision_may_wrap_a_hyperlink_at_top_level() {
     // A revision is transparent to the wrapper leaf-only rule, so it may wrap a
     // hyperlink (an inserted link) even though a hyperlink cannot nest in a
     // hyperlink/field.
-    let link = InlineNode::Hyperlink(Hyperlink {
+    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(12),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "a".to_owned(),
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "link")],
-    });
-    let revision = InlineNode::Revision(Revision {
+    }));
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3172,13 +3175,13 @@ fn revision_may_wrap_a_hyperlink_at_top_level() {
         revision_id: None,
         editor_group: None,
         inlines: vec![link],
-    });
+    }));
     assert!(table_document(vec![revision_paragraph(tid(1), revision)]).is_ok());
 }
 
 #[test]
 fn revision_child_id_duplicating_the_wrapper_is_rejected() {
-    let revision = InlineNode::Revision(Revision {
+    let revision = InlineNode::Revision(Box::new(Revision {
         id: tid(10),
         kind: RevisionKind::Insertion,
         author: None,
@@ -3186,7 +3189,7 @@ fn revision_child_id_duplicating_the_wrapper_is_rejected() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run_inline(tid(10), "dup")],
-    });
+    }));
     assert!(matches!(
         table_document(vec![revision_paragraph(tid(1), revision)]),
         Err(ModelError::DuplicateNodeId(_))
@@ -3202,7 +3205,7 @@ fn bookmark_id(counter: u64) -> BookmarkId {
 fn bookmark_paragraph(paragraph_id: NodeId, inlines: Vec<InlineNode>) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: paragraph_id,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines,
     })
 }
@@ -3410,7 +3413,7 @@ fn bookmark_marker_inside_a_hyperlink_validates() {
             name: "x".to_owned(),
         },
     );
-    let link = InlineNode::Hyperlink(Hyperlink {
+    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(2),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "x".to_owned(),
@@ -3427,7 +3430,7 @@ fn bookmark_marker_inside_a_hyperlink_validates() {
                 bookmark: bm,
             }),
         ],
-    });
+    }));
     let paragraph = bookmark_paragraph(tid(1), vec![link]);
     assert!(Document::new(tid(99), vec![paragraph], definitions).is_ok());
 }
@@ -3465,7 +3468,7 @@ fn block_sdt(id: NodeId, properties: SdtProperties, blocks: Vec<BlockNode>) -> B
 fn inline_sdt_paragraph(paragraph_id: NodeId, inline: InlineNode) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: paragraph_id,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![inline],
     })
 }
@@ -3502,11 +3505,11 @@ fn block_content_control_validates_and_round_trips_json() {
 
 #[test]
 fn inline_content_control_validates_and_round_trips_json() {
-    let inline = InlineNode::Sdt(InlineSdt {
+    let inline = InlineNode::Sdt(Box::new(InlineSdt {
         id: tid(10),
         properties: full_sdt_props(),
         inlines: vec![run_inline(tid(11), "typed")],
-    });
+    }));
     let document = table_document(vec![inline_sdt_paragraph(tid(1), inline)]).unwrap();
     let reloaded =
         Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
@@ -3574,11 +3577,11 @@ fn empty_block_content_control_is_rejected() {
 
 #[test]
 fn empty_inline_content_control_is_rejected() {
-    let inline = InlineNode::Sdt(InlineSdt {
+    let inline = InlineNode::Sdt(Box::new(InlineSdt {
         id: tid(10),
         properties: SdtProperties::default(),
         inlines: Vec::new(),
-    });
+    }));
     assert!(matches!(
         table_document(vec![inline_sdt_paragraph(tid(1), inline)]),
         Err(ModelError::EmptySdt(_))
@@ -3602,11 +3605,11 @@ fn wrap_in_inline_sdts(depth: u32, counter: &mut u64) -> InlineNode {
         return run_inline(id, "leaf");
     }
     let inner = wrap_in_inline_sdts(depth - 1, counter);
-    InlineNode::Sdt(InlineSdt {
+    InlineNode::Sdt(Box::new(InlineSdt {
         id,
         properties: SdtProperties::default(),
         inlines: vec![inner],
-    })
+    }))
 }
 
 #[test]
@@ -3794,34 +3797,34 @@ fn duplicate_id_inside_a_content_control_is_rejected() {
 fn inline_content_control_composes_with_a_hyperlink_either_way() {
     // A content control is transparent to the wrapper leaf-only rule, so it may
     // wrap a hyperlink AND may itself sit inside one.
-    let link = InlineNode::Hyperlink(Hyperlink {
+    let link = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(12),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "a".to_owned(),
         }),
         tooltip: None,
         inlines: vec![run_inline(tid(13), "link")],
-    });
-    let sdt_over_link = InlineNode::Sdt(InlineSdt {
+    }));
+    let sdt_over_link = InlineNode::Sdt(Box::new(InlineSdt {
         id: tid(10),
         properties: SdtProperties::default(),
         inlines: vec![link],
-    });
+    }));
     assert!(table_document(vec![inline_sdt_paragraph(tid(1), sdt_over_link)]).is_ok());
 
-    let inner_sdt = InlineNode::Sdt(InlineSdt {
+    let inner_sdt = InlineNode::Sdt(Box::new(InlineSdt {
         id: tid(22),
         properties: SdtProperties::default(),
         inlines: vec![run_inline(tid(23), "x")],
-    });
-    let link_over_sdt = InlineNode::Hyperlink(Hyperlink {
+    }));
+    let link_over_sdt = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: tid(20),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "b".to_owned(),
         }),
         tooltip: None,
         inlines: vec![inner_sdt],
-    });
+    }));
     assert!(table_document(vec![inline_sdt_paragraph(tid(2), link_over_sdt)]).is_ok());
 }
 
@@ -4015,7 +4018,7 @@ fn hyphens_and_positional_tab_and_alt_chunk_validate_and_round_trip_json() {
     // block-level alt chunk — all the P1F-39 additive nodes at once.
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(1),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             run_inline(tid(2), "re"),
             InlineNode::NoBreakHyphen(NoBreakHyphen { id: tid(3) }),
@@ -4029,13 +4032,13 @@ fn hyphens_and_positional_tab_and_alt_chunk_validate_and_round_trip_json() {
             run_inline(tid(6), "do"),
         ],
     });
-    let chunk = BlockNode::AltChunk(AltChunk {
+    let chunk = BlockNode::AltChunk(Box::new(AltChunk {
         id: tid(7),
         part: alt_chunk_part(),
         properties: AltChunkProperties {
             match_source: Some(true),
         },
-    });
+    }));
     let document = table_document(vec![paragraph, chunk]).unwrap();
     let reloaded =
         Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
@@ -4046,11 +4049,11 @@ fn hyphens_and_positional_tab_and_alt_chunk_validate_and_round_trip_json() {
 fn alt_chunk_with_empty_relationship_id_is_rejected() {
     let mut part = alt_chunk_part();
     part.relationship_id = String::new();
-    let chunk = BlockNode::AltChunk(AltChunk {
+    let chunk = BlockNode::AltChunk(Box::new(AltChunk {
         id: tid(7),
         part,
         properties: AltChunkProperties::default(),
-    });
+    }));
     assert!(matches!(
         table_document(vec![chunk]),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -4077,13 +4080,13 @@ fn typed_math_projection_round_trips_and_validates() {
     };
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(100),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Math(Math {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Math(Box::new(Math {
             id: tid(101),
             omml: "<m:oMath><m:f/></m:oMath>".to_owned(),
             text: "a/b2".to_owned(),
             expression: Some(expression),
-        })],
+        }))],
     });
     let document = table_document(vec![paragraph]).unwrap();
     let reloaded =
@@ -4095,15 +4098,15 @@ fn typed_math_projection_round_trips_and_validates() {
 fn invalid_typed_math_projection_is_rejected() {
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(110),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Math(Math {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Math(Box::new(Math {
             id: tid(111),
             omml: "<m:oMath/>".to_owned(),
             text: String::new(),
             expression: Some(MathExpression::Row {
                 children: Vec::new(),
             }),
-        })],
+        }))],
     });
     assert!(matches!(
         table_document(vec![paragraph]),
@@ -4126,13 +4129,13 @@ fn typed_math_projection_depth_is_bounded() {
     }
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(120),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Math(Math {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Math(Box::new(Math {
             id: tid(121),
             omml: "<m:oMath/>".to_owned(),
             text: "x".to_owned(),
             expression: Some(expression),
-        })],
+        }))],
     });
     assert!(matches!(
         table_document(vec![paragraph]),
@@ -4299,10 +4302,15 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
     use std::mem::align_of;
     use std::mem::size_of;
 
-    // Measured on macOS arm64 before stage 1 / after stage 1a / after 1b:
-    //   ParagraphProperties 768 -> 304, RunProperties 448 -> 352,
-    //   Paragraph 816 -> 352, Run 496 -> 400,
-    //   BlockNode 816 -> 800 -> 352, InlineNode 512 -> 416 -> 416.
+    // Measured on macOS arm64 before stage 1 / after 1a / after 1b / after 1c:
+    //   ParagraphProperties 768 -> 304 -> 304, RunProperties 448 -> 352 -> 352,
+    //   Paragraph 816 -> 352 -> 48, Run 496 -> 400 -> 48,
+    //   BlockNode 816 -> 800 -> 352 -> 48, InlineNode 512 -> 416 -> 416 -> 64.
+    //
+    // The two property structs did NOT shrink in 1c and are not meant to: what
+    // changed is that a document holds one copy per distinct value instead of
+    // one per node (`super::Shared`). Their ceilings below still matter —
+    // a document with a thousand distinct formats holds a thousand of them.
     //
     // One of `docs/111` §4's numbers does not land, and is worth recording
     // rather than rounding away: `RunProperties` ~192 counted a 160-byte
@@ -4370,26 +4378,35 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
     );
 
     // `InlineNode` is sized by `Run` itself — the common case, which must stay
-    // inline. `Symbol` and `NoteNumberMark` are large for the same reason (a
-    // `RunProperties` by value) and so track it rather than exceed it; boxing
-    // any of them would buy nothing while `Run` is 400 bytes.
+    // inline. Stage 1c made that true by storing every payload larger than a
+    // `Run` out of line, `Symbol` included: once run formatting became a
+    // pointer, `Run` fell to 48 bytes and what set the enum's size was no
+    // longer formatting but the long tail of structurally large variants.
+    // The relationship above (`InlineNode <= Run + align`) is what enforces it,
+    // and is the assertion that must not be weakened — this pair just names the
+    // two leaves that now sit at the floor, so the next variant added by value
+    // is reported against them rather than against a constant.
     assert!(
-        size_of::<Symbol>() <= size_of::<Run>(),
-        "Symbol ({} bytes) now exceeds Run ({} bytes) and sets InlineNode's size",
-        size_of::<Symbol>(),
+        size_of::<NoteReference>() <= size_of::<Run>() + align_of::<InlineNode>(),
+        "NoteReference ({} bytes) now exceeds Run ({} bytes) and sets InlineNode's size",
+        size_of::<NoteReference>(),
         size_of::<Run>()
     );
     assert!(
-        size_of::<NoteNumberMark>() <= size_of::<Run>(),
-        "NoteNumberMark ({} bytes) now exceeds Run ({} bytes)",
-        size_of::<NoteNumberMark>(),
+        size_of::<MoveRangeEnd>() <= size_of::<Run>() + align_of::<InlineNode>(),
+        "MoveRangeEnd ({} bytes) now exceeds Run ({} bytes)",
+        size_of::<MoveRangeEnd>(),
         size_of::<Run>()
     );
 
-    // The boxed block variants cost a pointer in the slot, whatever the payload
-    // grows to.
+    // The boxed variants cost a pointer in the slot, whatever the payload grows
+    // to. A `Symbol` carrying a 16-point Wingdings glyph's formatting is 64
+    // bytes and a `Table` is 800; in the enum they are both 8.
     assert_eq!(size_of::<Box<Table>>(), size_of::<usize>());
     assert_eq!(size_of::<Box<BlockSdt>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<Symbol>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<InlineSdt>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<AltChunk>>(), size_of::<usize>());
 
     // Each field stage 1 moved out of line costs a pointer when absent.
     assert_eq!(size_of::<BoxedParagraphBorders>(), size_of::<usize>());
@@ -4494,4 +4511,329 @@ fn boxed_block_variants_survive_a_json_round_trip_with_their_contents() {
     };
     assert_eq!(symbol.font, "Wingdings");
     assert_eq!(symbol.char, 0xF0FC);
+}
+
+// ---- docs/111 stage 1c: formatting is stored once, not once per node -----
+
+/// A paragraph and a run must **reference** their formatting, never embed it.
+///
+/// This is the shape the whole of `docs/111` stage 1c rests on. The property
+/// structs themselves are still 304 and 352 bytes — they did not shrink, and
+/// they are not supposed to; what changed is that a document holds one copy
+/// per distinct value rather than one copy per node. The guard is therefore a
+/// relationship, not a ceiling: **a node must cost less than the formatting it
+/// carries**, which is only possible while the formatting is out of line.
+///
+/// Written this way deliberately. A bare `size_of::<Paragraph>() <= 48` can be
+/// "fixed" by raising 48 alongside the field that broke it; `Paragraph must be
+/// smaller than ParagraphProperties` cannot be satisfied by any by-value
+/// arrangement of the same data.
+#[test]
+fn a_node_costs_less_than_the_formatting_it_carries() {
+    use std::mem::size_of;
+
+    assert_eq!(
+        size_of::<SharedParagraphProperties>(),
+        size_of::<usize>(),
+        "a paragraph's handle on its formatting must be one pointer, not {} bytes",
+        size_of::<SharedParagraphProperties>()
+    );
+    assert_eq!(
+        size_of::<SharedRunProperties>(),
+        size_of::<usize>(),
+        "a run's handle on its formatting must be one pointer, not {} bytes",
+        size_of::<SharedRunProperties>()
+    );
+
+    assert!(
+        size_of::<Paragraph>() < size_of::<ParagraphProperties>(),
+        "Paragraph is {} bytes against {}-byte ParagraphProperties: the \
+         formatting is embedded by value again, so a million paragraphs hold a \
+         million copies of it",
+        size_of::<Paragraph>(),
+        size_of::<ParagraphProperties>()
+    );
+    assert!(
+        size_of::<Run>() < size_of::<RunProperties>(),
+        "Run is {} bytes against {}-byte RunProperties: the formatting is \
+         embedded by value again",
+        size_of::<Run>(),
+        size_of::<RunProperties>()
+    );
+
+    // And a node is its identity, its handle, and its children — nothing else.
+    assert!(
+        size_of::<Paragraph>()
+            <= size_of::<NodeId>()
+                + size_of::<SharedParagraphProperties>()
+                + size_of::<Vec<InlineNode>>(),
+        "Paragraph is {} bytes: something beyond id + formatting handle + \
+         inlines was added by value",
+        size_of::<Paragraph>()
+    );
+    assert!(
+        size_of::<Run>()
+            <= size_of::<NodeId>() + size_of::<SharedRunProperties>() + size_of::<String>(),
+        "Run is {} bytes: something beyond id + formatting handle + text was \
+         added by value",
+        size_of::<Run>()
+    );
+}
+
+/// A body of default-formatted paragraphs holds **one** property set between
+/// them, not one each.
+///
+/// This is the measurement `docs/111` §4c reports, expressed small enough to
+/// assert: build a thousand paragraphs the way an importer does and require
+/// that every one of them references the same entry — and that the entry is
+/// the *process-wide* default one.
+///
+/// That last clause is not decoration. Deleting the default fast path from
+/// `Shared::new` left this test green, because the bounded recent-entry cache
+/// re-shared the default anyway; the first paragraph seeded the cache and the
+/// other 999 found it there. Requiring the shared entry to be the one
+/// `Shared::default()` hands out makes the two mechanisms distinguishable, so
+/// losing either is red.
+#[test]
+fn a_body_of_plain_paragraphs_holds_one_property_set_between_them() {
+    let body: Vec<BlockNode> = (0..1_000)
+        .map(|index| {
+            BlockNode::Paragraph(Paragraph {
+                id: tid(index + 1),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: tid(index + 100_000),
+                    properties: RunProperties::default().into(),
+                    text: "the owner's thirty-character line".to_owned(),
+                })],
+            })
+        })
+        .collect();
+
+    let BlockNode::Paragraph(first) = &body[0] else {
+        panic!("the body is paragraphs");
+    };
+    assert!(
+        first
+            .properties
+            .shares_with(&SharedParagraphProperties::default()),
+        "a default-formatted paragraph does not reference the process-wide \
+         default entry, so every document pays to discover the default again"
+    );
+    assert!(
+        first.properties.share_count() > body.len(),
+        "the default entry is referenced {} times by {} paragraphs",
+        first.properties.share_count(),
+        body.len()
+    );
+    for block in &body {
+        let BlockNode::Paragraph(paragraph) = block else {
+            panic!("the body is paragraphs");
+        };
+        assert!(
+            paragraph.properties.shares_with(&first.properties),
+            "paragraph {} holds its own copy of the default formatting",
+            paragraph.id
+        );
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("each paragraph is one run");
+        };
+        let InlineNode::Run(first_run) = &first.inlines[0] else {
+            panic!("each paragraph is one run");
+        };
+        assert!(
+            run.properties.shares_with(&first_run.properties),
+            "a run holds its own copy of the default formatting"
+        );
+    }
+}
+
+/// **Copy-on-write, which is the correctness heart of sharing.** Editing one
+/// of two nodes that reference the same formatting must leave the other
+/// exactly as it was, and must stop the two sharing.
+///
+/// Both halves matter. Without the copy, the edit would reach through to every
+/// node in the document — the aliasing bug this test exists to make
+/// impossible. Without the unsharing assertion, a `Shared` that deep-copied on
+/// every clone would pass the first half while quietly giving up the whole
+/// saving.
+#[test]
+fn editing_one_node_leaves_every_node_that_shared_its_formatting_untouched() {
+    let shared = SharedParagraphProperties::default();
+    let mut edited = Paragraph {
+        id: tid(1),
+        properties: shared.clone(),
+        inlines: Vec::new(),
+    };
+    let untouched = Paragraph {
+        id: tid(2),
+        properties: shared.clone(),
+        inlines: Vec::new(),
+    };
+    assert!(
+        edited.properties.shares_with(&untouched.properties),
+        "the two paragraphs must start out sharing, or this test proves nothing"
+    );
+
+    edited.properties.alignment = Some(Alignment::Center);
+
+    assert_eq!(edited.properties.alignment, Some(Alignment::Center));
+    assert_eq!(
+        untouched.properties.alignment, None,
+        "editing one paragraph reached through into another that shared its \
+         formatting"
+    );
+    assert_eq!(
+        untouched.properties, shared,
+        "the entry the other paragraph still references was mutated in place"
+    );
+    assert!(
+        !edited.properties.shares_with(&untouched.properties),
+        "the edited paragraph still references the shared entry"
+    );
+
+    // The same for a run, through the named seam rather than `DerefMut`.
+    let shared_run = SharedRunProperties::default();
+    let mut edited_run = Run {
+        id: tid(3),
+        properties: shared_run.clone(),
+        text: "a".to_owned(),
+    };
+    let untouched_run = Run {
+        id: tid(4),
+        properties: shared_run.clone(),
+        text: "b".to_owned(),
+    };
+    edited_run.properties.make_mut().bold = Some(true);
+    assert_eq!(edited_run.properties.bold, Some(true));
+    assert_eq!(
+        untouched_run.properties.bold, None,
+        "editing one run reached through into another that shared its formatting"
+    );
+
+    // Cloning a node clones the handle, so the clone must not be able to write
+    // through into the original either.
+    let mut clone = untouched.clone();
+    clone.properties.alignment = Some(Alignment::End);
+    assert_eq!(
+        untouched.properties.alignment, None,
+        "editing a cloned paragraph wrote into the paragraph it was cloned from"
+    );
+}
+
+/// Sharing must not change what a value *is*: a slot holding the default
+/// compares, serializes and reopens exactly as the struct it replaced.
+#[test]
+fn a_shared_property_set_behaves_exactly_like_the_value_it_replaced() {
+    let default_slot = SharedRunProperties::default();
+    assert_eq!(*default_slot, RunProperties::default());
+    assert_eq!(default_slot, RunProperties::default());
+    assert_eq!(
+        serde_json::to_string(&default_slot).expect("a property set serializes"),
+        serde_json::to_string(&RunProperties::default()).expect("a property set serializes"),
+    );
+
+    let bold = RunProperties {
+        bold: Some(true),
+        ..RunProperties::default()
+    };
+    let bold_slot: SharedRunProperties = bold.clone().into();
+    assert_eq!(*bold_slot, bold);
+    assert_ne!(bold_slot, RunProperties::default());
+    let json = serde_json::to_string(&bold_slot).expect("a property set serializes");
+    assert_eq!(
+        json,
+        serde_json::to_string(&bold).expect("a property set serializes")
+    );
+    let reopened: SharedRunProperties =
+        serde_json::from_str(&json).expect("a property set reopens");
+    assert_eq!(reopened, bold_slot);
+
+    // Reopening interns: two runs deserialized from the same bytes reference
+    // one entry, which is what keeps a reopened snapshot as small as an
+    // imported document.
+    let again: SharedRunProperties = serde_json::from_str(&json).expect("a property set reopens");
+    assert!(
+        reopened.shares_with(&again),
+        "two equal property sets read back from a snapshot did not re-share"
+    );
+}
+
+/// A document holds no spare vector capacity the moment it is built.
+///
+/// `Vec::push` onto an empty vector reserves `RawVec::MIN_NON_ZERO_CAP` — four
+/// elements — so a paragraph holding one inline arrives with three empty
+/// slots, and the body vector arrives holding between 1x and 2x the paragraphs
+/// it needs. That was 1,248 bytes per paragraph on the owner's own file
+/// (`docs/111` §4a), invisible to `size_of` and to every test that inspects
+/// values, which is why it outlived three rounds of shrinking the structs.
+///
+/// The first assertion is not decoration: it proves the over-allocation this
+/// guard is about actually happens on this toolchain, so a future `Vec` that
+/// no longer over-allocates turns this test into a statement about nothing and
+/// says so instead of passing quietly.
+#[test]
+fn a_document_is_built_holding_no_spare_vector_capacity() {
+    let mut inlines = Vec::new();
+    inlines.push(InlineNode::Run(Run {
+        id: tid(2),
+        properties: RunProperties::default().into(),
+        text: "one short line".to_owned(),
+    }));
+    assert!(
+        inlines.capacity() > inlines.len(),
+        "Vec::push no longer over-allocates ({} slots for {} inlines), so this \
+         guard no longer guards anything",
+        inlines.capacity(),
+        inlines.len()
+    );
+
+    let mut body = Vec::new();
+    for index in 0..5_u64 {
+        body.push(BlockNode::Paragraph(Paragraph {
+            id: tid(index * 2 + 10),
+            properties: ParagraphProperties::default().into(),
+            inlines: if index == 0 {
+                std::mem::take(&mut inlines)
+            } else {
+                vec![InlineNode::Run(Run {
+                    id: tid(index * 2 + 11),
+                    properties: RunProperties::default().into(),
+                    text: "another short line".to_owned(),
+                })]
+            },
+        }));
+    }
+    assert!(
+        body.capacity() > body.len(),
+        "Vec::push no longer over-allocates the body, so this guard no longer \
+         guards anything"
+    );
+
+    let mut document = Document::new(
+        NodeId::from_parts(9, 1).unwrap(),
+        body,
+        Definitions::default(),
+    )
+    .expect("the body is valid");
+
+    let blocks = document.body().len();
+    let slots = document.body_mut().capacity();
+    assert_eq!(
+        slots, blocks,
+        "the body vector kept {slots} slots for {blocks} blocks"
+    );
+    for block in document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            panic!("the body is paragraphs");
+        };
+        assert_eq!(
+            paragraph.inlines.capacity(),
+            paragraph.inlines.len(),
+            "paragraph {} kept {} inline slots for {} inlines",
+            paragraph.id,
+            paragraph.inlines.capacity(),
+            paragraph.inlines.len()
+        );
+    }
 }

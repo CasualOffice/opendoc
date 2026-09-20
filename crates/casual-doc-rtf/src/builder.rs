@@ -110,7 +110,7 @@ impl BodyBuilder {
         let id = next_id(ids)?;
         let paragraph = BlockNode::Paragraph(Paragraph {
             id,
-            properties,
+            properties: properties.into(),
             inlines: std::mem::take(&mut self.inlines),
         });
         if self.in_cell() {
@@ -145,7 +145,7 @@ impl BodyBuilder {
             )?;
             self.cell_blocks.push(BlockNode::Paragraph(Paragraph {
                 id: next_id(ids)?,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: std::mem::take(&mut self.inlines),
             }));
         }
@@ -248,7 +248,7 @@ impl BodyBuilder {
                 blocks: if self.cell_blocks.is_empty() {
                     vec![BlockNode::Paragraph(Paragraph {
                         id: next_id(ids)?,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: Vec::new(),
                     })]
                 } else {
@@ -261,7 +261,7 @@ impl BodyBuilder {
         if self.blocks.is_empty() {
             self.blocks.push(BlockNode::Paragraph(Paragraph {
                 id: next_id(ids)?,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: Vec::new(),
             }));
         }
@@ -327,7 +327,7 @@ impl BodyBuilder {
         self.charge_inline(limits)?;
         self.inlines.push(InlineNode::Run(Run {
             id: next_id(ids)?,
-            properties: self.pending_properties.clone(),
+            properties: self.pending_properties.clone().into(),
             text,
         }));
         Ok(())

@@ -93,13 +93,13 @@ impl Document {
                 let id = alloc_non_colliding(ids, &mut used)?;
                 inlines.push(InlineNode::Run(Run {
                     id,
-                    properties: run_properties_from_marks(run.marks()),
+                    properties: run_properties_from_marks(run.marks()).into(),
                     text: run.text().to_owned(),
                 }));
             }
             body.push(BlockNode::Paragraph(Paragraph {
                 id: paragraph.id(),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines,
             }));
         }

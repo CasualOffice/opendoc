@@ -578,7 +578,7 @@ impl TableStack {
             if let Some(cell) = self.current_cell() {
                 cell.blocks.push(BlockNode::Paragraph(Paragraph {
                     id,
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: Vec::new(),
                 }));
             }

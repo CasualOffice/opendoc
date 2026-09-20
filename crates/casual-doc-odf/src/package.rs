@@ -692,7 +692,7 @@ fn build_header_footer_blocks(
             inlines.push(match inline {
                 HeaderFooterInline::Text(text) => InlineNode::Run(Run {
                     id: inline_id,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.clone(),
                 }),
                 HeaderFooterInline::Tab => InlineNode::Tab(Tab { id: inline_id }),
@@ -704,7 +704,7 @@ fn build_header_footer_blocks(
         }
         blocks.push(BlockNode::Paragraph(Paragraph {
             id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines,
         }));
     }

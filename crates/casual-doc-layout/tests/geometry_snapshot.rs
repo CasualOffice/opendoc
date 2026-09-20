@@ -46,7 +46,7 @@ fn node(id: u64) -> NodeId {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -54,7 +54,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph(id: u64, properties: ParagraphProperties, text: &str) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines: vec![run(id + 1, text)],
     })
 }
@@ -307,7 +307,8 @@ fn multilevel_list() -> Document {
                     level,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(id + 1, text)],
         })
     };
@@ -384,7 +385,8 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                     level: 0,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(id + 1, text)],
         })
     };

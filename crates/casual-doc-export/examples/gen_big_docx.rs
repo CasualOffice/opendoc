@@ -26,10 +26,10 @@ fn main() {
             let id = i + 1;
             BlockNode::Paragraph(Paragraph {
                 id: node(id),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: node(id + 1_000_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: format!("Paragraph {id}. {SENTENCE}"),
                 })],
             })

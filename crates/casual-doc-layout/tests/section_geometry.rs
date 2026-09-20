@@ -33,7 +33,7 @@ fn node(id: u64) -> NodeId {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -41,7 +41,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph_with(id: u64, text: &str, properties: ParagraphProperties) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines: vec![run(id + 1, text)],
     })
 }

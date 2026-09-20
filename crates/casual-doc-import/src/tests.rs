@@ -3573,10 +3573,13 @@ fn tb_block_text(blocks: &[BlockNode]) -> String {
 }
 
 fn find_textbox(inlines: &[InlineNode]) -> Option<&casual_doc_model::v1::TextBox> {
-    inlines.iter().find_map(|inline| match inline {
-        InlineNode::TextBox(text_box) => Some(text_box),
-        _ => None,
-    })
+    inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::TextBox(text_box) => Some(text_box),
+            _ => None,
+        })
+        .map(|v| &**v)
 }
 
 #[test]
@@ -4381,10 +4384,14 @@ fn body_with_an_eof_truncated_table_preserves_its_content() {
 
 /// Returns the first `Revision` inline in paragraph 0, if any.
 fn first_revision(import: &Import) -> Option<&casual_doc_model::v1::Revision> {
-    paragraph(import, 0).inlines.iter().find_map(|i| match i {
-        InlineNode::Revision(r) => Some(r),
-        _ => None,
-    })
+    paragraph(import, 0)
+        .inlines
+        .iter()
+        .find_map(|i| match i {
+            InlineNode::Revision(r) => Some(r),
+            _ => None,
+        })
+        .map(|v| &**v)
 }
 
 #[test]
@@ -4401,7 +4408,7 @@ fn inserted_run_is_modeled_as_revision_with_metadata() {
     assert_eq!(revision.date.as_deref(), Some("2026-07-25T00:00:00Z"));
     assert_eq!(revision.revision_id.as_deref(), Some("1"));
     let mut text = String::new();
-    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    inline_text(&InlineNode::Revision(Box::new(revision.clone())), &mut text);
     assert_eq!(text, "added");
 }
 
@@ -4615,7 +4622,7 @@ fn unclosed_revision_at_eof_flushes_its_runs() {
     let import = import(xml);
     let revision = first_revision(&import).expect("truncated insertion still modeled");
     let mut text = String::new();
-    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    inline_text(&InlineNode::Revision(Box::new(revision.clone())), &mut text);
     assert_eq!(text, "text", "unclosed revision's run text preserved");
 }
 
@@ -4702,7 +4709,7 @@ fn revision_wrapping_a_text_box_preserves_box_content() {
         .any(|i| matches!(i, InlineNode::TextBox(_)));
     assert!(has_box, "text box lands inside the revision");
     let mut text = String::new();
-    inline_text(&InlineNode::Revision(revision.clone()), &mut text);
+    inline_text(&InlineNode::Revision(Box::new(revision.clone())), &mut text);
     // `inline_text` does not recurse text boxes, so only the run text shows here.
     assert_eq!(text, "see ");
 }
@@ -5623,10 +5630,13 @@ fn find_block_sdt(blocks: &[BlockNode]) -> Option<&casual_doc_model::v1::BlockSd
 }
 
 fn find_inline_sdt(inlines: &[InlineNode]) -> Option<&casual_doc_model::v1::InlineSdt> {
-    inlines.iter().find_map(|inline| match inline {
-        InlineNode::Sdt(sdt) => Some(sdt),
-        _ => None,
-    })
+    inlines
+        .iter()
+        .find_map(|inline| match inline {
+            InlineNode::Sdt(sdt) => Some(sdt),
+            _ => None,
+        })
+        .map(|v| &**v)
 }
 
 /// All run text under a sequence of inlines, recursing through content controls
@@ -6340,18 +6350,19 @@ fn symbol_run_is_mapped_to_a_symbol_node() {
     </w:body></w:document>"#;
     let import = import(xml);
     let paragraph = paragraph(&import, 0);
-    let Some(InlineNode::Symbol(Symbol {
-        font,
-        char,
-        properties,
-        ..
-    })) = paragraph
+    let Some(InlineNode::Symbol(symbol)) = paragraph
         .inlines
         .iter()
         .find(|inline| matches!(inline, InlineNode::Symbol(_)))
     else {
         panic!("expected a symbol node");
     };
+    let Symbol {
+        font,
+        char,
+        properties,
+        ..
+    } = symbol.as_ref();
     assert_eq!(font, "Wingdings");
     assert_eq!(*char, 0xF0FC);
     assert_eq!(properties.size_half_points, Some(32));

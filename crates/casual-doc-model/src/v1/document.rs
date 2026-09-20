@@ -34,11 +34,19 @@ pub struct Document {
 impl Document {
     /// Builds and validates a v1 document from constructed parts. The document
     /// carries no metadata; attach it with [`Document::with_properties`].
+    ///
+    /// Spare `Vec` and `String` capacity in the body is released here — see
+    /// `BlockNode::shrink_to_fit`, which carries the measurement. Every
+    /// importer assembles its body by pushing, and `Vec`'s first allocation is
+    /// four elements, so a one-inline paragraph arrives holding three empty
+    /// `InlineNode` slots. Doing it at this one choke point rather than in each
+    /// of the five importers is the same reason validation lives here.
     pub fn new(
         document_id: NodeId,
-        body: Vec<BlockNode>,
+        mut body: Vec<BlockNode>,
         definitions: Definitions,
     ) -> Result<Self, ModelError> {
+        super::body::shrink_blocks(&mut body);
         let document = Self {
             schema_version: SCHEMA_VERSION_V1,
             document_id,

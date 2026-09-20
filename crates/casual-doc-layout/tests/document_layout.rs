@@ -49,7 +49,7 @@ fn node(id: u64) -> NodeId {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -57,7 +57,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph(id: u64, inlines: Vec<InlineNode>) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines,
     })
 }
@@ -70,7 +70,8 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        },
+        }
+        .into(),
         inlines: vec![run(id + 1, text)],
     })
 }
@@ -82,7 +83,7 @@ fn aligned_float(
     vertical: VerticalAnchor,
     descr: &str,
 ) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -110,7 +111,7 @@ fn aligned_float(
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 fn offset_float(
@@ -120,7 +121,7 @@ fn offset_float(
     x_emu: i64,
     descr: &str,
 ) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -148,7 +149,7 @@ fn offset_float(
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 /// A single-column section boundary with the given geometry and header/footer
@@ -332,7 +333,8 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
                 properties: ParagraphProperties {
                     snap_to_grid: Some(false),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![run(111, "off")],
             }),
             BlockNode::Paragraph(Paragraph {
@@ -344,7 +346,8 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
                         ..Spacing::default()
                     }),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![run(121, "exact")],
             }),
         ];
@@ -397,7 +400,8 @@ fn document_grid_pitch_is_isolated_per_section() {
             properties: ParagraphProperties {
                 section_break: Some(first.id),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(101, "first section")],
         }),
         paragraph(110, vec![run(111, "second section")]),
@@ -723,7 +727,8 @@ fn later_sections_use_their_own_geometry_running_content_and_first_page_variant(
                 properties: ParagraphProperties {
                     section_break: Some(first_id),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![run(101, "Portrait")],
             }),
             paragraph(110, vec![run(111, "Landscape first page")]),
@@ -886,8 +891,8 @@ fn a_header_image_renders_through_the_full_pipeline() {
         ModelHeaderFooter {
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: node(310),
-                properties: ParagraphProperties::default(),
-                inlines: vec![InlineNode::Drawing(Drawing {
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Drawing(Box::new(Drawing {
                     id: node(311),
                     media: media_id,
                     extent: Some(Extent {
@@ -900,7 +905,7 @@ fn a_header_image_renders_through_the_full_pipeline() {
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                })],
+                }))],
             })],
         },
     );
@@ -978,12 +983,13 @@ fn later_section_floats_use_that_sections_page_and_margin_geometry() {
             properties: ParagraphProperties {
                 section_break: Some(first_id),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(101, "First section")],
         }),
         BlockNode::Paragraph(Paragraph {
             id: node(110),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 run(111, "Second section"),
                 aligned_float(
@@ -1067,7 +1073,8 @@ fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
                 properties: ParagraphProperties {
                     section_break: Some(first_id),
                     ..ParagraphProperties::default()
-                },
+                }
+                .into(),
                 inlines: vec![
                     run(101, "First band"),
                     offset_float(102, media_id, HorizontalAnchor::Margin, 0, "first margin"),
@@ -1075,7 +1082,7 @@ fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
             }),
             BlockNode::Paragraph(Paragraph {
                 id: node(110),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![
                     run(111, "Second band"),
                     offset_float(112, media_id, HorizontalAnchor::Margin, 0, "second margin"),
@@ -1128,7 +1135,7 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
     // Page-relative float at y = 1440 twips (914_400 EMU), 1440 twips tall, so its
     // bottom is 2880 twips from the page top — well past the 720-twip top margin.
     let header_float = || {
-        InlineNode::AnchoredDrawing(AnchoredDrawing {
+        InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: node(320),
             media: MediaId::new(node(321)),
             extent: Extent {
@@ -1156,7 +1163,7 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        })
+        }))
     };
     let build = |header_blocks: Vec<InlineNode>| {
         let mut headers = DefinitionMap::default();
@@ -1320,7 +1327,7 @@ fn glyph_and_struck_counts(layout: &PaginatedLayout) -> (usize, usize) {
 fn markup_view_shows_struck_deletions_the_editing_view_drops() {
     use casual_doc_model::v1::{Revision, RevisionKind};
 
-    let deletion = InlineNode::Revision(Revision {
+    let deletion = InlineNode::Revision(Box::new(Revision {
         id: node(20),
         kind: RevisionKind::Deletion,
         author: Some("Ada".to_owned()),
@@ -1328,12 +1335,12 @@ fn markup_view_shows_struck_deletions_the_editing_view_drops() {
         revision_id: None,
         editor_group: None,
         inlines: vec![run(21, "GONE")],
-    });
+    }));
     let doc = Document::new(
         node(1),
         vec![BlockNode::Paragraph(Paragraph {
             id: node(2),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(3, "keep"), deletion],
         })],
         Definitions {
@@ -1460,7 +1467,8 @@ fn a_section_without_its_own_header_inherits_the_previous_sections() {
             properties: ParagraphProperties {
                 section_break: Some(first.id),
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(101, "portrait body")],
         }),
         paragraph(110, vec![run(111, "landscape body")]),

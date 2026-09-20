@@ -296,10 +296,20 @@ fn enforce(name: &'static str, observed: usize, allowed: usize) -> Result<(), Ad
 fn document_from_text(text: &str) -> Result<Document, AdapterError> {
     let mut ids = IdGenerator::new(text_namespace(text));
     let document_id = next_id(&mut ids)?;
-    let mut body = Vec::new();
+    // Sized exactly, not grown. A 40 MB text file is 1.3 million paragraphs,
+    // and `Vec`'s growth reserves between 1x and 2x the elements it holds while
+    // a paragraph's first `push` reserves four `InlineNode` slots for the one
+    // inline nearly every line has — measured at 1,248 wasted bytes per
+    // paragraph, 1.6 GB on that file (`docs/111` §4a). `Document::new` releases
+    // spare capacity anyway; counting first means the allocation is never made,
+    // so peak memory never reaches for it either. Both passes over the text are
+    // linear and the second is the one that was already there.
+    let mut body = Vec::with_capacity(text.split('\n').count());
     for line in text.split('\n') {
         let paragraph_id = next_id(&mut ids)?;
-        let mut inlines = Vec::new();
+        let tabs = line.matches('\t').count();
+        let mut inlines =
+            Vec::with_capacity(tabs + line.split('\t').filter(|s| !s.is_empty()).count());
         for (index, segment) in line.split('\t').enumerate() {
             if index != 0 {
                 inlines.push(InlineNode::Tab(Tab {
@@ -309,14 +319,14 @@ fn document_from_text(text: &str) -> Result<Document, AdapterError> {
             if !segment.is_empty() {
                 inlines.push(InlineNode::Run(Run {
                     id: next_id(&mut ids)?,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: segment.to_owned(),
                 }));
             }
         }
         body.push(BlockNode::Paragraph(Paragraph {
             id: paragraph_id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines,
         }));
     }

@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    BookmarkId, BreakKind, CommentId, MediaId, NoteId, ParagraphProperties, RunProperties, Table,
-};
+use super::SharedParagraphProperties;
+use super::SharedRunProperties;
+use super::{BookmarkId, BreakKind, CommentId, MediaId, NoteId, RunProperties, Table};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -16,8 +16,9 @@ pub const MAX_EMU: i64 = 27_273_042_316_900;
 pub struct Run {
     /// Stable run identity.
     pub id: NodeId,
-    /// Run properties (always present; empty is `{}`).
-    pub properties: RunProperties,
+    /// Run properties (always present; empty is `{}`). Shared and
+    /// copy-on-write: see [`SharedRunProperties`].
+    pub properties: SharedRunProperties,
     /// Grapheme text (non-empty).
     pub text: String,
 }
@@ -183,11 +184,11 @@ pub struct Symbol {
     /// glyphs such as 16pt Wingdings checkboxes to retain their authored size and
     /// color instead of falling back to the paragraph default.
     #[serde(default, skip_serializing_if = "is_default_run_properties")]
-    pub properties: RunProperties,
+    pub properties: SharedRunProperties,
 }
 
-fn is_default_run_properties(properties: &RunProperties) -> bool {
-    *properties == RunProperties::default()
+fn is_default_run_properties(properties: &SharedRunProperties) -> bool {
+    **properties == RunProperties::default()
 }
 
 /// The natural size of a drawing, in English Metric Units (EMU).
@@ -1109,7 +1110,7 @@ pub enum GroupChild {
     /// A rectangle / line / other preset shape (`wps:wsp`/`wps:cxnSp`).
     Shape(GroupShape),
     /// A nested group (`wpg:grpSp`), positioned by its own transform.
-    Group(WordprocessingGroup),
+    Group(Box<WordprocessingGroup>),
 }
 
 /// The maximum nesting depth of DrawingML groups (a `wpg:grpSp` inside a
@@ -1713,7 +1714,7 @@ pub struct NoteNumberMark {
     /// (`w:endnoteRef`) auto-number mark.
     pub kind: NoteKind,
     /// The run properties of the enclosing run (the mark's own formatting).
-    pub properties: RunProperties,
+    pub properties: SharedRunProperties,
 }
 
 /// An inline reference to a comment definition (`w:commentReference`).
@@ -2432,14 +2433,28 @@ pub struct Math {
 
 /// Inline content supported by schema v1.
 //
-// Measured (`casual-doc-layout`'s `model_footprint` example): this enum is 416
-// bytes and its largest payload is `Run` at 400 — the *common* case, not a rare
-// one, so unlike `BlockNode` there is no rare variant to box. `Symbol` ties it
-// at 400 and `NoteNumberMark` follows at 384, but all three are large for the
-// same reason — each carries a full `RunProperties` by value — so boxing any of
-// them buys nothing while `Run` stays inline, and boxing `Run` would add a heap
-// allocation on the hottest path in the model. The remaining win here is
-// shrinking `RunProperties`, which shrinks all of them at once.
+// A `Vec<InlineNode>` pays for the enum's *largest* variant on every element,
+// so the enum's size — not the common payload's — is what a paragraph is
+// charged. That used to be 416 bytes because `Run` carried a `RunProperties`
+// by value; now that run and paragraph formatting is shared
+// (`super::Shared`), `Run` is 40 bytes and what sets the size is the long
+// tail of rare, structurally large variants. Every one of them larger than a
+// `Run` is therefore stored out of line, which is the same trade `BlockNode`
+// makes below: one pointer hop on a path that already allocates a `Vec` of
+// children or a `String` of opaque XML, against 368 bytes saved on every
+// inline in the document.
+//
+// The three still inline at 48 bytes — `Symbol`, `NoteReference`,
+// `MoveRangeEnd` — set the enum's size, so boxing any *one* boxed variant
+// above would buy nothing; they are left alone because the remaining 8 bytes
+// are not worth an allocation. Measured with `casual-doc-layout`'s
+// `model_footprint` example, which prints every payload largest-first so the
+// variant that sets the size is named rather than guessed at.
+//
+// `Run` stays inline deliberately: it is the common case, and boxing it would
+// add a heap allocation per run while shrinking nothing — the enum is already
+// the size of the three 48-byte leaves. The guard that matters is in
+// `v1::tests`: `InlineNode` must not exceed `Run` plus a discriminant.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -2450,23 +2465,27 @@ pub enum InlineNode {
     Tab(Tab),
     /// An explicit break.
     Break(Break),
-    /// An inline drawing referencing embedded media.
-    Drawing(Drawing),
+    /// An inline drawing referencing embedded media. Boxed: see the note on
+    /// this enum.
+    Drawing(Box<Drawing>),
     /// An anchored (floating) drawing placed at an absolute page position.
-    AnchoredDrawing(AnchoredDrawing),
+    /// Boxed: see the note on this enum.
+    AnchoredDrawing(Box<AnchoredDrawing>),
     /// An inline embedded object (chart, SmartArt diagram, or OLE object)
     /// referencing preserved package part(s).
-    EmbeddedObject(EmbeddedObject),
-    /// An inline hyperlink wrapping inline content.
-    Hyperlink(Hyperlink),
-    /// An inline field: an instruction and its cached result.
-    Field(Field),
+    EmbeddedObject(Box<EmbeddedObject>),
+    /// An inline hyperlink wrapping inline content. Boxed: see the note on
+    /// this enum.
+    Hyperlink(Box<Hyperlink>),
+    /// An inline field: an instruction and its cached result. Boxed: see the
+    /// note on this enum.
+    Field(Box<Field>),
     /// An inline text box holding block content (inline, or floating when it
     /// carries a [`TextBox::anchor`]).
-    TextBox(TextBox),
+    TextBox(Box<TextBox>),
     /// A DrawingML group (`wpg:wgp`): a floating, z-ordered container of
     /// pictures, text boxes, and shapes.
-    Group(WordprocessingGroup),
+    Group(Box<WordprocessingGroup>),
     /// An inline reference to a footnote or endnote.
     NoteReference(NoteReference),
     /// The auto-number mark inside a note's own body (`w:footnoteRef` /
@@ -2479,21 +2498,25 @@ pub enum InlineNode {
     /// The end marker of a comment's anchored range.
     CommentRangeEnd(CommentRangeEnd),
     /// A tracked-change (insertion/deletion) range wrapping inline content.
-    Revision(Revision),
+    /// Boxed: see the note on this enum.
+    Revision(Box<Revision>),
     /// The start marker of a bookmark range.
     BookmarkStart(BookmarkStart),
     /// The end marker of a bookmark range.
     BookmarkEnd(BookmarkEnd),
     /// The start marker of a tracked-move (source or destination) range.
-    MoveRangeStart(MoveRangeStart),
+    /// Boxed: see the note on this enum.
+    MoveRangeStart(Box<MoveRangeStart>),
     /// The end marker of a tracked-move (source or destination) range.
     MoveRangeEnd(MoveRangeEnd),
-    /// An inline-level content control wrapping inline content.
-    Sdt(InlineSdt),
-    /// An inline math object retaining its OMML subtree verbatim.
-    Math(Math),
+    /// An inline-level content control wrapping inline content. Boxed: see
+    /// the note on this enum.
+    Sdt(Box<InlineSdt>),
+    /// An inline math object retaining its OMML subtree verbatim. Boxed: see
+    /// the note on this enum.
+    Math(Box<Math>),
     /// An inline symbol glyph (a font plus a code point).
-    Symbol(Symbol),
+    Symbol(Box<Symbol>),
     /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a full-content-width
     /// filled line occupying its paragraph's own line.
     HorizontalRule(HorizontalRule),
@@ -2547,8 +2570,9 @@ impl InlineNode {
 pub struct Paragraph {
     /// Stable paragraph identity.
     pub id: NodeId,
-    /// Paragraph properties (always present; empty is `{}`).
-    pub properties: ParagraphProperties,
+    /// Paragraph properties (always present; empty is `{}`). Shared and
+    /// copy-on-write: see [`SharedParagraphProperties`].
+    pub properties: SharedParagraphProperties,
     /// Ordered inline content.
     pub inlines: Vec<InlineNode>,
 }
@@ -2577,7 +2601,118 @@ pub enum BlockNode {
     /// A block-level content control wrapping block content. Boxed: see the
     /// note on this enum.
     Sdt(Box<BlockSdt>),
-    /// An aggregated external content chunk (`w:altChunk`) referencing a preserved
-    /// package part.
-    AltChunk(AltChunk),
+    /// An aggregated external content chunk (`w:altChunk`) referencing a
+    /// preserved package part. Boxed: see the note on this enum.
+    AltChunk(Box<AltChunk>),
+}
+
+impl BlockNode {
+    /// Releases every byte of spare `Vec` and `String` capacity this block and
+    /// its descendants hold.
+    ///
+    /// # Why the model does this at all
+    ///
+    /// `Vec::push` onto an empty vector does not allocate one element — it
+    /// allocates `RawVec::MIN_NON_ZERO_CAP`, which is **four** elements for any
+    /// element of 1,024 bytes or less. Every importer builds a paragraph's
+    /// `inlines` by pushing, and the overwhelming majority of paragraphs hold
+    /// one inline, so the overwhelming majority of paragraphs carried three
+    /// empty `InlineNode` slots. Measured on the owner's own file shape
+    /// (`docs/111` §4a) that was **1,248 bytes per paragraph of capacity
+    /// holding nothing** — 56% of what a paragraph cost, and more than any
+    /// struct field in the model. The body vector's own doubling adds a further
+    /// 0-100% on top.
+    ///
+    /// Spare capacity is invisible to `size_of` and to any test that inspects
+    /// values, which is why it survived three rounds of shrinking the structs.
+    /// It is released here, at the point a document is constructed, rather than
+    /// in each importer: there is one `Document::new` and there are five
+    /// importers.
+    ///
+    /// Nothing observable changes — capacity is not part of a document's value,
+    /// its serialization, or its identity. Editing afterwards regrows the
+    /// vectors it touches, which is correct: a paragraph that was just edited
+    /// is about to be edited again.
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Paragraph(paragraph) => shrink_inlines(&mut paragraph.inlines),
+            Self::Table(table) => {
+                table.grid.shrink_to_fit();
+                table.rows.shrink_to_fit();
+                for row in &mut table.rows {
+                    row.cells.shrink_to_fit();
+                    for cell in &mut row.cells {
+                        shrink_blocks(&mut cell.blocks);
+                    }
+                }
+            }
+            Self::Sdt(sdt) => shrink_blocks(&mut sdt.blocks),
+            Self::AltChunk(_) => {}
+        }
+    }
+}
+
+impl InlineNode {
+    /// Releases every byte of spare capacity this inline and its descendants
+    /// hold. The measurement that motivates it is on
+    /// `BlockNode::shrink_to_fit`.
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Run(run) => run.text.shrink_to_fit(),
+            Self::Hyperlink(hyperlink) => shrink_inlines(&mut hyperlink.inlines),
+            Self::Field(field) => shrink_inlines(&mut field.inlines),
+            Self::Revision(revision) => shrink_inlines(&mut revision.inlines),
+            Self::Sdt(sdt) => shrink_inlines(&mut sdt.inlines),
+            Self::TextBox(text_box) => shrink_blocks(&mut text_box.blocks),
+            Self::Group(group) => shrink_group(group),
+            Self::Tab(_)
+            | Self::Break(_)
+            | Self::Drawing(_)
+            | Self::AnchoredDrawing(_)
+            | Self::EmbeddedObject(_)
+            | Self::NoteReference(_)
+            | Self::NoteNumberMark(_)
+            | Self::CommentReference(_)
+            | Self::CommentRangeStart(_)
+            | Self::CommentRangeEnd(_)
+            | Self::BookmarkStart(_)
+            | Self::BookmarkEnd(_)
+            | Self::MoveRangeStart(_)
+            | Self::MoveRangeEnd(_)
+            | Self::Math(_)
+            | Self::Symbol(_)
+            | Self::HorizontalRule(_)
+            | Self::NoBreakHyphen(_)
+            | Self::SoftHyphen(_)
+            | Self::PositionalTab(_) => {}
+        }
+    }
+}
+
+/// Releases spare capacity in a block list and everything under it.
+pub(super) fn shrink_blocks(blocks: &mut Vec<BlockNode>) {
+    blocks.shrink_to_fit();
+    for block in blocks.iter_mut() {
+        block.shrink_to_fit();
+    }
+}
+
+/// Releases spare capacity in an inline list and everything under it.
+fn shrink_inlines(inlines: &mut Vec<InlineNode>) {
+    inlines.shrink_to_fit();
+    for inline in inlines.iter_mut() {
+        inline.shrink_to_fit();
+    }
+}
+
+/// Releases spare capacity in a DrawingML group and its nested groups.
+fn shrink_group(group: &mut WordprocessingGroup) {
+    group.children.shrink_to_fit();
+    for child in &mut group.children {
+        match child {
+            GroupChild::TextBox(text_box) => shrink_blocks(&mut text_box.blocks),
+            GroupChild::Group(nested) => shrink_group(nested),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
 }

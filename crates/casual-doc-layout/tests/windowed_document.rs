@@ -62,7 +62,7 @@ const RUN_BAND: u64 = 5_000_000;
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -70,7 +70,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph(id: u64, properties: ParagraphProperties, text: &str) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines: vec![run(id + RUN_BAND, text)],
     })
 }
@@ -174,23 +174,23 @@ fn with_running_content(count: u64) -> Document {
         HeaderFooter {
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: node(430),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![
-                    InlineNode::Field(Field {
+                    InlineNode::Field(Box::new(Field {
                         id: node(431),
                         kind: FieldKind::Page,
                         instruction: "PAGE".to_owned(),
                         inlines: vec![run(432, "1")],
                         form: None,
-                    }),
+                    })),
                     run(433, " of "),
-                    InlineNode::Field(Field {
+                    InlineNode::Field(Box::new(Field {
                         id: node(434),
                         kind: FieldKind::NumPages,
                         instruction: "NUMPAGES".to_owned(),
                         inlines: vec![run(435, "1")],
                         form: None,
-                    }),
+                    })),
                 ],
             })],
         },
@@ -259,14 +259,14 @@ fn with_restarted_page_numbers(count: u64) -> Document {
         HeaderFooter {
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: node(510),
-                properties: ParagraphProperties::default(),
-                inlines: vec![InlineNode::Field(Field {
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Field(Box::new(Field {
                     id: node(511),
                     kind: FieldKind::Page,
                     instruction: "PAGE".to_owned(),
                     inlines: vec![run(512, "1")],
                     form: None,
-                })],
+                }))],
             })],
         },
     );
@@ -555,8 +555,8 @@ fn each_refusal_is_reachable_and_names_its_own_reason() {
     let mut floated = prose(40, 63_000);
     floated.push(BlockNode::Paragraph(Paragraph {
         id: node(63_900),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::AnchoredDrawing(AnchoredDrawing {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: node(63_901),
             media: MediaId::new(node(63_500)),
             extent: Extent {
@@ -584,7 +584,7 @@ fn each_refusal_is_reachable_and_names_its_own_reason() {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        })],
+        }))],
     }));
     let anchored = document_with(floated, media);
 

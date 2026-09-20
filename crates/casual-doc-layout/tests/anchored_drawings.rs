@@ -79,13 +79,13 @@ fn media_defs() -> (MediaId, Definitions) {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
 
 fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: bool) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -113,7 +113,7 @@ fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: b
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn an_anchored_drawing_composes_at_its_resolved_page_rect() {
     // (914400, 1828800) EMU = (1440, 2880) twips from the page corner.
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             run(11, "Body text"),
             anchored(12, media_id, 914_400, 1_828_800, false),
@@ -181,7 +181,7 @@ fn behind_doc_controls_the_paint_order_relative_to_text() {
     // Two anchored drawings: one behind the text, one in front.
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             run(11, "Body text"),
             anchored(12, media_id, 0, 0, true),      // behindDoc
@@ -285,7 +285,7 @@ fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
 }
 
 fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: i64) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -300,11 +300,11 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -319,11 +319,11 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -351,11 +351,11 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
-    InlineNode::AnchoredDrawing(AnchoredDrawing {
+    InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
         id: node(id),
         media,
         extent: Extent {
@@ -383,7 +383,7 @@ fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
         flip_h: false,
         flip_v: false,
         rotation: None,
-    })
+    }))
 }
 
 #[test]
@@ -399,27 +399,27 @@ fn a_paragraph_relative_anchor_gets_implicit_keep_with_next() {
         // Title line 1, carrying a paragraph-anchored logo.
         BlockNode::Paragraph(Paragraph {
             id: node(10),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![anchored_at_paragraph(11, media_id), run(12, "Title line 1")],
         }),
         // Title line 2 — the continuation that must stay with line 1.
         BlockNode::Paragraph(Paragraph {
             id: node(13),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(14, "Title line 2")],
         }),
         // A body paragraph with a vertically PAGE-anchored float (floats at a
         // fixed page position regardless of where the paragraph lands).
         BlockNode::Paragraph(Paragraph {
             id: node(15),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![anchored(16, media_id, 0, 5_000, false), run(17, "Body")],
         }),
         // A body paragraph with a paragraph-anchored but WRAPPING (`wrapSquare`)
         // float — a side image text flows around, not an overlay decoration.
         BlockNode::Paragraph(Paragraph {
             id: node(18),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![wrapping_at_paragraph(19, media_id), run(20, "Wrapped")],
         }),
     ];
@@ -480,7 +480,7 @@ fn one_cell_table(
                 properties: TableCellProperties::default(),
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: node(paragraph_id),
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines,
                 })],
             }],
@@ -511,7 +511,7 @@ fn assert_top_bottom_barrier(fragment: &BlockFragment, expected: Twip) {
 #[test]
 fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
     let (media_id, definitions) = media_defs();
-    let text_box = InlineNode::TextBox(TextBox {
+    let text_box = InlineNode::TextBox(Box::new(TextBox {
         id: node(20),
         anchor: Some(top_bottom_anchor(0)),
         relative_height: None,
@@ -524,15 +524,15 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
         body_properties: Default::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(21),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(22, "inside")],
         })],
-    });
+    }));
     let group_extent = Extent {
         width_emu: 127_000,
         height_emu: 300 * 635,
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(30),
         anchor: Some(top_bottom_anchor(50)),
         relative_height: None,
@@ -559,10 +559,10 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             flip_v: false,
             rotation: None,
         })],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             run(11, "Body text"),
             top_bottom_drawing(12, media_id, 100, 20),
@@ -592,7 +592,7 @@ fn wrap_clearance_changes_invalidate_the_paragraph_cache() {
         let (media_id, definitions) = media_defs();
         let paragraph = BlockNode::Paragraph(Paragraph {
             id: node(10),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 run(11, "cached"),
                 top_bottom_drawing(12, media_id, height_twips, 0),
@@ -634,7 +634,7 @@ fn unsupported_wrap_frames_remain_flow_neutral() {
     page_relative_drawing.anchor.vertical.relative_from = VerticalAnchor::Page;
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "unchanged"), square, page_relative],
     });
     let document = Document::new(node(1), vec![paragraph], definitions).unwrap();
@@ -656,14 +656,14 @@ fn top_and_bottom_reflow_survives_an_inline_wrapper_inside_a_table_cell() {
     use casual_doc_model::v1::{Hyperlink, HyperlinkTarget, InternalTarget};
 
     let (media_id, definitions) = media_defs();
-    let wrapped_float = InlineNode::Hyperlink(Hyperlink {
+    let wrapped_float = InlineNode::Hyperlink(Box::new(Hyperlink {
         id: node(45),
         target: HyperlinkTarget::Internal(InternalTarget {
             anchor: "bookmark".to_owned(),
         }),
         tooltip: None,
         inlines: vec![top_bottom_drawing(46, media_id, 1_440, 100)],
-    });
+    }));
     let table = one_cell_table(40, 41, 42, 43, vec![run(44, "cell text"), wrapped_float]);
     let document = Document::new(node(1), vec![table], definitions).unwrap();
 
@@ -681,18 +681,18 @@ fn top_and_bottom_reflow_repeats_in_both_headers_and_footers() {
     let (media_id, definitions) = media_defs();
     let header_block = BlockNode::Paragraph(Paragraph {
         id: node(60),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(61, "header"), top_bottom_drawing(62, media_id, 200, 20)],
     });
     let footer_block = BlockNode::Paragraph(Paragraph {
         id: node(70),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(71, "footer"), top_bottom_drawing(72, media_id, 300, 30)],
     });
     let body = vec![
         BlockNode::Paragraph(Paragraph {
             id: node(80),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(81, "page one")],
         }),
         BlockNode::Paragraph(Paragraph {
@@ -700,7 +700,8 @@ fn top_and_bottom_reflow_repeats_in_both_headers_and_footers() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(83, "page two")],
         }),
     ];
@@ -752,7 +753,7 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
     let (media_id, definitions) = media_defs();
     let first = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "page one")],
     });
     let page_two = BlockNode::Paragraph(Paragraph {
@@ -760,7 +761,8 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        },
+        }
+        .into(),
         inlines: vec![run(21, "page two")],
     });
     let table = one_cell_table(
@@ -893,7 +895,7 @@ fn a_float_in_a_bottom_aligned_vertical_merge_uses_the_full_merged_box() {
                     },
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: node(511),
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: vec![run(512, "merged"), anchored_at_paragraph(513, media_id)],
                     })],
                 }],
@@ -909,7 +911,7 @@ fn a_float_in_a_bottom_aligned_vertical_merge_uses_the_full_merged_box() {
                     },
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: node(521),
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: Vec::new(),
                     })],
                 }],
@@ -963,7 +965,7 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
     let body = vec![
         BlockNode::Paragraph(Paragraph {
             id: node(10),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(11, "page one")],
         }),
         BlockNode::Paragraph(Paragraph {
@@ -971,7 +973,8 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(21, "page two")],
         }),
     ];
@@ -1019,7 +1022,7 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
 #[test]
 fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
     let (_media_id, mut definitions) = media_defs();
-    let header_box = InlineNode::TextBox(TextBox {
+    let header_box = InlineNode::TextBox(Box::new(TextBox {
         id: node(410),
         anchor: Some(paragraph_anchor()),
         relative_height: Some(10),
@@ -1043,11 +1046,11 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
         },
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(411),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(412, "header box")],
         })],
-    });
-    let footer_box = InlineNode::TextBox(TextBox {
+    }));
+    let footer_box = InlineNode::TextBox(Box::new(TextBox {
         id: node(420),
         anchor: Some(paragraph_anchor()),
         relative_height: Some(20),
@@ -1069,18 +1072,18 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
         },
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(421),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(422, "footer box")],
         })],
-    });
+    }));
     let header_block = BlockNode::Paragraph(Paragraph {
         id: node(400),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![header_box],
     });
     let footer_block = BlockNode::Paragraph(Paragraph {
         id: node(401),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![footer_box],
     });
     definitions.headers.insert(
@@ -1098,7 +1101,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
     let body = vec![
         BlockNode::Paragraph(Paragraph {
             id: node(440),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(441, "page one")],
         }),
         BlockNode::Paragraph(Paragraph {
@@ -1106,7 +1109,8 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(443, "page two")],
         }),
     ];
@@ -1188,7 +1192,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
 #[test]
 fn grouped_text_box_uses_body_properties_and_shape_autofit() {
     let (_media_id, definitions) = media_defs();
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(500),
         anchor: Some(page_anchor(0, 0)),
         relative_height: Some(1),
@@ -1220,7 +1224,7 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
             },
             blocks: vec![BlockNode::Paragraph(Paragraph {
                 id: node(502),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![run(503, "grouped box")],
             })],
             fill: None,
@@ -1239,10 +1243,10 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
             flip_v: false,
             rotation: None,
         })],
-    });
+    }));
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: node(510),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![group],
     })];
     let document = Document::new(node(1), body, definitions).unwrap();
@@ -1311,7 +1315,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
     definitions.sections = vec![section];
     let header_block = BlockNode::Paragraph(Paragraph {
         id: node(910),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![
             run(911, "section header"),
             anchored_at_page_right(912, media_id),
@@ -1325,7 +1329,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
     );
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "body")],
     })];
     let doc = Document::new(node(1), body, definitions).unwrap();
@@ -1367,7 +1371,7 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
     let (_media, definitions) = media_defs();
     // A paragraph carrying body text plus a FLOATING text box (anchor set) at page
     // offset (1440, 2880) twips, 2x1 inch, white fill, and a 30-twip outline.
-    let float = InlineNode::TextBox(TextBox {
+    let float = InlineNode::TextBox(Box::new(TextBox {
         id: node(20),
         anchor: Some(page_anchor(914_400, 1_828_800)),
         relative_height: Some(100),
@@ -1396,13 +1400,13 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
         body_properties: Default::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(21),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(22, "Powered by")],
         })],
-    });
+    }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "Body text"), float],
     });
     let doc = Document::new(node(1), vec![para], definitions).unwrap();
@@ -1514,7 +1518,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(30),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(5),
@@ -1545,10 +1549,10 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             }),
             rect(33, 200_000),
         ],
-    });
+    }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "Body"), group],
     });
     let doc = Document::new(node(1), vec![para], definitions).unwrap();
@@ -1639,7 +1643,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(50),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(9),
@@ -1665,10 +1669,10 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
                 }],
             ),
         ],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "Body"), group],
     });
     let document = Document::new(node(1), vec![paragraph], Definitions::default()).unwrap();
@@ -1740,7 +1744,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(70),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(10),
@@ -1759,10 +1763,10 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             shape(72, 914_400, ShapeGeometry::RightTriangle),
             shape(73, 2 * 914_400, ShapeGeometry::Diamond),
         ],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "Body"), group],
     });
     let document = Document::new(node(1), vec![paragraph], Definitions::default()).unwrap();
@@ -1829,13 +1833,13 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
 /// A field inline node carrying a *stale* cached result — the baked value Word
 /// wrote into the file that the field pass must overwrite with the live value.
 fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
-    InlineNode::Field(Field {
+    InlineNode::Field(Box::new(Field {
         id: node(id),
         instruction: instruction.to_owned(),
         kind: casual_doc_model::v1::FieldKind::parse(instruction),
         inlines: vec![run(id + 1, cached)],
         form: None,
-    })
+    }))
 }
 
 /// Collects the resolved `PAGE`/`NUMPAGES` marker values from a slice of flowed
@@ -1894,7 +1898,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
 
     // The page number lives INSIDE a floating text box, with stale cached results
     // ("99") baked in — the bug is that these were shown verbatim on every page.
-    let footer_box = InlineNode::TextBox(TextBox {
+    let footer_box = InlineNode::TextBox(Box::new(TextBox {
         id: node(400),
         anchor: Some(page_anchor(2_743_200, 9_144_000)),
         relative_height: Some(1),
@@ -1907,17 +1911,17 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
         body_properties: TextBoxBodyProperties::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(410),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 field(420, page_instr, "99"),
                 run(430, " / "),
                 field(440, " NUMPAGES ", "99"),
             ],
         })],
-    });
+    }));
     let footer_para = BlockNode::Paragraph(Paragraph {
         id: node(390),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![footer_box],
     });
     definitions.footers.insert(
@@ -1931,7 +1935,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
     let body = vec![
         BlockNode::Paragraph(Paragraph {
             id: node(10),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![run(11, "page one")],
         }),
         BlockNode::Paragraph(Paragraph {
@@ -1939,7 +1943,8 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            },
+            }
+            .into(),
             inlines: vec![run(21, "page two")],
         }),
     ];
@@ -2005,7 +2010,7 @@ fn a_mergeformat_switched_page_field_in_a_footer_text_box_resolves() {
 fn a_page_field_in_an_inline_text_box_resolves() {
     // An INLINE text box (no anchor) flows onto a line; its PAGE field must resolve
     // through the ordinary field pass, which now recurses into inline text boxes.
-    let inline_box = InlineNode::TextBox(TextBox {
+    let inline_box = InlineNode::TextBox(Box::new(TextBox {
         id: node(50),
         anchor: None,
         relative_height: None,
@@ -2015,13 +2020,13 @@ fn a_page_field_in_an_inline_text_box_resolves() {
         body_properties: TextBoxBodyProperties::default(),
         blocks: vec![BlockNode::Paragraph(Paragraph {
             id: node(51),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![field(52, " PAGE ", "99")],
         })],
-    });
+    }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(11, "Body "), inline_box],
     });
     let doc = Document::new(node(1), vec![para], media_defs().1).unwrap();

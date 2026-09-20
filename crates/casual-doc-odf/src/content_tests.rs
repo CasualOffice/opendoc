@@ -1073,7 +1073,7 @@ fn tracked_insertion_round_trips_to_a_fixed_point() {
     assert_eq!(revision.author.as_deref(), Some("Ada"));
     assert_eq!(revision.date.as_deref(), Some("2024-01-02T03:04:05"));
     assert_eq!(revision.revision_id.as_deref(), Some("ct1"));
-    let Revision { inlines, .. } = &revision;
+    let Revision { inlines, .. } = &*revision;
     assert!(
         matches!(inlines.as_slice(), [InlineNode::Run(run)] if run.text == "inserted"),
         "revision must wrap the inserted run: {inlines:?}"
@@ -1124,7 +1124,7 @@ fn form_field_wrapping_a_revision_does_not_orphan_a_region() {
         kind: FieldKind::Other {
             keyword: "FORMTEXT".to_owned(),
         },
-        inlines: vec![InlineNode::Revision(Revision {
+        inlines: vec![InlineNode::Revision(Box::new(Revision {
             id: rev_id,
             kind: RevisionKind::Insertion,
             author: None,
@@ -1133,10 +1133,10 @@ fn form_field_wrapping_a_revision_does_not_orphan_a_region() {
             editor_group: None,
             inlines: vec![InlineNode::Run(Run {
                 id: run_id,
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "x".to_owned(),
             })],
-        })],
+        }))],
         form: Some(FormFieldData {
             name: None,
             enabled: None,
@@ -1150,8 +1150,8 @@ fn form_field_wrapping_a_revision_does_not_orphan_a_region() {
     };
     let paragraph = Paragraph {
         id: para_id,
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Field(field)],
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Field(Box::new(field))],
     };
     let document = Document::new(
         doc_id,
@@ -1332,7 +1332,7 @@ fn tracked_deletion_round_trips_to_a_fixed_point() {
     assert_eq!(revision.kind, RevisionKind::Deletion);
     assert_eq!(revision.author.as_deref(), Some("Ada"));
     assert_eq!(revision.revision_id.as_deref(), Some("d1"));
-    let Revision { inlines, .. } = &revision;
+    let Revision { inlines, .. } = &*revision;
     assert!(
         matches!(inlines.as_slice(), [InlineNode::Run(run)] if run.text == "deleted text"),
         "deletion must carry the deleted content: {inlines:?}"
@@ -1382,13 +1382,13 @@ fn deletion_wrapping_non_text_content_stays_idempotent() {
                 [InlineNode::Run(run)] => run.id,
                 other => panic!("deletion run: {other:?}"),
             };
-            revision.inlines = vec![InlineNode::Field(Field {
+            revision.inlines = vec![InlineNode::Field(Box::new(Field {
                 id: inner_id,
                 instruction: "PAGE".to_owned(),
                 kind: FieldKind::Page,
                 inlines: Vec::new(),
                 form: None,
-            })];
+            }))];
         }
     }
     document.validate().unwrap();
@@ -1982,7 +1982,10 @@ fn unsupported_automatic_style_values_are_reported_without_partial_mapping() {
     let InlineNode::Run(run) = &paragraph(&imported, 0).inlines[0] else {
         panic!("run")
     };
-    assert_eq!(run.properties, Default::default());
+    assert_eq!(
+        run.properties,
+        casual_doc_model::v1::RunProperties::default()
+    );
     for feature in [
         "odf.attribute.fo.color",
         "odf.attribute.fo.font-size",
