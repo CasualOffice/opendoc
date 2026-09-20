@@ -526,15 +526,26 @@ pub(crate) fn flow_body_range(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
 ) -> (Vec<BlockFragment>, u32) {
-    let offset = block_starts
-        .get(from_block)
-        .copied()
-        .unwrap_or_default() as usize;
+    let from_block = from_block.min(blocks.len());
+    let offset = block_starts.get(from_block).copied().unwrap_or_default() as usize;
+    // Stop flowing once past the window. Without this, a window at 75% of a
+    // million-block document still shapes the remaining quarter and throws it
+    // away — the sink bounds memory, only the slice bounds time.
+    //
+    // **Plus one block.** Two things reach one block forward: the
+    // `w:contextualSpacing` collapse (the next paragraph zeroes this one's
+    // space-after) and the drop-cap pair (a head is only a drop cap when a
+    // paragraph follows it). Cutting exactly at the window would change the
+    // last kept fragment; the extra block is flowed and then dropped.
+    let to_block = block_starts
+        .partition_point(|start| (*start as usize) < keep.end)
+        .saturating_add(1)
+        .clamp(from_block, blocks.len());
     let mut sink = MeasureWindowSink::new(offset, keep);
     flow_body_into(
         document,
         shaper,
-        &blocks[from_block.min(blocks.len())..],
+        &blocks[from_block..to_block],
         content_width,
         None,
         ReviewView::Editing,
@@ -7065,6 +7076,132 @@ mod tests {
 
     fn document_with_definitions(body: Vec<BlockNode>, definitions: Definitions) -> Document {
         Document::new(NodeId::from_parts(1, 1).unwrap(), body, definitions).unwrap()
+    }
+
+    /// A **tight** window of the galley — one that asks for exactly the
+    /// fragments it wants, with no slack — must be byte-identical to the same
+    /// slice of a whole-document build.
+    ///
+    /// The tightness is the point. `windowed::window_of` happens to ask for
+    /// one fragment more than its last page needs (a page's `flow.end` is the
+    /// next page's start), and that accidental slack hides whether
+    /// [`flow_body_range`] extends its block slice for the one-block
+    /// lookahead the `w:contextualSpacing` collapse needs. Asking tightly
+    /// makes the extension observable: without it the window's last fragment
+    /// keeps a `space_after` the whole build collapsed away.
+    ///
+    /// This flows from block zero, which is what the driver does for a
+    /// document carrying cross-block flow state
+    /// (`windowed::FlowResume::FromStart`); the mid-document resume is the
+    /// test below.
+    #[test]
+    fn a_tight_window_of_the_galley_equals_the_same_slice_of_a_whole_build() {
+        let contextual = |id: u64| {
+            BlockNode::Paragraph(Paragraph {
+                id: NodeId::from_parts(id, 1).unwrap(),
+                properties: ParagraphProperties {
+                    spacing: Some(Spacing {
+                        before_twips: Some(240),
+                        after_twips: Some(240),
+                        ..Spacing::default()
+                    }),
+                    contextual_spacing: true,
+                    ..ParagraphProperties::default()
+                },
+                inlines: vec![run_node(
+                    id + 5_000_000,
+                    "a paragraph that collapses its spacing against its neighbours",
+                    RunProperties::default(),
+                )],
+            })
+        };
+        let document = document((0..24).map(|i| contextual(100 + i)).collect());
+        let shaper = ParleyShaper::new();
+        let width = Twip::from_points(400);
+        let whole = build_galley_for_blocks(&document, &shaper, document.body(), width);
+        // One fragment per paragraph here, so the block map is the identity.
+        let block_starts: Vec<u32> = (0..whole.len() as u32).collect();
+
+        let mut collapsed = 0;
+        for (from, to) in [(0usize, 4usize), (0, 9), (0, 11), (0, 23), (0, 24)] {
+            let (window, base) = flow_body_range(
+                &document,
+                &shaper,
+                document.body(),
+                width,
+                0,
+                from..to,
+                &block_starts,
+                NoteFlow::default(),
+                None,
+            );
+            assert_eq!(
+                base as usize, from,
+                "window {from}..{to} reported base {base}"
+            );
+            assert_eq!(
+                window,
+                whole[from..to].to_vec(),
+                "window {from}..{to} differs from the same slice of a whole build"
+            );
+            if to < whole.len()
+                && let Some(BlockFragment::Paragraph { box_metrics, .. }) = window.last()
+                && box_metrics.space_after == Twip::ZERO
+            {
+                collapsed += 1;
+            }
+        }
+        assert!(
+            collapsed >= 3,
+            "the windows must actually end on a collapsed edge, or the lookahead \
+             they exist to test is never exercised ({collapsed})"
+        );
+    }
+
+    /// The other half of `FlowResume`: a document that carries **no**
+    /// cross-block flow state can have its flow resumed at an arbitrary block
+    /// and still produce byte-identical fragments.
+    ///
+    /// This is the claim `windowed::FlowResume::AnyBlock` rests on, and it is
+    /// the difference between a scroll costing `O(window)` and `O(document)`,
+    /// so it is asserted rather than reasoned about.
+    #[test]
+    fn a_stateless_document_flows_identically_from_any_block() {
+        let plain = |id: u64| {
+            paragraph(
+                id,
+                vec![run_node(
+                    id + 5_000_000,
+                    "a paragraph carrying no numbering, style, drop cap or contextual spacing",
+                    RunProperties::default(),
+                )],
+            )
+        };
+        let document = document((0..24).map(|i| plain(200 + i)).collect());
+        let shaper = ParleyShaper::new();
+        let width = Twip::from_points(400);
+        let whole = build_galley_for_blocks(&document, &shaper, document.body(), width);
+        let block_starts: Vec<u32> = (0..whole.len() as u32).collect();
+
+        for (from, to) in [(3usize, 7usize), (11, 12), (18, 24), (23, 24)] {
+            let (window, base) = flow_body_range(
+                &document,
+                &shaper,
+                document.body(),
+                width,
+                from,
+                from..to,
+                &block_starts,
+                NoteFlow::default(),
+                None,
+            );
+            assert_eq!(base as usize, from);
+            assert_eq!(
+                window,
+                whole[from..to].to_vec(),
+                "resuming the flow at block {from} changed fragments {from}..{to}"
+            );
+        }
     }
 
     #[test]

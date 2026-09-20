@@ -47,26 +47,25 @@
 //! | an anchored float anywhere | `finish_pagination` re-flows against computed exclusions (which changes line breaking and therefore page boundaries), and `place_floats` carries a document-global z-order |
 //! | margin line numbering | `place_line_numbers` runs a counter across pages |
 //!
-//! Each refusal is a fallback to [`paginate_document`], which is correct and
+//! Each refusal is a fallback to
+//! [`paginate_document`](crate::document_layout::paginate_document), which is correct and
 //! merely expensive. None of them is silent.
-
-use std::borrow::Cow;
 
 use casual_doc_model::v1::BlockNode;
 use casual_doc_model::v1::Document;
+use casual_doc_model::v1::NoteId;
 use casual_doc_model::v1::NoteKind;
 
 use crate::anchor::document_has_anchored_object;
-use crate::block::BlockFragment;
-use crate::document_layout::blocks_with_endnotes;
 use crate::document_layout::SectionPlan;
 use crate::document_layout::apply_page_vertical_alignment;
+use crate::document_layout::blocks_with_endnotes;
 use crate::document_layout::build_section_plans;
 use crate::document_layout::mirrored_page_config;
 use crate::document_layout::referenced_endnotes;
-use crate::flow::build_measures_for_blocks_inner;
 use crate::flow::NoteFlow;
 use crate::flow::ReviewView;
+use crate::flow::build_measures_for_blocks_inner;
 use crate::flow::flow_body_range;
 use crate::flow::single_section_line_grid;
 use crate::incremental::PageRange;
@@ -78,14 +77,14 @@ use crate::note_numbering::resolve_note_labels;
 use crate::note_numbering::visit_block_note_refs;
 use crate::page::Page;
 use crate::page_border::resolve_page_borders;
-use crate::running::place_running_content_on_page;
 use crate::paginate::Checkpoint;
 use crate::paginate::DEFAULT_CHECKPOINT_INTERVAL;
 use crate::paginate::PageConfig;
-use crate::paginate::paginate_from_based;
 use crate::paginate::page_number_label_at;
+use crate::paginate::paginate_from_based;
 use crate::paginate::paginate_measures;
 use crate::paginate::resolve_fields_labeled_with_total;
+use crate::running::place_running_content_on_page;
 use crate::text::LineShaper;
 use crate::units::Twip;
 
@@ -187,6 +186,13 @@ pub struct DocumentMeasures {
     /// The resolved note labels the measure pass flowed under, so a window
     /// re-flows under exactly the same ones.
     labels: NoteLabels,
+    /// The endnotes the body references, in the order the driver appends
+    /// their bodies to the flowed block sequence.
+    ///
+    /// Resolved once at open. Recomputing it per window would walk every block
+    /// of the document on every scroll — which, on the file this work exists
+    /// for, is a 1.3M-block walk to answer "no, there are no endnotes".
+    endnotes: Vec<NoteId>,
 }
 
 impl DocumentMeasures {
@@ -271,7 +277,8 @@ pub fn measure_document(
     let config = plans[0].config;
     let content_width = config.content_area().size.width;
 
-    let blocks = windowed_blocks(document);
+    let endnotes = referenced_endnotes(document.body());
+    let blocks = blocks_with_endnotes(document, document.body(), &endnotes);
     let (measures, block_starts) = build_measures_for_blocks_inner(
         document,
         shaper,
@@ -295,6 +302,7 @@ pub fn measure_document(
         content_width,
         resume: classify_resume(&blocks),
         labels,
+        endnotes,
     })
 }
 
@@ -313,13 +321,6 @@ fn body_has_footnote_reference(blocks: &[BlockNode]) -> bool {
         });
     }
     found
-}
-
-/// The block sequence the body is flowed as: the body plus any endnote bodies
-/// it references, exactly as `build_section_runs_inner` assembles it.
-fn windowed_blocks(document: &Document) -> Cow<'_, [BlockNode]> {
-    let body = document.body();
-    blocks_with_endnotes(document, body, &referenced_endnotes(body))
 }
 
 /// Whether anything in `blocks` carries flow state across a top-level block
@@ -383,10 +384,7 @@ impl WindowPolicy {
     #[must_use]
     pub fn window_for(&self, visible: PageRange, total_pages: usize) -> PageRange {
         let start = visible.start.saturating_sub(self.lead_pages);
-        let end = visible
-            .end
-            .saturating_add(self.lead_pages)
-            .min(total_pages);
+        let end = visible.end.saturating_add(self.lead_pages).min(total_pages);
         PageRange::new(start.min(end), end)
     }
 }
@@ -454,7 +452,7 @@ pub fn window_of(
     let need_to = (measures.pages[wanted.end - 1].flow.end.fragment as usize + 1)
         .min(measures.fragment_count);
 
-    let blocks = windowed_blocks(document);
+    let blocks = blocks_with_endnotes(document, document.body(), &measures.endnotes);
     let from_block = match measures.resume {
         FlowResume::AnyBlock => measures
             .block_starts
@@ -592,12 +590,7 @@ fn finish_window_pages(
     let labels: Vec<String> = (0..layout.pages.len())
         .map(|offset| page_number_label_at(section, first_index + offset))
         .collect();
-    resolve_fields_labeled_with_total(
-        &mut layout,
-        &labels,
-        measures.pages.len() as u32,
-        shaper,
-    );
+    resolve_fields_labeled_with_total(&mut layout, &labels, measures.pages.len() as u32, shaper);
     layout.pages
 }
 
@@ -608,7 +601,10 @@ fn checkpoint_at_or_before(measures: &DocumentMeasures, index: usize) -> &Checkp
     let slot = measures
         .checkpoints
         .partition_point(|c| (c.page_index as usize) <= index);
-    match slot.checked_sub(1).and_then(|i| measures.checkpoints.get(i)) {
+    match slot
+        .checked_sub(1)
+        .and_then(|i| measures.checkpoints.get(i))
+    {
         Some(checkpoint) => checkpoint,
         None => START.get_or_init(|| Checkpoint {
             page_index: 0,
@@ -629,52 +625,135 @@ fn stacked_offset(page_height: i64, index: usize) -> Twip {
 /// The paint-tier bytes one page holds: the glyph-bearing structures the
 /// window budget exists to bound.
 ///
-/// Counted, not estimated — a page of dense table and a page of prose differ
-/// by two orders of magnitude, which is `docs/113` §4 Q3's whole argument for
-/// budgeting in bytes.
+/// Counted, not estimated, by
+/// [`BlockFragment::paint_bytes`](crate::block::BlockFragment::paint_bytes).
 #[must_use]
 pub fn page_paint_bytes(page: &Page) -> usize {
     let placed = |list: &[crate::page::PlacedFragment]| -> usize {
-        size_of_val(list)
-            + list
-                .iter()
-                .map(|p| fragment_paint_bytes(&p.fragment))
-                .sum::<usize>()
+        size_of_val(list) + list.iter().map(|p| p.fragment.paint_bytes()).sum::<usize>()
     };
     size_of::<Page>() + placed(&page.placed) + placed(&page.header) + placed(&page.footer)
 }
 
-/// The paint-tier bytes one fragment holds, including its lines, runs and
-/// glyphs, and recursively any table cell content.
-fn fragment_paint_bytes(fragment: &BlockFragment) -> usize {
-    match fragment {
-        BlockFragment::Paragraph { lines, .. } => {
-            size_of_val(lines.lines.as_slice())
-                + lines
-                    .lines
-                    .iter()
-                    .map(|line| {
-                        size_of_val(line.runs.as_slice())
-                            + size_of_val(line.bars.as_slice())
-                            + size_of_val(line.images.as_slice())
-                            + size_of_val(line.fields.as_slice())
-                            + line
-                                .runs
-                                .iter()
-                                .map(|run| size_of_val(run.glyphs.as_slice()))
-                                .sum::<usize>()
-                    })
-                    .sum::<usize>()
+// --- Scroll coalescing ------------------------------------------------------
+
+/// What a scroll position asks the host to do.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollDecision {
+    /// Build the window for this visible range now.
+    Build(PageRange),
+    /// The position has not settled; build nothing yet.
+    Wait,
+    /// The window already built covers this position.
+    Satisfied,
+}
+
+/// Coalesces scroll positions so a drag builds the window the user **lands
+/// on**, not every window they pass over.
+///
+/// `docs/113` §4 Q3: "dragging a scrollbar across 60,000 pages must not
+/// thrash". Without coalescing, a drag that reports a hundred intermediate
+/// positions asks for a hundred windows, each of which re-flows and re-shapes
+/// — the user sees a stall and the machine does a hundred times the necessary
+/// work for content nobody looked at.
+///
+/// Deliberately **clock-free**. The engine has no wall clock it can rely on
+/// across native, wasm and headless hosts, and a test that waits on a clock is
+/// the kind that "degrades under load no matter how sound the code is". The
+/// host drives [`tick`](Self::tick) from whatever it already has — a frame
+/// callback, a debounce timer — and the settle threshold is counted in ticks.
+///
+/// The first window is built **immediately**: there is nothing on screen yet,
+/// and making the first paint wait for a settle is a blank page, not a saving.
+#[derive(Clone, Debug)]
+pub struct ScrollCoalescer {
+    /// Ticks a position must hold still before its window is built.
+    settle_ticks: u32,
+    /// The position waiting to settle.
+    pending: Option<PageRange>,
+    /// Consecutive ticks `pending` has not moved.
+    still: u32,
+    /// The window the host has actually built, as it reported it.
+    built: Option<PageRange>,
+    /// How many builds this coalescer has asked for — the thrash counter.
+    builds: usize,
+}
+
+impl ScrollCoalescer {
+    /// A coalescer that builds the window at a new position on the
+    /// `settle_ticks`-th host tick after the position last moved. `0` and `1`
+    /// both build on the very next tick.
+    #[must_use]
+    pub fn new(settle_ticks: u32) -> Self {
+        Self {
+            settle_ticks,
+            pending: None,
+            still: 0,
+            built: None,
+            builds: 0,
         }
-        BlockFragment::TableRow { cells, .. } => {
-            size_of_val(cells.as_slice())
-                + cells
-                    .iter()
-                    .map(|cell| {
-                        size_of_val(cell.blocks.as_slice())
-                            + cell.blocks.iter().map(fragment_paint_bytes).sum::<usize>()
-                    })
-                    .sum::<usize>()
+    }
+
+    /// The window the host last reported building.
+    #[must_use]
+    pub fn built(&self) -> Option<PageRange> {
+        self.built
+    }
+
+    /// How many windows this coalescer has asked the host to build.
+    #[must_use]
+    pub fn builds(&self) -> usize {
+        self.builds
+    }
+
+    /// The host scrolled so that `visible` is on screen.
+    pub fn scrolled_to(&mut self, visible: PageRange) -> ScrollDecision {
+        if self.covers(visible) {
+            self.pending = None;
+            self.still = 0;
+            return ScrollDecision::Satisfied;
+        }
+        if self.built.is_none() {
+            self.pending = None;
+            self.still = 0;
+            self.builds += 1;
+            return ScrollDecision::Build(visible);
+        }
+        if self.pending != Some(visible) {
+            self.still = 0;
+        }
+        self.pending = Some(visible);
+        ScrollDecision::Wait
+    }
+
+    /// One settle tick from the host.
+    pub fn tick(&mut self) -> ScrollDecision {
+        let Some(pending) = self.pending else {
+            return ScrollDecision::Satisfied;
+        };
+        self.still = self.still.saturating_add(1);
+        if self.still < self.settle_ticks {
+            return ScrollDecision::Wait;
+        }
+        self.pending = None;
+        self.still = 0;
+        self.builds += 1;
+        ScrollDecision::Build(pending)
+    }
+
+    /// Records the range the host actually built, which is what later
+    /// positions are tested against — the built range is wider than the
+    /// visible one (the lead pages), and narrower when the byte budget
+    /// trimmed it, so only the host knows it.
+    pub fn record_built(&mut self, range: PageRange) {
+        self.built = Some(range);
+    }
+
+    /// Whether the built window covers `visible` entirely.
+    fn covers(&self, visible: PageRange) -> bool {
+        match self.built {
+            Some(built) => visible.start >= built.start && visible.end <= built.end,
+            None => false,
         }
     }
 }

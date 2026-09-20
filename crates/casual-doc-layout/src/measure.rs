@@ -819,7 +819,7 @@ const MEASURE_SINK_LOOKBACK: usize = 2;
 /// be mutated, and drops the glyph-bearing form.
 ///
 /// This is what makes `docs/113` §3.2 true of *peak* memory and not only of
-/// resident memory. At most [`MEASURE_SINK_LOOKBACK`] shaped paragraphs exist
+/// resident memory. At most `MEASURE_SINK_LOOKBACK` (two) shaped paragraphs exist
 /// at once, whatever the document's length, so the flow engine's own
 /// high-water mark stops scaling with the document.
 ///
@@ -853,7 +853,7 @@ impl MeasureSink {
     /// How many fragments are still held in their **shaped** (glyph-bearing)
     /// form — the sink's live lookback.
     ///
-    /// Never more than [`MEASURE_SINK_LOOKBACK`], whatever the document's
+    /// Never more than `MEASURE_SINK_LOOKBACK` (two), whatever the document's
     /// length. That bound is the memory claim of `docs/113` §6 step 4, so it
     /// is observable rather than only asserted in prose.
     #[must_use]

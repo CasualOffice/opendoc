@@ -121,6 +121,35 @@ fn viewer_limits() -> PackageLimits {
 ///
 /// This does NOT bound file SIZE. A 200 MiB DOCX is large because of its
 /// images, and its block count is ordinary; `viewer_limits` admits it.
+///
+/// ## Why this did not move when windowed layout landed
+///
+/// `docs/113` §6 steps 4 and 5 made the layout engine able to open the
+/// owner's 1,303,306-paragraph file. Measured with the committed
+/// `casual-doc-layout` `layout_footprint` example (macOS arm64, release, the
+/// owner's own paragraph shape at its own size; peak is a 50 ms RSS sample of
+/// the child process):
+///
+/// | 1,303,306 paragraphs | `paginate_document` | `measure_document` + one window |
+/// |---|---:|---:|
+/// | pages | 29,621 | 29,621 |
+/// | per paragraph | 3,378 B | 1,021 B |
+/// | resident | 4.10 GiB | 1.24 GiB |
+/// | **peak RSS** | **4.14 GiB** | **1.23 GiB** |
+/// | time | 8.62 s | 8.27 s |
+///
+/// 4.14 GiB does not fit a wasm32 address space, which is the measured reason
+/// that file is refused rather than slow. 1.23 GiB does.
+///
+/// **But `open_document_as` below still calls `paginate_document`**, so the
+/// browser still pays the left-hand column, and this constant is a *measured*
+/// ceiling — "the largest size actually measured to open". Raising it on the
+/// strength of a number the product does not yet reach would trade an honest
+/// refusal for `RuntimeError: unreachable`, which is exactly the regression
+/// `docs/104` HF-158 exists for. It moves when `WasmDocument` holds a window
+/// instead of a whole `PaginatedLayout` — and when the browser-side open cost
+/// above (23.2 s at 262,145 blocks, linear) is addressed, since at 1.3M
+/// blocks that alone is minutes (`docs/104` HF-077).
 const MAX_VIEWER_BLOCKS: usize = 262_144;
 
 /// Plain-text admission for the viewer. [`PlainTextLimits::default`] is sized

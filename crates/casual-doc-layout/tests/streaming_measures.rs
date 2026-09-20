@@ -524,7 +524,11 @@ fn streaming_records_where_every_top_level_block_starts() {
                 "{name}: block marks must not go backwards ({pair:?})"
             );
         }
-        assert_eq!(marks.first().copied(), Some(0), "{name}: block 0 starts at 0");
+        assert_eq!(
+            marks.first().copied(),
+            Some(0),
+            "{name}: block 0 starts at 0"
+        );
         assert!(
             marks.last().copied().unwrap_or(0) as usize <= galley.len(),
             "{name}: no mark may point past the galley"

@@ -24,24 +24,33 @@
 
 use casual_doc_layout::document_layout::document_page_config;
 use casual_doc_layout::document_layout::paginate_document;
+use casual_doc_layout::flow::build_galley_cached;
+use casual_doc_layout::flow::build_galley_for_blocks;
+use casual_doc_layout::incremental::DirtySet;
+use casual_doc_layout::incremental::GalleyCache;
 use casual_doc_layout::incremental::PageRange;
 use casual_doc_layout::measure::PageOutline;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::Twip;
+use casual_doc_layout::windowed::DEFAULT_LEAD_PAGES;
 use casual_doc_layout::windowed::DEFAULT_PAINT_BUDGET_BYTES;
 use casual_doc_layout::windowed::DocumentMeasures;
 use casual_doc_layout::windowed::FlowResume;
 use casual_doc_layout::windowed::NotWindowable;
+use casual_doc_layout::windowed::ScrollCoalescer;
+use casual_doc_layout::windowed::ScrollDecision;
 use casual_doc_layout::windowed::WindowPolicy;
 use casual_doc_layout::windowed::measure_document;
 use casual_doc_layout::windowed::page_paint_bytes;
 use casual_doc_layout::windowed::window_of;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    BlockNode, Definitions, Document, Field, FieldKind, HeaderFooter, HeaderFooterId,
-    HeaderFooterKind, HeaderFooterRef, InlineNode, LineNumberRestart, LineNumbering, NumberFormat,
-    PageMargins, PageNumbering, PageSize, Paragraph, ParagraphProperties, Run, RunProperties,
-    SectionBoundary, SectionColumns, SectionId, Spacing,
+    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, Definitions, Document,
+    DrawingAnchor, Extent, Field, FieldKind, HeaderFooter, HeaderFooterId, HeaderFooterKind,
+    HeaderFooterRef, HorizontalAnchor, HorizontalPosition, InlineNode, LineNumberRestart,
+    LineNumbering, MediaId, MediaReference, NumberFormat, PageMargins, PageNumbering, PageSize,
+    Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+    Spacing, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -153,7 +162,11 @@ fn with_running_content(count: u64) -> Document {
     definitions.headers.insert(
         header_id,
         HeaderFooter {
-            blocks: vec![paragraph(420, ParagraphProperties::default(), "Chapter one")],
+            blocks: vec![paragraph(
+                420,
+                ParagraphProperties::default(),
+                "Chapter one",
+            )],
         },
     );
     definitions.footers.insert(
@@ -195,6 +208,42 @@ fn with_running_content(count: u64) -> Document {
     document_with(prose(count, 20_000), definitions)
 }
 
+/// `count` prose paragraphs that all carry `w:contextualSpacing`, so the
+/// engine's one retroactive mutation — the same-style adjacency collapse —
+/// fires at every paragraph boundary, including the boundaries a window is cut
+/// at.
+///
+/// This is the shape that tells a window built from the right flow state apart
+/// from one built from the wrong state, and the shape that tells a window
+/// sliced with the one-block lookahead apart from one sliced without it.
+/// Without it in the corpus, both of those are untested and look fine.
+fn contextual(count: u64) -> Document {
+    document_with(
+        (0..count)
+            .map(|i| {
+                paragraph(
+                    40_000 + i * 2,
+                    ParagraphProperties {
+                        spacing: Some(Spacing {
+                            before_twips: Some(240),
+                            after_twips: Some(240),
+                            ..Spacing::default()
+                        }),
+                        contextual_spacing: true,
+                        ..ParagraphProperties::default()
+                    },
+                    "The quick brown fox jumps over the lazy dog while the editor \
+                     reflows this paragraph and every other one on the page.",
+                )
+            })
+            .collect(),
+        Definitions {
+            sections: vec![section(9)],
+            ..Definitions::default()
+        },
+    )
+}
+
 /// Page numbering restarted at 7 in upper Roman, so the window's closed-form
 /// label has something to get wrong.
 fn with_restarted_page_numbers(count: u64) -> Document {
@@ -202,7 +251,6 @@ fn with_restarted_page_numbers(count: u64) -> Document {
     boundary.page_numbering = PageNumbering {
         start: Some(7),
         format: Some(NumberFormat::UpperRoman),
-        ..PageNumbering::default()
     };
     let header_id = HeaderFooterId::new(node(500));
     let mut definitions = Definitions::default();
@@ -241,6 +289,7 @@ fn windowable_corpus() -> Vec<(&'static str, Document)> {
             "page numbers restarted at VII",
             with_restarted_page_numbers(200),
         ),
+        ("contextual spacing throughout", contextual(200)),
     ]
 }
 
@@ -285,7 +334,10 @@ fn every_window_equals_the_same_pages_of_a_full_paginate() {
         let measures = measures_of(&doc, &shaper);
         let total = full.pages.len();
         // A sample of three-page windows, plus the two ends.
-        let starts: Vec<usize> = (0..total).step_by(4).chain([total.saturating_sub(1)]).collect();
+        let starts: Vec<usize> = (0..total)
+            .step_by(4)
+            .chain([total.saturating_sub(1)])
+            .collect();
         for start in starts {
             let visible = PageRange::new(start, (start + 3).min(total));
             let window = window_of(&doc, &shaper, &measures, visible, policy);
@@ -349,7 +401,8 @@ fn a_window_deep_in_a_long_document_equals_the_full_layout() {
         for (offset, visible_page) in window.viewport.pages.iter().enumerate() {
             let index = window.range.start + offset;
             assert_eq!(
-                &visible_page.page, &full.pages[index],
+                &visible_page.page,
+                &full.pages[index],
                 "windowed page {index} of {} differs from the full layout",
                 full.pages.len()
             );
@@ -365,6 +418,63 @@ fn a_window_deep_in_a_long_document_equals_the_full_layout() {
     );
 }
 
+/// The dangerous failure this whole design exists to prevent: a document that
+/// paginates differently depending on where the user scrolled.
+///
+/// A document carrying cross-block flow state, long enough that a deep window
+/// resumes from a **recorded checkpoint** rather than from page zero. If the
+/// driver mistakenly classified it resumable-anywhere, the window would flow
+/// from a middle block and the first paragraph in it would not know to
+/// collapse its spacing — a page that is subtly wrong, and wrong only when
+/// reached by scrolling.
+///
+/// It is deliberately separate from the sliding sweep above: this document is
+/// `FlowResume::FromStart`, so each window re-flows from block zero, and a
+/// sweep of it would cost time without testing anything the two windows here
+/// do not.
+#[test]
+fn a_deep_window_of_a_stateful_document_equals_the_full_layout() {
+    let shaper = ParleyShaper::new();
+    let doc = contextual(2_500);
+    let full = paginate_document(&doc, &shaper);
+    let measures = measures_of(&doc, &shaper);
+    assert_eq!(measures.resume(), FlowResume::FromStart);
+    assert!(
+        !measures.checkpoints.is_empty(),
+        "the fixture must be long enough to record a checkpoint ({} pages)",
+        full.pages.len()
+    );
+
+    let last = full.pages.len() - 1;
+    // Start at a page a recorded checkpoint actually precedes, so the resume
+    // path — not the trivial "the window begins at page zero" path — is what
+    // produced these pages.
+    // Past it by more than the lead pages, since the window is widened
+    // backwards before the checkpoint is chosen.
+    let past_first_checkpoint =
+        (measures.checkpoints[0].page_index as usize + DEFAULT_LEAD_PAGES + 1).min(last);
+    let mut resumed_from_a_checkpoint = 0;
+    for start in [past_first_checkpoint, last] {
+        let visible = PageRange::new(start, (start + 1).min(full.pages.len()));
+        let window = window_of(&doc, &shaper, &measures, visible, WindowPolicy::default());
+        assert!(!window.viewport.pages.is_empty());
+        for (offset, visible_page) in window.viewport.pages.iter().enumerate() {
+            let index = window.range.start + offset;
+            assert_eq!(
+                &visible_page.page, &full.pages[index],
+                "windowed page {index} of a stateful document differs from the full layout"
+            );
+        }
+        if window.resumed_at_page > 0 {
+            resumed_from_a_checkpoint += 1;
+        }
+    }
+    assert_eq!(
+        resumed_from_a_checkpoint, 2,
+        "both windows must have resumed from a recorded checkpoint"
+    );
+}
+
 #[test]
 fn a_plain_prose_document_can_resume_a_flow_at_any_block() {
     let shaper = ParleyShaper::new();
@@ -373,6 +483,21 @@ fn a_plain_prose_document_can_resume_a_flow_at_any_block() {
         measures.resume(),
         FlowResume::AnyBlock,
         "plain prose carries no cross-block flow state"
+    );
+}
+
+/// The other side of the classification. A document whose paragraphs collapse
+/// spacing against their neighbours cannot have its flow resumed at an
+/// arbitrary block — the first paragraph of the window would not know whether
+/// to collapse — so it must be classified `FromStart`.
+#[test]
+fn a_contextually_spaced_document_must_flow_from_the_start() {
+    let shaper = ParleyShaper::new();
+    let measures = measures_of(&contextual(200), &shaper);
+    assert_eq!(
+        measures.resume(),
+        FlowResume::FromStart,
+        "contextual spacing carries state across a block boundary"
     );
 }
 
@@ -415,10 +540,71 @@ fn each_refusal_is_reachable_and_names_its_own_reason() {
         },
     );
 
+    let mut media = Definitions {
+        sections: vec![section(9)],
+        ..Definitions::default()
+    };
+    media.media.insert(
+        MediaId::new(node(63_500)),
+        MediaReference {
+            relationship_id: "rId7".to_owned(),
+            media_type: "image/png".to_owned(),
+            part_name: "word/media/image1.png".to_owned(),
+        },
+    );
+    let mut floated = prose(40, 63_000);
+    floated.push(BlockNode::Paragraph(Paragraph {
+        id: node(63_900),
+        properties: ParagraphProperties::default(),
+        inlines: vec![InlineNode::AnchoredDrawing(AnchoredDrawing {
+            id: node(63_901),
+            media: MediaId::new(node(63_500)),
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 914_400,
+            },
+            anchor: DrawingAnchor {
+                horizontal: AnchorHorizontal {
+                    relative_from: HorizontalAnchor::Column,
+                    position: HorizontalPosition::Offset(0),
+                },
+                vertical: AnchorVertical {
+                    relative_from: VerticalAnchor::Paragraph,
+                    position: VerticalPosition::Offset(0),
+                },
+                wrap: WrapMode::Square,
+                wrap_distances: WrapDistances::default(),
+                wrap_polygon: None,
+                behind_doc: false,
+            },
+            descr: None,
+            relative_height: None,
+            crop: None,
+            border: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        })],
+    }));
+    let anchored = document_with(floated, media);
+
     let cases: Vec<(&str, Document, NotWindowable)> = vec![
-        ("two sections", multi_section, NotWindowable::MultipleSections),
+        (
+            "an anchored drawing",
+            anchored,
+            NotWindowable::AnchoredFloats,
+        ),
+        (
+            "two sections",
+            multi_section,
+            NotWindowable::MultipleSections,
+        ),
         ("two columns", multi_column, NotWindowable::MultipleColumns),
-        ("line numbering", line_numbered, NotWindowable::LineNumbering),
+        (
+            "line numbering",
+            line_numbered,
+            NotWindowable::LineNumbering,
+        ),
     ];
     for (name, doc, expected) in cases {
         let refusal = measure_document(&doc, &shaper).err();
@@ -573,4 +759,158 @@ fn the_page_geometry_a_window_uses_is_the_document_geometry() {
         document_page_config(&doc).page_size
     );
     assert!(measures.config().content_area().size.width > Twip::ZERO);
+}
+
+// --- Step 5: eviction and scroll coalescing ---------------------------------
+
+/// The paint-tier budget must bound what the edit cache holds, and it must
+/// bound it in **bytes** — a paragraph count would bound the wrong quantity.
+#[test]
+fn the_galley_cache_evicts_least_recently_used_paragraphs_to_a_byte_budget() {
+    let shaper = ParleyShaper::new();
+    let doc = plain(150);
+    let width = document_page_config(&doc).content_area().size.width;
+
+    let mut unbounded = GalleyCache::new();
+    let _ = build_galley_cached(
+        &doc,
+        &shaper,
+        width,
+        &mut unbounded,
+        &DirtySet::everything(),
+    );
+    let whole = unbounded.bytes();
+    assert!(whole > 0, "a cached prose document must cost bytes to hold");
+    assert_eq!(
+        unbounded.len(),
+        doc.body().len(),
+        "unbounded keeps every paragraph"
+    );
+    assert_eq!(unbounded.evicted_last_build(), 0);
+
+    let budget = whole / 4;
+    let mut bounded = GalleyCache::with_budget(budget);
+    let bounded_galley =
+        build_galley_cached(&doc, &shaper, width, &mut bounded, &DirtySet::everything());
+    assert!(
+        bounded.bytes() <= budget,
+        "the cache holds {} B against a {budget} B budget",
+        bounded.bytes()
+    );
+    assert!(
+        bounded.evicted_last_build() > 0,
+        "a budget a quarter of the document must have evicted something"
+    );
+    // Eviction is a cost, never a different answer.
+    let fresh = build_galley_for_blocks(&doc, &shaper, doc.body(), width);
+    assert_eq!(
+        bounded_galley, fresh,
+        "a budgeted cache must still produce the galley a fresh build produces"
+    );
+
+    let second = build_galley_cached(&doc, &shaper, width, &mut bounded, &DirtySet::new());
+    assert_eq!(
+        second, fresh,
+        "a second budgeted build must still produce the same galley"
+    );
+    assert!(
+        bounded.bytes() <= budget,
+        "the budget must hold across builds"
+    );
+}
+
+/// Dragging a scrollbar across a 60,000-page document must build the window
+/// the user lands on — not the ones they pass over.
+#[test]
+fn dragging_across_sixty_thousand_pages_builds_one_window() {
+    let mut coalescer = ScrollCoalescer::new(2);
+
+    // First paint: nothing is on screen, so it must not wait.
+    assert_eq!(
+        coalescer.scrolled_to(PageRange::new(0, 2)),
+        ScrollDecision::Build(PageRange::new(0, 2))
+    );
+    coalescer.record_built(PageRange::new(0, 4));
+    assert_eq!(coalescer.builds(), 1);
+
+    // A scroll inside the built window asks for nothing at all.
+    assert_eq!(
+        coalescer.scrolled_to(PageRange::new(1, 3)),
+        ScrollDecision::Satisfied
+    );
+    assert_eq!(coalescer.builds(), 1);
+
+    // The drag: 600 reported positions sweeping to page 60,000, with a tick
+    // between each (a real host reports scroll far faster than it ticks, which
+    // only makes this more conservative).
+    for page in (100..60_000).step_by(100) {
+        assert_eq!(
+            coalescer.scrolled_to(PageRange::new(page, page + 2)),
+            ScrollDecision::Wait,
+            "a position passed over during a drag must not be built"
+        );
+        assert_eq!(coalescer.tick(), ScrollDecision::Wait);
+    }
+    assert_eq!(
+        coalescer.builds(),
+        1,
+        "the drag itself must not have built anything"
+    );
+
+    // The user lets go. The position holds still, and after the settle
+    // threshold exactly one window is built.
+    let landed = PageRange::new(59_950, 59_952);
+    assert_eq!(coalescer.scrolled_to(landed), ScrollDecision::Wait);
+    assert_eq!(coalescer.tick(), ScrollDecision::Wait);
+    assert_eq!(coalescer.tick(), ScrollDecision::Build(landed));
+    assert_eq!(
+        coalescer.builds(),
+        2,
+        "landing builds exactly one more window"
+    );
+    coalescer.record_built(PageRange::new(59_898, 59_904));
+    assert_eq!(coalescer.tick(), ScrollDecision::Satisfied);
+}
+
+/// A settled scroll that lands where the window already is must not rebuild.
+#[test]
+fn settling_back_where_it_started_rebuilds_nothing() {
+    let mut coalescer = ScrollCoalescer::new(1);
+    assert!(matches!(
+        coalescer.scrolled_to(PageRange::new(10, 12)),
+        ScrollDecision::Build(_)
+    ));
+    coalescer.record_built(PageRange::new(8, 14));
+    for page in [40, 400, 4_000, 40, 11] {
+        coalescer.scrolled_to(PageRange::new(page, page + 1));
+        coalescer.tick();
+    }
+    // The last position is inside the built window, so the final state asks
+    // for nothing.
+    assert_eq!(
+        coalescer.scrolled_to(PageRange::new(11, 12)),
+        ScrollDecision::Satisfied
+    );
+}
+
+/// `document_has_anchored_object` is the windowed driver's float refusal, and
+/// it only works if it is a genuine superset: `false` must mean the float
+/// passes really are inert.
+#[test]
+fn no_anchored_object_means_no_floats() {
+    let shaper = ParleyShaper::new();
+    for (name, doc) in windowable_corpus() {
+        // Every corpus document was accepted, which means the driver judged it
+        // free of anchored objects.
+        assert!(
+            measure_document(&doc, &shaper).is_ok(),
+            "{name}: expected the corpus to be windowable"
+        );
+        let full = paginate_document(&doc, &shaper);
+        assert!(
+            full.pages.iter().all(|page| page.anchored.is_empty()),
+            "{name}: the driver accepted a document whose full layout DOES place \
+             floats, so the refusal is not the superset it claims to be"
+        );
+    }
 }

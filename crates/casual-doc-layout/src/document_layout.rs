@@ -902,7 +902,11 @@ fn finish_pagination_pass(
 ///
 /// A document that does not mirror (the overwhelming majority) gets the section
 /// geometry back unchanged, so this is inert on the common path.
-pub(crate) fn mirrored_page_config(config: &PageConfig, mirror_margins: bool, number: u32) -> PageConfig {
+pub(crate) fn mirrored_page_config(
+    config: &PageConfig,
+    mirror_margins: bool,
+    number: u32,
+) -> PageConfig {
     let mut config = *config;
     if mirror_margins && number.is_multiple_of(2) {
         core::mem::swap(&mut config.margin_start, &mut config.margin_end);

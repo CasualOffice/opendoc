@@ -301,8 +301,7 @@ pub fn paginate_from_based(
     checkpoint: &Checkpoint,
 ) -> PaginatedLayout {
     assert!(
-        checkpoint.at.fragment >= base
-            && checkpoint.table_headers.iter().all(|i| *i >= base),
+        checkpoint.at.fragment >= base && checkpoint.table_headers.iter().all(|i| *i >= base),
         "a windowed pagination must contain everything its checkpoint names \
          (base {base}, checkpoint at {:?}, headers {:?})",
         checkpoint.at,
