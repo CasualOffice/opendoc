@@ -715,3 +715,352 @@ impl PaginableCell for CellMeasure {
             .fold(self.vertical_margins, |a, h| a + h)
     }
 }
+
+// --- Streaming the measure tier out of the flow engine ---------------------
+
+/// Where [`crate::flow`] puts the block fragments it produces.
+///
+/// `docs/113` §6 step 4. Until this existed the flow engine could only append
+/// to a `Vec<BlockFragment>`, so the *only* way to obtain the measure tier was
+/// to build the whole paint tier and project it ([`measure_galley`]) — which
+/// made the measure tier's small footprint a projection rather than a peak. A
+/// sink lets the engine hand each fragment somewhere that keeps only what it
+/// needs, so the glyph-bearing form of a paragraph can be dropped as soon as
+/// the next one is shaped.
+///
+/// ## The one-fragment lookback contract
+///
+/// The flow engine mutates a fragment it has already pushed in exactly one
+/// place: `w:contextualSpacing` collapses the gap between two adjacent
+/// same-style paragraphs, which zeroes the *current* fragment's space-before
+/// and the *previous* fragment's space-after (ECMA-376 §17.3.1.9). A paragraph
+/// contributes exactly one fragment and the collapse runs immediately after
+/// the push, so the reach of that mutation is the last two fragments and no
+/// more.
+///
+/// `zero_space_before` and `zero_space_after` are therefore specified to be
+/// called only with an index in `len() - 2 ..= len() - 1`, and [`MeasureSink`]
+/// — which cannot reach further back, because it has already discarded the
+/// glyphs — **panics** rather than silently applying the collapse to the wrong
+/// paragraph.
+pub trait GalleySink {
+    /// Appends a fragment.
+    fn push(&mut self, fragment: BlockFragment);
+
+    /// How many fragments have been pushed.
+    fn len(&self) -> usize;
+
+    /// Whether nothing has been pushed.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The stacked height of everything pushed so far — the flow-relative top
+    /// of the next fragment, which is what a square-wrap float's clearance is
+    /// measured from.
+    fn stacked_height(&self) -> Twip;
+
+    /// Zeroes `w:spacing/@before` on the fragment at `index` (a no-op for a
+    /// table row). See the lookback contract on [`GalleySink`].
+    fn zero_space_before(&mut self, index: usize);
+
+    /// Zeroes `w:spacing/@after` on the fragment at `index` (a no-op for a
+    /// table row). See the lookback contract on [`GalleySink`].
+    fn zero_space_after(&mut self, index: usize);
+
+    /// Records that a top-level block of the flowed sequence starts at the next
+    /// fragment. Inert for the paint tier; [`MeasureSink`] keeps the marks so a
+    /// window that has to re-flow galley fragment *f* knows which block to
+    /// start flowing from.
+    fn mark_block(&mut self) {}
+}
+
+/// The paint tier's sink: the galley itself. Every behavior here is what the
+/// flow engine did inline before [`GalleySink`] existed, including the
+/// deliberately re-summed [`stacked_height`](GalleySink::stacked_height) — it
+/// is asked for only when a float is actually anchored, which is rare.
+impl GalleySink for Vec<BlockFragment> {
+    fn push(&mut self, fragment: BlockFragment) {
+        Vec::push(self, fragment);
+    }
+
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn stacked_height(&self) -> Twip {
+        self.iter()
+            .map(BlockFragment::height)
+            .fold(Twip::ZERO, |a, h| a + h)
+    }
+
+    fn zero_space_before(&mut self, index: usize) {
+        if let BlockFragment::Paragraph { box_metrics, .. } = &mut self[index] {
+            box_metrics.space_before = Twip::ZERO;
+        }
+    }
+
+    fn zero_space_after(&mut self, index: usize) {
+        if let BlockFragment::Paragraph { box_metrics, .. } = &mut self[index] {
+            box_metrics.space_after = Twip::ZERO;
+        }
+    }
+}
+
+/// How many just-pushed fragments a [`MeasureSink`] keeps in their paint form.
+///
+/// Two, which is exactly the reach of the `w:contextualSpacing` collapse
+/// documented on [`GalleySink`]: the fragment being pushed and its
+/// predecessor. Everything older is projected onto the measure tier and its
+/// glyphs dropped.
+const MEASURE_SINK_LOOKBACK: usize = 2;
+
+/// The measure tier's sink: projects each fragment as soon as it can no longer
+/// be mutated, and drops the glyph-bearing form.
+///
+/// This is what makes `docs/113` §3.2 true of *peak* memory and not only of
+/// resident memory. At most [`MEASURE_SINK_LOOKBACK`] shaped paragraphs exist
+/// at once, whatever the document's length, so the flow engine's own
+/// high-water mark stops scaling with the document.
+///
+/// It is not a second flow engine and it re-derives nothing: the fragments it
+/// sees are the fragments [`build_galley`](crate::flow::build_galley) would
+/// have returned, in order, and [`FragmentMeasure::of`] is the same projection
+/// [`measure_galley`] applies to a finished galley. That equality is asserted
+/// directly — see the `streaming_*` tests in
+/// `crates/casual-doc-layout/tests/windowed_layout.rs`.
+#[derive(Debug, Default)]
+pub struct MeasureSink {
+    /// Fragments already projected, in galley order.
+    measures: Vec<FragmentMeasure>,
+    /// Galley index of `pending[0]`.
+    pending_base: usize,
+    /// The tail still open to the one-fragment lookback, oldest first.
+    pending: Vec<BlockFragment>,
+    /// Stacked height of everything already projected.
+    committed_height: Twip,
+    /// Galley index of the first fragment of each top-level block.
+    block_marks: Vec<u32>,
+}
+
+impl MeasureSink {
+    /// An empty sink.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// How many fragments are still held in their **shaped** (glyph-bearing)
+    /// form — the sink's live lookback.
+    ///
+    /// Never more than [`MEASURE_SINK_LOOKBACK`], whatever the document's
+    /// length. That bound is the memory claim of `docs/113` §6 step 4, so it
+    /// is observable rather than only asserted in prose.
+    #[must_use]
+    pub fn shaped_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Projects everything still pending and returns the finished tier.
+    #[must_use]
+    pub fn finish(mut self) -> Vec<FragmentMeasure> {
+        self.drain_to(0);
+        self.measures
+    }
+
+    /// Projects everything still pending and returns the tier together with
+    /// the galley index each top-level block started at.
+    #[must_use]
+    pub fn finish_with_block_marks(mut self) -> (Vec<FragmentMeasure>, Vec<u32>) {
+        self.drain_to(0);
+        (self.measures, self.block_marks)
+    }
+
+    /// Projects pending fragments until at most `keep` remain.
+    fn drain_to(&mut self, keep: usize) {
+        while self.pending.len() > keep {
+            let fragment = self.pending.remove(0);
+            self.committed_height = self.committed_height + fragment.height();
+            self.measures.push(FragmentMeasure::of(&fragment));
+            self.pending_base += 1;
+        }
+    }
+
+    /// The pending slot for galley index `index`, or a panic naming the
+    /// violated lookback contract.
+    fn pending_mut(&mut self, index: usize) -> &mut BlockFragment {
+        let slot = index
+            .checked_sub(self.pending_base)
+            .filter(|slot| *slot < self.pending.len());
+        let Some(slot) = slot else {
+            panic!(
+                "the measure sink was asked to mutate galley fragment {index}, which it has \
+                 already projected and dropped; the flow engine's retroactive mutation must \
+                 stay within the last {MEASURE_SINK_LOOKBACK} fragments (see `GalleySink`)"
+            );
+        };
+        &mut self.pending[slot]
+    }
+}
+
+impl GalleySink for MeasureSink {
+    fn push(&mut self, fragment: BlockFragment) {
+        self.pending.push(fragment);
+        self.drain_to(MEASURE_SINK_LOOKBACK);
+    }
+
+    fn len(&self) -> usize {
+        self.pending_base + self.pending.len()
+    }
+
+    fn stacked_height(&self) -> Twip {
+        self.pending
+            .iter()
+            .map(BlockFragment::height)
+            .fold(self.committed_height, |a, h| a + h)
+    }
+
+    fn zero_space_before(&mut self, index: usize) {
+        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(index) {
+            box_metrics.space_before = Twip::ZERO;
+        }
+    }
+
+    fn zero_space_after(&mut self, index: usize) {
+        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(index) {
+            box_metrics.space_after = Twip::ZERO;
+        }
+    }
+
+    fn mark_block(&mut self) {
+        self.block_marks.push(self.len() as u32);
+    }
+}
+
+/// A sink that keeps the paint tier for **one galley window** and drops
+/// everything else (`docs/113` §6 step 4).
+///
+/// Same lookback contract and same shape as [`MeasureSink`] — the difference
+/// is what happens to a fragment that leaves the lookback: the measure sink
+/// projects it, this one keeps it if it falls inside the window and drops it
+/// otherwise. So re-flowing a long document to paint page 40,000 costs the
+/// *shaping* of everything before it (unavoidable when the flow state is not
+/// resumable) but never its *storage*.
+///
+/// Indices are galley-absolute: `offset` is the absolute index the flow that
+/// feeds this sink starts at, so a caller that begins mid-document still names
+/// its window in the same coordinates the checkpoints use.
+#[derive(Debug)]
+pub struct WindowSink {
+    /// Absolute galley index this flow started at.
+    offset: usize,
+    /// The absolute window to keep, half-open.
+    keep: core::ops::Range<usize>,
+    /// Kept fragments, in order.
+    out: Vec<BlockFragment>,
+    /// Absolute index of `out[0]`, once something has been kept.
+    first_kept: Option<usize>,
+    /// Galley index of `pending[0]`, relative to this flow's start.
+    pending_base: usize,
+    /// The tail still open to the one-fragment lookback, oldest first.
+    pending: Vec<BlockFragment>,
+    /// Stacked height of everything that has left the lookback.
+    committed_height: Twip,
+}
+
+impl WindowSink {
+    /// A sink for the absolute window `keep`, fed by a flow that starts at
+    /// absolute galley index `offset`.
+    #[must_use]
+    pub fn new(offset: usize, keep: core::ops::Range<usize>) -> Self {
+        Self {
+            offset,
+            keep,
+            out: Vec::new(),
+            first_kept: None,
+            pending_base: 0,
+            pending: Vec::new(),
+            committed_height: Twip::ZERO,
+        }
+    }
+
+    /// The absolute galley index of the first kept fragment, or the window
+    /// start when nothing was kept.
+    #[must_use]
+    pub fn base(&self) -> u32 {
+        self.first_kept.unwrap_or(self.keep.start) as u32
+    }
+
+    /// Finishes the flow and returns the kept fragments with the absolute
+    /// index of the first of them.
+    #[must_use]
+    pub fn finish(mut self) -> (Vec<BlockFragment>, u32) {
+        self.drain_to(0);
+        let base = self.base();
+        (self.out, base)
+    }
+
+    fn drain_to(&mut self, keep: usize) {
+        while self.pending.len() > keep {
+            let fragment = self.pending.remove(0);
+            self.committed_height = self.committed_height + fragment.height();
+            let absolute = self.offset + self.pending_base;
+            self.pending_base += 1;
+            if self.keep.contains(&absolute) {
+                if self.first_kept.is_none() {
+                    self.first_kept = Some(absolute);
+                }
+                self.out.push(fragment);
+            }
+        }
+    }
+
+    fn pending_mut(&mut self, index: usize) -> &mut BlockFragment {
+        let local = index.checked_sub(self.offset);
+        let slot = local
+            .and_then(|local| local.checked_sub(self.pending_base))
+            .filter(|slot| *slot < self.pending.len());
+        let Some(slot) = slot else {
+            panic!(
+                "the window sink was asked to mutate galley fragment {index}, which it has \
+                 already passed; the flow engine's retroactive mutation must stay within \
+                 the last {MEASURE_SINK_LOOKBACK} fragments (see `GalleySink`)"
+            );
+        };
+        &mut self.pending[slot]
+    }
+}
+
+impl GalleySink for WindowSink {
+    fn push(&mut self, fragment: BlockFragment) {
+        self.pending.push(fragment);
+        self.drain_to(MEASURE_SINK_LOOKBACK);
+    }
+
+    fn len(&self) -> usize {
+        // Flow-relative, like every other sink: the engine's own indices count
+        // from the start of the sequence it was handed.
+        self.pending_base + self.pending.len()
+    }
+
+    fn stacked_height(&self) -> Twip {
+        self.pending
+            .iter()
+            .map(BlockFragment::height)
+            .fold(self.committed_height, |a, h| a + h)
+    }
+
+    fn zero_space_before(&mut self, index: usize) {
+        let absolute = self.offset + index;
+        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(absolute) {
+            box_metrics.space_before = Twip::ZERO;
+        }
+    }
+
+    fn zero_space_after(&mut self, index: usize) {
+        let absolute = self.offset + index;
+        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(absolute) {
+            box_metrics.space_after = Twip::ZERO;
+        }
+    }
+}

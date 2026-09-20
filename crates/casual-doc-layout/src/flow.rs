@@ -52,6 +52,11 @@ use crate::cascade::{
     requested_font_family_for, union_cnf,
 };
 use crate::incremental::{DirtySet, GalleyCache};
+// Separate `use` lines (anti-conflict): the galley sink seam, `docs/113` step 4.
+use crate::measure::FragmentMeasure;
+use crate::measure::GalleySink;
+use crate::measure::MeasureSink;
+use crate::measure::WindowSink as MeasureWindowSink;
 use crate::model::{ModelPos, ModelRange};
 use crate::note_numbering::NoteLabels;
 use crate::numbering::{self, NumberingState, PreparedMarker};
@@ -265,7 +270,7 @@ pub(crate) fn line_grid_for_section(
     })
 }
 
-fn single_section_line_grid(document: &Document) -> Option<LineGrid> {
+pub(crate) fn single_section_line_grid(document: &Document) -> Option<LineGrid> {
     let [section] = document.definitions().sections.as_slice() else {
         return None;
     };
@@ -402,6 +407,17 @@ pub(crate) struct NoteFlow<'a> {
     pub(crate) labels: Option<&'a NoteLabels>,
 }
 
+impl<'a> NoteFlow<'a> {
+    /// The body's note inputs: every referenced note's resolved label, and no
+    /// note-body label (the body is not inside a note).
+    pub(crate) fn with_labels(labels: &'a NoteLabels) -> Self {
+        Self {
+            label: None,
+            labels: Some(labels),
+        }
+    }
+}
+
 /// Flows a note's own body blocks (`build_galley_for_blocks`), threading the
 /// note's display `label` so its in-body auto-number mark
 /// (`w:footnoteRef`/`w:endnoteRef`) prints that number — the superscript ordinal
@@ -441,6 +457,172 @@ pub(crate) fn build_galley_for_blocks_inner(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
 ) -> Vec<BlockFragment> {
+    let mut galley = Vec::new();
+    flow_body_into(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        exclusions,
+        review_view,
+        notes,
+        line_grid,
+        &mut galley,
+        BlockMarks::Skip,
+    );
+    galley
+}
+
+/// The **measure tier** of `blocks`, built without the shaped galley ever
+/// becoming resident (`docs/113` §6 step 4).
+///
+/// This is [`build_galley_for_blocks`] with a [`MeasureSink`] in place of the
+/// `Vec<BlockFragment>`: the same flow walk, the same shaper, the same
+/// fragments, but each one is projected onto [`FragmentMeasure`] and its glyph
+/// runs dropped as soon as the engine can no longer mutate it. So the process
+/// high-water mark holds two shaped paragraphs rather than a document's worth
+/// — which is the difference between the measure tier being a *projection* of
+/// what a full build costs and being what the machine actually pays.
+///
+/// The second return value is the galley index each top-level block of
+/// `blocks` starts at, so a window that must re-shape galley fragment *f* can
+/// find the block to start flowing from.
+#[must_use]
+pub fn build_measures_for_blocks(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+) -> (Vec<FragmentMeasure>, Vec<u32>) {
+    build_measures_for_blocks_inner(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        None,
+        ReviewView::Editing,
+        NoteFlow::default(),
+        single_section_line_grid(document),
+    )
+}
+
+/// Flows `blocks[from_block..]` and keeps only the galley fragments in the
+/// absolute range `keep`, returning them with the absolute index of the first.
+///
+/// The window's paint tier (`docs/113` §6 step 4). `block_starts` is the
+/// block-index → galley-index map [`build_measures_for_blocks_inner`]
+/// produced, so the caller can start the walk at the block that owns the first
+/// fragment it wants rather than at the document top.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub(crate) fn flow_body_range(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    from_block: usize,
+    keep: core::ops::Range<usize>,
+    block_starts: &[u32],
+    notes: NoteFlow<'_>,
+    line_grid: Option<LineGrid>,
+) -> (Vec<BlockFragment>, u32) {
+    let offset = block_starts
+        .get(from_block)
+        .copied()
+        .unwrap_or_default() as usize;
+    let mut sink = MeasureWindowSink::new(offset, keep);
+    flow_body_into(
+        document,
+        shaper,
+        &blocks[from_block.min(blocks.len())..],
+        content_width,
+        None,
+        ReviewView::Editing,
+        notes,
+        line_grid,
+        &mut sink,
+        BlockMarks::Skip,
+    );
+    sink.finish()
+}
+
+/// Flows a document's body blocks into an arbitrary [`GalleySink`].
+///
+/// The two tiers are just two sinks over this one walk, so the seam is public:
+/// a caller that wants neither a `Vec<BlockFragment>` nor a
+/// [`MeasureSink`] — a test watching what the engine does to fragments it has
+/// already pushed, say — gets the real engine rather than a stand-in of it.
+pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    sink: &mut S,
+) {
+    flow_body_into(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        None,
+        ReviewView::Editing,
+        NoteFlow::default(),
+        single_section_line_grid(document),
+        sink,
+        BlockMarks::Record,
+    );
+}
+
+/// [`build_measures_for_blocks`] with the same inputs
+/// [`build_galley_for_blocks_inner`] takes, so the document driver can measure
+/// a section run exactly as it would have flowed it.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub(crate) fn build_measures_for_blocks_inner(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
+    notes: NoteFlow<'_>,
+    line_grid: Option<LineGrid>,
+) -> (Vec<FragmentMeasure>, Vec<u32>) {
+    let mut sink = MeasureSink::new();
+    flow_body_into(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        exclusions,
+        review_view,
+        notes,
+        line_grid,
+        &mut sink,
+        BlockMarks::Record,
+    );
+    sink.finish_with_block_marks()
+}
+
+/// The shared body-flow constructor both tiers go through: one
+/// [`FlowCtx`], one [`flow_blocks_into`] call, differing only in the sink.
+///
+/// Keeping this single is the same discipline `docs/113` §6.1 applied to the
+/// paginator. A second context builder is a second set of defaults, and a
+/// document would then measure under one and paint under another.
+#[allow(clippy::too_many_arguments)]
+fn flow_body_into<S: GalleySink + ?Sized>(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
+    notes: NoteFlow<'_>,
+    line_grid: Option<LineGrid>,
+    sink: &mut S,
+    marks: BlockMarks,
+) {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
     let palette = document
@@ -470,7 +652,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         note_label: notes.label,
         note_labels: notes.labels,
     };
-    flow_blocks(blocks, shaper, content_width, &mut ctx).0
+    flow_blocks_into(blocks, shaper, content_width, &mut ctx, sink, marks);
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -1070,23 +1252,29 @@ struct ContextualNeighbor {
 /// space-after (ECMA-376 §17.3.1.9). In the ubiquitous case (a run of
 /// same-style list/body paragraphs that all carry the flag) both edges
 /// collapse and the inter-paragraph gap becomes zero.
-fn collapse_contextual_spacing(
-    galley: &mut [BlockFragment],
+fn collapse_contextual_spacing<S: GalleySink + ?Sized>(
+    galley: &mut S,
     current: &ContextualNeighbor,
     prev: &ContextualNeighbor,
 ) {
+    // The one-fragment lookback `GalleySink` is specified against: a paragraph
+    // emits exactly one fragment and this runs straight after the push, so the
+    // pair is always the last two. A streaming sink has dropped the glyphs of
+    // anything older and cannot honor a wider reach, so state the invariant
+    // here rather than let it be discovered as a wrong answer.
+    debug_assert_eq!(
+        prev.galley_index + 1,
+        current.galley_index,
+        "contextual spacing may only collapse two ADJACENT fragments"
+    );
     if prev.style != current.style {
         return;
     }
-    if current.contextual
-        && let BlockFragment::Paragraph { box_metrics, .. } = &mut galley[current.galley_index]
-    {
-        box_metrics.space_before = Twip::ZERO;
+    if current.contextual {
+        galley.zero_space_before(current.galley_index);
     }
-    if prev.contextual
-        && let BlockFragment::Paragraph { box_metrics, .. } = &mut galley[prev.galley_index]
-    {
-        box_metrics.space_after = Twip::ZERO;
+    if prev.contextual {
+        galley.zero_space_after(prev.galley_index);
     }
 }
 
@@ -1104,6 +1292,42 @@ fn flow_blocks(
     ctx: &mut FlowCtx,
 ) -> (Vec<BlockFragment>, Twip) {
     let mut galley = Vec::new();
+    let float_floor = flow_blocks_into(blocks, shaper, width, ctx, &mut galley, BlockMarks::Skip);
+    (galley, float_floor)
+}
+
+/// Whether a flow pass records where each top-level block of `blocks` starts.
+///
+/// Only the outermost call over a body records: the marks are a
+/// block-index → galley-index map, and a nested content control's children are
+/// not top-level blocks of the body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockMarks {
+    /// Call [`GalleySink::mark_block`] once per block of this sequence.
+    Record,
+    /// Do not mark (a nested sequence).
+    Skip,
+}
+
+/// [`flow_blocks`] writing into any [`GalleySink`] — the seam that lets the
+/// measure tier be produced without the shaped galley ever becoming resident
+/// (`docs/113` §6 step 4).
+///
+/// The returned float floor is measured from **this sequence's** top, not the
+/// sink's, so a nested call composes exactly as it did when every sequence
+/// built its own `Vec`.
+fn flow_blocks_into<S: GalleySink + ?Sized>(
+    blocks: &[BlockNode],
+    shaper: &dyn LineShaper,
+    width: Twip,
+    ctx: &mut FlowCtx,
+    galley: &mut S,
+    marks: BlockMarks,
+) -> Twip {
+    // Where this sequence starts inside the sink. Fragment indices stay
+    // sink-absolute (that is what the contextual collapse addresses), while
+    // every height this function reports is relative to `base_height`.
+    let base_height = galley.stacked_height();
     let mut index = 0;
     // Maximum bottom extent of any square-family wrap float anchored in this
     // sequence (see the doc comment). `Twip::ZERO` when there is no such float.
@@ -1119,6 +1343,9 @@ fn flow_blocks(
     // so their text wraps beside it instead of under it.
     let mut active_carries: Vec<ParagraphFloatExclusion> = Vec::new();
     while index < blocks.len() {
+        if marks == BlockMarks::Record {
+            galley.mark_block();
+        }
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
             && let Some(frame) =
@@ -1139,6 +1366,11 @@ fn flow_blocks(
             exclusions.extend(exclusion);
             let body_fragment = flow_paragraph(body, shaper, width, ctx, &exclusions, false);
             let consumed = Twip(drop_height.raw() + body_fragment.height().raw());
+            // The coupled body paragraph is the sequence's *next* block, and
+            // this branch consumes it here rather than on the next iteration.
+            if marks == BlockMarks::Record {
+                galley.mark_block();
+            }
             galley.push(body_fragment);
             decrement_wrap_carries(&mut active_carries, consumed);
             // A drop-cap frame is a distinct visual context; don't collapse
@@ -1158,7 +1390,7 @@ fn flow_blocks(
                     .cascade
                     .resolve_paragraph(&paragraph.properties)
                     .contextual_spacing;
-                let galley_index = galley.len();
+                let galley_index = GalleySink::len(galley);
                 if let Some(clearance) = paragraph_wrap_carries(paragraph, width)
                     .iter()
                     .map(|carry| carry.height)
@@ -1172,10 +1404,7 @@ fn flow_blocks(
                     // `BlockFragment::height` itself folds over every line of every
                     // fragment — so laying out a document was quadratic in its own
                     // length, on documents containing no floats at all.
-                    let anchor_top = galley
-                        .iter()
-                        .map(BlockFragment::height)
-                        .fold(Twip::ZERO, |a, h| a + h);
+                    let anchor_top = galley.stacked_height() - base_height;
                     float_floor = float_floor.max(anchor_top + clearance);
                 }
                 galley.push(flow_paragraph_with_carries(
@@ -1191,12 +1420,12 @@ fn flow_blocks(
                     contextual,
                 };
                 if let Some(prev) = &prev_para {
-                    collapse_contextual_spacing(&mut galley, &current, prev);
+                    collapse_contextual_spacing(galley, &current, prev);
                 }
                 prev_para = Some(current);
             }
             BlockNode::Table(table) => {
-                flow_table(table, shaper, width, &mut galley, ctx);
+                flow_table(table, shaper, width, galley, ctx);
                 prev_para = None;
                 // A float's text wrap does not cross a table boundary.
                 active_carries.clear();
@@ -1207,13 +1436,10 @@ fn flow_blocks(
                 // contexts also flow. Nested SDTs recurse naturally. The nested
                 // flow does its own contextual collapsing; treat the wrapper as
                 // an adjacency break at this level.
-                let sdt_top = galley
-                    .iter()
-                    .map(BlockFragment::height)
-                    .fold(Twip::ZERO, |a, h| a + h);
-                let (sub, sub_floor) = flow_blocks(&sdt.blocks, shaper, width, ctx);
+                let sdt_top = galley.stacked_height() - base_height;
+                let sub_floor =
+                    flow_blocks_into(&sdt.blocks, shaper, width, ctx, galley, BlockMarks::Skip);
                 float_floor = float_floor.max(sdt_top + sub_floor);
-                galley.extend(sub);
                 prev_para = None;
                 active_carries.clear();
             }
@@ -1227,7 +1453,7 @@ fn flow_blocks(
         }
         index += 1;
     }
-    (galley, float_floor)
+    float_floor
 }
 
 /// Flows one paragraph while carrying square-family wrap-float exclusions across
@@ -1429,11 +1655,11 @@ fn collapse_drop_cap_fragment(
 ///
 /// Cross-page row splitting and header repetition are the paginator's job
 /// ([`crate::paginate`]); this produces the row fragments it slices.
-fn flow_table(
+fn flow_table<S: GalleySink + ?Sized>(
     table: &Table,
     shaper: &dyn LineShaper,
     width: Twip,
-    galley: &mut Vec<BlockFragment>,
+    galley: &mut S,
     ctx: &mut FlowCtx,
 ) {
     let merge_roles = resolve_vertical_merge_roles(table);
@@ -1615,16 +1841,18 @@ fn flow_table(
     }
 
     resolve_vertical_merge_geometry(&merge_roles, &mut rows);
-    galley.extend(rows.into_iter().map(|row| BlockFragment::TableRow {
-        id: row.id,
-        table: table.id,
-        cells: row.cells,
-        height: row.height,
-        can_split: row.can_split,
-        header: row.header,
-        merge_keep_next: row.merge_keep_next,
-        clip: row.clip,
-    }));
+    for row in rows {
+        galley.push(BlockFragment::TableRow {
+            id: row.id,
+            table: table.id,
+            cells: row.cells,
+            height: row.height,
+            can_split: row.can_split,
+            header: row.header,
+            merge_keep_next: row.merge_keep_next,
+            clip: row.clip,
+        });
+    }
 }
 
 /// Resolves a row's logical `w:jc` to its physical grid origin. A row-direct

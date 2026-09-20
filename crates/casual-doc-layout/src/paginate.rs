@@ -276,6 +276,55 @@ pub fn paginate_from(
     PaginatedLayout { pages: p.pages }
 }
 
+/// [`paginate_from`] over a **window** of the galley: `fragments` is the slice
+/// starting at galley index `base`, and the checkpoint's indices are
+/// galley-absolute.
+///
+/// This is what lets a window be painted without the fragments above it
+/// existing. Rather than teaching the paginator a second coordinate system —
+/// which would put an index translation on every line of the walk — the
+/// checkpoint is translated *in*, the paginator runs unchanged, and the only
+/// galley-relative thing it emits, [`FlowSpan`], is translated *out*. With
+/// `base == 0` it is [`paginate_from`] exactly, which is how the equality is
+/// asserted (`paginate_from_based_at_zero_is_paginate_from`).
+///
+/// # Panics
+///
+/// If the checkpoint names a position or a repeated header row that lies
+/// before `base` — the window does not contain what it would have to resume
+/// from, and producing a page anyway would produce a wrong one.
+#[must_use]
+pub fn paginate_from_based(
+    fragments: &[BlockFragment],
+    base: u32,
+    config: &PageConfig,
+    checkpoint: &Checkpoint,
+) -> PaginatedLayout {
+    assert!(
+        checkpoint.at.fragment >= base
+            && checkpoint.table_headers.iter().all(|i| *i >= base),
+        "a windowed pagination must contain everything its checkpoint names \
+         (base {base}, checkpoint at {:?}, headers {:?})",
+        checkpoint.at,
+        checkpoint.table_headers,
+    );
+    let local = Checkpoint {
+        page_index: checkpoint.page_index,
+        at: FlowPos {
+            fragment: checkpoint.at.fragment - base,
+            line: checkpoint.at.line,
+        },
+        current_table: checkpoint.current_table,
+        table_headers: checkpoint.table_headers.iter().map(|i| i - base).collect(),
+    };
+    let mut layout = paginate_from(fragments, config, &local);
+    for page in &mut layout.pages {
+        page.flow.start.fragment += base;
+        page.flow.end.fragment += base;
+    }
+    layout
+}
+
 /// Re-paginates `new_galley` given the previous layout and the galley it came
 /// from, doing work bounded to the edit neighborhood — the guarantee is that the
 /// result is **field-for-field identical to a full [`paginate`] of the new
@@ -1504,6 +1553,22 @@ pub(crate) fn resolve_fields_labeled(
     shaper: &dyn LineShaper,
 ) {
     let total = layout.pages.len() as u32;
+    resolve_fields_labeled_with_total(layout, labels, total, shaper);
+}
+
+/// [`resolve_fields_labeled`] for a layout that holds only **part** of the
+/// document: `total` is the document's real page count, which `NUMPAGES` must
+/// print.
+///
+/// `docs/113` §7's fourth unknown, answered: a windowed layout cannot take the
+/// page count from its own `pages.len()`, and the measure tier is exactly what
+/// supplies the right one.
+pub(crate) fn resolve_fields_labeled_with_total(
+    layout: &mut PaginatedLayout,
+    labels: &[String],
+    total: u32,
+    shaper: &dyn LineShaper,
+) {
     for (index, page) in layout.pages.iter_mut().enumerate() {
         let fallback = page.number.to_string();
         let label = labels.get(index).unwrap_or(&fallback);
@@ -1537,6 +1602,27 @@ pub(crate) fn page_number_labels(
     sections: &[SectionBoundary],
 ) -> Vec<String> {
     page_number_labels_for(layout.pages.iter().map(|page| page.section), sections)
+}
+
+/// The `PAGE` label of the page at 0-based index `index` of a document with a
+/// **single** section — computed directly rather than by walking every page
+/// before it.
+///
+/// [`page_number_labels`] is a running fold over the whole page list, which a
+/// window does not have and should not have to materialize (60,000 formatted
+/// strings per scroll). With one section the fold is closed-form: the counter
+/// starts at `w:pgNumType/@start` (or 1) and increments. The two are asserted
+/// to agree in `page_number_label_at_matches_the_running_fold`.
+#[must_use]
+pub(crate) fn page_number_label_at(section: Option<&SectionBoundary>, index: usize) -> String {
+    let numbering = section.map(|s| &s.page_numbering);
+    let start = numbering
+        .and_then(|n| n.start)
+        .map_or(1, |value| value.max(0) as u32);
+    let fmt = numbering
+        .and_then(|n| n.format.as_ref())
+        .map(page_number_format_token);
+    format_page_number(start.saturating_add(index as u32), fmt)
 }
 
 /// The [`page_number_labels`] core over a page→section sequence, so the restart /
@@ -1801,6 +1887,32 @@ mod tests {
         // Unknown token and out-of-range roman fall back to decimal.
         assert_eq!(format_page_number(5, Some("cardinalText")), "5");
         assert_eq!(format_page_number(4000, Some("upperRoman")), "4000");
+    }
+
+    /// The windowed driver's closed-form page label must be the same string
+    /// the driver's running fold produces — a window has no page list to fold
+    /// over, so the two must be asserted equal rather than assumed.
+    #[test]
+    fn page_number_label_at_matches_the_running_fold() {
+        for (fmt, start) in [
+            (None, None),
+            (Some("upperRoman"), Some(7)),
+            (Some("lowerLetter"), None),
+            (None, Some(0)),
+            (Some("lowerRoman"), Some(1)),
+        ] {
+            let section = numbering_section(30, fmt, start);
+            let id = section.id;
+            let sections = vec![section];
+            let folded = page_number_labels_for(std::iter::repeat_n(id, 300), &sections);
+            for (index, expected) in folded.iter().enumerate() {
+                assert_eq!(
+                    &page_number_label_at(sections.first(), index),
+                    expected,
+                    "page {index} under fmt {fmt:?} start {start:?}"
+                );
+            }
+        }
     }
 
     fn numbering_section(id: u64, fmt: Option<&str>, start: Option<i32>) -> SectionBoundary {

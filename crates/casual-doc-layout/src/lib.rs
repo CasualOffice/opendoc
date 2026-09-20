@@ -51,3 +51,4 @@ pub mod symbol_map;
 pub mod tabs;
 pub mod text;
 pub mod units;
+pub mod windowed;

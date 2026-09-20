@@ -48,6 +48,7 @@
 //!   section's bands are the ones painted. One page has one header, so some rule
 //!   has to break the tie; this one is recorded rather than accidental.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casual_doc_model::NodeId;
@@ -239,10 +240,11 @@ fn variant_mut(
 
 /// All layout inputs that are local to one section. The config already includes
 /// that section's measured header/footer (and positioned-header-float) bands.
-struct SectionPlan {
-    config: PageConfig,
-    running: RunningContent,
-    page_borders: PageBorders,
+#[derive(Clone, Debug)]
+pub(crate) struct SectionPlan {
+    pub(crate) config: PageConfig,
+    pub(crate) running: RunningContent,
+    pub(crate) page_borders: PageBorders,
 }
 
 /// Resolves running-content inheritance and geometry for every section before
@@ -261,7 +263,7 @@ struct SectionPlan {
 /// Geometry is resolved here too, per section: each plan's [`PageConfig`] comes
 /// from its *own* `w:pgSz`/`w:pgMar`/`w:headerDistance`, and the running content
 /// is flowed at that section's content width.
-fn build_section_plans(
+pub(crate) fn build_section_plans(
     document: &Document,
     shaper: &dyn crate::text::LineShaper,
     labels: &NoteLabels,
@@ -464,13 +466,17 @@ fn take_unemitted(wanted: &[NoteId], emitted: &mut Vec<NoteId>) -> Vec<NoteId> {
 }
 
 /// `blocks` with the listed endnote bodies appended, in the order given.
-fn blocks_with_endnotes(
+pub(crate) fn blocks_with_endnotes<'a>(
     document: &Document,
-    blocks: &[BlockNode],
+    blocks: &'a [BlockNode],
     endnotes: &[NoteId],
-) -> Vec<BlockNode> {
+) -> Cow<'a, [BlockNode]> {
+    // Borrowed in the overwhelmingly common case. This used to be an
+    // unconditional `blocks.to_vec()`, which cloned the ENTIRE body on every
+    // layout pass — 1.3 GB of transient copy for the 1.3M-paragraph file
+    // `docs/111` is about, on a document with no endnotes at all.
     if endnotes.is_empty() {
-        return blocks.to_vec();
+        return Cow::Borrowed(blocks);
     }
     let mut out = blocks.to_vec();
     for id in endnotes {
@@ -478,14 +484,14 @@ fn blocks_with_endnotes(
             out.extend(note.blocks.clone());
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Every endnote referenced by `blocks`, in first-reference order, through the one
 /// shared note-reference walker (`crate::note_numbering::visit_block_note_refs`) so
 /// a new container that can hold a reference is taught to both this and note
 /// numbering at once.
-fn referenced_endnotes(blocks: &[BlockNode]) -> Vec<NoteId> {
+pub(crate) fn referenced_endnotes(blocks: &[BlockNode]) -> Vec<NoteId> {
     let mut out = Vec::new();
     for block in blocks {
         visit_block_note_refs(block, &mut |kind, note| {
@@ -896,7 +902,7 @@ fn finish_pagination_pass(
 ///
 /// A document that does not mirror (the overwhelming majority) gets the section
 /// geometry back unchanged, so this is inert on the common path.
-fn mirrored_page_config(config: &PageConfig, mirror_margins: bool, number: u32) -> PageConfig {
+pub(crate) fn mirrored_page_config(config: &PageConfig, mirror_margins: bool, number: u32) -> PageConfig {
     let mut config = *config;
     if mirror_margins && number.is_multiple_of(2) {
         core::mem::swap(&mut config.margin_start, &mut config.margin_end);
@@ -912,7 +918,7 @@ fn mirrored_page_config(config: &PageConfig, mirror_margins: bool, number: u32) 
 /// content's own height; a page whose content fills (or overflows) the area has
 /// no slack and is left untouched. Every glyph/image/text-box origin is relative
 /// to its fragment's `rect`, so moving `rect.origin.y` moves the whole block.
-fn apply_page_vertical_alignment(
+pub(crate) fn apply_page_vertical_alignment(
     layout: &mut crate::page::PaginatedLayout,
     sections: &[SectionBoundary],
 ) {
