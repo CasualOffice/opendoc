@@ -48,14 +48,24 @@ const OPEN_PREFIXES = ["Open", "Partly fixed", "Partly", "In progress", "Re-open
 const normalise = (status) => status.replace(/^[*_\s]+/, "");
 const isOpen = (status) => OPEN_PREFIXES.some((p) => normalise(status).startsWith(p));
 
-/** Every `| ID | … |` row in a document, with its id and last cell. */
+/**
+ * Every `| ID | … |` row in a document, with its id, last cell, and the `##`/`###`
+ * heading it sits under. The heading is what lets a summary be checked cell by
+ * cell instead of only in total.
+ */
 function rows(text, idPattern) {
   const out = [];
+  let heading = "";
   for (const line of text.split("\n")) {
+    const h = line.match(/^#{2,3} +(.*?)\s*$/);
+    if (h) {
+      heading = h[1];
+      continue;
+    }
     if (!line.startsWith("|")) continue;
     const c = cells(line);
     if (!c.length || !idPattern.test(c[0])) continue;
-    out.push({ id: c[0], status: c[c.length - 1], cells: c, line });
+    out.push({ id: c[0], status: c[c.length - 1], cells: c, line, heading });
   }
   return out;
 }
@@ -106,6 +116,7 @@ test("docs/104: every summary cell is what the rows actually say", () => {
   assert.ok(headerAt > 0, "docs/104 must carry a Section/Rows summary table");
   const sectionOpen = [];
   const sectionRows = [];
+  const stated = [];
   for (let i = headerAt + 2; i < summaryLines.length; i++) {
     const line = summaryLines[i];
     if (!line.startsWith("|")) break;
@@ -113,11 +124,13 @@ test("docs/104: every summary cell is what the rows actually say", () => {
     const c = cells(line);
     sectionRows.push(Number(c[1]));
     sectionOpen.push(Number(c[2]));
+    stated.push({ label: c[0], rows: Number(c[1]), open: Number(c[2]) });
   }
   assert.ok(
     sectionOpen.every((n) => Number.isFinite(n)),
     "every summary section must carry a numeric Still-open cell",
   );
+
   assert.equal(
     sectionRows.reduce((a, b) => a + b, 0),
     summary,
@@ -130,6 +143,75 @@ test("docs/104: every summary cell is what the rows actually say", () => {
     `the per-section Still-open column sums to ${sectionOpen.reduce((a, b) => a + b, 0)}, ` +
       `but the rows say ${open} — this is exactly the P3-cell drift`,
   );
+
+  // Per-section, not only the column total. The two assertions ABOVE only check
+  // that the Rows and Still-open columns SUM to the Total — which two
+  // equal-and-opposite errors sail straight through. That is not hypothetical:
+  // on 2026-09-20 the P2 cell read 21 against 23 rows actually open while the
+  // behavioural-audit cell read 6 against 4, the column still summed to the
+  // stated Total of 50, and the guard stayed green through both. They are
+  // deliberately left above this block so that the failure of a cancelling pair
+  // is charged to THIS assertion and not to theirs. So: charge every row to the
+  // heading it sits under and compare the cells one at a time.
+  const bySection = new Map();
+  for (const r of all) {
+    if (!bySection.has(r.heading)) bySection.set(r.heading, []);
+    bySection.get(r.heading).push(r);
+  }
+  // A summary label names its section either verbatim ("Behavioural audit —
+  // 2026-09-04") or as the stem of a counted heading ("P2" -> "P2 — 52 items").
+  const matchesLabel = (heading, label) => heading === label || heading.startsWith(`${label} —`);
+  const resolved = stated.map((s) => ({
+    ...s,
+    hits: [...bySection.keys()].filter((h) => matchesLabel(h, s.label)),
+  }));
+
+  // Checked BEFORE the per-cell comparisons, and it has to be: a section that
+  // splits in two (a heading inserted mid-table) leaves the rows below it
+  // charged to a heading no summary row names, and the first thing the reader
+  // would otherwise see is a count mismatch on the section that shrank, which
+  // is the symptom rather than the cause.
+  const claimed = new Set(resolved.flatMap((s) => s.hits));
+  const unclaimed = [...bySection.keys()].filter((h) => !claimed.has(h));
+  assert.deepEqual(
+    unclaimed,
+    [],
+    "these sections of docs/104 hold HF rows but no summary row counts them, so their " +
+      `open work is invisible in the summary: ${unclaimed.join(" / ")}`,
+  );
+
+  for (const s of resolved) {
+    const hits = s.hits;
+    assert.equal(
+      hits.length,
+      1,
+      `docs/104's summary row "${s.label}" matches ${hits.length} sections holding HF rows ` +
+        `(${hits.join(" / ") || "none"}) — a summary cell that names no section counts nothing`,
+    );
+    const rs = bySection.get(hits[0]);
+    const openHere = rs.filter((r) => isOpen(r.status));
+    assert.equal(
+      s.rows,
+      rs.length,
+      `docs/104 summary "${s.label}" Rows says ${s.rows}, section "${hits[0]}" holds ${rs.length}`,
+    );
+    assert.equal(
+      s.open,
+      openHere.length,
+      `docs/104 summary "${s.label}" Still-open says ${s.open}, but section "${hits[0]}" has ` +
+        `${openHere.length} open: ${openHere.map((r) => r.id).join(", ") || "none"}`,
+    );
+    // The `— N items` in the heading itself is a hand-maintained number too,
+    // and it is the one a reader sees before the table.
+    const inHeading = hits[0].match(/— (\d+) items$/);
+    if (inHeading) {
+      assert.equal(
+        Number(inHeading[1]),
+        rs.length,
+        `docs/104 heading "${hits[0]}" claims ${inHeading[1]} items, the section holds ${rs.length}`,
+      );
+    }
+  }
 
   const prose = text.match(/\*\*(\d+) of (\d+) rows remain open/);
   assert.ok(prose, "the progress line must state 'N of M rows remain open'");
@@ -209,4 +291,284 @@ test("docs/105: every class count is derived, and no row is malformed", () => {
   const allOpen = Object.values(counts).reduce((a, c) => a + c.open, 0);
   assert.equal(Number(t[1]), allRows, `Total rows: says ${t[1]}, derived ${allRows}`);
   assert.equal(Number(t[2]), allOpen, `Total open: says ${t[2]}, derived ${allOpen}`);
+});
+
+// ---------------------------------------------------------------------------
+// docs/109 — the one queue.
+//
+// The owner's decision on 2026-09-20 was that there is exactly ONE tracker to
+// work from. 104, 105 and 106 became archives; 109 holds the order. The failure
+// mode that decision creates is obvious and quiet: a row that is still open in
+// an archive silently stops being worked, because nobody reads the archive any
+// more. So the load-bearing assertion here is not the arithmetic — it is
+// COVERAGE: every open row of 104 and 105 must be reachable from 109, either as
+// a row of its own or as a merged id named in the Supersedes/see-also column.
+//
+// The rest guards what a hand-edited table gets wrong: a duplicated id (the
+// work is then done twice, or one copy silently overwritten), a drifted summary
+// cell, and a row inserted in the wrong place — which matters here because the
+// ordering IS the product of this document. Lane order (Hotfix -> Audit ->
+// Roadmap) and the within-lane priority order are the owner's instruction, so
+// they are asserted rather than trusted.
+
+/** The queue rows of docs/109: the ones whose first cell is a position number. */
+function queueRows(text) {
+  const lines = text.split("\n");
+  const headerAt = lines.findIndex((l) => l.startsWith("| # | Id | Lane |"));
+  assert.ok(headerAt > 0, "docs/109 must carry a queue table headed '| # | Id | Lane |'");
+  const header = cells(lines[headerAt]);
+  const col = (name) => {
+    const i = header.findIndex((h) => h.toLowerCase().startsWith(name));
+    assert.ok(i >= 0, `docs/109's queue table must carry a ${name} column`);
+    return i;
+  };
+  const idx = {
+    n: col("#"),
+    id: col("id"),
+    lane: col("lane"),
+    priority: col("priority"),
+    effort: col("effort"),
+    status: col("status"),
+    source: col("source"),
+    supersedes: col("supersedes"),
+  };
+  const out = [];
+  for (const line of lines.slice(headerAt + 1)) {
+    if (!line.startsWith("|")) continue;
+    const c = cells(line);
+    if (!/^\d+$/.test(c[0])) continue;
+    assert.equal(
+      c.length,
+      header.length,
+      `docs/109 row ${c[0]} has ${c.length} cells against the header's ${header.length} — ` +
+        "a missing cell shifts every later column left and the derived counts go wrong",
+    );
+    out.push({
+      n: Number(c[idx.n]),
+      id: c[idx.id],
+      lane: c[idx.lane],
+      priority: c[idx.priority],
+      effort: c[idx.effort],
+      status: c[idx.status],
+      source: c[idx.source],
+      supersedes: c[idx.supersedes],
+    });
+  }
+  assert.ok(out.length > 0, "docs/109 must carry queue rows");
+  return out;
+}
+
+const LANES = ["Hotfix", "Audit", "Roadmap"];
+const PRIORITIES = ["P0", "P1", "P2", "P3"];
+
+test("docs/109: the queue is well formed and ordered the way the owner asked", () => {
+  const queue = queueRows(read("109-BACKLOG.md"));
+
+  // The # column is a position, not an identity. It must enumerate the queue.
+  assert.deepEqual(
+    queue.map((r) => r.n),
+    Array.from({ length: queue.length }, (_, i) => i + 1),
+    "docs/109's # column must run 1..N with no gaps or repeats",
+  );
+
+  // An id appearing twice means the same work is queued twice — or, worse, that
+  // one row was overwritten by a copy-paste and has silently left the queue.
+  const seen = new Map();
+  for (const r of queue) {
+    assert.ok(!seen.has(r.id), `docs/109 lists ${r.id} twice (rows ${seen.get(r.id)} and ${r.n})`);
+    seen.set(r.id, r.n);
+  }
+
+  // Lanes run Hotfix -> Audit -> Roadmap, contiguously: "lets complete the
+  // hotfix.. target those than audit and than roadmap".
+  let lane = 0;
+  for (const r of queue) {
+    assert.ok(LANES.includes(r.lane), `docs/109 row ${r.n} has unknown lane ${r.lane}`);
+    const at = LANES.indexOf(r.lane);
+    assert.ok(
+      at >= lane,
+      `docs/109 row ${r.n} (${r.id}) is lane ${r.lane} after lane ${LANES[lane]} — ` +
+        "the lanes must run Hotfix, then Audit, then Roadmap",
+    );
+    lane = at;
+  }
+
+  // Within Hotfix and Audit, priority never goes back up the scale. The Roadmap
+  // lane is ordered by phase and carries no priority, which the header states.
+  for (const name of ["Hotfix", "Audit"]) {
+    let pri = 0;
+    for (const r of queue.filter((x) => x.lane === name)) {
+      const at = PRIORITIES.indexOf(r.priority);
+      assert.ok(at >= 0, `docs/109 row ${r.n} (${r.id}) in lane ${name} needs a P0-P3 priority`);
+      assert.ok(
+        at >= pri,
+        `docs/109 row ${r.n} (${r.id}) is ${r.priority} after ${PRIORITIES[pri]} — ` +
+          `the ${name} lane must run P0 to P3`,
+      );
+      pri = at;
+    }
+  }
+  for (const r of queue.filter((x) => x.lane === "Roadmap")) {
+    assert.ok(
+      !PRIORITIES.includes(r.priority),
+      `docs/109 row ${r.n} (${r.id}) carries priority ${r.priority}, but 106 states none — ` +
+        "inventing one here would be re-grading, which this document forbids",
+    );
+  }
+
+  // A queue of closed work is not a queue.
+  for (const r of queue) {
+    assert.ok(isOpen(r.status), `docs/109 row ${r.n} (${r.id}) is not open: "${r.status}"`);
+  }
+});
+
+test("docs/109: every summary cell is what the rows actually say", () => {
+  const text = read("109-BACKLOG.md");
+  const queue = queueRows(text);
+
+  const tally = (rs) => ({
+    Rows: rs.length,
+    P0: rs.filter((r) => r.priority === "P0").length,
+    P1: rs.filter((r) => r.priority === "P1").length,
+    P2: rs.filter((r) => r.priority === "P2").length,
+    P3: rs.filter((r) => r.priority === "P3").length,
+    Unprioritised: rs.filter((r) => !PRIORITIES.includes(r.priority)).length,
+  });
+
+  const lines = text.split("\n");
+  const headerAt = lines.findIndex((l) => l.startsWith("| Lane | Rows |"));
+  assert.ok(headerAt > 0, "docs/109 must carry a Lane/Rows summary table");
+  const columns = cells(lines[headerAt]).slice(1);
+  assert.deepEqual(
+    columns,
+    ["Rows", "P0", "P1", "P2", "P3", "Unprioritised"],
+    "docs/109's summary columns changed — derive the new ones here too",
+  );
+
+  const stated = new Map();
+  for (const line of lines.slice(headerAt + 2)) {
+    if (!line.startsWith("|")) break;
+    const c = cells(line).map((x) => x.replaceAll("*", "").trim());
+    stated.set(c[0], c.slice(1).map(Number));
+  }
+
+  for (const name of LANES) {
+    const derived = tally(queue.filter((r) => r.lane === name));
+    const row = stated.get(name);
+    assert.ok(row, `docs/109's summary must carry a ${name} row`);
+    columns.forEach((colName, i) => {
+      assert.equal(
+        row[i],
+        derived[colName],
+        `docs/109 summary ${name}/${colName}: says ${row[i]}, the rows say ${derived[colName]}`,
+      );
+    });
+  }
+
+  const total = tally(queue);
+  const totalRow = stated.get("Total");
+  assert.ok(totalRow, "docs/109's summary must carry a Total row");
+  columns.forEach((colName, i) => {
+    assert.equal(
+      totalRow[i],
+      total[colName],
+      `docs/109 summary Total/${colName}: says ${totalRow[i]}, the rows say ${total[colName]}`,
+    );
+  });
+
+  // The prose headline is a published number too, and it is the one a reader
+  // quotes without opening the table.
+  const prose = text.match(
+    /\*\*(\d+) rows in the one queue: (\d+) Hotfix, (\d+) Audit, (\d+) Roadmap\.\*\*/,
+  );
+  assert.ok(
+    prose,
+    "docs/109 must state '**N rows in the one queue: A Hotfix, B Audit, C Roadmap.**'",
+  );
+  assert.equal(Number(prose[1]), total.Rows, "docs/109 headline total");
+  LANES.forEach((name, i) => {
+    assert.equal(
+      Number(prose[i + 2]),
+      queue.filter((r) => r.lane === name).length,
+      `docs/109 headline ${name} count`,
+    );
+  });
+});
+
+test("docs/109: no open row of 104 or 105 has fallen out of the one queue", () => {
+  const queue = queueRows(read("109-BACKLOG.md"));
+
+  // A merged row keeps its id but gets no row of its own: it is DECLARED in the
+  // "What was merged" table, and named in the Supersedes/see-also column of the
+  // row that absorbed it. Both are required. An earlier draft of this guard
+  // accepted a bare see-also mention as coverage, and deleting the OO-010 row
+  // did not turn it red — OO-010 is cited by five other rows, so the queue
+  // could lose the row that actually carries the work while the guard stayed
+  // green. Coverage therefore means "has a row, or is declared merged".
+  const listed = new Set(queue.map((r) => r.id));
+  const seeAlso = new Set();
+  for (const r of queue) {
+    for (const m of r.supersedes.match(/\b(?:HF|EV|UX|CQ|OO)-\d+\b|\bFID-[PLR]-\d+\b/g) ?? []) {
+      seeAlso.add(m);
+    }
+  }
+
+  const merged = new Set(
+    rows(
+      read("109-BACKLOG.md").split("## What was merged")[1] ?? "",
+      /^(?:HF|EV|UX|CQ|OO)-\d+$|^FID-[PLR]-\d+$/,
+    ).map((r) => r.id),
+  );
+  assert.ok(merged.size > 0, "docs/109 must carry a 'What was merged' table");
+  for (const id of merged) {
+    assert.ok(
+      !listed.has(id),
+      `docs/109 declares ${id} merged away and also queues it as a row of its own`,
+    );
+    assert.ok(
+      seeAlso.has(id),
+      `docs/109 declares ${id} merged, but no row names it in Supersedes / see also — ` +
+        "the work it stands for is now unreachable from the queue",
+    );
+  }
+  const mentioned = new Set([...listed, ...merged]);
+
+  const sources = [
+    ["104-HOTFIX-TRACKER.md", [/^HF-\d+$/]],
+    [
+      "105-AUDIT-2026-09-TRACKER.md",
+      [/^EV-\d+$/, /^UX-\d+$/, /^CQ-\d+$/, /^FID-[PLR]-\d+$/, /^OO-\d+$/],
+    ],
+  ];
+
+  const missing = [];
+  const closedButQueued = [];
+  for (const [file, patterns] of sources) {
+    const text = read(file);
+    for (const pattern of patterns) {
+      for (const r of rows(text, pattern)) {
+        if (isOpen(r.status)) {
+          if (!mentioned.has(r.id)) missing.push(`${r.id} (open in ${file.slice(0, 3)})`);
+        } else if (listed.has(r.id)) {
+          closedButQueued.push(
+            `${r.id} (closed in ${file.slice(0, 3)}: "${r.status.slice(0, 60)}")`,
+          );
+        }
+      }
+    }
+  }
+
+  // Checked before the coverage list, so that mis-typing one row's id reports
+  // the closed row it now points at rather than only the row it stopped being.
+  assert.deepEqual(
+    closedButQueued,
+    [],
+    "docs/109 queues rows their own source records as closed: " + closedButQueued.join(", "),
+  );
+  assert.deepEqual(
+    missing,
+    [],
+    "these rows are open in an archive and appear nowhere in docs/109 — work has " +
+      "fallen out of the one queue: " + missing.join(", "),
+  );
 });

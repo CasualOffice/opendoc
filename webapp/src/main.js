@@ -2990,7 +2990,7 @@ async function boot() {
 
   try {
     await init();
-    setStatus("Ready — open a .docx, .odt, .json, or .txt");
+    setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
     fileEl.disabled = false;
     if (openBtn) openBtn.disabled = false;
   } catch (err) {
@@ -8526,8 +8526,8 @@ const REVIEW_SURFACE = [
   { command: "review.next", button: () => reviewNextBtn, run: () => navigateReview(1) },
   { command: "review.acceptNext", button: () => reviewAcceptBtn, run: () => decideReviewAndAdvance(true) },
   { command: "review.rejectNext", button: () => reviewRejectBtn, run: () => decideReviewAndAdvance(false) },
-  { command: "review.acceptAll", button: () => reviewAcceptAllBtn, run: () => reviewAcceptAll.click() },
-  { command: "review.rejectAll", button: () => reviewRejectAllBtn, run: () => reviewRejectAll.click() },
+  { command: "review.acceptAll", button: () => reviewAcceptAllBtn, run: () => void decideAllReviewChanges(true) },
+  { command: "review.rejectAll", button: () => reviewRejectAllBtn, run: () => void decideAllReviewChanges(false) },
   { command: "review.comment", button: () => reviewCommentBtn, requires: "range", run: () => openReviewComposer() },
   { command: "review.toggle", button: () => reviewPanelBtn, run: () => toggleReview() },
 ];
@@ -9485,7 +9485,16 @@ for (const key of ["bold", "italic", "underline", "strike"]) {
   onButton(fmtButtons[key], () => toggleFormat(key));
 }
 onButton(clearFormattingBtn, () => {
-  if (!hasRange()) return;
+  if (!hasRange()) {
+    // A caret is not a range, so there is nothing to clear — but the control is
+    // enabled (the caret IS a selection), so returning in silence made Clear
+    // formatting a dead control on every surface that runs it: the ribbon
+    // button, the Format menu row, the palette and the compact bar all end up
+    // here. It refuses out loud instead, the same way the suggesting-mode
+    // branch below already does.
+    setStatus("Select the text whose formatting you want to clear", "error");
+    return;
+  }
   if (reviewMode === "suggesting") {
     setStatus("Clear formatting is not tracked; switch to Editing to apply it", "error");
     return;
@@ -12201,7 +12210,16 @@ function reviewCurrentTargetIndex(targets) {
 function navigateReview(direction) {
   if (!doc) return;
   const targets = reviewNavTargets();
-  if (!targets.length) return;
+  if (!targets.length) {
+    // The Review surface deliberately keeps Next/Previous enabled whatever the
+    // document holds, on the stated grounds that "the commands themselves
+    // report why nothing happened" (see REVIEW_SURFACE). This one did not: with
+    // no comments and no tracked changes it returned in silence, so Review ▸
+    // Next was a control that did nothing on a clean document — the same dead
+    // control Tools ▸ Settings was, by a different route.
+    setStatus("This document has no comments or tracked changes", "", { timeout: 3000 });
+    return;
+  }
   const current = reviewCurrentTargetIndex(targets);
   let index;
   if (current >= 0) {
@@ -12379,8 +12397,33 @@ function toggleReview(open) {
 reviewBtn.addEventListener("click", () => toggleReview());
 railReview.addEventListener("click", () => toggleReview());
 reviewClose.addEventListener("click", () => toggleReview(false));
-reviewAcceptAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(true)); announceReview("All changes accepted"); scheduleReviewMarginRender(); } });
-reviewRejectAll.addEventListener("click", async () => { if (doc) { await runEdit(() => doc.decideAllRevisions(false)); announceReview("All changes rejected"); scheduleReviewMarginRender(); } });
+/** Accept or reject every tracked change, for whichever surface asked.
+ *
+ *  The Review menu and the Review ribbon used to reach this by clicking the
+ *  sidebar's own button — and `updateReviewControls` DISABLES that button when
+ *  the document holds no changes. A disabled button dispatches no click, so the
+ *  menu row and the ribbon button did nothing at all, and said nothing either:
+ *  the same dead control Tools ▸ Settings was, reached by a different route.
+ *  Surfaces call this instead, and it answers for itself. Viewing mode is still
+ *  refused by `runEdit`, which reports that in its own words. */
+async function decideAllReviewChanges(accept) {
+  if (!doc) return;
+  let count = 0;
+  try {
+    count = (JSON.parse(doc.listRevisions()) ?? []).length;
+  } catch {
+    count = 0;
+  }
+  if (!count) {
+    setStatus("This document has no tracked changes", "", { timeout: 3000 });
+    return;
+  }
+  await runEdit(() => doc.decideAllRevisions(accept));
+  announceReview(accept ? "All changes accepted" : "All changes rejected");
+  scheduleReviewMarginRender();
+}
+reviewAcceptAll.addEventListener("click", () => void decideAllReviewChanges(true));
+reviewRejectAll.addEventListener("click", () => void decideAllReviewChanges(false));
 reviewPrevious.addEventListener("click", () => navigateReview(-1));
 reviewNext.addEventListener("click", () => navigateReview(1));
 // The visible mode control (`#reviewModeControl`) is a three-button segmented
@@ -12666,7 +12709,15 @@ function editorCommands(context = { surface: "palette" }) {
     // shape `tools.smartQuotes` uses, so the palette and the View menu both read
     // as a switch rather than as an action with an unknown effect.
     { id: "view.compactRibbon", label: `Compact ribbon: ${ribbonViewCollapsed ? "on" : "off"}`, group: "View", kw: "compact ribbon collapse expand band density toolbar chrome docs word full", noDoc: true, run: () => setRibbonCollapsed(!ribbonViewCollapsed) },
-    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark", run: () => settingsBtn.click() },
+    // Settings OPENS the panel; it does not synthesize a click on the gear
+    // button. Clicking a control on the user's behalf inherits that control's
+    // event semantics — the gear's handler stops propagation of ITS OWN click,
+    // which says nothing about the menu row's click that is still bubbling —
+    // and it also inherits the gear's toggle, so picking "Settings" from a menu
+    // while the panel was open would have closed it. `noDoc` because theme,
+    // accent and reviewer identity are host preferences that do not need a
+    // document open, and the gear is the only other way to reach them.
+    { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => toggleSettings(true) },
     { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
     // The Layout and References tabs' own rows, generated from the SAME tables
@@ -12716,8 +12767,8 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "review.rejectAtCaret", label: "Reject change at cursor", group: "Review", kw: "revision suggestion discard current", run: () => decideReviewAtCaret(false) },
     { id: "review.acceptNext", label: "Accept change and move to next", group: "Review", kw: "revision suggestion approve next advance", shortcut: "⌘⌥⏎", run: () => decideReviewAndAdvance(true) },
     { id: "review.rejectNext", label: "Reject change and move to next", group: "Review", kw: "revision suggestion discard next advance", shortcut: "⌘⌥⌫", run: () => decideReviewAndAdvance(false) },
-    { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => reviewAcceptAll.click() },
-    { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => reviewRejectAll.click() },
+    { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => void decideAllReviewChanges(true) },
+    { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => void decideAllReviewChanges(false) },
   ];
   const styleTarget = currentParagraphStyleName();
   cmds.push(
@@ -16614,10 +16665,10 @@ const MAX_OPEN_BYTES = 64 * 1024 * 1024;
 async function handleFile(file) {
   if (!file) return;
   // The WASM `open` auto-detects any registered format from the bytes, so accept
-  // every format the picker offers (DOCX, ODT, normalized JSON, plain text) — the
-  // extension is only a friendly pre-filter; detection is authoritative.
-  if (!/\.(docx|odt|json|txt)$/.test(file.name.toLowerCase())) {
-    setStatus("Please choose a .docx, .odt, .json, or .txt file", "error");
+  // every format the picker offers (DOCX, ODT, RTF, normalized JSON, plain text) —
+  // the extension is only a friendly pre-filter; detection is authoritative.
+  if (!/\.(docx|odt|rtf|json|txt)$/.test(file.name.toLowerCase())) {
+    setStatus("Please choose a .docx, .odt, .rtf, .json, or .txt file", "error");
     return;
   }
   // The open document lives in the wasm heap and nowhere else, so replacing it
@@ -16933,14 +16984,28 @@ function toggleSettings(open) {
   if (show) queueMicrotask(() => focusFirstIn(settingsPanel));
   else if (holdsFocus) settingsBtn.focus({ preventScroll: true });
 }
-settingsBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  toggleSettings();
-});
-document.addEventListener("click", (e) => {
-  if (!settingsPanel.hidden && !settingsPanel.contains(e.target) && e.target !== settingsBtn) {
-    toggleSettings(false);
-  }
+settingsBtn.addEventListener("click", () => toggleSettings());
+// Light dismiss on POINTERDOWN — the phase every other dismissable surface in
+// this chrome already uses (the menu bar, the editor context menu, the ribbon
+// overflow, the link chip, the paste-options bubble).
+//
+// This listener used to run on `click`, and that alone is what made
+// Tools ▸ Settings a dead control. The menu row's click ran the command, the
+// command opened the panel, and the SAME click carried on bubbling to here —
+// where the target (a menu row) is neither the panel nor the gear, so the panel
+// was closed again inside one event. Nothing was thrown and nothing was logged;
+// the panel was simply never on screen long enough to paint. `stopPropagation`
+// on the gear's own click could not help: it stops the gear's event, and the
+// event that closed the panel was the menu row's.
+//
+// Pointerdown cannot do that to any surface: it has already fired and been
+// handled before the activating click exists, and keyboard activation produces
+// no pointerdown at all. `closest` rather than `===` because the gear's visible
+// child is an icon span, which is what a real pointer lands on.
+document.addEventListener("pointerdown", (e) => {
+  if (settingsPanel.hidden) return;
+  if (settingsPanel.contains(e.target) || e.target?.closest?.("#settingsBtn")) return;
+  toggleSettings(false);
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !settingsPanel.hidden) toggleSettings(false);

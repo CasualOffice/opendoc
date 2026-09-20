@@ -16,6 +16,7 @@ mod normalized_json;
 mod odt;
 mod registry;
 mod report;
+mod rtf;
 mod text;
 
 pub use artifact::{
@@ -23,8 +24,8 @@ pub use artifact::{
     ImportRequest, SourceEnvelope,
 };
 pub use docx::{
-    DocxAdapter, builtin_registry, builtin_registry_with_limits,
-    builtin_registry_with_package_limits,
+    DocxAdapter, builtin_registry, builtin_registry_with_format_limits,
+    builtin_registry_with_limits, builtin_registry_with_package_limits,
 };
 pub use error::{AdapterError, IoError};
 pub use format::{FormatDescriptor, FormatId, FormatIdError, formats};
@@ -37,4 +38,5 @@ pub use registry::{
 pub use report::{
     CompatibilityEntry, CompatibilityReport, FeatureLocation, ModelOutcome, RetentionOutcome,
 };
+pub use rtf::RtfAdapter;
 pub use text::{PlainTextAdapter, PlainTextLimits};

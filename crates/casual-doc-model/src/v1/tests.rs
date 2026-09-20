@@ -1638,7 +1638,8 @@ fn paragraph_borders_shading_tabs_round_trip_and_bound() {
                 space_points: Some(4),
             }),
             ..ParagraphBorders::default()
-        },
+        }
+        .into(),
         shading: Shading {
             fill: Some(RgbColor { r: 1, g: 2, b: 3 }),
             ..Shading::default()
@@ -4139,4 +4140,210 @@ fn typed_math_projection_depth_is_bounded() {
             property: "math.expression.depth"
         })
     ));
+}
+
+// ---- docs/111 stage 1: the model's per-paragraph memory cost ---------------
+
+/// A document that populates every property field `docs/111` stage 1 moved out
+/// of line, written in the model's own canonical field order so re-serializing
+/// it must reproduce these exact bytes: paragraph `borders`, paragraph
+/// `propChange`, paragraph `markRevision`, and run `propChange`.
+const EVERY_BOXED_FIELD_POPULATED: &str = concat!(
+    r#"{"schemaVersion":1,"documentId":"00000000000001110000000000000001","#,
+    r#""body":[{"type":"paragraph","id":"00000000000001110000000000000002","#,
+    r#""properties":{"#,
+    r#""borders":{"top":{"style":"single","sizeEighthPoints":8,"spacePoints":4},"#,
+    r#""bar":{"style":"double","sizeEighthPoints":12}},"#,
+    r#""propChange":{"author":"Bo","date":"2022-02-02T00:00:00Z","revisionId":"3","#,
+    r#""prior":{"alignment":"center"}},"#,
+    r#""markRevision":{"kind":"insertion","author":"Ann","#,
+    r#""date":"2021-01-01T00:00:00Z","revisionId":"7"}},"#,
+    r#""inlines":[{"type":"run","id":"00000000000001110000000000000003","#,
+    r#""properties":{"bold":true,"#,
+    r#""propChange":{"author":"Cy","date":"2023-03-03T00:00:00Z","revisionId":"9","#,
+    r#""prior":{"italic":true}}},"text":"x"}]}],"#,
+    r#""definitions":{"styles":{},"abstractNumbering":{},"numbering":{},"#,
+    r#""sections":[],"media":{}}}"#,
+);
+
+/// The same document with none of those fields populated.
+const NO_BOXED_FIELD_POPULATED: &str = concat!(
+    r#"{"schemaVersion":1,"documentId":"00000000000001110000000000000001","#,
+    r#""body":[{"type":"paragraph","id":"00000000000001110000000000000002","#,
+    r#""properties":{},"#,
+    r#""inlines":[{"type":"run","id":"00000000000001110000000000000003","#,
+    r#""properties":{"bold":true},"text":"x"}]}],"#,
+    r#""definitions":{"styles":{},"abstractNumbering":{},"numbering":{},"#,
+    r#""sections":[],"media":{}}}"#,
+);
+
+/// `docs/111` stage 1 moved the rarely-populated property fields out of line
+/// (`borders`, paragraph `propChange`/`markRevision`, run `propChange`). That is
+/// a memory-layout change only: `Option<Box<T>>` serializes exactly as
+/// `Option<T>` does, and an absent field must still be omitted rather than
+/// written as `null`.
+///
+/// Both constants are already in canonical form, so "byte-identical to before"
+/// is checked as "the re-serialized document is these exact bytes" — the same
+/// bytes the unboxed model produced.
+#[test]
+fn boxed_property_fields_serialize_exactly_as_the_unboxed_values_did() {
+    for original in [EVERY_BOXED_FIELD_POPULATED, NO_BOXED_FIELD_POPULATED] {
+        let document = Document::from_json(original.as_bytes(), SnapshotLimits::default())
+            .expect("the document is valid");
+        let written = String::from_utf8(document.to_json().expect("serializes")).unwrap();
+        assert_eq!(written, original, "the JSON shape moved");
+
+        // And it is a fixed point: reopening the written bytes writes them again.
+        let reopened = Document::from_json(written.as_bytes(), SnapshotLimits::default())
+            .expect("the written document reopens");
+        assert_eq!(
+            String::from_utf8(reopened.to_json().unwrap()).unwrap(),
+            original
+        );
+    }
+}
+
+/// No boxed field loses its payload on the way through JSON (`SKILL.md` §12, no
+/// silent data loss): every value that went in comes back out.
+#[test]
+fn boxed_property_fields_survive_a_json_round_trip_with_their_values() {
+    let document = Document::from_json(
+        EVERY_BOXED_FIELD_POPULATED.as_bytes(),
+        SnapshotLimits::default(),
+    )
+    .expect("the document is valid");
+    let BlockNode::Paragraph(paragraph) = &document.body()[0] else {
+        panic!("expected a paragraph");
+    };
+    let properties = &paragraph.properties;
+
+    let top = properties.borders.top.as_ref().expect("the top edge");
+    assert_eq!(top.style, "single");
+    assert_eq!(top.size_eighth_points, Some(8));
+    assert_eq!(top.space_points, Some(4));
+    assert_eq!(
+        properties
+            .borders
+            .bar
+            .as_ref()
+            .map(|edge| edge.style.clone()),
+        Some("double".to_owned())
+    );
+    assert!(properties.borders.bottom.is_none());
+
+    let change = properties.prop_change.as_ref().expect("the pPrChange");
+    assert_eq!(change.author.as_deref(), Some("Bo"));
+    assert_eq!(change.revision_id.as_deref(), Some("3"));
+    assert_eq!(change.prior.alignment, Some(Alignment::Center));
+
+    let mark = properties
+        .mark_revision
+        .as_ref()
+        .expect("the mark revision");
+    assert_eq!(mark.kind, MarkRevisionKind::Insertion);
+    assert_eq!(mark.author.as_deref(), Some("Ann"));
+    assert_eq!(mark.revision_id.as_deref(), Some("7"));
+
+    let InlineNode::Run(run) = &paragraph.inlines[0] else {
+        panic!("expected a run");
+    };
+    let change = run.properties.prop_change.as_ref().expect("the rPrChange");
+    assert_eq!(change.author.as_deref(), Some("Cy"));
+    assert_eq!(change.prior.italic, Some(true));
+}
+
+/// An absent border set and an explicitly empty one are the same value: they
+/// compare equal, print the same, and both serialize to nothing. That was true
+/// of the unboxed `ParagraphBorders` and must stay true of the boxed one, or
+/// boxing would have changed behaviour rather than layout.
+#[test]
+fn an_absent_border_set_is_indistinguishable_from_an_empty_one() {
+    let absent = BoxedParagraphBorders::default();
+    let mut emptied = BoxedParagraphBorders::default();
+    emptied.top = Some(BorderEdge {
+        style: "single".to_owned(),
+        size_eighth_points: None,
+        color: None,
+        space_points: None,
+    });
+    emptied.top = None;
+
+    assert!(emptied.is_allocated(), "the mutation allocated a set");
+    assert!(!absent.is_allocated(), "an untouched set holds nothing");
+    assert_eq!(absent, emptied, "absent and emptied compare equal");
+    assert_eq!(format!("{absent:?}"), format!("{emptied:?}"));
+    assert!(absent.is_empty() && emptied.is_empty());
+    assert_eq!(
+        serde_json::to_string(&absent).unwrap(),
+        serde_json::to_string(&emptied).unwrap()
+    );
+
+    // An explicit `{}` in the JSON deserializes to the absent form, so a
+    // producer that writes an empty `w:pBdr` costs no allocation.
+    let parsed: BoxedParagraphBorders = serde_json::from_str("{}").unwrap();
+    assert!(!parsed.is_allocated());
+    assert_eq!(parsed, absent);
+}
+
+/// The per-paragraph memory budget from `docs/111` §3.1, as a committed
+/// artifact: a paragraph of 130 characters cost 1,565 bytes of model, of which
+/// 1,216 bytes were two property structs holding nothing.
+///
+/// These ceilings exist so the next 200-byte field cannot be added by value
+/// without someone deciding to pay for it on every paragraph in every document.
+/// Sizes are asserted as upper bounds, so a 32-bit target (wasm32, where every
+/// pointer halves) passes them too.
+#[test]
+fn the_model_stays_inside_its_per_paragraph_memory_budget() {
+    use std::mem::size_of;
+
+    // Measured on macOS arm64 before stage 1 / after stage 1:
+    //   ParagraphProperties 768 -> 304, RunProperties 448 -> 352,
+    //   Paragraph 816 -> 352, Run 496 -> 400, BlockNode 816 -> 800.
+    //
+    // Two of `docs/111` §4's numbers do not land, for reasons that are worth
+    // recording rather than rounding away:
+    //   * `RunProperties` ~192 counted a 160-byte `revision: Option<Revision>`
+    //     field that this struct has never had (`Revision` is an inline node,
+    //     not a run property), so 352 is the whole of that win.
+    //   * `BlockNode` is its largest variant, and that is now `Table` at 800
+    //     bytes, not `Paragraph` at 352. Boxing the table payload is the next
+    //     win; the note on the enum already tracks it.
+    assert!(
+        size_of::<ParagraphProperties>() <= 320,
+        "ParagraphProperties is {} bytes; something large was added by value",
+        size_of::<ParagraphProperties>()
+    );
+    assert!(
+        size_of::<RunProperties>() <= 368,
+        "RunProperties is {} bytes; something large was added by value",
+        size_of::<RunProperties>()
+    );
+    assert!(
+        size_of::<Paragraph>() <= 368,
+        "Paragraph is {} bytes",
+        size_of::<Paragraph>()
+    );
+    assert!(size_of::<Run>() <= 416, "Run is {} bytes", size_of::<Run>());
+    // `BlockNode` is as large as its largest variant, which is now `Table`, not
+    // `Paragraph` — boxing the table payload is the next win and is tracked on
+    // the enum itself.
+    assert!(
+        size_of::<BlockNode>() <= 800,
+        "BlockNode is {} bytes",
+        size_of::<BlockNode>()
+    );
+
+    // Each field stage 1 moved out of line costs a pointer when absent.
+    assert_eq!(size_of::<BoxedParagraphBorders>(), size_of::<usize>());
+    assert_eq!(
+        size_of::<Option<Box<PropChange<ParagraphProperties>>>>(),
+        size_of::<usize>()
+    );
+    assert_eq!(
+        size_of::<Option<Box<PropChange<RunProperties>>>>(),
+        size_of::<usize>()
+    );
+    assert_eq!(size_of::<Option<Box<MarkRevision>>>(), size_of::<usize>());
 }

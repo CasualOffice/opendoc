@@ -137,13 +137,25 @@ fn viewer_text_limits() -> PlainTextLimits {
 
 /// Refuses an input the editor cannot open, before any of it is parsed.
 ///
-/// Only the cheap, certain case: a non-package input whose newline count alone
-/// puts it past [`MAX_VIEWER_BLOCKS`]. Counting newlines in 200 MiB takes
+/// Only the cheap, certain case: a **plain-text** input whose newline count
+/// alone puts it past [`MAX_VIEWER_BLOCKS`]. Counting newlines in 200 MiB takes
 /// milliseconds, where importing it would spend seconds and then abort.
-/// Packages (`PK\x03\x04`) are left to the adapters, which must decompress
-/// before any count is meaningful.
+///
+/// The pre-check is sound only for formats where a newline *is* a paragraph
+/// break, so every format where it is not must be exempt and left to its
+/// adapter, which counts blocks honestly after import:
+///
+/// - **Packages** (`PK\x03\x04` — DOCX, ODT) carry their text compressed, so no
+///   count over the raw bytes means anything at all.
+/// - **RTF** (`{\rtf`) treats a newline as insignificant whitespace and its
+///   producers hard-wrap the control stream at roughly 255 bytes. A 60 MB RTF
+///   of perfectly ordinary length therefore carries ~250,000 newlines and would
+///   have been refused here for having "too many paragraphs" while holding a
+///   few thousand — the message would have been confidently wrong, which is
+///   worse than no pre-check. Found while wiring the RTF adapter in; the bound
+///   itself was correct for the plain text it was written against.
 fn viewer_admission_error(bytes: &[u8]) -> Option<String> {
-    if bytes.starts_with(b"PK\x03\x04") {
+    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"{\\rt") {
         return None;
     }
     let lines = bytes.iter().filter(|byte| **byte == b'\n').count() + 1;
@@ -7594,13 +7606,13 @@ impl WasmDocument {
             Some(id) => Some(id),
             None => Some(self.revision_ids.allocate()?),
         };
-        next.prop_change = Some(PropChange {
+        next.prop_change = Some(Box::new(PropChange {
             author,
             date,
             revision_id,
             editor_group: None,
             prior: Box::new(prior),
-        });
+        }));
         Ok(next)
     }
 
@@ -7629,12 +7641,12 @@ impl WasmDocument {
         }
         let revision_id = self.revision_ids.allocate().map_err(to_js)?;
         let mut leading = current.clone();
-        leading.mark_revision = Some(MarkRevision {
+        leading.mark_revision = Some(Box::new(MarkRevision {
             kind: MarkRevisionKind::Insertion,
             author,
             date,
             revision_id: Some(revision_id),
-        });
+        }));
         let mut trailing = current.clone();
         // Word's `w:next`: Enter at the END of a heading starts its follow-on style.
         if offset == len
@@ -7724,12 +7736,12 @@ impl WasmDocument {
             }
             None => {
                 let mut deleted = current.clone();
-                deleted.mark_revision = Some(MarkRevision {
+                deleted.mark_revision = Some(Box::new(MarkRevision {
                     kind: MarkRevisionKind::Deletion,
                     author,
                     date,
                     revision_id: Some(self.revision_ids.allocate()?),
-                });
+                }));
                 Operation::SetParagraphProperties {
                     node,
                     properties: Box::new(deleted),
@@ -7905,12 +7917,12 @@ impl WasmDocument {
                         return Err("A paragraph break in this range is another reviewer's suggestion; accept or reject it first".to_string());
                     }
                     None => {
-                        next.mark_revision = Some(MarkRevision {
+                        next.mark_revision = Some(Box::new(MarkRevision {
                             kind: MarkRevisionKind::Deletion,
                             author: author.clone(),
                             date: date.clone(),
                             revision_id: Some(self.revision_ids.allocate()?),
-                        });
+                        }));
                     }
                 }
             }
@@ -7928,13 +7940,13 @@ impl WasmDocument {
                         Some(id) => Some(id),
                         None => Some(self.revision_ids.allocate()?),
                     };
-                    shaped.prop_change = Some(PropChange {
+                    shaped.prop_change = Some(Box::new(PropChange {
                         author: author.clone(),
                         date: date.clone(),
                         revision_id,
                         editor_group: None,
                         prior: Box::new(prior),
-                    });
+                    }));
                 }
                 next = shaped;
             }
@@ -13819,13 +13831,13 @@ fn apply_review_format_change(
                 }
 
                 for (index, mut current, prior) in changes {
-                    current.prop_change = Some(PropChange {
+                    current.prop_change = Some(Box::new(PropChange {
                         author: author.clone(),
                         date: date.clone(),
                         revision_id: Some(revision_ids.allocate()?),
                         editor_group: Some(group),
                         prior: Box::new(prior),
-                    });
+                    }));
                     let InlineNode::Run(run) = &mut paragraph.inlines[index] else {
                         return Ok(false);
                     };
@@ -20713,6 +20725,36 @@ mod tests {
         );
     }
 
+    /// RTF is exempt from the newline pre-check for the same reason a package is,
+    /// but for the opposite cause: not because its text is compressed, but
+    /// because a newline in RTF is insignificant whitespace, and producers
+    /// hard-wrap the control stream at roughly 255 bytes. This document holds
+    /// **three** paragraphs and carries far more newlines than the ceiling; the
+    /// pre-check used to refuse it for having "too many paragraphs", which is a
+    /// confidently wrong message rather than a conservative one.
+    #[test]
+    fn a_hard_wrapped_rtf_is_not_refused_for_its_newlines() {
+        let mut bytes = Vec::from(&b"{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\n"[..]);
+        // Three real paragraphs, wrapped the way every RTF producer wraps: a
+        // newline every few tokens. Well past MAX_VIEWER_BLOCKS in newlines.
+        for paragraph in 0..3 {
+            for word in 0..(MAX_VIEWER_BLOCKS / 2) {
+                bytes.extend_from_slice(format!("w{paragraph}_{word}\n").as_bytes());
+            }
+            bytes.extend_from_slice(b"\\par\n");
+        }
+        bytes.push(b'}');
+        let newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
+        assert!(
+            newlines > MAX_VIEWER_BLOCKS,
+            "fixture must exceed the ceiling in newlines to be meaningful: {newlines}",
+        );
+        assert!(
+            viewer_admission_error(&bytes).is_none(),
+            "a hard-wrapped RTF must not be refused by the plain-text newline pre-check",
+        );
+    }
+
     /// The package path has its own guard, because the cheap newline pre-check
     /// deliberately skips packages: a ZIP's paragraph count is unknowable until
     /// it is decompressed. Without this, a DOCX past the ceiling was admitted and
@@ -21123,11 +21165,13 @@ mod tests {
             Alignment, Definitions, MarkRevision, MarkRevisionKind, PropChange,
         };
         let id = |n: u64| NodeId::from_parts(n, 108).unwrap();
-        let mark = |kind, revision: &str| MarkRevision {
-            kind,
-            author: Some("Word Reviewer".to_owned()),
-            date: Some("2026-09-17T00:00:00Z".to_owned()),
-            revision_id: Some(revision.to_owned()),
+        let mark = |kind, revision: &str| {
+            Box::new(MarkRevision {
+                kind,
+                author: Some("Word Reviewer".to_owned()),
+                date: Some("2026-09-17T00:00:00Z".to_owned()),
+                revision_id: Some(revision.to_owned()),
+            })
         };
         let paragraph = |n: u64, text: &str, properties: ParagraphProperties| {
             BlockNode::Paragraph(Paragraph {
@@ -21156,13 +21200,13 @@ mod tests {
                     "Beta",
                     ParagraphProperties {
                         alignment: Some(Alignment::Center),
-                        prop_change: Some(PropChange {
+                        prop_change: Some(Box::new(PropChange {
                             author: Some("Word Reviewer".to_owned()),
                             date: Some("2026-09-17T00:00:00Z".to_owned()),
                             revision_id: Some("4".to_owned()),
                             editor_group: None,
                             prior: Box::new(ParagraphProperties::default()),
-                        }),
+                        })),
                         ..ParagraphProperties::default()
                     },
                 ),
@@ -21426,12 +21470,12 @@ mod tests {
             .unwrap()
             .properties
             .clone();
-        properties.mark_revision = Some(MarkRevision {
+        properties.mark_revision = Some(Box::new(MarkRevision {
             kind: MarkRevisionKind::Deletion,
             author: None,
             date: None,
             revision_id: None,
-        });
+        }));
         d.apply_action_as(
             vec![Operation::SetParagraphProperties {
                 node,

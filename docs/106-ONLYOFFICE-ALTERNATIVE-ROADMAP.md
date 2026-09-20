@@ -1,5 +1,14 @@
 # 106 — Roadmap: the Apache-2.0 Alternative to ONLYOFFICE for Documents
 
+> **Archive, closed to new rows (2026-09-20).** The single working queue is
+> **`109-BACKLOG.md`** — the roadmap work that is not already a `104` or `105` row appears
+> there as the `RM-` and `Q` rows, in the order it will be worked, and `109` is the only
+> queue to work from. This document is not deleted: it holds the phase gates, the
+> sequencing rationale, the definition of "alternative" and the effort estimates that `109`
+> deliberately does not duplicate. **Do not add a new row here** — add it to `109`. Note
+> that the phase tables below still name rows that have since closed; read them as
+> rationale, not as a work list.
+
 **Status:** Proposed. **Opened:** 2026-09-15. **Owner decision required** — see §9.
 **Supersedes:** nothing. **Consumes:** `105-AUDIT-2026-09-TRACKER.md` (every row cited here
 lives there), `99-REMAINING-WORK-AUDIT.md`, `104-HOTFIX-TRACKER.md`.

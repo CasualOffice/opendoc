@@ -7,6 +7,10 @@ export const FORMAT_CATALOG = Object.freeze({
     label: "ODT",
     extension: "odt",
   }),
+  "application.rtf": Object.freeze({
+    label: "Rich Text Format",
+    extension: "rtf",
+  }),
   "org.casualoffice.normalized-json": Object.freeze({
     label: "Normalized JSON",
     extension: "json",
@@ -17,7 +21,7 @@ export const FORMAT_CATALOG = Object.freeze({
   }),
 });
 
-const DOCUMENT_EXTENSION = /\.(docx|odt|json|txt)$/i;
+const DOCUMENT_EXTENSION = /\.(docx|odt|rtf|json|txt)$/i;
 
 export function formatInfo(formatId) {
   return (

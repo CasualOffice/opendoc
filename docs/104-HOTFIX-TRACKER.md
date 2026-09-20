@@ -1,5 +1,13 @@
 # 104 — Hotfix Tracker
 
+> **Archive, closed to new rows (2026-09-20).** The single working queue is
+> **`109-BACKLOG.md`** — every open row below appears there, in the order it will be
+> worked, and `109` is the only queue to work from. This document is not deleted and no row
+> is removed from it: it holds the per-defect detail, the verification history, the refuted
+> findings and the cross-cutting themes that `109` deliberately does not duplicate.
+> **Do not add a new row here** — add it to `109`. When a row below closes, update its
+> Status here *and* remove it from `109`.
+
 **Status:** Living record. **Opened:** 2026-09-02. **Owner:** unassigned.
 
 **Scope:** every confirmed UX, UI, and correctness defect currently known in this
@@ -59,16 +67,16 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 10 |
-| P2 | 52 | 21 |
+| P1 | 33 | 7 |
+| P2 | 52 | 23 |
 | P3 | 22 | 13 |
-| Behavioural audit — 2026-09-04 | 18 | 6 |
+| Behavioural audit — 2026-09-04 | 18 | 4 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
 | Command-surface gaps found by the chrome prototypes — 2026-09-10 | 5 | 0 |
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **50** |
+| **Total** | **158** | **47** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -76,9 +84,31 @@ the prefix matters, because real statuses qualify themselves (`Open (owner decis
 re-derives every cell in this table from the rows and fails if one drifts; the P3 cell
 was one out for exactly as long as no such guard existed.
 
+**Corrected 2026-09-20.** Two cells in this table were wrong and had been for some time:
+P2 read `21` still-open against **23**, and the 2026-09-04 behavioural section read `6`
+against **4**. The errors were equal and opposite, so the column still summed to the stated
+Total of 50 and the guard — which only asserted that the section column sums to the Total —
+stayed green through both. `tracker_counts.test.mjs` now asserts **each section cell
+individually** against the rows under that heading, and additionally that the `— N items`
+count in each heading matches, so a single wrong cell can no longer hide behind a correct
+total. (The 47 now stated is that corrected 50 minus the three P1 rows closed the same day
+by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
+
 ### Progress
 
-**50 of 158 rows remain open. Every P0 is closed.** (HF-094 closed by #542; re-derive these counts, do not edit them by hand.)
+**47 of 158 rows remain open. Every P0 is closed.** (HF-094 closed by #542; HF-016, HF-022 and HF-034 closed 2026-09-20 after source verification; re-derive these counts, do not edit them by hand.)
+
+**Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
+against the code it cites, because `109` is now the only queue and a stale `Open` there is
+work nobody does. Three closed (above). The rest are still live, and two of them carry
+evidence lines that have gone stale without the defect closing — recorded so the next
+reader does not re-derive them: **HF-085**'s "93% of the webapp" was measured at
+14,859/16,040; `main.js` is now **17,545** lines of **19,333**, i.e. **90.75%**, still with
+**zero** `export` statements. **HF-025**'s shortcut-label defect is now partial:
+`formatShortcut()` exists in `webapp/src/keyboard.mjs` and is applied on the palette, app
+menu, shortcuts dialog and ribbon tooltips, but the palette's own `⌘⇧P` chip in
+`webapp/editor.html` is a static literal and the paste-options `title` attributes are
+outside `TIP_SELECTOR`, so raw ⌘ glyphs still reach Windows and Linux users.
 
 Four rows previously listed Open were re-read against the code on 2026-09-15 and are
 closed: **HF-069** (activation moved to `click`), **HF-074** (skip link present),
@@ -156,14 +186,14 @@ Still waiting on an owner decision, not on engineering:
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
 | HF-051 | No Word Count dialog and no selection-scoped counts — the code flags this hole itself | word-count | M | Sibling gap (docs (ProseMirror)) | Open |
 | HF-015 | A six-byte non-ASCII color string panics the WASM module and poisons the session | wasm | S | Internal audit | Fixed |
-| HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Open |
+| HF-016 | There is no "New blank document" — the only way to get a document is to open someone else's file | file | M | Sibling gap (docs (ProseMirror)) | Fixed (#542) |
 | HF-017 | Table column count is unbounded on one side and collapses to 1 twip on the other | layout | M | Internal audit | Fixed |
 | HF-018 | Blocking site data leaves the editor completely dead (blank, no handlers) | webapp-js | S | Internal audit | Fixed |
 | HF-019 | Right-click "Open link" bypasses the URL scheme allowlist the click path enforces | security | S | Internal audit | Fixed |
 | HF-060 | No coarse-pointer sizing and 13px inputs — every menu row is mouse-sized and iOS Safari zooms on every field focus | a11y | M | Sibling gap (opencalc + docs) | Fixed |
 | HF-020 | Opening a tracked-changes document can throw mid-render and leave the page list blank | wasm | S | Internal audit | Fixed |
 | HF-021 | Track-changes UI hardcodes light-mode Google hexes — suggestions and the mode switch are unreadable in dark mode | design-system | M | Sibling gap (opencalc + docs) | Fixed |
-| HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Open |
+| HF-022 | With changes shown, clicking places the caret in the wrong place and selection highlights miss the text | wasm | L | Internal audit | Fixed (verified 2026-09-20) |
 | HF-023 | Every table command is enabled but always fails for tables in headers, footers, notes and text boxes | parity | M | Internal audit | Fixed |
 | HF-024 | Down arrow in a table jumps sideways to the next cell instead of the row below | editor-ux | M | Internal audit | Fixed |
 | HF-025 | Every shortcut label is a hardcoded ⌘ glyph — Windows and Linux users are shown keys their keyboard does not have | i18n | M | Sibling gap (docs (ProseMirror)) | Open |
@@ -178,7 +208,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-032 | Insert-table grid picker is pointer-only and exposes 80 unnamed buttons | accessibility | S | Internal audit | Fixed |
 | HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Fixed |
 | HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Partly fixed |
-| HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Partly fixed |
+| HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Fixed (#508 + verified 2026-09-20) |
 | HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Open |
 
 ### P2 — 52 items
@@ -800,7 +830,18 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-016 — There is no "New blank document" — the only way to get a document is to open someone else's file
 
-**P1** · file · parity · effort M · source: Sibling gap vs docs (ProseMirror) · **Status:** Open
+**P1** · file · parity · effort M · source: Sibling gap vs docs (ProseMirror) · **Status:** Fixed (#542)
+
+**Closed 2026-09-20, verified in the source rather than taken from the PR.** The row was
+still reading `Open` while `105` UX-011 had been `Fixed (#542)` for days — `104` was simply
+never updated. What the code says today: the command is declared at
+`webapp/src/main.js:12468` — `{ id: "file.new", label: "New blank document", …, noDoc: true,
+run: () => void newBlankDocument() }` — the implementation is `newBlankDocument()` at
+`webapp/src/main.js:3261`, and it is reachable from two surfaces, not one: the File menu
+(`APP_MENU_SECTIONS.file` carries `["file.new"]` at `webapp/src/main.js:13005`) and the
+command palette, which enumerates the same descriptor list. `noDoc: true` is the part that
+matters for this row's symptom — the command is live with no document open, which is the
+state the row describes.
 
 **Symptom.** You open the editor to write something new and there is no way forward — you have to find or fabricate a .docx elsewhere first. The empty state reads as a viewer, not an editor.
 
@@ -888,7 +929,20 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-022 — With changes shown, clicking places the caret in the wrong place and selection highlights miss the text
 
-**P1** · wasm · bug · effort L · source: Internal audit · **Status:** Open
+**P1** · wasm · bug · effort L · source: Internal audit · **Status:** Fixed (verified 2026-09-20)
+
+**Closed 2026-09-20 by re-reading the code the row cites, not by trusting a PR.** The
+row's Evidence sentence — "body_hit, caret_rect and selection_rects all build
+`LayoutSnapshot::new(&self.layout)`" — is no longer true of any of the three.
+`crates/casual-doc-wasm/src/lib.rs:11313` introduces `painted_layout()`
+(`self.markup_layout.as_ref().unwrap_or(&self.layout)`) with a doc comment stating the
+rule for the whole file: "EVERYTHING that converts between the screen and the model must
+read this one". `body_hit` (`:1006`), `caret_rect` (`:2036`) and `selection_rects`
+(`:2052`) all build their snapshot from it. The second half of the defect — the two
+layouts having different byte spaces — is handled by `view_pos` (`:11343`) and `edit_pos`
+(`:11357`), which map an editing-space position into the painted space and back through
+`review_segments`. The row's alternative fix (make the markup view read-only) was not the
+one taken; the harder one was.
 
 **Symptom.** On exactly the documents the review feature exists for — even with zero edits — clicking a word lands the caret several characters or lines away, and drag-selection paints rectangles that do not cover the glyphs underneath. Suggesting mode forces this state on.
 
@@ -1078,7 +1132,21 @@ Every row, in queue order. Locations were verified against the code at audit tim
 
 ### HF-034 — The header "Open" button cannot be focused or activated by keyboard
 
-**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Partly fixed — #508 (button is focusable; the pre-document File menu needs a CSS rule)
+**P1** · accessibility · a11y · effort S · source: Internal audit · **Status:** Fixed (#508 + verified 2026-09-20)
+
+**Closed 2026-09-20.** Both halves of the row's Evidence are now false. (a) There is no
+`<label class="btn btn-primary file">` anywhere — `grep` finds no such class — and
+`#file` at `webapp/editor.html:74` is a bare hidden `<input type=file>` with nothing
+wrapping it. (b) The remainder this row was held open for — "the pre-document File menu
+needs a CSS rule" — is closed at `webapp/src/main.js:2630`: `documentChrome.hidden =
+false` runs unconditionally at module scope, above a comment that states the reason
+("The menu bar is the ONLY entry point now that Open has left the header, so it can no
+longer wait for a document"). `#appMenuBar` (`webapp/editor.html:44`) is a `<nav>` of real
+`<button>` elements, and `file.open` is `noDoc: true` and sits in `APP_MENU_SECTIONS.file`
+(`webapp/src/main.js:13006`), so Open is tab-reachable on a fresh editor from two surfaces
+(File menu, palette). Deliberate divergence from this row's prescribed fix: the primary
+Open affordance was **removed from the header** rather than re-implemented there as
+`<button id="openBtn">`; the keyboard/AT defect the row names is what closed.
 
 **Symptom.** Tabbing through a freshly loaded editor skips the primary Open button entirely — it is a label wrapping a hidden input — and the File menu that offers Open… is hidden until a document exists. Screen-reader users never encounter the app's main entry point.
 
