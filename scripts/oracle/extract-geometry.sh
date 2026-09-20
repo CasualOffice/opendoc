@@ -4,10 +4,12 @@
 # casual-doc-render `oracle_geometry` test compares against.
 #
 # Output (stdout, and written to fixtures/oracle/<id>.geom.json by the caller):
-#   { "schema": 2,
+#   { "schema": 3,
+#     "fonts": ["LiberationSerif", ...],
 #     "pages": [ { "sizeTwips": [w,h],
 #                  "contentBboxTwips": [x0,y0,x1,y1]|null,
-#                  "excludedLines": n } ] }
+#                  "excludedLines": n,
+#                  "excludedExtentTwips": n } ] }
 #
 # Coordinates: PDF points (1/72in), origin top-left, converted to twips (×20) so
 # they match the engine's twip geometry.
@@ -25,7 +27,18 @@
 #   The engine reproduces the same quantity from its shaped runs' pen advances
 #   and per-run ascent/descent, so no ink-vs-layout fudge factor is involved.
 #
-# FONT-PARITY SCOPING (`excludedLines`):
+# FONT PROVENANCE (`fonts`):
+#
+#   Every face LibreOffice actually EMBEDDED in the PDF, subset prefix stripped
+#   (`BAAAAA+LiberationSerif` -> `LiberationSerif`). This is provenance read off
+#   the artifact rather than off the environment, and it is what the gate trusts:
+#   installing a font package is not the same as the renderer using it, and a
+#   reference shaped with a substituted face measures the producing machine's
+#   font cache instead of our fidelity (that has happened — the geometry came
+#   back ~17% wide). The test refuses a reference naming any face that is neither
+#   a pinned metric-compatible family nor an explicitly reviewed non-parity face.
+#
+# FONT-PARITY SCOPING (`excludedLines`, `excludedExtentTwips`):
 #
 #   Determinism rests on both renderers shaping with the same metric-compatible
 #   faces — but that only holds for the code points those faces COVER. A run of
@@ -33,10 +46,22 @@
 #   with different advances, and a wider substitute also shifts every word after
 #   it on the same line. Such text is not oracle-comparable, so the words are
 #   grouped into lines (by vertical overlap) and any line containing an
-#   out-of-coverage code point is dropped from the bbox and counted instead. The
+#   out-of-coverage code point is dropped from the bbox and measured instead. The
 #   test applies the mirror-image rule (drop a line holding a run that did not
-#   resolve to a bundled metric-compatible face) and compares the counts exactly,
-#   so the exclusion cannot silently hide a line.
+#   resolve to a bundled metric-compatible face) and compares the excluded
+#   VERTICAL EXTENT within the same tolerance as every other edge, so the
+#   exclusion cannot silently swallow a line of real content.
+#
+#   The extent, not the line COUNT, is the compared quantity, and that is a
+#   measured decision rather than a preference. Line grouping is per-renderer:
+#   on `real-producer-table-list` LibreOffice's two bullet lines sit 0.8pt apart
+#   and group as two, while our list marker's box is tall enough to overlap the
+#   next line, so the same two lines group as one. The count then differs (1 vs
+#   2) with no fidelity difference behind it, whereas the excluded extent differs
+#   by 17 twips — well inside tolerance — and still moves by a full line height
+#   (~276 twips at body size) the moment an exclusion actually eats real content.
+#   `excludedLines` is still emitted, as context for a reference diff, but it is
+#   grouping-sensitive and is NOT gated.
 #
 # Determinism (docs/94 §Determinism): pin the LibreOffice version AND install
 # ONLY the bundled metric-compatible faces (Liberation/Carlito/Caladea) so the
@@ -62,7 +87,7 @@ if [[ ! -f "$input" ]]; then
   exit 2
 fi
 
-for tool in soffice pdftotext python3; do
+for tool in soffice pdftotext pdffonts python3; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "required tool not found: $tool" >&2
     exit 3
@@ -85,11 +110,15 @@ pdf="$workdir/$(basename "${input%.*}").pdf"
 # 2. PDF -> per-word bounding boxes (XHTML with <page>/<word> elements).
 pdftotext -bbox "$pdf" "$workdir/bbox.html"
 
-# 3. Reduce the word boxes to per-page {size, content bbox, excluded lines}.
-python3 - "$workdir/bbox.html" <<'PY'
+# 3. PDF -> the faces LibreOffice actually embedded, as provenance the gate reads
+#    off the artifact rather than off the producing machine's font configuration.
+pdffonts "$pdf" > "$workdir/fonts.txt"
+
+# 4. Reduce the word boxes to per-page {size, content bbox, excluded extent}.
+python3 - "$workdir/bbox.html" "$workdir/fonts.txt" <<'PY'
 import sys, json, html.parser
 
-SCHEMA = 2
+SCHEMA = 3
 
 # Code points the pinned faces (Liberation Sans/Serif/Mono, Carlito, Caladea)
 # all cover, as inclusive ranges. Deliberately conservative: a range left out
@@ -166,6 +195,26 @@ def group_into_lines(words):
     return lines
 
 
+def embedded_fonts(path):
+    """The distinct faces the PDF embeds, subset prefix stripped, sorted.
+
+    `pdffonts` prints a two-line header, then one row per font whose first
+    column is the (possibly subsetted) base font name.
+    """
+    names = set()
+    with open(path, encoding="utf-8") as fh:
+        for line in fh.read().splitlines()[2:]:
+            name = line.split(" ", 1)[0].strip()
+            if not name:
+                continue
+            # `BAAAAA+LiberationSerif` -> `LiberationSerif`; a subset tag is six
+            # uppercase letters chosen per-document and carries no information.
+            if "+" in name:
+                name = name.split("+", 1)[1]
+            names.add(name)
+    return sorted(names)
+
+
 parser = BBox()
 with open(sys.argv[1], encoding="utf-8") as fh:
     parser.feed(fh.read())
@@ -174,13 +223,17 @@ def twips(pt):
     # PDF points (1/72in) -> twips (1/1440in); round to the nearest twip.
     return int(round(pt * 20.0))
 
-out = {"schema": SCHEMA, "pages": []}
+out = {"schema": SCHEMA, "fonts": embedded_fonts(sys.argv[2]), "pages": []}
 for p in parser.pages:
     bbox = None
     excluded = 0
+    excluded_extent = 0.0
     for line in group_into_lines(p["words"]):
         if not all(is_pinned(w["text"]) for w in line):
             excluded += 1
+            # The band this excluded line occupies. Summed rather than counted:
+            # see FONT-PARITY SCOPING above for why the count is not gated.
+            excluded_extent += max(w["y1"] for w in line) - min(w["y0"] for w in line)
             continue
         for w in line:
             if bbox is None:
@@ -192,6 +245,7 @@ for p in parser.pages:
         "sizeTwips": [twips(p["w"]), twips(p["h"])],
         "contentBboxTwips": [twips(v) for v in bbox] if bbox is not None else None,
         "excludedLines": excluded,
+        "excludedExtentTwips": twips(excluded_extent),
     })
 print(json.dumps(out, indent=2))
 PY
