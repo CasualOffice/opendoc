@@ -228,9 +228,27 @@ pub(crate) struct LineGrid {
     adjust_line_height_in_table: bool,
 }
 
-/// Resolves a section document grid into an active line pitch. Word commonly
-/// omits `w:type` while writing a positive `w:linePitch`; that producer form is
-/// a line grid. Explicit `default` and character-only `snapToChars` are inert.
+/// Resolves a section document grid into an active line pitch. Only an
+/// **explicit** `lines` / `linesAndChars` grid type enables the line grid;
+/// `default`, `snapToChars`, and an **omitted** `w:type` are inert.
+///
+/// The omitted-type case is the one that matters in practice, and it used to be
+/// read the other way (`docs/100` §2, rule 1: "the producer form used by Word …
+/// treated as a line grid"). That reading is wrong and it over-paginated real
+/// documents. Word writes `<w:docGrid w:linePitch="360"/>` with **no** `w:type`
+/// into the `sectPr` of essentially every Latin document it saves, and it does
+/// not snap those lines to 18 pt — the grid is a Page Setup → Document Grid
+/// feature that is off unless the author turns it on, at which point Word writes
+/// the type out. ECMA-376 §17.6.5 leaves `w:type` with no schema default, so an
+/// absent type is "not specified", i.e. no grid; LibreOffice's writerfilter maps
+/// it to `GRID_NONE` for the same reason.
+///
+/// Measured on a real customer document (an A4 loan-agreement form carrying
+/// `<w:docGrid w:linePitch="299"/>` and no `w:type`): reading the omitted type as
+/// a line grid rounded every 218-twip body line up to 299 and every 20 pt title
+/// line up to 598, turning a 5-page document into 7 pages with a near-empty
+/// page 3. Word's own last layout (four `w:lastRenderedPageBreak` marks) and a
+/// LibreOffice PDF conversion both say 5. `tests/pagination_fidelity.rs` pins it.
 #[must_use]
 pub(crate) fn line_grid_for_section(
     section: &SectionBoundary,
@@ -238,7 +256,7 @@ pub(crate) fn line_grid_for_section(
 ) -> Option<LineGrid> {
     let enabled = matches!(
         section.doc_grid.grid_type,
-        None | Some(DocGridType::Lines | DocGridType::LinesAndChars)
+        Some(DocGridType::Lines | DocGridType::LinesAndChars)
     );
     let pitch = section.doc_grid.line_pitch.filter(|pitch| *pitch > 0)?;
     enabled.then_some(LineGrid {

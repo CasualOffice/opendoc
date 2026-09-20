@@ -35,6 +35,7 @@ pub mod fonts;
 pub mod hittest;
 pub mod incremental;
 mod line_number;
+pub mod measure;
 pub mod model;
 mod note_numbering;
 pub mod notes;

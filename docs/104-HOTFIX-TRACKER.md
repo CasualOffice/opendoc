@@ -67,8 +67,8 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 7 |
-| P2 | 52 | 23 |
+| P1 | 33 | 6 |
+| P2 | 52 | 22 |
 | P3 | 22 | 13 |
 | Behavioural audit — 2026-09-04 | 18 | 4 |
 | Layout-space audit — 2026-09-09 | 14 | 0 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **47** |
+| **Total** | **158** | **45** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**47 of 158 rows remain open. Every P0 is closed.** (HF-094 closed by #542; HF-016, HF-022 and HF-034 closed 2026-09-20 after source verification; re-derive these counts, do not edit them by hand.)
+**45 of 158 rows remain open. Every P0 is closed** — the last two, HF-011 (no crash recovery) and HF-045 (a half-applied edit), closed with #554. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -180,7 +180,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-008 | Control characters in text are written raw into document.xml, producing a file nothing can reopen | import-export | M | Internal audit | Fixed |
 | HF-009 | Images in headers, footers, footnotes and comments lose their relationship on save | import-export | M | Internal audit | Fixed |
 | HF-010 | Duplicate relationship Id in document.xml.rels makes the saved package invalid | import-export | S | Internal audit | Fixed (#497) |
-| HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Open |
+| HF-011 | No autosave, draft, or crash recovery — a tab crash or OS kill is unrecoverable | data-safety | L | Sibling gap (opencalc + docs) | Fixed (#554) |
 | HF-012 | Numbering, note, comment and bookmark ids are exported as 20-digit numbers Word cannot accept | import-export | M | Internal audit | Fixed |
 | HF-013 | Rich paste in Suggesting mode scrambles or drops text containing any non-ASCII character | webapp-js | S | Internal audit | Fixed |
 | HF-014 | Rendering hangs forever on dashed/dot-dash underline with a font reporting zero underline thickness | render | S | Internal audit | Fixed |
@@ -224,7 +224,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-042 | Charts and ink are dropped even when the file carries a fallback the model supports | import-export | L | Internal audit | Fixed |
 | HF-043 | Nine hand-rolled dialogs behave differently — Split cell ignores Escape, backdrop clicks and Enter, and leaks focus behind its own modal | dialogs | M | Sibling gap (opencalc) | Fixed |
 | HF-044 | An unreadable image is exported as a zero-byte part with no loss reported | import-export | S | Internal audit | Fixed (#497) |
-| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Partly fixed |
+| HF-045 | A failed edit or undo leaves the document half-changed and can lose the undo step | rust-core | M | Internal audit | Fixed (#554) |
 | HF-046 | The paste-options chip undoes an unrelated edit if you press Cmd+Z first | clipboard | S | Internal audit | Fixed |
 | HF-047 | Import/export data loss is reported as a bare number — the report naming what was lost is parsed and discarded | error-handling | M | Sibling gap (opencalc) | Open |
 | HF-048 | Changing underline style or double-strike leaves the page showing the old decoration | layout | S | Internal audit | Fixed |

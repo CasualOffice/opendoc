@@ -24,6 +24,13 @@ use casual_doc_model::v1::NumberFormat;
 
 use crate::block::{BlockFragment, BoxMetrics, BreakControl, CellFragment, ParagraphDecor};
 use crate::flow::shape_field_run;
+// Separate `use` lines (anti-conflict, and the measure tier is a distinct
+// concern from the block/flow types above): the two-tier galley of `docs/113`.
+use crate::measure::FragmentMeasure;
+use crate::measure::MeasureLayout;
+use crate::measure::Paginable;
+use crate::measure::PaginableCell;
+use crate::measure::cells_content_height;
 use crate::model::ModelPos;
 use crate::page::{AnchorContent, FlowPos, FlowSpan, Page, PaginatedLayout, PlacedFragment};
 use crate::text::{FieldKind, GlyphRun, Line, LineLayout, LineShaper};
@@ -39,9 +46,13 @@ use crate::units::{Point, Rect, Size, Twip};
 /// extends *past* the margin:
 ///
 /// ```text
-/// body_top    = max(margin_top,    header_distance + header_height)
-/// body_bottom = max(margin_bottom, footer_distance + footer_height)
+/// body_top    = header_height == 0 ? margin_top    : max(margin_top,    header_distance + header_height)
+/// body_bottom = footer_height == 0 ? margin_bottom : max(margin_bottom, footer_distance + footer_height)
 /// ```
+///
+/// The zero-height guards are not an optimization: a section with no header part
+/// still carries `w:pgMar/@w:header` (usually the 720-twip default), so without
+/// them a headerless page reserves a band that does not exist.
 ///
 /// So a header shorter than the top margin costs the body nothing (the common
 /// case) — the previous implementation subtracted the full band height on top of
@@ -91,16 +102,34 @@ pub struct PageConfig {
 impl PageConfig {
     /// The y of the top of the body content area: the top margin, or the bottom of
     /// the header band if the band (nested at `header_distance`) reaches past it.
+    ///
+    /// A section with **no header** has no band at all, so `header_distance` must
+    /// not participate: Word starts the body at the top margin. Guarding on
+    /// `header_height == 0` matters because `w:pgMar/@w:header` is written on
+    /// every section whether or not a header part exists, and it is usually the
+    /// 720-twip default — larger than a narrow top margin. Without the guard a
+    /// headerless document with `top="567" header="737"` silently lost 170 twips
+    /// of body on every page to a header that does not exist.
     #[must_use]
     fn body_top(&self) -> Twip {
+        if self.header_height.is_zero() {
+            return self.margin_top;
+        }
         self.margin_top
             .max(self.header_distance + self.header_height)
     }
 
     /// The distance from the bottom page edge to the bottom of the body content
     /// area: the bottom margin, or the top of the footer band if it reaches past it.
+    ///
+    /// Mirrors [`body_top`](Self::body_top): with **no footer** there is no band,
+    /// so `footer_distance` must not participate and the body ends at the bottom
+    /// margin.
     #[must_use]
     fn body_bottom(&self) -> Twip {
+        if self.footer_height.is_zero() {
+            return self.margin_bottom;
+        }
         self.margin_bottom
             .max(self.footer_distance + self.footer_height)
     }
@@ -167,8 +196,82 @@ const MIN_WIDOW_ORPHAN: usize = 2;
 /// overflows rather than looping, so pagination always terminates.
 #[must_use]
 pub fn paginate(fragments: &[BlockFragment], config: &PageConfig) -> PaginatedLayout {
-    let mut p = Paginator::new(config, Vec::new(), FlowPos::at(0), None, &[]);
-    p.run(fragments, 0);
+    paginate_with_checkpoints(fragments, config, 0).0
+}
+
+/// [`paginate`] that also records a resumable [`Checkpoint`] every
+/// `checkpoint_interval` pages (`0` = none).
+///
+/// The layout is byte-identical to [`paginate`]'s — recording a checkpoint
+/// observes the paginator's state, it does not steer it.
+#[must_use]
+pub fn paginate_with_checkpoints(
+    fragments: &[BlockFragment],
+    config: &PageConfig,
+    checkpoint_interval: usize,
+) -> (PaginatedLayout, Vec<Checkpoint>) {
+    let mut p = Paginator::new(config, fragments, Vec::new(), 0, FlowPos::at(0), None, &[]);
+    p.checkpoint_interval = checkpoint_interval;
+    p.run(0);
+    p.flush();
+    (PaginatedLayout { pages: p.pages }, p.checkpoints)
+}
+
+/// Paginates the **measure tier** of a galley: the page boundaries of the whole
+/// document, and the checkpoints any page can be re-derived from.
+///
+/// This is the pass that makes an exact page count affordable for a document
+/// whose shaped galley would not fit in memory (`docs/113` §4 Q1). It runs the
+/// *same* `Paginator` as [`paginate`], over fragments that carry heights and
+/// break opportunities but no glyphs, and emits
+/// [`PageOutline`](crate::measure::PageOutline)s instead of [`Page`]s. Because
+/// the walk is shared, the boundaries it reports are the boundaries a full
+/// pagination would report — asserted by the `measure_equals_full_*` tests.
+#[must_use]
+pub fn paginate_measures(
+    measures: &[FragmentMeasure],
+    config: &PageConfig,
+    checkpoint_interval: usize,
+) -> MeasureLayout {
+    let mut p = Paginator::new(config, measures, Vec::new(), 0, FlowPos::at(0), None, &[]);
+    p.checkpoint_interval = checkpoint_interval;
+    p.run(0);
+    p.flush();
+    MeasureLayout {
+        pages: p.pages,
+        checkpoints: p.checkpoints,
+    }
+}
+
+/// Paginates the pages from `checkpoint` onward, without paginating anything
+/// above it.
+///
+/// The guarantee is the same shape as [`repaginate`]'s: the returned pages are
+/// **field-for-field identical** to `paginate(fragments, config).pages[checkpoint.page_index..]`,
+/// including their page numbers, their flow spans (galley-absolute, not
+/// window-relative) and a table's repeated header rows when the table straddles
+/// the checkpoint. That is verified by the `paginate_from_equals_full_*` tests.
+///
+/// The checkpoint may come from either tier — [`paginate_measures`] produces
+/// them from heights alone, which is the point: the window that has to be
+/// painted is reached without the galley above it ever being shaped.
+#[must_use]
+pub fn paginate_from(
+    fragments: &[BlockFragment],
+    config: &PageConfig,
+    checkpoint: &Checkpoint,
+) -> PaginatedLayout {
+    let mut p = Paginator::new(
+        config,
+        fragments,
+        Vec::new(),
+        checkpoint.page_index as usize,
+        checkpoint.at,
+        None,
+        &[],
+    );
+    p.seed_table_context(checkpoint);
+    p.run(checkpoint.at.fragment as usize);
     p.flush();
     PaginatedLayout { pages: p.pages }
 }
@@ -266,8 +369,16 @@ pub fn repaginate_with_stats(
     );
 
     let prefix: Vec<Page> = prev.pages[..resume_page].to_vec();
-    let mut p = Paginator::new(config, prefix, FlowPos::at(resume_index as u32), halt, &[]);
-    p.run(new_galley, resume_index);
+    let mut p = Paginator::new(
+        config,
+        new_galley,
+        prefix,
+        0,
+        FlowPos::at(resume_index as u32),
+        halt,
+        &[],
+    );
+    p.run(resume_index);
     p.flush();
 
     let reflowed = p.pages.len() - resume_page;
@@ -435,15 +546,73 @@ impl HaltLookup {
     }
 }
 
+/// The carry state that lets pagination restart at a page boundary instead of
+/// at the top of the document (`docs/113` §3.1).
+///
+/// Pagination is a **forward fill** and each page begins at a fresh content-top
+/// cursor, so everything below a page boundary is a pure function of the state
+/// at that boundary plus the geometry and the downstream galley. These are
+/// exactly the `Paginator`'s own fields at such a boundary:
+///
+/// - `at` — the flow position of the next content to place. Restricted to a
+///   whole-fragment boundary (`line == 0`) that starts a keep-group, because
+///   those are the positions the group walk can restart from and reproduce
+///   what the forward fill did; see `Paginator::is_resumable_boundary`, which
+///   applies the same two conditions `safe_resume_page` applies to the
+///   incremental path.
+/// - `page_index` — how many pages precede it, so resumed pages carry the page
+///   numbers they would have had (`PAGE` fields and `Page::number`).
+/// - `current_table` / `table_headers` — the table whose rows are being placed
+///   across the boundary and its repeated `w:tblHeader` rows. Without them, a
+///   table resumed mid-way would lose its repeated header on the first resumed
+///   page. The headers are named by **galley index** rather than copied, which
+///   keeps a checkpoint small and makes it valid for either tier: the measure
+///   pass produces the checkpoints, the paint pass consumes them.
+///
+/// A checkpoint is therefore 80 bytes of struct (measured by the committed
+/// `layout_footprint` example on macOS arm64) plus four bytes per repeated
+/// header row, one every [`DEFAULT_CHECKPOINT_INTERVAL`] pages — 5,680 bytes
+/// for the 4,546-page synthetic document that probe paginates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Checkpoint {
+    /// Number of pages that precede this boundary; the next page is
+    /// `page_index + 1`.
+    pub page_index: u32,
+    /// Flow position of the first content on the next page.
+    pub at: FlowPos,
+    /// The table whose rows are being placed across this boundary, if any.
+    pub current_table: Option<NodeId>,
+    /// Galley indices of that table's repeated header rows, in capture order.
+    pub table_headers: Vec<u32>,
+}
+
+/// How many pages apart resumable checkpoints are placed by default
+/// (`docs/113` §4 Q2 starting value).
+pub const DEFAULT_CHECKPOINT_INTERVAL: usize = 64;
+
 /// Mutable pagination state, walked fragment by fragment.
-struct Paginator<'a> {
+///
+/// Generic over the galley tier ([`Paginable`]). The same walk drives the
+/// **paint** tier ([`BlockFragment`] → [`Page`]) and the **measure** tier
+/// ([`FragmentMeasure`] → [`PageOutline`](crate::measure::PageOutline)), so the
+/// two cannot disagree about where a page ends — which is the property
+/// `docs/113` §5 requires and the `measure_equals_full_*` tests assert.
+struct Paginator<'a, F: Paginable> {
     config: &'a PageConfig,
+    /// The galley being walked. Held so a checkpoint can name a table's header
+    /// rows by galley index instead of copying the fragments, and so the
+    /// resumability of a boundary can be tested when it is reached.
+    galley: &'a [F],
     reservations: &'a [Twip],
     content: Rect,
     content_bottom: i32,
     content_height: i32,
-    pages: Vec<Page>,
-    placed: Vec<PlacedFragment>,
+    /// The pages this run emitted. A resumed run starts empty and counts from
+    /// `number_base`.
+    pages: Vec<F::Page>,
+    /// How many pages precede the ones in `pages` (0 for a full run).
+    number_base: usize,
+    placed: Vec<F::Placed>,
     cursor_y: Twip,
     /// Flow position of the next content to be placed.
     at: FlowPos,
@@ -458,29 +627,47 @@ struct Paginator<'a> {
     current_table: Option<NodeId>,
     /// The current table's header rows (`w:tblHeader`), repeated at the top of
     /// each continuation page.
-    table_headers: Vec<BlockFragment>,
+    table_headers: Vec<F>,
+    /// The galley indices `table_headers` were captured from, so a
+    /// [`Checkpoint`] can carry the header context without carrying fragments.
+    table_header_indices: Vec<u32>,
+    /// Set while a row is being cut across a page boundary. A page closed in
+    /// the middle of a fragment cannot be resumed from — see
+    /// `Paginator::split_table_row`.
+    mid_fragment: bool,
+    /// Record a [`Checkpoint`] every this many pages; `0` records none.
+    checkpoint_interval: usize,
+    /// The checkpoints recorded so far.
+    checkpoints: Vec<Checkpoint>,
 }
 
-impl<'a> Paginator<'a> {
-    /// Creates a paginator seeded with already-emitted `pages` and resuming at
-    /// flow position `at` (page-top cursor). For a full run pass an empty prefix,
+impl<'a, F: Paginable> Paginator<'a, F> {
+    /// Creates a paginator over `galley` seeded with already-emitted `pages`
+    /// (and `number_base` pages before those), resuming at flow position `at`
+    /// (a page-top cursor). For a full run pass an empty prefix, a base of 0,
     /// `FlowPos::at(0)`, and no halt lookup.
     fn new(
         config: &'a PageConfig,
-        pages: Vec<Page>,
+        galley: &'a [F],
+        pages: Vec<F::Page>,
+        number_base: usize,
         at: FlowPos,
         halt: Option<HaltLookup>,
         reservations: &'a [Twip],
     ) -> Self {
-        let content =
-            content_area_with_reservation(config, reservation_for_page(reservations, pages.len()));
+        let content = content_area_with_reservation(
+            config,
+            reservation_for_page(reservations, number_base + pages.len()),
+        );
         Self {
             config,
+            galley,
             reservations,
             content,
             content_bottom: content.bottom().raw(),
             content_height: content.size.height.raw(),
             pages,
+            number_base,
             placed: Vec::new(),
             cursor_y: content.origin.y,
             at,
@@ -489,23 +676,48 @@ impl<'a> Paginator<'a> {
             halted: None,
             current_table: None,
             table_headers: Vec::new(),
+            table_header_indices: Vec::new(),
+            mid_fragment: false,
+            checkpoint_interval: 0,
+            checkpoints: Vec::new(),
         }
+    }
+
+    /// The 0-based index of the page currently being filled — equivalently, how
+    /// many pages precede it.
+    fn page_index(&self) -> usize {
+        self.number_base + self.pages.len()
+    }
+
+    /// Restores the table context a [`Checkpoint`] captured, so a table whose
+    /// rows straddle the boundary keeps repeating its header rows.
+    fn seed_table_context(&mut self, checkpoint: &Checkpoint) {
+        let galley = self.galley;
+        self.current_table = checkpoint.current_table;
+        self.table_header_indices
+            .clone_from(&checkpoint.table_headers);
+        self.table_headers = checkpoint
+            .table_headers
+            .iter()
+            .filter_map(|index| galley.get(*index as usize).cloned())
+            .collect();
     }
 
     fn reset_page_content(&mut self) {
         self.content = content_area_with_reservation(
             self.config,
-            reservation_for_page(self.reservations, self.pages.len()),
+            reservation_for_page(self.reservations, self.page_index()),
         );
         self.content_bottom = self.content.bottom().raw();
         self.content_height = self.content.size.height.raw();
     }
 
-    /// Walks keep-with-next groups of `fragments[from..]`, placing them into
+    /// Walks keep-with-next groups of the galley from `from`, placing them into
     /// pages. A keep-together group (a keep-next chain, or a single `keep_lines`
     /// paragraph) is moved whole when it fits a page but not the remaining space;
     /// a normal paragraph splits to fill the current page.
-    fn run(&mut self, fragments: &[BlockFragment], from: usize) {
+    fn run(&mut self, from: usize) {
+        let fragments = self.galley;
         let mut i = from;
         while i < fragments.len() && self.halted.is_none() {
             self.at = FlowPos::at(i as u32);
@@ -531,7 +743,7 @@ impl<'a> Paginator<'a> {
             let group_height: i32 = group.iter().map(|f| f.height().raw()).sum();
             let group_fits_page = group_height <= self.content_height;
             let is_keep_group = group.len() > 1 || group[0].break_control().keep_lines;
-            let is_vertical_merge_group = group.iter().any(BlockFragment::is_vertical_merge_row);
+            let is_vertical_merge_group = group.iter().any(Paginable::is_vertical_merge_row);
 
             let forced = group[0].break_control().page_break_before;
             let doesnt_fit_here = self.cursor_y.raw() + group_height > self.content_bottom;
@@ -555,12 +767,8 @@ impl<'a> Paginator<'a> {
             // the table's repeated headers. Include them when deciding whether
             // the explicit intact-overflow fallback is required.
             let repeated_header_height = if is_vertical_merge_group && self.placed.is_empty() {
-                match group.first() {
-                    Some(BlockFragment::TableRow {
-                        table,
-                        header: false,
-                        ..
-                    }) if self.current_table == Some(*table) => self
+                match group.first().and_then(Paginable::row_info) {
+                    Some(row) if !row.header && self.current_table == Some(row.table) => self
                         .table_headers
                         .iter()
                         .map(|header| header.height().raw())
@@ -589,8 +797,8 @@ impl<'a> Paginator<'a> {
                 start: self.page_start,
                 end: self.at,
             };
-            let page = build_page(
-                self.pages.len(),
+            let page = F::build_page(
+                self.page_index(),
                 self.config,
                 self.content,
                 std::mem::take(&mut self.placed),
@@ -600,6 +808,7 @@ impl<'a> Paginator<'a> {
             self.reset_page_content();
             self.cursor_y = self.content.origin.y;
             self.page_start = self.at;
+            self.record_checkpoint();
             // The page just closed; `self.at` is the next page's start. If it
             // re-lands on a previous boundary inside the unchanged tail, stop —
             // the caller splices the rest of the previous layout verbatim.
@@ -611,6 +820,57 @@ impl<'a> Paginator<'a> {
         }
     }
 
+    /// Records a [`Checkpoint`] at the page boundary just closed, when the
+    /// interval falls due and the boundary is one [`run`](Self::run) can
+    /// restart from.
+    fn record_checkpoint(&mut self) {
+        if self.checkpoint_interval == 0 {
+            return;
+        }
+        let pages = self.page_index();
+        if pages == 0
+            || !pages.is_multiple_of(self.checkpoint_interval)
+            || !self.is_resumable_boundary()
+        {
+            return;
+        }
+        self.checkpoints.push(Checkpoint {
+            page_index: pages as u32,
+            at: self.at,
+            current_table: self.current_table,
+            table_headers: self.table_header_indices.clone(),
+        });
+    }
+
+    /// Whether [`run`](Self::run) can restart at [`at`](Self::at) and reproduce
+    /// what the forward fill did from there.
+    ///
+    /// Three conditions, two of them the ones `safe_resume_page` applies to the
+    /// incremental path:
+    ///
+    /// - **A whole-fragment boundary.** `run` always begins a fragment at its
+    ///   first line, so it cannot express a resume part-way through one. That
+    ///   rules out `line > 0` (a split paragraph) and, through `mid_fragment`,
+    ///   a page closed inside a row being cut — whose recorded flow position
+    ///   says `line == 0` but whose remaining content is the row's tail.
+    /// - **A keep-group start.** `run` re-forms keep-with-next groups from
+    ///   their head, so resuming inside one would hand the walk a *shorter*
+    ///   group than the full pass saw, with a different `allow_split`. This
+    ///   condition is deliberately **conservative**: it is not known that every
+    ///   such resume diverges, only that the group the walk re-forms is not the
+    ///   one the full pass split, and refusing the boundary costs at most a
+    ///   checkpoint. Reasoning case by case about when it would happen to agree
+    ///   is exactly the kind of subtlety `docs/113` §5 says not to rely on.
+    /// - **Real downstream content.** A boundary at the end of the galley names
+    ///   nothing to resume.
+    fn is_resumable_boundary(&self) -> bool {
+        let fragment = self.at.fragment as usize;
+        !self.mid_fragment
+            && self.at.line == 0
+            && fragment < self.galley.len()
+            && (fragment == 0 || !self.galley[fragment - 1].break_control().keep_next)
+    }
+
     /// Remaining content height below the cursor.
     fn remaining(&self) -> i32 {
         self.content_bottom - self.cursor_y.raw()
@@ -618,7 +878,7 @@ impl<'a> Paginator<'a> {
 
     /// Appends a placed fragment at the cursor and advances by `height`. Records
     /// the page's start flow position when this is the page's first content.
-    fn push(&mut self, fragment: BlockFragment, height: Twip) {
+    fn push(&mut self, fragment: F, height: Twip) {
         if self.placed.is_empty() {
             self.page_start = self.at;
         }
@@ -626,61 +886,44 @@ impl<'a> Paginator<'a> {
             Point::new(self.content.origin.x, self.cursor_y),
             Size::new(self.content.size.width, height),
         );
-        self.placed.push(PlacedFragment {
-            fragment,
-            rect,
-            section: Some(self.config.section),
-        });
+        self.placed
+            .push(fragment.into_placed(rect, self.config.section));
         self.cursor_y = self.cursor_y + height;
     }
 
     /// Places fragment `idx`, splitting a multi-line paragraph across pages when
     /// `allow_split` and it does not fit whole.
-    fn place(
-        &mut self,
-        idx: usize,
-        fragment: &BlockFragment,
-        allow_split: bool,
-        force_overflow: bool,
-    ) {
+    fn place(&mut self, idx: usize, fragment: &F, allow_split: bool, force_overflow: bool) {
         self.at = FlowPos::at(idx as u32);
+        let row = fragment.row_info();
         // Leaving a run of table rows ends the current table's header context.
-        if !matches!(fragment, BlockFragment::TableRow { .. }) {
+        if row.is_none() {
             self.leave_table();
         }
-        match fragment {
-            BlockFragment::Paragraph {
-                id,
-                lines,
-                box_metrics,
-                break_control,
-                decor,
-            } if lines.lines.iter().any(|l| l.page_break_after)
-                || (lines.lines.len() > 1 && allow_split && !break_control.keep_lines) =>
-            {
-                // A paragraph with a forced page/column break is always routed
-                // through the line splitter (even under `keepLines`, a keep-group,
-                // or when it is a *single* line — e.g. an empty paragraph carrying a
-                // section break or a lone `w:br`) so the explicit break is honored;
-                // the `_` arm below would place it whole and drop the break.
-                self.place_paragraph(idx, *id, lines, *box_metrics, *break_control, *decor);
-            }
-            BlockFragment::TableRow {
-                table,
-                can_split,
-                header,
-                ..
-            } => {
+        match row {
+            Some(row) => {
                 self.place_table_row(
                     idx,
                     fragment,
-                    *table,
-                    *can_split && allow_split,
-                    *header,
+                    row.table,
+                    row.can_split && allow_split,
+                    row.header,
                     force_overflow,
                 );
             }
-            _ => {
+            // A paragraph with a forced page/column break is always routed
+            // through the line splitter (even under `keepLines`, a keep-group,
+            // or when it is a *single* line — e.g. an empty paragraph carrying a
+            // section break or a lone `w:br`) so the explicit break is honored;
+            // the whole-placement branch below would drop the break.
+            None if fragment.any_line_page_break_after()
+                || (fragment.line_count() > 1
+                    && allow_split
+                    && !fragment.break_control().keep_lines) =>
+            {
+                self.place_paragraph(idx, fragment);
+            }
+            None => {
                 let height = fragment.height();
                 if !self.placed.is_empty() && height.raw() > self.remaining() {
                     self.flush();
@@ -703,7 +946,7 @@ impl<'a> Paginator<'a> {
     fn place_table_row(
         &mut self,
         idx: usize,
-        fragment: &BlockFragment,
+        fragment: &F,
         table: NodeId,
         can_split: bool,
         header: bool,
@@ -715,7 +958,7 @@ impl<'a> Paginator<'a> {
             self.repeat_headers_if_needed(idx, header);
             self.push(fragment.clone(), fragment.height());
             self.at = FlowPos::at(idx as u32 + 1);
-            self.capture_header(fragment, header);
+            self.capture_header(idx, fragment, header);
             return;
         }
         // Header rows are never split — they move whole and repeat.
@@ -728,7 +971,7 @@ impl<'a> Paginator<'a> {
         // follows other content.
         if !fits && can_split {
             self.split_table_row(idx, fragment);
-            self.capture_header(fragment, header);
+            self.capture_header(idx, fragment, header);
             return;
         }
         // A `cantSplit`/header row that does not fit moves whole to the next page
@@ -742,27 +985,34 @@ impl<'a> Paginator<'a> {
         self.repeat_headers_if_needed(idx, header);
         self.push(fragment.clone(), height);
         self.at = FlowPos::at(idx as u32 + 1);
-        self.capture_header(fragment, header);
+        self.capture_header(idx, fragment, header);
     }
 
     /// Splits a table row across a page boundary at block/line boundaries within
     /// its cells, mirroring the paragraph line-splitting path. Each chunk is a
     /// row fragment carrying the cells' content that fits; the remainder carries
     /// to the next page (with header rows repeated).
-    fn split_table_row(&mut self, idx: usize, fragment: &BlockFragment) {
-        let BlockFragment::TableRow {
-            id,
-            table,
-            cells,
-            can_split,
-            header,
-            ..
-        } = fragment
-        else {
+    fn split_table_row(&mut self, idx: usize, fragment: &F) {
+        // Every page this cut closes ends *inside* fragment `idx`, and the flow
+        // position recorded at such a boundary names the row rather than the
+        // chunk within it (`repeat_headers_if_needed` deliberately re-anchors
+        // `page_start` to the body row, so the page's provenance stays on the
+        // real row). A boundary like that looks resumable — `line == 0` — and is
+        // not: restarting `run` there would place the whole row again instead of
+        // its tail. Mark the span so no checkpoint is taken inside it.
+        self.mid_fragment = true;
+        self.split_row_chunks(idx, fragment);
+        self.mid_fragment = false;
+    }
+
+    /// The body of [`split_table_row`](Self::split_table_row); see its comment
+    /// for why it is wrapped.
+    fn split_row_chunks(&mut self, idx: usize, fragment: &F) {
+        let Some(row) = fragment.row_info() else {
             return;
         };
-        let is_header = *header;
-        let mut remaining: Vec<CellFragment> = cells.clone();
+        let is_header = row.header;
+        let mut remaining: Vec<F::Cell> = fragment.cells().to_vec();
         let mut chunk = 0u32;
         loop {
             self.at = FlowPos {
@@ -774,8 +1024,8 @@ impl<'a> Paginator<'a> {
                 // Nothing fits here. On an empty page place the remainder whole
                 // as overflow (so we never loop); otherwise start a fresh page.
                 if self.placed.is_empty() {
-                    let h = BlockFragment::cells_content_height(&remaining);
-                    let row = make_row_chunk(*id, *table, remaining, h, *can_split, is_header);
+                    let h = cells_content_height(&remaining);
+                    let row = fragment.row_chunk(remaining, h);
                     self.push(row, h);
                     self.at = FlowPos::at(idx as u32 + 1);
                     return;
@@ -787,7 +1037,7 @@ impl<'a> Paginator<'a> {
                 self.repeat_headers_if_needed(idx, is_header);
                 continue;
             }
-            let row = make_row_chunk(*id, *table, head, Twip(used), *can_split, is_header);
+            let row = fragment.row_chunk(head, Twip(used));
             self.push(row, Twip(used));
             if tail.is_empty() {
                 self.at = FlowPos::at(idx as u32 + 1);
@@ -809,6 +1059,7 @@ impl<'a> Paginator<'a> {
         if self.current_table != Some(table) {
             self.current_table = Some(table);
             self.table_headers.clear();
+            self.table_header_indices.clear();
         }
     }
 
@@ -817,12 +1068,15 @@ impl<'a> Paginator<'a> {
     fn leave_table(&mut self) {
         self.current_table = None;
         self.table_headers.clear();
+        self.table_header_indices.clear();
     }
 
-    /// Records a header row so it can be repeated on continuation pages.
-    fn capture_header(&mut self, fragment: &BlockFragment, header: bool) {
+    /// Records a header row so it can be repeated on continuation pages. `idx`
+    /// is the row's galley index, which is what a [`Checkpoint`] stores.
+    fn capture_header(&mut self, idx: usize, fragment: &F, header: bool) {
         if header {
             self.table_headers.push(fragment.clone());
+            self.table_header_indices.push(idx as u32);
         }
     }
 
@@ -857,28 +1111,16 @@ impl<'a> Paginator<'a> {
                 Point::new(self.content.origin.x, self.cursor_y),
                 Size::new(self.content.size.width, height),
             );
-            self.placed.push(PlacedFragment {
-                fragment: h,
-                rect,
-                section: Some(self.config.section),
-            });
+            self.placed.push(h.into_placed(rect, self.config.section));
             self.cursor_y = self.cursor_y + height;
         }
     }
 
     /// Places paragraph `idx`'s lines, breaking across pages at line boundaries
     /// with widow/orphan control.
-    fn place_paragraph(
-        &mut self,
-        idx: usize,
-        id: NodeId,
-        lines: &LineLayout,
-        box_metrics: BoxMetrics,
-        break_control: BreakControl,
-        decor: ParagraphDecor,
-    ) {
-        let n = lines.lines.len();
-        let widow = break_control.widow_control;
+    fn place_paragraph(&mut self, idx: usize, fragment: &F) {
+        let n = fragment.line_count();
+        let widow = fragment.break_control().widow_control;
         let mut start = 0;
         let mut is_head = true;
         while start < n && self.halted.is_none() {
@@ -889,7 +1131,7 @@ impl<'a> Paginator<'a> {
                 line: start as u32,
             };
             let space_before = if is_head {
-                box_metrics.space_before.raw()
+                fragment.space_before().raw()
             } else {
                 0
             };
@@ -899,7 +1141,7 @@ impl<'a> Paginator<'a> {
             let mut take = 0;
             let mut used = 0;
             while start + take < n {
-                let h = lines.lines[start + take].height.raw();
+                let h = fragment.line_height(start + take).raw();
                 if used + h > avail {
                     break;
                 }
@@ -912,7 +1154,7 @@ impl<'a> Paginator<'a> {
                 // one (then place a single line as overflow so we never loop).
                 if self.placed.is_empty() {
                     take = 1;
-                    used = lines.lines[start].height.raw();
+                    used = fragment.line_height(start).raw();
                 } else {
                     self.flush();
                     continue;
@@ -923,14 +1165,11 @@ impl<'a> Paginator<'a> {
             // include up to and through the break line, then flush unconditionally.
             // This is just another line-split point, so the incremental halt/prefix
             // bookkeeping (keyed on `{fragment, line}`) is unchanged.
-            let forced = lines.lines[start..start + take]
-                .iter()
-                .position(|l| l.page_break_after);
+            let forced = (0..take).find(|offset| fragment.line_page_break_after(start + offset));
             if let Some(k) = forced {
                 let new_take = k + 1;
-                used -= lines.lines[start + new_take..start + take]
-                    .iter()
-                    .map(|l| l.height.raw())
+                used -= (new_take..take)
+                    .map(|offset| fragment.line_height(start + offset).raw())
                     .sum::<i32>();
                 take = new_take;
             }
@@ -960,23 +1199,16 @@ impl<'a> Paginator<'a> {
                 && take > 1
             {
                 take -= 1;
-                used -= lines.lines[start + take].height.raw();
+                used -= fragment.line_height(start + take).raw();
             }
 
             let is_tail = start + take == n;
             let space_after = if is_tail {
-                box_metrics.space_after.raw()
+                fragment.space_after().raw()
             } else {
                 0
             };
-            let chunk = slice_paragraph(
-                id,
-                lines,
-                box_metrics,
-                break_control,
-                decor,
-                start..start + take,
-            );
+            let chunk = fragment.slice_paragraph(start..start + take);
             self.push(chunk, Twip(used + space_before + space_after));
             start += take;
             is_head = false;
@@ -1078,38 +1310,23 @@ pub(crate) fn make_row_chunk(
 /// preserving every column so the continuation row keeps its geometry), and the
 /// head height actually used (the tallest content-bearing cell's fitted content
 /// plus its cloned top/bottom margins). A `used` of 0 means nothing fit.
-pub(crate) fn split_cells(
-    cells: &[CellFragment],
-    avail: i32,
-) -> (Vec<CellFragment>, Vec<CellFragment>, i32) {
+pub(crate) fn split_cells<C: PaginableCell>(cells: &[C], avail: i32) -> (Vec<C>, Vec<C>, i32) {
     let mut head = Vec::with_capacity(cells.len());
     let mut tail = Vec::with_capacity(cells.len());
     let mut used = 0;
     let mut has_tail = false;
     for cell in cells {
-        let vertical_margins = cell
-            .margins
-            .top
-            .raw()
-            .saturating_add(cell.margins.bottom.raw())
-            .saturating_add(cell.cell_spacing.top.raw())
-            .saturating_add(cell.cell_spacing.bottom.raw());
+        let vertical_margins = cell.vertical_margins().raw();
         let content_avail = avail.saturating_sub(vertical_margins);
-        let (head_blocks, tail_blocks, cell_used) = split_blocks(&cell.blocks, content_avail);
+        let (head_blocks, tail_blocks, cell_used) = split_blocks(cell.blocks(), content_avail);
         if cell_used > 0 || !head_blocks.is_empty() {
             used = used.max(cell_used.saturating_add(vertical_margins));
         }
-        head.push(CellFragment {
-            blocks: head_blocks,
-            ..cell.clone()
-        });
+        head.push(cell.with_blocks(head_blocks));
         if !tail_blocks.is_empty() {
             has_tail = true;
         }
-        tail.push(CellFragment {
-            blocks: tail_blocks,
-            ..cell.clone()
-        });
+        tail.push(cell.with_blocks(tail_blocks));
     }
     if !has_tail {
         tail.clear();
@@ -1121,10 +1338,7 @@ pub(crate) fn split_cells(
 /// the cut go to the head, the straddling block is split (a multi-line paragraph
 /// at a line boundary; anything else moves whole to the tail), and the rest go to
 /// the tail. Returns `(head, tail, used_height)`.
-fn split_blocks(
-    blocks: &[BlockFragment],
-    avail: i32,
-) -> (Vec<BlockFragment>, Vec<BlockFragment>, i32) {
+fn split_blocks<F: Paginable>(blocks: &[F], avail: i32) -> (Vec<F>, Vec<F>, i32) {
     let mut head = Vec::new();
     let mut tail = Vec::new();
     let mut y = 0;
@@ -1140,25 +1354,19 @@ fn split_blocks(
             y += height;
             continue;
         }
-        match block {
-            BlockFragment::Paragraph {
-                id,
-                lines,
-                box_metrics,
-                break_control,
-                decor,
-            } if lines.lines.len() > 1 && !break_control.keep_lines => {
-                let (head_frag, tail_frag, used) =
-                    split_paragraph_at(*id, lines, *box_metrics, *break_control, *decor, avail - y);
-                if let Some(head_frag) = head_frag {
-                    head.push(head_frag);
-                    y += used;
-                }
-                if let Some(tail_frag) = tail_frag {
-                    tail.push(tail_frag);
-                }
+        // A table row reports zero lines, so only a multi-line paragraph that is
+        // not `keepLines` is ever cut here; anything else moves whole.
+        if block.line_count() > 1 && !block.break_control().keep_lines {
+            let (head_frag, tail_frag, used) = split_paragraph_at(block, avail - y);
+            if let Some(head_frag) = head_frag {
+                head.push(head_frag);
+                y += used;
             }
-            _ => tail.push(block.clone()),
+            if let Some(tail_frag) = tail_frag {
+                tail.push(tail_frag);
+            }
+        } else {
+            tail.push(block.clone());
         }
         splitting = false;
     }
@@ -1168,21 +1376,14 @@ fn split_blocks(
 /// Splits one paragraph at a `avail`-twip vertical cut, greedily keeping the
 /// leading lines that fit. Returns the head chunk (if any line fits), the tail
 /// chunk (the rest), and the head height used.
-fn split_paragraph_at(
-    id: NodeId,
-    lines: &LineLayout,
-    box_metrics: BoxMetrics,
-    break_control: BreakControl,
-    decor: ParagraphDecor,
-    avail: i32,
-) -> (Option<BlockFragment>, Option<BlockFragment>, i32) {
-    let n = lines.lines.len();
-    let space_before = box_metrics.space_before.raw();
+fn split_paragraph_at<F: Paginable>(fragment: &F, avail: i32) -> (Option<F>, Option<F>, i32) {
+    let n = fragment.line_count();
+    let space_before = fragment.space_before().raw();
     let budget = avail - space_before;
     let mut take = 0;
     let mut used = 0;
     while take < n {
-        let line_h = lines.lines[take].height.raw();
+        let line_h = fragment.line_height(take).raw();
         if used + line_h > budget {
             break;
         }
@@ -1190,11 +1391,10 @@ fn split_paragraph_at(
         take += 1;
     }
     if take == 0 {
-        let whole = slice_paragraph(id, lines, box_metrics, break_control, decor, 0..n);
-        return (None, Some(whole), 0);
+        return (None, Some(fragment.slice_paragraph(0..n)), 0);
     }
-    let head = slice_paragraph(id, lines, box_metrics, break_control, decor, 0..take);
-    let tail = slice_paragraph(id, lines, box_metrics, break_control, decor, take..n);
+    let head = fragment.slice_paragraph(0..take);
+    let tail = fragment.slice_paragraph(take..n);
     (Some(head), Some(tail), space_before + used)
 }
 
