@@ -28,7 +28,7 @@ casual-doc-model.workspace = true
 # advances for the `/W` array, and the character map inverted to build the
 # `ToUnicode` CMap. Already in the tree via `parley`/`fontique`/
 # `casual-doc-render`. Apache-2.0 OR MIT.
-skrifa = "0.43"
+skrifa = "0.44"
 # `FlateDecode` for content streams, embedded font programs and image samples.
 # Already in the tree (the `zip` stack pulls the same 1.1 release); pure-Rust
 # backends only, so the WASM build stays clean. MIT OR Apache-2.0.
