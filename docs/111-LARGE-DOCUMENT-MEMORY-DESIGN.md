@@ -86,10 +86,17 @@ Inside `RunProperties` (448 B):
 
 | field | size | typical |
 | --- | ---: | --- |
-| `revision: Option<Revision>` | 160 B | only on a tracked run |
 | `prop_change: Option<PropChange<RunProperties>>` | 112 B | only on a tracked format change |
 
-Five fields, 752 B, present on every paragraph and run in the document and populated on
+**Correction (2026-09-20).** An earlier revision of this section also listed
+`revision: Option<Revision>` at 160 B on `RunProperties`. **That field does not exist and
+never has** — `Revision` is an inline node (`InlineNode::Revision`), not a run property,
+and the 160 B was `size_of::<Option<Revision>>()` measured as a free-standing type rather
+than as a field of anything. The error is left visible rather than quietly deleted,
+because it is the exact failure mode `docs/105` EV-rules exist to catch: a number that was
+measured correctly and then attributed to the wrong thing.
+
+Four fields, 592 B, present on every paragraph and run in the document and populated on
 almost none of them. The codebase already has the fix as an established pattern in the
 same struct — `mark_run: Option<Box<RunProperties>>` is 8 B.
 
@@ -110,9 +117,34 @@ builds every page of the document before the first one is shown.
 Box the five rarely-populated fields above: `Option<Box<T>>` where the payload is large
 and usually absent, matching `mark_run`'s existing shape.
 
-- `ParagraphProperties` 768 B → ~312 B
-- `RunProperties` 448 B → ~192 B
-- model per paragraph 1,565 B → ~850 B
+Measured outcome on `perf/shrink-model-properties` (commit `556a6c3`):
+
+| type | before | after |
+| --- | ---: | ---: |
+| `ParagraphProperties` | 768 B | **304 B** |
+| `RunProperties` | 448 B | **352 B** |
+| `Paragraph` | 816 B | **352 B** |
+| `Run` | 496 B | **400 B** |
+| `BlockNode` | 816 B | **800 B** |
+| model per paragraph | 1,565 B | **1,492 B** |
+
+**The predicted ~850 B/paragraph did not land, and the reason matters more than the
+miss.** A `Vec<BlockNode>` pays for the enum's *largest variant* on every element, and
+that variant is `Table` at 800 B — not `Paragraph`, which is now 352 B. The same is true
+one level down: `InlineNode` is 416 B, so the run vector pays 416 B per run however small
+`Run` becomes. Shrinking the property structs therefore bought **73 B per paragraph, 4.7%**,
+because the enum slots absorbed the rest.
+
+This is not a reason to undo it: the structs had to shrink *first*, or boxing the variants
+would buy nothing either. It does mean stage 1 has a second half.
+
+### Stage 1b — box the large enum variants
+
+`BlockNode::Table(Box<Table>)` (already flagged as a deferred follow-up in
+`casual-doc-import/src/body.rs`) and the equivalent for whichever `InlineNode` variant sets
+its 416 B. Then `BlockNode` is sized by `Paragraph` (352 B) and `InlineNode` by `Run`
+(400 B), and the property shrink above finally shows up in the total. Projected model cost
+~900 B/paragraph — **re-measure, do not trust this number**, given §4's record.
 
 Blast radius is contained: `prop_change` has 99 references, `mark_revision` 40, across
 **10 files in 5 crates** (`casual-doc-model` 3, `casual-doc-import` 3, `casual-doc-export`
@@ -148,8 +180,10 @@ so it needs its own design before implementation. Open questions to settle there
 ### Projected result
 
 For the owner's file (short paragraphs, so per-paragraph glyph cost is well below the
-130-character probe): model ~650 B × 1.3M ≈ 845 MB resident, plus a bounded window of a
-few hundred MB. **~1.15 GB — it fits.**
+130-character probe): model ~900 B × 1.3M ≈ **1.17 GB** resident after stages 1a **and**
+1b, plus a bounded window of a few hundred MB. That fits a 4 GB address space, but with
+less headroom than the first draft of this document claimed, and it depends on stage 1b
+landing. Stage 1a alone leaves the model at 1,492 B × 1.3M ≈ 1.94 GB, which does not.
 
 ## 5. What is deliberately NOT proposed
 
