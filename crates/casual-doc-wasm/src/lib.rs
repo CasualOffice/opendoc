@@ -137,13 +137,25 @@ fn viewer_text_limits() -> PlainTextLimits {
 
 /// Refuses an input the editor cannot open, before any of it is parsed.
 ///
-/// Only the cheap, certain case: a non-package input whose newline count alone
-/// puts it past [`MAX_VIEWER_BLOCKS`]. Counting newlines in 200 MiB takes
+/// Only the cheap, certain case: a **plain-text** input whose newline count
+/// alone puts it past [`MAX_VIEWER_BLOCKS`]. Counting newlines in 200 MiB takes
 /// milliseconds, where importing it would spend seconds and then abort.
-/// Packages (`PK\x03\x04`) are left to the adapters, which must decompress
-/// before any count is meaningful.
+///
+/// The pre-check is sound only for formats where a newline *is* a paragraph
+/// break, so every format where it is not must be exempt and left to its
+/// adapter, which counts blocks honestly after import:
+///
+/// - **Packages** (`PK\x03\x04` — DOCX, ODT) carry their text compressed, so no
+///   count over the raw bytes means anything at all.
+/// - **RTF** (`{\rtf`) treats a newline as insignificant whitespace and its
+///   producers hard-wrap the control stream at roughly 255 bytes. A 60 MB RTF
+///   of perfectly ordinary length therefore carries ~250,000 newlines and would
+///   have been refused here for having "too many paragraphs" while holding a
+///   few thousand — the message would have been confidently wrong, which is
+///   worse than no pre-check. Found while wiring the RTF adapter in; the bound
+///   itself was correct for the plain text it was written against.
 fn viewer_admission_error(bytes: &[u8]) -> Option<String> {
-    if bytes.starts_with(b"PK\x03\x04") {
+    if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"{\\rt") {
         return None;
     }
     let lines = bytes.iter().filter(|byte| **byte == b'\n').count() + 1;
@@ -20710,6 +20722,36 @@ mod tests {
             started.elapsed() < std::time::Duration::from_secs(2),
             "refusing took {:?}; it must not import first",
             started.elapsed(),
+        );
+    }
+
+    /// RTF is exempt from the newline pre-check for the same reason a package is,
+    /// but for the opposite cause: not because its text is compressed, but
+    /// because a newline in RTF is insignificant whitespace, and producers
+    /// hard-wrap the control stream at roughly 255 bytes. This document holds
+    /// **three** paragraphs and carries far more newlines than the ceiling; the
+    /// pre-check used to refuse it for having "too many paragraphs", which is a
+    /// confidently wrong message rather than a conservative one.
+    #[test]
+    fn a_hard_wrapped_rtf_is_not_refused_for_its_newlines() {
+        let mut bytes = Vec::from(&b"{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\n"[..]);
+        // Three real paragraphs, wrapped the way every RTF producer wraps: a
+        // newline every few tokens. Well past MAX_VIEWER_BLOCKS in newlines.
+        for paragraph in 0..3 {
+            for word in 0..(MAX_VIEWER_BLOCKS / 2) {
+                bytes.extend_from_slice(format!("w{paragraph}_{word}\n").as_bytes());
+            }
+            bytes.extend_from_slice(b"\\par\n");
+        }
+        bytes.push(b'}');
+        let newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
+        assert!(
+            newlines > MAX_VIEWER_BLOCKS,
+            "fixture must exceed the ceiling in newlines to be meaningful: {newlines}",
+        );
+        assert!(
+            viewer_admission_error(&bytes).is_none(),
+            "a hard-wrapped RTF must not be refused by the plain-text newline pre-check",
         );
     }
 
