@@ -9632,7 +9632,8 @@ mod tests {
                         space_points: Some(4),
                     }),
                     ..ParagraphBorders::default()
-                },
+                }
+                .into(),
                 ..ParagraphProperties::default()
             }),
             run: None,

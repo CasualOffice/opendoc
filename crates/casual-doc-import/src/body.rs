@@ -2404,7 +2404,7 @@ impl BodyParser<'_> {
                 } else {
                     MarkRevisionKind::Deletion
                 };
-                self.paragraph_properties.mark_revision = Some(MarkRevision {
+                self.paragraph_properties.mark_revision = Some(Box::new(MarkRevision {
                     kind,
                     author: attribute_value(element, b"author")
                         .filter(|value| !value.is_empty() && value.len() <= 255),
@@ -2412,7 +2412,7 @@ impl BodyParser<'_> {
                         .filter(|value| !value.is_empty() && value.len() <= 64),
                     revision_id: attribute_value(element, b"id")
                         .filter(|value| !value.is_empty() && value.len() <= 64),
-                });
+                }));
                 // Balance the matching close (Empty events call on_end too).
                 self.suppressed_revision_depth += 1;
             }
@@ -6289,11 +6289,11 @@ impl BodyParser<'_> {
                     &mut self.run_properties
                 };
                 let prior = std::mem::replace(slot, saved);
-                slot.prop_change = Some(meta.into_change(prior));
+                slot.prop_change = Some(Box::new(meta.into_change(prior)));
             }
             PropChangeCapture::Paragraph { meta, saved } => {
                 let prior = std::mem::replace(&mut self.paragraph_properties, saved);
-                self.paragraph_properties.prop_change = Some(meta.into_change(prior));
+                self.paragraph_properties.prop_change = Some(Box::new(meta.into_change(prior)));
             }
             PropChangeCapture::Table { meta, saved } => {
                 if let Some(prior) = self.tables.take_table_properties() {

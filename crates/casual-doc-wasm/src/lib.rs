@@ -7594,13 +7594,13 @@ impl WasmDocument {
             Some(id) => Some(id),
             None => Some(self.revision_ids.allocate()?),
         };
-        next.prop_change = Some(PropChange {
+        next.prop_change = Some(Box::new(PropChange {
             author,
             date,
             revision_id,
             editor_group: None,
             prior: Box::new(prior),
-        });
+        }));
         Ok(next)
     }
 
@@ -7629,12 +7629,12 @@ impl WasmDocument {
         }
         let revision_id = self.revision_ids.allocate().map_err(to_js)?;
         let mut leading = current.clone();
-        leading.mark_revision = Some(MarkRevision {
+        leading.mark_revision = Some(Box::new(MarkRevision {
             kind: MarkRevisionKind::Insertion,
             author,
             date,
             revision_id: Some(revision_id),
-        });
+        }));
         let mut trailing = current.clone();
         // Word's `w:next`: Enter at the END of a heading starts its follow-on style.
         if offset == len
@@ -7724,12 +7724,12 @@ impl WasmDocument {
             }
             None => {
                 let mut deleted = current.clone();
-                deleted.mark_revision = Some(MarkRevision {
+                deleted.mark_revision = Some(Box::new(MarkRevision {
                     kind: MarkRevisionKind::Deletion,
                     author,
                     date,
                     revision_id: Some(self.revision_ids.allocate()?),
-                });
+                }));
                 Operation::SetParagraphProperties {
                     node,
                     properties: Box::new(deleted),
@@ -7905,12 +7905,12 @@ impl WasmDocument {
                         return Err("A paragraph break in this range is another reviewer's suggestion; accept or reject it first".to_string());
                     }
                     None => {
-                        next.mark_revision = Some(MarkRevision {
+                        next.mark_revision = Some(Box::new(MarkRevision {
                             kind: MarkRevisionKind::Deletion,
                             author: author.clone(),
                             date: date.clone(),
                             revision_id: Some(self.revision_ids.allocate()?),
-                        });
+                        }));
                     }
                 }
             }
@@ -7928,13 +7928,13 @@ impl WasmDocument {
                         Some(id) => Some(id),
                         None => Some(self.revision_ids.allocate()?),
                     };
-                    shaped.prop_change = Some(PropChange {
+                    shaped.prop_change = Some(Box::new(PropChange {
                         author: author.clone(),
                         date: date.clone(),
                         revision_id,
                         editor_group: None,
                         prior: Box::new(prior),
-                    });
+                    }));
                 }
                 next = shaped;
             }
@@ -13819,13 +13819,13 @@ fn apply_review_format_change(
                 }
 
                 for (index, mut current, prior) in changes {
-                    current.prop_change = Some(PropChange {
+                    current.prop_change = Some(Box::new(PropChange {
                         author: author.clone(),
                         date: date.clone(),
                         revision_id: Some(revision_ids.allocate()?),
                         editor_group: Some(group),
                         prior: Box::new(prior),
-                    });
+                    }));
                     let InlineNode::Run(run) = &mut paragraph.inlines[index] else {
                         return Ok(false);
                     };
@@ -21123,11 +21123,13 @@ mod tests {
             Alignment, Definitions, MarkRevision, MarkRevisionKind, PropChange,
         };
         let id = |n: u64| NodeId::from_parts(n, 108).unwrap();
-        let mark = |kind, revision: &str| MarkRevision {
-            kind,
-            author: Some("Word Reviewer".to_owned()),
-            date: Some("2026-09-17T00:00:00Z".to_owned()),
-            revision_id: Some(revision.to_owned()),
+        let mark = |kind, revision: &str| {
+            Box::new(MarkRevision {
+                kind,
+                author: Some("Word Reviewer".to_owned()),
+                date: Some("2026-09-17T00:00:00Z".to_owned()),
+                revision_id: Some(revision.to_owned()),
+            })
         };
         let paragraph = |n: u64, text: &str, properties: ParagraphProperties| {
             BlockNode::Paragraph(Paragraph {
@@ -21156,13 +21158,13 @@ mod tests {
                     "Beta",
                     ParagraphProperties {
                         alignment: Some(Alignment::Center),
-                        prop_change: Some(PropChange {
+                        prop_change: Some(Box::new(PropChange {
                             author: Some("Word Reviewer".to_owned()),
                             date: Some("2026-09-17T00:00:00Z".to_owned()),
                             revision_id: Some("4".to_owned()),
                             editor_group: None,
                             prior: Box::new(ParagraphProperties::default()),
-                        }),
+                        })),
                         ..ParagraphProperties::default()
                     },
                 ),
@@ -21426,12 +21428,12 @@ mod tests {
             .unwrap()
             .properties
             .clone();
-        properties.mark_revision = Some(MarkRevision {
+        properties.mark_revision = Some(Box::new(MarkRevision {
             kind: MarkRevisionKind::Deletion,
             author: None,
             date: None,
             revision_id: None,
-        });
+        }));
         d.apply_action_as(
             vec![Operation::SetParagraphProperties {
                 node,

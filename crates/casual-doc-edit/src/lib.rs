@@ -7092,12 +7092,12 @@ mod tests {
         use casual_doc_model::v1::{Alignment, MarkRevision, MarkRevisionKind};
         ParagraphProperties {
             alignment: Some(Alignment::Center),
-            mark_revision: Some(MarkRevision {
+            mark_revision: Some(Box::new(MarkRevision {
                 kind: MarkRevisionKind::Deletion,
                 author: Some("Reviewer".to_owned()),
                 date: None,
                 revision_id: Some("7".to_owned()),
-            }),
+            })),
             ..ParagraphProperties::default()
         }
     }
