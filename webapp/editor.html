@@ -179,6 +179,18 @@
         </div>
         <p class="settings-note">Attributed on comments and tracked changes you create. This is the only identity source — the engine never invents an author.</p>
       </div>
+      <!-- Autosave. The retention posture D-1 required be written down before
+           any document bytes were kept on-device is stated HERE, next to the
+           control that turns it off, rather than only in docs/112. -->
+      <div class="settings-section">
+        <div class="settings-label">Autosave</div>
+        <label class="dialog-check">
+          <input id="autosaveToggle" type="checkbox" checked />
+          <span><strong>Keep a local draft of unsaved work</strong><small>So a tab crash, an OS restart or a power cut does not take the document with it.</small></span>
+        </label>
+        <p class="settings-note" id="draftRetentionNote">Drafts stay in this browser, on this device, for up to 24 hours. They are never uploaded, and are deleted as soon as you save.</p>
+        <button type="button" id="draftsClearBtn" class="dialog-button">Delete saved drafts</button>
+      </div>
       <div class="settings-foot">
         <span class="oss">Open-source · customizable</span>
         <button type="button" id="settingsReset" class="link">Reset</button>
@@ -1182,6 +1194,23 @@
       <button id="viewingBannerEdit" type="button">Switch to editing</button>
     </div>
 
+    <!-- CRASH RECOVERY (docs/112 §4.6, HF-011). A non-modal region, not a
+         dialog: Word's Document Recovery is a task pane and Docs uses a bar,
+         and for the same reason — the editor must not block the document to
+         make an offer about it. It OFFERS and never applies: nothing is
+         restored until Restore is pressed, because the editor cannot know
+         whether the draft or the file on screen is the one the user wants, and
+         guessing wrong destroys the other. Rows are rendered from the draft
+         store by `renderDraftRecovery` in main.js. -->
+    <div id="draftRecoveryBar" class="draft-recovery" role="region" aria-label="Recovered unsaved work" hidden>
+      <span class="ms draft-recovery-icon" aria-hidden="true">restore_page</span>
+      <div class="draft-recovery-body">
+        <p class="draft-recovery-title" id="draftRecoveryTitle">Unsaved work recovered</p>
+        <ul class="draft-recovery-list" id="draftRecoveryList"></ul>
+      </div>
+      <button id="draftRecoveryDismiss" type="button" class="draft-recovery-dismiss" title="Dismiss" aria-label="Dismiss recovered work notice"><span class="ms" aria-hidden="true">close</span></button>
+    </div>
+
     <div class="workarea">
       <nav class="rail" aria-label="Document navigation">
         <button id="railOutline" type="button" class="rail-btn" title="Outline" aria-label="Outline" aria-pressed="false" disabled><span class="ms" aria-hidden="true">toc</span><span>Outline</span></button>
@@ -1481,6 +1510,11 @@
           <span id="statChars" data-status-priority="2">0 characters</span>
           <span id="statParas" data-status-priority="3">0 paragraphs</span>
         </span>
+        <!-- Autosave's own indicator (docs/112 §4.6). Priority 3: the first
+             thing shed on a narrow window, because it is reassurance rather
+             than information the user acts on — except when it reads
+             "Autosave unavailable", which is why that state also announces. -->
+        <span id="draftStatus" class="draft-status" data-status-priority="3" hidden></span>
       </span>
       <span class="foot-right">
         <span class="footer-mode">

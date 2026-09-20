@@ -33,6 +33,21 @@ import {
   normalizeMenuEntries,
 } from "./context_menu.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import {
+  DRAFT_EXPORT_MODES,
+  DraftPresence,
+  DraftScheduler,
+  HEARTBEAT_MS,
+  describeDraftAge,
+  describeDraftSize,
+  documentKey,
+  draftFormatFor,
+  draftSlotId,
+  evictableSlots,
+  offerableDrafts,
+  openDraftStore,
+  slotIsLive,
+} from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { previewInkIsLegible } from "./contrast.mjs";
 
@@ -2891,6 +2906,36 @@ function setDocumentState(state) {
   documentStateEl.querySelector(".ms").textContent = next.icon;
   documentStateText.textContent = next.text;
   documentStateEl.title = next.text;
+  // Every path that changes document identity or saved-ness passes through
+  // here — open, edit, rename, save, restore — so the browser tab is refreshed
+  // from one place rather than from five call sites that will drift.
+  refreshDocumentTitle();
+}
+
+/** The static title in `editor.html`, kept as the no-document fallback. */
+const FALLBACK_DOCUMENT_TITLE = document.title;
+
+/**
+ * Names the open document in the browser tab.
+ *
+ * `document.title` was assigned nowhere in `webapp/src`, so every editor tab
+ * read the same static string and several open documents were indistinguishable
+ * in a tab strip. The convention here is the platform's, not an invention: the
+ * document name FIRST (a tab strip truncates from the right, so anything before
+ * the name is what survives and the name is what the user is scanning for),
+ * then the app, then a leading `•` when there is unsaved work — the web's
+ * equivalent of Word's title-bar asterisk and the dot Docs shows while saving.
+ *
+ * The marker is driven by `documentIsDirty()`, the same engine revision
+ * watermark the `beforeunload` guard and `confirmDiscardIfEdited()` read, so
+ * the tab, the close warning and the discard gate can never disagree.
+ */
+function refreshDocumentTitle() {
+  if (!doc || !currentName) {
+    document.title = FALLBACK_DOCUMENT_TITLE;
+    return;
+  }
+  document.title = `${documentIsDirty() ? "• " : ""}${currentName} — OpenDoc`;
 }
 
 function clearObjectStatus() {
@@ -3031,6 +3076,12 @@ async function boot() {
   } else if (params.get("blank") !== "1") {
     await loadStartupDocument("./sample.docx", "sample.docx");
   }
+
+  // Last, and deliberately after the startup document: the recovery bar is an
+  // offer about work the user already has a document open next to, and it
+  // reads the store rather than the engine, so nothing above waits on it
+  // (HF-011, docs/112 §4.6).
+  await startDrafts();
 }
 
 // Curated `?demo=<kind>` presets for the editor. `?demo=1` — used by the Home
@@ -3294,6 +3345,13 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     const next = open(bytes);
     hideLinkChip();
     clearLinkHover();
+    // Only now that the new document has PARSED — a failed open leaves the
+    // previous document on screen, and handing its draft over before knowing
+    // that would orphan the draft of a document the user is still editing.
+    // Still before `free()`, because the snapshot needs the live wrapper: the
+    // user may have chosen "Discard and open", but that discards the document
+    // from the screen, not the only copy of unsaved work from the disk.
+    handOverDraftBeforeOpen();
     if (doc) doc.free();
     doc = next;
     currentSourceFormat = doc.sourceFormat;
@@ -3343,6 +3401,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     docTitleEl.value = name;
     documentChrome.hidden = false;
     resetDirtyTracking(currentName);
+    // The identity a draft records, computed from the bytes the document was
+    // opened from. O(1) in document size — see `documentKey`.
+    adoptDraftDocument(name, bytes);
     setDocumentState("opened");
     if (saveBtn) saveBtn.disabled = false;
     populateSaveFormats();
@@ -3437,7 +3498,13 @@ function commitRename() {
   const changed = named !== currentName;
   currentName = named;
   docTitleEl.value = named;
-  if (changed) setDocumentState("edited");
+  if (changed) {
+    setDocumentState("edited");
+    // A rename changes what Save produces without touching the model, so no
+    // revision observes it — but the draft's name is now stale, and a recovery
+    // bar naming the old file is a recovery bar the user does not recognise.
+    noteDraftDirty();
+  }
 }
 
 docTitleEl.addEventListener("keydown", (e) => {
@@ -8632,6 +8699,12 @@ let savedRevision = 0;
 let currentRevision = 0;
 let savedName = "";
 let revisionUnreadable = false;
+// A third axis, and the only one that is not about editing: a document restored
+// from a crash draft has never been written out ANYWHERE. Its revision starts
+// at the open-time baseline and its name matches, so both axes above would call
+// it clean — which would re-arm, one level up, exactly the data loss the draft
+// exists to prevent. Cleared by the same two places that clear the others.
+let restoredFromDraft = false;
 
 /** The engine's post-edit revision, or null if it cannot be read. Never throws:
  *  a wrapper that has already been freed, or a build whose `EditResult` predates
@@ -8666,6 +8739,10 @@ function noteDocumentEdited(revision) {
   if (revision === null || revision === undefined) revisionUnreadable = true;
   else currentRevision = revision;
   setDocumentState("edited");
+  // Autosave's only contact with the edit path, and it must stay O(1) in
+  // document size (docs/107 §4): this stores an integer and re-arms a timer.
+  // The snapshot itself is taken from that timer, never from a keystroke.
+  noteDraftDirty();
 }
 
 /** Re-baseline onto a freshly opened document: nothing is unsaved yet. */
@@ -8674,6 +8751,7 @@ function resetDirtyTracking(name) {
   currentRevision = 0;
   savedName = name;
   revisionUnreadable = false;
+  restoredFromDraft = false;
 }
 
 /** The bytes have left the editor, so the current state is now the saved one. */
@@ -8681,13 +8759,18 @@ function markDocumentSaved() {
   savedRevision = currentRevision;
   savedName = currentName;
   revisionUnreadable = false;
+  restoredFromDraft = false;
   setDocumentState("downloaded");
+  // The user has the bytes, so the draft has nothing left to protect. Keeping
+  // it would mean offering back, after the next crash, work that is already on
+  // disk — and the offer would look like the save had not happened.
+  discardOwnDraft();
 }
 
 /** Whether closing right now would lose work. */
 function documentIsDirty() {
   if (!doc) return false;
-  if (revisionUnreadable) return true;
+  if (revisionUnreadable || restoredFromDraft) return true;
   return currentRevision !== savedRevision || currentName !== savedName;
 }
 
@@ -12515,6 +12598,21 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "file.export.odt", label: "Export as ODT…", group: "File", kw: "export save as opendocument", run: () => exportDocumentAs("org.oasis.opendocument.text") },
     { id: "file.export.text", label: "Export as Plain text…", group: "File", kw: "export save as txt", run: () => exportDocumentAs("text.plain") },
     { id: "file.export.json", label: "Export as Normalized JSON…", group: "File", kw: "export save as json", run: () => exportDocumentAs("org.casualoffice.normalized-json") },
+    // Reachable with no document open, because the case it exists for is
+    // arriving at a fresh tab after a crash (HF-011). Disabled WITH A REASON
+    // when the store is empty — never a control that silently does nothing.
+    {
+      id: "file.recoverDrafts",
+      label: "Recover unsaved work…",
+      group: "File",
+      kw: "draft autosave recover crash restore unsaved backup",
+      noDoc: true,
+      enabled: draftOffers.length > 0,
+      disabledReason: AUTOSAVE_ALLOWED_HERE
+        ? "No unsaved work to recover"
+        : "Autosave is off in an embedded editor",
+      run: () => showDraftRecovery(),
+    },
     { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", shortcut: "⌘P", run: () => printDocument() },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
@@ -13060,7 +13158,7 @@ const APP_MENU_SECTIONS = {
     // Docs files it under File and Word under Layout. It is on the Layout
     // ribbon too; this gives it a menu home that matches the competition.
     ["layout.pageSetup", "file.print"],
-    ["file.properties"],
+    ["file.properties", "file.recoverDrafts"],
   ],
   edit: [
     ["edit.undo", "edit.redo"],
@@ -16852,6 +16950,630 @@ viewportEl.addEventListener("drop", (e) => {
 
 // ---- Settings: theme + accent + reviewer identity, persisted (OSS-customizable) ----
 const settingsBtn = document.getElementById("settingsBtn");
+// ---- Autosave drafts and crash recovery (HF-011 / OO-004, docs/112) --------
+//
+// The hole this closes: the open document lives in the wasm heap and nowhere
+// else, so an OOM kill, a wasm trap or a power cut — none of which run a single
+// line of shutdown code — took the whole session with it. The `beforeunload`
+// guard above catches a deliberate close and nothing else.
+//
+// The shape is the sibling's (opencalc `editor.drafts.js`), as owner decision
+// D-1 requires: an IndexedDB store with a meta row and a bytes row per tab
+// slot, written on quiesce with a ceiling, and a boot-time bar that OFFERS the
+// work back and never applies it. The policy lives in `drafts.mjs` where it can
+// be unit-tested; what is here is wiring, the surfaces, and the export ladder.
+//
+// Two invariants, both load-bearing:
+//   * nothing on the keystroke path is O(document) — `noteDraftDirty` stores an
+//     integer and re-arms a timer, and the snapshot runs from that timer;
+//   * the draft is written in the document's OWN format, because the
+//     normalized-JSON snapshot measurably drops embedded images (docs/112 §3.2)
+//     and handing back a document with its pictures gone is silent data loss.
+const draftRecoveryBar = document.getElementById("draftRecoveryBar");
+const draftRecoveryList = document.getElementById("draftRecoveryList");
+const draftRecoveryTitle = document.getElementById("draftRecoveryTitle");
+const draftRecoveryDismissBtn = document.getElementById("draftRecoveryDismiss");
+const draftStatusEl = document.getElementById("draftStatus");
+const autosaveToggle = document.getElementById("autosaveToggle");
+const draftsClearBtn = document.getElementById("draftsClearBtn");
+
+/** This tab's slot. `let`, because opening another document hands the current
+ *  slot's draft over as an orphan and takes a fresh one (see
+ *  `handOverDraftBeforeOpen`). */
+let draftSlot = draftSlotId(safeSessionStorage());
+let draftStore = null;
+let draftStoreOpening = null;
+/** Non-empty once autosave has given up, and the reason it gave. */
+let draftUnavailableReason = "";
+let draftDocKey = "";
+let draftOffers = [];
+let draftBarDismissed = false;
+let ownSlotHasDraft = false;
+let draftHeartbeatTimer = 0;
+/** Serializes store work: two overlapping writes would race on one slot. */
+let draftQueue = Promise.resolve();
+
+/** `sessionStorage`, or null where touching it throws (cross-origin embed,
+ *  site data blocked) — the same posture `readPref` takes for preferences. */
+function safeSessionStorage() {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether this page may keep drafts at all.
+ *
+ *  Off inside a frame: `home-embed.js` boots `editor.html?demo=1` in an iframe
+ *  on the marketing home page, and without this every visitor who typed in the
+ *  hero demo would leave a draft on the origin — which a later real session
+ *  would then be offered. `?autosave=1` lets a host opt back in, and
+ *  `?autosave=0` lets one opt out of the top-level case (docs/112 O-2). */
+function autosaveAllowedHere() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("autosave") === "0") return false;
+  if (params.get("autosave") === "1") return true;
+  try {
+    return window.self === window.top;
+  } catch {
+    return false; // cross-origin frame: `window.top` throws, so we are framed
+  }
+}
+const AUTOSAVE_ALLOWED_HERE = autosaveAllowedHere();
+
+/** The user's switch. Defaults on; `settings` is read at call time. */
+function autosaveEnabled() {
+  return AUTOSAVE_ALLOWED_HERE && settings.autosave !== false && !draftUnavailableReason;
+}
+
+/** Autosave has failed in a way the user should know about. It is never silent:
+ *  a draft that is not being written is a promise the editor is not keeping. */
+function reportAutosaveUnavailable(reason) {
+  if (draftUnavailableReason) return;
+  draftUnavailableReason = reason;
+  stopDraftHeartbeat();
+  setDraftStatus("Autosave unavailable", "unavailable", `Autosave is not running: ${reason}. Save the document to keep your work.`);
+  announceStatus(`Autosave unavailable: ${reason}`, "error");
+}
+
+function setDraftStatus(text, state = "", title = "") {
+  if (!draftStatusEl) return;
+  draftStatusEl.textContent = text;
+  draftStatusEl.hidden = !text;
+  if (state) draftStatusEl.dataset.draftState = state;
+  else delete draftStatusEl.dataset.draftState;
+  draftStatusEl.title = title || text;
+}
+
+/** hh:mm in the user's locale, for "Draft saved 14:32". */
+function clockTime(at) {
+  return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Opens the store once, lazily. Returns null when it cannot be opened, having
+ *  already said so. */
+async function ensureDraftStore() {
+  if (draftStore) return draftStore;
+  if (!AUTOSAVE_ALLOWED_HERE || draftUnavailableReason) return null;
+  if (!draftStoreOpening) {
+    draftStoreOpening = openDraftStore({}).then(
+      (store) => {
+        draftStore = store;
+        return store;
+      },
+      (err) => {
+        reportAutosaveUnavailable(`this browser refused local storage (${err?.message ?? err})`);
+        return null;
+      },
+    );
+  }
+  return draftStoreOpening;
+}
+
+/** Runs store work one job at a time, so two writes never race on one slot. */
+function queueDraftWork(job) {
+  draftQueue = draftQueue.then(job).catch((err) => {
+    console.error("draft store", err);
+  });
+  return draftQueue;
+}
+
+// The cadence. Injected `write` is the only thing that ever costs document-sized
+// work, and the scheduler only ever calls it from a timer.
+const draftScheduler = new DraftScheduler({ write: (reason) => queueDraftWork(() => writeDraft(reason)) });
+
+// Cross-tab presence. Answering "is that tab still open?" with a heartbeat
+// timestamp is wrong in exactly the case that matters: a crashed tab's last
+// heartbeat is seconds old, so a heartbeat-only lease withholds the draft from
+// the person reopening the editor to get it back. Asking the other tabs
+// directly distinguishes "still open" from "died" immediately.
+const draftPresence = new DraftPresence({ slotId: draftSlot });
+
+/** O(1). The edit path's entire contribution to autosave. */
+function noteDraftDirty() {
+  if (!autosaveEnabled() || !doc) return;
+  draftScheduler.noteDirty();
+}
+
+/** Re-keys this tab onto a freshly opened document. */
+function adoptDraftDocument(name, bytes) {
+  draftDocKey = documentKey(name, bytes);
+  draftScheduler.reset();
+}
+
+/**
+ * Takes the snapshot, in the document's own format.
+ *
+ * The mode ladder is `exportDocumentAs`'s, plus `semantic` as the last resort,
+ * so a draft and a save can never be produced by different ladders. There is
+ * deliberately no cross-format fallback: normalized JSON would succeed where
+ * DOCX failed and would drop every image while doing it.
+ */
+function takeDraftSnapshot() {
+  const formatId = draftFormatFor(currentSourceFormat);
+  let lastError = null;
+  for (const mode of DRAFT_EXPORT_MODES) {
+    try {
+      const artifact = doc.exportAs(formatId, mode);
+      const bytes = artifact.bytes;
+      let findings = 0;
+      try {
+        findings = compatibilityOccurrenceCount(artifact.reportJson);
+      } catch {
+        findings = 0; // a report we cannot parse must not lose us the draft
+      }
+      artifact.free();
+      return { bytes, formatId, mode, findings };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError ?? new Error("no export mode produced a snapshot");
+}
+
+/** Writes this tab's draft. Only ever called from the scheduler or a flush. */
+async function writeDraft(reason) {
+  if (!doc || !autosaveEnabled() || !documentIsDirty()) return;
+  const store = await ensureDraftStore();
+  if (!store) return;
+
+  let snapshot;
+  try {
+    snapshot = takeDraftSnapshot();
+  } catch (err) {
+    reportAutosaveUnavailable(`this document could not be exported (${err?.message ?? err})`);
+    return;
+  }
+
+  const now = Date.now();
+  const meta = {
+    slotId: draftSlot,
+    docKey: draftDocKey,
+    name: currentName,
+    formatId: snapshot.formatId,
+    exportMode: snapshot.mode,
+    findings: snapshot.findings,
+    revision: currentRevision,
+    bytes: snapshot.bytes.length,
+    savedAt: now,
+    heartbeatAt: now,
+    engine: engineVersion(),
+    reason,
+  };
+
+  try {
+    await pruneDraftSlots(store, now);
+    await store.putDraft(meta, snapshot.bytes);
+  } catch (err) {
+    // Quota is the one failure worth a second attempt: drop the oldest draft
+    // that is not ours and try again before giving up on autosave entirely.
+    if (err?.name === "QuotaExceededError") {
+      const freed = await freeOldestOtherSlot(store);
+      if (freed) {
+        try {
+          await store.putDraft(meta, snapshot.bytes);
+        } catch (retryErr) {
+          reportAutosaveUnavailable(`this browser is out of storage (${retryErr?.name ?? "quota"})`);
+          return;
+        }
+      } else {
+        reportAutosaveUnavailable("this browser is out of storage for local drafts");
+        return;
+      }
+    } else {
+      reportAutosaveUnavailable(`the draft could not be written (${err?.message ?? err})`);
+      return;
+    }
+  }
+
+  ownSlotHasDraft = true;
+  setDraftStatus(
+    `Draft saved ${clockTime(now)}`,
+    "saved",
+    `${describeDraftSize(meta.bytes)} kept in this browser only, until you save. Written ${clockTime(now)}.`,
+  );
+  startDraftHeartbeat();
+}
+
+/** Deletes expired rows and anything past the slot cap, never our own. */
+async function pruneDraftSlots(store, now) {
+  const metas = await store.listMeta();
+  for (const slotId of evictableSlots(metas, { now, keepSlotId: draftSlot })) {
+    await store.deleteSlot(slotId);
+  }
+}
+
+/** Frees the oldest slot that is not ours. Returns whether anything went. */
+async function freeOldestOtherSlot(store) {
+  const metas = (await store.listMeta())
+    .filter((meta) => meta.slotId !== draftSlot)
+    .sort((a, b) => (a.savedAt ?? 0) - (b.savedAt ?? 0));
+  if (metas.length === 0) return false;
+  await store.deleteSlot(metas[0].slotId);
+  return true;
+}
+
+/** Tells other tabs this slot is still owned. Meta only — a few hundred bytes,
+ *  never the snapshot — and only while a draft actually exists. */
+function startDraftHeartbeat() {
+  if (draftHeartbeatTimer || !ownSlotHasDraft) return;
+  draftHeartbeatTimer = setInterval(() => {
+    if (!ownSlotHasDraft) return stopDraftHeartbeat();
+    queueDraftWork(async () => {
+      const store = await ensureDraftStore();
+      if (store) await store.touch(draftSlot, Date.now());
+    });
+  }, HEARTBEAT_MS);
+}
+
+function stopDraftHeartbeat() {
+  if (!draftHeartbeatTimer) return;
+  clearInterval(draftHeartbeatTimer);
+  draftHeartbeatTimer = 0;
+}
+
+/** The work is on disk now, so this tab's draft has nothing left to protect. */
+function discardOwnDraft() {
+  draftScheduler.reset();
+  if (!ownSlotHasDraft) return;
+  ownSlotHasDraft = false;
+  stopDraftHeartbeat();
+  setDraftStatus("");
+  queueDraftWork(async () => {
+    const store = await ensureDraftStore();
+    if (store) await store.deleteSlot(draftSlot);
+  });
+}
+
+/**
+ * Called just before another document replaces the open one.
+ *
+ * If there is unsaved work, it is written one last time and the slot is left
+ * behind as an ORPHAN — heartbeat cleared, so the next scan offers it — while
+ * this tab takes a fresh slot for the incoming document. The user may have
+ * pressed "Discard and open" at the confirm gate, but that discards the
+ * document from the screen; it is not a request to shred the only copy.
+ */
+function handOverDraftBeforeOpen() {
+  if (!doc) return;
+  const hadWork = documentIsDirty() && autosaveEnabled();
+  const previousSlot = draftSlot;
+  if (hadWork) {
+    // Synchronous snapshot, queued write: the wrapper is freed by the caller
+    // moments from now, so the bytes must be taken before this returns.
+    let snapshot = null;
+    try {
+      snapshot = takeDraftSnapshot();
+    } catch {
+      snapshot = null; // nothing to hand over; the open still proceeds
+    }
+    if (snapshot) {
+      const meta = {
+        slotId: previousSlot,
+        docKey: draftDocKey,
+        name: currentName,
+        formatId: snapshot.formatId,
+        exportMode: snapshot.mode,
+        findings: snapshot.findings,
+        revision: currentRevision,
+        bytes: snapshot.bytes.length,
+        savedAt: Date.now(),
+        // Orphaned on purpose: this tab no longer owns the slot, so the next
+        // scan must not mistake it for a live tab's live draft.
+        heartbeatAt: 0,
+        engine: engineVersion(),
+        reason: "handover",
+      };
+      queueDraftWork(async () => {
+        const store = await ensureDraftStore();
+        if (store) await store.putDraft(meta, snapshot.bytes);
+      });
+      draftSlot = rotateDraftSlot();
+      // Presence must follow the rotation, or this tab keeps answering pings
+      // for the slot it just handed over — which would mark that orphan draft
+      // as belonging to a live tab and hide it from every recovery scan.
+      draftPresence.slotId = draftSlot;
+    }
+  } else if (ownSlotHasDraft) {
+    discardOwnDraft();
+  }
+  ownSlotHasDraft = false;
+  stopDraftHeartbeat();
+  draftScheduler.reset();
+  setDraftStatus("");
+}
+
+/** A fresh slot id for this tab, persisted like the first one. */
+function rotateDraftSlot() {
+  const storage = safeSessionStorage();
+  try {
+    storage?.removeItem("opendoc.draftSlot");
+  } catch {
+    /* storage is optional; a session-only slot still works */
+  }
+  return draftSlotId(storage);
+}
+
+// ---- The recovery offer -----------------------------------------------------
+
+/** Reads the meta store, prunes what has expired, and renders the bar. */
+async function refreshDraftOffers({ announce = false } = {}) {
+  const store = await ensureDraftStore();
+  if (!store) return;
+  const now = Date.now();
+  let metas = [];
+  try {
+    metas = await store.listMeta();
+  } catch (err) {
+    reportAutosaveUnavailable(`the draft store could not be read (${err?.message ?? err})`);
+    return;
+  }
+  for (const slotId of evictableSlots(metas, { now, keepSlotId: draftSlot })) {
+    try {
+      await store.deleteSlot(slotId);
+    } catch {
+      /* a row we cannot delete is not a reason to withhold the offer */
+    }
+  }
+  // Ask the other tabs which of these slots they still own. Only rows whose
+  // heartbeat is recent enough to be ambiguous are worth asking about, so a
+  // boot with nothing else running waits for nothing.
+  const ambiguous = metas
+    .filter((meta) => meta.slotId !== draftSlot && slotIsLive(meta, now, draftSlot))
+    .map((meta) => meta.slotId);
+  const liveSlotIds = await draftPresence.liveSlots(ambiguous);
+
+  draftOffers = offerableDrafts(metas, {
+    now,
+    ownSlotId: draftSlot,
+    liveSlotIds,
+    // Silence is only proof when there was a way to ask.
+    heartbeatFallback: draftPresence.unavailable,
+  }).filter(
+    // Once this tab has written its own draft, that draft is the document on
+    // screen. Offering it back would be offering the user their own live work.
+    (meta) => !(ownSlotHasDraft && meta.slotId === draftSlot),
+  );
+  renderDraftRecovery({ announce });
+}
+
+function renderDraftRecovery({ announce = false } = {}) {
+  if (!draftRecoveryBar) return;
+  if (draftBarDismissed || draftOffers.length === 0) {
+    draftRecoveryBar.hidden = true;
+    draftRecoveryList.replaceChildren();
+    return;
+  }
+  const now = Date.now();
+  draftRecoveryTitle.textContent =
+    draftOffers.length === 1
+      ? "Unsaved work recovered"
+      : `Unsaved work recovered from ${draftOffers.length} sessions`;
+
+  draftRecoveryList.replaceChildren(
+    ...draftOffers.map((meta) => {
+      const row = document.createElement("li");
+      row.className = "draft-recovery-row";
+      row.dataset.slot = meta.slotId;
+
+      const name = document.createElement("span");
+      name.className = "draft-recovery-name";
+      name.textContent = meta.name || "Untitled document";
+      name.title = meta.name || "Untitled document";
+
+      const detail = document.createElement("span");
+      detail.className = "draft-recovery-meta";
+      const sameDocument = meta.docKey && meta.docKey === draftDocKey ? " · this document" : "";
+      detail.textContent = `autosaved ${describeDraftAge(now - (meta.savedAt ?? now))} · ${describeDraftSize(meta.bytes)}${sameDocument}`;
+
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.dataset.draftRestore = meta.slotId;
+      restore.textContent = "Restore";
+      restore.setAttribute("aria-label", `Restore ${meta.name || "the recovered document"}`);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.draftDelete = meta.slotId;
+      remove.textContent = "Delete";
+      remove.setAttribute("aria-label", `Delete the recovered draft of ${meta.name || "this document"}`);
+
+      row.append(name, detail, restore, remove);
+      return row;
+    }),
+  );
+  draftRecoveryBar.hidden = false;
+  if (announce) {
+    const first = draftOffers[0];
+    announceStatus(
+      `Unsaved work recovered: ${first.name}, autosaved ${describeDraftAge(now - (first.savedAt ?? now))}. Restore or delete it from the recovery bar.`,
+    );
+  }
+}
+
+/** Brings the offer back after a dismissal — the File menu / palette route. */
+function showDraftRecovery() {
+  draftBarDismissed = false;
+  renderDraftRecovery();
+  queueDraftWork(() => refreshDraftOffers());
+  draftRecoveryBar?.querySelector("button[data-draft-restore]")?.focus({ preventScroll: true });
+}
+
+/** Restores one draft. Offers first, applies only on this call. */
+async function restoreDraft(slotId) {
+  const meta = draftOffers.find((row) => row.slotId === slotId);
+  const store = await ensureDraftStore();
+  if (!meta || !store) return;
+  // The same gate File ▸ Open uses: restoring replaces what is on screen.
+  if (!(await confirmDiscardIfEdited())) return;
+  let bytes;
+  try {
+    bytes = await store.readBytes(slotId);
+  } catch (err) {
+    setStatus(`The recovered draft could not be read: ${err?.message ?? err}`, "error");
+    return;
+  }
+  if (!bytes) {
+    setStatus("That draft is no longer in this browser's storage", "error");
+    await forgetDraft(slotId);
+    return;
+  }
+  // A promoted draft (a .txt document kept as DOCX so its formatting survived)
+  // comes back under the extension it will actually save as.
+  const name = downloadNameForFormat(meta.name, formatInfo(meta.formatId).extension);
+  // `openBytes` swallows a failed parse by design — it leaves the previous
+  // document on screen rather than destroying it — so success has to be
+  // observed, not assumed. Its opened-document hook runs only after the parse
+  // succeeded. Treating a failed restore as a success and then deleting the
+  // row would delete the only copy of the work the restore was trying to save.
+  let opened = false;
+  await openBytes(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), name, () => {
+    opened = true;
+  });
+  if (!opened) {
+    setStatus(`“${meta.name}” could not be restored — the draft has been kept`, "error");
+    return;
+  }
+  // Restored work has never been written out. Saying "Opened" here would tell
+  // the user their document is safe on disk when it is not.
+  restoredFromDraft = true;
+  setDocumentState("edited");
+  // Take our own copy BEFORE dropping the row it came from, so the work is
+  // never momentarily in neither place — a crash in the gap would otherwise
+  // lose exactly the document the user had just recovered.
+  await queueDraftWork(() => writeDraft("restored"));
+  if (slotId === draftSlot) {
+    // This tab reclaimed its own slot, so the write above IS that row, now
+    // holding the restored document. Deleting it would delete the work.
+    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
+    renderDraftRecovery();
+  } else if (ownSlotHasDraft) {
+    await forgetDraft(slotId);
+  } else {
+    // Autosave could not take a copy (off, or unavailable), so the row we
+    // restored from is still the only one. Keep it; just stop offering it.
+    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
+    renderDraftRecovery();
+  }
+  setStatus(
+    `Restored “${name}” from the draft autosaved ${describeDraftAge(Date.now() - (meta.savedAt ?? Date.now()))} — save it to keep it`,
+  );
+}
+
+/** Deletes one draft, after asking: it is the only copy of that work. */
+async function deleteDraftWithConfirmation(slotId) {
+  const meta = draftOffers.find((row) => row.slotId === slotId);
+  if (!meta) return;
+  const ok = await confirmModal({
+    title: "Delete this recovered draft?",
+    message: `“${meta.name}” was autosaved ${describeDraftAge(Date.now() - (meta.savedAt ?? Date.now()))}. This is the only copy of that work — deleting it cannot be undone.`,
+    confirmLabel: "Delete draft",
+    cancelLabel: "Keep it",
+    note: "Restore it first if you are not sure.",
+    icon: "warning",
+  });
+  if (!ok) return;
+  await forgetDraft(slotId);
+  setStatus(`Deleted the recovered draft of “${meta.name}”`);
+}
+
+async function forgetDraft(slotId) {
+  const store = await ensureDraftStore();
+  if (store) {
+    try {
+      await store.deleteSlot(slotId);
+    } catch (err) {
+      console.error("draft delete", err);
+    }
+  }
+  draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
+  renderDraftRecovery();
+}
+
+/** Settings ▸ Autosave ▸ Delete saved drafts, and the switch's off path. */
+async function clearAllDrafts({ confirm = true } = {}) {
+  if (confirm) {
+    const ok = await confirmModal({
+      title: "Delete every saved draft?",
+      message:
+        "Drafts are the only copy of work that was never saved to a file. Deleting them cannot be undone.",
+      confirmLabel: "Delete drafts",
+      cancelLabel: "Keep them",
+      icon: "warning",
+    });
+    if (!ok) return;
+  }
+  const store = await ensureDraftStore();
+  if (store) {
+    try {
+      await store.clear();
+    } catch (err) {
+      console.error("draft clear", err);
+    }
+  }
+  ownSlotHasDraft = false;
+  stopDraftHeartbeat();
+  draftOffers = [];
+  renderDraftRecovery();
+  setDraftStatus("");
+  setStatus("Saved drafts deleted");
+}
+
+draftRecoveryBar?.addEventListener("click", (event) => {
+  const restore = event.target.closest?.("button[data-draft-restore]");
+  if (restore) {
+    void restoreDraft(restore.dataset.draftRestore);
+    return;
+  }
+  const remove = event.target.closest?.("button[data-draft-delete]");
+  if (remove) void deleteDraftWithConfirmation(remove.dataset.draftDelete);
+});
+draftRecoveryDismissBtn?.addEventListener("click", () => {
+  // Dismiss keeps the draft. Nothing in this bar may lose work by being closed.
+  draftBarDismissed = true;
+  renderDraftRecovery();
+  setStatus("Recovered work is still available from File ▸ Recover unsaved work");
+});
+
+// `visibilitychange` rather than `beforeunload`: the hidden transition is the
+// only one browsers reliably fire for a background-tab discard or a mobile
+// app switch, which is where the tab most often dies. `pagehide` is the belt.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") draftScheduler.flush("hidden");
+});
+window.addEventListener("pagehide", () => draftScheduler.flush("pagehide"));
+
+/** Boot: scan the store and offer whatever a previous session left behind. */
+async function startDrafts() {
+  if (!AUTOSAVE_ALLOWED_HERE) return;
+  if (settings.autosave === false) {
+    setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
+    return;
+  }
+  await queueDraftWork(() => refreshDraftOffers({ announce: true }));
+}
+
 const settingsPanel = document.getElementById("settingsPanel");
 const themeSeg = document.getElementById("themeSeg");
 const accentSwatches = document.getElementById("accentSwatches");
@@ -16860,7 +17582,15 @@ const settingsReset = document.getElementById("settingsReset");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
-const DEFAULT_SETTINGS = { theme: "system", accent: "#3355c4", authorName: "", authorInitials: "" };
+const DEFAULT_SETTINGS = {
+  theme: "system",
+  accent: "#3355c4",
+  authorName: "",
+  authorInitials: "",
+  // On by default: the row this closes is a P0 data-safety row, and a safety
+  // net nobody switches on is not one. Turning it off deletes what is stored.
+  autosave: true,
+};
 let settings = loadSettings();
 
 function loadSettings() {
@@ -16921,8 +17651,34 @@ function applySettings() {
   accentCustom.value = settings.accent;
   authorNameInput.value = settings.authorName;
   authorInitialsInput.value = settings.authorInitials;
+  if (autosaveToggle) {
+    autosaveToggle.checked = settings.autosave !== false;
+    // A control that cannot do anything says why, rather than sitting there
+    // looking operable (SKILL.md §10). In a host iframe autosave is off by
+    // policy, not by preference.
+    autosaveToggle.disabled = !AUTOSAVE_ALLOWED_HERE;
+    autosaveToggle.title = AUTOSAVE_ALLOWED_HERE
+      ? ""
+      : "Autosave is off in an embedded editor — the page that embeds it owns saving.";
+  }
+  if (draftsClearBtn) draftsClearBtn.disabled = !AUTOSAVE_ALLOWED_HERE;
   applyActiveAuthorToDocument();
 }
+
+autosaveToggle?.addEventListener("change", () => {
+  settings.autosave = autosaveToggle.checked;
+  saveSettings();
+  if (settings.autosave) {
+    setDraftStatus("");
+    noteDraftDirty();
+    void queueDraftWork(() => refreshDraftOffers());
+  } else {
+    // Off means off: the bytes go too, or "off" would only mean "stop adding".
+    void clearAllDrafts({ confirm: false });
+    setDraftStatus("Autosave off", "off", "Autosave is off. Turn it back on in Settings ▸ Autosave.");
+  }
+});
+draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
 
 themeSeg.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-theme]");
