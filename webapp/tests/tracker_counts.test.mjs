@@ -48,14 +48,24 @@ const OPEN_PREFIXES = ["Open", "Partly fixed", "Partly", "In progress", "Re-open
 const normalise = (status) => status.replace(/^[*_\s]+/, "");
 const isOpen = (status) => OPEN_PREFIXES.some((p) => normalise(status).startsWith(p));
 
-/** Every `| ID | … |` row in a document, with its id and last cell. */
+/**
+ * Every `| ID | … |` row in a document, with its id, last cell, and the `##`/`###`
+ * heading it sits under. The heading is what lets a summary be checked cell by
+ * cell instead of only in total.
+ */
 function rows(text, idPattern) {
   const out = [];
+  let heading = "";
   for (const line of text.split("\n")) {
+    const h = line.match(/^#{2,3} +(.*?)\s*$/);
+    if (h) {
+      heading = h[1];
+      continue;
+    }
     if (!line.startsWith("|")) continue;
     const c = cells(line);
     if (!c.length || !idPattern.test(c[0])) continue;
-    out.push({ id: c[0], status: c[c.length - 1], cells: c, line });
+    out.push({ id: c[0], status: c[c.length - 1], cells: c, line, heading });
   }
   return out;
 }
@@ -106,6 +116,7 @@ test("docs/104: every summary cell is what the rows actually say", () => {
   assert.ok(headerAt > 0, "docs/104 must carry a Section/Rows summary table");
   const sectionOpen = [];
   const sectionRows = [];
+  const stated = [];
   for (let i = headerAt + 2; i < summaryLines.length; i++) {
     const line = summaryLines[i];
     if (!line.startsWith("|")) break;
@@ -113,11 +124,13 @@ test("docs/104: every summary cell is what the rows actually say", () => {
     const c = cells(line);
     sectionRows.push(Number(c[1]));
     sectionOpen.push(Number(c[2]));
+    stated.push({ label: c[0], rows: Number(c[1]), open: Number(c[2]) });
   }
   assert.ok(
     sectionOpen.every((n) => Number.isFinite(n)),
     "every summary section must carry a numeric Still-open cell",
   );
+
   assert.equal(
     sectionRows.reduce((a, b) => a + b, 0),
     summary,
@@ -130,6 +143,75 @@ test("docs/104: every summary cell is what the rows actually say", () => {
     `the per-section Still-open column sums to ${sectionOpen.reduce((a, b) => a + b, 0)}, ` +
       `but the rows say ${open} — this is exactly the P3-cell drift`,
   );
+
+  // Per-section, not only the column total. The two assertions ABOVE only check
+  // that the Rows and Still-open columns SUM to the Total — which two
+  // equal-and-opposite errors sail straight through. That is not hypothetical:
+  // on 2026-09-20 the P2 cell read 21 against 23 rows actually open while the
+  // behavioural-audit cell read 6 against 4, the column still summed to the
+  // stated Total of 50, and the guard stayed green through both. They are
+  // deliberately left above this block so that the failure of a cancelling pair
+  // is charged to THIS assertion and not to theirs. So: charge every row to the
+  // heading it sits under and compare the cells one at a time.
+  const bySection = new Map();
+  for (const r of all) {
+    if (!bySection.has(r.heading)) bySection.set(r.heading, []);
+    bySection.get(r.heading).push(r);
+  }
+  // A summary label names its section either verbatim ("Behavioural audit —
+  // 2026-09-04") or as the stem of a counted heading ("P2" -> "P2 — 52 items").
+  const matchesLabel = (heading, label) => heading === label || heading.startsWith(`${label} —`);
+  const resolved = stated.map((s) => ({
+    ...s,
+    hits: [...bySection.keys()].filter((h) => matchesLabel(h, s.label)),
+  }));
+
+  // Checked BEFORE the per-cell comparisons, and it has to be: a section that
+  // splits in two (a heading inserted mid-table) leaves the rows below it
+  // charged to a heading no summary row names, and the first thing the reader
+  // would otherwise see is a count mismatch on the section that shrank, which
+  // is the symptom rather than the cause.
+  const claimed = new Set(resolved.flatMap((s) => s.hits));
+  const unclaimed = [...bySection.keys()].filter((h) => !claimed.has(h));
+  assert.deepEqual(
+    unclaimed,
+    [],
+    "these sections of docs/104 hold HF rows but no summary row counts them, so their " +
+      `open work is invisible in the summary: ${unclaimed.join(" / ")}`,
+  );
+
+  for (const s of resolved) {
+    const hits = s.hits;
+    assert.equal(
+      hits.length,
+      1,
+      `docs/104's summary row "${s.label}" matches ${hits.length} sections holding HF rows ` +
+        `(${hits.join(" / ") || "none"}) — a summary cell that names no section counts nothing`,
+    );
+    const rs = bySection.get(hits[0]);
+    const openHere = rs.filter((r) => isOpen(r.status));
+    assert.equal(
+      s.rows,
+      rs.length,
+      `docs/104 summary "${s.label}" Rows says ${s.rows}, section "${hits[0]}" holds ${rs.length}`,
+    );
+    assert.equal(
+      s.open,
+      openHere.length,
+      `docs/104 summary "${s.label}" Still-open says ${s.open}, but section "${hits[0]}" has ` +
+        `${openHere.length} open: ${openHere.map((r) => r.id).join(", ") || "none"}`,
+    );
+    // The `— N items` in the heading itself is a hand-maintained number too,
+    // and it is the one a reader sees before the table.
+    const inHeading = hits[0].match(/— (\d+) items$/);
+    if (inHeading) {
+      assert.equal(
+        Number(inHeading[1]),
+        rs.length,
+        `docs/104 heading "${hits[0]}" claims ${inHeading[1]} items, the section holds ${rs.length}`,
+      );
+    }
+  }
 
   const prose = text.match(/\*\*(\d+) of (\d+) rows remain open/);
   assert.ok(prose, "the progress line must state 'N of M rows remain open'");
