@@ -428,6 +428,57 @@ pub enum BlockFragment {
 }
 
 impl BlockFragment {
+    /// The heap bytes this fragment's **paint tier** holds: its lines, their
+    /// glyph runs and glyphs, their inline bars/images/field markers, and
+    /// recursively the blocks of any table cell.
+    ///
+    /// This is what a windowed layout budgets against (`docs/113` §4 Q3). It
+    /// is **counted, not estimated**, because that is the whole argument for
+    /// budgeting in bytes rather than in pages: a page of prose and a page of
+    /// dense table differ by orders of magnitude, so a page-counted budget is
+    /// a budget for the wrong quantity.
+    ///
+    /// It counts the structure's own heap, not shared interned data (a
+    /// `FontId` names a face the registry owns), so it is a cost attributable
+    /// to *this* fragment and adding two fragments' costs never double-counts.
+    #[must_use]
+    pub fn paint_bytes(&self) -> usize {
+        match self {
+            BlockFragment::Paragraph { lines, .. } => {
+                size_of_val(lines.lines.as_slice())
+                    + lines
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            size_of_val(line.runs.as_slice())
+                                + size_of_val(line.bars.as_slice())
+                                + size_of_val(line.images.as_slice())
+                                + size_of_val(line.fields.as_slice())
+                                + line
+                                    .runs
+                                    .iter()
+                                    .map(|run| size_of_val(run.glyphs.as_slice()))
+                                    .sum::<usize>()
+                        })
+                        .sum::<usize>()
+            }
+            BlockFragment::TableRow { cells, .. } => {
+                size_of_val(cells.as_slice())
+                    + cells
+                        .iter()
+                        .map(|cell| {
+                            size_of_val(cell.blocks.as_slice())
+                                + cell
+                                    .blocks
+                                    .iter()
+                                    .map(BlockFragment::paint_bytes)
+                                    .sum::<usize>()
+                        })
+                        .sum::<usize>()
+            }
+        }
+    }
+
     /// The natural height this fragment occupies in the galley (before any page
     /// split). Paragraph height includes its box space.
     #[must_use]

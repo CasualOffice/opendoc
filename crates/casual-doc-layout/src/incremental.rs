@@ -13,10 +13,21 @@
 //!    re-shapes only the dirty paragraphs — the expensive step — reusing the
 //!    shaped lines of every paragraph that did not change. This is what makes an
 //!    edit `O(edit)` rather than `O(document)`.
-//! 3. **A virtualized viewport** ([`paginate_viewport`], [`viewport_of`]): expose
-//!    only the pages intersecting the visible scroll window — with their absolute
-//!    page number and stacked y-offset — while still reporting the true total page
-//!    count, so a host only composes and paints what is on screen.
+//! 3. **A virtualized viewport** ([`viewport_of`]): expose only the pages
+//!    intersecting the visible scroll window — with their absolute page number
+//!    and stacked y-offset — while still reporting the true total page count,
+//!    so a host only composes and paints what is on screen. This windows a
+//!    layout that is ALREADY BUILT, so it bounds composition and paint, not
+//!    memory. Bounding memory is [`crate::windowed::window_of`], which returns
+//!    the same [`ViewportLayout`] so a host has one scroll seam whichever path
+//!    produced the pages.
+//!
+//!    There used to be a third entry here, `paginate_viewport`, which
+//!    paginated the whole galley and then windowed the result. It was removed
+//!    rather than kept: it required the full paint tier to exist before it
+//!    could return a window, which is the precise misreading `docs/113` §2
+//!    warns against, and it had no consumer. `window_of` is what it looked
+//!    like it was.
 //!
 //! The layout produced here is, by construction, field-for-field identical to a
 //! full [`crate::paginate::paginate`]: dirty tracking chooses *where* to resume,
@@ -29,7 +40,7 @@ use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
 use crate::page::{Page, PaginatedLayout};
-use crate::paginate::{PageConfig, RepaginateStats, paginate, repaginate_with_stats};
+use crate::paginate::{PageConfig, RepaginateStats, repaginate_with_stats};
 use crate::units::Twip;
 
 // --- Dirty tracking --------------------------------------------------------
@@ -211,6 +222,11 @@ struct CachedParagraph {
     hash: u64,
     /// The shaped paragraph fragment, cloned into each rebuilt galley on a hit.
     fragment: BlockFragment,
+    /// The fragment's paint-tier heap cost, computed once at store time.
+    bytes: usize,
+    /// The cache clock value when this entry was last stored or reused — the
+    /// LRU key.
+    last_used: u64,
 }
 
 /// A cache of shaped paragraph fragments, keyed by paragraph
@@ -243,13 +259,70 @@ pub struct GalleyCache {
     /// Paragraphs (re-)shaped during the most recent build — telemetry that lets
     /// tests and benchmarks confirm work stayed proportional to the edit.
     shaped_last_build: usize,
+    /// Paint-tier byte budget (`docs/113` §4 Q3). `None` keeps every live
+    /// entry, which is the historical behavior and is right for a document
+    /// small enough to hold whole.
+    budget_bytes: Option<usize>,
+    /// Paint-tier bytes currently held, kept incrementally so the budget check
+    /// after a build does not re-walk every cached paragraph's glyphs.
+    bytes: usize,
+    /// Monotonic access counter; each store or reuse stamps an entry with it.
+    clock: u64,
+    /// Entries evicted by the budget during the most recent build — telemetry,
+    /// so a thrash guard can assert eviction is not fighting the window.
+    evicted_last_build: usize,
 }
 
 impl GalleyCache {
-    /// An empty cache.
+    /// An empty, unbounded cache.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty cache that holds at most `budget_bytes` of paint tier,
+    /// evicting least-recently-used paragraphs past that.
+    ///
+    /// The budget is in **bytes, not paragraphs**, for the reason
+    /// `docs/113` §4 Q3 gives: a paragraph of prose and a paragraph inside a
+    /// dense nested table differ by orders of magnitude, so counting entries
+    /// bounds the wrong quantity. [`BlockFragment::paint_bytes`] counts each
+    /// entry rather than estimating it.
+    ///
+    /// Eviction can never change what a build produces — an evicted paragraph
+    /// is re-shaped, which is a cost, not a different answer. That is why a
+    /// budget is safe to apply to live entries: correctness does not depend on
+    /// a hit.
+    #[must_use]
+    pub fn with_budget(budget_bytes: usize) -> Self {
+        Self {
+            budget_bytes: Some(budget_bytes),
+            ..Self::default()
+        }
+    }
+
+    /// Sets (or clears) the paint-tier byte budget. Takes effect at the end of
+    /// the next build.
+    pub fn set_budget(&mut self, budget_bytes: Option<usize>) {
+        self.budget_bytes = budget_bytes;
+    }
+
+    /// The paint-tier byte budget, if one is set.
+    #[must_use]
+    pub fn budget_bytes(&self) -> Option<usize> {
+        self.budget_bytes
+    }
+
+    /// Paint-tier bytes currently held.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Entries the budget evicted during the most recent build.
+    #[must_use]
+    pub fn evicted_last_build(&self) -> usize {
+        self.evicted_last_build
     }
 
     /// The number of cached paragraphs.
@@ -277,17 +350,54 @@ impl GalleyCache {
     pub(crate) fn begin_build(&mut self, width: Twip) {
         if self.width != Some(width) {
             self.entries.clear();
+            self.bytes = 0;
             self.width = Some(width);
         }
         self.shaped_last_build = 0;
+        self.evicted_last_build = 0;
         self.live.clear();
     }
 
-    /// Drops every entry this build did not use. One cached build covers the whole
-    /// body, so an untouched entry is a paragraph the document no longer has.
+    /// Drops every entry this build did not use, then evicts
+    /// least-recently-used entries until the paint tier is inside its budget.
+    ///
+    /// One cached build covers the whole body, so an untouched entry is a
+    /// paragraph the document no longer has — that part is liveness, not
+    /// eviction, and it happens whether or not a budget is set.
     pub(crate) fn end_build(&mut self) {
         let live = std::mem::take(&mut self.live);
         self.entries.retain(|id, _| live.contains(id));
+        self.bytes = self.entries.values().map(|entry| entry.bytes).sum();
+        self.evict_to_budget();
+    }
+
+    /// Evicts the least recently used entries until the held paint tier fits
+    /// the budget. Inert without one.
+    fn evict_to_budget(&mut self) {
+        let Some(budget) = self.budget_bytes else {
+            return;
+        };
+        if self.bytes <= budget {
+            return;
+        }
+        // Oldest first. Sorting the keys once is cheaper than repeatedly
+        // scanning for a minimum, and the pass only runs when the budget is
+        // actually exceeded.
+        let mut order: Vec<(u64, NodeId)> = self
+            .entries
+            .iter()
+            .map(|(id, entry)| (entry.last_used, *id))
+            .collect();
+        order.sort_unstable();
+        for (_, id) in order {
+            if self.bytes <= budget {
+                break;
+            }
+            if let Some(entry) = self.entries.remove(&id) {
+                self.bytes -= entry.bytes;
+                self.evicted_last_build += 1;
+            }
+        }
     }
 
     /// The cached fragment reusable for node `id` under content `hash`: a hit
@@ -301,7 +411,13 @@ impl GalleyCache {
         if dirty.contains(id) {
             return None;
         }
-        let entry = self.entries.get(&id).filter(|entry| entry.hash == hash)?;
+        self.clock += 1;
+        let clock = self.clock;
+        let entry = self
+            .entries
+            .get_mut(&id)
+            .filter(|entry| entry.hash == hash)?;
+        entry.last_used = clock;
         self.live.insert(id);
         Some(&entry.fragment)
     }
@@ -311,7 +427,18 @@ impl GalleyCache {
     pub(crate) fn store(&mut self, id: NodeId, hash: u64, fragment: BlockFragment) {
         self.shaped_last_build += 1;
         self.live.insert(id);
-        self.entries.insert(id, CachedParagraph { hash, fragment });
+        self.clock += 1;
+        let bytes = fragment.paint_bytes();
+        let entry = CachedParagraph {
+            hash,
+            fragment,
+            bytes,
+            last_used: self.clock,
+        };
+        if let Some(previous) = self.entries.insert(id, entry) {
+            self.bytes = self.bytes.saturating_sub(previous.bytes);
+        }
+        self.bytes += bytes;
     }
 }
 
@@ -395,26 +522,6 @@ pub fn viewport_of(
     ViewportLayout { total_pages, pages }
 }
 
-/// Paginates `fragments` and returns only the pages intersecting `range`, with
-/// the true total page count and each visible page's absolute number and stacked
-/// y-offset — the virtualized viewport (`43-…` §7.4).
-///
-/// The result agrees field-for-field with the corresponding slice of a full
-/// [`crate::paginate::paginate`]. Pagination over a galley is `O(fragments)` and
-/// cheap (the expensive shaping is virtualized separately by [`GalleyCache`]);
-/// the viewport bounds the *downstream* cost — composition and paint run only for
-/// the returned pages. For repeated scrolling over a stable document, hold the
-/// layout and window it with [`viewport_of`] instead of re-paginating.
-#[must_use]
-pub fn paginate_viewport(
-    fragments: &[BlockFragment],
-    config: &PageConfig,
-    range: PageRange,
-) -> ViewportLayout {
-    let layout = paginate(fragments, config);
-    viewport_of(&layout, config, range)
-}
-
 /// The top of page `index` in a continuous scroll where pages stack by their full
 /// height, saturating rather than overflowing a twip for a pathologically long
 /// document.
@@ -435,6 +542,7 @@ mod tests {
     use super::*;
     use crate::flow::{build_galley, build_galley_cached};
     use crate::model::ModelRange;
+    use crate::paginate::paginate;
     use crate::text::{Line, LineBreak, LineConstraints, LineLayout, LineShaper, StyledRun};
     use crate::units::Size;
     use casual_doc_model::v1::SectionId;
@@ -689,71 +797,6 @@ mod tests {
             paginate(&new_galley, &config),
             "reflow must equal a full paginate of the new galley"
         );
-    }
-
-    #[test]
-    fn paginate_viewport_matches_the_slice_of_a_full_paginate() {
-        let config = letter_config();
-        let shaper = SpyShaper::new();
-        // Enough paragraphs to span several pages (each ~ a page tall).
-        let texts: Vec<String> = (0..12).map(|i| format!("para {i}")).collect();
-        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        // Force one page per paragraph via tall single-line paragraphs is awkward
-        // through the shaper; instead paginate whatever falls out and window it.
-        let document = doc(&refs);
-        let galley = build_galley(&document, &shaper, WIDTH);
-        let full = paginate(&galley, &config);
-        assert!(!full.pages.is_empty());
-
-        let range = PageRange::new(0, full.pages.len());
-        let viewport = paginate_viewport(&galley, &config, range);
-        assert_eq!(viewport.total_pages, full.pages.len());
-        assert_eq!(viewport.pages.len(), full.pages.len());
-        let page_height = config.page_size.height.raw();
-        for (i, visible) in viewport.pages.iter().enumerate() {
-            assert_eq!(visible.page, full.pages[i], "each visible page is verbatim");
-            assert_eq!(
-                visible.page.number as usize,
-                i + 1,
-                "the absolute page number is preserved"
-            );
-            assert_eq!(
-                visible.y_offset,
-                Twip(page_height * i as i32),
-                "pages stack by their full height"
-            );
-        }
-    }
-
-    #[test]
-    fn paginate_viewport_returns_only_the_requested_window() {
-        let config = letter_config();
-        let shaper = SpyShaper::new();
-        // Tall paragraphs so the document is many pages: each paragraph is a big
-        // run, so a page holds only a few.
-        let big = "x".repeat(400);
-        let texts: Vec<&str> = vec![big.as_str(); 200];
-        let document = doc(&texts);
-        let galley = build_galley(&document, &shaper, WIDTH);
-        let full = paginate(&galley, &config);
-        assert!(
-            full.pages.len() >= 3,
-            "expected a multi-page document, got {}",
-            full.pages.len()
-        );
-
-        let window = PageRange::new(1, 3.min(full.pages.len()));
-        let viewport = paginate_viewport(&galley, &config, window);
-        assert_eq!(
-            viewport.total_pages,
-            full.pages.len(),
-            "total is the whole doc"
-        );
-        assert_eq!(viewport.pages.len(), window.end - window.start);
-        for (k, visible) in viewport.pages.iter().enumerate() {
-            let absolute = window.start + k;
-            assert_eq!(visible.page, full.pages[absolute]);
-        }
     }
 
     #[test]

@@ -218,6 +218,71 @@ fn collect_body_wrap_inlines(
     }
 }
 
+/// Whether the document anchors a floating object **anywhere** — any depth of
+/// the body, or any header/footer part.
+///
+/// A **deliberately conservative superset** of what the float passes act on:
+/// it ignores `behind_doc`, the wrap mode and the anchor kind, all of which
+/// [`push_body_wrap_rect`] filters on, and it descends into tables, cells and
+/// content controls that [`body_wrap_rects`] deliberately does not. So `false`
+/// here proves both [`body_wrap_rects`] and [`place_floats`] are inert, while
+/// `true` proves nothing.
+///
+/// That direction is the one the windowed driver needs (`docs/113` §7). Two
+/// separate passes make floats non-page-local: `finish_pagination` re-flows
+/// the whole body against computed wrap exclusions (which can move page
+/// boundaries), and [`place_floats`] resolves an anchor against the page its
+/// paragraph landed on while carrying a document-global z-order counter.
+/// Neither can be evaluated for one window, so a document with any anchored
+/// object is refused rather than windowed. Refusing a few documents that would
+/// in fact have been safe costs a fallback; missing one costs a document that
+/// paginates differently depending on how it was opened.
+///
+/// The superset relation is asserted by `no_anchored_object_means_no_floats`
+/// in `tests/windowed_document.rs`.
+#[must_use]
+pub(crate) fn document_has_anchored_object(document: &Document) -> bool {
+    let definitions = document.definitions();
+    document.body().iter().any(block_has_anchor)
+        || definitions
+            .headers
+            .iter()
+            .any(|(_, part)| part.blocks.iter().any(block_has_anchor))
+        || definitions
+            .footers
+            .iter()
+            .any(|(_, part)| part.blocks.iter().any(block_has_anchor))
+}
+
+/// The block half of [`document_has_anchored_object`], descending to any depth.
+fn block_has_anchor(block: &BlockNode) -> bool {
+    match block {
+        BlockNode::Paragraph(paragraph) => inlines_have_anchor(&paragraph.inlines),
+        BlockNode::Table(table) => table.rows.iter().any(|row| {
+            row.cells
+                .iter()
+                .any(|cell| cell.blocks.iter().any(block_has_anchor))
+        }),
+        BlockNode::Sdt(sdt) => sdt.blocks.iter().any(block_has_anchor),
+        BlockNode::AltChunk(_) => false,
+    }
+}
+
+/// The inline half of [`document_has_anchored_object`], recursing through the
+/// same transparent wrappers [`collect_body_wrap_inlines`] recurses through.
+fn inlines_have_anchor(inlines: &[InlineNode]) -> bool {
+    inlines.iter().any(|inline| match inline {
+        InlineNode::AnchoredDrawing(_) => true,
+        InlineNode::TextBox(text_box) => text_box.anchor.is_some(),
+        InlineNode::Group(group) => group.anchor.is_some(),
+        InlineNode::Hyperlink(link) => inlines_have_anchor(&link.inlines),
+        InlineNode::Field(field) => inlines_have_anchor(&field.inlines),
+        InlineNode::Revision(revision) => inlines_have_anchor(&revision.inlines),
+        InlineNode::Sdt(sdt) => inlines_have_anchor(&sdt.inlines),
+        _ => false,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_body_wrap_rect(
     layout: &PaginatedLayout,

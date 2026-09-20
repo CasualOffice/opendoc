@@ -45,6 +45,7 @@ use casual_doc_layout::paginate::Checkpoint;
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::paginate::paginate;
 use casual_doc_layout::paginate::paginate_from;
+use casual_doc_layout::paginate::paginate_from_based;
 use casual_doc_layout::paginate::paginate_measures;
 use casual_doc_layout::paginate::paginate_with_checkpoints;
 use casual_doc_layout::text::Line;
@@ -790,4 +791,84 @@ fn paginate_from_the_document_start_equals_a_full_paginate() {
             1,
         );
     }
+}
+
+/// `paginate_from_based` with a zero base must be `paginate_from` exactly.
+///
+/// That is what makes the window path's index translation safe to reason
+/// about: it is the identity at the origin, so any difference a window shows
+/// is the translation and nothing else.
+#[test]
+fn paginate_from_based_at_zero_is_paginate_from() {
+    let config = letter_config();
+    let mut checked = 0;
+    for (name, galley) in corpus() {
+        let checkpoints = paginate_measures(&measure_galley(&galley), &config, 1).checkpoints;
+        for checkpoint in &checkpoints {
+            let plain = paginate_from(&galley, &config, checkpoint);
+            let based = paginate_from_based(&galley, 0, &config, checkpoint);
+            assert_eq!(
+                plain.pages, based.pages,
+                "{name}: a zero base must change nothing (checkpoint {checkpoint:?})"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 20, "too few checkpoints exercised ({checked})");
+}
+
+/// Paginating a **window** of the galley must produce the same pages, with the
+/// same galley-absolute flow spans, as paginating the whole thing.
+///
+/// This is the property `window_of` rests on: the paginator is handed a slice
+/// that starts at galley index `base`, and everything it reports back — page
+/// numbers, model spans, and the flow provenance the incremental path keys on
+/// — has to be in the document's coordinates, not the slice's.
+#[test]
+fn paginating_a_window_of_the_galley_reports_absolute_flow_spans() {
+    let config = letter_config();
+    let mut checked = 0;
+    for (name, galley) in corpus() {
+        let full = paginate(&galley, &config);
+        let checkpoints = paginate_measures(&measure_galley(&galley), &config, 1).checkpoints;
+        for checkpoint in &checkpoints {
+            // A window that starts exactly at the checkpoint — the narrowest
+            // slice `window_of` would ever hand the paginator.
+            let base = checkpoint.at.fragment;
+            if checkpoint.table_headers.iter().any(|i| *i < base) {
+                // The window would not contain the repeated header rows the
+                // checkpoint names; `window_of` widens for that case and
+                // `paginate_from_based` asserts it rather than guessing.
+                continue;
+            }
+            let window = &galley[base as usize..];
+            let paginated = paginate_from_based(window, base, &config, checkpoint);
+            let from = checkpoint.page_index as usize;
+            assert_eq!(
+                paginated.pages.len(),
+                full.pages.len() - from,
+                "{name}: a window from page {from} must produce the remaining pages"
+            );
+            for (offset, (got, want)) in paginated.pages.iter().zip(&full.pages[from..]).enumerate()
+            {
+                assert_eq!(
+                    got.flow,
+                    want.flow,
+                    "{name}: windowed page {} reported a slice-relative flow span",
+                    from + offset + 1
+                );
+                assert_eq!(
+                    got,
+                    want,
+                    "{name}: windowed page {} differs from the full layout",
+                    from + offset + 1
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 20,
+        "too few windows exercised, so absolute flow spans are barely tested ({checked})"
+    );
 }

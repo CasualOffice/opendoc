@@ -226,6 +226,53 @@ so it needs its own design before implementation. Open questions to settle there
   the edit path (`paginate_document_cached`: 477 ms at 200k paragraphs against 4,471 ms
   for a full re-pagination). Windowing and caching must be one mechanism, not two.
 
+#### Stage 2 as landed — the design is `docs/113`, and it is built in the engine
+
+That design is `113-WINDOWED-LAYOUT-DESIGN.md`, which answers all four questions above
+and carries the measurements. In short, and only so this section is not read as still
+open:
+
+- **Page count** is exact from the first frame, not estimated: the measure tier is built
+  in one shaping pass through a sink that keeps two shaped paragraphs at a time, and
+  paginated by the *same* paginator the paint tier uses.
+- **Resumable pagination** is a checkpoint every 64 pages plus, for the flow half, a
+  classification of whether the document carries any state across a block boundary at
+  all — rather than a snapshot of that state, which would be a second place for the two
+  paths to disagree.
+- **Eviction** is LRU over counted paint-tier bytes, on `GalleyCache` and on the window;
+  thrash is handled by a clock-free scroll coalescer whose guard drags 60,000 pages and
+  asserts one window is built.
+- **One mechanism**, as required: `GalleyCache` gained the budget, no second cache exists.
+
+**Measured on the owner's own file shape at its own size** (1,303,306 paragraphs), with
+the committed `casual-doc-layout` `layout_footprint` example; peak is a sampled RSS
+high-water mark of the child process, because peak is what fails an allocation:
+
+| 1,303,306 paragraphs | `paginate_document` (today) | `measure_document` + one window |
+| --- | ---: | ---: |
+| pages | 29,621 | 29,621 |
+| per paragraph | 3,378 B | **1,021 B** |
+| resident | 4.10 GiB | **1.24 GiB** |
+| peak RSS | 4.14 GiB | **1.23 GiB** |
+| time | 8.6-34.6 s | 8.3-33.7 s |
+
+Timing is a range because it is the noisy half: six runs on a shared 16 GiB laptop gave
+8.3-38 s for the same work while the memory figures reproduced to within 0.4%. Both
+columns move together — the windowed open pays the same single shaping pass — so
+windowing does not make opening faster, it makes it fit. The 3,378 B/paragraph figure is
+the same at 300,000, 600,000 and 1,303,306 paragraphs, so the total is measured rather
+than extrapolated.
+
+Note how far §3.1's 14.4 KB/paragraph has moved, and why the comparison is not with it:
+that figure was measured on 130-character prose with a pre-stage-1 model. On the owner's
+own 30-character paragraphs the production path costs 3,378 B, which is the number that
+matters for that file. The 4.14 GiB peak is the measured reason it is refused: it does
+not fit a wasm32 address space.
+
+**The ceiling has not moved yet**, because `casual-doc-wasm`'s open path still calls
+`paginate_document`. `docs/113` §8 lists the two things owed before `MAX_VIEWER_BLOCKS`
+can change, and the constant's own doc comment carries the table above.
+
 ### Result after stages 1a and 1b, measured
 
 For the owner's file (short paragraphs, so per-paragraph glyph cost is well below the

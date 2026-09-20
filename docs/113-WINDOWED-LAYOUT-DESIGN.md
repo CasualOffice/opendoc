@@ -1,6 +1,7 @@
 # 113 — Windowed layout: laying out only the pages someone is looking at
 
-**Status:** Design. **Opened:** 2026-09-20. **Owner:** unassigned.
+**Status:** Steps 1-5 landed in the engine; host wiring open (§8). **Opened:** 2026-09-20.
+**Owner:** unassigned.
 **Row:** `109` **HF-162** (P1, L). **Depends on:** HF-161 / HF-163 (`docs/111`).
 **Supersedes:** `docs/111` §4 "stage 2", which sketched this and listed four open
 questions. Those four are answered here.
@@ -40,6 +41,22 @@ So: do not read the presence of a "viewport" API as this work being half done, a
 not delete it either. Wiring it up is worth doing on its own merits, as a separate
 smaller row, because painting fewer pages is cheaper than painting all of them even when
 they are all in memory.
+
+### 2.1 What step 4/5 decided about them
+
+Split, deliberately, rather than kept or dropped wholesale:
+
+- **`PageRange`, `VisiblePage`, `ViewportLayout` — reused.** They are the right shape
+  for the scroll seam, and they now have a consumer: `windowed::window_of` returns a
+  `ViewportLayout`. Two paths can produce one, which is the point — a document the
+  windowed driver refuses still scrolls through the same type, so a host has **one**
+  scroll seam whichever path built the pages.
+- **`viewport_of` — kept**, unchanged, as that second path: window an already-resident
+  layout when the document is small enough to hold whole.
+- **`paginate_viewport` — removed.** It paginated the entire galley and then returned a
+  slice of the result, so asking it for one page cost a whole document's paint tier. It
+  had no consumer and its name invited exactly the misreading this section warns about.
+  `window_of` is what it looked like it was.
 
 ## 3. The two facts that make this tractable
 
@@ -133,8 +150,10 @@ second cache.
    existing corpus. **Landed** — see §6.1.
 3. Checkpoints + resumable `paginate_from`; prove page-for-page equality with a full
    paginate. **Landed** — see §6.2.
-4. Byte-budgeted LRU on `GalleyCache`; wire the window to the scroll position. **Open.**
-5. Re-measure, and only then move `MAX_VIEWER_BLOCKS`. **Open.**
+4. Make the flow engine emit measures directly, and materialize one window's
+   paint tier from a checkpoint. **Landed** — see §6.3.
+5. Byte-budgeted LRU on `GalleyCache`, scroll coalescing, re-measure, and only
+   then move `MAX_VIEWER_BLOCKS`. **Engine landed, host wiring open** — see §6.4.
 
 Steps 2 and 3 are each independently testable against a full paginate, which is what
 keeps this from becoming one unreviewable change.
@@ -219,26 +238,189 @@ that is not measurable until step 4 wires the window to the scroll position.
   (`line == 0`) and is not: restarting there places the whole row again instead of its
   tail. The paginator now marks that span (`mid_fragment`) and takes no checkpoint in it.
 
+### 6.3 Step 4 as landed — the engine emits measures, and a window is materialized
+
+Two halves.
+
+**The flow engine writes into a sink.** `flow_blocks` used to append to a
+`Vec<BlockFragment>`; it is now generic over `measure::GalleySink`, and both tiers go
+through one `flow_body_into`. `MeasureSink` projects each fragment onto
+`FragmentMeasure` and drops its glyphs as soon as the engine can no longer touch it.
+"As soon as" is a stated contract rather than a hope: the engine mutates an
+already-pushed fragment in exactly **one** place — the `w:contextualSpacing` collapse,
+which zeroes the previous paragraph's space-after — so the sink holds two shaped
+fragments and **panics** rather than silently mis-applying a collapse it can no longer
+honor. `ReachSpy` in `tests/streaming_measures.rs` watches the real engine through the
+same public seam and fails if it ever reaches further back than two.
+
+This is what makes §3.2's claim true of **peak** and not only of resident memory, and
+it retires §6.1's honest qualification: the 4,096-block chunked stand-in is still in the
+probe as the `measure` phase, but the production seam is `build_measures_for_blocks`
+and it carries no cross-chunk assumption at all, because there are no chunks.
+
+**One window's paint tier.** `windowed::window_of` finds the nearest checkpoint at or
+before the window, re-flows only the blocks the window needs (`flow_body_range`, a sink
+that keeps the wanted galley range and drops the rest, over a block slice that stops one
+block past the window — one, because the contextual collapse and the drop-cap pair each
+reach exactly one block forward), and runs `paginate_from_based`, which is
+`paginate_from` with the checkpoint translated into window coordinates on the way in and
+the emitted `FlowSpan`s translated back out. At base zero it is `paginate_from`
+identically, which is how the translation is asserted.
+
+**Re-flowing from the middle is a classified decision, not an assumption.** Flowing is a
+forward walk carrying list counters, the previous paragraph's style, wrap carries and
+drop-cap pairing. Rather than snapshot that state — every field of which is a place for
+two paths to drift — `measure_document` classifies the document: `FlowResume::AnyBlock`
+when the body contains no numbering, no contextual spacing, no drop cap and no paragraph
+style (so any block boundary reproduces the full build exactly), `FlowResume::FromStart`
+otherwise, which re-flows from block zero into the same retaining sink — memory stays
+bounded to the window, *time* is `O(document)` per window, and that cost is stated rather
+than hidden.
+
+**Measured**, with the committed `crates/casual-doc-layout/examples/layout_footprint.rs`
+(macOS arm64, release; each phase in its own child process; **peak** is a 4 ms RSS sample
+of that child, reported alongside resident because peak is what fails an allocation).
+100,000 single-run 130-character paragraphs, 4,546 pages in every phase:
+
+| 100,000 paragraphs | resident | peak RSS |
+| --- | ---: | ---: |
+| `model` — the document alone | 1,003 B/para | 103 MB |
+| `full` — galley + `paginate` | 7,993 B/para | **830 MB** |
+| `measure` — chunked stand-in (step 2) | 1,189 B/para | 147 MB |
+| `stream` — engine emits measures (step 4) | 1,085 B/para | **136 MB** |
+| `window` — measures + one 6-page window | 1,119 B/para | 133 MB |
+
+The peak is the row that changed: **830 MB → 136 MB, 6.1×**, and the layout half of it
+(net of the 103 MB model) is 727 MB → 33 MB, **22×**.
+
+### 6.4 Step 5 as landed — byte budget, eviction, coalescing; and the constant did not move
+
+**A byte budget, counted.** `BlockFragment::paint_bytes` counts a fragment's lines, glyph
+runs, glyphs, inline bars/images/field markers and, recursively, its cells' blocks.
+`GalleyCache::with_budget` holds a running total and, at the end of each build, evicts
+least-recently-used entries until it fits; `WindowPolicy` applies the same accounting to
+a window, charging the visible pages first and adding lead pages outward while the budget
+allows. The default is the 256 MiB §4 Q3 names and a lead of two pages either side.
+Eviction can never change an answer — an evicted paragraph is re-shaped — which is why it
+is safe to apply to live entries, and the guard asserts a budgeted build produces the
+same galley a fresh build does.
+
+**Coalescing, without a clock.** `ScrollCoalescer` is a tick-driven state machine: a
+position inside the built window asks for nothing, the first window is built immediately
+(a settle delay on first paint is a blank page, not a saving), and a position that moves
+resets the settle counter. The guard drags across 60,000 pages in 600 reported positions
+with a tick between each and asserts **exactly one** window is built, on landing. It is
+clock-free on purpose — `docs/105` records that clock-bound tests degrade under load
+however sound the code is.
+
+**`MAX_VIEWER_BLOCKS` did not move, and the measurement says why.** Measured on the
+owner's own paragraph shape at its own size (1,303,306 paragraphs of the single line that
+file repeats; the file is the owner's and is not in the repository, so the shape is
+reproduced in the probe — `file(1)` calls it CRLF ASCII text, `sort -u` yields exactly
+one distinct line and `wc -l` counts 1,303,305 of them):
+
+| 1,303,306 paragraphs | `paginate_document` | `measure_document` + one window |
+| --- | ---: | ---: |
+| pages | 29,621 | 29,621 |
+| per paragraph | 3,378 B | 1,021 B |
+| resident | 4.10 GiB | 1.24 GiB |
+| **peak RSS** | **4.14 GiB** | **1.23 GiB** |
+| time | 8.6-34.6 s | 8.3-33.7 s |
+| scroll to page 22,215 | — | 3-29 ms, 264 KB, 485 fragments re-shaped |
+
+Both paths report **29,621 pages**, which is the cross-check that the measure tier agrees
+with the full driver at this scale and not only on the corpus.
+
+Timing is reported as a range because it is the noisy half of this measurement:
+six runs on a shared 16 GiB laptop gave 8.3-38 s for the same work, while the
+memory figures reproduced to within 0.4%. Both columns move together — the
+windowed path pays the **same single shaping pass** the production path pays,
+measured back to back at 34.6 s and 30.7 s under identical load. Windowing does
+not make opening faster; it makes it fit.
+
+The production column is the one to read carefully: **3,377 B/paragraph measured at
+300,000, 600,000 and 1,303,306 paragraphs**, the same figure at all three, so the total
+is a measurement and not an extrapolation. Under memory pressure its resident reading
+*falls* (the OS reclaims), which is itself the symptom of a 16 GiB machine at its limit
+— another reason the number that matters is the peak.
+
+4.14 GiB does not fit a wasm32 address space. That is the measured reason the owner's
+file is refused rather than merely slow, and 1.23 GiB is why the engine can now open it.
+**But `casual-doc-wasm`'s `open_document_as` still calls `paginate_document`**, so the
+browser still pays the left-hand column. The constant is a *measured* ceiling — "the
+largest size actually measured to open" — so raising it now would trade an honest refusal
+for `RuntimeError: unreachable`, the regression HF-158 exists for. What has to happen
+first is recorded in §8.
+
+## 8. What is still owed before the constant moves
+
+Both are host work, outside the layout engine:
+
+1. **`WasmDocument` must hold a window, not a whole `PaginatedLayout`.** The facade keeps
+   `layout: PaginatedLayout` and answers `pageCount`, `renderPage`, hit-testing, selection
+   geometry and export from it. The narrow part is that only `compose.rs` and `hittest.rs`
+   read `Page::placed` at all, so the surface is smaller than the file's size suggests; the
+   wide part is that every consumer that iterates *all* pages (export, find-all, the
+   accessibility mirror) needs an explicit answer, because a page that is silently empty
+   because it is outside the window is silent data loss.
+2. **The browser-side open cost is a separate ceiling.** The table on `MAX_VIEWER_BLOCKS`
+   measures 23.2 s to open 262,145 blocks in Chromium, linear in blocks. At 1.3M that is
+   minutes, whatever the engine costs. That is `docs/104` HF-077 (budget, progress,
+   cancel), and until it is addressed a raised block limit would replace a clear refusal
+   with a frozen tab.
+
+The scroll seam itself is ready: `window_of` returns a `ViewportLayout` and
+`ScrollCoalescer` decides when to ask for one. Neither has a host consumer yet, which is
+named here rather than left to be discovered (`docs/105` §9 rule 4).
+
 ## 7. Known unknowns
 
-- ~~Whether the measure tier can be derived without shaping twice~~ — **not resolved,
-  but no longer blocking.** The tier is currently *projected from* a shaped fragment
-  (`FragmentMeasure::of`), so today it costs exactly one shaping pass and no more, for
-  every script. The question returns in step 4, when the flow engine is asked to emit
-  measures without retaining the shaped form: a script whose line breaks are only known
-  after full shaping may then need the paint tier rebuilt for the window. Measure it
-  there; it is a per-window cost, not a per-document one.
-- Footnotes and `eachPage` note renumbering run a bounded fixed point over *pages*
-  (`NOTE_PAGE_RESTART_PASSES`), which assumes all pages exist. A document with
-  `w:numRestart="eachPage"` may have to fall back to full pagination; `paginate_document_cached`
-  already takes that fallback and it is the honest precedent. **Not hit by steps 2/3**:
-  both operate on the body galley below the note passes, which run in the
-  `document_layout` driver afterwards. It becomes live in step 4.
-- Anchored floats resolve onto pages in a post-pass. Whether that pass is checkpointable
-  or must run per window is unresolved. **Also not hit by steps 2/3**, for the same
-  reason — `Page::anchored` is filled after pagination — and also step 4's problem.
-- **New:** `paginate_from` reproduces the *paginator's* output. The `document_layout`
-  driver's post-passes (running content, floats, notes, `PAGE`/`NUMPAGES` field
-  resolution) are separate, and `resolve_fields` in particular needs the **total** page
-  count, which the measure tier supplies. Wiring those to a window is step 4 and is not
-  claimed here.
+- ~~Whether the measure tier can be derived without shaping twice~~ — **resolved, and
+  the answer is that the question was the wrong one.** The worry was that a
+  complex-script paragraph's line breaks are only known after full shaping, so a measure
+  tier built without retaining the shaped form would have to shape twice. It does not,
+  because step 4 does not avoid shaping — it avoids *retaining*. `MeasureSink` receives
+  the same fully shaped `BlockFragment` the paint tier would have received, from the same
+  shaper, and discards its glyphs one fragment later. So the height of a complex-script
+  paragraph is exactly the height the paint tier computes, for every script, at exactly
+  one shaping pass. What a window then pays is a **second** shaping of the paragraphs it
+  paints — 485 fragments out of 1,303,306 in the measurement above, 3 ms — and that is a
+  per-window cost, as predicted, not a per-document one.
+- ~~Footnotes and `eachPage` note renumbering~~ — **resolved by refusing, which is the
+  precedent the question itself named.** `measure_document` returns
+  `NotWindowable::NotesRestartEachPage` when `resolve_note_labels(...).restarts_each_page()`,
+  exactly as `paginate_document_cached` does, and `NotWindowable::BodyFootnotes` when the
+  body references a footnote at all — a footnote reserves a band at the bottom of the page
+  it lands on, so the content height the measure pass filled is not the height that page
+  had. Endnotes are **not** refused: their bodies are appended to the flowed block
+  sequence exactly as `build_section_runs_inner` appends them, and the resolved endnote
+  list is computed once at open rather than per window (recomputing it was a full-body
+  walk on every scroll, which measured at 0.4 s on a 100,000-block document before it was
+  cached).
+- ~~Anchored floats~~ — **resolved by refusing, and the reason is worse than the one the
+  question anticipated.** It is not only that `place_floats` resolves an anchor against
+  the page its paragraph landed on while carrying a document-global z-order counter.
+  It is that `finish_pagination` runs a **bounded fixed point that re-flows the whole
+  body** against computed wrap exclusions, so an anchored float can move page boundaries
+  — which means the measure tier's page list would be wrong, not merely incomplete.
+  `measure_document` therefore returns `NotWindowable::AnchoredFloats` if the document
+  anchors an object anywhere: any depth of the body, or any header/footer part.
+  `anchor::document_has_anchored_object` is a deliberate **superset** of what the float
+  passes act on (it ignores `behind_doc`, the wrap mode and the anchor kind, and descends
+  into cells and content controls that `body_wrap_rects` does not), so `false` proves both
+  passes inert while `true` proves nothing. Margin line numbering is refused for the
+  related reason that `place_line_numbers` runs a counter across pages.
+- ~~`paginate_from` reproduces the paginator's output, not the driver's~~ — **resolved
+  by splitting the driver's post-passes into page-local and not.** `window_of` runs the
+  four that are page-local given a page's absolute number — section `w:vAlign`, running
+  content, `w:pgBorders`, and `PAGE`/`NUMPAGES` resolution — so a windowed page is a
+  finished page and the test compares it to a full `paginate_document`'s page *field for
+  field*, glyphs and header and footer included, rather than comparing boundaries.
+  `resolve_fields_labeled_with_total` takes the total the measure tier supplies instead
+  of `layout.pages.len()`, which is the specific trap: a window that paginated perfectly
+  but printed "page 3 of 6" on a 29,621-page document would still be showing the user a
+  wrong number. `page_number_label_at` computes one page's `PAGE` label in closed form
+  rather than folding over every page before it (a fold would allocate 29,621 strings per
+  scroll); it is asserted equal to the driver's running fold over 300 pages in five
+  `w:pgNumType` configurations. The passes that are **not** page-local are the two above,
+  and documents needing them are refused.
