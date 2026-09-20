@@ -14,6 +14,7 @@ import {
   packFontBytes,
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
+import { editRefusalMessage } from "./edit_errors.mjs";
 import {
   compatibilityOccurrenceCount,
   downloadNameForFormat,
@@ -8956,7 +8957,13 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     // vocabulary, not user-facing text — a bounded, generic message is enough
     // to stop this from reading as "nothing happened" (docs/67, "Error/
     // reporting UX": never silently do nothing).
-    setStatus("That edit isn't supported for this selection yet", "error");
+    //
+    // A refused undo or redo is the one case the generic sentence actively
+    // misdescribes: nothing about the *selection* is wrong, the history step
+    // simply no longer applies to this document. `apply_group` now restores
+    // the pre-edit document and pushes the entry back before returning, so the
+    // honest thing to say is that nothing changed (HF-045).
+    setStatus(editRefusalMessage(err), "error");
     return false;
   }
   await applyEditResult(res);
