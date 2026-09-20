@@ -33,12 +33,17 @@ test("a document far past the ceiling is refused with a reason, and the editor s
   await gotoEditor(page);
   const before = await paragraphCount(page);
 
-  // 1.3 million paragraphs: the size of the reported file.
-  await page.locator("#file").setInputFiles(textFile(1_303_305, "40mb.docx"));
+  // One paragraph past the ceiling. It used to be 1,303,306 — the size of the
+  // reported file — and that size now OPENS, through the windowed layout path
+  // (`docs/113`): measured at 110.5 s and 2,476 MB of wasm linear memory for
+  // 25,556 pages, against the 4.14 GiB the whole-layout path needed. The
+  // refusal still has to exist and still has to be readable, so this exercises
+  // it at the size where it now applies.
+  await page.locator("#file").setInputFiles(textFile(700_001, "40mb.docx"));
 
   const status = page.locator("#status");
-  await expect(status).toContainText("1,303,306 paragraphs", { timeout: 60_000 });
-  await expect(status).toContainText("262,144");
+  await expect(status).toContainText("700,002 paragraphs", { timeout: 120_000 });
+  await expect(status).toContainText("700,000");
   await expect(status).toContainText("Split it into smaller documents");
   // The message must never show a trap name, and the module must not have died.
   await expect(status).not.toContainText(/unreachable/i);
@@ -76,4 +81,51 @@ test("a large document opens, and the accessibility mirror stays a window", asyn
   // And it says it is a window, so a screen reader is not told the document is
   // only as long as the part it can see.
   await expect(page.locator("#a11yDocument")).toContainText(/Showing blocks 1 to \d+ of 65,?537/);
+});
+
+// docs/113 §8 — a document too large to lay out whole opens one page-window at
+// a time, and the pages outside the window are still real pages.
+//
+// This is the browser half of the invariant `crates/casual-doc-wasm` asserts
+// natively ("a windowed page equals the same page of a whole layout, field for
+// field"). What it adds is the thing only a browser can show: that the page a
+// user SCROLLS TO — far outside the window the document opened with — paints
+// ink rather than an empty sheet, which is the silent failure `docs/113` §8 is
+// written against.
+test("a document too large to lay out whole opens windowed, and its far pages still paint", async ({
+  page,
+}) => {
+  // One block past MAX_WHOLE_LAYOUT_BLOCKS (262,144): the smallest document
+  // that takes the windowed path, so this guard costs the least time that can
+  // still cover it. Measured at 17-31 s to open.
+  const paragraphs = 262_146;
+  test.setTimeout(6 * 60_000);
+  const crashes = [];
+  page.on("pageerror", (error) => crashes.push(String(error)));
+  await gotoEditor(page);
+
+  await page.locator("#file").setInputFiles(textFile(paragraphs - 1, "windowed.docx"));
+  await expect.poll(() => paragraphCount(page), { timeout: 5 * 60_000 }).toBe(paragraphs);
+  expect(crashes, "the module must not abort").toEqual([]);
+
+  // The page count is the DOCUMENT's, not the resident window's. A windowed
+  // body that reported its window here would say five.
+  const wraps = await page.locator(".page-wrap").count();
+  expect(wraps, "every page of the document must exist for the host").toBeGreaterThan(5_000);
+
+  // The last page — thousands of pages outside the window the document opened
+  // with — must paint, and paint ink.
+  const last = page.locator(".page-wrap").nth(wraps - 1);
+  await last.scrollIntoViewIfNeeded();
+  await last.locator("canvas").waitFor({ state: "attached", timeout: 120_000 });
+  const inked = await last.locator("canvas").evaluate((canvas) => {
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) return true;
+    }
+    return false;
+  });
+  expect(inked, `page ${wraps} painted nothing`).toBe(true);
+  expect(crashes).toEqual([]);
 });
