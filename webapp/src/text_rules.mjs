@@ -105,3 +105,23 @@ export function isWholeWordAt(text, start, end) {
   const word = /[\p{L}\p{N}_]/u;
   return !word.test(text[start - 1] || "") && !word.test(text[end] || "");
 }
+
+/**
+ * HTML-escapes a string for interpolation into markup.
+ *
+ * Pure and DOM-free, so it belongs beside the other text rules rather than in
+ * the 18k-line module. Moved to bring `main.js` back under its ratchet after a
+ * merge: two branches each lowered the ceiling from a shared base, and the
+ * merge summed their additions, so the file ended two lines above a ceiling
+ * neither branch had measured against.
+ *
+ * @param {unknown} text any value; stringified first.
+ * @returns {string} the text with `& < > "` replaced by their entities.
+ */
+export function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}

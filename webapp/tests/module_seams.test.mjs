@@ -35,7 +35,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  position-comparison helpers moved into `caret_navigation.mjs` (renamed from
  *  `caret_probe.mjs`) to pay for them.
  *  Was 18,373 before the first HF-085 extraction. */
-const MAIN_JS_LINE_CEILING = 18107;
+const MAIN_JS_LINE_CEILING = 18103;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
