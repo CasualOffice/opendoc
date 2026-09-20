@@ -325,11 +325,24 @@ one distinct line and `wc -l` counts 1,303,305 of them):
 | per paragraph | 3,378 B | 1,021 B |
 | resident | 4.10 GiB | 1.24 GiB |
 | **peak RSS** | **4.14 GiB** | **1.23 GiB** |
-| time | 8.62 s | 8.27 s (0.61 model + 7.66 measure) |
-| scroll to page 22,215 | — | 3 ms, 264 KB, 485 fragments re-shaped |
+| time | 8.6-34.6 s | 8.3-33.7 s |
+| scroll to page 22,215 | — | 3-29 ms, 264 KB, 485 fragments re-shaped |
 
 Both paths report **29,621 pages**, which is the cross-check that the measure tier agrees
 with the full driver at this scale and not only on the corpus.
+
+Timing is reported as a range because it is the noisy half of this measurement:
+six runs on a shared 16 GiB laptop gave 8.3-38 s for the same work, while the
+memory figures reproduced to within 0.4%. Both columns move together — the
+windowed path pays the **same single shaping pass** the production path pays,
+measured back to back at 34.6 s and 30.7 s under identical load. Windowing does
+not make opening faster; it makes it fit.
+
+The production column is the one to read carefully: **3,377 B/paragraph measured at
+300,000, 600,000 and 1,303,306 paragraphs**, the same figure at all three, so the total
+is a measurement and not an extrapolation. Under memory pressure its resident reading
+*falls* (the OS reclaims), which is itself the symptom of a 16 GiB machine at its limit
+— another reason the number that matters is the peak.
 
 4.14 GiB does not fit a wasm32 address space. That is the measured reason the owner's
 file is refused rather than merely slow, and 1.23 GiB is why the engine can now open it.

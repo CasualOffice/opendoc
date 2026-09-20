@@ -254,7 +254,14 @@ high-water mark of the child process, because peak is what fails an allocation:
 | per paragraph | 3,378 B | **1,021 B** |
 | resident | 4.10 GiB | **1.24 GiB** |
 | peak RSS | 4.14 GiB | **1.23 GiB** |
-| time | 8.62 s | 8.27 s |
+| time | 8.6-34.6 s | 8.3-33.7 s |
+
+Timing is a range because it is the noisy half: six runs on a shared 16 GiB laptop gave
+8.3-38 s for the same work while the memory figures reproduced to within 0.4%. Both
+columns move together — the windowed open pays the same single shaping pass — so
+windowing does not make opening faster, it makes it fit. The 3,378 B/paragraph figure is
+the same at 300,000, 600,000 and 1,303,306 paragraphs, so the total is measured rather
+than extrapolated.
 
 Note how far §3.1's 14.4 KB/paragraph has moved, and why the comparison is not with it:
 that figure was measured on 130-character prose with a pre-stage-1 model. On the owner's

@@ -136,7 +136,13 @@ fn viewer_limits() -> PackageLimits {
 /// | per paragraph | 3,378 B | 1,021 B |
 /// | resident | 4.10 GiB | 1.24 GiB |
 /// | **peak RSS** | **4.14 GiB** | **1.23 GiB** |
-/// | time | 8.62 s | 8.27 s |
+/// | time | 8.6-34.6 s | 8.3-33.7 s |
+///
+/// Timing is a range because it is the noisy half of the measurement (six runs
+/// on a shared 16 GiB laptop, 8.3-38 s for the same work) while the memory
+/// figures reproduced to within 0.4%. Both columns move together: the windowed
+/// open pays the same single shaping pass, so windowing does not make opening
+/// faster, it makes it fit.
 ///
 /// 4.14 GiB does not fit a wasm32 address space, which is the measured reason
 /// that file is refused rather than slow. 1.23 GiB does.
