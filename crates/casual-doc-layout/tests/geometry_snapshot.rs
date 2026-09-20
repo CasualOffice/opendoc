@@ -21,7 +21,14 @@ use std::path::PathBuf;
 
 use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::document_layout::paginate_document;
+// Separate `use` lines (anti-conflict): the measure tier of `docs/113`.
+use casual_doc_layout::document_layout::document_page_config;
+use casual_doc_layout::flow::build_galley_for_blocks;
+use casual_doc_layout::measure::PageOutline;
+use casual_doc_layout::measure::measure_galley;
 use casual_doc_layout::page::{PaginatedLayout, PlacedFragment};
+use casual_doc_layout::paginate::paginate;
+use casual_doc_layout::paginate::paginate_measures;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::Twip;
 use casual_doc_model::NodeId;
@@ -503,5 +510,82 @@ fn geometry_of_fixtures_matches_the_golden_snapshot() {
         actual, expected,
         "geometry drifted from the golden (docs/94 H1). If intended, re-bless with \
          REBLESS_GEOMETRY=1 and review the diff."
+    );
+}
+
+/// The measure tier, over the same corpus (`docs/113` §6 step 2).
+///
+/// `windowed_layout.rs` proves "the measure tier reproduces every page
+/// boundary" against synthetic galleys, where every line height is a round
+/// number chosen by the test. This runs the same property over the *real*
+/// shaped fixtures — real font metrics, real line breaking, numbering, tab
+/// stops, contextual spacing — so a height the projection rounds or drops
+/// differently from the paint tier shows up as a moved page boundary rather
+/// than passing unnoticed.
+///
+/// It compares `paginate` against `paginate_measures` over the body galley at
+/// the document's own page geometry, rather than going through
+/// `paginate_document`: the measure tier is a property of the paginator, and
+/// the driver's post-passes (running content, floats, notes) run after it.
+///
+/// Shaped metrics differ on Windows, but this asserts an *equality between two
+/// tiers of the same run*, not an absolute geometry, so it holds everywhere and
+/// is deliberately not skipped there the way the golden above is.
+#[test]
+fn the_measure_tier_paginates_the_corpus_identically() {
+    let shaper = ParleyShaper::new();
+    let mut multi_page = 0;
+    // The blessed fixtures are single-concern and short: the one that runs onto
+    // several pages does so through forced breaks, so its boundaries do not
+    // depend on a single shaped height and a projection that lost one would
+    // still agree. A long prose body is added here — not to `fixtures()`, which
+    // would move the golden — so that at least one case paginates *on heights*
+    // and the equality below can actually fail.
+    let long_prose = document(
+        (0..400)
+            .map(|i| {
+                paragraph(
+                    10_000 + i * 2,
+                    ParagraphProperties {
+                        spacing: Some(spacing(120, 180)),
+                        ..ParagraphProperties::default()
+                    },
+                    "The quick brown fox jumps over the lazy dog while the editor \
+                     reflows this paragraph and every other one on the page.",
+                )
+            })
+            .collect(),
+        section(9, None),
+    );
+    let corpus = fixtures()
+        .into_iter()
+        .chain(std::iter::once(("long prose", long_prose)));
+    for (name, doc) in corpus {
+        let config = document_page_config(&doc);
+        let content_width = config.content_area().size.width;
+        let galley = build_galley_for_blocks(&doc, &shaper, doc.body(), content_width);
+        let full: Vec<PageOutline> = paginate(&galley, &config)
+            .pages
+            .iter()
+            .map(PageOutline::of)
+            .collect();
+        let measured = paginate_measures(&measure_galley(&galley), &config, 0);
+        assert_eq!(
+            measured.pages.len(),
+            full.len(),
+            "{name}: the measure tier must agree on the page count"
+        );
+        assert_eq!(
+            measured.pages, full,
+            "{name}: the measure tier must reproduce every page boundary, field for field"
+        );
+        if full.len() > 1 {
+            multi_page += 1;
+        }
+    }
+    assert!(
+        multi_page > 1,
+        "the corpus must contain cases that paginate onto more than one page, \
+         or agreeing about page boundaries proves nothing ({multi_page})"
     );
 }
