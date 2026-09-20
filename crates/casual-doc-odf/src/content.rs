@@ -10398,7 +10398,7 @@ fn build_blocks(
                 groups,
                 group_media_ids,
             )?),
-            BlockDraft::Table(table) => BlockNode::Table(build_table(
+            BlockDraft::Table(table) => BlockNode::Table(Box::new(build_table(
                 table,
                 paragraphs,
                 ids,
@@ -10415,7 +10415,7 @@ fn build_blocks(
                 shapes,
                 groups,
                 group_media_ids,
-            )?),
+            )?)),
             BlockDraft::Toc(toc) => {
                 let id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
                 let inner = build_blocks(
@@ -10438,7 +10438,7 @@ fn build_blocks(
                 )?;
                 // A TOC with no captured entries is dropped at import (the model
                 // rejects an empty content control), so `inner` is non-empty here.
-                BlockNode::Sdt(BlockSdt {
+                BlockNode::Sdt(Box::new(BlockSdt {
                     id,
                     properties: SdtProperties {
                         control_kind: Some(SdtControlKind::BuildingBlockGallery),
@@ -10448,7 +10448,7 @@ fn build_blocks(
                         ..SdtProperties::default()
                     },
                     blocks: inner,
-                })
+                }))
             }
         });
     }

@@ -1773,7 +1773,7 @@ mod cross_paragraph_float_tests {
         });
         let table_id = node(950);
         let cell_paragraph = node(953);
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: table_id,
             grid: vec![GridColumn {
                 width_twips: Some(9_000),
@@ -1798,7 +1798,7 @@ mod cross_paragraph_float_tests {
                     })],
                 }],
             }],
-        });
+        }));
         let document = Document::new(
             node(939),
             vec![paragraph(1, "anchor".to_owned(), vec![drawing]), table],

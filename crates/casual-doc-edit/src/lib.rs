@@ -1342,7 +1342,7 @@ pub fn apply(
             if idx > blocks.len() {
                 return Err(EditError::OffsetOutOfRange);
             }
-            blocks.insert(idx, BlockNode::Table((**table).clone()));
+            blocks.insert(idx, BlockNode::Table(Box::new((**table).clone())));
             Ok(Operation::DeleteTable { table: table.id })
         }
         Operation::InsertBlocks {
@@ -2294,7 +2294,7 @@ fn remove_table(
         let BlockNode::Table(t) = blocks.remove(i) else {
             unreachable!("position matched a table");
         };
-        return Ok((container, i as u32, t));
+        return Ok((container, i as u32, *t));
     }
     for block in blocks.iter_mut() {
         match block {
@@ -3241,7 +3241,7 @@ fn find_table_mut(blocks: &mut [BlockNode], table: NodeId) -> Option<&mut Table>
         .any(|b| matches!(b, BlockNode::Table(t) if t.id == table))
     {
         return blocks.iter_mut().find_map(|b| match b {
-            BlockNode::Table(t) if t.id == table => Some(t),
+            BlockNode::Table(t) if t.id == table => Some(&mut **t),
             _ => None,
         });
     }
@@ -7350,7 +7350,7 @@ mod tests {
         definitions.headers.insert(
             header_id,
             casual_doc_model::v1::HeaderFooter {
-                blocks: vec![BlockNode::Table(Table {
+                blocks: vec![BlockNode::Table(Box::new(Table {
                     id: table_id,
                     grid: vec![GridColumn {
                         width_twips: Some(3000),
@@ -7362,7 +7362,7 @@ mod tests {
                         properties: TableRowProperties::default(),
                         cells: vec![cell(cell_id, 994, 995, "header cell")],
                     }],
-                })],
+                }))],
             },
         );
         let mut d = Document::new(n(1002), vec![para(2, vec![run(3, "body")])], definitions)

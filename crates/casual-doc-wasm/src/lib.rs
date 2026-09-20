@@ -2577,13 +2577,13 @@ impl WasmDocument {
         let mut properties = TableProperties::default();
         set_table_borders_preset(&mut properties.borders, "all", || border_edge(0, 0, 0, 4));
         let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-        Ok(BlockNode::Table(Table {
+        Ok(BlockNode::Table(Box::new(Table {
             id: table_id,
             grid,
             grid_change: None,
             properties,
             rows: table_rows,
-        }))
+        })))
     }
 
     /// Rebuilds a paragraph's inline sequence from external [`ClipboardRun`]s: each
@@ -10641,13 +10641,13 @@ impl WasmDocument {
                     });
                 }
                 let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                Ok(BlockNode::Table(Table {
+                Ok(BlockNode::Table(Box::new(Table {
                     id: table_id,
                     grid: t.grid.clone(),
                     grid_change: t.grid_change.clone(),
                     properties: t.properties.clone(),
                     rows,
-                }))
+                })))
             }
             _ => Err("unsupported block in structured paste".into()),
         }
@@ -27755,7 +27755,7 @@ mod tests {
                         drawing(unlabelled, None),
                     ],
                 }),
-                BlockNode::Table(Table {
+                BlockNode::Table(Box::new(Table {
                     id: table_id,
                     grid: Vec::new(),
                     grid_change: None,
@@ -27769,7 +27769,7 @@ mod tests {
                         ..TableProperties::default()
                     },
                     rows: vec![header_row, body_row],
-                }),
+                })),
             ],
             definitions,
         )
