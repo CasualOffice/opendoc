@@ -589,10 +589,10 @@ Two thirds of the open time was the host building one sheet element per page —
   monotonic. Raising `MAX_SCROLL_PX` past the wall turns it red.
 - `webapp/tests/e2e/viewer-scroll-ceiling.spec.mjs` — the same claims in a browser, on a
   6,600-page document at 500% zoom (35.0 M px of paper, past **both** walls): the
-  container, the last page's ink, find scrolling to a match 6,600 pages away, the caret
-  staying inside the viewport while arrowing at the far end, and the Pages navigator.
-  With the cap removed, four of its five tests fail — including "page 6,600 could not be
-  scrolled to".
+  container, the last page's ink, find scrolling to a match 6,600 pages away,
+  the caret staying inside the viewport while arrowing at the far end, the comment column
+  staying pinned to its anchor, and the Pages navigator. With the cap removed, four of its
+  six tests fail — including "page 6,600 could not be scrolled to".
 - `webapp/tests/e2e/large-documents.spec.mjs` — the windowed document, its far pages, and
   the read-only surface of §8.7.
 
@@ -607,11 +607,14 @@ Two thirds of the open time was the host building one sheet element per page —
   work is engaged, so it is not the band's; it is the same family as the ArrowUp fixes
   that landed on `main` after this branch was cut. The ceiling spec asserts the caret's
   *position*, and says why in a comment rather than asserting around it.
-- **The review margin is recomputed when the window moves, but only while compressed.**
-  A comment card is anchored in scroll coordinates, and those move under it as the window
-  moves; for an uncompressed document they do not, so an ordinary scroll pays nothing.
-  A document with both 25,556 pages and hundreds of comments would pay a review re-layout
-  per window move.
+- ~~The review margin is recomputed per window move while compressed.~~ Fixed properly
+  instead: a card's position is stored in BAND coordinates and `mountReviewWindow` — which
+  already runs on every scroll frame — adds the live offset back, so the card tracks its
+  marker exactly, per frame, with no parse or re-layout. The stopgap it replaces was a
+  full review re-render per window move. Measured before either: on a 3,300-page document
+  at 500%, a card slid **533 px** away from the text it points at after 200 px of
+  scrolling, without unmounting and without a word. Guarded, and driven red by putting the
+  scroll-coordinate anchor back.
 - **The `pageSize` loop is still O(pages) at open.** It is cheap per page (an outline
   read, no re-pagination) but it is 25,556 crossings of the wasm boundary.
 
