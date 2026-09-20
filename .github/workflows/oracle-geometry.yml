@@ -8,7 +8,19 @@
 # exactly like any visual baseline change.
 #
 # The `oracle_geometry` test in casual-doc-render then diffs our layout against
-# these references within tolerance; until this job has run, that test is inert.
+# these references within tolerance. Those references are NOW COMMITTED, so that
+# test is a live gate on every pull request (`.github/workflows/ci.yml`, job
+# `test`, step "Oracle geometry gate") and `the_oracle_gate_is_armed` fails the
+# build if one is removed, staled or voided. This job exists to *move* a
+# reference deliberately — a fixture change, a LibreOffice bump, or an extraction
+# semantics change — never to repair a red gate.
+#
+# The committed references were first blessed with LibreOffice 26.2.4.2 on
+# macOS/arm64, because that is the pinned build that was actually available; see
+# fixtures/oracle/README.md. When this job runs it regenerates them on Linux with
+# the same pinned build, and the resulting PR diff is therefore also the first
+# measurement of whether the oracle is platform-stable. A non-empty diff here is
+# information, not a failure: review it before merging.
 name: Oracle geometry re-bless
 
 on:
@@ -72,13 +84,21 @@ jobs:
             exit 1
           fi
 
-      - name: Record which faces fontconfig actually resolved
+      - name: Check which faces fontconfig actually resolves
         run: |
           set -euo pipefail
           # Installing a font package is not the same as LibreOffice using it.
-          # This records what fontconfig resolved, so a reference can never be
-          # produced by a silently substituted face without that being visible
-          # in the diff.
+          # This fails the job early if fontconfig would substitute, so a bad
+          # reference is never produced in the first place.
+          #
+          # It is a PRE-FLIGHT, not the gate's provenance. The gate reads the
+          # faces the produced PDF actually embedded, recorded per reference as
+          # `fonts` by scripts/oracle/extract-geometry.sh and checked by
+          # `embedded_fonts_are_pinned` in the oracle_geometry test. That answers
+          # "what shaped this document" instead of "what was installed on the
+          # machine", and it is also the only form of the check that means
+          # anything on macOS, where LibreOffice ships and uses its own copies of
+          # these families and fontconfig answers for the system's fonts.
           #
           # Scope, stated honestly: this guards the PINNED LATIN faces only. It
           # is NOT the explanation for the H2 residual — on the corpus fixture
@@ -88,14 +108,13 @@ jobs:
           # environment substitutes differently (container 7933, macOS 6953,
           # ours 6885). docs/94's font-parity premise is Latin-only; the test
           # and the extractor both exclude uncoverable lines and compare the
-          # excluded count exactly, which is what actually closes that hole.
+          # excluded extent, which is what actually closes that hole.
           sudo fc-cache -f >/dev/null
-          : > fixtures/oracle/.fonts
           status=0
           for family in "Liberation Sans" "Liberation Serif" "Liberation Mono" \
                         "Carlito" "Caladea"; do
             resolved="$(fc-match "$family" family | head -n1)"
-            echo "$family => $resolved" | tee -a fixtures/oracle/.fonts
+            echo "$family => $resolved"
             if [ "$resolved" != "$family" ]; then
               echo "::error::fontconfig substituted '$resolved' for '$family' — the oracle would shape Latin text with the wrong face"
               status=1
@@ -131,7 +150,22 @@ jobs:
             scripts/oracle/extract-geometry.sh "${FIXTURES[$id]}" \
               > "fixtures/oracle/${id}.geom.json"
           done
-          git diff --stat -- fixtures/oracle || true
+
+      - name: Report how far the regenerated references moved
+        run: |
+          set -euo pipefail
+          # The committed references were blessed on macOS/arm64 with the same
+          # pinned LibreOffice build. This diff is therefore also the measurement
+          # of whether the oracle is platform-stable — print it whether or not a
+          # PR is opened, and do NOT fail on it: a moved reference is a review
+          # decision, and failing here would only tempt someone to hand-patch a
+          # reference, which is the one thing the blessing protocol forbids.
+          if git diff --quiet -- fixtures/oracle; then
+            echo "references are byte-identical to the committed set"
+          else
+            echo "::warning::the regenerated references differ from the committed set — review the diff"
+            git --no-pager diff -- fixtures/oracle
+          fi
 
       - name: Open a PR with the regenerated references
         if: ${{ inputs.open_pr }}

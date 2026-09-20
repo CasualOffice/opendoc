@@ -1,0 +1,23 @@
+{
+  "schema": 3,
+  "fonts": [
+    "LiberationSans-Bold",
+    "LiberationSerif"
+  ],
+  "pages": [
+    {
+      "sizeTwips": [
+        11906,
+        16838
+      ],
+      "contentBboxTwips": [
+        1136,
+        808,
+        3934,
+        3813
+      ],
+      "excludedLines": 0,
+      "excludedExtentTwips": 0
+    }
+  ]
+}

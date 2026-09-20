@@ -60,6 +60,18 @@ jobs:
           toolchain: 1.96.0
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      # The oracle geometry gate (docs/94 H2) runs FIRST and by name, on every
+      # pull request. It is part of the workspace sweep below too, but a gate
+      # that only exists as one line of a 3,000-line log is a gate nobody can
+      # point at: FID-P-01 was open because the harness was merged, described as
+      # protecting rendering fidelity, and never executed — no reference had ever
+      # been blessed. `the_oracle_gate_is_armed` asserts this step still exists,
+      # so deleting it fails the build rather than quietly disarming the gate.
+      # No LibreOffice and no network here: the references under fixtures/oracle/
+      # are committed, and regenerating them is the separate, reviewed
+      # `.github/workflows/oracle-geometry.yml` job.
+      - name: Oracle geometry gate (docs/94 H2, FID-P-01)
+        run: cargo test -p casual-doc-render --test oracle_geometry --all-features --locked
       - name: Run workspace tests
         run: cargo test --workspace --all-features --locked
       - name: Run documentation tests
