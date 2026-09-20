@@ -1,5 +1,13 @@
 # 104 — Hotfix Tracker
 
+> **Archive, closed to new rows (2026-09-20).** The single working queue is
+> **`109-BACKLOG.md`** — every open row below appears there, in the order it will be
+> worked, and `109` is the only queue to work from. This document is not deleted and no row
+> is removed from it: it holds the per-defect detail, the verification history, the refuted
+> findings and the cross-cutting themes that `109` deliberately does not duplicate.
+> **Do not add a new row here** — add it to `109`. When a row below closes, update its
+> Status here *and* remove it from `109`.
+
 **Status:** Living record. **Opened:** 2026-09-02. **Owner:** unassigned.
 
 **Scope:** every confirmed UX, UI, and correctness defect currently known in this
