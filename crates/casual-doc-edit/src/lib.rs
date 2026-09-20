@@ -5347,7 +5347,12 @@ fn insert_field_at(
     if at.offset > paragraph_text_len(para) {
         return Err(EditError::OffsetOutOfRange);
     }
-    insert_marker_at(&mut para.inlines, at.offset, InlineNode::Field(Box::new(field)), ids)?;
+    insert_marker_at(
+        &mut para.inlines,
+        at.offset,
+        InlineNode::Field(Box::new(field)),
+        ids,
+    )?;
     Ok(())
 }
 
@@ -6223,7 +6228,8 @@ mod tests {
             properties: RunProperties {
                 bold: Some(true),
                 ..RunProperties::default()
-            }.into(),
+            }
+            .into(),
             text: "before".to_owned(),
         });
         let mut d = Document::new(
@@ -7001,12 +7007,12 @@ mod tests {
             properties: ParagraphProperties::default().into(),
             inlines: vec![
                 run(3, "ab"),
-                InlineNode::Symbol(Symbol {
+                InlineNode::Symbol(Box::new(Symbol {
                     id: n(4),
                     font: "Wingdings".to_owned(),
                     char: 0x1_F600,
                     properties: RunProperties::default().into(),
-                }),
+                })),
                 run(5, "cd"),
             ],
         })]);
@@ -7058,12 +7064,12 @@ mod tests {
                     properties: ParagraphProperties::default().into(),
                     inlines: vec![
                         run(4, "ab"),
-                        InlineNode::Symbol(Symbol {
+                        InlineNode::Symbol(Box::new(Symbol {
                             id: n(5),
                             font: "Wingdings".to_owned(),
                             char: 0x1_F600,
                             properties: RunProperties::default().into(),
-                        }),
+                        })),
                         run(6, "cd"),
                     ],
                 }),
@@ -7603,7 +7609,8 @@ mod tests {
             properties: RunProperties {
                 bold: Some(true),
                 ..RunProperties::default()
-            }.into(),
+            }
+            .into(),
             text: "Bold footer text".to_owned(),
         });
         definitions.headers.insert(
@@ -7770,7 +7777,7 @@ mod tests {
         BlockNode::Paragraph(Paragraph {
             id: n(paragraph),
             properties: ParagraphProperties::default().into(),
-            inlines: vec![InlineNode::Group(WordprocessingGroup {
+            inlines: vec![InlineNode::Group(Box::new(WordprocessingGroup {
                 id: n(group),
                 anchor: None,
                 relative_height: None,
@@ -7797,7 +7804,7 @@ mod tests {
                     flip_v: false,
                     rotation: None,
                 })],
-            })],
+            }))],
         })
     }
 
@@ -9061,7 +9068,8 @@ mod tests {
             properties: RunProperties {
                 bold: Some(true),
                 ..RunProperties::default()
-            }.into(),
+            }
+            .into(),
             text: "bold".to_string(),
         });
         let insertion = InlineNode::Revision(Box::new(Revision {

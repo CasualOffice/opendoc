@@ -307,7 +307,8 @@ fn multilevel_list() -> Document {
                     level,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(id + 1, text)],
         })
     };
@@ -384,7 +385,8 @@ fn numbered_list(lvl_text: &str, num_fmt: NumberFormat) -> Document {
                     level: 0,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(id + 1, text)],
         })
     };

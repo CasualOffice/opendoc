@@ -2182,7 +2182,7 @@ impl WasmDocument {
         self.apply_action_as(
             vec![Operation::InsertInlineObject {
                 at: Pos::new(owner, offset),
-                node: Box::new(InlineNode::Group(group)),
+                node: Box::new(InlineNode::Group(Box::new(group))),
             }],
             HistoryKind::ObjectInsert,
         )
@@ -14382,7 +14382,7 @@ fn decide_all_review_inlines(inlines: &mut Vec<InlineNode>, accept: bool) {
                 {
                     let mut prior = *change.prior;
                     prior.prop_change = None;
-                    *run.properties = prior.into();
+                    run.properties = prior.into();
                 }
                 index += 1;
             }
@@ -14922,7 +14922,7 @@ fn decide_review_inline_format_change(
                 if !accept {
                     let mut prior = *change.prior;
                     prior.prop_change = None;
-                    *run.properties = prior.into();
+                    run.properties = prior.into();
                 }
                 return true;
             }
@@ -22975,7 +22975,8 @@ mod tests {
                             properties: RunProperties {
                                 bold: Some(true),
                                 ..RunProperties::default()
-                            }.into(),
+                            }
+                            .into(),
                             text: "Heading".to_owned(),
                         }),
                     ],
@@ -23289,7 +23290,8 @@ mod tests {
                         properties: RunProperties {
                             italic: Some(true),
                             ..RunProperties::default()
-                        }.into(),
+                        }
+                        .into(),
                         text: "B".to_owned(),
                     }),
                 ],
@@ -23695,7 +23697,8 @@ mod tests {
                 properties: ParagraphProperties {
                     outline_level: Some(0),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![
                     InlineNode::Revision(Box::new(Revision {
                         id: NodeId::from_parts(92, 2).unwrap(),
@@ -25318,7 +25321,8 @@ mod tests {
                             properties: RunProperties {
                                 bold: Some(true),
                                 ..RunProperties::default()
-                            }.into(),
+                            }
+                            .into(),
                             text: "Bold".to_owned(),
                         })],
                     })),
@@ -25387,7 +25391,8 @@ mod tests {
                 properties: ParagraphProperties {
                     style_ref: Some(style_id),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: NodeId::from_parts(82, 4).unwrap(),
                     properties: RunProperties::default().into(),
@@ -27292,7 +27297,7 @@ mod tests {
             vec![BlockNode::Paragraph(Paragraph {
                 id: NodeId::from_parts(9, 2).unwrap(),
                 properties: ParagraphProperties::default().into(),
-                inlines: vec![InlineNode::Group(WordprocessingGroup {
+                inlines: vec![InlineNode::Group(Box::new(WordprocessingGroup {
                     id: NodeId::from_parts(9, 3).unwrap(),
                     anchor: None,
                     relative_height: None,
@@ -27319,7 +27324,7 @@ mod tests {
                         flip_v: false,
                         rotation: None,
                     })],
-                })],
+                }))],
             })],
             Definitions::default(),
         )
@@ -29750,7 +29755,8 @@ mod tests {
             properties: ParagraphProperties {
                 page_break_before: page_break,
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![InlineNode::Run(Run {
                 id: sections_id(run),
                 properties: RunProperties::default().into(),
@@ -29766,7 +29772,8 @@ mod tests {
                 page_break_before: true,
                 section_break: Some(SectionId::new(sections_id(section))),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![InlineNode::Run(Run {
                 id: sections_id(run),
                 properties: RunProperties::default().into(),

@@ -532,7 +532,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
         width_emu: 127_000,
         height_emu: 300 * 635,
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(30),
         anchor: Some(top_bottom_anchor(50)),
         relative_height: None,
@@ -559,7 +559,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             flip_v: false,
             rotation: None,
         })],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
         properties: ParagraphProperties::default().into(),
@@ -700,7 +700,8 @@ fn top_and_bottom_reflow_repeats_in_both_headers_and_footers() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(83, "page two")],
         }),
     ];
@@ -760,7 +761,8 @@ fn a_float_in_a_body_table_cell_uses_the_nested_paragraph_on_its_actual_page() {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run(21, "page two")],
     });
     let table = one_cell_table(
@@ -971,7 +973,8 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(21, "page two")],
         }),
     ];
@@ -1106,7 +1109,8 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(443, "page two")],
         }),
     ];
@@ -1188,7 +1192,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
 #[test]
 fn grouped_text_box_uses_body_properties_and_shape_autofit() {
     let (_media_id, definitions) = media_defs();
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(500),
         anchor: Some(page_anchor(0, 0)),
         relative_height: Some(1),
@@ -1239,7 +1243,7 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
             flip_v: false,
             rotation: None,
         })],
-    });
+    }));
     let body = vec![BlockNode::Paragraph(Paragraph {
         id: node(510),
         properties: ParagraphProperties::default().into(),
@@ -1514,7 +1518,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(30),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(5),
@@ -1545,7 +1549,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             }),
             rect(33, 200_000),
         ],
-    });
+    }));
     let para = BlockNode::Paragraph(Paragraph {
         id: node(10),
         properties: ParagraphProperties::default().into(),
@@ -1639,7 +1643,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(50),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(9),
@@ -1665,7 +1669,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
                 }],
             ),
         ],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
         properties: ParagraphProperties::default().into(),
@@ -1740,7 +1744,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             rotation: None,
         })
     };
-    let group = InlineNode::Group(WordprocessingGroup {
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
         id: node(70),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(10),
@@ -1759,7 +1763,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             shape(72, 914_400, ShapeGeometry::RightTriangle),
             shape(73, 2 * 914_400, ShapeGeometry::Diamond),
         ],
-    });
+    }));
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: node(10),
         properties: ParagraphProperties::default().into(),
@@ -1939,7 +1943,8 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
             properties: ParagraphProperties {
                 page_break_before: true,
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(21, "page two")],
         }),
     ];

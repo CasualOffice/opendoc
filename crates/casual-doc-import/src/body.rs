@@ -6743,12 +6743,12 @@ impl BodyParser<'_> {
                 properties,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Symbol(Symbol {
+                Ok(InlineNode::Symbol(Box::new(Symbol {
                     id,
                     font,
                     char,
                     properties: properties.into(),
-                }))
+                })))
             }
             Segment::HorizontalRule {
                 align,
@@ -6789,7 +6789,7 @@ impl BodyParser<'_> {
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
             Segment::TextBox(text_box) => Ok(InlineNode::TextBox(Box::new(text_box))),
-            Segment::Group(group) => Ok(InlineNode::Group(group)),
+            Segment::Group(group) => Ok(InlineNode::Group(Box::new(group))),
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::NoteReference(NoteReference { id, kind, note }))

@@ -74,7 +74,8 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run(id + 1, text)],
     })
 }

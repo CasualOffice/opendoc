@@ -201,7 +201,8 @@ fn numbered_paragraph(id: u64, text: &str) -> BlockNode {
                 level: 0,
             }),
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run(id + RUN_BAND, text)],
     })
 }
@@ -274,13 +275,15 @@ fn drop_cap_pair(id: u64) -> Vec<BlockNode> {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![InlineNode::Run(Run {
                 id: node(id + RUN_BAND),
                 properties: RunProperties {
                     size_half_points: Some(117),
                     ..RunProperties::default()
-                }.into(),
+                }
+                .into(),
                 text: "D".to_owned(),
             })],
         }),

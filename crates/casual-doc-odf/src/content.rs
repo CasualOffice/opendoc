@@ -11162,7 +11162,7 @@ fn build_inlines(
                 // (mirroring the DOCX group-of-one), the shape filling the group box
                 // at origin. `id` is the group's; the shape gets its own id.
                 let shape_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
-                InlineNode::Group(WordprocessingGroup {
+                InlineNode::Group(Box::new(WordprocessingGroup {
                     id,
                     anchor: Some(DrawingAnchor {
                         horizontal: AnchorHorizontal {
@@ -11210,7 +11210,7 @@ fn build_inlines(
                         flip_v: draft.flip_v,
                         rotation: None,
                     })],
-                })
+                }))
             }
             InlineDraft::Group(index) => {
                 let draft = groups.get(*index).ok_or(OdfError::InvalidModel)?;
@@ -11237,7 +11237,7 @@ fn build_inlines(
                     picture_media,
                     &mut media_cursor,
                 )?;
-                InlineNode::Group(WordprocessingGroup {
+                InlineNode::Group(Box::new(WordprocessingGroup {
                     id,
                     anchor: Some(DrawingAnchor {
                         horizontal: AnchorHorizontal {
@@ -11265,7 +11265,7 @@ fn build_inlines(
                         rotation: None,
                     },
                     children,
-                })
+                }))
             }
             InlineDraft::Field(kind) => InlineNode::Field(Box::new(Field {
                 id,

@@ -1982,7 +1982,10 @@ fn unsupported_automatic_style_values_are_reported_without_partial_mapping() {
     let InlineNode::Run(run) = &paragraph(&imported, 0).inlines[0] else {
         panic!("run")
     };
-    assert_eq!(run.properties, casual_doc_model::v1::RunProperties::default());
+    assert_eq!(
+        run.properties,
+        casual_doc_model::v1::RunProperties::default()
+    );
     for feature in [
         "odf.attribute.fo.color",
         "odf.attribute.fo.font-size",

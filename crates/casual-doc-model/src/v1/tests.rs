@@ -1603,7 +1603,8 @@ fn drop_cap_frame_round_trips_and_is_bounded() {
         properties: ParagraphProperties {
             drop_cap_frame: Some(frame),
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "D")],
     });
     let document = table_document(vec![block]).unwrap();
@@ -1616,7 +1617,8 @@ fn drop_cap_frame_round_trips_and_is_bounded() {
         properties: ParagraphProperties {
             drop_cap_frame: Some(DropCapFrame { lines: 0, ..frame }),
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "D")],
     });
     assert!(matches!(
@@ -1692,7 +1694,8 @@ fn out_of_range_outline_level_is_rejected() {
         properties: ParagraphProperties {
             outline_level: Some(10),
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run_inline(tid(2), "x")],
     });
     assert!(matches!(
@@ -1840,7 +1843,7 @@ fn symbol_paragraph(symbol: Symbol) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: tid(1),
         properties: ParagraphProperties::default().into(),
-        inlines: vec![InlineNode::Symbol(symbol)],
+        inlines: vec![InlineNode::Symbol(Box::new(symbol))],
     })
 }
 
@@ -2291,7 +2294,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
     let paragraph = BlockNode::Paragraph(Paragraph {
         id: tid(1),
         properties: ParagraphProperties::default().into(),
-        inlines: vec![InlineNode::Group(group)],
+        inlines: vec![InlineNode::Group(Box::new(group))],
     });
     let document = table_document(vec![paragraph]).unwrap();
     let json = document.to_json().unwrap();
@@ -2321,7 +2324,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
     };
     paragraph
         .inlines
-        .push(InlineNode::Group(WordprocessingGroup {
+        .push(InlineNode::Group(Box::new(WordprocessingGroup {
             id: tid(30),
             anchor: None,
             relative_height: None,
@@ -2363,7 +2366,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 flip_v: false,
                 rotation: None,
             })],
-        }));
+        })));
     document.validate().unwrap();
 
     let mut preset_on_typed_geometry = document.clone();
@@ -4299,10 +4302,15 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
     use std::mem::align_of;
     use std::mem::size_of;
 
-    // Measured on macOS arm64 before stage 1 / after stage 1a / after 1b:
-    //   ParagraphProperties 768 -> 304, RunProperties 448 -> 352,
-    //   Paragraph 816 -> 352, Run 496 -> 400,
-    //   BlockNode 816 -> 800 -> 352, InlineNode 512 -> 416 -> 416.
+    // Measured on macOS arm64 before stage 1 / after 1a / after 1b / after 1c:
+    //   ParagraphProperties 768 -> 304 -> 304, RunProperties 448 -> 352 -> 352,
+    //   Paragraph 816 -> 352 -> 48, Run 496 -> 400 -> 48,
+    //   BlockNode 816 -> 800 -> 352 -> 48, InlineNode 512 -> 416 -> 416 -> 64.
+    //
+    // The two property structs did NOT shrink in 1c and are not meant to: what
+    // changed is that a document holds one copy per distinct value instead of
+    // one per node (`super::Shared`). Their ceilings below still matter —
+    // a document with a thousand distinct formats holds a thousand of them.
     //
     // One of `docs/111` §4's numbers does not land, and is worth recording
     // rather than rounding away: `RunProperties` ~192 counted a 160-byte
@@ -4370,26 +4378,35 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
     );
 
     // `InlineNode` is sized by `Run` itself — the common case, which must stay
-    // inline. `Symbol` and `NoteNumberMark` are large for the same reason (a
-    // `RunProperties` by value) and so track it rather than exceed it; boxing
-    // any of them would buy nothing while `Run` is 400 bytes.
+    // inline. Stage 1c made that true by storing every payload larger than a
+    // `Run` out of line, `Symbol` included: once run formatting became a
+    // pointer, `Run` fell to 48 bytes and what set the enum's size was no
+    // longer formatting but the long tail of structurally large variants.
+    // The relationship above (`InlineNode <= Run + align`) is what enforces it,
+    // and is the assertion that must not be weakened — this pair just names the
+    // two leaves that now sit at the floor, so the next variant added by value
+    // is reported against them rather than against a constant.
     assert!(
-        size_of::<Symbol>() <= size_of::<Run>(),
-        "Symbol ({} bytes) now exceeds Run ({} bytes) and sets InlineNode's size",
-        size_of::<Symbol>(),
+        size_of::<NoteReference>() <= size_of::<Run>() + align_of::<InlineNode>(),
+        "NoteReference ({} bytes) now exceeds Run ({} bytes) and sets InlineNode's size",
+        size_of::<NoteReference>(),
         size_of::<Run>()
     );
     assert!(
-        size_of::<NoteNumberMark>() <= size_of::<Run>(),
-        "NoteNumberMark ({} bytes) now exceeds Run ({} bytes)",
-        size_of::<NoteNumberMark>(),
+        size_of::<MoveRangeEnd>() <= size_of::<Run>() + align_of::<InlineNode>(),
+        "MoveRangeEnd ({} bytes) now exceeds Run ({} bytes)",
+        size_of::<MoveRangeEnd>(),
         size_of::<Run>()
     );
 
-    // The boxed block variants cost a pointer in the slot, whatever the payload
-    // grows to.
+    // The boxed variants cost a pointer in the slot, whatever the payload grows
+    // to. A `Symbol` carrying a 16-point Wingdings glyph's formatting is 64
+    // bytes and a `Table` is 800; in the enum they are both 8.
     assert_eq!(size_of::<Box<Table>>(), size_of::<usize>());
     assert_eq!(size_of::<Box<BlockSdt>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<Symbol>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<InlineSdt>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<AltChunk>>(), size_of::<usize>());
 
     // Each field stage 1 moved out of line costs a pointer when absent.
     assert_eq!(size_of::<BoxedParagraphBorders>(), size_of::<usize>());
@@ -4494,4 +4511,329 @@ fn boxed_block_variants_survive_a_json_round_trip_with_their_contents() {
     };
     assert_eq!(symbol.font, "Wingdings");
     assert_eq!(symbol.char, 0xF0FC);
+}
+
+// ---- docs/111 stage 1c: formatting is stored once, not once per node -----
+
+/// A paragraph and a run must **reference** their formatting, never embed it.
+///
+/// This is the shape the whole of `docs/111` stage 1c rests on. The property
+/// structs themselves are still 304 and 352 bytes — they did not shrink, and
+/// they are not supposed to; what changed is that a document holds one copy
+/// per distinct value rather than one copy per node. The guard is therefore a
+/// relationship, not a ceiling: **a node must cost less than the formatting it
+/// carries**, which is only possible while the formatting is out of line.
+///
+/// Written this way deliberately. A bare `size_of::<Paragraph>() <= 48` can be
+/// "fixed" by raising 48 alongside the field that broke it; `Paragraph must be
+/// smaller than ParagraphProperties` cannot be satisfied by any by-value
+/// arrangement of the same data.
+#[test]
+fn a_node_costs_less_than_the_formatting_it_carries() {
+    use std::mem::size_of;
+
+    assert_eq!(
+        size_of::<SharedParagraphProperties>(),
+        size_of::<usize>(),
+        "a paragraph's handle on its formatting must be one pointer, not {} bytes",
+        size_of::<SharedParagraphProperties>()
+    );
+    assert_eq!(
+        size_of::<SharedRunProperties>(),
+        size_of::<usize>(),
+        "a run's handle on its formatting must be one pointer, not {} bytes",
+        size_of::<SharedRunProperties>()
+    );
+
+    assert!(
+        size_of::<Paragraph>() < size_of::<ParagraphProperties>(),
+        "Paragraph is {} bytes against {}-byte ParagraphProperties: the \
+         formatting is embedded by value again, so a million paragraphs hold a \
+         million copies of it",
+        size_of::<Paragraph>(),
+        size_of::<ParagraphProperties>()
+    );
+    assert!(
+        size_of::<Run>() < size_of::<RunProperties>(),
+        "Run is {} bytes against {}-byte RunProperties: the formatting is \
+         embedded by value again",
+        size_of::<Run>(),
+        size_of::<RunProperties>()
+    );
+
+    // And a node is its identity, its handle, and its children — nothing else.
+    assert!(
+        size_of::<Paragraph>()
+            <= size_of::<NodeId>()
+                + size_of::<SharedParagraphProperties>()
+                + size_of::<Vec<InlineNode>>(),
+        "Paragraph is {} bytes: something beyond id + formatting handle + \
+         inlines was added by value",
+        size_of::<Paragraph>()
+    );
+    assert!(
+        size_of::<Run>()
+            <= size_of::<NodeId>() + size_of::<SharedRunProperties>() + size_of::<String>(),
+        "Run is {} bytes: something beyond id + formatting handle + text was \
+         added by value",
+        size_of::<Run>()
+    );
+}
+
+/// A body of default-formatted paragraphs holds **one** property set between
+/// them, not one each.
+///
+/// This is the measurement `docs/111` §4c reports, expressed small enough to
+/// assert: build a thousand paragraphs the way an importer does and require
+/// that every one of them references the same entry — and that the entry is
+/// the *process-wide* default one.
+///
+/// That last clause is not decoration. Deleting the default fast path from
+/// `Shared::new` left this test green, because the bounded recent-entry cache
+/// re-shared the default anyway; the first paragraph seeded the cache and the
+/// other 999 found it there. Requiring the shared entry to be the one
+/// `Shared::default()` hands out makes the two mechanisms distinguishable, so
+/// losing either is red.
+#[test]
+fn a_body_of_plain_paragraphs_holds_one_property_set_between_them() {
+    let body: Vec<BlockNode> = (0..1_000)
+        .map(|index| {
+            BlockNode::Paragraph(Paragraph {
+                id: tid(index + 1),
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![InlineNode::Run(Run {
+                    id: tid(index + 100_000),
+                    properties: RunProperties::default().into(),
+                    text: "the owner's thirty-character line".to_owned(),
+                })],
+            })
+        })
+        .collect();
+
+    let BlockNode::Paragraph(first) = &body[0] else {
+        panic!("the body is paragraphs");
+    };
+    assert!(
+        first
+            .properties
+            .shares_with(&SharedParagraphProperties::default()),
+        "a default-formatted paragraph does not reference the process-wide \
+         default entry, so every document pays to discover the default again"
+    );
+    assert!(
+        first.properties.share_count() > body.len(),
+        "the default entry is referenced {} times by {} paragraphs",
+        first.properties.share_count(),
+        body.len()
+    );
+    for block in &body {
+        let BlockNode::Paragraph(paragraph) = block else {
+            panic!("the body is paragraphs");
+        };
+        assert!(
+            paragraph.properties.shares_with(&first.properties),
+            "paragraph {} holds its own copy of the default formatting",
+            paragraph.id
+        );
+        let InlineNode::Run(run) = &paragraph.inlines[0] else {
+            panic!("each paragraph is one run");
+        };
+        let InlineNode::Run(first_run) = &first.inlines[0] else {
+            panic!("each paragraph is one run");
+        };
+        assert!(
+            run.properties.shares_with(&first_run.properties),
+            "a run holds its own copy of the default formatting"
+        );
+    }
+}
+
+/// **Copy-on-write, which is the correctness heart of sharing.** Editing one
+/// of two nodes that reference the same formatting must leave the other
+/// exactly as it was, and must stop the two sharing.
+///
+/// Both halves matter. Without the copy, the edit would reach through to every
+/// node in the document — the aliasing bug this test exists to make
+/// impossible. Without the unsharing assertion, a `Shared` that deep-copied on
+/// every clone would pass the first half while quietly giving up the whole
+/// saving.
+#[test]
+fn editing_one_node_leaves_every_node_that_shared_its_formatting_untouched() {
+    let shared = SharedParagraphProperties::default();
+    let mut edited = Paragraph {
+        id: tid(1),
+        properties: shared.clone(),
+        inlines: Vec::new(),
+    };
+    let untouched = Paragraph {
+        id: tid(2),
+        properties: shared.clone(),
+        inlines: Vec::new(),
+    };
+    assert!(
+        edited.properties.shares_with(&untouched.properties),
+        "the two paragraphs must start out sharing, or this test proves nothing"
+    );
+
+    edited.properties.alignment = Some(Alignment::Center);
+
+    assert_eq!(edited.properties.alignment, Some(Alignment::Center));
+    assert_eq!(
+        untouched.properties.alignment, None,
+        "editing one paragraph reached through into another that shared its \
+         formatting"
+    );
+    assert_eq!(
+        untouched.properties, shared,
+        "the entry the other paragraph still references was mutated in place"
+    );
+    assert!(
+        !edited.properties.shares_with(&untouched.properties),
+        "the edited paragraph still references the shared entry"
+    );
+
+    // The same for a run, through the named seam rather than `DerefMut`.
+    let shared_run = SharedRunProperties::default();
+    let mut edited_run = Run {
+        id: tid(3),
+        properties: shared_run.clone(),
+        text: "a".to_owned(),
+    };
+    let untouched_run = Run {
+        id: tid(4),
+        properties: shared_run.clone(),
+        text: "b".to_owned(),
+    };
+    edited_run.properties.make_mut().bold = Some(true);
+    assert_eq!(edited_run.properties.bold, Some(true));
+    assert_eq!(
+        untouched_run.properties.bold, None,
+        "editing one run reached through into another that shared its formatting"
+    );
+
+    // Cloning a node clones the handle, so the clone must not be able to write
+    // through into the original either.
+    let mut clone = untouched.clone();
+    clone.properties.alignment = Some(Alignment::End);
+    assert_eq!(
+        untouched.properties.alignment, None,
+        "editing a cloned paragraph wrote into the paragraph it was cloned from"
+    );
+}
+
+/// Sharing must not change what a value *is*: a slot holding the default
+/// compares, serializes and reopens exactly as the struct it replaced.
+#[test]
+fn a_shared_property_set_behaves_exactly_like_the_value_it_replaced() {
+    let default_slot = SharedRunProperties::default();
+    assert_eq!(*default_slot, RunProperties::default());
+    assert_eq!(default_slot, RunProperties::default());
+    assert_eq!(
+        serde_json::to_string(&default_slot).expect("a property set serializes"),
+        serde_json::to_string(&RunProperties::default()).expect("a property set serializes"),
+    );
+
+    let bold = RunProperties {
+        bold: Some(true),
+        ..RunProperties::default()
+    };
+    let bold_slot: SharedRunProperties = bold.clone().into();
+    assert_eq!(*bold_slot, bold);
+    assert_ne!(bold_slot, RunProperties::default());
+    let json = serde_json::to_string(&bold_slot).expect("a property set serializes");
+    assert_eq!(
+        json,
+        serde_json::to_string(&bold).expect("a property set serializes")
+    );
+    let reopened: SharedRunProperties =
+        serde_json::from_str(&json).expect("a property set reopens");
+    assert_eq!(reopened, bold_slot);
+
+    // Reopening interns: two runs deserialized from the same bytes reference
+    // one entry, which is what keeps a reopened snapshot as small as an
+    // imported document.
+    let again: SharedRunProperties = serde_json::from_str(&json).expect("a property set reopens");
+    assert!(
+        reopened.shares_with(&again),
+        "two equal property sets read back from a snapshot did not re-share"
+    );
+}
+
+/// A document holds no spare vector capacity the moment it is built.
+///
+/// `Vec::push` onto an empty vector reserves `RawVec::MIN_NON_ZERO_CAP` — four
+/// elements — so a paragraph holding one inline arrives with three empty
+/// slots, and the body vector arrives holding between 1x and 2x the paragraphs
+/// it needs. That was 1,248 bytes per paragraph on the owner's own file
+/// (`docs/111` §4a), invisible to `size_of` and to every test that inspects
+/// values, which is why it outlived three rounds of shrinking the structs.
+///
+/// The first assertion is not decoration: it proves the over-allocation this
+/// guard is about actually happens on this toolchain, so a future `Vec` that
+/// no longer over-allocates turns this test into a statement about nothing and
+/// says so instead of passing quietly.
+#[test]
+fn a_document_is_built_holding_no_spare_vector_capacity() {
+    let mut inlines = Vec::new();
+    inlines.push(InlineNode::Run(Run {
+        id: tid(2),
+        properties: RunProperties::default().into(),
+        text: "one short line".to_owned(),
+    }));
+    assert!(
+        inlines.capacity() > inlines.len(),
+        "Vec::push no longer over-allocates ({} slots for {} inlines), so this \
+         guard no longer guards anything",
+        inlines.capacity(),
+        inlines.len()
+    );
+
+    let mut body = Vec::new();
+    for index in 0..5_u64 {
+        body.push(BlockNode::Paragraph(Paragraph {
+            id: tid(index * 2 + 10),
+            properties: ParagraphProperties::default().into(),
+            inlines: if index == 0 {
+                std::mem::take(&mut inlines)
+            } else {
+                vec![InlineNode::Run(Run {
+                    id: tid(index * 2 + 11),
+                    properties: RunProperties::default().into(),
+                    text: "another short line".to_owned(),
+                })]
+            },
+        }));
+    }
+    assert!(
+        body.capacity() > body.len(),
+        "Vec::push no longer over-allocates the body, so this guard no longer \
+         guards anything"
+    );
+
+    let mut document = Document::new(
+        NodeId::from_parts(9, 1).unwrap(),
+        body,
+        Definitions::default(),
+    )
+    .expect("the body is valid");
+
+    let blocks = document.body().len();
+    let slots = document.body_mut().capacity();
+    assert_eq!(
+        slots, blocks,
+        "the body vector kept {slots} slots for {blocks} blocks"
+    );
+    for block in document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            panic!("the body is paragraphs");
+        };
+        assert_eq!(
+            paragraph.inlines.capacity(),
+            paragraph.inlines.len(),
+            "paragraph {} kept {} inline slots for {} inlines",
+            paragraph.id,
+            paragraph.inlines.capacity(),
+            paragraph.inlines.len()
+        );
+    }
 }

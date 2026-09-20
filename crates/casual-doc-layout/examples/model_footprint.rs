@@ -120,6 +120,7 @@ fn sentence(chars: usize) -> String {
 /// vector then doubles as it grows, so it finishes holding between 1x and 2x
 /// the elements it needs. [`collected_body`] pays neither cost, which is why
 /// it measures lower than anything a real import produces.
+#[allow(clippy::vec_init_then_push)] // the capacity `push` reserves is what this measures
 fn pushed_body(n: u64, chars: usize) -> Vec<BlockNode> {
     let text = sentence(chars);
     let mut body = Vec::new();
@@ -127,7 +128,6 @@ fn pushed_body(n: u64, chars: usize) -> Vec<BlockNode> {
         let id = i + 1;
         // Deliberately `Vec::new()` + `push`: the capacity this rounds up to is
         // half of what this example exists to measure.
-        #[allow(clippy::vec_init_then_push)]
         let mut inlines = Vec::new();
         inlines.push(InlineNode::Run(Run {
             id: node(id + 10_000_000),
@@ -243,7 +243,7 @@ fn sizes() {
 fn itemise(body: &[BlockNode], capacity: usize, n: u64) {
     let slot = size_of::<BlockNode>();
     let inline_slot = size_of::<InlineNode>();
-    let body_used = body.len() * slot;
+    let body_used = std::mem::size_of_val(body);
     let body_slack = capacity.saturating_sub(body.len()) * slot;
     let mut inline_used = 0_usize;
     let mut inline_slack = 0_usize;
@@ -252,8 +252,7 @@ fn itemise(body: &[BlockNode], capacity: usize, n: u64) {
     for block in body {
         if let BlockNode::Paragraph(paragraph) = block {
             inline_used += paragraph.inlines.len() * inline_slot;
-            inline_slack +=
-                (paragraph.inlines.capacity() - paragraph.inlines.len()) * inline_slot;
+            inline_slack += (paragraph.inlines.capacity() - paragraph.inlines.len()) * inline_slot;
             for inline in &paragraph.inlines {
                 if let InlineNode::Run(run) = inline {
                     text_bytes += run.text.len();
@@ -289,7 +288,10 @@ fn itemise(body: &[BlockNode], capacity: usize, n: u64) {
         "run text (slack)           {text_slack:>14}  {:>8.1}",
         per(text_slack)
     );
-    println!("accounted                  {total:>14}  {:>8.1}", per(total));
+    println!(
+        "accounted                  {total:>14}  {:>8.1}",
+        per(total)
+    );
 }
 
 /// Builds `n` paragraphs, reports the resident delta and the itemised
@@ -372,7 +374,9 @@ fn run_shape_in_child(n: u64, chars: usize, shape: &str) {
     let sampled = peak.load(Ordering::Relaxed);
     #[allow(clippy::cast_precision_loss)] // reporting, not arithmetic we branch on
     let per = sampled as f64 / n as f64;
-    println!("PEAK shape={shape} n={n} chars={chars} sampled_peak_rss_bytes={sampled} per_paragraph={per:.1}");
+    println!(
+        "PEAK shape={shape} n={n} chars={chars} sampled_peak_rss_bytes={sampled} per_paragraph={per:.1}"
+    );
     assert!(status.success(), "the {shape} build failed");
 }
 

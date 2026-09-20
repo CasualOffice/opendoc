@@ -70,7 +70,8 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        }.into(),
+        }
+        .into(),
         inlines: vec![run(id + 1, text)],
     })
 }
@@ -332,7 +333,8 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
                 properties: ParagraphProperties {
                     snap_to_grid: Some(false),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![run(111, "off")],
             }),
             BlockNode::Paragraph(Paragraph {
@@ -344,7 +346,8 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
                         ..Spacing::default()
                     }),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![run(121, "exact")],
             }),
         ];
@@ -397,7 +400,8 @@ fn document_grid_pitch_is_isolated_per_section() {
             properties: ParagraphProperties {
                 section_break: Some(first.id),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(101, "first section")],
         }),
         paragraph(110, vec![run(111, "second section")]),
@@ -723,7 +727,8 @@ fn later_sections_use_their_own_geometry_running_content_and_first_page_variant(
                 properties: ParagraphProperties {
                     section_break: Some(first_id),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![run(101, "Portrait")],
             }),
             paragraph(110, vec![run(111, "Landscape first page")]),
@@ -978,7 +983,8 @@ fn later_section_floats_use_that_sections_page_and_margin_geometry() {
             properties: ParagraphProperties {
                 section_break: Some(first_id),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(101, "First section")],
         }),
         BlockNode::Paragraph(Paragraph {
@@ -1067,7 +1073,8 @@ fn continuous_sections_on_one_page_keep_distinct_anchor_margins() {
                 properties: ParagraphProperties {
                     section_break: Some(first_id),
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![
                     run(101, "First band"),
                     offset_float(102, media_id, HorizontalAnchor::Margin, 0, "first margin"),
@@ -1460,7 +1467,8 @@ fn a_section_without_its_own_header_inherits_the_previous_sections() {
             properties: ParagraphProperties {
                 section_break: Some(first.id),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run(101, "portrait body")],
         }),
         paragraph(110, vec![run(111, "landscape body")]),

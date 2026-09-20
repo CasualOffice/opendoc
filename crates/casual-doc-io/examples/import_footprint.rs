@@ -76,7 +76,6 @@ fn synthetic_source(n: u64, chars: usize) -> Vec<u8> {
 /// Reports where the imported body's bytes are, read off the live structure.
 #[allow(clippy::cast_precision_loss)] // reporting, not arithmetic we branch on
 fn itemise(body: &[BlockNode], n: u64) {
-    let slot = size_of::<BlockNode>();
     let inline_slot = size_of::<InlineNode>();
     let mut inline_used = 0_usize;
     let mut inline_slack = 0_usize;
@@ -93,7 +92,7 @@ fn itemise(body: &[BlockNode], n: u64) {
         }
     }
     let per = |bytes: usize| bytes as f64 / n as f64;
-    let used = body.len() * slot;
+    let used = std::mem::size_of_val(body);
     println!("\n-- itemised import, {n} paragraphs (bytes, then per paragraph) --");
     println!("BlockNode slots (used)     {used:>14}  {:>8.1}", per(used));
     println!(

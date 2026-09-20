@@ -2,11 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    BookmarkId, BreakKind, CommentId, MediaId, NoteId, RunProperties, Table,
-};
 use super::SharedParagraphProperties;
 use super::SharedRunProperties;
+use super::{BookmarkId, BreakKind, CommentId, MediaId, NoteId, RunProperties, Table};
 use crate::NodeId;
 
 /// OOXML `ST_PositiveCoordinate` upper bound, in English Metric Units (EMU).
@@ -2518,7 +2516,7 @@ pub enum InlineNode {
     /// the note on this enum.
     Math(Box<Math>),
     /// An inline symbol glyph (a font plus a code point).
-    Symbol(Symbol),
+    Symbol(Box<Symbol>),
     /// An inline horizontal rule (`w:pict` / `v:rect@o:hr`): a full-content-width
     /// filled line occupying its paragraph's own line.
     HorizontalRule(HorizontalRule),
@@ -2606,4 +2604,115 @@ pub enum BlockNode {
     /// An aggregated external content chunk (`w:altChunk`) referencing a
     /// preserved package part. Boxed: see the note on this enum.
     AltChunk(Box<AltChunk>),
+}
+
+impl BlockNode {
+    /// Releases every byte of spare `Vec` and `String` capacity this block and
+    /// its descendants hold.
+    ///
+    /// # Why the model does this at all
+    ///
+    /// `Vec::push` onto an empty vector does not allocate one element — it
+    /// allocates `RawVec::MIN_NON_ZERO_CAP`, which is **four** elements for any
+    /// element of 1,024 bytes or less. Every importer builds a paragraph's
+    /// `inlines` by pushing, and the overwhelming majority of paragraphs hold
+    /// one inline, so the overwhelming majority of paragraphs carried three
+    /// empty `InlineNode` slots. Measured on the owner's own file shape
+    /// (`docs/111` §4a) that was **1,248 bytes per paragraph of capacity
+    /// holding nothing** — 56% of what a paragraph cost, and more than any
+    /// struct field in the model. The body vector's own doubling adds a further
+    /// 0-100% on top.
+    ///
+    /// Spare capacity is invisible to `size_of` and to any test that inspects
+    /// values, which is why it survived three rounds of shrinking the structs.
+    /// It is released here, at the point a document is constructed, rather than
+    /// in each importer: there is one `Document::new` and there are five
+    /// importers.
+    ///
+    /// Nothing observable changes — capacity is not part of a document's value,
+    /// its serialization, or its identity. Editing afterwards regrows the
+    /// vectors it touches, which is correct: a paragraph that was just edited
+    /// is about to be edited again.
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Paragraph(paragraph) => shrink_inlines(&mut paragraph.inlines),
+            Self::Table(table) => {
+                table.grid.shrink_to_fit();
+                table.rows.shrink_to_fit();
+                for row in &mut table.rows {
+                    row.cells.shrink_to_fit();
+                    for cell in &mut row.cells {
+                        shrink_blocks(&mut cell.blocks);
+                    }
+                }
+            }
+            Self::Sdt(sdt) => shrink_blocks(&mut sdt.blocks),
+            Self::AltChunk(_) => {}
+        }
+    }
+}
+
+impl InlineNode {
+    /// Releases every byte of spare capacity this inline and its descendants
+    /// hold. The measurement that motivates it is on
+    /// `BlockNode::shrink_to_fit`.
+    pub fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Run(run) => run.text.shrink_to_fit(),
+            Self::Hyperlink(hyperlink) => shrink_inlines(&mut hyperlink.inlines),
+            Self::Field(field) => shrink_inlines(&mut field.inlines),
+            Self::Revision(revision) => shrink_inlines(&mut revision.inlines),
+            Self::Sdt(sdt) => shrink_inlines(&mut sdt.inlines),
+            Self::TextBox(text_box) => shrink_blocks(&mut text_box.blocks),
+            Self::Group(group) => shrink_group(group),
+            Self::Tab(_)
+            | Self::Break(_)
+            | Self::Drawing(_)
+            | Self::AnchoredDrawing(_)
+            | Self::EmbeddedObject(_)
+            | Self::NoteReference(_)
+            | Self::NoteNumberMark(_)
+            | Self::CommentReference(_)
+            | Self::CommentRangeStart(_)
+            | Self::CommentRangeEnd(_)
+            | Self::BookmarkStart(_)
+            | Self::BookmarkEnd(_)
+            | Self::MoveRangeStart(_)
+            | Self::MoveRangeEnd(_)
+            | Self::Math(_)
+            | Self::Symbol(_)
+            | Self::HorizontalRule(_)
+            | Self::NoBreakHyphen(_)
+            | Self::SoftHyphen(_)
+            | Self::PositionalTab(_) => {}
+        }
+    }
+}
+
+/// Releases spare capacity in a block list and everything under it.
+pub(super) fn shrink_blocks(blocks: &mut Vec<BlockNode>) {
+    blocks.shrink_to_fit();
+    for block in blocks.iter_mut() {
+        block.shrink_to_fit();
+    }
+}
+
+/// Releases spare capacity in an inline list and everything under it.
+fn shrink_inlines(inlines: &mut Vec<InlineNode>) {
+    inlines.shrink_to_fit();
+    for inline in inlines.iter_mut() {
+        inline.shrink_to_fit();
+    }
+}
+
+/// Releases spare capacity in a DrawingML group and its nested groups.
+fn shrink_group(group: &mut WordprocessingGroup) {
+    group.children.shrink_to_fit();
+    for child in &mut group.children {
+        match child {
+            GroupChild::TextBox(text_box) => shrink_blocks(&mut text_box.blocks),
+            GroupChild::Group(nested) => shrink_group(nested),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
 }

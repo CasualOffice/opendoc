@@ -7107,7 +7107,8 @@ mod tests {
                     }),
                     contextual_spacing: true,
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![run_node(
                     id + 5_000_000,
                     "a paragraph that collapses its spacing against its neighbours",
@@ -7218,7 +7219,8 @@ mod tests {
                     }),
                     contextual_spacing: contextual,
                     ..ParagraphProperties::default()
-                }.into(),
+                }
+                .into(),
                 inlines: vec![run_node(id * 10, "x", RunProperties::default())],
             })
         };
@@ -8887,7 +8889,8 @@ mod tests {
                     ..Indentation::default()
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run_node(11, text, RunProperties::default())],
         })]);
         let shaper = ParleyShaper::new();
@@ -9722,7 +9725,7 @@ mod tests {
         // A `w:sym` (the Medical form's Wingdings-2 checkbox, `F0A3`) must produce
         // a styled run bearing a visible box glyph — not be silently dropped as it
         // was before symbol layout existed.
-        let checkbox = InlineNode::Symbol(Symbol {
+        let checkbox = InlineNode::Symbol(Box::new(Symbol {
             id: NodeId::from_parts(9, 1).unwrap(),
             font: "Wingdings 2".to_owned(),
             char: 0xF0A3,
@@ -9734,17 +9737,18 @@ mod tests {
                     b: 121,
                 })),
                 ..RunProperties::default()
-            }.into(),
-        });
+            }
+            .into(),
+        }));
         // An unmapped glyph in a non-bundled face still yields a visible placeholder
         // run rather than nothing.
-        let unknown = InlineNode::Symbol(Symbol {
+        let unknown = InlineNode::Symbol(Box::new(Symbol {
             id: NodeId::from_parts(10, 1).unwrap(),
             // A byte with no table entry (Wingdings 3 stops at 0xF0) → placeholder.
             font: "Wingdings 3".to_owned(),
             char: 0xF0FE,
             properties: RunProperties::default().into(),
-        });
+        }));
         let inlines = vec![checkbox, unknown];
         let definitions = Definitions::default();
         let items = collected_items(&definitions, &inlines);
@@ -9923,7 +9927,8 @@ mod tests {
                             b: 30,
                         })),
                         ..RunProperties::default()
-                    }.into(),
+                    }
+                    .into(),
                     text: String::new(),
                 })],
                 form: Some(FormFieldData {
@@ -10033,7 +10038,8 @@ mod tests {
             properties: ParagraphProperties {
                 style_ref: Some(sid),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run_node(31, "Heading", RunProperties::default())],
         });
         let document =
@@ -13660,7 +13666,8 @@ mod tests {
                     level: 0,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run_node(11, "Body", RunProperties::default())],
         });
         Document::new(NodeId::from_parts(1, 1).unwrap(), vec![para], definitions).unwrap()
@@ -13832,7 +13839,8 @@ mod tests {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run_node(
                 71,
                 "D",
@@ -13921,7 +13929,8 @@ mod tests {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            }.into(),
+            }
+            .into(),
             inlines: vec![run_node(75, "D", RunProperties::default())],
         });
         let body = paragraph(
