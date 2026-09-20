@@ -632,7 +632,7 @@ impl TableStack {
             self.close_cell(ids)?;
             self.close_row();
             if let Some(table) = self.close_table()
-                && let Some(returned) = self.push_block(BlockNode::Table(table))
+                && let Some(returned) = self.push_block(BlockNode::Table(Box::new(table)))
             {
                 roots.push(returned);
             }

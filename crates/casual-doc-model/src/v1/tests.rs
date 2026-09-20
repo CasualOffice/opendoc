@@ -874,7 +874,7 @@ fn table_document(body: Vec<BlockNode>) -> Result<Document, ModelError> {
 fn valid_table_with_merges_validates_and_round_trips_json() {
     // A 2x2 table: top-left spans two grid columns (gridSpan), and the
     // right column vertically merges (Restart over Continue).
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: vec![
             GridColumn {
@@ -929,7 +929,7 @@ fn valid_table_with_merges_validates_and_round_trips_json() {
                 ],
             },
         ],
-    });
+    }));
 
     let document = table_document(vec![table]).unwrap();
     let json = document.to_json().unwrap();
@@ -957,7 +957,7 @@ fn table_alignment_justify_is_rejected() {
     // not carry it (the writer would emit an invalid `w:jc`). Start/Center/End
     // remain valid.
     let table = |alignment| {
-        BlockNode::Table(Table {
+        BlockNode::Table(Box::new(Table {
             id: tid(30),
             grid: vec![GridColumn {
                 width_twips: Some(2_880),
@@ -976,7 +976,7 @@ fn table_alignment_justify_is_rejected() {
                     vec![paragraph_block(tid(33))],
                 )],
             }],
-        })
+        }))
     };
     assert!(matches!(
         table_document(vec![table(Alignment::Justify)]),
@@ -1027,7 +1027,7 @@ fn table_properties_round_trip_and_default_omits_the_key() {
             cells: vec![styled_cell],
         }],
     };
-    let document = table_document(vec![BlockNode::Table(table)]).unwrap();
+    let document = table_document(vec![BlockNode::Table(Box::new(table))]).unwrap();
     let reloaded =
         Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
     assert_eq!(document, reloaded);
@@ -1157,7 +1157,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
             )],
         }],
     };
-    let document = table_document(vec![BlockNode::Table(table)]).unwrap();
+    let document = table_document(vec![BlockNode::Table(Box::new(table))]).unwrap();
     let reloaded =
         Document::from_json(&document.to_json().unwrap(), SnapshotLimits::default()).unwrap();
     assert_eq!(document, reloaded);
@@ -1190,7 +1190,7 @@ fn table_borders_and_margins_round_trip_and_reject_bad_style() {
         }],
     };
     assert!(matches!(
-        table_document(vec![BlockNode::Table(bad)]),
+        table_document(vec![BlockNode::Table(Box::new(bad))]),
         Err(ModelError::PropertyValueOutOfDomain {
             property: "table.borders"
         })
@@ -1218,7 +1218,7 @@ fn over_range_table_width_is_rejected() {
         }],
     };
     assert!(matches!(
-        table_document(vec![BlockNode::Table(table)]),
+        table_document(vec![BlockNode::Table(Box::new(table))]),
         Err(ModelError::PropertyValueOutOfDomain {
             property: "table.width"
         })
@@ -1227,13 +1227,13 @@ fn over_range_table_width_is_rejected() {
 
 #[test]
 fn empty_table_is_rejected() {
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
         properties: TableProperties::default(),
         rows: Vec::new(),
-    });
+    }));
     assert!(matches!(
         table_document(vec![table]),
         Err(ModelError::EmptyTable(_))
@@ -1242,7 +1242,7 @@ fn empty_table_is_rejected() {
 
 #[test]
 fn table_row_without_cells_is_rejected() {
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
@@ -1252,7 +1252,7 @@ fn table_row_without_cells_is_rejected() {
             properties: TableRowProperties::default(),
             cells: Vec::new(),
         }],
-    });
+    }));
     assert!(matches!(
         table_document(vec![table]),
         Err(ModelError::EmptyTableRow(_))
@@ -1261,7 +1261,7 @@ fn table_row_without_cells_is_rejected() {
 
 #[test]
 fn table_cell_without_blocks_is_rejected() {
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
@@ -1271,7 +1271,7 @@ fn table_cell_without_blocks_is_rejected() {
             properties: TableRowProperties::default(),
             cells: vec![cell(tid(12), TableCellProperties::default(), Vec::new())],
         }],
-    });
+    }));
     assert!(matches!(
         table_document(vec![table]),
         Err(ModelError::EmptyTableCell(_))
@@ -1280,7 +1280,7 @@ fn table_cell_without_blocks_is_rejected() {
 
 #[test]
 fn grid_span_out_of_domain_is_rejected() {
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
@@ -1297,7 +1297,7 @@ fn grid_span_out_of_domain_is_rejected() {
                 vec![paragraph_block(tid(13))],
             )],
         }],
-    });
+    }));
     assert!(matches!(
         table_document(vec![table]),
         Err(ModelError::PropertyValueOutOfDomain {
@@ -1309,7 +1309,7 @@ fn grid_span_out_of_domain_is_rejected() {
 #[test]
 fn duplicate_id_inside_a_cell_is_rejected() {
     // The cell id collides with a nested paragraph id.
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
@@ -1323,7 +1323,7 @@ fn duplicate_id_inside_a_cell_is_rejected() {
                 vec![paragraph_block(tid(12))],
             )],
         }],
-    });
+    }));
     assert!(matches!(
         table_document(vec![table]),
         Err(ModelError::DuplicateNodeId(_))
@@ -1342,7 +1342,7 @@ fn wrap_in_tables(depth: u32, counter: &mut u64) -> BlockNode {
     let row_id = tid(*counter);
     *counter += 1;
     let cell_id = tid(*counter);
-    BlockNode::Table(Table {
+    BlockNode::Table(Box::new(Table {
         id: table_id,
         grid: Vec::new(),
         grid_change: None,
@@ -1352,7 +1352,7 @@ fn wrap_in_tables(depth: u32, counter: &mut u64) -> BlockNode {
             properties: TableRowProperties::default(),
             cells: vec![cell(cell_id, TableCellProperties::default(), vec![inner])],
         }],
-    })
+    }))
 }
 
 #[test]
@@ -1376,7 +1376,7 @@ fn table_nesting_beyond_bound_is_rejected() {
 fn nested_table_block_count_is_bounded() {
     // A table (1) + row (1) + cell (1) + nested paragraph (1) = 4 blocks; a
     // max_blocks of 3 must reject via the snapshot limit, not silently pass.
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: tid(10),
         grid: Vec::new(),
         grid_change: None,
@@ -1390,7 +1390,7 @@ fn nested_table_block_count_is_bounded() {
                 vec![paragraph_block(tid(13))],
             )],
         }],
-    });
+    }));
     let document = table_document(vec![table]).unwrap();
     let json = document.to_json().unwrap();
     let limits = SnapshotLimits {
@@ -3455,11 +3455,11 @@ fn full_sdt_props() -> SdtProperties {
 }
 
 fn block_sdt(id: NodeId, properties: SdtProperties, blocks: Vec<BlockNode>) -> BlockNode {
-    BlockNode::Sdt(BlockSdt {
+    BlockNode::Sdt(Box::new(BlockSdt {
         id,
         properties,
         blocks,
-    })
+    }))
 }
 
 fn inline_sdt_paragraph(paragraph_id: NodeId, inline: InlineNode) -> BlockNode {
@@ -3838,7 +3838,7 @@ fn nested_table(levels: u32, counter: &mut u64) -> BlockNode {
     } else {
         nested_table(levels - 1, counter)
     };
-    BlockNode::Table(Table {
+    BlockNode::Table(Box::new(Table {
         id: table_id,
         grid: Vec::new(),
         grid_change: None,
@@ -3848,7 +3848,7 @@ fn nested_table(levels: u32, counter: &mut u64) -> BlockNode {
             properties: TableRowProperties::default(),
             cells: vec![cell(cell_id, TableCellProperties::default(), vec![inner])],
         }],
-    })
+    }))
 }
 
 #[test]
@@ -3860,7 +3860,7 @@ fn deep_table_inside_a_block_content_control_validates() {
     let mut counter = 100;
     let tower = nested_table(MAX_TABLE_DEPTH, &mut counter);
     let sdt = block_sdt(tid(1), SdtProperties::default(), vec![tower]);
-    let outer = BlockNode::Table(Table {
+    let outer = BlockNode::Table(Box::new(Table {
         id: tid(2),
         grid: Vec::new(),
         grid_change: None,
@@ -3870,7 +3870,7 @@ fn deep_table_inside_a_block_content_control_validates() {
             properties: TableRowProperties::default(),
             cells: vec![cell(tid(4), TableCellProperties::default(), vec![sdt])],
         }],
-    });
+    }));
     assert!(table_document(vec![outer]).is_ok());
 }
 
@@ -4296,20 +4296,19 @@ fn an_absent_border_set_is_indistinguishable_from_an_empty_one() {
 /// pointer halves) passes them too.
 #[test]
 fn the_model_stays_inside_its_per_paragraph_memory_budget() {
+    use std::mem::align_of;
     use std::mem::size_of;
 
-    // Measured on macOS arm64 before stage 1 / after stage 1:
+    // Measured on macOS arm64 before stage 1 / after stage 1a / after 1b:
     //   ParagraphProperties 768 -> 304, RunProperties 448 -> 352,
-    //   Paragraph 816 -> 352, Run 496 -> 400, BlockNode 816 -> 800.
+    //   Paragraph 816 -> 352, Run 496 -> 400,
+    //   BlockNode 816 -> 800 -> 352, InlineNode 512 -> 416 -> 416.
     //
-    // Two of `docs/111` §4's numbers do not land, for reasons that are worth
-    // recording rather than rounding away:
-    //   * `RunProperties` ~192 counted a 160-byte `revision: Option<Revision>`
-    //     field that this struct has never had (`Revision` is an inline node,
-    //     not a run property), so 352 is the whole of that win.
-    //   * `BlockNode` is its largest variant, and that is now `Table` at 800
-    //     bytes, not `Paragraph` at 352. Boxing the table payload is the next
-    //     win; the note on the enum already tracks it.
+    // One of `docs/111` §4's numbers does not land, and is worth recording
+    // rather than rounding away: `RunProperties` ~192 counted a 160-byte
+    // `revision: Option<Revision>` field that this struct has never had
+    // (`Revision` is an inline node, not a run property), so 352 is the whole
+    // of that win.
     assert!(
         size_of::<ParagraphProperties>() <= 320,
         "ParagraphProperties is {} bytes; something large was added by value",
@@ -4326,14 +4325,71 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
         size_of::<Paragraph>()
     );
     assert!(size_of::<Run>() <= 416, "Run is {} bytes", size_of::<Run>());
-    // `BlockNode` is as large as its largest variant, which is now `Table`, not
-    // `Paragraph` — boxing the table payload is the next win and is tracked on
-    // the enum itself.
+
+    // A `Vec` pays for its enum's LARGEST variant on every element, so what a
+    // document is actually charged is the enum, not the payload. Both enums
+    // must therefore stay sized by their *common* case — a paragraph of runs —
+    // which is what stage 1b bought by boxing `BlockNode`'s two rare, large
+    // variants (`Table` 800 B, `BlockSdt` 384 B).
+    //
+    // These are written as relationships rather than as bare constants
+    // deliberately: a bare `<= 368` can be "fixed" by raising the constant
+    // along with the variant it was meant to catch, whereas the relationship
+    // stays true only while the rare variants are out of line. The slack is one
+    // alignment unit for the discriminant — the most a tag can cost once the
+    // payload is rounded up — and niche optimization often pays even that out
+    // of spare bits in the payload (`BlockNode` is exactly `Paragraph`).
     assert!(
-        size_of::<BlockNode>() <= 800,
+        size_of::<BlockNode>() <= size_of::<Paragraph>() + align_of::<BlockNode>(),
+        "BlockNode is {} bytes against a {}-byte Paragraph: a large variant is \
+         stored by value again — box it, or every paragraph in every document \
+         pays for it",
+        size_of::<BlockNode>(),
+        size_of::<Paragraph>()
+    );
+    assert!(
+        size_of::<InlineNode>() <= size_of::<Run>() + align_of::<InlineNode>(),
+        "InlineNode is {} bytes against a {}-byte Run: a variant larger than a \
+         run is stored by value — box it, or every inline node in every \
+         paragraph pays for it",
+        size_of::<InlineNode>(),
+        size_of::<Run>()
+    );
+
+    // The absolute ceilings the relationships above resolve to today, so a
+    // regression in `Paragraph`/`Run` cannot quietly raise the enums with them.
+    assert!(
+        size_of::<BlockNode>() <= 368,
         "BlockNode is {} bytes",
         size_of::<BlockNode>()
     );
+    assert!(
+        size_of::<InlineNode>() <= 416,
+        "InlineNode is {} bytes",
+        size_of::<InlineNode>()
+    );
+
+    // `InlineNode` is sized by `Run` itself — the common case, which must stay
+    // inline. `Symbol` and `NoteNumberMark` are large for the same reason (a
+    // `RunProperties` by value) and so track it rather than exceed it; boxing
+    // any of them would buy nothing while `Run` is 400 bytes.
+    assert!(
+        size_of::<Symbol>() <= size_of::<Run>(),
+        "Symbol ({} bytes) now exceeds Run ({} bytes) and sets InlineNode's size",
+        size_of::<Symbol>(),
+        size_of::<Run>()
+    );
+    assert!(
+        size_of::<NoteNumberMark>() <= size_of::<Run>(),
+        "NoteNumberMark ({} bytes) now exceeds Run ({} bytes)",
+        size_of::<NoteNumberMark>(),
+        size_of::<Run>()
+    );
+
+    // The boxed block variants cost a pointer in the slot, whatever the payload
+    // grows to.
+    assert_eq!(size_of::<Box<Table>>(), size_of::<usize>());
+    assert_eq!(size_of::<Box<BlockSdt>>(), size_of::<usize>());
 
     // Each field stage 1 moved out of line costs a pointer when absent.
     assert_eq!(size_of::<BoxedParagraphBorders>(), size_of::<usize>());
@@ -4346,4 +4402,96 @@ fn the_model_stays_inside_its_per_paragraph_memory_budget() {
         size_of::<usize>()
     );
     assert_eq!(size_of::<Option<Box<MarkRevision>>>(), size_of::<usize>());
+}
+
+// ---- docs/111 stage 1b: the block enum's rare, large variants -------------
+
+/// A canonical document holding both variants stage 1b moved out of line — a
+/// `BlockNode::Table` (was 800 bytes by value) and a `BlockNode::Sdt` (384) —
+/// plus a `symbol` inline, the variant that ties `Run` for `InlineNode`'s size
+/// and was measured rather than boxed.
+///
+/// It is written in the model's own canonical field order, so re-serializing it
+/// must reproduce these exact bytes.
+const BOTH_BOXED_BLOCK_VARIANTS: &str = concat!(
+    r#"{"schemaVersion":1,"documentId":"00000000000000090000000000000001","#,
+    r#""body":[{"type":"table","id":"000000000000000100000000000000c8","#,
+    r#""grid":[{"widthTwips":4680}],"#,
+    r#""rows":[{"id":"000000000000000100000000000000c9","#,
+    r#""cells":[{"id":"000000000000000100000000000000ca","properties":{},"#,
+    r#""blocks":[{"type":"paragraph","id":"000000000000000100000000000000cb","#,
+    r#""properties":{},"inlines":[{"type":"run","#,
+    r#""id":"000000000000000100000000000000cc","properties":{},"#,
+    r#""text":"cell"}]}]}]}]},"#,
+    r#"{"type":"sdt","id":"000000000000000100000000000000d2","#,
+    r#""properties":{"alias":"Control"},"#,
+    r#""blocks":[{"type":"paragraph","id":"000000000000000100000000000000d3","#,
+    r#""properties":{},"inlines":[{"type":"symbol","#,
+    r#""id":"000000000000000100000000000000d4","font":"Wingdings","#,
+    r#""char":61692}]}]}],"#,
+    r#""definitions":{"styles":{},"abstractNumbering":{},"numbering":{},"#,
+    r#""sections":[],"media":{}}}"#,
+);
+
+/// `docs/111` stage 1b boxed `BlockNode`'s two rare, large variants. `Box<T>`
+/// serializes exactly as `T` does — but "exactly" is the whole claim, so it is
+/// pinned rather than asserted: the JSON a table and a block content control
+/// produce is byte-for-byte what the unboxed enum produced, tag and field order
+/// included, and reopening those bytes writes them again.
+#[test]
+fn boxed_block_variants_serialize_exactly_as_the_unboxed_values_did() {
+    let document = Document::from_json(
+        BOTH_BOXED_BLOCK_VARIANTS.as_bytes(),
+        SnapshotLimits::default(),
+    )
+    .expect("the document is valid");
+    let written = String::from_utf8(document.to_json().expect("serializes")).unwrap();
+    assert_eq!(written, BOTH_BOXED_BLOCK_VARIANTS, "the JSON shape moved");
+
+    let reopened =
+        Document::from_json(written.as_bytes(), SnapshotLimits::default()).expect("reopens");
+    assert_eq!(
+        String::from_utf8(reopened.to_json().unwrap()).unwrap(),
+        BOTH_BOXED_BLOCK_VARIANTS
+    );
+}
+
+/// Nothing inside a boxed variant is lost on the way through JSON (`SKILL.md`
+/// §12, no silent data loss): the table's grid, row, cell and nested paragraph
+/// all come back, and so does the content control's alias and its symbol.
+#[test]
+fn boxed_block_variants_survive_a_json_round_trip_with_their_contents() {
+    let document = Document::from_json(
+        BOTH_BOXED_BLOCK_VARIANTS.as_bytes(),
+        SnapshotLimits::default(),
+    )
+    .expect("the document is valid");
+
+    let BlockNode::Table(table) = &document.body()[0] else {
+        panic!("expected a table");
+    };
+    assert_eq!(table.grid.len(), 1);
+    assert_eq!(table.grid[0].width_twips, Some(4_680));
+    assert_eq!(table.rows.len(), 1);
+    assert_eq!(table.rows[0].cells.len(), 1);
+    let BlockNode::Paragraph(cell_paragraph) = &table.rows[0].cells[0].blocks[0] else {
+        panic!("expected a paragraph in the cell");
+    };
+    let InlineNode::Run(run) = &cell_paragraph.inlines[0] else {
+        panic!("expected a run in the cell");
+    };
+    assert_eq!(run.text, "cell");
+
+    let BlockNode::Sdt(sdt) = &document.body()[1] else {
+        panic!("expected a content control");
+    };
+    assert_eq!(sdt.properties.alias.as_deref(), Some("Control"));
+    let BlockNode::Paragraph(inner) = &sdt.blocks[0] else {
+        panic!("expected a paragraph in the control");
+    };
+    let InlineNode::Symbol(symbol) = &inner.inlines[0] else {
+        panic!("expected a symbol");
+    };
+    assert_eq!(symbol.font, "Wingdings");
+    assert_eq!(symbol.char, 0xF0FC);
 }

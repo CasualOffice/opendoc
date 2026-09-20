@@ -138,22 +138,71 @@ because the enum slots absorbed the rest.
 This is not a reason to undo it: the structs had to shrink *first*, or boxing the variants
 would buy nothing either. It does mean stage 1 has a second half.
 
-### Stage 1b — box the large enum variants
+### Stage 1b — box the large enum variants (landed)
 
-`BlockNode::Table(Box<Table>)` (already flagged as a deferred follow-up in
-`casual-doc-import/src/body.rs`) and the equivalent for whichever `InlineNode` variant sets
-its 416 B. Then `BlockNode` is sized by `Paragraph` (352 B) and `InlineNode` by `Run`
-(400 B), and the property shrink above finally shows up in the total. Projected model cost
-~900 B/paragraph — **re-measure, do not trust this number**, given §4's record.
+**Measured, on `perf/box-large-enum-variants`, with the committed
+`casual-doc-layout` `model_footprint` example** (macOS arm64, release; run it as
+`cargo run --release --example model_footprint [paragraphs]`). The same probe produced
+both columns, one run per side of the change:
 
-Blast radius is contained: `prop_change` has 99 references, `mark_revision` 40, across
-**10 files in 5 crates** (`casual-doc-model` 3, `casual-doc-import` 3, `casual-doc-export`
-2, `casual-doc-wasm` 1, `casual-doc-edit` 1). It is mechanical and fully covered by the
-existing round-trip suite.
+| type | after 1a | after 1b |
+| --- | ---: | ---: |
+| `BlockNode` | 800 B | **352 B** |
+| `InlineNode` | 416 B | 416 B (unchanged — see below) |
+| `Paragraph` | 352 B | 352 B |
+| `Run` | 400 B | 400 B |
+| `Table` | 800 B | 800 B (unchanged — it moved out of line, it did not shrink) |
+| **model per paragraph** | **1,452 B** | **1,004 B** |
 
-This alone does **not** admit the owner's file. It roughly halves the model, which at
-1.3M paragraphs is the difference between 2.0 GB and 1.1 GB of permanently resident
-memory — the headroom stage 2 needs in order to be worth doing.
+The per-paragraph figures are this probe's, measured as the RSS delta of building
+100,000 single-run 130-character paragraphs; §3.1's 1,565/1,492 came from a different,
+uncommitted probe and ran slightly higher. 1,004 B is stable across runs (±3 B) and
+across sizes (1,006 B at 200,000 paragraphs). The saving is **448 B per paragraph,
+30.9%** — exactly the 800 − 352 the enum slot gave back, which is the point: nothing
+about a paragraph changed, only what the `Vec` slot holding it costs.
+
+**What was boxed, and why those two.** `BlockNode::Table(Box<Table>)` and
+`BlockNode::Sdt(Box<BlockSdt>)`. `Table` at 800 B was the variant §4 named; `BlockSdt`
+at 384 B is the one it did not, and leaving it inline would have stopped the enum at
+400 B instead of 352 B. Both are rare, and both already allocate a `Vec` of rows or
+blocks when they are used, so the added pointer hop costs nothing measurable on the
+paths that touch them. `Paragraph` stays inline deliberately: it is the common case,
+and boxing it would add an allocation per paragraph while shrinking nothing.
+
+`BlockNode` came out at 352 B, not the 360–368 a tag would suggest, because the
+discriminant fits in spare bits of `Paragraph` — the enum is now exactly the size of
+the thing a document is nearly entirely made of.
+
+**`InlineNode` was measured and deliberately left alone.** §4 assumed some rare variant
+set its 416 B. It does not. Sorted largest-first, its payloads are `Run` 400,
+`Symbol` 400, `NoteNumberMark` 384, `InlineSdt` 384, then a long tail — and all three
+of the large ones are large for the same reason, a `RunProperties` by value. So the
+enum is already sized by its *common* case. Boxing `Symbol` or `NoteNumberMark` would
+buy exactly zero bytes while `Run` is 400 B, and boxing `Run` would put a heap
+allocation on the hottest path in the model. **The remaining win under `InlineNode` is
+shrinking `RunProperties` (352 B), which shrinks all three at once** — that is stage 1c
+if it is ever worth doing, not a boxing change.
+
+**Blast radius, as actually landed.** 16 files in 8 crates, all mechanical: 341
+references to the two variants, of which the pattern matches kept working through
+deref and only the constructions needed `Box::new`. No golden, fixture or snapshot
+moved.
+
+**Serialization is unchanged, and it is pinned rather than asserted.**
+`crates/casual-doc-model/src/v1/tests.rs` carries a canonical document holding a table,
+a block content control and a `symbol` inline, and requires re-serialization to
+reproduce those exact bytes and to be a fixed point on reopen; a second test walks the
+payloads back out (grid, row, cell, nested run, alias, symbol font and code point) so a
+silently dropped field inside a boxed variant fails rather than passes. The size guard
+in the same file is now written as a *relationship* — `BlockNode <= Paragraph + align`,
+`InlineNode <= Run + align` — so it cannot be "fixed" by raising a constant alongside
+the variant it was meant to catch.
+
+**The ~900 B projection did not hold: the real number is 1,004 B**, 11.6% higher. For
+the owner's file that is 1,303,306 × 1,004 B ≈ **1.31 GB** of permanently resident
+model, not the 1.17 GB §4 projected — still inside a 4 GB address space, still
+dependent on stage 2 for the galley and display list, and with correspondingly less
+headroom. Stage 1a alone would have been ≈1.89 GB.
 
 ### Stage 2 — window the layout (this is the architecture)
 
@@ -177,13 +226,15 @@ so it needs its own design before implementation. Open questions to settle there
   the edit path (`paginate_document_cached`: 477 ms at 200k paragraphs against 4,471 ms
   for a full re-pagination). Windowing and caching must be one mechanism, not two.
 
-### Projected result
+### Result after stages 1a and 1b, measured
 
 For the owner's file (short paragraphs, so per-paragraph glyph cost is well below the
-130-character probe): model ~900 B × 1.3M ≈ **1.17 GB** resident after stages 1a **and**
-1b, plus a bounded window of a few hundred MB. That fits a 4 GB address space, but with
-less headroom than the first draft of this document claimed, and it depends on stage 1b
-landing. Stage 1a alone leaves the model at 1,492 B × 1.3M ≈ 1.94 GB, which does not.
+130-character probe): model **1,004 B measured** × 1.3M ≈ **1.31 GB** resident, plus the
+bounded window stage 2 owes. That fits a 4 GB address space, but with less headroom than
+either earlier draft of this document claimed — the ~900 B this section projected for
+stage 1b was 11.6% low, which is the third projection here to miss and the reason the
+number above is quoted from a committed probe rather than reasoned about. Stage 1a alone
+would have left the model at ≈1.89 GB, which does not fit once a window is added.
 
 ## 5. What is deliberately NOT proposed
 
@@ -197,8 +248,14 @@ landing. Stage 1a alone leaves the model at 1,492 B × 1.3M ≈ 1.94 GB, which d
 
 ## 6. Reproducing these numbers
 
-The probes used here were temporary examples under `crates/casual-doc-layout/examples/`
-and were not committed; the committed `edit_latency` example produces the pagination
-timings in §4. Per `docs/105` EV-rules a published number must derive from a committed
-artifact — **if any number in this document is quoted outside it, commit the probe
-first.** The numbers above are recorded as design input, not as a public claim.
+**§4 stage 1b's numbers are reproducible: `cargo run --release --example
+model_footprint [paragraphs]`** in `crates/casual-doc-layout`. That example is committed
+and prints both halves of the measurement — the `size_of` table, every `BlockNode` and
+`InlineNode` payload sorted largest-first (so the variant that sets an enum's size is
+named rather than guessed at), and the resident bytes per paragraph as an RSS delta over
+a synthetic body. The committed `edit_latency` example produces the pagination timings.
+
+The §2 and §3.1 probes predate it and were temporary examples that were not committed,
+so **those numbers remain design input, not a public claim.** Per `docs/105` EV-rules a
+published number must derive from a committed artifact — which stage 1b's now do, and
+§2/§3.1's do not.

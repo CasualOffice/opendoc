@@ -449,7 +449,7 @@ fn table_cells_join_the_document_grid_only_with_the_compatibility_switch() {
     let layout_for = |adjust_line_height_in_table: bool| {
         let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
         boundary.doc_grid.line_pitch = Some(360);
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: node(200),
             grid: vec![GridColumn {
                 width_twips: Some(4_000),
@@ -465,7 +465,7 @@ fn table_cells_join_the_document_grid_only_with_the_compatibility_switch() {
                     blocks: vec![paragraph(203, vec![run(204, "cell")])],
                 }],
             }],
-        });
+        }));
         let document = Document::new(
             node(1),
             vec![table],

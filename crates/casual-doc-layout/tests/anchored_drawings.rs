@@ -465,7 +465,7 @@ fn one_cell_table(
     paragraph_id: u64,
     inlines: Vec<InlineNode>,
 ) -> BlockNode {
-    BlockNode::Table(Table {
+    BlockNode::Table(Box::new(Table {
         id: node(table_id),
         grid: vec![GridColumn {
             width_twips: Some(4_000),
@@ -485,7 +485,7 @@ fn one_cell_table(
                 })],
             }],
         }],
-    })
+    }))
 }
 
 fn assert_top_bottom_barrier(fragment: &BlockFragment, expected: Twip) {
@@ -815,7 +815,7 @@ fn a_column_relative_float_in_a_nested_cell_uses_the_containing_flow_column() {
             anchored_at_column_right(605, media_id),
         ],
     );
-    let outer = BlockNode::Table(Table {
+    let outer = BlockNode::Table(Box::new(Table {
         id: node(500),
         grid: vec![GridColumn {
             width_twips: Some(4_000),
@@ -831,7 +831,7 @@ fn a_column_relative_float_in_a_nested_cell_uses_the_containing_flow_column() {
                 blocks: vec![inner],
             }],
         }],
-    });
+    }));
     let doc = Document::new(node(1), vec![outer], definitions).unwrap();
 
     let shaper = ParleyShaper::new();
@@ -873,7 +873,7 @@ fn a_float_in_a_bottom_aligned_vertical_merge_uses_the_full_merged_box() {
         },
         ..TableRowProperties::default()
     };
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: node(500),
         grid: vec![GridColumn {
             width_twips: Some(4_000),
@@ -915,7 +915,7 @@ fn a_float_in_a_bottom_aligned_vertical_merge_uses_the_full_merged_box() {
                 }],
             },
         ],
-    });
+    }));
     let doc = Document::new(node(1), vec![table], definitions).unwrap();
 
     let shaper = ParleyShaper::new();

@@ -299,13 +299,13 @@ impl BodyBuilder {
             return Ok(());
         }
         let _ = limits;
-        self.blocks.push(BlockNode::Table(Table {
+        self.blocks.push(BlockNode::Table(Box::new(Table {
             id: next_id(ids)?,
             grid: std::mem::take(&mut self.table_grid),
             grid_change: None,
             properties: TableProperties::default(),
             rows: std::mem::take(&mut self.rows),
-        }));
+        })));
         Ok(())
     }
 
