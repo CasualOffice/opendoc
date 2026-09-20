@@ -1,9 +1,9 @@
 # 113 — Windowed layout: laying out only the pages someone is looking at
 
-**Status:** Steps 1-5 landed in the engine and the host now holds a window (§8);
-`MAX_VIEWER_BLOCKS` moved 262,144 → **700,000** on a browser measurement, and the
-owner's 1,303,306-paragraph file now opens in the browser (2,476 MB, §8.4) but is still
-refused because the host cannot scroll to all of it (§8.4-8.5). **Opened:** 2026-09-20.
+**Status:** Steps 1-5 landed in the engine, the host holds a window (§8), and the host
+now scrolls one too (§8.6). `MAX_VIEWER_BLOCKS` moved 262,144 → 700,000 → **1,800,000**
+on browser measurements, and the owner's 1,303,306-paragraph file **opens and every one
+of its 25,556 pages is reachable** (32.4 s, 2,503 MB, §8.6). **Opened:** 2026-09-20.
 **Owner:** unassigned.
 **Row:** `109` **HF-162** (P1, L). **Depends on:** HF-161 / HF-163 (`docs/111`).
 **Supersedes:** `docs/111` §4 "stage 2", which sketched this and listed four open
@@ -355,7 +355,7 @@ largest size actually measured to open" — so raising it now would trade an hon
 for `RuntimeError: unreachable`, the regression HF-158 exists for. What has to happen
 first is recorded in §8.
 
-## 8. The host side, as landed — and the ceiling that is left
+## 8. The host side, as landed — and where the ceiling is now
 
 ### 8.1 What was owed
 
@@ -435,11 +435,15 @@ stale, which is the silent version of the same limitation.
 isn't supported for this selection yet"*, which for a read-only document is actively
 misleading — it sends the user to look at their selection. A getter,
 `editingUnavailableReason`, now exists for the host to read so a control can be
-**disabled with a reason** rather than look live and refuse (`SKILL.md` §10). Nothing in
-`webapp/src` consumes it yet. Named here rather than left to be discovered
-(`docs/105` §9 rule 4).
+**disabled with a reason** rather than look live and refuse (`SKILL.md` §10). Named here
+rather than left to be discovered (`docs/105` §9 rule 4) — and **§8.7 is the host half,
+which now reads it.**
 
 ### 8.4 The constant moved: 262,144 → 700,000, and where it stopped
+
+> Kept as it was measured. **§8.6 moved it again, to 1,800,000**, by fixing the host
+> limit this section ends on; the numbers below are the state before that and are the
+> evidence for why the host was the thing in the way.
 
 Measured **through the browser** with the committed probe
 `webapp/tests/e2e/viewer-ceiling-measurement.spec.mjs`
@@ -487,22 +491,160 @@ so 700,000 is the measured answer for this shape and not a proof for every shape
 hazard is not new (262,144 blocks of one-page-each blocks was already past the browser's
 limit), but it is now the thing in the way.
 
-### 8.5 What is owed next, in the order it blocks the owner
+### 8.5 What was owed next, in the order it blocked the owner
 
-1. **A virtualized scroll container in the host** (`webapp/src`). One sheet per page is
-   what puts a 25,556-page document past the browser's scroll limit. Until it is fixed,
-   no engine work raises the ceiling past ~15,500 pages. This is the single thing between
-   the owner and their file.
-2. **`editingUnavailableReason` has no consumer** (§8.3). A read-only document currently
-   looks fully editable and then refuses with a sentence about the selection.
-3. **Open is still slow and gives no feedback**: 110.5 s for the owner's file, linear in
-   blocks, with no budget, progress or cancel. `docs/104` HF-077. Windowing did not
-   change this and was never going to — both paths pay the same single shaping pass.
+1. ~~**A virtualized scroll container in the host**~~ — **done, §8.6.**
+2. ~~**`editingUnavailableReason` has no consumer**~~ — **done, §8.7.**
+3. **Open is still slow and gives no feedback**: 32.4 s for the owner's file — down from
+   110.5 s, because two thirds of that was the host building 25,556 sheet elements, not
+   the engine — but still linear in blocks, still with no budget, progress or cancel.
+   `docs/104` HF-077. Windowing did not change the shaping pass and was never going to.
 4. **`ScrollCoalescer` still has no host consumer.** `window_of` returns a
    `ViewportLayout` and the coalescer decides when to ask for one; the facade instead
    moves its window from `renderPage`, which is correct and is what the existing host
-   drives, but it means a drag across 25,556 pages is bounded by the host's
-   virtualization rather than by the coalescer built for it.
+   drives, but it means a drag across 25,556 pages is bounded by the host's page band
+   rather than by the coalescer built for it.
+
+### 8.6 The host's scroll model: a bounded band with a mapped scroll position
+
+**The decision, first.** The pages live in ONE positioned element — `.page-band` — whose
+height is **capped at 8,000,000 CSS px**. A sheet (`.page-wrap`) exists only for the
+pages in or near the viewport; every other page is arithmetic and nothing else. Below the
+cap, scroll space *is* document space and the sheets sit at fixed positions, exactly as
+they always did. Above it, scroll space is a **linear compression** of document space
+that keeps both ends exact: scroll offset 0 shows the first page's top, maximum scroll
+shows the last page's bottom, and the window of sheets is placed against the current
+scroll position rather than at a fixed offset. The model is `webapp/src/page_scroll.mjs`,
+a pure module with no DOM and no engine in it.
+
+#### Why not the two obvious alternatives
+
+- **Virtualize the sheets and keep a spacer for the rest** — the standard technique, and
+  the one this started as. It does not work here: the spacer has to be as tall as the
+  document it stands in for, so a 25,556-page document still asks the browser for a
+  27,549,376 px box and the browser still refuses to scroll to the end of it. Virtualized
+  sheets are necessary (they are half of what is above) but they are not sufficient.
+- **Segmented / paged scrolling** — scroll within a segment, jump between segments. It
+  keeps every pixel honest, and it was rejected on product grounds: the scrollbar stops
+  meaning "where am I in the document", `Page X of Y` and find-next have to explain which
+  segment they landed in, and every scroll gesture near a boundary becomes a page-turn.
+  A document does not stop being one document because it is long.
+
+#### What the compression costs, stated plainly
+
+Above the cap, one pixel of scrollbar travel is `scale = docHeight / 8,000,000` pixels of
+document, so a wheel notch moves `scale`× further than in a short document — 3.4× for the
+owner's file. Nothing else changes: pages keep their true size, and every rect the engine
+hands out is converted at the page's own scale, because **pages are never compressed —
+only the emptiness between the window and the ends of the document is**.
+
+Two consequences had to be handled rather than discovered:
+
+- **A screen delta is not a scroll delta.** `scrollIntoView`, and any code that computes
+  "scroll by the distance this rect is off screen", overshoots by `scale` — and above a
+  factor of two it oscillates instead of converging. `scrollOverlayIntoView` divides by
+  the factor; the caret, find and review paths go through document space instead
+  (`scrollModelRectIntoView`), which is exact because `docToScroll` is the exact inverse
+  of the mapping that placed the page. Measured before that change: a caret 57 px off
+  screen after one ArrowUp at the bottom of a 3,300-page document.
+- **A marker on a page with no sheet cannot be scrolled to.** Find, the caret, the review
+  selection and jump-to-page all used to ask the DOM where something was. They now ask
+  the model, scroll there, and materialize the page — which is also the rule `SKILL.md`
+  §12 states: the runtime must not depend on the DOM as source of truth.
+
+#### Where the browser's wall actually is
+
+The usual figure is 2^24 = 16,777,216 px, and `docs/111`/§8.4 recorded a 16,910,594 px
+container whose last pages could not be reached. Probing this Chromium directly, with the
+cap removed, a 34,993,644 px band was **clamped to 33,554,432 px — exactly 2^25** — and
+the last 271 pages of a 6,600-page document could not be scrolled to at all; a
+17,496,668 px container, by contrast, *was* fully reachable. So the wall in this engine is
+2^25, the earlier 16.9 M row is probably a different failure (that probe waited 90 s for a
+canvas), and the cap is set at 8,000,000 — a quarter of the measured wall, under Firefox's
+own 17,895,697 px limit, and ~7,270 Letter pages at 100% zoom, so every document short
+enough to read page by page keeps byte-identical geometry.
+
+Zoom reaches the same ceiling from the other direction: 1,455 pages at 500% is past
+2^24. That is why the cap is applied to the measured CSS height and not to a page count.
+
+#### What this cost, and what it bought
+
+| | before | after |
+| --- | ---: | ---: |
+| scroll container, owner's file | 27,549,376 px | 8,000,090 px |
+| sheet elements, any document | one per page | ≤ ~12 |
+| open, 700,000 blocks | 85.9-95.0 s | **17.7 s** |
+| open, the owner's file | 110.5 s | **32.4 s** |
+| last page of the owner's file | unreachable | reached in 0.7 s |
+| `MAX_VIEWER_BLOCKS` | 700,000 | **1,800,000** |
+
+Two thirds of the open time was the host building one sheet element per page — 25,556
+`div`s, each with an overlay and an inline size — not the engine.
+
+#### The guards, and what drives them red
+
+- `webapp/tests/page_scroll.test.mjs` — the arithmetic, up to 250,000 pages: the
+  container never passes the wall at any length or zoom, the first and last pages are
+  exactly reachable, a document under the cap is not remapped at all, and scrolling is
+  monotonic. Raising `MAX_SCROLL_PX` past the wall turns it red.
+- `webapp/tests/e2e/viewer-scroll-ceiling.spec.mjs` — the same claims in a browser, on a
+  6,600-page document at 500% zoom (35.0 M px of paper, past **both** walls): the
+  container, the last page's ink, find scrolling to a match 6,600 pages away, the caret
+  staying inside the viewport while arrowing at the far end, and the Pages navigator.
+  With the cap removed, four of its five tests fail — including "page 6,600 could not be
+  scrolled to".
+- `webapp/tests/e2e/large-documents.spec.mjs` — the windowed document, its far pages, and
+  the read-only surface of §8.7.
+
+#### What still breaks at this size
+
+- **Open has no progress and cannot be cancelled** (HF-077): 32 s of a frozen tab for the
+  owner's file, 47-53 s at the ceiling.
+- **A zero-height caret rect.** Once `ArrowUp` reaches a paragraph that carries a page
+  break, the engine reports a caret rect of height 0, so the caret is positioned correctly
+  and paints nothing. Reproduced at 100% zoom on a 6-page document, where none of this
+  work is engaged, so it is not the band's; it is the same family as the ArrowUp fixes
+  that landed on `main` after this branch was cut. The ceiling spec asserts the caret's
+  *position*, and says why in a comment rather than asserting around it.
+- **The review margin is recomputed when the window moves, but only while compressed.**
+  A comment card is anchored in scroll coordinates, and those move under it as the window
+  moves; for an uncompressed document they do not, so an ordinary scroll pays nothing.
+  A document with both 25,556 pages and hundreds of comments would pay a review re-layout
+  per window move.
+- **The `pageSize` loop is still O(pages) at open.** It is cheap per page (an outline
+  read, no re-pagination) but it is 25,556 crossings of the wasm boundary.
+
+### 8.7 `editingUnavailableReason` has a consumer: the document says it is read-only
+
+§8.3 named the gap — the engine refuses every edit on a windowed document with a sentence
+naming the size, the limit and what to do, and nothing in `webapp/src` read it, so the
+document looked fully editable and then refused with *"That edit isn't supported for this
+selection yet"*, which is wrong twice over: the selection is fine, and no other selection
+would work either.
+
+What the host does now, on open, from that one getter:
+
+- **Forces the read-only mode it already has.** A windowed document opens in Viewing
+  mode, whose single choke point (`blockMutationInViewing`) already fails every mutation
+  closed. No second gate was invented.
+- **Disables the mode control** — Editing and Suggesting cannot be chosen, and each
+  button carries the reason as its title. A control that cannot work ships disabled with a
+  reason (`SKILL.md` §10).
+- **Says so in the banner**, in the engine's own words, and **removes the banner's
+  "Switch to editing" button**, because there is nothing to switch to.
+- **Answers with the reason wherever a refusal is worded.** `edit_errors.mjs` — which
+  exists so message policy is a pure, testable function — gained
+  `mutationBlockedMessage()` for the host's own block and a document-level branch in
+  `editRefusalMessage()` for an engine throw. Both take the reason as context rather than
+  matching on the engine's text, and the document-level reason outranks the history-step
+  message, because on a read-only document a refused undo is refused for the same single
+  reason as everything else.
+
+Driven red, to prove the guards are real: removing the consumer (`readOnlyReason = ""`)
+fails the banner assertion; making `mutationBlockedMessage` ignore its context fails both
+the unit test and the browser one, with the status bar reading *"Viewing mode is
+read-only; switch to Editing to change the document"* — an instruction the reader cannot
+follow.
 
 ## 7. Known unknowns
 

@@ -21,13 +21,49 @@ const HISTORY = "That history step can no longer be applied — the document is 
 /** The engine prefixes a refused history step with `undo failed:` / `redo failed:`. */
 const HISTORY_FAILURE = /^(undo|redo) failed:/;
 
+/** Viewing mode: a choice the reader made and can unmake, so the sentence says
+ *  how. It is only true when the DOCUMENT is not itself read-only. */
+const VIEWING = "Viewing mode is read-only; switch to Editing to change the document";
+
+/**
+ * What to say when a mutation is refused BEFORE it reaches the engine.
+ *
+ * The host blocks every mutation in Viewing mode at one choke point, and tells
+ * the reader to switch to Editing. For a document the engine will not let
+ * anyone edit — one too large to lay out whole (`docs/113` §8.3) — that is an
+ * instruction they cannot follow: the mode buttons are disabled, and switching
+ * is not a thing that exists. Same policy function as the engine-refusal case
+ * below, so the two can never drift into saying different things about the
+ * same document.
+ *
+ * @param {{editingUnavailableReason?: string}} [context]
+ * @returns {string}
+ */
+export function mutationBlockedMessage(context = {}) {
+  return String(context.editingUnavailableReason ?? "") || VIEWING;
+}
+
 /**
  * The sentence to show for a thrown engine error.
  *
  * @param {unknown} error the value `catch` received; any shape, including null.
+ * @param {{editingUnavailableReason?: string}} [context] what the HOST already
+ *        knows about the document, independent of this particular throw.
+ *        `editingUnavailableReason` is the engine's own getter (`docs/113`
+ *        §8.3): a non-empty string means no edit can ever apply to this
+ *        document, and it is already a user-facing sentence naming the size,
+ *        the limit and what to do about it.
  * @returns {string} a user-facing sentence, never an engine error name.
  */
-export function editRefusalMessage(error) {
+export function editRefusalMessage(error, context = {}) {
+  // Checked FIRST, and from context rather than from the thrown value. When a
+  // document cannot be edited at all, nothing about the selection is wrong and
+  // nothing about a history step is either — "that edit isn't supported for
+  // this selection yet" sends the reader to inspect a selection that is fine,
+  // and to try again with a different one, forever. This is the whole reason
+  // the getter exists (`SKILL.md` §10: say why, never refuse blankly).
+  const unavailable = String(context.editingUnavailableReason ?? "");
+  if (unavailable) return unavailable;
   const text = String(error?.message ?? error ?? "");
   return HISTORY_FAILURE.test(text) ? HISTORY : GENERIC;
 }

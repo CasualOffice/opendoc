@@ -119,45 +119,55 @@ fn viewer_limits() -> PackageLimits {
 /// it is the number that decides whether a document opens at all. "last page"
 /// is whether the host can scroll to the final page and find ink on it:
 ///
-/// | blocks      | path     | open        | wasm     | JS heap | pages  | last page |
-/// |-------------|----------|------------:|---------:|--------:|-------:|-----------|
-/// | 65,537      | whole    | 9.1 s       | 359 MB   | 38 MB   | 1,286  | reached   |
-/// | 262,144     | whole    | 26.3-42.2 s | 1,222 MB | 57 MB   | 5,141  | reached   |
-/// | 262,146     | windowed | 17.3-31.2 s | 592 MB   | 33 MB   | 5,141  | reached   |
-/// | 600,000     | windowed | 21.6-73.0 s | 1,230 MB | 67 MB   | 11,765 | reached   |
-/// | **700,000** | windowed | 85.9-95.0 s | 1,314 MB | 74 MB   | 13,726 | reached   |
-/// | 800,000     | windowed | 118.7 s     | 1,442 MB | 91 MB   | 15,687 | **NOT reached** |
-/// | 1,303,306   | windowed | 110.5 s     | 2,476 MB | 139 MB  | 25,556 | **NOT reached** |
+/// | blocks        | path     | open        | wasm     | pages  | scroll container | last page |
+/// |---------------|----------|------------:|---------:|-------:|-----------------:|-----------|
+/// | 65,537        | whole    | 9.1 s       | 359 MB   | 1,286  | 1.4 M px         | reached   |
+/// | 262,144       | whole    | 26.3-42.2 s | 1,222 MB | 5,141  | 5.5 M px         | reached   |
+/// | 262,146       | windowed | 17.3-31.2 s | 592 MB   | 5,141  | 5.5 M px         | reached   |
+/// | 700,000       | windowed | 17.7 s      | 1,334 MB | 13,726 | 8,000,090 px     | reached, inked |
+/// | 1,303,306     | windowed | 32.4-36.2 s | 2,503 MB | 25,556 | 8,000,090 px     | reached (blank; 25,555 inked) |
+/// | 1,500,000     | windowed | 99.7 s      | 2,755 MB | 29,412 | 8,000,090 px     | reached, inked |
+/// | **1,800,000** | windowed | 47.2-53.1 s | 3,090 MB | 35,295 | 8,000,090 px     | reached, inked |
+/// | 2,000,000     | windowed | 56.1 s      | 3,366 MB | 39,216 | 8,000,090 px     | reached, inked |
 ///
-/// The last row is the **owner's own 41 MB file**, measured through the picker,
-/// not a synthetic stand-in (`VIEWER_CEILING_FILE=…` on the probe). Two things
-/// to read out of the table.
+/// The 1,303,306 row is the **owner's own 41 MB file**, measured through the
+/// picker, not a synthetic stand-in (`VIEWER_CEILING_FILE=…` on the probe). Its
+/// last page is blank because the file ends in a newline, so its final
+/// paragraph is empty; the probe reports the page before it, which is inked.
+/// Three things to read out of the table.
 ///
-/// **Windowing works, and it is what moved this constant.** At the same
-/// 262,14x block count the windowed path holds **592 MB against 1,222 MB** and
-/// opens no slower. That is what makes 700,000 blocks — 2.7× the old ceiling —
-/// something the browser can actually hold, and it is why 1,303,306 paragraphs
-/// now fit in 2,476 MB of a wasm32 address space instead of the 4.14 GiB
-/// `docs/113` §6.4 measured for the whole path, which did not fit at all.
+/// **Windowing is what made these sizes hold at all.** At the same 262,14x
+/// block count the windowed path holds **592 MB against 1,222 MB** and opens no
+/// slower, which is why 1,303,306 paragraphs fit in 2.5 GB of a wasm32 address
+/// space instead of the 4.14 GiB `docs/113` §6.4 measured for the whole path,
+/// which did not fit at all.
 ///
-/// **The value stops at 700,000 because of the HOST, not the engine.** At
-/// 1,303,306 paragraphs the document opens, reports its true 25,556 pages, and
-/// every one of them is individually rasterizable. What the host cannot do is
-/// let the user scroll to them: the viewer builds one sheet per page, so the
-/// scroll container is pages × ~1,078 px, and a browser stops scrolling at
-/// 2^24 = 16,777,216 CSS px. Measured: at 800,000 blocks that container is
-/// 16,910,594 px and the final pages are unreachable; at 1,303,306 it is
-/// 27,549,376 px and the last third is. Admitting a document whose final pages
-/// cannot be reached would be the silent version of a refusal, which is the
-/// thing this constant exists to avoid. Lifting it needs a virtualized scroll
-/// container in the host (`webapp/src`), outside this crate — `docs/113` §8
-/// records it as the next thing owed.
+/// **What moved the constant from 700,000 to 1,800,000 is the HOST, not the
+/// engine.** The viewer used to build one sheet element per page, so its scroll
+/// container was pages × ~1,078 px and a browser stops scrolling somewhere
+/// between 2^24 and 2^25 CSS px: at 800,000 blocks that container was
+/// 16,910,594 px and the final pages could not be reached, and at 1,303,306 it
+/// was 27,549,376 px and the last third could not. The host now positions a
+/// window of sheets inside one bounded band (`docs/113` §8.6), so the container
+/// is 8,000,090 px at every size above, and the last page of every row here was
+/// scrolled to and found to carry ink. Building 13,726 fewer sheet elements also
+/// took the 700,000-block open from 85.9-95.0 s to **17.7 s**.
 ///
-/// Timing is the noisy half, as it was in `docs/113` §6.4: the same 600,000-block
-/// open measured 21.6 s and 73.0 s on a shared laptop, and 700,000 measured
-/// 85.9, 88.5 and 95.0 s, while each row's wasm figure reproduced to the
-/// megabyte. Opening is still linear in blocks and still slow; windowing makes a
-/// document **fit**, not open faster (`docs/104` HF-077).
+/// **Why 1,800,000 and not the 2,000,000 that also opened.** 3,366 MB is 82% of
+/// a 4 GiB address space, and this table is one document *shape* — the owner's
+/// 32-byte lines, at 1.73 KB per block. The same block count in longer
+/// paragraphs costs more, and the failure past the address space is an abort
+/// (`docs/104` HF-158), not a refusal. 1,800,000 leaves ~1 GB for that
+/// difference while still admitting the owner's file with 38% to spare. For
+/// this shape the host's own 64 MiB file cap binds first anyway, at ~2.1 M
+/// lines.
+///
+/// Timing is the noisy half, as it was in `docs/113` §6.4: the same 1,800,000
+/// open measured 47.2 s and 53.1 s, and 1,500,000 measured 99.7 s on a busier
+/// machine than the 2,000,000 row's 56.1 s, while each row's wasm figure
+/// reproduced to the megabyte. Opening is still linear in blocks and still
+/// slow; windowing makes a document **fit**, not open faster (`docs/104`
+/// HF-077).
 ///
 /// The value is the largest size actually measured to open, not an
 /// extrapolation. Past it a document is refused with its real size and the
@@ -173,7 +183,7 @@ fn viewer_limits() -> PackageLimits {
 /// ceiling for one it has to lay out whole, which is every document a window
 /// cannot serve: footnotes, anchored floats, multiple sections or columns,
 /// margin line numbering, per-page note restart.
-const MAX_VIEWER_BLOCKS: usize = 700_000;
+const MAX_VIEWER_BLOCKS: usize = 1_800_000;
 
 /// The largest document the viewer will lay out **whole**, in top-level blocks
 /// — every page paginated and resident before the first frame.
@@ -198,11 +208,31 @@ const MAX_WHOLE_LAYOUT_BLOCKS: usize = 262_144;
 /// Plain-text admission for the viewer. [`PlainTextLimits::default`] is sized
 /// for a 64-bit native host; the browser needs its own ceiling for the same
 /// reason the package limits do.
+///
+/// ## Why the scalar-value cap is raised too, and not left at its default
+///
+/// It is not a free parameter: a text importer whose *character* cap is lower
+/// than its *paragraph* cap refuses a document the paragraph cap admits — and
+/// refuses it in the worst possible way, because the cap is enforced inside
+/// `probe`, so no importer matches and the reader is told **"document format
+/// could not be detected"** about a plain text file. Measured: 1,800,000 of
+/// the owner's 32-byte lines is 57.6 million scalar values against a 50 million
+/// default, and that is exactly what the viewer said about it.
+///
+/// So the cap is raised to the adapter's own hard maximum, 200,000,000, which
+/// is above [`MAX_VIEWER_BLOCKS`] paragraphs of any realistic line length —
+/// the relationship `the_character_cap_cannot_refuse_a_document_the_paragraph_cap_admits`
+/// pins, because it is the one that breaks silently when either constant moves.
+/// The remaining band where characters could still bind before bytes is a text
+/// file between 200,000,000 and 209,715,200 bytes, and the host refuses any
+/// file over 64 MiB before the engine sees it (`MAX_OPEN_BYTES` in `main.js`),
+/// so nothing reaches it.
 fn viewer_text_limits() -> PlainTextLimits {
     PlainTextLimits {
         max_input_bytes: 200 * 1024 * 1024,
         max_output_bytes: 200 * 1024 * 1024,
         max_paragraphs: MAX_VIEWER_BLOCKS,
+        max_unicode_scalar_values: PlainTextLimits::HARD_MAX_UNICODE_SCALAR_VALUES,
         ..PlainTextLimits::default()
     }
 }
@@ -21532,6 +21562,40 @@ mod tests {
             limits.max_input_bytes,
         );
         assert!(u128::from(limits.max_total_expanded_bytes) >= limits.max_input_bytes as u128);
+    }
+
+    /// The text importer's CHARACTER cap must never be the one that refuses a
+    /// document its PARAGRAPH cap admits.
+    ///
+    /// Not a style point. `max_unicode_scalar_values` is enforced inside
+    /// `probe`, so exceeding it does not produce "this document is too large" —
+    /// it produces **no matching importer**, and the reader is told "document
+    /// format could not be detected" about a plain text file. Measured, through
+    /// the picker, with the default 50,000,000: 1,800,000 of the owner's
+    /// 32-byte lines is 57.6 million scalar values, and that is exactly what
+    /// the viewer said about it.
+    ///
+    /// So the two caps have to be sized together, and this is the assertion
+    /// that keeps them that way when either one moves.
+    #[test]
+    fn the_character_cap_cannot_refuse_a_document_the_paragraph_cap_admits() {
+        let limits = viewer_text_limits();
+        assert_eq!(
+            limits.max_paragraphs, MAX_VIEWER_BLOCKS,
+            "the paragraph cap is the ceiling the refusal message names",
+        );
+        // The owner's own line is 32 bytes. Generous: at the ceiling, a
+        // document of 60-character lines still has to be refused by its
+        // paragraph count and not by its characters.
+        let at_the_ceiling = MAX_VIEWER_BLOCKS.saturating_mul(60);
+        assert!(
+            limits.max_unicode_scalar_values >= at_the_ceiling,
+            "{} paragraphs of 60 characters is {} scalar values, past the {} cap: \
+             such a document would be refused as an undetectable format",
+            MAX_VIEWER_BLOCKS,
+            at_the_ceiling,
+            limits.max_unicode_scalar_values,
+        );
     }
 
     /// The accessibility projection is a WINDOW. Projecting every block is what

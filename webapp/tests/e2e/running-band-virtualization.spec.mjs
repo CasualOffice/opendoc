@@ -2,7 +2,7 @@
 // context transitions. A repeated header/footer remains the same model story,
 // while its visible caret projection follows the page the user is viewing
 // (docs/58, P1G-CONTEXT-05).
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, documentPageCount, gotoEditor, pageSheet } from "./fixtures.mjs";
 import { makeLargeDocx } from "./large-docx.mjs";
 
 async function openVirtualizedDocument(page, pageCount = 12) {
@@ -14,18 +14,21 @@ async function openVirtualizedDocument(page, pageCount = 12) {
     buffer: Buffer.from(makeLargeDocx(pageCount)),
   });
   await page.waitForFunction(
-    (minimum) => {
+    () => {
       const status = document.getElementById("status");
       return (
         status?.textContent === "" &&
         !status.classList.contains("error") &&
-        document.querySelectorAll(".page-wrap").length >= minimum &&
+        document.querySelectorAll(".page-wrap").length > 0 &&
         document.querySelectorAll("canvas.page").length > 0
       );
     },
-    pageCount - 1,
+    null,
     { timeout: 45_000 },
   );
+  // Every page of the document exists for the HOST — the page count is the
+  // document's — while only the pages near the viewport have sheets.
+  await expect.poll(() => documentPageCount(page)).toBe(pageCount);
 }
 
 async function enterRunningBand(page, band) {
@@ -46,14 +49,15 @@ for (const band of ["header", "footer"]) {
     await page.keyboard.type("BEFORE_SCROLL");
     expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
 
-    const first = page.locator(".page-wrap").first();
-    const target = page.locator(".page-wrap").nth(9);
+    const first = page.locator('.page-wrap[data-page-number="1"]');
+    const target = page.locator('.page-wrap[data-page-number="10"]');
     await expect.poll(() => first.locator("canvas.page").count()).toBe(1);
-    await expect.poll(() => target.locator("canvas.page").count()).toBe(0);
-    await target.evaluate((element) => element.scrollIntoView({ block: "start" }));
+    // Page 10 has no sheet at all yet — the stronger form of "no raster".
+    await expect.poll(() => target.count()).toBe(0);
+    await pageSheet(page, 10);
 
     // Prove the exercise crossed the actual virtualization boundary: the first
-    // page raster is released and the distant page raster is mounted.
+    // page's sheet and raster are released and the distant page's are built.
     await expect.poll(() => first.locator("canvas.page").count()).toBe(0);
     await expect.poll(() => target.locator("canvas.page").count()).toBe(1);
 

@@ -31,6 +31,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  pageSheet,
   stableBox,
   MOD,
 } from "./fixtures.mjs";
@@ -371,12 +372,12 @@ const marker = (page) => page.locator(".running-marker");
 
 /** Hovers just inside the top edge of the 1-based page `index`. */
 async function hoverTopBand(page, index) {
-  // Page canvases are created lazily, so scroll the WRAP into view first and let
-  // its canvas appear.
-  const wrap = page.locator(".page-wrap").nth(index - 1);
-  await wrap.evaluate((el) => el.scrollIntoView({ block: "start" }));
+  // Sheets and canvases are both created lazily, so scroll the PAGE into view
+  // first and let its canvas appear. `pageSheet` addresses the page by number,
+  // which is not the same as the nth sheet once the reader has scrolled.
+  await pageSheet(page, index);
   await page.waitForTimeout(250);
-  const box = await stableBox(wrap);
+  const box = await stableBox(page.locator(`.page-wrap[data-page-number="${index}"]`));
   await page.mouse.move(box.x + box.width * 0.5, box.y + 10);
   await page.waitForTimeout(150);
 }

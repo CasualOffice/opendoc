@@ -4607,6 +4607,18 @@ body.is-format-painting .page-wrap * {
   line-height: 1.5;
 }
 
+/* A panel that is showing a WINDOW of a long document says so, rather than
+   letting a slice read as the whole (the Pages navigator, docs/113 §8.6 — the
+   same rule the accessibility mirror follows). */
+.panel-window-note {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  border-bottom: 1px solid var(--line);
+}
+
 /* One column of page thumbnails; reserve the scrollbar gutter so it never
    overlaps a thumbnail's corner. */
 .pages-grid { display: grid; grid-template-columns: 1fr; gap: 12px; align-content: start; scrollbar-gutter: stable; justify-items: center; }
@@ -4925,12 +4937,32 @@ body.is-format-painting .page-wrap * {
    `.viewport` scroll horizontally (`.pages` below reserves the room for it);
    a reader who would rather scale than scroll has Fit width in the zoom menu,
    which recomputes the factor on every resize and keeps both axes together. */
+/* The one element the page sheets live in, and the element whose height IS the
+   scroll range (docs/113 §8.6). Its height is capped at MAX_SCROLL_PX because a
+   browser stops scrolling at 2^24 CSS px, and the sheets are positioned inside
+   it by `page_scroll.mjs` rather than stacked in flow — that is what makes the
+   scroll height independent of the page count. It is a flex item of `.pages`,
+   so the existing centering, `width: max-content` sizing and comment-gutter
+   reservation all apply to it exactly as they applied to a sheet. */
+.page-band {
+  position: relative;
+  flex: none;
+}
+
 .page-wrap {
   position: relative;
   background: var(--paper);
   box-shadow: var(--shadow-page);
   border-radius: 3px;
   line-height: 0;
+}
+
+/* Inside the band a sheet is placed, not flowed: `main.js` writes `top`/`left`
+   from the document-space page stack. The 22px pitch between pages lives in
+   `PAGE_GAP_PX` (page_scroll.mjs) instead of in a flex `gap`, because the
+   positions have to be computable for pages that are not in the DOM. */
+.page-band > .page-wrap {
+  position: absolute;
 }
 
 .page {

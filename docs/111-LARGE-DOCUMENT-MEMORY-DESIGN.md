@@ -1,6 +1,8 @@
 # 111 — Large-document memory: why a 1.3M-paragraph file is refused, and what it costs to admit it
 
-**Status:** Design. **Opened:** 2026-09-20. **Owner:** unassigned.
+**Status:** Design; stages 1a, 1b and 2 landed, and the file in the title now opens with
+all 25,556 of its pages reachable (§4, `docs/113` §8.6). **Opened:** 2026-09-20.
+**Owner:** unassigned.
 **Supersedes nothing.** Extends the admission work landed in #552 (`docs/104` HF-158).
 
 ## 1. The problem, stated concretely
@@ -269,7 +271,7 @@ own 30-character paragraphs the production path costs 3,378 B, which is the numb
 matters for that file. The 4.14 GiB peak is the measured reason it is refused: it does
 not fit a wasm32 address space.
 
-#### The ceiling has moved: 262,144 → 700,000
+#### The ceiling has moved: 262,144 → 700,000 → 1,800,000
 
 `casual-doc-wasm` now holds a `BodyLayout` that is either the whole document's pages or
 one window of them (`docs/113` §8.2), so the browser no longer pays the left-hand column
@@ -282,22 +284,28 @@ because linear memory never shrinks:
 | --- | --- | ---: | ---: | ---: | --- |
 | 262,144 | whole | 26.3-42.2 s | 1,222 MB | 5,141 | yes |
 | 262,146 | windowed | 17.3-31.2 s | **592 MB** | 5,141 | yes |
-| **700,000** | windowed | 85.9-95.0 s | 1,314 MB | 13,726 | yes |
-| 800,000 | windowed | 118.7 s | 1,442 MB | 15,687 | **no** |
-| **1,303,306 — the owner's file** | windowed | **110.5 s** | **2,476 MB** | **25,556** | **no** |
+| 700,000 | windowed | 85.9-95.0 s → **17.7 s** | 1,314-1,334 MB | 13,726 | yes |
+| 800,000 | windowed | 118.7 s | 1,442 MB | 15,687 | no → **yes** |
+| **1,303,306 — the owner's file** | windowed | 110.5 s → **32.4 s** | **2,503 MB** | **25,556** | no → **yes** |
+| **1,800,000 — the ceiling** | windowed | **47.2-53.1 s** | **3,090 MB** | 35,295 | **yes** |
+
+The second figure in each cell is after the host's page band (`docs/113` §8.6). The
+"reachable" column moved because the scroll container is no longer as tall as the
+document; the open times moved because two thirds of the old figure was the host
+building one sheet element per page.
 
 At the same block count the windowed path holds **592 MB against 1,222 MB**, which is
 what pays for a 2.7× higher ceiling.
 
-**The owner's file now opens in the browser** — 2,476 MB inside a wasm32 address space
-where the whole-layout path needed 4.14 GiB and could not be attempted, with all 25,556
-pages reported, rasterizable, exportable and findable. It is nonetheless still refused,
-and the reason is no longer the engine's: the viewer builds one sheet per page, so its
-scroll container is 27,549,376 px and a browser stops scrolling at 2^24 = 16,777,216 px,
-leaving the last third unreachable. Admitting a document whose final third is silently
-unreachable is the failure this work exists to prevent, so the constant is the largest
-size measured to open **and be wholly reachable**. `docs/113` §8.5 lists what is owed
-next, starting with a virtualized scroll container in the host.
+**The owner's file now opens in the browser, and all of it is reachable** — 2,503 MB
+inside a wasm32 address space where the whole-layout path needed 4.14 GiB and could not
+be attempted, with all 25,556 pages reported, rasterizable, exportable, findable and
+scrollable to. The second half of that sentence is `docs/113` §8.6: the viewer used to
+build one sheet per page, so its scroll container was 27,549,376 px against a browser
+limit between 2^24 and 2^25, and the last third could not be reached. It now positions a
+window of sheets inside one 8,000,090 px band, so the container is the same height at
+every document size and the constant is again what it says it is — the largest size
+measured to open **and be wholly reachable**.
 
 ### Result after stages 1a and 1b, measured
 
@@ -314,8 +322,9 @@ would have left the model at ≈1.89 GB, which does not fit once a window is add
 - **Raising `MAX_VIEWER_BLOCKS` without stage 2.** The constant is a measured cliff. A
   larger number buys a module abort instead of an honest refusal, which is strictly
   worse (HF-158 exists because that is what used to happen). *(Stage 2 landed, the
-  constant was re-measured through the browser, and it moved to 700,000 — see §4. The
-  rule stands: it moved because a measurement moved.)*
+  constant was re-measured through the browser, and it moved to 700,000, then to
+  1,800,000 once the host stopped building one sheet element per page — see §4 and
+  `docs/113` §8.6. The rule stands: it moved because a measurement moved, both times.)*
 - **Removing the refusal path.** Even after stage 2 there is a ceiling; it must keep
   saying what was found, what the limit is, and what to do.
 - **Streaming the model to disk / IndexedDB.** Out of scope; local-first and

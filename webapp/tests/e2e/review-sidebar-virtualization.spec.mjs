@@ -6,7 +6,7 @@
 // comments far apart vertically, and proves that only the cards inside (or near)
 // the viewport are ever mounted: a card off screen is detached, and scrolling it
 // back into view remounts it — while the item itself is never lost.
-import { test, expect } from "./fixtures.mjs";
+import { test, expect, pageSheet } from "./fixtures.mjs";
 
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -59,23 +59,25 @@ test("only cards inside the viewport band are mounted, and scrolling remounts th
   const cards = page.locator(".review-margin-card.review-margin-comment");
 
   // A comment near the very top of the document.
-  await page.locator(".page-wrap").first().locator(".page").click({ position: { x: 120, y: 120 } });
+  await page.locator('.page-wrap[data-page-number="1"]').locator(".page").click({ position: { x: 120, y: 120 } });
   await page.keyboard.press(`${MOD}+Home`);
   await addCommentAtCaret(page, "TOPMARK", "TOPNOTE");
   const topCard = sidebar.locator(".review-margin-card", { hasText: "TOPNOTE" });
   await expect(topCard).toHaveCount(1);
 
   // A comment far down the document (a lower page), several thousand px away.
-  await scrollViewportTo(page, 9000);
+  // Page 10 — several thousand px down. It has no sheet until something
+  // scrolls to it, so ask for the page rather than for the tenth sheet.
+  const farSheet = await pageSheet(page, 10);
   await page.waitForTimeout(150);
-  await page.locator(".page-wrap").nth(9).locator(".page").click({ position: { x: 150, y: 150 } });
+  await farSheet.locator(".page").click({ position: { x: 150, y: 150 } });
   await addCommentAtCaret(page, "FARMARK", "FARNOTE");
   const farCard = sidebar.locator(".review-margin-card", { hasText: "FARNOTE" });
   await expect(farCard).toHaveCount(1);
 
   // Scrolled down here, the far comment is mounted and the top comment — now
   // thousands of px above the viewport band — is detached from the DOM.
-  await scrollViewportTo(page, 9000);
+  await pageSheet(page, 10);
   await page.waitForTimeout(120);
   await expect(farCard).toHaveCount(1);
   await expect(topCard).toHaveCount(0);
