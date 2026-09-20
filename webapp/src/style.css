@@ -1162,6 +1162,10 @@ body.modal-open {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* The action row WRAPS rather than clipping. With `nowrap` the note and the
+     two buttons were squeezed into one line of a 380px compact card and the
+     labels broke inside boxes that could not grow (see `.dialog-button`). */
+  flex-wrap: wrap;
   gap: var(--space-4);
   /* The action row needs less vertical air than the body: it holds one line of
      buttons. On the compact dialogs head+foot were eating 55% of the card. */
@@ -1171,6 +1175,11 @@ body.modal-open {
 }
 
 .dialog-note {
+  /* Takes the leftover width, but gives the buttons their line when what is
+     left is too narrow to read: the note is the least important thing in the
+     footer, and it must never be what forces a label to break. */
+  flex: 1 1 16ch;
+  min-width: 0;
   color: var(--muted);
   font-size: var(--fs-small);
 }
@@ -1178,12 +1187,24 @@ body.modal-open {
 .dialog-actions {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin-left: auto;
 }
 
 .dialog-button {
-  height: var(--h-search);
+  /* `min-height`, not `height`. A fixed height is a promise that every label
+     fits on one line, and the app writes its own labels at runtime:
+     `confirmModal({ confirmLabel: "Discard and open" })` wrapped to two lines
+     and reported a 59px content height inside this 32px box, so the second
+     line was simply not painted. `nowrap` keeps the normal case on one line —
+     the rendering is unchanged for every label that already fitted — and
+     `min-height` lets the box grow instead of cutting anything that does not. */
+  min-height: var(--h-search);
+  flex: 0 0 auto;
+  white-space: nowrap;
   min-width: 80px;
   padding: 0 16px;
   border: 1px solid var(--line-strong);
@@ -2121,7 +2142,12 @@ body.modal-open {
      where space is scarcest. Sized to its content instead, with the stepper
      keeping its own fixed column. */
   inline-size: fit-content;
-  grid-template-columns: calc(5ch + 1.25rem) 32px;
+  /* Five characters ("22.00"), the input's own 14px of padding, AND the native
+     spin buttons Chromium lays out inside the input — roughly 17px, which the
+     old `1.25rem` allowance did not include. An A4 height of 11.69 needed 66px
+     of content in the 60px box that produced, so the last digit was cut off.
+     Same defect as the dialog button below: a fixed box, a label that grew. */
+  grid-template-columns: calc(5ch + 2.25rem) 32px;
   height: var(--h-field);
   overflow: hidden;
   border: 1px solid var(--line-strong);
