@@ -49,6 +49,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "casual-doc-rtf"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-model",
+]
+
+[[package]]
 name = "cc"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -179,6 +186,7 @@ dependencies = [
  "casual-doc-odf",
  "casual-doc-ooxml",
  "casual-doc-package",
+ "casual-doc-rtf",
  "libfuzzer-sys",
 ]
 
