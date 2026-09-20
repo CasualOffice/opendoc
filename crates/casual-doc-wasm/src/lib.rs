@@ -125,7 +125,7 @@ fn viewer_limits() -> PackageLimits {
 /// | 262,144       | whole    | 26.3-42.2 s | 1,222 MB | 5,141  | 5.5 M px         | reached   |
 /// | 262,146       | windowed | 17.3-31.2 s | 592 MB   | 5,141  | 5.5 M px         | reached   |
 /// | 700,000       | windowed | 17.7 s      | 1,334 MB | 13,726 | 8,000,090 px     | reached, inked |
-/// | 1,303,306     | windowed | 32.4-36.2 s | 2,503 MB | 25,556 | 8,000,090 px     | reached (blank; 25,555 inked) |
+/// | 1,303,306     | windowed | 32.4-51.9 s | 2,504 MB | 25,556 | 8,000,090 px     | reached (blank; 25,555 inked) |
 /// | 1,500,000     | windowed | 99.7 s      | 2,755 MB | 29,412 | 8,000,090 px     | reached, inked |
 /// | **1,800,000** | windowed | 47.2-53.1 s | 3,090 MB | 35,295 | 8,000,090 px     | reached, inked |
 /// | 2,000,000     | windowed | 56.1 s      | 3,366 MB | 39,216 | 8,000,090 px     | reached, inked |

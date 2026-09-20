@@ -286,7 +286,7 @@ because linear memory never shrinks:
 | 262,146 | windowed | 17.3-31.2 s | **592 MB** | 5,141 | yes |
 | 700,000 | windowed | 85.9-95.0 s → **17.7 s** | 1,314-1,334 MB | 13,726 | yes |
 | 800,000 | windowed | 118.7 s | 1,442 MB | 15,687 | no → **yes** |
-| **1,303,306 — the owner's file** | windowed | 110.5 s → **32.4 s** | **2,503 MB** | **25,556** | no → **yes** |
+| **1,303,306 — the owner's file** | windowed | 110.5 s → **32.4-51.9 s** | **2,504 MB** | **25,556** | no → **yes** |
 | **1,800,000 — the ceiling** | windowed | **47.2-53.1 s** | **3,090 MB** | 35,295 | **yes** |
 
 The second figure in each cell is after the host's page band (`docs/113` §8.6). The
@@ -297,7 +297,7 @@ building one sheet element per page.
 At the same block count the windowed path holds **592 MB against 1,222 MB**, which is
 what pays for a 2.7× higher ceiling.
 
-**The owner's file now opens in the browser, and all of it is reachable** — 2,503 MB
+**The owner's file now opens in the browser, and all of it is reachable** — 2,504 MB
 inside a wasm32 address space where the whole-layout path needed 4.14 GiB and could not
 be attempted, with all 25,556 pages reported, rasterizable, exportable, findable and
 scrollable to. The second half of that sentence is `docs/113` §8.6: the viewer used to

@@ -3,7 +3,7 @@
 **Status:** Steps 1-5 landed in the engine, the host holds a window (§8), and the host
 now scrolls one too (§8.6). `MAX_VIEWER_BLOCKS` moved 262,144 → 700,000 → **1,800,000**
 on browser measurements, and the owner's 1,303,306-paragraph file **opens and every one
-of its 25,556 pages is reachable** (32.4 s, 2,503 MB, §8.6). **Opened:** 2026-09-20.
+of its 25,556 pages is reachable** (32-52 s, 2,504 MB, §8.6). **Opened:** 2026-09-20.
 **Owner:** unassigned.
 **Row:** `109` **HF-162** (P1, L). **Depends on:** HF-161 / HF-163 (`docs/111`).
 **Supersedes:** `docs/111` §4 "stage 2", which sketched this and listed four open
@@ -495,7 +495,7 @@ limit), but it is now the thing in the way.
 
 1. ~~**A virtualized scroll container in the host**~~ — **done, §8.6.**
 2. ~~**`editingUnavailableReason` has no consumer**~~ — **done, §8.7.**
-3. **Open is still slow and gives no feedback**: 32.4 s for the owner's file — down from
+3. **Open is still slow and gives no feedback**: 32-52 s for the owner's file — down from
    110.5 s, because two thirds of that was the host building 25,556 sheet elements, not
    the engine — but still linear in blocks, still with no budget, progress or cancel.
    `docs/104` HF-077. Windowing did not change the shaping pass and was never going to.
@@ -574,8 +574,8 @@ Zoom reaches the same ceiling from the other direction: 1,455 pages at 500% is p
 | scroll container, owner's file | 27,549,376 px | 8,000,090 px |
 | sheet elements, any document | one per page | ≤ ~12 |
 | open, 700,000 blocks | 85.9-95.0 s | **17.7 s** |
-| open, the owner's file | 110.5 s | **32.4 s** |
-| last page of the owner's file | unreachable | reached in 0.7 s |
+| open, the owner's file | 110.5 s | **32.4-51.9 s** |
+| last page of the owner's file | unreachable | reached, with page 25,555 inked |
 | `MAX_VIEWER_BLOCKS` | 700,000 | **1,800,000** |
 
 Two thirds of the open time was the host building one sheet element per page — 25,556
@@ -598,8 +598,9 @@ Two thirds of the open time was the host building one sheet element per page —
 
 #### What still breaks at this size
 
-- **Open has no progress and cannot be cancelled** (HF-077): 32 s of a frozen tab for the
-  owner's file, 47-53 s at the ceiling.
+- **Open has no progress and cannot be cancelled** (HF-077): 32-52 s of a frozen tab for
+  the owner's file, 47-53 s at the ceiling. Timing is the noisy half of every measurement
+  here; the memory figures reproduce to the megabyte.
 - **A zero-height caret rect.** Once `ArrowUp` reaches a paragraph that carries a page
   break, the engine reports a caret rect of height 0, so the caret is positioned correctly
   and paints nothing. Reproduced at 100% zoom on a 6-page document, where none of this
