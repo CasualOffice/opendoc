@@ -3761,10 +3761,24 @@ impl WasmDocument {
 
     /// Moves a caret by one step in `dir` (`"left"`, `"right"`, `"up"`, `"down"`),
     /// crossing line, paragraph, and page boundaries. Pure navigation — no edit.
+    ///
+    /// `goalX` is the vertical goal column in page-local twips — the x a run of
+    /// Up/Down presses is aiming at, as `caretRect` reports it. Pass it on every
+    /// vertical move of a run and the column survives a short line; pass
+    /// `undefined` and the move aims at the caret's own x, which is what sets the
+    /// column on the first press. Ignored for the horizontal directions. The host
+    /// owns it because only the host sees the gestures that clear it — a
+    /// horizontal move, a click, or an edit (HF-164).
     #[wasm_bindgen(js_name = moveCaret)]
-    pub fn move_caret(&self, node: &str, offset: u32, dir: &str) -> Result<Caret, JsValue> {
+    pub fn move_caret(
+        &self,
+        node: &str,
+        offset: u32,
+        dir: &str,
+        goal_x: Option<i32>,
+    ) -> Result<Caret, JsValue> {
         let nid = node_id(node)?;
-        let pos = self.moved_caret(nid, offset, dir);
+        let pos = self.moved_caret(nid, offset, dir, goal_x.map(Twip));
         Ok(Caret {
             node: pos.0.to_string(),
             offset: pos.1,
@@ -11514,7 +11528,18 @@ impl WasmDocument {
 
     /// The caret position one step in `dir` from `(nid, offset)` — crossing line/
     /// page boundaries (up/down) and paragraph boundaries (left/right).
-    fn moved_caret(&self, nid: NodeId, offset: u32, dir: &str) -> (NodeId, u32) {
+    ///
+    /// `goal_x` is the vertical goal column in page-local twips (`None` = aim at
+    /// the caret's own x); it is meaningful only for `"up"`/`"down"`, and the
+    /// horizontal steps that recurse into this function pass `None` because a
+    /// horizontal move is exactly what clears the column.
+    fn moved_caret(
+        &self,
+        nid: NodeId,
+        offset: u32,
+        dir: &str,
+        goal_x: Option<Twip>,
+    ) -> (NodeId, u32) {
         match dir {
             "up" | "down" => {
                 let direction = if dir == "up" {
@@ -11529,7 +11554,7 @@ impl WasmDocument {
                 // 78px sideways once anything upstream on its line was struck.
                 let pos = self.view_pos(ModelPos::new(nid, offset));
                 self.painted_snapshot()
-                    .move_vertical(pos, direction)
+                    .move_vertical(pos, direction, goal_x)
                     .map_or((nid, offset), |p| {
                         let p = self.edit_pos(p);
                         (p.node, p.offset)
@@ -11589,14 +11614,14 @@ impl WasmDocument {
                 let text = self.paragraph_text(nid);
                 match next_word_boundary(&text, offset as usize) {
                     Some(o) => (nid, o as u32),
-                    None => self.moved_caret(nid, offset.max(text.len() as u32), "right"),
+                    None => self.moved_caret(nid, offset.max(text.len() as u32), "right", None),
                 }
             }
             "wordLeft" => {
                 let text = self.paragraph_text(nid);
                 match prev_word_boundary(&text, offset as usize) {
                     Some(o) => (nid, o as u32),
-                    None if offset == 0 => self.moved_caret(nid, 0, "left"),
+                    None if offset == 0 => self.moved_caret(nid, 0, "left", None),
                     None => (nid, 0),
                 }
             }
@@ -28931,7 +28956,7 @@ mod tests {
         assert!(word[1] > 0 && (word[1] as usize) <= text.len());
 
         // Move right by one (ASCII) byte.
-        let caret = d.move_caret(&node, 0, "right").expect("move");
+        let caret = d.move_caret(&node, 0, "right", None).expect("move");
         assert_eq!(caret.offset(), 1);
         assert_eq!(caret.node(), node);
 
@@ -29015,19 +29040,19 @@ mod tests {
         let second = pair[1];
 
         let current_start = d
-            .move_caret(&second.0.to_string(), 1, "paragraphUp")
+            .move_caret(&second.0.to_string(), 1, "paragraphUp", None)
             .expect("move to current paragraph start");
         assert_eq!(current_start.node(), second.0.to_string());
         assert_eq!(current_start.offset(), 0);
 
         let previous_start = d
-            .move_caret(&second.0.to_string(), 0, "paragraphUp")
+            .move_caret(&second.0.to_string(), 0, "paragraphUp", None)
             .expect("move to previous paragraph start");
         assert_eq!(previous_start.node(), first.0.to_string());
         assert_eq!(previous_start.offset(), 0);
 
         let next_start = d
-            .move_caret(&first.0.to_string(), 1, "paragraphDown")
+            .move_caret(&first.0.to_string(), 1, "paragraphDown", None)
             .expect("move to next paragraph start");
         assert_eq!(next_start.node(), second.0.to_string());
         assert_eq!(next_start.offset(), 0);

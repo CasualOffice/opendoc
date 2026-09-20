@@ -1,20 +1,123 @@
-// The decision behind "the arrow key did nothing, find the line myself".
+// The vertical goal column, as a state machine (HF-164).
 //
-// All geometry and model access is injected, so the rules are testable without
-// a browser: when the engine's answer is accepted, when it is overridden, and —
-// the part that matters most — when nothing must happen at all, because a
-// fallback that invents movement at the first or last line is worse than the
-// dead end it replaces.
+// The engine cannot hold this state and the DOM is not involved in deciding
+// it, so it is a plain object here and every rule is asserted directly: what
+// sets the column, what keeps it, and what ends the run. The numbers are the
+// ones the owner measured — a caret at x = 1456 on a long line, ArrowDown onto
+// a short line that can only reach 392, then an empty paragraph at 346.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
   VERTICAL_PROBE_STEPS,
+  createVerticalGoal,
   movedVertically,
   probeVerticalNeighbour,
   recoverVerticalMove,
   verticalProbePoints,
-} from "../src/caret_probe.mjs";
+} from "../src/caret_navigation.mjs";
+
+const LONG = { node: "p1", offset: 120 };
+const SHORT = { node: "p2", offset: 8 };
+const EMPTY = { node: "p3", offset: 0 };
+
+/** A measurement that fails the test if the column is taken when it should
+ *  have been carried — "never measured" is half of what these assert. */
+function measures(value, log = []) {
+  return {
+    log,
+    measure: () => {
+      log.push(value);
+      return value;
+    },
+  };
+}
+
+test("the first vertical move sets the column from the caret's own x", () => {
+  const goal = createVerticalGoal();
+  const { measure, log } = measures(1456);
+  assert.equal(goal.columnFor("down", LONG, measure), 1456);
+  assert.deepEqual(log, [1456], "the column has to be measured once");
+});
+
+test("a short line clamps the caret without taking the column", () => {
+  const goal = createVerticalGoal();
+  goal.keep(1456, LONG);
+
+  // Down onto a short line: the engine is still told to aim at 1456 and the
+  // caret is clamped to 392, which must NOT become the new column.
+  const short = measures(392);
+  assert.equal(goal.columnFor("down", LONG, short.measure), 1456);
+  goal.keep(1456, SHORT);
+  assert.deepEqual(short.log, [], "the caret's clamped x must not be consulted");
+
+  // Down onto an empty paragraph: same again.
+  const empty = measures(346);
+  assert.equal(goal.columnFor("down", SHORT, empty.measure), 1456);
+  goal.keep(1456, EMPTY);
+
+  // …and the long line below them is entered at the original column.
+  assert.equal(goal.columnFor("down", EMPTY, measures(346).measure), 1456);
+});
+
+test("Page Up and Page Down are vertical moves and keep the column", () => {
+  const goal = createVerticalGoal();
+  goal.keep(1456, LONG);
+  for (const dir of ["pageDown", "pageUp", "up", "down"]) {
+    assert.equal(goal.columnFor(dir, LONG, measures(392).measure), 1456, dir);
+  }
+});
+
+test("a horizontal move has no column, and ends the run", () => {
+  const goal = createVerticalGoal();
+  goal.keep(1456, LONG);
+  for (const dir of ["left", "right", "wordLeft", "wordRight", "lineStart", "lineEnd"]) {
+    assert.equal(goal.columnFor(dir, LONG, measures(392).measure), null, dir);
+  }
+  // The caller passes that null straight back, which is what clears it: the
+  // next vertical move measures again.
+  goal.keep(null, LONG);
+  assert.equal(goal.columnFor("down", LONG, measures(392).measure), 392);
+});
+
+test("a click or an edit clears the column", () => {
+  const goal = createVerticalGoal();
+  goal.keep(1456, LONG);
+  goal.clear();
+  assert.equal(goal.columnFor("down", LONG, measures(392).measure), 392);
+});
+
+test("a caret that moved elsewhere cannot inherit the column", () => {
+  const goal = createVerticalGoal();
+  goal.keep(1456, LONG);
+  // Anything that puts the caret somewhere else — find, a command, a restored
+  // draft — leaves the column behind whether or not it cleared it.
+  assert.equal(goal.columnFor("down", SHORT, measures(392).measure), 392);
+  // Same node, different offset: still not the caret the column belongs to.
+  assert.equal(
+    goal.columnFor("down", { node: LONG.node, offset: LONG.offset + 1 }, measures(500).measure),
+    500,
+  );
+});
+
+test("a position with no geometry yields no column rather than a bad one", () => {
+  const goal = createVerticalGoal();
+  assert.equal(
+    goal.columnFor("down", LONG, () => null),
+    null,
+  );
+  assert.equal(
+    goal.columnFor("down", LONG, () => undefined),
+    null,
+  );
+});
+
+// ---- The rescue for a vertical move the engine could not make ----------------
+//
+// When the engine's answer is accepted, when it is overridden, and — the part
+// that matters most — when nothing must happen at all, because a fallback that
+// invents movement at the first or last line is worse than the dead end it
+// replaces.
 
 const CARET = { left: 300, top: 500, bottom: 516 };
 

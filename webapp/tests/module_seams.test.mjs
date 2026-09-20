@@ -30,16 +30,20 @@ const SRC = new URL("../src/", import.meta.url);
  *  About dialog out. Each branch measured its own half — 18,134 and 18,158
  *  against a shared 18,186 base — so neither number is right for the merge
  *  and this one is re-measured from the merged file rather than picked.
+ *  Lowered again to 18,107 by the sticky-goal-column fix (HF-164): the goal
+ *  column and its clears cost lines, so the selection-ordering and
+ *  position-comparison helpers moved into `caret_navigation.mjs` (renamed from
+ *  `caret_probe.mjs`) to pay for them.
  *  Was 18,373 before the first HF-085 extraction. */
-const MAIN_JS_LINE_CEILING = 18108;
+const MAIN_JS_LINE_CEILING = 18107;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
  *  them that way is that adding a `document.` to one fails here. */
 const PURE_MODULES = [
-  // Takes the caret's geometry as arguments; the DOM and the engine are the
-  // caller's, which is what makes the arrow-key decision unit-testable.
-  "caret_probe.mjs",
+  // Holds the vertical goal column and nothing else: no DOM and no engine, so
+  // the arrow-key rule is unit-testable as a plain state machine.
+  "caret_navigation.mjs",
   "command_taxonomy.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
