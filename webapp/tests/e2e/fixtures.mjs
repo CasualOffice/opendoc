@@ -124,12 +124,16 @@ export async function pageSheet(page, pageNumber) {
       if (element) {
         const box = element.getBoundingClientRect();
         const view = viewport.getBoundingClientRect();
-        const middle = view.top + viewport.clientHeight / 2;
-        // "Where the reader is": the page covering the middle of the viewport,
-        // which is also what the editor's own `pageInView()` means by it.
-        if (box.top <= middle && box.bottom >= middle) break;
-        if (box.top > middle) hi = viewport.scrollTop;
-        else lo = viewport.scrollTop;
+        // Aim the page's TOP just below the top of the viewport — what
+        // `scrollIntoView({ block: "start" })` would do if it could be trusted
+        // here. That shows the page's own top margin (where the header band
+        // and its marker live) AND leaves the page covering the middle of the
+        // viewport, which is what the editor's `pageInView()` answers with.
+        if (box.top >= view.top - 2 && box.top <= view.top + viewport.clientHeight / 2) break;
+        // Scrolling further moves content UP, so a page whose top is too low
+        // needs MORE scroll, and one whose top is off the top needs less.
+        if (box.top > view.top) lo = viewport.scrollTop;
+        else hi = viewport.scrollTop;
       } else {
         const numbers = [...document.querySelectorAll(".page-wrap")].map((wrap) =>
           Number(wrap.dataset.pageNumber),
