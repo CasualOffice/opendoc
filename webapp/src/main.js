@@ -34,6 +34,7 @@ import {
   normalizeMenuEntries,
 } from "./context_menu.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { isShortcutLike, localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import {
   DRAFT_EXPORT_MODES,
   DraftPresence,
@@ -50,6 +51,21 @@ import {
   slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
+import { recoverVerticalMove } from "./caret_probe.mjs";
+import {
+  reviewCardSignature,
+  reviewCommentIsReplyTo,
+  reviewStackHeight,
+  stackReviewCards,
+} from "./review_layout.mjs";
+import {
+  formatReviewDate,
+  reviewAuthorDisplay,
+  reviewCardAriaLabel,
+  reviewChangeTypeLabel,
+  reviewCommentTooltip,
+  reviewRevisionTooltip,
+} from "./review_labels.mjs";
 import { previewInkIsLegible } from "./contrast.mjs";
 import {
   byteOffsetToStringIndex,
@@ -1151,7 +1167,11 @@ function tipContentFor(el) {
   // "(compact view)" are part of the name, and translating them would have
   // printed nonsense in the shortcut slot.
   const parenthetical = match ? match[2].trim() : "";
-  const shortcut = /[⌘⌃⌥⇧]/u.test(parenthetical) ? formatShortcut(parenthetical) : "";
+  // `isShortcutLike`, not a glyph test: the boot sweep has already rewritten
+  // these titles to "Ctrl+B" on a non-Apple keyboard, and a glyph-only test
+  // would then drop the chord from the tooltip on exactly the platform
+  // HF-025 exists for.
+  const shortcut = isShortcutLike(parenthetical) ? formatShortcut(parenthetical) : "";
   return { name, shortcut };
 }
 
@@ -1344,6 +1364,20 @@ let reviewWindowFrame = 0;
 // Pixels above and below the viewport to keep mounted, so a scroll reveals an
 // already-present card instead of a blank gap before the next frame mounts it.
 const REVIEW_WINDOW_OVERSCAN = 800;
+// HF-088. The width below which the comment column stops being a margin and
+// becomes a bottom sheet. Declared here rather than only in a media query
+// because the CARD LAYOUT changes shape too, not just the container's box, and
+// `style.css` cannot tell main.js which shape it picked. `review_narrow.test`
+// asserts the stylesheet and this constant still name the same width.
+const REVIEW_SHEET_MAX_WIDTH = 700;
+const reviewSheetQuery = window.matchMedia?.(`(max-width: ${REVIEW_SHEET_MAX_WIDTH}px)`) ?? null;
+/** True while the review surface should render as a bottom sheet. */
+function reviewSheetMode() {
+  return !!reviewSheetQuery?.matches;
+}
+// Crossing the rung swaps the layout shape, so it needs a re-render, not just
+// a repaint: the cards' tops mean different things on either side of it.
+reviewSheetQuery?.addEventListener?.("change", () => scheduleReviewMarginRender());
 
 /** Reads the typed comment/revision review data (docs/81 REVIEW-GAP-022's
  *  `listComments`/`listRevisions`), shaped like the legacy combined
@@ -1416,15 +1450,6 @@ function reviewAuthorColor(key) {
   return REVIEW_AUTHOR_PALETTE[hash % REVIEW_AUTHOR_PALETTE.length];
 }
 
-/** The human display name for an author, matching the sidebar's existing
- *  convention: name, else initials, else "You" (an unattributed local edit). */
-function reviewAuthorDisplay(item) {
-  return String(item?.author ?? "").trim()
-    || String(item?.initials ?? "").trim()
-    || "You";
-}
-
-/** The change-type label used in an attribution tooltip. */
 /** Revision kinds that are real, visitable changes despite carrying no text. */
 const REVIEW_TEXTLESS_KINDS = new Set([
   "formatting",
@@ -1502,59 +1527,6 @@ function paragraphColumnStart(node) {
   }
   reviewColumnStartMemo.set(node, start);
   return start;
-}
-
-function reviewChangeTypeLabel(kind) {
-  switch (kind) {
-    case "insertion": return "Insertion";
-    case "deletion": return "Deletion";
-    case "replacement": return "Replacement";
-    case "formatting": return "Formatting change";
-    case "move": return "Move";
-    case "move_from": return "Move (source)";
-    case "move_to": return "Move (destination)";
-    // Paragraph-level revisions (docs/108). A paragraph mark is the pilcrow that
-    // ends a paragraph, so inserting one is a new paragraph break and deleting
-    // one joins the paragraph to the next when accepted.
-    case "paragraph_mark_insertion": return "Paragraph break added";
-    case "paragraph_mark_deletion": return "Paragraph break deleted";
-    case "paragraph_format": return "Paragraph formatting";
-    default: return "Change";
-  }
-}
-
-/** The `author · type · date` attribution string shown on hover of a tracked
- *  change (its inline marker and its sidebar card). Omits empty segments. */
-function reviewRevisionTooltip(revision) {
-  return [
-    reviewAuthorDisplay(revision),
-    reviewChangeTypeLabel(revision.kind),
-    formatReviewDate(revision.date),
-  ].filter(Boolean).join(" · ");
-}
-
-/** The `author · date` attribution string for a comment marker/card. */
-function reviewCommentTooltip(comment) {
-  return [
-    reviewAuthorDisplay(comment),
-    comment.resolved ? "Resolved" : "Comment",
-    formatReviewDate(comment.date),
-  ].filter(Boolean).join(" · ");
-}
-
-/** A descriptive accessible name for a review card — who, what kind, and a short
- *  text snippet — so a screen reader announces the card's content and role
- *  rather than a nameless generic article (REVIEW-GAP-023). */
-function reviewCardAriaLabel(item) {
-  const author = reviewAuthorDisplay(item.data) || "You";
-  const snippet = String(item.data.text || "").replace(/\s+/g, " ").trim().slice(0, 80);
-  const suffix = snippet ? `: ${snippet}` : "";
-  if (item.type === "comment") {
-    const kind = item.data.parentParaId ? "Reply" : item.data.resolved ? "Resolved comment" : "Comment";
-    return `${kind} by ${author}${suffix}`;
-  }
-  const kind = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
-  return `Suggested ${kind} by ${author}${suffix}`;
 }
 
 // Enable the three-state mode control (Editing / Suggesting / Viewing) once a
@@ -1788,22 +1760,6 @@ function scheduleReviewMarginRender() {
   });
 }
 
-/** Whether `comment` is a threaded reply to `parent`. A reply carries a
- *  non-null `parentParaId` that joins to the parent's `paraId` (the DOCX
- *  `w15:paraIdParent` → `w14:paraId` link) or, as a fallback, to the parent's
- *  comment id. A thread root has a null/absent `parentParaId` and is a reply to
- *  nothing. The `parentParaId != null` guard is load-bearing: `listComments`
- *  projects a comment with no join key as `paraId: null` / `parentParaId: null`
- *  (e.g. imported comments with no `commentsExtended`/`w14:paraId`), and without
- *  the guard `null === null` would count every top-level comment as a reply to
- *  every other — an O(n²) reply-DOM (and signature-string) blowup that makes a
- *  comment-heavy document consume gigabytes of memory. */
-function reviewCommentIsReplyTo(comment, parent) {
-  const parentKey = comment?.parentParaId;
-  if (parentKey == null) return false;
-  return parentKey === parent.paraId || parentKey === parent.id;
-}
-
 function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
@@ -1968,6 +1924,13 @@ function renderReviewMarginItems() {
   // is shown, so pages stay centered-ish and the single `.viewport` scrollbar
   // sits past the comments (never between the canvas and the comments).
   viewportEl.classList.toggle("has-review-sidebar", show);
+  // HF-088: below `REVIEW_SHEET_MAX_WIDTH` there is no margin to put a column
+  // in — a 320px column over a 390px window leaves the document about 70px and
+  // covers the text it annotates. The column becomes a bottom sheet instead:
+  // the page keeps its full width and the top half of the screen, and the
+  // comments are a scrollable, dismissable list.
+  const sheet = show && reviewSheetMode();
+  viewportEl.classList.toggle("review-sheet", sheet);
   reviewBtn.setAttribute("aria-pressed", String(show));
   railReview.setAttribute("aria-pressed", String(show));
   if (!show) {
@@ -1981,12 +1944,20 @@ function renderReviewMarginItems() {
   const viewportRect = viewportEl.getBoundingClientRect();
   reviewSidebarBody.style.height = `${Math.max(pagesEl.scrollHeight, viewportEl.clientHeight)}px`;
   // Cancel the sticky header's flow height so cards stay pixel-aligned to their
-  // canvas anchors (the header floats above via `position: sticky`).
+  // canvas anchors (the header floats above via `position: sticky`). In the
+  // sheet there are no canvas anchors to align to and the header is the sheet's
+  // own title bar, so that offset would hide the first card behind it.
   if (reviewSidebarHeader) {
-    reviewSidebarBody.style.marginTop = `-${reviewSidebarHeader.offsetHeight}px`;
+    reviewSidebarBody.style.marginTop = sheet
+      ? "0px"
+      : `-${reviewSidebarHeader.offsetHeight}px`;
   }
 
   if (!items.length) {
+    // The sheet is only as tall as its content; the page-height reservation
+    // above is a margin-column idea and would leave the sheet scrolling over
+    // an empty area taller than the phone.
+    if (sheet) reviewSidebarBody.style.height = "auto";
     const empty = document.createElement("div");
     empty.className = "review-sidebar-empty";
     empty.innerHTML = '<span class="ms" aria-hidden="true">chat_bubble_outline</span><br>No comments or suggestions yet.<br>Select text and choose Add comment.';
@@ -2018,7 +1989,10 @@ function renderReviewMarginItems() {
       });
     }
     const expanded = activeReviewItemId === itemId;
-    const sig = reviewCardSignature(item, comments);
+    const sig = reviewCardSignature(item, comments, {
+      activeItemId: activeReviewItemId,
+      deleteConfirmId: reviewDeleteConfirmId,
+    });
     let entry = reviewCardCache.get(itemId);
     if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
       built.push({ itemId, item, entry });
@@ -2457,58 +2431,31 @@ function renderReviewMarginItems() {
   }
   for (const { entry } of toMeasure) reviewSidebarBody.removeChild(entry.el);
 
-  // Position pass. Each card's natural anchor is its item's on-canvas marker Y in
-  // document-scroll coordinates; cards are then destacked so they never overlap.
-  const GAP = 8;
+  // Position pass. `stackReviewCards` owns the arithmetic for both shapes: the
+  // anchored margin column, and the narrow-width bottom sheet where cards are a
+  // plain list (HF-088). Anchors are still computed for the margin shape in
+  // document-scroll coordinates, from each item's on-canvas marker.
   const seen = new Set();
-  const layout = [];
   const anchorY = built.map(
     ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop,
   );
-  const activeIdx = activeReviewItemId
-    ? built.findIndex((b) => b.itemId === activeReviewItemId)
-    : -1;
-
-  if (activeIdx >= 0) {
-    // Stacked-chip surfacing (REVIEW-GAP-019): when several review items cluster
-    // on the same/near anchor Y, the selected card claims true anchor alignment —
-    // it stays locked to ITS OWN marker — and the rest stack around it (the
-    // Google Docs pattern). A plain top-down pass could only ever push the
-    // selected card DOWN past its marker (a later item in a dense cluster ended
-    // up far below the change it points at, and manual scrolling never closed the
-    // gap because both move together). So we anchor the layout on the selected
-    // card and destack outward: the cards after it flow downward, the cards
-    // before it flow upward — each still pinned to its own anchor except where a
-    // neighbour would overlap. Document order (and thus mount order) is preserved.
-    const tops = new Array(built.length);
-    tops[activeIdx] = Math.max(GAP, anchorY[activeIdx]);
-    for (let i = activeIdx + 1; i < built.length; i++) {
-      tops[i] = Math.max(anchorY[i], tops[i - 1] + built[i - 1].entry.height + GAP);
-    }
-    for (let i = activeIdx - 1; i >= 0; i--) {
-      tops[i] = Math.min(anchorY[i], tops[i + 1] - built[i].entry.height - GAP);
-    }
-    // Only if the cards above are collectively too tall to fit above the selected
-    // card's anchor (a cluster crowding the document top) does the whole stack
-    // shift down — the selected card yields its exact anchor solely when the
-    // geometry leaves no alternative.
-    const overflow = GAP - tops[0];
-    if (overflow > 0) for (let i = 0; i < tops.length; i++) tops[i] += overflow;
-    for (let i = 0; i < built.length; i++) {
-      seen.add(built[i].itemId);
-      layout.push({ itemId: built[i].itemId, top: tops[i], entry: built[i].entry });
-    }
-  } else {
-    // No selection: stack every card top-down (anchor top, pushed down to clear
-    // the card above), exactly as the non-virtualized layout did.
-    let nextY = GAP;
-    for (let i = 0; i < built.length; i++) {
-      const { itemId, entry } = built[i];
-      seen.add(itemId);
-      const y = Math.max(GAP, anchorY[i], nextY);
-      nextY = y + entry.height + GAP;
-      layout.push({ itemId, top: y, entry });
-    }
+  const heights = built.map(({ entry }) => entry.height);
+  const tops = stackReviewCards({
+    anchorY,
+    heights,
+    activeIndex: activeReviewItemId
+      ? built.findIndex((b) => b.itemId === activeReviewItemId)
+      : -1,
+    sheet,
+  });
+  const layout = built.map(({ itemId, entry }, i) => {
+    seen.add(itemId);
+    return { itemId, top: tops[i], entry };
+  });
+  // In the sheet the card body is the scrolled content, so it must be exactly as
+  // tall as the stack; in the margin it spans the page stack (set above).
+  if (sheet) {
+    reviewSidebarBody.style.height = `${Math.round(reviewStackHeight(tops, heights))}px`;
   }
   // Drop cache entries (and their retained DOM) for items no longer present.
   for (const key of [...reviewCardCache.keys()]) {
@@ -2516,32 +2463,6 @@ function renderReviewMarginItems() {
   }
   reviewLayout = layout;
   mountReviewWindow();
-}
-
-/** A stable string that changes whenever anything affecting a card's rendered
- *  DOM or measured height changes, so `reviewCardCache` reuses a card only when
- *  it would render identically. The composer is never cached (always rebuilt so
- *  its live textarea/focus stays correct). */
-function reviewCardSignature(item, comments) {
-  if (item.type === "composer") return "composer";
-  const d = item.data;
-  const itemId = `${item.type}:${d.id}`;
-  const expanded = activeReviewItemId === itemId;
-  const confirm = reviewDeleteConfirmId === d.id;
-  const replies = item.type === "comment"
-    ? comments
-      .filter((c) => reviewCommentIsReplyTo(c, d))
-      .map((r) => `${r.id}${r.resolved ? 1 : 0}${r.text}${r.author}${r.date}`)
-      .join("")
-    : "";
-  return JSON.stringify([
-    item.type, d.id, d.kind || "", expanded ? 1 : 0, d.resolved ? 1 : 0, confirm ? 1 : 0,
-    d.text || "", d.oldText || "", d.newText || "", d.author || "", d.initials || "", d.date || "",
-    d.groupId || "", d.movePair ? 1 : 0,
-    Array.isArray(d.formattingDelta) ? d.formattingDelta : 0,
-    d.anchor ? `${d.anchor.node}:${d.anchor.start}:${d.anchor.end}` : "",
-    replies,
-  ]);
 }
 
 /** Mounts only the cards whose precomputed position falls inside (or within
@@ -2553,9 +2474,12 @@ function reviewCardSignature(item, comments) {
  *  (REVIEW-GAP-020). */
 function mountReviewWindow() {
   if (reviewSidebar.hidden) return;
-  const scrollTop = viewportEl.scrollTop;
+  // Whichever element owns the scroll owns the window: the viewport in the
+  // margin shape, the sheet itself when the sheet is the scroller (HF-088).
+  const scroller = reviewSheetMode() ? reviewSidebar : viewportEl;
+  const scrollTop = scroller.scrollTop;
   const bandTop = scrollTop - REVIEW_WINDOW_OVERSCAN;
-  const bandBottom = scrollTop + viewportEl.clientHeight + REVIEW_WINDOW_OVERSCAN;
+  const bandBottom = scrollTop + scroller.clientHeight + REVIEW_WINDOW_OVERSCAN;
   for (const { itemId, top, entry } of reviewLayout) {
     // The composer and the active/expanded card are always kept mounted: they
     // own live focus/controls the user is interacting with.
@@ -2597,6 +2521,8 @@ function scheduleReviewWindow() {
 // no rebuild — so a document with hundreds of comments scrolls with a bounded,
 // viewport-sized number of mounted cards (REVIEW-GAP-020).
 viewportEl.addEventListener("scroll", scheduleReviewWindow, { passive: true });
+// In the sheet the cards ride the sheet's own scroll instead (HF-088).
+reviewSidebar.addEventListener("scroll", scheduleReviewWindow, { passive: true });
 reviewSidebarBody.addEventListener("click", (event) => {
   if (event.target !== reviewSidebarBody || !activeReviewItemId) return;
   activeReviewItemId = null;
@@ -2806,6 +2732,11 @@ let typingSessionActive = false;
 let lastTypingAt = 0;
 const TYPING_PAUSE_MS = 1000;
 const EDITOR_KEYBOARD_PLATFORM = keyboardPlatform(navigator);
+// HF-025: every shortcut label authored in `editor.html` is declared in Apple
+// notation. One sweep of the chrome renders them all for the keyboard actually
+// in front of the user; document content is excluded, because a ⌘ in a comment
+// or a paragraph is the user's text, not our label.
+localizeShortcutGlyphs(document.body, EDITOR_KEYBOARD_PLATFORM);
 
 function focusEditorSurface() {
   // Never steal the keyboard from a modal. Repaints and deferred edit results
@@ -9009,9 +8940,36 @@ function navCaret(dir, extend) {
       : doc.moveCaret(selection.focus.node, selection.focus.offset, dir);
   const to = { node: c.node, offset: c.offset };
   c.free();
-  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
+  // The engine's vertical move can dead-end around a table (HF-024, in the UP
+  // direction): it either returns the position it was given or slides the
+  // caret to the start of the SAME line, and either way the key does nothing
+  // visible — on the owner's document, sixty ArrowUps from the end moved the
+  // caret zero pixels. `recoverVerticalMove` accepts the engine's answer
+  // whenever it genuinely moved in the asked-for direction and only otherwise
+  // looks for the neighbouring line geometrically.
+  const next =
+    dir === "up" || dir === "down"
+      ? recoverVerticalMove(dir, selection.focus, to, caretProbeIO())
+      : to;
+  selection = extend ? { anchor: selection.anchor, focus: next } : { anchor: next, focus: next };
   drawSelection();
   scrollCaretIntoView();
+}
+
+/** The geometry and model access `probeVerticalNeighbour` needs, bound to this
+ *  editor's DOM and engine. */
+function caretProbeIO() {
+  return {
+    caretRect: () => pagesEl.querySelector(".overlay .caret")?.getBoundingClientRect() ?? null,
+    resolveAt: (x, y) => {
+      const page = pageFromClientPoint(x, y);
+      return page ? anchorAt(page, clientPointEvent(x, y)) : null;
+    },
+    positionRect: (position) => {
+      const flat = doc.caretRect(position.node, position.offset);
+      return flat.length >= 5 ? { page: flat[0], y: flat[2] } : null;
+    },
+  };
 }
 
 // ---- Formatting toolbar (run + paragraph properties) -------------------------
@@ -9434,8 +9392,10 @@ function updateToolbar() {
   const redoName = redoLabel ? `Redo ${redoLabel}` : "Redo";
   undoBtn.setAttribute("aria-label", undoName);
   redoBtn.setAttribute("aria-label", redoName);
-  undoBtn.title = `${undoName} (⌘Z)`;
-  redoBtn.title = `${redoName} (⌘⇧Z)`;
+  // Reassigned on every state sync, so these outlive the boot sweep and have to
+  // be localized at the point of assignment (HF-025).
+  undoBtn.title = localizeShortcutText(`${undoName} (⌘Z)`, EDITOR_KEYBOARD_PLATFORM);
+  redoBtn.title = localizeShortcutText(`${redoName} (⌘⇧Z)`, EDITOR_KEYBOARD_PLATFORM);
   findBtn.disabled = !doc;
   replaceBtn.disabled = !doc;
   // Clipboard buttons mirror the clipboard actions' own preconditions: copy/cut
@@ -11923,18 +11883,6 @@ pagesClose.addEventListener("click", togglePages);
 
 function reviewText(value) {
   return value == null || value === "" ? "Not provided" : String(value);
-}
-
-function formatReviewDate(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return String(value);
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }
 
 /**

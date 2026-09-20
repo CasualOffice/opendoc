@@ -20,6 +20,7 @@ import {
   gotoEditor,
   setReviewMode,
   openCommandPalette,
+  shortcutHint,
 } from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
@@ -125,8 +126,13 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     await expect(page.locator(selector)).toHaveAttribute("aria-label", label);
   }
 
-  // The ribbon teaches the shortcut the palette already lists.
-  await expect(page.locator("#insertLinkBtn")).toHaveAttribute("title", /⌘K/);
+  // The ribbon teaches the shortcut the palette already lists, rendered for the
+  // keyboard this platform actually has (HF-025) — hardcoding either "⌘K" or
+  // "Ctrl+K" here passes on one OS and fails on the other.
+  await expect(page.locator("#insertLinkBtn")).toHaveAttribute(
+    "title",
+    new RegExp(shortcutHint("⌘K").replace(/[+]/g, "\\+")),
+  );
 
   expect(consoleErrors).toEqual([]);
 });

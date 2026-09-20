@@ -88,8 +88,22 @@ test("opening comments below tablet width costs the document no width", async ({
   expect(Math.abs(after.scrollWidth - before.scrollWidth)).toBeLessThan(2);
 
   // And the column itself can no longer be the thing that forces the overflow.
+  // At this width it is now a bottom sheet (HF-088 completed), so it spans the
+  // window instead of narrowing into a margin — "at most 320px" described the
+  // old shape. What it stood for still holds, and is what is asserted: the
+  // column never exceeds the window, and it is fixed to the viewport rather
+  // than laid out inside the scrolling page stack, so it can add no horizontal
+  // extent at all. `narrow-review-column.spec.mjs` covers the rest of the
+  // sheet's behaviour.
   const sidebar = await stableBox(page.locator("#reviewSidebar"));
-  expect(sidebar.width).toBeLessThanOrEqual(320);
+  expect(sidebar.width).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth),
+  );
+  expect(
+    await page.evaluate(
+      () => getComputedStyle(document.getElementById("reviewSidebar")).position,
+    ),
+  ).toBe("fixed");
 
   expect(consoleErrors).toEqual([]);
 });
