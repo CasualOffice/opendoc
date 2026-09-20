@@ -480,10 +480,7 @@ fn parse_to_unicode(bytes: &[u8]) -> BTreeMap<u16, String> {
 type Xref = (BTreeMap<u32, usize>, BTreeMap<String, Object>);
 
 /// Reads a classic cross-reference table and its trailer.
-fn read_xref(
-    bytes: &[u8],
-    offset: usize,
-) -> Result<Xref, String> {
+fn read_xref(bytes: &[u8], offset: usize) -> Result<Xref, String> {
     let mut lexer = Lexer::new(bytes, offset);
     lexer.expect_keyword("xref")?;
     let mut offsets = BTreeMap::new();

@@ -215,6 +215,54 @@ mod tests {
     }
 
     #[test]
+    fn an_export_that_loses_something_reports_it_through_the_registry() {
+        // No silent data loss: a picture the host cannot serve must reach the
+        // caller as a degraded finding in the compatibility report, not as a
+        // clean export with a hole in the page.
+        const RICH_DOCX: &[u8] = include_bytes!("../../../fixtures/corpus/real-producer-rich.docx");
+        let imported = crate::builtin_registry()
+            .import(
+                crate::DetectionRequest {
+                    bytes: RICH_DOCX,
+                    selection: crate::FormatSelection::Auto,
+                    file_name_hint: None,
+                    mime_hint: None,
+                },
+                false,
+            )
+            .expect("import the fixture");
+        // Deliberately serve no media, which is what a host that lost its
+        // resource table does.
+        let resources = DocumentResources::default();
+        let artifact = PdfAdapter::default()
+            .export(ExportRequest {
+                document: &imported.document,
+                resources: &resources,
+                source: None,
+                source_unchanged: false,
+                mode: ExportMode::Semantic,
+            })
+            .expect("export");
+        let degraded: Vec<&str> = artifact
+            .report
+            .entries
+            .iter()
+            .filter(|entry| entry.model_outcome == ModelOutcome::Degraded)
+            .map(|entry| entry.feature.as_str())
+            .collect();
+        assert!(
+            degraded.contains(&"pdf.image.missing_bytes"),
+            "the lost picture must be reported; report was {:?}",
+            artifact
+                .report
+                .entries
+                .iter()
+                .map(|entry| (entry.feature.as_str(), entry.model_outcome))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn a_preservation_mode_still_produces_a_pdf_rather_than_an_error() {
         // A PDF is never the source, so `ExactIfUnchanged` has nothing to
         // preserve. Refusing would turn a host's default mode into a dead

@@ -269,8 +269,15 @@ fn an_undecodable_picture_draws_the_editor_placeholder_and_says_so() {
         .expect("decode content stream");
     let text = String::from_utf8_lossy(&stream);
     // The border box, then the corner-to-corner cross.
-    assert!(text.contains("re S"), "{text}");
-    assert_eq!(text.matches(" l\n").count(), 2, "{text}");
+    assert!(
+        text.contains("re S"),
+        "no placeholder border was drawn; the page's operators are:\n{text}"
+    );
+    assert_eq!(
+        text.matches(" l\n").count(),
+        2,
+        "the placeholder's corner-to-corner cross is missing:\n{text}"
+    );
 }
 
 #[test]
@@ -279,7 +286,27 @@ fn the_same_document_exports_to_the_same_bytes() {
     // PDF it also means no clock and no random file identifier leaked in.
     let first = export_rich();
     let second = export_rich();
-    assert_eq!(first.bytes, second.bytes);
+    assert_eq!(
+        first.bytes.len(),
+        second.bytes.len(),
+        "two exports of one document differ in length"
+    );
+    if let Some(at) = first
+        .bytes
+        .iter()
+        .zip(&second.bytes)
+        .position(|(left, right)| left != right)
+    {
+        // Report the neighbourhood rather than two megabyte-long byte vectors:
+        // a failure here has to be readable to be actionable.
+        let from = at.saturating_sub(48);
+        let to = (at + 48).min(first.bytes.len());
+        panic!(
+            "two exports of one document differ at byte {at}\n  first:  {:?}\n  second: {:?}",
+            String::from_utf8_lossy(&first.bytes[from..to]),
+            String::from_utf8_lossy(&second.bytes[from..to]),
+        );
+    }
     let text = String::from_utf8_lossy(&first.bytes);
     assert!(!text.contains("/CreationDate"), "no clock is read");
 }
@@ -320,8 +347,14 @@ fn document_metadata_reaches_the_info_dictionary() {
         .properties()
         .and_then(|properties| properties.core.title.clone())
         .expect("the fixture carries a title");
-    let inspect::Object::String(bytes) = &info["Title"] else {
-        panic!("/Title is not a string");
+    let entry = info.get("Title").unwrap_or_else(|| {
+        panic!(
+            "/Info carries no /Title; its keys are {:?}",
+            info.keys().collect::<Vec<_>>()
+        )
+    });
+    let inspect::Object::String(bytes) = entry else {
+        panic!("/Title is not a string but {entry:?}");
     };
     assert_eq!(decode_text_string(bytes), title);
 }
@@ -355,8 +388,13 @@ fn a_face_that_forbids_embedding_is_refused_out_loud() {
         &NoMediaSource,
         &PdfExportOptions::default(),
     );
-    let Err(PdfError::Font(message)) = outcome else {
-        panic!("a restricted face must refuse the export, got {outcome:?}");
+    let message = match outcome {
+        Err(PdfError::Font(message)) => message,
+        Err(other) => panic!("the refusal must name the font, got: {other}"),
+        Ok(export) => panic!(
+            "a restricted face must refuse the export; it produced {} bytes instead",
+            export.bytes.len()
+        ),
     };
     assert!(
         message.contains("forbids embedding"),

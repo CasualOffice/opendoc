@@ -1,9 +1,150 @@
 # 98 — PDF Export and Print Design
 
-**Status:** Proposed implementation design (not yet accepted). Effort estimates are planning-grade (±40%).
-**Date:** 2026-08-05
+**Status:** **Phase 0 implemented** in `crates/casual-doc-pdf` and reachable through the
+`casual-doc-io` export registry as `application.pdf`; Phase 1 (semantic features) and
+Phase 2 (tagged PDF / PDF-A) remain design-only. Everything below the *Implementation
+status* section is the original design, unchanged; its effort estimates now overstate
+what Phase 0 still costs, because Phase 0 is done. Read *Implementation status* for what
+actually exists, family by family, and for what is still missing.
+**Date:** 2026-08-05; implementation status added 2026-09-21.
 **Depends on:** ADR-003 (backend-neutral display list); `casual-doc-layout::display::DisplayList`; `casual-doc-render` (tiny-skia backend, reference implementation); `paginate.rs` per-page display lists; `casual-doc-io` format registry; `40-FONT-MANAGEMENT-DESIGN.md`; `94-ORACLE-VISUAL-FIDELITY-HARNESS-DESIGN.md`; `21-PARSER-LIMITS.md`; `20-ERROR-CODE-REGISTRY.md`.
-**Owner decision required before implementation:** ADR-031 (build-vs-buy for the PDF writer + font subsetter) and the Phase-2 scope gate (§10).
+**Owner decision still required:** the Phase-2 scope gate (§10 item 2). ADR-031 is
+resolved below.
+**Addresses:** `104` HF-030 (the output half), `105` RM-04 Phase 0. Still open after it:
+the print dialog (`105` OO-010) and the host wiring listed below.
+
+## Implementation status (2026-09-21)
+
+### What exists
+
+| Piece | Where |
+| --- | --- |
+| Display-list transcription, container, xref, deterministic `/ID` | `crates/casual-doc-pdf/src/{writer,content}.rs` |
+| TrueType subsetting, `Type0`/CID font emission, `ToUnicode` | `crates/casual-doc-pdf/src/{subset,font}.rs` |
+| Image XObjects (JPEG passthrough, decode-and-Flate otherwise) | `crates/casual-doc-pdf/src/picture.rs` |
+| A PDF reader the guards use to read the output back | `crates/casual-doc-pdf/src/inspect.rs` |
+| Export-only `application.pdf` registry adapter | `crates/casual-doc-io/src/pdf.rs` |
+| Guards | `crates/casual-doc-pdf/tests/real_text_export.rs`, `casual-doc-io/src/pdf.rs` tests |
+
+Entry points: `casual_doc_pdf::export_document` (lay out, then write) and
+`casual_doc_pdf::write_pdf` (write display lists a host already holds — the seam for a
+viewer that must not paginate twice).
+
+### Support, family by family
+
+Absence from a support list is an overstatement by omission, so every family the display
+list can carry is listed here, including the ones that are not covered.
+
+| Family | State | Notes |
+| --- | --- | --- |
+| Text runs (`PaintItem::Glyphs`) | **Supported** | `Type0`/`Identity-H`; the CIDs *are* the shaper's glyph ids, and per-glyph `TJ` adjustments reproduce the shaper's advances exactly. `w:w` character scaling maps to `Tz`. |
+| Text extraction (select / search / copy) | **Supported** | A `ToUnicode` CMap per face, built by inverting the face's `cmap`. A ligature glyph, or one reached only by substitution, has no character that way and is counted and reported as `pdf.font.unmapped_glyphs` rather than guessed at. |
+| Font embedding and subsetting (TrueType `glyf`) | **Supported** | The glyph identity space is retained and unused outlines emptied; `cvt `/`fpgm`/`prep` are kept, composites closed transitively, and the PostScript name carries an `ABCDEF+` subset tag. A committed guard holds every embedded face for a one-page fixture under 40 KB. |
+| Font embedding (CFF/OpenType outlines, collection members) | **Partial** | Embedded **whole** as `FontFile3 /OpenType`, not subset, and reported as `pdf.font.not_subsetted`. A CFF charstring subsetter is not written. |
+| A face whose licence forbids embedding (`OS/2.fsType`) | **Supported, as a refusal** | The export fails, naming the face. No substitution, no outlines, no rasterized text, no silent drop. A face flagged no-subsetting is embedded whole with a finding. |
+| Page geometry | **Supported** | `/MediaBox` from pagination; twips → points with the y axis flipped. No device scale is applied anywhere: a PDF is resolution-free. |
+| Rules, borders, table furniture, paragraph and run shading (`Rect`) | **Supported** | Vector `re` fills and strokes. |
+| `Ellipse`, `RoundedRect`, `Polygon`, `Line` | **Supported** | Vector paths, Béziers for the curved forms. |
+| Floating DrawingML shapes (`PaintItem::Shape`) | **Supported** | Solid and gradient fills, dashable outlines, rotation/flip as a `cm` matrix, and arrowheads built from the same construction the raster backend uses. |
+| Gradients | **Supported** | Axial (`ShadingType 2`) and radial (`ShadingType 3`) with a stitched function over the stops — genuinely vector, no bitmap, sharp at any zoom. |
+| Clips (`PushClip`/`PopClip`) | **Supported** | `q … re W n … Q`, and the stream stays balanced even if a display list does not. |
+| Constant alpha | **Supported** | One `ExtGState` per distinct alpha value. |
+| Underline, strike-through, double strike | **Supported** | Derived from the face's own metrics, mirroring `casual-doc-render` including the `words`, `wavy`, `dotted`, `dashed`, `dotDash`, `double` and `thick` styles. The raster backend's one-**device-pixel** floor becomes a half-**point** floor, which is the only deliberate divergence: a device-pixel floor has no meaning in a resolution-free file. |
+| Pictures (`PaintItem::Image`) | **Supported** | Embedded once as an XObject however often placed. JPEG bytes are stored verbatim as `DCTDecode` — no decode, no re-encode; everything else is decoded once to 8-bit RGB with an `/SMask` when it has alpha. A crop is a clip plus an oversized placement, so no sample is resampled. Rotation and flip become a `cm`. Decode limits match the raster backend's. |
+| An undecodable or unserved picture | **Supported, as a report** | Draws the same bordered box with a corner-to-corner cross the raster backend draws, and reports `pdf.image.unresolved` / `pdf.image.missing_bytes`. |
+| SVG pictures | **Not covered** | The native raster backend rasterizes them through `resvg`; the PDF path draws the placeholder instead. |
+| Emphasis marks (`w:em`) | **Not covered** | The raster backend does not draw them either, so this is parity rather than a PDF gap. |
+| Document metadata | **Supported, opt-in** | `/Info` Title/Author/Subject/Keywords/CreationDate/ModDate from `DocumentProperties`. Dates come from the document; the clock is never read. No XMP packet yet. |
+| Determinism | **Supported** | Identical input gives identical bytes: object numbering is assignment-ordered and the file `/ID` is a content hash. |
+| Hyperlink annotations | **Not covered** | A link's *text* is exported; the clickable `/Annots` entry is not. Needs the §6 semantic side-channel. |
+| Outline / bookmark tree, internal `GoTo` destinations | **Not covered** | Same dependency. |
+| Page ranges, image-quality knob | **Not covered** | |
+| Tagged PDF (`/StructTreeRoot`, reading order, heading/list/table tags, alt text, `/Lang`) | **Not covered — a separate roadmap row** | Nothing here forecloses it: a structure tree would hang off the same per-page transcription, and list-marker runs are already flagged in the display list so they can be marked as artifacts. |
+| PDF/A, encryption, comment/markup export | **Not covered** | Phase 2, still gated (§10). |
+| RTL / bidi reading order in the text layer | **Partial** | Glyphs are placed in visual order at the right positions, so the *page* is correct; an extractor recovers visual, not logical, order. |
+| Page background, footnote separators, headers and footers, text boxes, nested tables, floating art | **Supported by construction** | They are ordinary paint items in the same display list; the exporter has no notion of them and needs none, which is the point of transcribing the shared seam. Exercised end to end on the `real-producer-header-footer`, `real-producer-footnotes` and `real-producer-rich` (nested table) fixtures, whose text all comes back out of the file. |
+
+### ADR-031 (PDF writer and subsetter, build vs buy) — resolved: hand-rolled, no new dependency
+
+Step 0 left this open. The decision taken is **(A) hand-roll both**, for a reason that
+only became visible once the problem was concrete:
+
+- The subsetter does **not** need to renumber glyphs. Because the file addresses glyphs
+  through `Identity-H` with `/CIDToGIDMap /Identity`, keeping the glyph identity space
+  and emptying the outlines of unused glyphs is both simpler *and* stronger for parity
+  than a renumbering subsetter — it removes the entire class of "the PDF drew glyph 41
+  where the shaper chose 42" defects. That is a few hundred lines, not the multi-sprint
+  estimate this design assumed, because the expensive half of a general subsetter is the
+  half we deliberately do not do.
+- The container is an object table, a cross-reference table and a trailer. Owning it is
+  what makes byte-determinism a property of the code rather than a hope about a
+  dependency's release notes.
+- `deny.toml`, `unsafe_code = forbid` and the `dependency-policy` job all stay simple
+  with zero new supply-chain surface.
+
+Three crates **already in the tree** are reused rather than added, so `Cargo.lock` gains
+no new package: `flate2` (`FlateDecode`; MIT OR Apache-2.0; already pulled by the `zip`
+stack), `skrifa` (font metrics and the `cmap` inversion; Apache-2.0 OR MIT; already
+pulled by `parley`/`fontique` and `casual-doc-render`) and `image` (picture decoding; MIT
+OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds).
+
+### Reachability — what is wired and what is not
+
+"Built" is not "reachable" (`SKILL.md` §9 rule 4), so plainly:
+
+- **Reachable now** from any Rust host. `casual_doc_io::register_pdf_exporter(&mut
+  registry)` adds `application.pdf` to `FormatRegistry::export_formats()`, and
+  `registry.export(...)` returns bytes, MIME type, suggested extension and a
+  compatibility report in the same shape DOCX and ODT return. Registration is opt-in
+  rather than part of `builtin_registry` so a host decides when PDF appears in its
+  save-as list.
+- **Not yet reachable from the product.** `casual-doc-wasm` and `webapp/src/main.js` are
+  untouched by this slice; Print and "Save as PDF" still take the 150-DPI raster path.
+  Two pieces of wiring close that:
+  1. `casual-doc-wasm`: call `casual_doc_io::register_pdf_exporter` on the registry built
+     in `available_export_formats` and on the one used by the export path, and update the
+     test that pins the exact export-format list.
+  2. `webapp/src/main.js`: point File → "Save as PDF" and the ⌘P "Save as PDF"
+     destination at `exportDocumentAs("application.pdf")` instead of the raster print
+     container, keeping the existing preview flow for physical printing. Neither command
+     may become a dead control while that happens.
+
+### Remaining work, in the order to take it
+
+1. **Font parity on the registry path.** `export_document` paginates with a fresh shaper,
+   so a host's *live* font registry (the browser's network-fetched CJK faces) cannot
+   simply be handed over: those ids belong to a different registry and handing them over
+   would embed the wrong face rather than a fallback. Either let a caller seed the
+   export's pagination with an existing `FontRegistry`, or have the browser host drive
+   `write_pdf` with the display lists it already holds. Until then the registry path
+   embeds bundled and system-tier faces only.
+2. **Exact `ToUnicode`.** Carry cluster text through the display list (or alongside it)
+   so ligature and substituted glyphs map to their real characters instead of being
+   reported as unmapped.
+3. **Phase 1 semantics** (§6): the `StructureTree` bridge first, then XMP metadata,
+   hyperlink annotations, destinations, the outline tree and page ranges.
+4. **CFF subsetting**, so OpenType faces stop being embedded whole.
+5. **Oracle extension** (§9): diff the PDF's text layer and page geometry against the
+   LibreOffice-PDF oracle.
+6. **Fuzz targets** for the subsetter and the picture path, as §9 specifies. The
+   subsetter is the highest-risk surface here: it parses font bytes that came out of an
+   imported document.
+
+### Guards, and the mutations that drive them red
+
+Each guard was driven red by mutating the production code before it was trusted
+(`SKILL.md` §4). The mutations used: dropping `/ToUnicode` from the font dictionary;
+shifting the text matrix by 10 pt; forcing whole-face embedding; skipping glyph emission
+entirely; deriving the file `/ID` from a counter; ignoring `OS/2.fsType`; dropping the
+placeholder mark; disabling picture de-duplication; dropping `/Title`; skipping the
+composite-glyph closure; claiming `can_import`; and downgrading a degraded finding to
+`Mapped`.
+
+The guards assert the guarantee rather than the mechanism: the file is parsed back and
+interrogated the way a reader would — text extractable and matching the document, every
+run within 0.01 pt of where layout put it, fonts embedded and subset under a
+six-character tag, no page delivered as a picture, repeat exports byte-identical, and a
+lost picture reported through the registry's compatibility report.
 
 ## Problem
 
