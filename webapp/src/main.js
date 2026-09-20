@@ -16,6 +16,7 @@ import {
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
+import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
@@ -2505,8 +2506,13 @@ function renderReviewMarginItems() {
   const GAP = 8;
   const seen = new Set();
   const layout = [];
+  // BAND coordinates, not scroll coordinates. `bandOffset` moves on every
+  // scroll once a document is compressed (`page_scroll.mjs`), so an anchor
+  // stored in scroll coordinates drifts from its marker by (scale - 1) × the
+  // distance scrolled; subtracting it here and adding it back at mount time
+  // pins the card. At scale 1 the offset is 0 and nothing changes.
   const anchorY = built.map(
-    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop,
+    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop - bandOffset,
   );
   const activeIdx = activeReviewItemId
     ? built.findIndex((b) => b.itemId === activeReviewItemId)
@@ -2597,8 +2603,11 @@ function reviewCardSignature(item, comments) {
 function mountReviewWindow() {
   if (reviewSidebar.hidden) return;
   const scrollTop = viewportEl.scrollTop;
-  const bandTop = scrollTop - REVIEW_WINDOW_OVERSCAN;
-  const bandBottom = scrollTop + viewportEl.clientHeight + REVIEW_WINDOW_OVERSCAN;
+  // Stored in band coordinates; the live offset converts them back. Here
+  // rather than in the layout pass because this runs on every scroll frame.
+  const offset = bandOffset;
+  const bandTop = scrollTop - offset - REVIEW_WINDOW_OVERSCAN;
+  const bandBottom = scrollTop - offset + viewportEl.clientHeight + REVIEW_WINDOW_OVERSCAN;
   for (const { itemId, top, entry } of reviewLayout) {
     // The composer and the active/expanded card are always kept mounted: they
     // own live focus/controls the user is interacting with.
@@ -2606,7 +2615,7 @@ function mountReviewWindow() {
     const visible = force || (top + entry.height >= bandTop && top <= bandBottom);
     const mounted = entry.el.parentNode === reviewSidebarBody;
     if (visible) {
-      entry.el.style.top = `${Math.round(top)}px`;
+      entry.el.style.top = `${Math.round(top + offset)}px`;
       if (!mounted) reviewSidebarBody.appendChild(entry.el);
       if (entry.needsFocus && entry.focusTextarea) {
         entry.needsFocus = false;
@@ -3735,8 +3744,8 @@ function pageIndexOfWrap(wrap) {
 }
 
 /** The pages that currently have a sheet, in page order. Every loop that walks
- *  `pages` looking for DOM goes through this: it must be bounded by the
- *  window, not by a page count that can be 25,556. */
+ *  `pages` looking for DOM goes through this: bounded by the window, not by a
+ *  page count that can be 25,556. */
 function materializedPages() {
   const out = [];
   for (let i = pageWindow.first; i <= pageWindow.last; i++) {
@@ -3747,8 +3756,8 @@ function materializedPages() {
 
 /** How far outside the viewport a page stays materialized: at least a viewport
  *  height (so an ordinary scroll never reveals a missing sheet) and at least
- *  `PAGE_WINDOW_OVERSCAN_PX`, which covers the comment column's own mounting
- *  band so a card never anchors to a page that does not exist. */
+ *  `PAGE_WINDOW_OVERSCAN_PX`, which covers the comment column's mounting band
+ *  so a card never anchors to a page that does not exist. */
 function pageWindowOverscan() {
   return Math.max(viewportEl.clientHeight, PAGE_WINDOW_OVERSCAN_PX);
 }
@@ -3761,11 +3770,10 @@ function pageBandTop(index) {
 /** The client rect a page's sheet has, or WOULD have if it were materialized.
  *
  *  Every twip→pixel conversion goes through `scaleOf`, and the pages it is
- *  asked about are no longer all in the DOM: a comment anchored eight pages
- *  down, a find match on page 20,000, the caret after a jump. The band's rect
- *  plus the page's known position answers those exactly — and identically to
- *  `getBoundingClientRect()` for a materialized page, because that is where
- *  `materializePage` put the sheet. */
+ *  asked about are no longer all in the DOM: a comment eight pages down, a
+ *  find match on page 20,000, the caret after a jump. The band's rect plus the
+ *  page's position answers those exactly — and identically to
+ *  `getBoundingClientRect()`, because that is where the sheet was put. */
 function virtualPageRect(index) {
   return pageClientRect(bandEl.getBoundingClientRect(), pageBandModel, index, bandOffset);
 }
@@ -3851,10 +3859,6 @@ function updatePageWindow({ force = false } = {}) {
   if (moved || force) {
     paintOverlayLayer();
     if (runningEditBand) drawRunningBands(runningEditBand);
-    // A comment card is anchored in scroll coordinates, and while the document
-    // is compressed those move under it as the window moves. For an
-    // uncompressed one they do not, so an ordinary scroll never pays this.
-    if (pageBandModel.scale > 1) scheduleReviewMarginRender();
     syncPagesPanelToViewport();
   }
 }
@@ -11874,7 +11878,9 @@ function toggleOutline() {
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
 
-/** The page the navigator should centre on: the caret's, or the one being read. */
+/** The page the navigator marks as current: the caret's, falling back to the
+ *  one being read. It is NOT what the panel centres on — a reader who has
+ *  scrolled 6,000 pages away from their caret wants to see where they are. */
 function pagesPanelFocusPage() {
   if (selection) {
     const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
@@ -11892,7 +11898,7 @@ function buildPages(centre = null) {
   pagesPanelRange = renderPagesPanel({
     doc,
     pages,
-    current: centre ?? focus,
+    current: centre ?? pageInView()?.pageNumber ?? focus,
     body: pagesBody,
     onJump: (n) => goToPage(n),
   });
@@ -13296,41 +13302,7 @@ function toggleShortcutsReference(open) {
 shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- About -----------------------------------------------------------------
-// There was no About anywhere in the product: no version, no licence, no way
-// for someone reporting a bug to say which build they were on. The version
-// comes from `engineVersion()`, which the engine compiles from its own crate
-// manifest, so it cannot drift from what actually shipped.
-const aboutDialog = document.getElementById("aboutDialog");
-const aboutClose = document.getElementById("aboutClose");
-const aboutModal = aboutDialog
-  ? registerModal(aboutDialog, {
-      initialFocus: () => aboutClose,
-      fallbackFocus: () => pagesEl,
-    })
-  : null;
-
-function toggleAbout(open) {
-  if (!aboutModal) return;
-  if (open) {
-    const slot = document.getElementById("aboutVersion");
-    if (slot) {
-      // The engine may not have booted yet — About is a `noDoc` command, so it
-      // is reachable from the very first frame. Say so rather than printing a
-      // placeholder that reads like a version.
-      let version = "";
-      try {
-        version = engineVersion();
-      } catch {
-        version = "";
-      }
-      slot.textContent = version || "not loaded yet";
-    }
-    aboutModal.open();
-  } else {
-    aboutModal.close();
-  }
-}
-aboutClose?.addEventListener("click", () => toggleAbout(false));
+const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
 
 // ---- Bookmark manager ------------------------------------------------------
 // A Word/Docs-style bookmark surface over the engine's create/rename/delete ops

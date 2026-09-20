@@ -188,6 +188,60 @@ test.describe("a document taller than the browser can scroll", () => {
     // cut. Recorded in `docs/113` §8.6 rather than silently asserted around.
   });
 
+  test("a comment card stays pinned to its anchor while scrolling", async () => {
+    // The review column positions cards against their markers. Under
+    // compression a pixel of scroll is `scale` pixels of document, so a card
+    // whose position was stored in scroll coordinates slides away from the
+    // marker it points at as soon as the reader scrolls — by (scale - 1) × the
+    // distance, which here is more than a card's height within one page.
+    await pageSheet(page, 1);
+    const point = await page.evaluate(() => {
+      const box = document.querySelector('.page-wrap[data-page-number="1"]').getBoundingClientRect();
+      const view = document.getElementById("viewport").getBoundingClientRect();
+      return { x: Math.max(box.left, view.left) + 200, y: Math.max(box.top, view.top) + 500 };
+    });
+    await page.mouse.click(point.x, point.y);
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+ArrowRight");
+    await page.locator("#selComment").click();
+    const composer = page.locator('[data-testid="review-comment-composer"]');
+    await expect(composer).toBeVisible();
+    // QZX, not a marker containing "@": the corpus is full of e-mail addresses
+    // and every search matches those.
+    await composer.fill("QZXNOTE");
+    await page.locator('[data-testid="review-comment-submit"]').click();
+
+    // The offset between a card and its own marker, or a reason there is none.
+    const drift = () =>
+      page.evaluate(() => {
+        const card = [...document.querySelectorAll(".review-margin-card")].find((element) =>
+          element.textContent.includes("QZXNOTE"),
+        );
+        if (!card) return "no card";
+        const marker = document.querySelector(
+          ".overlay .review-comment-marker, .overlay .highlight",
+        );
+        if (!marker) return "no marker";
+        return Math.round(card.getBoundingClientRect().top - marker.getBoundingClientRect().top);
+      });
+    await expect.poll(drift).not.toBe("no card");
+    const settled = await drift();
+    expect(typeof settled, `card was not positioned: ${settled}`).toBe("number");
+
+    // Scroll a fraction of a page — far too little to unmount the card, and
+    // under compression far more than enough to move the band under it.
+    await page.evaluate(() => {
+      document.getElementById("viewport").scrollTop += 200;
+    });
+    await page.waitForTimeout(200);
+    const after = await drift();
+    expect(typeof after, `card vanished after scrolling: ${after}`).toBe("number");
+    expect(
+      Math.abs(after - settled),
+      `the card slid ${after - settled} px away from its marker`,
+    ).toBeLessThanOrEqual(2);
+  });
+
   test("the Pages navigator windows its thumbnails, and still jumps", async () => {
     await pageSheet(page, PAGES);
     await page.locator("#railPages").click();

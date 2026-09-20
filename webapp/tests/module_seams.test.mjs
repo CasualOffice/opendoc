@@ -22,9 +22,11 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const SRC = new URL("../src/", import.meta.url);
 
-/** Measured 2026-09-20, after the first HF-085 extraction (command taxonomy,
- *  status policy, units, text rules). Was 18,373 before it. */
-const MAIN_JS_LINE_CEILING = 18186;
+/** Measured 2026-09-21, after the page-band extraction (`docs/113` §8.6) took
+ *  the scroll model, the print path, the accessibility mirror, the Pages
+ *  navigator, the shortcut reference and the About dialog out. Was 18,186
+ *  before it, and 18,373 before the first HF-085 extraction. */
+const MAIN_JS_LINE_CEILING = 18158;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
