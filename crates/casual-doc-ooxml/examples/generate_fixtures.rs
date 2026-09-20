@@ -11,6 +11,13 @@ const VISUAL_CONTAINMENT_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding
 const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 const NOTE_REFERENCES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rIdEndnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
 const VISUAL_CONTAINMENT_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdVisualFloat" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/visual-float.png"/></Relationships>"#;
+const PAGINATION_FIDELITY_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
+const PAGINATION_FIDELITY_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
+/// The footer part of `pagination-fidelity.docx`. One paragraph on an **exact**
+/// 300-twip line, so the reserved footer band is a fixed 300 twips no matter
+/// which fonts are installed — the pagination scenarios the fixture
+/// discriminates then differ only in the body.
+const PAGINATION_FIDELITY_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:spacing w:line="300" w:lineRule="exact"/></w:pPr><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>Pagination fidelity fixture footer</w:t></w:r></w:p></w:ftr>"#;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -53,6 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         output.join("visual-containment.docx"),
         package(&visual_containment_entries())?,
+    )?;
+
+    fs::write(
+        output.join("pagination-fidelity.docx"),
+        package(&pagination_fidelity_entries())?,
     )?;
 
     let mut unknown_safe = minimal_entries();
@@ -274,6 +286,130 @@ fn visual_containment_document() -> Vec<u8> {
   </w:sectPr>
  </w:body>
 </w:document>"#,
+    )
+    .into_bytes()
+}
+
+fn pagination_fidelity_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            pagination_fidelity_document(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            PAGINATION_FIDELITY_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            PAGINATION_FIDELITY_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/footer1.xml".to_owned(),
+            PAGINATION_FIDELITY_FOOTER.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+    ]
+}
+
+/// A page-count fidelity probe, shaped after a real A4 form that regressed from
+/// 5 pages to 7 (`crates/casual-doc-render/tests/pagination_fidelity.rs`).
+///
+/// Every construct here is load-bearing:
+///
+/// - **`<w:docGrid w:linePitch="299"/>` with no `w:type`.** Word writes exactly
+///   this into essentially every Latin `sectPr` and does not snap lines to it.
+///   Reading the omitted type as an active line grid rounds each 240-twip body
+///   line up to 299 and adds a page.
+/// - **A footer part and no header part.** `w:pgMar/@w:header` is still written
+///   (737) and is larger than the 567-twip top margin, so a body-top rule that
+///   reserves a band for a header that does not exist silently loses 170 twips a
+///   page. The footer's own band is real and *must* still be reserved.
+/// - **A `continuous` second section.** Per ECMA-376 the *following* section's
+///   start type decides whether a section break paginates, so the final section
+///   is the `continuous` one: the two sections must share a page.
+/// - **A long run of table rows.** Atomic fragments that cannot be split at a
+///   line boundary, so a small height error shows up as a whole displaced row.
+///
+/// Paragraph lines are `w:lineRule="atLeast" w:line="240"` at 9 pt: `atLeast`
+/// is still rounded up by an active grid (so the grid defect stays visible) but
+/// pins the height at 240 for any installed font (so the page count does not
+/// drift with font metrics). Table rows and the exact-spaced footer are
+/// grid-immune by design, which keeps the scenarios differing only where they
+/// should.
+///
+/// The counts are chosen so a single page-count assertion discriminates both
+/// defects. Body area = `16838 - 567 - (737 + 300)` = **15234** twips = 63
+/// lines a page, and the body is exactly **126** lines — two full pages. Reserve
+/// a phantom header band and the area drops to 15064 = 62 lines, so 126 lines
+/// need three pages. Snap the lines to the 299 grid and the 106 paragraphs grow
+/// by 59 twips each, which also needs three pages.
+fn pagination_fidelity_document() -> Vec<u8> {
+    // Body geometry: A4 (11906 x 16838), top margin 567, bottom margin 278,
+    // header/footer distance 737, footer band 300. 2 + 20 + 104 = 126 lines.
+    let paragraph = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:line=\"240\" w:lineRule=\"atLeast\"/>\
+             <w:rPr><w:sz w:val=\"18\"/></w:rPr></w:pPr>\
+             <w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let section_properties = |extra: &str| {
+        format!(
+            "{extra}<w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+             <w:pgMar w:top=\"567\" w:right=\"709\" w:bottom=\"278\" w:left=\"709\" \
+             w:header=\"737\" w:footer=\"737\" w:gutter=\"0\"/>\
+             <w:cols w:space=\"720\"/><w:docGrid w:linePitch=\"299\"/>"
+        )
+    };
+
+    let mut body = String::new();
+    // Section one carries the only footer reference and is closed by a section
+    // break whose successor is CONTINUOUS, so section two keeps flowing on the
+    // same page instead of starting a new one.
+    body.push_str(&paragraph("Section one, line one."));
+    body.push_str(&format!(
+        "<w:p><w:pPr><w:spacing w:line=\"240\" w:lineRule=\"atLeast\"/><w:sectPr>{}</w:sectPr></w:pPr>\
+         <w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>Section one, line two.</w:t></w:r></w:p>",
+        section_properties("<w:footerReference w:type=\"default\" r:id=\"rIdFooter\"/>")
+    ));
+
+    // Section two: twenty atomic table rows, then a long run of body lines. The
+    // second section declares no footer reference and must inherit the first's.
+    body.push_str(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"10488\"/></w:tblGrid>",
+    );
+    for row in 1..=20 {
+        body.push_str(&format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"10488\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:line=\"240\" w:lineRule=\"atLeast\"/></w:pPr>\
+             <w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>Table row {row}.</w:t></w:r></w:p>\
+             </w:tc></w:tr>"
+        ));
+    }
+    body.push_str("</w:tbl>");
+    for line in 1..=104 {
+        body.push_str(&paragraph(&format!("Section two, body line {line}.")));
+    }
+    body.push_str(&format!(
+        "<w:sectPr>{}</w:sectPr>",
+        section_properties("<w:type w:val=\"continuous\"/>")
+    ));
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <w:body>{body}</w:body></w:document>"
     )
     .into_bytes()
 }
