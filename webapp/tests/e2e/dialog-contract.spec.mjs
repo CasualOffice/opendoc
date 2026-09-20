@@ -217,8 +217,82 @@ const MODALS = [
   },
 ];
 
+// An icon-font glyph's CONTENT AREA is ascent+descent, and for Material Symbols
+// that is taller than the 1em line box `.ms` gives it — about two pixels at an
+// 18px glyph. `.ms` clips that on purpose (`overflow: hidden` in fonts.css):
+// the excess is the font's line gap, not ink. So the height rule is relaxed for
+// icons by this much and no more, and two checks that DO bite are asserted in
+// its place: the box must still be at least one em tall, and the glyph must
+// never overflow horizontally. Shrink an icon's box and this still fails.
+// The constant is declared INSIDE `measureClipping`: that function is
+// serialised into the page, where nothing in this module's scope exists.
+//
+/** Every element inside `id` whose content is larger than the box it is painted
+ *  in, measured rather than inspected.
+ *
+ *  This is the measurable form of "the label does not fit". `#confirmAccept`
+ *  reading "Discard and open" wrapped to a second line inside a fixed 32px box
+ *  and reported `scrollHeight` 59 against `clientHeight` 32 — the second line
+ *  simply was not painted, and the overflow propagated up through
+ *  `.dialog-actions`, `.dialog-foot` and the card itself. Every assertion that
+ *  the older specs make about that dialog — it is visible, it has the right
+ *  text, it is focused, it dismisses — passes in exactly that state. Only the
+ *  geometry says anything, so the geometry is what this asserts. */
+const measureClipping = (id) => {
+  const ICON_LINE_GAP = 4;
+  const root = document.getElementById(id);
+  const out = [];
+  for (const el of [root, ...root.querySelectorAll("*")]) {
+    if (el.getClientRects().length === 0) continue; // not painted: nothing to clip
+    const style = getComputedStyle(el);
+    const where =
+      (el.id && `#${el.id}`) ||
+      (typeof el.className === "string" && el.className.trim()
+        ? `${el.tagName.toLowerCase()}.${el.className.trim().split(/\s+/)[0]}`
+        : el.tagName.toLowerCase());
+    const box = `${el.clientWidth}x${el.clientHeight}`;
+    const content = `${el.scrollWidth}x${el.scrollHeight}`;
+    if (el.classList.contains("ms")) {
+      const em = parseFloat(style.fontSize) || 0;
+      if (el.scrollWidth > el.clientWidth + 1) {
+        out.push(`${where}: icon is ${content} wide in a ${box} box`);
+      }
+      if (el.clientHeight + 1 < em) {
+        out.push(`${where}: icon box is ${el.clientHeight}px tall for a ${em}px glyph`);
+      }
+      if (el.scrollHeight > el.clientHeight + ICON_LINE_GAP) {
+        out.push(`${where}: icon content ${content} exceeds its ${box} box by more than the line gap`);
+      }
+      continue;
+    }
+    // An element that scrolls ON PURPOSE is allowed more content than box in
+    // that axis — that is what the scrollbar is for. `.dialog-body` is the one
+    // that actually uses it.
+    const scrollsX = /auto|scroll/.test(style.overflowX);
+    const scrollsY = /auto|scroll/.test(style.overflowY);
+    if (!scrollsX && el.scrollWidth > el.clientWidth + 1) {
+      out.push(`${where}: content ${content} is wider than its ${box} box`);
+    }
+    if (!scrollsY && el.scrollHeight > el.clientHeight + 1) {
+      out.push(`${where}: content ${content} is taller than its ${box} box`);
+    }
+  }
+  return out;
+};
+
 for (const modal of MODALS) {
   const dialog = (page) => page.locator(`#${modal.id}`);
+
+  test(`${modal.name}: nothing in it is clipped`, async ({ page, consoleErrors }) => {
+    await modal.open(page);
+    await expect(dialog(page)).toBeVisible();
+    const clipped = await page.evaluate(measureClipping, modal.id);
+    expect(
+      clipped,
+      `#${modal.id} paints content outside the boxes that hold it:\n  ${clipped.join("\n  ")}`,
+    ).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
 
   test(`${modal.name}: opening moves focus in, Escape closes and restores it`, async ({
     page,

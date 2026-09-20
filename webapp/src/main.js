@@ -10186,7 +10186,9 @@ if (stylesMoreBtn && stylesMorePanel) {
   stylesMoreBtn.addEventListener("click", focusIntoMorePanel);
 }
 
-document.addEventListener("mousedown", (e) => {
+// `pointerdown` — the phase every other dismissable surface uses (#556). The
+// last holdout on `mousedown`, which a pen or a consumed touch never produces.
+document.addEventListener("pointerdown", (e) => {
   for (const p of popovers) {
     if (
       !p.menu.hidden &&
