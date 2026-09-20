@@ -104,9 +104,9 @@ HF-094. FID-L-16 and FID-L-18 are partly closed with the remainder stated in the
 | EV — evidence and public claims | 7 | 1 | 6 (#528, this PR) |
 | UX — editor UI/UX | 24 | 20 | 4 (#537, #542) |
 | CQ — engineering quality | 10 | 10 | 0 |
-| FID — fidelity and round-trip | 34 | 28 | 6 (#534, #536, #541, #543) |
+| FID — fidelity and round-trip | 34 | 26 | 6 (#534, #536, #541, #543) |
 | OO — ONLYOFFICE fit-gap | 21 | 21 | 0 — analysis only, no implementation yet |
-| **Total** | **96** | **80** | **16** |
+| **Total** | **96** | **78** | **16** |
 
 **These counts are derived from the rows, not maintained by hand** — re-derive them rather
 than editing them, per CQ-007. (The first draft of this table said 55 rows and understated
@@ -293,10 +293,10 @@ claimed before EV-001…EV-004. The staleness corrections are §3.4.
 
 | ID | Finding | Pri | Eff | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| FID-P-01 | **No oracle reference is committed, so the geometry gate is inert.** The workflow is written and ready; one dispatch, a review of the blessed references, and a merge converts a disarmed gate into a live one. This is the cheapest credibility win in the repository and it gates the EV-005 assertion that the gate is armed. | P1 | S | `crates/casual-doc-render/tests/oracle_geometry.rs:186-190`; `.github/workflows/oracle-geometry.yml` | Partly (#532/#535/#541) — the harness now measures the right quantity, takes only Latin-only fixtures, and refuses a reference without font+toolchain provenance. **Still open**: no verified reference is committed, so the content gate is dormant, and re-blessing surfaced a real engine divergence (see FID-L-21) |
+| FID-P-01 | **No oracle reference is committed, so the geometry gate is inert.** The workflow is written and ready; one dispatch, a review of the blessed references, and a merge converts a disarmed gate into a live one. This is the cheapest credibility win in the repository and it gates the EV-005 assertion that the gate is armed. | P1 | S | `crates/casual-doc-render/tests/oracle_geometry.rs:186-190`; `.github/workflows/oracle-geometry.yml` | Fixed (#558) — armed on pull requests with six committed references; three fixtures held out for a platform-dependent font-parity rule, tracked separately |
 | FID-P-02 | **There is no Microsoft-Word-produced fixture anywhere in the repository.** All 21 fixtures are generator output, handwritten minimal packages, or LibreOffice conversions. Word is the stated compatibility reference (`12` §Market Groups); LibreOffice is a layout *proxy* chosen in `46`. Until a rights-reviewed Word-produced corpus exists (`23`), no claim about Word-grade fidelity rests on anything a build can reproduce. | P1 | M | `fixtures/manifest.json` | Open |
 | FID-P-03 | **Round-trip tests are a fixed point and cannot detect lossy import.** `assert_corpus_round_trip` asserts `reopen(source) == reopen(write(reopen(source)))`. Because the left side is itself the importer's output, **anything dropped on first import is a perfect fixed point and passes**. ~200 `*_survive_the_semantic_round_trip` tests share this blind spot; nothing in the suite compares output against the source XML. Fix: assert that no source element local-name disappears without a corresponding report entry. | P1 | M | `crates/casual-doc-export/src/lib.rs:162-167` | Open |
-| FID-P-04 | **"Modeled" is counted as done while nothing consumes it.** Eight constructs are typed, cascaded and round-tripped with zero layout consumers: footnote `NoteProperties` (number format / restart / position), `w:lnNumType`, the `w:kern` size threshold, `w:kinsoku`, embedded `.odttf` faces, cell `noWrap`/`fitText`/`hideMark`/`textDirection`, `w:gutter`/`w:mirrorMargins`, and `evenPage`/`oddPage`. Each reads as finished from the model side and is invisible to a user. Fix: a model-row template field naming the consumer, and a check that a `Done` model row either has one or is explicitly marked preservation-only. | P1 | S | see FID-L-* rows below | Open |
+| FID-P-04 | **"Modeled" is counted as done while nothing consumes it.** Eight constructs are typed, cascaded and round-tripped with zero layout consumers: footnote `NoteProperties` (number format / restart / position), `w:lnNumType`, the `w:kern` size threshold, `w:kinsoku`, embedded `.odttf` faces, cell `noWrap`/`fitText`/`hideMark`/`textDirection`, `w:gutter`/`w:mirrorMargins`, and `evenPage`/`oddPage`. Each reads as finished from the model side and is invisible to a user. Fix: a model-row template field naming the consumer, and a check that a `Done` model row either has one or is explicitly marked preservation-only. | P1 | S | see FID-L-* rows below | Fixed (#558) — every model row names field, file and symbol, all three verified against source; 17 of 40 are modelled with no consumer, as a ratchet |
 
 ### 3.2 Layout and rendering gaps
 

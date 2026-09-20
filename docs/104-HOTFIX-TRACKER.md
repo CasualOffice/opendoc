@@ -67,7 +67,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Section | Rows | Still open |
 | --- | ---: | ---: |
 | P0 | 7 | 0 |
-| P1 | 33 | 4 |
+| P1 | 33 | 3 |
 | P2 | 52 | 22 |
 | P3 | 22 | 13 |
 | Behavioural audit — 2026-09-04 | 18 | 4 |
@@ -76,7 +76,7 @@ below are derived, not maintained by hand; re-derive them rather than editing th
 | Ribbon keyboard reachability — 2026-09-10 | 2 | 0 |
 | Paragraph-level revision mapping — 2026-09-17 | 4 | 0 |
 | Large-document admission — 2026-09-18 | 1 | 0 |
-| **Total** | **158** | **43** |
+| **Total** | **158** | **42** |
 
 "Still open" counts any status *beginning* `Open`, `Partly fixed`, or `In progress` —
 the prefix matters, because real statuses qualify themselves (`Open (owner decision)`,
@@ -96,7 +96,7 @@ by re-reading the code they cite: **HF-016**, **HF-022** and **HF-034**.)
 
 ### Progress
 
-**43 of 158 rows remain open. Every P0 is closed.** HF-025 and HF-088 closed with #556. (Re-derive these counts, do not edit them by hand.)
+**42 of 158 rows remain open. Every P0 is closed.** HF-030 closed with #559. (Re-derive these counts, do not edit them by hand.)
 
 **Staleness sweep, 2026-09-20.** Every P1 row of this tracker and of `105` was re-read
 against the code it cites, because `109` is now the only queue and a stale `Open` there is
@@ -201,7 +201,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-027 | Accept All / Reject All silently leaves tracked changes in headers, footers, notes and text boxes | wasm | M | Internal audit | Fixed |
 | HF-028 | Alt text never reaches the accessibility tree, and figure paragraphs and table headers vanish | accessibility | M | Internal audit | Fixed |
 | HF-029 | The status line is the only error channel and is not a live region — every failure is silent to screen readers | accessibility | S | Internal audit | Fixed |
-| HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Open |
+| HF-030 | Print and "Save as PDF" emit a 150-DPI raster — no selectable, searchable or accessible text, and a long document exhausts the tab | print | L | Sibling gap (docs (ProseMirror)) | Fixed (#559) |
 | HF-081 | No localization seam — every string is an English literal inside a 14.9k-line file | i18n | L | Sibling gap (opencalc + docs) | Open |
 | HF-031 | Command palette announces nothing while arrowing through results | accessibility | S | Internal audit | Fixed |
 | HF-083 | Pages are squashed horizontally in any window narrower than the sheet | layout | M | Internal audit | Fixed |
