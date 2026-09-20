@@ -22,9 +22,11 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const SRC = new URL("../src/", import.meta.url);
 
-/** Measured 2026-09-20, after the first HF-085 extraction (command taxonomy,
- *  status policy, units, text rules). Was 18,373 before it. */
-const MAIN_JS_LINE_CEILING = 18186;
+/** Measured 2026-09-20, after the review-layout and review-label extractions
+ *  that came with HF-088/HF-025. Was 18,186 before them, and 18,373 before the
+ *  first HF-085 extraction (command taxonomy, status policy, units, text
+ *  rules). */
+const MAIN_JS_LINE_CEILING = 18140;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -33,6 +35,11 @@ const PURE_MODULES = [
   "command_taxonomy.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
+  "review_labels.mjs",
+  "review_layout.mjs",
+  // Takes nodes as arguments and never reaches for a global one, which is what
+  // lets `shortcut_labels.test.mjs` drive the sweep with plain objects.
+  "shortcut_labels.mjs",
   "status_policy.mjs",
   "text_rules.mjs",
   "units.mjs",

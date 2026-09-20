@@ -4371,17 +4371,17 @@ body.is-format-painting .page-wrap * {
    window left to reserve from. At 390px the column and its page gutter left the
    document about 74px of usable width and pushed the sheet off the right edge —
    the flagship comments surface making the document it annotates unreadable
-   (HF-088). The column gives up its 300px hard floor here so it can never be the
-   thing that forces the overflow, and floats over the page rather than beside it.
-   The cards keep riding the document's own scroll — they are positioned in
-   document-scroll coordinates inside `.viewport`, which is what keeps every card
-   pinned to the text it annotates with no JS scroll-sync — so this stays a
-   layout change only. A dismissable bottom sheet, the phone-native shape, would
-   have to move the cards out of those coordinates: a change in main.js, not here. */
+   (HF-088). Floating the column over the page fixed the overflow but not the
+   occlusion: a 320px card stack still covered the text it points at. So below
+   this width the column is not a column — it is a bottom sheet, and the rules
+   for it live beside the `has-review-sidebar` gutter further down, because they
+   have to beat it on source order. The width itself is duplicated in main.js as
+   `REVIEW_SHEET_MAX_WIDTH`: the CARD LAYOUT changes shape here too (cards become
+   a list in the sheet's own scroll rather than being pinned to canvas anchors),
+   and a media query cannot tell main.js which shape it picked. */
 @media (max-width: 700px) {
   .review-sidebar {
     right: 8px;
-    width: min(320px, calc(100% - 24px));
     min-width: 0;
   }
 }
@@ -4734,6 +4734,50 @@ body.is-format-painting .page-wrap * {
   .viewport.has-review-sidebar .pages {
     padding-right: 0;
   }
+}
+
+/* The bottom sheet (HF-088). `.review-sheet` is set by main.js at
+   `REVIEW_SHEET_MAX_WIDTH`, the same width as the rung above. The extra class
+   here is deliberate: `.viewport.has-review-sidebar .review-sidebar` a few rules
+   up is equally specific, and the 860px rung that "never applied" was lost on
+   exactly this tie.
+
+   The sheet owns the bottom half of the screen and nothing else. The page keeps
+   its full width and the top half, which is the guarantee the row is about: the
+   comments must not swallow the document. It scrolls itself (one card list, not
+   a canvas-anchored layer), contains its overscroll so a flick inside it does
+   not scroll the document behind it, and is dismissed with the Close button the
+   header already carries. */
+.viewport.review-sheet.has-review-sidebar .review-sidebar {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: auto;
+  min-width: 0;
+  max-height: 50vh;
+  padding: 0 10px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-drawer);
+}
+
+/* The header is the sheet's title bar, so it sticks to the sheet's own top edge
+   rather than hanging 8px below the viewport's. */
+.viewport.review-sheet .review-sidebar-header {
+  top: 0;
+  margin-top: 0;
+  box-shadow: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+/* Let the last page scroll clear of the sheet, so a comment anchored to the end
+   of the document can still be read with its text on screen. */
+.viewport.review-sheet.has-review-sidebar .pages {
+  padding-bottom: calc(50vh + 12px);
 }
 
 /* The live W x H bubble shown while an object is being resized. Anchored to the
