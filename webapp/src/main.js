@@ -51,7 +51,13 @@ import {
   slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
-import { reviewStackHeight, stackReviewCards } from "./review_layout.mjs";
+import { recoverVerticalMove } from "./caret_probe.mjs";
+import {
+  reviewCardSignature,
+  reviewCommentIsReplyTo,
+  reviewStackHeight,
+  stackReviewCards,
+} from "./review_layout.mjs";
 import {
   formatReviewDate,
   reviewAuthorDisplay,
@@ -1754,22 +1760,6 @@ function scheduleReviewMarginRender() {
   });
 }
 
-/** Whether `comment` is a threaded reply to `parent`. A reply carries a
- *  non-null `parentParaId` that joins to the parent's `paraId` (the DOCX
- *  `w15:paraIdParent` → `w14:paraId` link) or, as a fallback, to the parent's
- *  comment id. A thread root has a null/absent `parentParaId` and is a reply to
- *  nothing. The `parentParaId != null` guard is load-bearing: `listComments`
- *  projects a comment with no join key as `paraId: null` / `parentParaId: null`
- *  (e.g. imported comments with no `commentsExtended`/`w14:paraId`), and without
- *  the guard `null === null` would count every top-level comment as a reply to
- *  every other — an O(n²) reply-DOM (and signature-string) blowup that makes a
- *  comment-heavy document consume gigabytes of memory. */
-function reviewCommentIsReplyTo(comment, parent) {
-  const parentKey = comment?.parentParaId;
-  if (parentKey == null) return false;
-  return parentKey === parent.paraId || parentKey === parent.id;
-}
-
 function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
@@ -1999,7 +1989,10 @@ function renderReviewMarginItems() {
       });
     }
     const expanded = activeReviewItemId === itemId;
-    const sig = reviewCardSignature(item, comments);
+    const sig = reviewCardSignature(item, comments, {
+      activeItemId: activeReviewItemId,
+      deleteConfirmId: reviewDeleteConfirmId,
+    });
     let entry = reviewCardCache.get(itemId);
     if (entry && entry.sig === sig && item.type !== "composer" && !expanded) {
       built.push({ itemId, item, entry });
@@ -2470,32 +2463,6 @@ function renderReviewMarginItems() {
   }
   reviewLayout = layout;
   mountReviewWindow();
-}
-
-/** A stable string that changes whenever anything affecting a card's rendered
- *  DOM or measured height changes, so `reviewCardCache` reuses a card only when
- *  it would render identically. The composer is never cached (always rebuilt so
- *  its live textarea/focus stays correct). */
-function reviewCardSignature(item, comments) {
-  if (item.type === "composer") return "composer";
-  const d = item.data;
-  const itemId = `${item.type}:${d.id}`;
-  const expanded = activeReviewItemId === itemId;
-  const confirm = reviewDeleteConfirmId === d.id;
-  const replies = item.type === "comment"
-    ? comments
-      .filter((c) => reviewCommentIsReplyTo(c, d))
-      .map((r) => `${r.id}${r.resolved ? 1 : 0}${r.text}${r.author}${r.date}`)
-      .join("")
-    : "";
-  return JSON.stringify([
-    item.type, d.id, d.kind || "", expanded ? 1 : 0, d.resolved ? 1 : 0, confirm ? 1 : 0,
-    d.text || "", d.oldText || "", d.newText || "", d.author || "", d.initials || "", d.date || "",
-    d.groupId || "", d.movePair ? 1 : 0,
-    Array.isArray(d.formattingDelta) ? d.formattingDelta : 0,
-    d.anchor ? `${d.anchor.node}:${d.anchor.start}:${d.anchor.end}` : "",
-    replies,
-  ]);
 }
 
 /** Mounts only the cards whose precomputed position falls inside (or within
@@ -8973,9 +8940,36 @@ function navCaret(dir, extend) {
       : doc.moveCaret(selection.focus.node, selection.focus.offset, dir);
   const to = { node: c.node, offset: c.offset };
   c.free();
-  selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
+  // The engine's vertical move can dead-end around a table (HF-024, in the UP
+  // direction): it either returns the position it was given or slides the
+  // caret to the start of the SAME line, and either way the key does nothing
+  // visible — on the owner's document, sixty ArrowUps from the end moved the
+  // caret zero pixels. `recoverVerticalMove` accepts the engine's answer
+  // whenever it genuinely moved in the asked-for direction and only otherwise
+  // looks for the neighbouring line geometrically.
+  const next =
+    dir === "up" || dir === "down"
+      ? recoverVerticalMove(dir, selection.focus, to, caretProbeIO())
+      : to;
+  selection = extend ? { anchor: selection.anchor, focus: next } : { anchor: next, focus: next };
   drawSelection();
   scrollCaretIntoView();
+}
+
+/** The geometry and model access `probeVerticalNeighbour` needs, bound to this
+ *  editor's DOM and engine. */
+function caretProbeIO() {
+  return {
+    caretRect: () => pagesEl.querySelector(".overlay .caret")?.getBoundingClientRect() ?? null,
+    resolveAt: (x, y) => {
+      const page = pageFromClientPoint(x, y);
+      return page ? anchorAt(page, clientPointEvent(x, y)) : null;
+    },
+    positionRect: (position) => {
+      const flat = doc.caretRect(position.node, position.offset);
+      return flat.length >= 5 ? { page: flat[0], y: flat[2] } : null;
+    },
+  };
 }
 
 // ---- Formatting toolbar (run + paragraph properties) -------------------------
