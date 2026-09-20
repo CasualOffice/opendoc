@@ -840,6 +840,9 @@ mod tests {
     }
 
     #[test]
+    /// PDF joins the list because the builtin registry registers the
+    /// export-only adapter (see `builtin_registry_with_format_limits`); it
+    /// sorts first on id. RTF is import-only and correctly absent.
     fn builtin_export_formats_are_capability_sorted() {
         let registry: FormatRegistry = builtin_registry();
         assert_eq!(
@@ -849,6 +852,7 @@ mod tests {
                 .map(FormatId::as_str)
                 .collect::<Vec<_>>(),
             vec![
+                formats::PDF,
                 formats::NORMALIZED_JSON,
                 formats::ODT,
                 formats::DOCX,

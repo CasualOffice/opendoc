@@ -35,9 +35,10 @@
 //
 //     MEASURE_VIEWER_CEILING=1 VIEWER_CEILING_FILE=~/Downloads/40mb.docx \
 //       npx playwright test viewer-ceiling-measurement
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { test, expect, documentPageCount, gotoEditor, pageSheet } from "./fixtures.mjs";
 
 const LINE = "examplefile.com - Sample Files\r\n"; // 32 bytes, the owner's own line
 
@@ -92,7 +93,7 @@ test.describe("viewer ceiling measurement", () => {
         // `paragraphs - 1` newline-terminated lines are `paragraphs`
         // paragraphs: the trailing empty one counts, exactly as the importer
         // counts it.
-        name: "measured.docx",
+        name: "measured.txt",
         buffer: Buffer.from(LINE.repeat(paragraphs - 1)),
         paragraphs,
       }));
@@ -110,11 +111,20 @@ test.describe("viewer ceiling measurement", () => {
       const baseline = await wasmBytes(page);
 
       const started = Date.now();
-      await page.locator("#file").setInputFiles({
-        name,
-        mimeType: "text/plain",
-        buffer,
-      });
+      // Playwright refuses to marshal more than 50 MB inline, which is 1.56
+      // million of the owner's 32-byte lines — below the sizes this probe
+      // exists to measure. Past that, hand the picker a real file on disk
+      // instead. Under it, keep the inline buffer, because that is what every
+      // row already published was measured through.
+      let scratch = null;
+      if (buffer.length > 0) { // TEMP
+        scratch = mkdtempSync(join(tmpdir(), "opendoc-ceiling-"));
+        const onDisk = join(scratch, name);
+        writeFileSync(onDisk, buffer);
+        await page.locator("#file").setInputFiles(onDisk);
+      } else {
+        await page.locator("#file").setInputFiles({ name, mimeType: "text/plain", buffer });
+      }
 
       // Either the document opens, or the viewer refuses it. Both are results.
       // `#status` also carries transient progress text, so only the error
@@ -137,6 +147,9 @@ test.describe("viewer ceiling measurement", () => {
       const elapsed = (Date.now() - started) / 1000;
 
       const after = await wasmBytes(page);
+      const scrollHeight = await page.evaluate(
+        () => document.getElementById("viewport")?.scrollHeight ?? -1,
+      );
       const heap = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? 0);
       const status = (await page.locator("#status").textContent()) ?? "";
       const pages = await page.locator("#statPages").textContent();
@@ -149,38 +162,42 @@ test.describe("viewer ceiling measurement", () => {
       if (settled === "opened") {
         // The LAST page, not a fraction of the way in: "the document opens" has
         // to mean every page of it is reachable. A browser stops scrolling at
-        // 2^24 CSS px, so a long enough document has pages the host cannot
-        // reach however well the engine lays them out, and a 75%-of-the-way
+        // 2^24-2^25 CSS px depending on the engine, so before the page band
+        // (`docs/113` §8.6) a long enough document had pages the host could not
+        // reach however well the engine laid them out, and a 75%-of-the-way
         // probe would have reported that document as fine.
-        const total = await page.locator(".page-wrap").count();
+        //
+        // The page count is the DOCUMENT's, read from the indicator: only the
+        // pages near the viewport have sheets now, so counting sheets would
+        // measure the window instead of the document.
+        const total = await documentPageCount(page);
         const target = total - 1;
-        const wrap = page.locator(".page-wrap").nth(target);
         const jumped = Date.now();
-        await wrap.scrollIntoViewIfNeeded();
         // NOT a hard failure: an unreachable last page is a RESULT this probe
         // exists to record, and throwing here would suppress the row — which is
         // how a memory figure that was never printed could end up in a doc
         // comment. The row is printed either way and the assertion comes after.
         let reached = true;
+        let wrap = null;
         try {
+          wrap = await pageSheet(page, total);
           await wrap.locator("canvas").waitFor({ state: "attached", timeout: 90_000 });
         } catch {
           reached = false;
         }
         if (!reached) {
-          const where = await page.evaluate((index) => {
-            const viewport = document.getElementById("pages");
-            const wraps = document.querySelectorAll(".page-wrap");
-            const rect = wraps[index]?.getBoundingClientRect();
+          const where = await page.evaluate(() => {
+            const viewport = document.getElementById("viewport");
+            const sheets = [...document.querySelectorAll(".page-wrap")];
             return {
               canvases: document.querySelectorAll("canvas.page").length,
-              wraps: wraps.length,
-              // The browser stops scrolling at 2^24 = 16,777,216 CSS px, so a
-              // scrollHeight past that has pages no scroll can reach.
+              sheets: sheets.map((sheet) => Number(sheet.dataset.pageNumber)),
+              // A scrollHeight past the engine's limit has pages no scroll can
+              // reach; the band exists to keep this bounded.
               scrollHeight: viewport?.scrollHeight ?? -1,
-              lastPageTop: Math.round(rect?.top ?? NaN),
+              scrollTop: Math.round(viewport?.scrollTop ?? -1),
             };
-          }, target);
+          });
           scroll = `page ${target + 1} NOT REACHED in ${(
             (Date.now() - jumped) / 1000
           ).toFixed(1)} s ${JSON.stringify(where)}`;
@@ -188,7 +205,7 @@ test.describe("viewer ceiling measurement", () => {
         } else {
           // A canvas that exists but is blank would still satisfy the wait, so
           // require ink: at least one non-background pixel.
-          const inked = await wrap.locator("canvas").evaluate((canvas) => {
+          const inked = await wrap.locator("canvas").first().evaluate((canvas) => {
             const context = canvas.getContext("2d", { willReadFrequently: true });
             const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
             for (let i = 0; i < data.length; i += 4) {
@@ -199,6 +216,27 @@ test.describe("viewer ceiling measurement", () => {
           scroll = `page ${target + 1} in ${((Date.now() - jumped) / 1000).toFixed(1)} s, ${
             inked ? "inked" : "BLANK"
           }`;
+          // A blank last page is ambiguous — a document whose final paragraph
+          // is empty (every file that ends in a newline) has a legitimately
+          // blank last page, and reading that as "the window painted nothing"
+          // would condemn a working viewer. So when the last page is blank,
+          // say whether the one before it is: that is the difference between
+          // an empty page and a broken one.
+          if (!inked && total > 1) {
+            const previous = await pageSheet(page, total - 1);
+            const previousInked = await previous
+              .locator("canvas")
+              .first()
+              .evaluate((canvas) => {
+                const context = canvas.getContext("2d", { willReadFrequently: true });
+                const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+                for (let i = 0; i < data.length; i += 4) {
+                  if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) return true;
+                }
+                return false;
+              });
+            scroll += `; page ${total - 1} ${previousInked ? "inked" : "ALSO BLANK"}`;
+          }
         }
         reachedLastPage = reached;
       }
@@ -215,10 +253,13 @@ test.describe("viewer ceiling measurement", () => {
           `(+${mib(after - baseline)})`,
           `heap ${mib(heap)}`,
           `pages ${(pages ?? "").trim()}`,
+          `scrollHeight ${scrollHeight.toLocaleString("en-US")} px`,
           `scroll ${scroll}`,
           status.trim() ? `status: ${status.trim()}` : "",
         ].join(" | "),
       );
+
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
 
       // Whatever the outcome, the module must not have died: an abort is the
       // regression HF-158 exists for, and it is the one result that is not an

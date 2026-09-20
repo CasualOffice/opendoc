@@ -114,6 +114,7 @@ dependencies = [
  "casual-doc-model",
  "casual-doc-odf",
  "casual-doc-ooxml",
+ "casual-doc-pdf",
  "casual-doc-rtf",
  "zip",
 ]
@@ -163,6 +164,19 @@ name = "casual-doc-package"
 version = "0.0.1"
 dependencies = [
  "zip",
+]
+
+[[package]]
+name = "casual-doc-pdf"
+version = "0.0.1"
+dependencies = [
+ "casual-doc-import",
+ "casual-doc-layout",
+ "casual-doc-model",
+ "casual-doc-ooxml",
+ "flate2",
+ "image",
+ "skrifa",
 ]
 
 [[package]]

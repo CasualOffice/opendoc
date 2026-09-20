@@ -77,6 +77,9 @@ pub mod formats {
     pub const RTF: &str = "application.rtf";
     /// Plain UTF-8 text.
     pub const TEXT: &str = "text.plain";
+    /// Portable Document Format (`.pdf`). Export only: the engine writes PDF
+    /// and never reads it.
+    pub const PDF: &str = "application.pdf";
 }
 
 /// Public capabilities and aliases for one registered format.

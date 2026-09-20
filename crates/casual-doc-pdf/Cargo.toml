@@ -1,0 +1,56 @@
+[package]
+name = "casual-doc-pdf"
+description = "Real-text PDF backend for OpenDoc: transcribes the shared display list into vector PDF with embedded subset fonts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+# Forwards to the layout crate's native OS font fallback, exactly as
+# `casual-doc-render`'s flag does. Off by default; the browser build resolves
+# fonts through the host-populated registry instead.
+system-fonts = ["casual-doc-layout/system-fonts"]
+
+[dependencies]
+# The shared layout seam: `DisplayList`/`PaintItem`/`GlyphRun`/`FontRegistry`
+# plus `paginate_document`/`compose_page`. This crate performs NO text layout of
+# its own -- it transcribes the same display list the raster backend consumes
+# (docs/98: the exporter is never permitted to be "smarter" than the editor).
+casual-doc-layout.workspace = true
+# `PaintItem::Image` carries the model's `CropRect`; `DocumentProperties`
+# supplies the PDF `/Info` dictionary.
+casual-doc-model.workspace = true
+# Parse-only OpenType reader (fontations): underline/strikeout metrics, glyph
+# advances for the `/W` array, and the character map inverted to build the
+# `ToUnicode` CMap. Already in the tree via `parley`/`fontique`/
+# `casual-doc-render`. Apache-2.0 OR MIT.
+skrifa = "0.43"
+# `FlateDecode` for content streams, embedded font programs and image samples.
+# Already in the tree (the `zip` stack pulls the same 1.1 release); pure-Rust
+# backends only, so the WASM build stays clean. MIT OR Apache-2.0.
+flate2 = "1.1"
+# Raster decoding for inline pictures that cannot be passed through verbatim.
+# The same crate, version and codec feature set `casual-doc-render` already
+# builds, so no new codec surface enters the tree. MIT OR Apache-2.0.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "bmp",
+    "tiff",
+    "webp",
+] }
+
+[dev-dependencies]
+casual-doc-import.workspace = true
+casual-doc-ooxml.workspace = true
+# The guards encode a known picture and assert the bytes come back out of the
+# file unchanged; the same crate and features the library already builds.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[lints]
+workspace = true

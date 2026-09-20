@@ -22,11 +22,16 @@ import { readFileSync, readdirSync } from "node:fs";
 
 const SRC = new URL("../src/", import.meta.url);
 
-/** Measured 2026-09-20, after the review-layout, review-label and card-reuse
- *  extractions that came with HF-088/HF-025 and the vertical-navigation fix.
- *  Was 18,186 before them, and 18,373 before the first HF-085 extraction
- *  (command taxonomy, status policy, units, text rules). */
-const MAIN_JS_LINE_CEILING = 18134;
+/** Measured 2026-09-21 on the merge of two independent extraction rounds:
+ *  the review-layout, review-label and card-reuse modules that came with
+ *  HF-088/HF-025 and the vertical-navigation fix, and the page-band round
+ *  (`docs/113` section 8.6) that took the scroll model, the print path, the
+ *  accessibility mirror, the Pages navigator, the shortcut reference and the
+ *  About dialog out. Each branch measured its own half — 18,134 and 18,158
+ *  against a shared 18,186 base — so neither number is right for the merge
+ *  and this one is re-measured from the merged file rather than picked.
+ *  Was 18,373 before the first HF-085 extraction. */
+const MAIN_JS_LINE_CEILING = 18108;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
