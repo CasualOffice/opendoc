@@ -40,7 +40,12 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
   // format a round trip landed on, and which exporters are registered.
   const format = page.locator("#saveFormat");
   await expect(format).toHaveValue(TEXT);
+  // PDF leads the list: the builtin registry now registers the export-only
+  // real-text PDF adapter (`docs/98`, HF-030), and `application.pdf` sorts
+  // first on id. It has no importer, so it never appears as something the
+  // picker offers to open — which the Rust side asserts separately.
   await expect(format.locator("option")).toHaveText([
+    "PDF",
     "Normalized JSON",
     "ODT",
     "DOCX",

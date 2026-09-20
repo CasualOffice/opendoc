@@ -20894,6 +20894,9 @@ mod tests {
         assert_eq!(
             doc.available_export_formats(),
             vec![
+                // Export-only, registered by the builtin registry rather than
+                // opted into per host, so every host offers it (`docs/98`).
+                formats::PDF,
                 formats::NORMALIZED_JSON,
                 formats::ODT,
                 formats::DOCX,

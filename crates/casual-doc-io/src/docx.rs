@@ -349,6 +349,14 @@ pub fn builtin_registry_with_format_limits(
     registry
         .register_importer(Arc::new(crate::RtfAdapter::new(rtf_limits)))
         .expect("built-in RTF importer registration is unique");
+    // Export only, and registered here rather than left to each host to opt
+    // into: a capability a host must remember to switch on is a capability
+    // some host will ship without, which is the "built but not reachable"
+    // pattern `docs/105` §9 rule 4 names as the most expensive recurring
+    // defect here — the RTF importer landed exactly that way. PDF has no
+    // importer, so it never becomes a format the picker offers to open.
+    crate::register_pdf_exporter(&mut registry)
+        .expect("built-in PDF exporter registration is unique");
     registry
 }
 

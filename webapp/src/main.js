@@ -14,6 +14,7 @@ import {
   packFontBytes,
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
+import { exportCommands } from "./export_commands.mjs";
 import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
@@ -2480,7 +2481,6 @@ function renderReviewMarginItems() {
   // plain list (HF-088). Anchors are still computed for the margin shape in
   // document-scroll coordinates, from each item's on-canvas marker.
   const seen = new Set();
-  const layout = [];
   // BAND coordinates, not scroll coordinates. `bandOffset` moves on every
   // scroll once a document is compressed (`page_scroll.mjs`), so an anchor
   // stored in scroll coordinates drifts from its marker by (scale - 1) × the
@@ -12553,10 +12553,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, run: () => void newBlankDocument() },
     { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, run: () => fileEl.click() },
     { id: "file.save", label: "Save", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocument() },
-    { id: "file.export.docx", label: "Export as DOCX…", group: "File", kw: "export save as word", run: () => exportDocumentAs("org.openxmlformats.wordprocessingml.document") },
-    { id: "file.export.odt", label: "Export as ODT…", group: "File", kw: "export save as opendocument", run: () => exportDocumentAs("org.oasis.opendocument.text") },
-    { id: "file.export.text", label: "Export as Plain text…", group: "File", kw: "export save as txt", run: () => exportDocumentAs("text.plain") },
-    { id: "file.export.json", label: "Export as Normalized JSON…", group: "File", kw: "export save as json", run: () => exportDocumentAs("org.casualoffice.normalized-json") },
+    ...exportCommands(exportDocumentAs),
     // Reachable with no document open, because the case it exists for is
     // arriving at a fresh tab after a crash (HF-011). Disabled WITH A REASON
     // when the store is empty — never a control that silently does nothing.

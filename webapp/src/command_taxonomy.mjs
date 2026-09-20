@@ -28,7 +28,7 @@ export const APP_MENU_SECTIONS = {
   file: [
     ["file.new"],
     ["file.open", "file.save"],
-    ["file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
+    ["file.export.pdf", "file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
     // Page setup was under Tools, which is where nobody looks for paper size —
     // Docs files it under File and Word under Layout. It is on the Layout
     // ribbon too; this gives it a menu home that matches the competition.

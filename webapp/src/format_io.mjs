@@ -1,4 +1,10 @@
 export const FORMAT_CATALOG = Object.freeze({
+  // Export only — the engine registers no PDF importer, so this never appears
+  // as something the picker offers to open.
+  "application.pdf": Object.freeze({
+    label: "PDF",
+    extension: "pdf",
+  }),
   "org.openxmlformats.wordprocessingml.document": Object.freeze({
     label: "DOCX",
     extension: "docx",
@@ -21,7 +27,7 @@ export const FORMAT_CATALOG = Object.freeze({
   }),
 });
 
-const DOCUMENT_EXTENSION = /\.(docx|odt|rtf|json|txt)$/i;
+const DOCUMENT_EXTENSION = /\.(docx|odt|rtf|pdf|json|txt)$/i;
 
 export function formatInfo(formatId) {
   return (

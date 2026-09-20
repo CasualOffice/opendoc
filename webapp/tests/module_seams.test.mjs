@@ -31,7 +31,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  against a shared 18,186 base — so neither number is right for the merge
  *  and this one is re-measured from the merged file rather than picked.
  *  Was 18,373 before the first HF-085 extraction. */
-const MAIN_JS_LINE_CEILING = 18109;
+const MAIN_JS_LINE_CEILING = 18108;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

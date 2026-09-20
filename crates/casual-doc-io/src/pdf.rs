@@ -171,8 +171,10 @@ mod tests {
 
     #[test]
     fn pdf_is_export_only_and_never_offered_as_an_import_format() {
-        let mut registry = builtin_registry();
-        register_pdf_exporter(&mut registry).expect("register");
+        // No `register_pdf_exporter` call: the builtin registry carries the
+        // exporter now, and that is the property worth asserting — a host that
+        // never opts in still gets PDF, and cannot ship without it.
+        let registry = builtin_registry();
         let pdf = FormatId::new(formats::PDF).unwrap();
         assert!(registry.export_formats().contains(&&pdf));
         let descriptor = registry
@@ -186,8 +188,7 @@ mod tests {
 
     #[test]
     fn exporting_through_the_registry_produces_a_pdf_with_the_documents_text() {
-        let mut registry = builtin_registry();
-        register_pdf_exporter(&mut registry).expect("register");
+        let registry = builtin_registry();
         let document = document("Registry reaches the writer");
         let resources = DocumentResources::default();
         let artifact = registry
