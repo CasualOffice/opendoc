@@ -90,6 +90,42 @@ test("work typed before a renderer crash is offered back, and comes back", async
   await recovered.close();
 });
 
+test("recovered work is protected again immediately, without waiting to be retyped", async ({
+  page,
+}) => {
+  test.setTimeout(150_000);
+  const context = page.context();
+
+  await gotoEditor(page);
+  await typeMarker(page, "TWICECRASHEDMARKER");
+  await waitForDraftWritten(page);
+  await crashRenderer(page);
+  await page.close({ runBeforeUnload: false }).catch(() => {});
+
+  const second = await context.newPage();
+  await gotoEditor(second);
+  await expect(second.locator("#draftRecoveryBar")).toBeVisible({ timeout: 20_000 });
+  await second.locator("button[data-draft-restore]").first().click();
+  await expect(second.locator("#a11yDocument")).toContainText("TWICECRASHEDMARKER", {
+    timeout: 30_000,
+  });
+
+  // Crash again WITHOUT typing anything. If restoring deleted the row before
+  // taking its own copy, the work now exists nowhere: the restored document is
+  // in the wasm heap of a renderer that is about to die.
+  await crashRenderer(second);
+  await second.close({ runBeforeUnload: false }).catch(() => {});
+
+  const third = await context.newPage();
+  await gotoEditor(third);
+  await expect(third.locator("#draftRecoveryBar")).toBeVisible({ timeout: 20_000 });
+  await third.locator("button[data-draft-restore]").first().click();
+  await expect(third.locator("#a11yDocument")).toContainText("TWICECRASHEDMARKER", {
+    timeout: 30_000,
+  });
+  await third.close();
+});
+
 test("saving clears the draft, so the next load offers nothing", async ({ page }) => {
   test.setTimeout(120_000);
   const context = page.context();

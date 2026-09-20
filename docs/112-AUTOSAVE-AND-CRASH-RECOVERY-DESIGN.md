@@ -8,9 +8,9 @@ meant to sit on the store this document defines.
 
 ## 1. The problem, stated concretely
 
-The open document lives in the wasm heap and nowhere else. `webapp/src/main.js:2977` says so in
-the comment above the `beforeunload` guard, and that guard is the entire safety net today: it
-catches a deliberate close and nothing else.
+The open document lives in the wasm heap and nowhere else. The comment above the `beforeunload`
+guard in `webapp/src/main.js` said so itself (line 2977 before this change), and that guard was
+the entire safety net: it catches a deliberate close and nothing else.
 
 - A renderer OOM kill, a wasm trap, an OS restart or a power cut fires no `beforeunload`.
 - After the crash there is no trace of the work anywhere on the machine.
@@ -31,9 +31,11 @@ re-graded P1 → P0 on 2026-09-20.
 
 ## 3. Measurement, not assumption
 
-Everything below was measured in the e2e Chromium (Chrome 151, Apple Silicon host), against the
-engine built from this branch, by exporting through the real `WasmDocument::exportAs` the editor
-already calls. Medians of 5–7 runs.
+Everything below was measured in the e2e Chromium (Chrome 151 via Playwright, Apple Silicon host),
+against the engine built from this branch, by exporting through the real `WasmDocument::exportAs`
+the editor already calls. Medians of 5–7 runs. The harnesses were temporary specs, deleted after
+the numbers were taken; re-deriving them is a matter of calling `exportAs` in a loop from a page
+context, and the method is described here rather than left as a claim.
 
 ### 3.1 What a snapshot costs
 
@@ -48,12 +50,13 @@ Both formats are linear in document size. The worst realistic case measured — 
 320,000-word document — costs **5.2 ms** and **2.4 MB** per draft in the format this design
 chose. That is one frame, once per quiesce, on a document larger than most people ever edit.
 
-Storage round trip for the same 3.4 MB payload: **IndexedDB write 1.4 ms, read 0.7 ms**
+Storage round trip for a 3,441,567 B snapshot of the same 320,000-word document: **IndexedDB
+write 1.4 ms, read 0.7 ms**
 (structured clone of a `Uint8Array`, `readwrite` transaction, measured end to end). Re-opening a
 draft costs **24 ms** (14 pages) to **418 ms** (471 pages) — paid once, during recovery, not
 during editing.
 
-gzip via `CompressionStream` compresses the 3.4 MB snapshot to 91,217 B in 11.1 ms (~37×).
+gzip via `CompressionStream` compresses that 3,441,567 B snapshot to 91,217 B in 11.1 ms (~37×).
 **Not adopted** — see §4.3.
 
 ### 3.2 The finding that chose the format
@@ -253,7 +256,7 @@ explanatory tooltip if the store ever refuses a write.
 | Event | Effect |
 | --- | --- |
 | Successful Save / export | The draft for this slot is deleted (`markDocumentSaved()`); the user has the bytes. |
-| Restore | The restored draft's slot is deleted; this tab's own slot takes over autosaving the restored document immediately, because it is unsaved work. |
+| Restore | This tab writes its OWN copy first and only then drops the row it restored from — a crash in the gap would otherwise lose exactly the document that was just recovered — and if the tab reclaimed its own slot, the two are the same row and nothing is deleted at all. A restore whose parse FAILS deletes nothing: `openBytes` leaves the previous document on screen and reports failure through its opened-document hook, so the draft is kept and the failure is said out loud. |
 | Delete (bar, confirmed) | Row removed. |
 | A new document opened in the tab | The slot is re-keyed to the new document; the previous draft is dropped **only if it was clean**, otherwise it stays as a separate orphan row for recovery. |
 | Age | Pruned at boot and before every write at `DRAFT_TTL_MS = 24 h`, the same age gate the docs-repo reference uses. |
@@ -285,6 +288,7 @@ next to the control.
 | same — *offer, never apply* | After the crash the reloaded document does **not** contain the typed marker until Restore is pressed. |
 | same — *restored work is unsaved* | The state pill reads **Edited** after a restore. |
 | same — *saving clears the draft* | After a Save the bar does not appear on the next load. |
+| same — *recovered work is protected again at once* | Crash, restore, then crash AGAIN without typing: the work still comes back. This is the ordering guard — restoring must take its own copy before dropping the row it came from. |
 | same — *off means off* | With autosave suppressed (`?autosave=0`, the switch the iframe rule uses), typing leaves no draft and a crash offers nothing. |
 | same — *never a dead control* | With nothing to recover, File ▸ Recover unsaved work… is disabled and its tooltip says why. |
 | `tests/drafts.test.mjs` | Scheduler cadence (quiesce, ceiling, no work per keystroke), the 24 h age gate, the presence protocol **including a crashed tab whose heartbeat is two seconds old**, the heartbeat fallback, slot eviction, the promotion table, and that `documentKey` samples rather than scans. |

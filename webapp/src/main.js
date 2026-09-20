@@ -17290,6 +17290,10 @@ function handOverDraftBeforeOpen() {
         if (store) await store.putDraft(meta, snapshot.bytes);
       });
       draftSlot = rotateDraftSlot();
+      // Presence must follow the rotation, or this tab keeps answering pings
+      // for the slot it just handed over — which would mark that orphan draft
+      // as belonging to a live tab and hide it from every recovery scan.
+      draftPresence.slotId = draftSlot;
     }
   } else if (ownSlotHasDraft) {
     discardOwnDraft();
@@ -17438,13 +17442,40 @@ async function restoreDraft(slotId) {
   // A promoted draft (a .txt document kept as DOCX so its formatting survived)
   // comes back under the extension it will actually save as.
   const name = downloadNameForFormat(meta.name, formatInfo(meta.formatId).extension);
-  await openBytes(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), name);
+  // `openBytes` swallows a failed parse by design — it leaves the previous
+  // document on screen rather than destroying it — so success has to be
+  // observed, not assumed. Its opened-document hook runs only after the parse
+  // succeeded. Treating a failed restore as a success and then deleting the
+  // row would delete the only copy of the work the restore was trying to save.
+  let opened = false;
+  await openBytes(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), name, () => {
+    opened = true;
+  });
+  if (!opened) {
+    setStatus(`“${meta.name}” could not be restored — the draft has been kept`, "error");
+    return;
+  }
   // Restored work has never been written out. Saying "Opened" here would tell
   // the user their document is safe on disk when it is not.
   restoredFromDraft = true;
   setDocumentState("edited");
-  noteDraftDirty();
-  await forgetDraft(slotId);
+  // Take our own copy BEFORE dropping the row it came from, so the work is
+  // never momentarily in neither place — a crash in the gap would otherwise
+  // lose exactly the document the user had just recovered.
+  await queueDraftWork(() => writeDraft("restored"));
+  if (slotId === draftSlot) {
+    // This tab reclaimed its own slot, so the write above IS that row, now
+    // holding the restored document. Deleting it would delete the work.
+    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
+    renderDraftRecovery();
+  } else if (ownSlotHasDraft) {
+    await forgetDraft(slotId);
+  } else {
+    // Autosave could not take a copy (off, or unavailable), so the row we
+    // restored from is still the only one. Keep it; just stop offering it.
+    draftOffers = draftOffers.filter((row) => row.slotId !== slotId);
+    renderDraftRecovery();
+  }
   setStatus(
     `Restored “${name}” from the draft autosaved ${describeDraftAge(Date.now() - (meta.savedAt ?? Date.now()))} — save it to keep it`,
   );
