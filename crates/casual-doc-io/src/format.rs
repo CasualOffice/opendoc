@@ -73,6 +73,8 @@ pub mod formats {
     pub const ODT: &str = "org.oasis.opendocument.text";
     /// OpenDoc normalized JSON snapshot.
     pub const NORMALIZED_JSON: &str = "org.casualoffice.normalized-json";
+    /// Rich Text Format (`.rtf`).
+    pub const RTF: &str = "application.rtf";
     /// Plain UTF-8 text.
     pub const TEXT: &str = "text.plain";
 }

@@ -2990,7 +2990,7 @@ async function boot() {
 
   try {
     await init();
-    setStatus("Ready — open a .docx, .odt, .json, or .txt");
+    setStatus("Ready — open a .docx, .odt, .rtf, .json, or .txt");
     fileEl.disabled = false;
     if (openBtn) openBtn.disabled = false;
   } catch (err) {
@@ -16665,10 +16665,10 @@ const MAX_OPEN_BYTES = 64 * 1024 * 1024;
 async function handleFile(file) {
   if (!file) return;
   // The WASM `open` auto-detects any registered format from the bytes, so accept
-  // every format the picker offers (DOCX, ODT, normalized JSON, plain text) — the
-  // extension is only a friendly pre-filter; detection is authoritative.
-  if (!/\.(docx|odt|json|txt)$/.test(file.name.toLowerCase())) {
-    setStatus("Please choose a .docx, .odt, .json, or .txt file", "error");
+  // every format the picker offers (DOCX, ODT, RTF, normalized JSON, plain text) —
+  // the extension is only a friendly pre-filter; detection is authoritative.
+  if (!/\.(docx|odt|rtf|json|txt)$/.test(file.name.toLowerCase())) {
+    setStatus("Please choose a .docx, .odt, .rtf, .json, or .txt file", "error");
     return;
   }
   // The open document lives in the wasm heap and nowhere else, so replacing it

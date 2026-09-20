@@ -13,6 +13,7 @@ cargo-fuzz = true
 casual-doc-package = { path = "../crates/casual-doc-package", version = "=0.0.1" }
 casual-doc-ooxml = { path = "../crates/casual-doc-ooxml", version = "=0.0.1" }
 casual-doc-odf = { path = "../crates/casual-doc-odf", version = "=0.0.1" }
+casual-doc-rtf = { path = "../crates/casual-doc-rtf", version = "=0.0.1" }
 libfuzzer-sys = "=0.4.13"
 
 [[bin]]
@@ -39,6 +40,13 @@ bench = false
 [[bin]]
 name = "odt_content"
 path = "fuzz_targets/odt_content.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rtf_import"
+path = "fuzz_targets/rtf_import.rs"
 test = false
 doc = false
 bench = false

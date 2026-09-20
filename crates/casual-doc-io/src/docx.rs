@@ -10,6 +10,7 @@ use casual_doc_import::{
 };
 use casual_doc_odf::{OdfImportLimits, OdfPackageLimits};
 use casual_doc_ooxml::{DocxPackage, PackageLimits};
+use casual_doc_rtf::RtfLimits;
 
 use crate::{
     AdapterError, CompatibilityEntry, CompatibilityReport, DocumentResources, ExportArtifact,
@@ -292,6 +293,21 @@ pub fn builtin_registry_with_limits(
     package_limits: PackageLimits,
     text_limits: PlainTextLimits,
 ) -> FormatRegistry {
+    builtin_registry_with_format_limits(package_limits, text_limits, RtfLimits::default())
+}
+
+/// Creates the built-in registry with every host-selected admission policy:
+/// the ZIP policy DOCX and ODT share, the plain-text policy, and the RTF
+/// policy.
+///
+/// [`RtfLimits::default`] is already sized for a 32-bit browser host, so
+/// [`builtin_registry_with_limits`] stays correct without this; a native host
+/// that wants larger RTF documents than the browser can hold raises them here.
+pub fn builtin_registry_with_format_limits(
+    package_limits: PackageLimits,
+    text_limits: PlainTextLimits,
+    rtf_limits: RtfLimits,
+) -> FormatRegistry {
     let mut registry = FormatRegistry::new();
     let adapter = Arc::new(DocxAdapter::new(package_limits, ImportConfig::default()));
     registry
@@ -327,6 +343,12 @@ pub fn builtin_registry_with_limits(
     registry
         .register_exporter(adapter)
         .expect("built-in ODT exporter registration is unique");
+    // Import only: no exporter is registered, so `.rtf` never appears in
+    // `export_formats()` and the UI cannot offer a save format the engine
+    // cannot write (`docs/110` §11 records what a writer would add).
+    registry
+        .register_importer(Arc::new(crate::RtfAdapter::new(rtf_limits)))
+        .expect("built-in RTF importer registration is unique");
     registry
 }
 
