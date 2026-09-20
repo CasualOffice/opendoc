@@ -8,59 +8,27 @@
 // `table.*` family sat in NO menu (UX-012), so browsing the bar said the
 // editor could not edit tables at all.
 //
-// This parses `APP_MENU_SECTIONS` out of main.js as text. That is deliberate:
-// main.js has zero exports (docs/105 UX-003/CQ-001) and cannot be imported, and
-// a browser-driven check would make a structural rule cost a Playwright run.
-// The e2e side of this contract — that each row actually renders and runs — is
+// This used to parse `APP_MENU_SECTIONS` out of main.js as TEXT, with a brace
+// matcher, because main.js had zero exports (`109` HF-085) and could not be
+// imported. The taxonomy now lives in `src/command_taxonomy.mjs`, so the rules
+// below read the real data structure the editor renders from. The e2e side of
+// this contract — that each row actually renders and runs — is
 // `webapp/tests/e2e/menu-taxonomy.spec.mjs`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import {
+  APP_MENU_SECTIONS,
+  TABLE_MENU_LABELS,
+  menuCommandIds,
+  menuHomes,
+} from "../src/command_taxonomy.mjs";
+
 const source = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 
-/** Extracts a balanced `{...}` or `[...]` literal that starts at `open`. */
-function balanced(text, open, pair) {
-  const [l, r] = pair;
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === l) depth += 1;
-    else if (text[i] === r) {
-      depth -= 1;
-      if (depth === 0) return text.slice(open + 1, i);
-    }
-  }
-  throw new Error("unbalanced literal");
-}
-
-/** `APP_MENU_SECTIONS` as {menuName: [commandId, ...]}. */
-function menuSections() {
-  const at = source.indexOf("const APP_MENU_SECTIONS = {");
-  assert.ok(at > 0, "APP_MENU_SECTIONS must exist");
-  const body = balanced(source, source.indexOf("{", at), "{}");
-  const out = {};
-  const key = /(\w+):\s*\[/g;
-  let m;
-  while ((m = key.exec(body))) {
-    const list = balanced(body, m.index + m[0].length - 1, "[]");
-    out[m[1]] = [...list.matchAll(/"([\w.]+)"/g)].map((x) => x[1]);
-    key.lastIndex = m.index + m[0].length + list.length;
-  }
-  return out;
-}
-
 test("no command has two menu homes", () => {
-  const sections = menuSections();
-  const homes = new Map();
-  for (const [menu, ids] of Object.entries(sections)) {
-    for (const id of ids) {
-      if (!homes.has(id)) homes.set(id, []);
-      // A menu may legitimately list an id once; twice in the SAME menu is also
-      // a bug, so push per occurrence rather than per menu.
-      homes.get(id).push(menu);
-    }
-  }
-  const duplicated = [...homes.entries()].filter(([, menus]) => menus.length > 1);
+  const duplicated = [...menuHomes().entries()].filter(([, menus]) => menus.length > 1);
   assert.deepEqual(
     duplicated.map(([id, menus]) => `${id} → ${menus.join(", ")}`),
     [],
@@ -70,18 +38,17 @@ test("no command has two menu homes", () => {
 });
 
 test("every menu in the taxonomy has a button, and every button has a menu", () => {
-  const sections = menuSections();
   const html = readFileSync(new URL("../editor.html", import.meta.url), "utf8");
   const buttons = [...html.matchAll(/class="app-menu-button"[^>]*data-menu="(\w+)"/g)].map(
     (m) => m[1],
   );
   assert.deepEqual(
-    buttons.filter((b) => !sections[b]),
+    buttons.filter((b) => !APP_MENU_SECTIONS[b]),
     [],
     "a menu button with no section renders an empty popover",
   );
   assert.deepEqual(
-    Object.keys(sections).filter((s) => !buttons.includes(s)),
+    Object.keys(APP_MENU_SECTIONS).filter((s) => !buttons.includes(s)),
     [],
     "a section with no button is unreachable — the exact UX-012 shape, where " +
       "every table command existed and no menu offered them",
@@ -89,8 +56,7 @@ test("every menu in the taxonomy has a button, and every button has a menu", () 
 });
 
 test("the Table menu covers every structural table command", () => {
-  const sections = menuSections();
-  assert.ok(sections.table, "there must be a Table menu (docs/105 UX-012)");
+  assert.ok(APP_MENU_SECTIONS.table, "there must be a Table menu (docs/105 UX-012)");
 
   // The ids `tableToolCommands` actually builds. Submenu PARENTS (table.insert,
   // table.delete, table.select, table.layout) are containers, not commands, and
@@ -105,7 +71,7 @@ test("the Table menu covers every structural table command", () => {
       .filter((id) => !parents.has(id)),
   );
 
-  const inMenu = new Set(sections.table);
+  const inMenu = new Set(menuCommandIds("table"));
   assert.deepEqual(
     [...built].filter((id) => !inMenu.has(id)).sort(),
     [],
@@ -119,11 +85,8 @@ test("the Table menu covers every structural table command", () => {
 });
 
 test("every Table menu row has a label, and no label is orphaned", () => {
-  const at = source.indexOf("const TABLE_MENU_LABELS = new Map([");
-  assert.ok(at > 0, "TABLE_MENU_LABELS must exist");
-  const body = balanced(source, source.indexOf("[", at), "[]");
-  const labelled = new Set([...body.matchAll(/\["(table\.[\w.]+)",/g)].map((m) => m[1]));
-  const inMenu = new Set(menuSections().table);
+  const labelled = new Set(TABLE_MENU_LABELS.keys());
+  const inMenu = new Set(menuCommandIds("table"));
 
   assert.deepEqual(
     [...inMenu].filter((id) => !labelled.has(id)).sort(),
@@ -139,9 +102,8 @@ test("every Table menu row has a label, and no label is orphaned", () => {
 });
 
 test("Help offers About, and About is the only place claiming a version", () => {
-  const sections = menuSections();
   assert.ok(
-    sections.help?.includes("help.about"),
+    menuCommandIds("help").includes("help.about"),
     "About must be reachable from Help — the product shipped with no About " +
       "anywhere, so a bug report could not name the build it came from",
   );

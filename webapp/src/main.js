@@ -51,6 +51,35 @@ import {
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { previewInkIsLegible } from "./contrast.mjs";
+import {
+  byteOffsetToStringIndex,
+  isWholeWordAt,
+  smartQuoteChar,
+  transformCase,
+} from "./text_rules.mjs";
+import {
+  EMU_PER_TWIP,
+  TWIPS_PER_INCH,
+  inchesToTwips,
+  optionalInchesToTwips,
+  round2,
+  signedInchesToTwips,
+  twipsToDialogInches,
+  twipsToInchText,
+} from "./units.mjs";
+import {
+  announcementRegion,
+  documentStateBadge,
+  documentTabTitle,
+  isObjectSelectionStatus,
+  statusClassName,
+} from "./status_policy.mjs";
+import {
+  APP_MENU_SECTIONS,
+  flattenCommandTree,
+  tableCommandLabel,
+  tableMenuPlaceholders,
+} from "./command_taxonomy.mjs";
 
 function escapeHtml(text) {
   return String(text)
@@ -2864,7 +2893,7 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
   clearTimeout(statusClearTimer);
   statusClearTimer = 0;
   statusEl.textContent = text;
-  statusEl.className = `status ${kind}`;
+  statusEl.className = statusClassName(kind);
   announceStatus(text, kind);
   if (text && timeout > 0) {
     statusClearTimer = window.setTimeout(() => {
@@ -2875,13 +2904,13 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
   }
 }
 
-/** Speaks a status message. Failures go to the assertive region because a
- *  refusal the user cannot hear reads as the editor doing nothing; everything
- *  else is polite and waits its turn. The clear-then-next-frame write is what
- *  makes a repeated identical message (the same edit refused twice) count as a
- *  change worth announcing — the same trick `announceReview` uses. */
+/** Speaks a status message. `announcementRegion` decides which region hears
+ *  it. The clear-then-next-frame write is what makes a repeated identical
+ *  message (the same edit refused twice) count as a change worth announcing —
+ *  the same trick `announceReview` uses. */
 function announceStatus(text, kind) {
-  const region = kind === "error" ? statusAlertRegion : statusLiveRegion;
+  const region =
+    announcementRegion(kind) === "assertive" ? statusAlertRegion : statusLiveRegion;
   if (!region) return;
   // Only one of the two regions may hold text, or a screen reader browsing the
   // footer meets the last error long after it stopped being true.
@@ -2894,16 +2923,8 @@ function announceStatus(text, kind) {
 }
 
 function setDocumentState(state) {
-  const states = {
-    opened: { icon: "check_circle", text: "Opened" },
-    edited: { icon: "edit", text: "Edited" },
-    downloaded: { icon: "download_done", text: "Downloaded" },
-  };
-  const next = states[state] ?? states.opened;
-  // The pill is display only. Whether work would be lost is answered by
-  // `documentIsDirty()` from the engine revision watermark — deliberately not
-  // by this string, which is what let the old flag sit here with no readers.
-  documentStateEl.dataset.state = state in states ? state : "opened";
+  const next = documentStateBadge(state);
+  documentStateEl.dataset.state = next.state;
   documentStateEl.querySelector(".ms").textContent = next.icon;
   documentStateText.textContent = next.text;
   documentStateEl.title = next.text;
@@ -2921,26 +2942,22 @@ const FALLBACK_DOCUMENT_TITLE = document.title;
  *
  * `document.title` was assigned nowhere in `webapp/src`, so every editor tab
  * read the same static string and several open documents were indistinguishable
- * in a tab strip. The convention here is the platform's, not an invention: the
- * document name FIRST (a tab strip truncates from the right, so anything before
- * the name is what survives and the name is what the user is scanning for),
- * then the app, then a leading `•` when there is unsaved work — the web's
- * equivalent of Word's title-bar asterisk and the dot Docs shows while saving.
+ * in a tab strip. `documentTabTitle` owns the composition rule.
  *
- * The marker is driven by `documentIsDirty()`, the same engine revision
+ * The dirty marker is driven by `documentIsDirty()`, the same engine revision
  * watermark the `beforeunload` guard and `confirmDiscardIfEdited()` read, so
  * the tab, the close warning and the discard gate can never disagree.
  */
 function refreshDocumentTitle() {
-  if (!doc || !currentName) {
-    document.title = FALLBACK_DOCUMENT_TITLE;
-    return;
-  }
-  document.title = `${documentIsDirty() ? "• " : ""}${currentName} — OpenDoc`;
+  document.title = documentTabTitle({
+    name: doc ? currentName : "",
+    dirty: !!doc && documentIsDirty(),
+    fallback: FALLBACK_DOCUMENT_TITLE,
+  });
 }
 
 function clearObjectStatus() {
-  if (/^(Image|Shape|Text box|Object) selected/.test(statusEl.textContent)) setStatus("");
+  if (isObjectSelectionStatus(statusEl.textContent)) setStatus("");
 }
 
 // Concise polite announcements for review events (comment added, change
@@ -4619,7 +4636,6 @@ function finishObjectResize(event) {
     Math.abs(drag.lastW - drag.startW) >= 8 ||
     Math.abs(drag.lastH - drag.startH) >= 8;
   if (changed) {
-    const EMU_PER_TWIP = 635;
     runEdit(
       () =>
         doc.resizeObject(
@@ -5847,7 +5863,6 @@ function finishObjectMove(event) {
   drag.preview.remove();
   event.preventDefault();
   if (drag.moved) {
-    const EMU_PER_TWIP = 635;
     runEdit(
       () => doc.setObjectAnchorPosition(drag.root, drag.lastX * EMU_PER_TWIP, drag.lastY * EMU_PER_TWIP),
       { gate: true },
@@ -5874,7 +5889,6 @@ function nudgeSelectedObject(dx, dy, large) {
   const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
   const nx = Math.max(0, rect[1] + dx * step);
   const ny = Math.max(0, rect[2] + dy * step);
-  const EMU_PER_TWIP = 635;
   runEdit(() => doc.setObjectAnchorPosition(root, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
     gate: true,
   });
@@ -8162,7 +8176,6 @@ ruler.appendChild(rulerTrack);
 let rulerGeom = null; // { widthTwip, marginStartTwip, marginEndTwip }
 let rulerScale = 0; // px per twip at the current zoom
 const markers = {}; // key -> element
-const TWIPS_PER_INCH = 1440;
 let tabInsertCode = 0; // the type new ruler tabs get: 0 L, 1 C, 2 R, 3 decimal
 const TAB_LETTER = ["L", "C", "R", "."];
 
@@ -10683,28 +10696,6 @@ onButton(growFontBtn, () => stepFontSize(1));
 onButton(shrinkFontBtn, () => stepFontSize(-1));
 
 // ---- Change case (Q5): transform selected text, preserving per-run format ----
-function transformCase(text, mode) {
-  switch (mode) {
-    case "upper":
-      return text.toLocaleUpperCase();
-    case "lower":
-      return text.toLocaleLowerCase();
-    case "title":
-      return text.replace(/\p{L}[\p{L}'’]*/gu, (w) => w[0].toLocaleUpperCase() + w.slice(1).toLocaleLowerCase());
-    case "sentence": {
-      const lowered = text.toLocaleLowerCase();
-      return lowered.replace(/(^\s*\p{L})|([.!?]["')\]]?\s+\p{L})/gu, (m) => m.toLocaleUpperCase());
-    }
-    case "toggle":
-      return [...text].map((ch) => {
-        const up = ch.toLocaleUpperCase();
-        const lo = ch.toLocaleLowerCase();
-        return ch === lo && ch !== up ? up : lo;
-      }).join("");
-    default:
-      return text;
-  }
-}
 async function applyChangeCase(mode) {
   if (!doc || !hasRange()) return;
   const { anchor, focus } = selection;
@@ -10862,11 +10853,6 @@ for (const b of spacingMenu.querySelectorAll(".spacing-line")) {
   });
 }
 
-/** Round to at most 2 decimals, trimming trailing zeros. */
-function round2(n) {
-  return Math.round(n * 100) / 100;
-}
-
 /** Sync the value field's unit label + step to the current mode (× for a
  *  multiple, pt for atLeast/exact). */
 function reflectLineSpacingUnit() {
@@ -10916,23 +10902,14 @@ spaceAfterInput.addEventListener("change", () =>
 );
 
 // -- Paragraph properties inspector ------------------------------------------
-/** Twips → inches string, trimming trailing zeros; "" for zero. */
-function inchStr(twip) {
-  if (!twip) return "";
-  return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "");
-}
 /** An inches field's value → twips (≥ 0); "" or non-numeric → 0. */
 function inchTwips(input) {
-  const raw = input.value.trim();
-  if (raw === "" || !Number.isFinite(Number(raw))) return 0;
-  return Math.max(0, Math.round(Number(raw) * TWIPS_PER_INCH));
+  return inchesToTwips(input.value);
 }
 
 /** An inches field's value → signed twips; blank/non-numeric → 0. */
 function signedInchTwips(input) {
-  const raw = input.value.trim();
-  if (raw === "" || !Number.isFinite(Number(raw))) return 0;
-  return Math.round(Number(raw) * TWIPS_PER_INCH);
+  return signedInchesToTwips(input.value);
 }
 
 function setMixedCheckbox(input, state) {
@@ -10960,11 +10937,11 @@ function reflectParagraphProperties() {
 
   if (document.activeElement !== indentLeftInput) {
     indentLeftInput.placeholder = state.startMixed ? "Mixed" : "";
-    indentLeftInput.value = state.startMixed ? "" : inchStr(state.startTwip);
+    indentLeftInput.value = state.startMixed ? "" : twipsToInchText(state.startTwip);
   }
   if (document.activeElement !== indentRightInput) {
     indentRightInput.placeholder = state.endMixed ? "Mixed" : "";
-    indentRightInput.value = state.endMixed ? "" : inchStr(state.endTwip);
+    indentRightInput.value = state.endMixed ? "" : twipsToInchText(state.endTwip);
   }
   if (![indentSpecialByInput, indentSpecialSel].includes(document.activeElement)) {
     if (state.firstLineMixed || state.hangingMixed) {
@@ -10973,11 +10950,11 @@ function reflectParagraphProperties() {
       indentSpecialByInput.placeholder = "Mixed";
     } else if (state.firstLineTwip > 0) {
       indentSpecialSel.value = "first";
-      indentSpecialByInput.value = inchStr(state.firstLineTwip);
+      indentSpecialByInput.value = twipsToInchText(state.firstLineTwip);
       indentSpecialByInput.placeholder = "";
     } else if (state.hangingTwip > 0) {
       indentSpecialSel.value = "hanging";
-      indentSpecialByInput.value = inchStr(state.hangingTwip);
+      indentSpecialByInput.value = twipsToInchText(state.hangingTwip);
       indentSpecialByInput.placeholder = "";
     } else {
       indentSpecialSel.value = "none";
@@ -11307,15 +11284,9 @@ for (const b of tableFmtMenu.querySelectorAll("[data-tableborder]")) {
 let tablePropertiesCurrent = null;
 let tablePropertiesNode = null;
 
-function dialogTwipsValue(twips) {
-  return twips < 0
-    ? ""
-    : (twips / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
-}
-
+/** An optional inches field's value → twips, or -1 for "leave it unset". */
 function optionalDialogTwips(input) {
-  const raw = input.value.trim();
-  return raw === "" ? -1 : Math.round(Number(raw) * TWIPS_PER_INCH);
+  return optionalInchesToTwips(input.value);
 }
 
 function updateTableRowHeightField() {
@@ -11340,16 +11311,16 @@ function reflectTableProperties(node = selection?.focus.node) {
   tableHeaderRow.checked = info.headerRow;
   tableFixedLayout.checked = info.fixedLayout;
   tableColumnWidth.disabled = !info.regular;
-  tableColumnWidth.value = dialogTwipsValue(info.columnWidthTwips);
+  tableColumnWidth.value = twipsToDialogInches(info.columnWidthTwips);
   tableColumnWidthNote.textContent = info.regular
     ? "Sets the width of the current column."
     : "Column sizing is unavailable for merged or spanned tables.";
-  tableWidth.value = dialogTwipsValue(info.tableWidthTwips);
-  tableIndent.value = dialogTwipsValue(info.tableIndentTwips);
-  tableRowHeight.value = dialogTwipsValue(info.rowHeightTwips);
+  tableWidth.value = twipsToDialogInches(info.tableWidthTwips);
+  tableIndent.value = twipsToDialogInches(info.tableIndentTwips);
+  tableRowHeight.value = twipsToDialogInches(info.rowHeightTwips);
   tableRowHeightRule.value = info.rowHeightRule || "auto";
-  tableCellMargin.value = dialogTwipsValue(info.cellMarginTwips);
-  tableCellSpacing.value = dialogTwipsValue(info.cellSpacingTwips);
+  tableCellMargin.value = twipsToDialogInches(info.cellMarginTwips);
+  tableCellSpacing.value = twipsToDialogInches(info.cellSpacingTwips);
   for (const button of tableAlign.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.talign === info.alignment));
   }
@@ -13037,48 +13008,21 @@ function editorCommands(context = { surface: "palette" }) {
   // searchable list. `surface` is checked because the context menu composes these
   // rows itself — it must not receive them twice.
   if (doc && context.surface !== "context" && selection && plainTableInfo(selection.anchor.node)) {
-    const flatten = (entries, trail) =>
-      entries.flatMap((entry) =>
-        entry.submenu
-          ? flatten(entry.submenu, trail ? `${trail} ${entry.label}` : entry.label)
-          : [{
-            id: entry.id,
-            // In the Table MENU the noun is already supplied by the menu the row
-            // sits in, so the palette's "Table:" prefix would read as a stutter.
-            label:
-              context.surface === "menu" && TABLE_MENU_LABELS.has(entry.id)
-                ? TABLE_MENU_LABELS.get(entry.id)
-                : trail
-                  ? `Table: ${trail} ${entry.label}`
-                  : `Table: ${entry.label}`,
-            group: "Table",
-            kw: `table ${trail} ${entry.label}`.toLowerCase(),
-            enabled: entry.enabled,
-            disabledReason: entry.disabledReason,
-            run: entry.run,
-          }],
-      );
-    cmds.push(...flatten(tableToolCommands(contextAt(selection.anchor)), ""));
-  } else if (context.surface === "menu") {
-    // The Table MENU must exist even when the caret is not in a table. Building
-    // it only from a live table context meant browsing to Table with the caret
-    // in a paragraph opened an EMPTY popover — which says the editor cannot
-    // edit tables, the same thing having no Table menu at all said (UX-012).
-    // Word and Docs both show the rows greyed with the reason. The labels come
-    // from the same map the live rows use, and `menu_taxonomy` fails if that
-    // map and the real command set ever disagree, so these placeholders cannot
-    // drift away from the commands they stand in for.
-    for (const [id, label] of TABLE_MENU_LABELS) {
-      cmds.push({
-        id,
-        label,
+    cmds.push(
+      ...flattenCommandTree(tableToolCommands(contextAt(selection.anchor)), (entry, trail) => ({
+        label: tableCommandLabel(entry.id, entry.label, trail, context.surface),
         group: "Table",
-        kw: `table ${label}`.toLowerCase(),
-        enabled: false,
-        disabledReason: doc ? "Place the caret in a table" : "Open a document first",
-        run: () => {},
-      });
-    }
+        kw: `table ${trail} ${entry.label}`.toLowerCase(),
+      })),
+    );
+  } else if (context.surface === "menu") {
+    // The Table MENU must exist even when the caret is not in a table: an empty
+    // popover says the editor cannot edit tables (UX-012). `command_taxonomy`
+    // builds the greyed rows from the same label map the live rows use, and
+    // `menu_taxonomy` fails if that map and the real command set disagree.
+    cmds.push(
+      ...tableMenuPlaceholders(doc ? "Place the caret in a table" : "Open a document first"),
+    );
   }
   // Object commands, on the same terms. Everything a selected image, shape or
   // text box can do lived on the floating bar and (mostly) the right-click menu
@@ -13090,21 +13034,13 @@ function editorCommands(context = { surface: "palette" }) {
     // Flattened the same way as the table rows above, because some object
     // commands are submenus (Wrap text) and a palette entry whose `run` is a
     // submenu is a dead row.
-    const flattenObject = (entries, trail) =>
-      entries.flatMap((entry) =>
-        entry.submenu
-          ? flattenObject(entry.submenu, trail ? `${trail} ${entry.label}` : entry.label)
-          : [{
-            id: entry.id,
-            label: trail ? `Object: ${trail} ${entry.label}` : `Object: ${entry.label}`,
-            group: "Object",
-            kw: `object image picture shape text box ${trail} ${entry.label}`.toLowerCase(),
-            enabled: entry.enabled,
-            disabledReason: entry.disabledReason,
-            run: entry.run,
-          }],
-      );
-    cmds.push(...flattenObject(buildObjectContextCommands(selectedObjectContext()), ""));
+    cmds.push(
+      ...flattenCommandTree(buildObjectContextCommands(selectedObjectContext()), (entry, trail) => ({
+        label: trail ? `Object: ${trail} ${entry.label}` : `Object: ${entry.label}`,
+        group: "Object",
+        kw: `object image picture shape text box ${trail} ${entry.label}`.toLowerCase(),
+      })),
+    );
   }
   // Reaching an object at all is a command too, and it is the one that has to
   // work with no object selected — otherwise every row above is unreachable
@@ -13143,114 +13079,6 @@ const appMenuButtons = [...appMenuBar.querySelectorAll(".app-menu-button")];
 const appMenuPopover = document.getElementById("appMenuPopover");
 let activeAppMenu = null;
 let activeAppMenuTrigger = null;
-
-// The menu bar's taxonomy. One command has ONE menu home: eight ids used to sit
-// in two menus each (the three review modes, `review.toggle`, `view.showChanges`,
-// `review.comment`, `layout.paragraph`, `file.properties`), which is what made
-// browsing the bar feel repetitive — the same row answered twice and the menus
-// stopped telling you where a thing lives. Reachability from more than one
-// SURFACE is a requirement here (docs/105 command-surface parity) and is
-// unaffected: every command below is still in the palette, and most are on the
-// ribbon. What is fixed is duplication WITHIN the bar.
-//
-// Where the split was a judgement call it follows Google Docs, which is the
-// stated bar: editing mode is View ▸ Mode, a comment is Insert ▸ Comment, page
-// setup is File ▸ Page setup. Tracked-change OPERATIONS stay in Review.
-const APP_MENU_SECTIONS = {
-  file: [
-    ["file.new"],
-    ["file.open", "file.save"],
-    ["file.export.docx", "file.export.odt", "file.export.text", "file.export.json"],
-    // Page setup was under Tools, which is where nobody looks for paper size —
-    // Docs files it under File and Word under Layout. It is on the Layout
-    // ribbon too; this gives it a menu home that matches the competition.
-    ["layout.pageSetup", "file.print"],
-    ["file.properties", "file.recoverDrafts"],
-  ],
-  edit: [
-    ["edit.undo", "edit.redo"],
-    ["edit.cut", "edit.copy", "edit.paste", "edit.pasteText"],
-    ["edit.selectAll", "edit.find"],
-  ],
-  view: [
-    ["view.outline", "view.showChanges"],
-    ["view.zoomIn", "view.zoomOut"],
-    // The ribbon-density switch belongs in View, next to the other things that
-    // change what the window shows rather than what the document says.
-    ["view.compactRibbon"],
-    // Editing mode is View ▸ Mode in Docs. It was in both View and Review.
-    ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
-  ],
-  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
-  format: [
-    ["format.bold", "format.italic", "format.underline", "format.strike"],
-    ["format.grow", "format.shrink", "format.color", "format.highlight"],
-    ["format.case.upper", "format.case.lower", "format.case.title", "format.case.sentence", "format.case.toggle"],
-    ["format.superscript", "format.subscript", "format.clear"],
-    ["paragraph.align.start", "paragraph.align.center", "paragraph.align.end", "paragraph.align.justify"],
-    // Checklist, restart and continue existed on the ribbon and in the palette
-    // but in no menu, so browsing Format said the editor had no checklists at
-    // all (docs/104 HF-076).
-    ["paragraph.list.bullet", "paragraph.list.numbered", "paragraph.list.checklist"],
-    ["paragraph.list.restart", "paragraph.list.continue"],
-    ["paragraph.indent.decrease", "paragraph.indent.increase", "layout.paragraph"],
-    // Copying formatting is a FORMAT action. Filing it under Edit put it next to
-    // cut/paste, where it reads as clipboard behaviour.
-    ["format.painter"],
-    ["style.updateFromSelection", "style.createFromSelection"],
-  ],
-  // Every structural table command already ran through `tableToolCommands` and
-  // was reachable from the right-click menu and the palette — and from no menu
-  // at all (docs/105 UX-012), so a user browsing the bar was told the editor
-  // could not edit tables. The rows below are the SAME command objects, so
-  // gating, disabled reasons and the transactions they run cannot drift.
-  table: [
-    ["table.insert.rowAbove", "table.insert.rowBelow", "table.insert.columnLeft", "table.insert.columnRight"],
-    ["table.delete.row", "table.delete.column", "table.delete.table"],
-    ["table.select.row", "table.select.column", "table.select.table"],
-    ["table.merge", "table.split"],
-    ["table.distribute.rows", "table.distribute.columns"],
-    ["table.sort.ascending", "table.sort.descending"],
-    ["table.cellFormat", "table.properties"],
-  ],
-  review: [
-    ["review.toggle"],
-    ["review.previous", "review.next"],
-    ["review.acceptNext", "review.rejectNext"],
-    ["review.acceptAll", "review.rejectAll"],
-  ],
-  tools: [["tools.smartQuotes"], ["view.settings"]],
-  help: [["help.commands", "help.shortcuts"], ["help.about"]],
-};
-
-// Menu labels for the table rows. `tableToolCommands` supplies behaviour; only
-// the LABEL differs by surface. The palette needs its "Table:" prefix because it
-// is one flat global list, while a row inside the Table menu already has that
-// noun from the menu it sits in. This map is explicit rather than derived from
-// the submenu trail because the trails do not compose into readable text
-// ("Delete Delete row", "Autofit & sort Distribute rows"). `menu-taxonomy`
-// fails if this map and the command set disagree in either direction.
-const TABLE_MENU_LABELS = new Map([
-  ["table.insert.rowAbove", "Insert row above"],
-  ["table.insert.rowBelow", "Insert row below"],
-  ["table.insert.columnLeft", "Insert column left"],
-  ["table.insert.columnRight", "Insert column right"],
-  ["table.delete.row", "Delete row"],
-  ["table.delete.column", "Delete column"],
-  ["table.delete.table", "Delete table"],
-  ["table.select.row", "Select row"],
-  ["table.select.column", "Select column"],
-  ["table.select.table", "Select table"],
-  ["table.merge", "Merge cells"],
-  ["table.split", "Split cell…"],
-  ["table.distribute.rows", "Distribute rows"],
-  ["table.distribute.columns", "Distribute columns"],
-  ["table.sort.ascending", "Sort ascending"],
-  ["table.sort.descending", "Sort descending"],
-  ["table.cellFormat", "Cell formatting…"],
-  ["table.properties", "Table properties…"],
-]);
-
 
 function appMenuFocusableItems() {
   return [...appMenuPopover.querySelectorAll(".app-menu-item:not(:disabled)")];
@@ -14935,16 +14763,6 @@ function setFindStatus(text, miss = false) {
   findStatus.classList.toggle("miss", miss);
 }
 
-/** Scans every match in document order, starting from the top, up to
- * FIND_SCAN_CAP — bounded like every other pagination/parse loop in this
- * codebase, since findText wraps around and would otherwise loop forever.
- * Once every match has been visited once, the engine's wrap fallback can
- * re-surface *any* earlier match (not necessarily the first one), so
- * termination checks membership in every key seen so far, not just the
- * first — comparing only to the first match's key under-counts (it can
- * oscillate between two later matches forever without ever revisiting the
- * exact first one). */
-const findTextEncoder = new TextEncoder();
 const findParagraphTextCache = new Map();
 
 function paragraphTextForFind(node) {
@@ -14955,25 +14773,16 @@ function paragraphTextForFind(node) {
   return findParagraphTextCache.get(node);
 }
 
-function byteOffsetToStringIndex(text, byteOffset) {
-  if (byteOffset <= 0) return 0;
-  let bytes = 0;
-  for (let i = 0; i < text.length; ) {
-    if (bytes >= byteOffset) return i;
-    const cp = text.codePointAt(i);
-    const width = findTextEncoder.encode(String.fromCodePoint(cp)).length;
-    bytes += width;
-    i += cp > 0xffff ? 2 : 1;
-  }
-  return text.length;
-}
-
-function isWholeWordMatch(match, query) {
+/** Whether an engine match stands alone as a word — the "Whole word" option.
+ *  The paragraph text comes from the engine; the boundary rule itself is
+ *  `isWholeWordAt`, which is pure and unit-tested. */
+function isWholeWordMatch(match) {
   const text = paragraphTextForFind(match.startNode);
-  const start = byteOffsetToStringIndex(text, match.startOffset);
-  const end = byteOffsetToStringIndex(text, match.endOffset);
-  const word = /[\p{L}\p{N}_]/u;
-  return !word.test(text[start - 1] || "") && !word.test(text[end] || "");
+  return isWholeWordAt(
+    text,
+    byteOffsetToStringIndex(text, match.startOffset),
+    byteOffsetToStringIndex(text, match.endOffset),
+  );
 }
 
 function clearFindParagraphCache() {
@@ -15038,6 +14847,15 @@ function matchInFindSelection(match) {
   );
 }
 
+/** Scans every match in document order, starting from the top, up to
+ * FIND_SCAN_CAP — bounded like every other pagination/parse loop in this
+ * codebase, since findText wraps around and would otherwise loop forever.
+ * Once every match has been visited once, the engine's wrap fallback can
+ * re-surface *any* earlier match (not necessarily the first one), so
+ * termination checks membership in every key seen so far, not just the
+ * first — comparing only to the first match's key under-counts (it can
+ * oscillate between two later matches forever without ever revisiting the
+ * exact first one). */
 function scanAllMatches(query, matchCase, wholeWord = false) {
   const matches = [];
   if (!doc || !query) return matches;
@@ -15064,7 +14882,7 @@ function scanAllMatches(query, matchCase, wholeWord = false) {
       endNode: match.endNode,
       endOffset: match.endOffset,
     };
-    if ((!wholeWord || isWholeWordMatch(candidate, query)) && matchInFindSelection(candidate)) {
+    if ((!wholeWord || isWholeWordMatch(candidate)) && matchInFindSelection(candidate)) {
       matches.push(candidate);
     }
     node = match.endNode;
@@ -16177,9 +15995,6 @@ document.addEventListener("compositionend", async (e) => {
 const SMART_QUOTE_PREF = "opendoc.smartQuotes";
 let smartQuotesEnabled = readPref(SMART_QUOTE_PREF) !== "off";
 
-/** Characters after which a quote is an OPENING quote. */
-const QUOTE_OPENERS = new Set(["(", "[", "{", "\u2018", "\u201C", "\u2014", "\u2013", "-", "/"]);
-
 function setSmartQuotes(enabled) {
   smartQuotesEnabled = enabled;
   writePref(SMART_QUOTE_PREF, enabled ? "on" : "off");
@@ -16212,9 +16027,7 @@ function smartQuoteFor(key, node, offset) {
       return key; // an engine that cannot read the position gets the literal key
     }
   }
-  const opening = previous === "" || /\s/u.test(previous) || QUOTE_OPENERS.has(previous);
-  if (key === '"') return opening ? "\u201C" : "\u201D";
-  return opening ? "\u2018" : "\u2019";
+  return smartQuoteChar(key, previous);
 }
 
 const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
