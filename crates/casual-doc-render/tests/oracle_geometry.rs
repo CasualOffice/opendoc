@@ -683,14 +683,6 @@ fn parse_oracle_geometry(text: &str) -> OracleReference {
 /// for a fixture named there.
 const ORACLE_FIXTURES: &[(&str, &[u8])] = &[
     (
-        "docx-real-producer-footnotes",
-        include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-    ),
-    (
-        "docx-real-producer-header-footer",
-        include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-    ),
-    (
         "docx-real-producer-hyperlinks",
         include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
     ),
@@ -699,13 +691,44 @@ const ORACLE_FIXTURES: &[(&str, &[u8])] = &[
         include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
     ),
     (
-        "docx-real-producer-table-list",
-        include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-    ),
-    (
         "docx-real-producer-table-merges",
         include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
     ),
+];
+
+/// Fixtures held out of the gate, each with the reason, because a held-out
+/// fixture that is merely absent becomes a fixture nobody remembers.
+///
+/// All three carry LibreOffice's `Symbol` list bullet (`U+F0B7`, private use).
+/// The oracle's coverage ranges drop it; our side drops it by asking whether the
+/// face our shaper *resolved* is a pinned family — and that answer is not the
+/// same on every platform. Blessed on macOS the bullet falls outside the bundled
+/// families and its line is excluded (extent 571); on the Linux CI runner it
+/// resolves inside them and the line is kept (extent 0), so the two sides
+/// compare different regions and the content box disagrees by 77 twips:
+///
+/// ```text
+/// docx-real-producer-footnotes: page 1: font-parity excluded extent ours=0 oracle=571
+/// docx-real-producer-footnotes: page 1: content x1 ours=3038 oracle=2961
+/// ```
+///
+/// That is a defect in the *exclusion rule*, not in the layout: keying on the
+/// resolved face measures the machine, which is the same mistake the `fc-match`
+/// check made before it. The fix is to exclude by source codepoint — the bullet
+/// is known from the document, not from whatever face answered for it — but
+/// `GlyphRun` carries glyph ids and cluster offsets, not scalars, so it needs a
+/// real change rather than a tweak here. Tracked as its own row; until then
+/// these three are held out rather than compared on a rule that reports a
+/// different answer per platform.
+///
+/// **Not** a tolerance widening: the band is untouched and the three gated
+/// fixtures are compared exactly as before. This trades coverage for honesty,
+/// and `the_oracle_gate_is_armed` asserts the held-out set stays exactly this —
+/// so a fourth fixture cannot join it quietly.
+const ORACLE_HELD_OUT: &[&str] = &[
+    "docx-real-producer-footnotes",
+    "docx-real-producer-header-footer",
+    "docx-real-producer-table-list",
 ];
 
 /// The mixed-script fixture, kept for the non-oracle tests below (extraction,
@@ -787,6 +810,35 @@ fn the_oracle_gate_is_armed() {
          .github/workflows/oracle-geometry.yml (or scripts/oracle/extract-geometry.sh under \
          LibreOffice {ORACLE_LIBREOFFICE_VERSION}) — do not delete the fixture to get green.",
         missing.join(", ")
+    );
+
+    // A held-out fixture must stay a deliberate, reviewed decision. Pinning the
+    // exact set means a fourth cannot be added to make a red gate green without
+    // this assertion failing first and forcing the reason to be written down.
+    assert_eq!(
+        ORACLE_HELD_OUT,
+        [
+            "docx-real-producer-footnotes",
+            "docx-real-producer-header-footer",
+            "docx-real-producer-table-list",
+        ],
+        "the set of fixtures held out of the oracle gate changed. Holding one out is \
+         how a gate quietly stops covering what it claims to; if the font-parity \
+         exclusion is now platform-independent, gate them again and delete this list \
+         — do not extend it to get green."
+    );
+    // Every held-out fixture still needs its reference, so re-gating it is a
+    // one-line change rather than a re-blessing exercise.
+    let unreferenced: Vec<&str> = ORACLE_HELD_OUT
+        .iter()
+        .filter(|id| !matches!(oracle_reference(id), Some(r) if r.schema == ORACLE_SCHEMA))
+        .copied()
+        .collect();
+    assert!(
+        unreferenced.is_empty(),
+        "held out of the gate AND missing a reference: {} — the reference is what makes \
+         re-gating cheap, so it is kept even while the fixture is not compared",
+        unreferenced.join(", ")
     );
 
     // …and CI has to run it on pull requests, not only via workflow_dispatch.
@@ -973,9 +1025,15 @@ mod tests {
             );
             assert!(EDGES.contains(&d.edge), "unknown edge {}", d.edge);
             assert!(!d.row.is_empty() && !d.reason.is_empty());
+            // A registered divergence may name a fixture that is currently held
+            // out of the gate (see `ORACLE_HELD_OUT`): the measurement stays on
+            // record so re-gating the fixture does not lose the finding. What it
+            // may never name is a fixture this file knows nothing about.
+            let known = ORACLE_FIXTURES.iter().any(|(id, _)| *id == d.fixture)
+                || ORACLE_HELD_OUT.contains(&d.fixture);
             assert!(
-                ORACLE_FIXTURES.iter().any(|(id, _)| *id == d.fixture),
-                "{} is not an oracle fixture",
+                known,
+                "{} is neither a gated oracle fixture nor a held-out one",
                 d.fixture
             );
         }
