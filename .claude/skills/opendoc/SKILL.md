@@ -211,6 +211,42 @@ Per `AGENTS.md`: read the docs, design, discuss substantial designs, update
 `docs/14-EXECUTION-TRACKER.md`, implement in reviewable increments, test, keep docs and
 ADRs current.
 
+### Name the known pattern before inventing an approach
+
+**Before designing anything structural, say what the established solution is.** Most
+problems here are not new: they are caching, interning, virtualization, copy-on-write,
+normalization, indexing, streaming, back-pressure. Write down which one applies, or why
+none does, *before* writing code. A design that does not name its prior art is usually
+about to rediscover it badly.
+
+This is here because the owner had to supply it, twice in one session, on work that had
+already shipped three increments:
+
+- **Model memory.** Every `Paragraph` and `Run` stored its properties **by value**, so a
+  1.3M-paragraph plain-text document held 1.3 million copies of one distinct
+  `RunProperties`. Three rounds of work boxed rarely-populated *fields* — each measured
+  less than projected — while the actual defect was duplication, not struct width. The
+  owner named it: *"minimising repeated properties… normalization/denormalization, people
+  study it first year of college."* **Flyweight/interning**: properties in a side table,
+  nodes holding a handle, copy-on-write on mutation. ~1,000 B/paragraph to ~150–200 B —
+  a change of kind, not of degree, and unreachable by shrinking fields.
+- The same session raised a viewer ceiling three times by measurement alone before asking
+  what the *shape* of the cost was.
+
+The tell is a sequence of increments each buying less than the last. That is not a hard
+problem being ground down; it is the wrong axis. Stop and ask what the textbook does.
+
+Corollaries that follow from the same habit:
+
+- **Quote the competitive standard for interaction design**, not just for features — §1
+  and the editing-standard rule already say every interaction is designed from Word/Docs
+  first. A dropdown holding every style in the document fails that test before any code
+  is written.
+- **Prefer one mechanism over two.** The windowed-layout work kept a single paginator
+  generic over a trait rather than writing a second height-only one, because two
+  implementations of one rule diverge. When a design needs a parallel path, that is
+  evidence the abstraction is wrong.
+
 - Durable knowledge goes in a **numbered doc** under `docs/`. Decisions go in an **ADR**
   (`docs/08-ADR-REGISTER.md`). Execution state goes in the **tracker**.
 - **Record open questions rather than hiding uncertainty.** Where behaviour deliberately
