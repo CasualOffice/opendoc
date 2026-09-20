@@ -14,7 +14,22 @@ import {
   packFontBytes,
 } from "./web_fonts.mjs";
 import { embedMarker, extractMarker, htmlToRuns, htmlToStructured, runsToHtml } from "./clipboard.mjs";
-import { editRefusalMessage } from "./edit_errors.mjs";
+import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
+import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
+import { createAboutDialog } from "./about_dialog.mjs";
+import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
+import { printDocument } from "./print.mjs";
+import {
+  MAX_SCROLL_PX,
+  PAGE_GAP_PX,
+  PAGE_WINDOW_OVERSCAN_PX,
+  buildPageBand,
+  docToScroll,
+  pageClientRect,
+  pageRangeAt,
+  scrollToDoc,
+} from "./page_scroll.mjs";
 import {
   compatibilityOccurrenceCount,
   downloadNameForFormat,
@@ -1273,7 +1288,6 @@ const outlineBody = document.getElementById("outlineBody");
 const pagesPanel = document.getElementById("pagesPanel");
 const pagesClose = document.getElementById("pagesClose");
 const pagesBody = document.getElementById("pagesBody");
-const a11yDocument = document.getElementById("a11yDocument");
 const reviewBtn = document.getElementById("reviewBtn");
 const reviewClose = document.getElementById("reviewClose");
 const reviewFilters = [...document.querySelectorAll("[data-review-filter]")];
@@ -1287,11 +1301,24 @@ const reviewBulkActions = document.getElementById("reviewBulkActions");
 const suggestingBanner = document.getElementById("suggestingBanner");
 const suggestingBannerEdit = document.getElementById("suggestingBannerEdit");
 const viewingBanner = document.getElementById("viewingBanner");
+const viewingBannerText = document.getElementById("viewingBannerText");
 const viewingBannerEdit = document.getElementById("viewingBannerEdit");
+/** The banner's own authored sentence, so a read-only reason can replace it and
+ *  be put back without a second copy of the string here. */
+const VIEWING_BANNER_DEFAULT = viewingBannerText?.textContent ?? "";
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 let reviewMode = "editing";
+/** Why this DOCUMENT cannot be edited at all, or "" when it can be.
+ *
+ *  The engine answers this (`editingUnavailableReason`), and exactly one
+ *  document in the product says anything: one too large to lay out whole, which
+ *  the viewer opens one page-window at a time (`docs/113` §8.3/§8.7). Unlike
+ *  Viewing mode — a choice the reader can reverse — this one cannot be switched
+ *  off, which is why the mode buttons are disabled and the banner loses its
+ *  "Switch to editing" escape. */
+let readOnlyReason = "";
 let activeReviewCommentId = null;
 
 // The "Show changes" markup preview (docs/93): renders struck deletions +
@@ -1538,7 +1565,13 @@ function updateReviewControls() {
   if (!doc) return;
   let count = 0;
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
-  for (const button of reviewModeButtons) button.disabled = false;
+  // A document the engine will not let anyone edit cannot offer Editing or
+  // Suggesting: the buttons are disabled WITH the reason, not left live.
+  for (const button of reviewModeButtons) {
+    button.disabled = !!readOnlyReason;
+    if (readOnlyReason) button.title = readOnlyReason;
+    else button.removeAttribute("title");
+  }
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -1553,10 +1586,21 @@ function updateReviewControls() {
  *  value falls back to `editing`. */
 function setReviewMode(mode) {
   const previous = reviewMode;
+  // A read-only document has one mode. Asked for another — by a shortcut, the
+  // palette, or a stale click — it stays where it is and says why.
+  if (readOnlyReason && mode !== "viewing") {
+    setStatus(readOnlyReason, "error");
+    mode = "viewing";
+  }
   reviewMode =
     mode === "suggesting" ? "suggesting" : mode === "viewing" ? "viewing" : "editing";
   suggestingBanner.hidden = reviewMode !== "suggesting";
   if (viewingBanner) viewingBanner.hidden = reviewMode !== "viewing";
+  if (viewingBannerText) {
+    viewingBannerText.textContent = readOnlyReason || VIEWING_BANNER_DEFAULT;
+  }
+  // There is nothing to switch to: the offer would be a dead control.
+  if (viewingBannerEdit) viewingBannerEdit.hidden = !!readOnlyReason;
   for (const button of reviewModeButtons) {
     button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
   }
@@ -2436,8 +2480,14 @@ function renderReviewMarginItems() {
   // plain list (HF-088). Anchors are still computed for the margin shape in
   // document-scroll coordinates, from each item's on-canvas marker.
   const seen = new Set();
+  const layout = [];
+  // BAND coordinates, not scroll coordinates. `bandOffset` moves on every
+  // scroll once a document is compressed (`page_scroll.mjs`), so an anchor
+  // stored in scroll coordinates drifts from its marker by (scale - 1) × the
+  // distance scrolled; subtracting it here and adding it back at mount time
+  // pins the card. At scale 1 the offset is 0 and nothing changes.
   const anchorY = built.map(
-    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop,
+    ({ item }) => item.rect.top - viewportRect.top + viewportEl.scrollTop - bandOffset,
   );
   const heights = built.map(({ entry }) => entry.height);
   const tops = stackReviewCards({
@@ -2478,8 +2528,13 @@ function mountReviewWindow() {
   // margin shape, the sheet itself when the sheet is the scroller (HF-088).
   const scroller = reviewSheetMode() ? reviewSidebar : viewportEl;
   const scrollTop = scroller.scrollTop;
-  const bandTop = scrollTop - REVIEW_WINDOW_OVERSCAN;
-  const bandBottom = scrollTop + scroller.clientHeight + REVIEW_WINDOW_OVERSCAN;
+  // Stored in band coordinates; the live offset converts them back. Here
+  // rather than in the layout pass because this runs on every scroll frame.
+  // The bottom sheet scrolls itself and is never the compressed band, so its
+  // offset is 0 — taking it unconditionally keeps one expression for both.
+  const offset = reviewSheetMode() ? 0 : bandOffset;
+  const bandTop = scrollTop - offset - REVIEW_WINDOW_OVERSCAN;
+  const bandBottom = scrollTop - offset + scroller.clientHeight + REVIEW_WINDOW_OVERSCAN;
   for (const { itemId, top, entry } of reviewLayout) {
     // The composer and the active/expanded card are always kept mounted: they
     // own live focus/controls the user is interacting with.
@@ -2487,7 +2542,7 @@ function mountReviewWindow() {
     const visible = force || (top + entry.height >= bandTop && top <= bandBottom);
     const mounted = entry.el.parentNode === reviewSidebarBody;
     if (visible) {
-      entry.el.style.top = `${Math.round(top)}px`;
+      entry.el.style.top = `${Math.round(top + offset)}px`;
       if (!mounted) reviewSidebarBody.appendChild(entry.el);
       if (entry.needsFocus && entry.focusTextarea) {
         entry.needsFocus = false;
@@ -3331,7 +3386,11 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     startPosition.free();
     tableSelection = null;
     objectCropSession = null; // a new document invalidates any in-progress crop
-    reviewMode = "editing";
+      // Ask the engine, before anything is offered, whether this document can be
+    // edited at all: everything downstream — the mode buttons, the banner,
+    // every refusal message — reads this one answer (`docs/113` §8.7).
+    readOnlyReason = String(doc.editingUnavailableReason ?? "");
+    reviewMode = readOnlyReason ? "viewing" : "editing";
     suggestingBanner.hidden = true;
     if (viewingBanner) viewingBanner.hidden = true;
     reviewSidebarPreference = null;
@@ -3345,6 +3404,10 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     for (const button of reviewModeButtons) {
       button.setAttribute("aria-pressed", String(button.dataset.reviewMode === reviewMode));
     }
+      // Through the one function that owns mode state, so the banner, its
+    // (removed) escape hatch and the disabled buttons cannot drift from
+    // `reviewMode`.
+    if (readOnlyReason) setReviewMode("viewing");
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
@@ -3560,16 +3623,35 @@ async function ensureGlyphCoverage(label) {
 }
 
 // ---- Page virtualization -----------------------------------------------------
-// A document keeps ONE lightweight `.page-wrap` (sized from the page box) per
-// page, but a live raster `<canvas>` only for pages in or near the viewport.
-// Off-screen pages are blank sheet placeholders, so tab memory is bounded by the
-// viewport, not the page count. An IntersectionObserver mounts a page's canvas
-// as it scrolls in and releases it (freeing the RGBA buffer) as it scrolls out.
+// The pages live inside ONE positioned element, `.page-band`, whose height is
+// the scroll container's height. A sheet element (`.page-wrap`) exists only for
+// the pages in or near the viewport; every other page is arithmetic in
+// `page_scroll.mjs` and nothing in the DOM at all. A live raster `<canvas>` is
+// mounted inside a sheet as it comes on screen and released as it leaves, so
+// tab memory AND node count are bounded by the viewport, not the page count.
+//
+// Why a band rather than one sheet per page in flow, and what the mapping from
+// scroll space to document space costs: `page_scroll.mjs`, `docs/113` §8.6.
 
 /** Keep a live canvas for pages within ~one viewport-height of the visible band
  *  above and below, so a normal scroll never reveals an unpainted page. */
 const PAGE_VIRTUALIZATION_ROOT_MARGIN = "100% 0px";
 let pageObserver = null;
+
+/** The current page stack + scroll mapping (`buildPageBand`), or null. */
+let pageBandModel = null;
+/** The `.page-band` element holding the materialized sheets, or null. */
+let bandEl = null;
+/** What a page's document-space top is shifted by to place it in the band;
+ *  always 0 while the document fits under `MAX_SCROLL_PX`. */
+let bandOffset = 0;
+/** The band's top in the scroller's own scroll coordinates (the ruler and the
+ *  viewport padding sit above it). Measured once per render, not per scroll. */
+let bandTopInScroller = 0;
+/** The materialized page range, inclusive; `last < first` means none. The
+ *  Pages navigator keeps its own, because it windows separately. */
+let pageWindow = { first: 0, last: -1 };
+let pagesPanelRange = { start: 0, end: -1 };
 
 function ensurePageObserver() {
   if (pageObserver) return pageObserver;
@@ -3589,21 +3671,136 @@ function ensurePageObserver() {
   return pageObserver;
 }
 
-/** Rewire the observer to the current page set (called after every rebuild). */
-function observePages() {
-  const obs = ensurePageObserver();
-  obs.disconnect();
-  for (const page of pages) {
-    page.wrap.__pageIndex = page.pageNumber - 1;
-    obs.observe(page.wrap);
-  }
-}
-
 /** Resolve an observed wrap back to its (still-current) page index, or -1. */
 function pageIndexOfWrap(wrap) {
   const idx = wrap.__pageIndex;
   return Number.isInteger(idx) && pages[idx]?.wrap === wrap ? idx : -1;
 }
+
+/** The pages that currently have a sheet, in page order. Every loop that walks
+ *  `pages` looking for DOM goes through this: bounded by the window, not by a
+ *  page count that can be 25,556. */
+function materializedPages() {
+  const out = [];
+  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
+    if (pages[i]?.wrap) out.push(pages[i]);
+  }
+  return out;
+}
+
+/** How far outside the viewport a page stays materialized: at least a viewport
+ *  height (so an ordinary scroll never reveals a missing sheet) and at least
+ *  `PAGE_WINDOW_OVERSCAN_PX`, which covers the comment column's mounting band
+ *  so a card never anchors to a page that does not exist. */
+function pageWindowOverscan() {
+  return Math.max(viewportEl.clientHeight, PAGE_WINDOW_OVERSCAN_PX);
+}
+
+/** The band-local y a page's sheet is positioned at, in CSS px. */
+function pageBandTop(index) {
+  return bandOffset + pageBandModel.tops[index];
+}
+
+/** The client rect a page's sheet has, or WOULD have if it were materialized.
+ *
+ *  Every twip→pixel conversion goes through `scaleOf`, and the pages it is
+ *  asked about are no longer all in the DOM: a comment eight pages down, a
+ *  find match on page 20,000, the caret after a jump. The band's rect plus the
+ *  page's position answers those exactly — and identically to
+ *  `getBoundingClientRect()`, because that is where the sheet was put. */
+function virtualPageRect(index) {
+  return pageClientRect(bandEl.getBoundingClientRect(), pageBandModel, index, bandOffset);
+}
+
+/** Build the sheet (and overlay) for one page, in page order in the band. */
+function materializePage(index) {
+  const page = pages[index];
+  if (!page || page.wrap) return;
+  const wrap = document.createElement("div");
+  wrap.className = "page-wrap";
+  wrap.dataset.pageNumber = String(index + 1);
+  wrap.style.width = `${pageBandModel.widths[index]}px`;
+  wrap.style.height = `${pageBandModel.heights[index]}px`;
+  wrap.style.left = `${Math.round((pageBandModel.width - pageBandModel.widths[index]) / 2)}px`;
+  wrap.style.top = `${pageBandTop(index)}px`;
+  wrap.__pageIndex = index;
+
+  // A transparent overlay above the canvas holds the caret/selection we draw
+  // ourselves from engine geometry — so the highlight matches the raster
+  // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  wrap.appendChild(overlay);
+
+  // Keep the DOM in page order: hit-testing and the browser suite both read
+  // document order off element order.
+  let before = null;
+  for (const el of bandEl.children) {
+    if (Number(el.dataset.pageNumber) > index + 1) {
+      before = el;
+      break;
+    }
+  }
+  bandEl.insertBefore(wrap, before);
+  page.wrap = wrap;
+  page.overlay = overlay;
+  ensurePageObserver().observe(wrap);
+}
+
+/** Drop one page's sheet, canvas and overlay. The page RECORD survives. */
+function dematerializePage(page) {
+  if (!page.wrap) return;
+  pageObserver?.unobserve(page.wrap);
+  page.wrap.remove();
+  page.wrap = null;
+  page.overlay = null;
+  page.canvas = null;
+  page.visible = false;
+}
+
+/** Re-place the window of sheets for the current scroll position.
+ *
+ *  Called from the scroll handler, so it must be cheap: a binary search, a few
+ *  node insertions and one style write per sheet. It repaints the overlay layer
+ *  only when the window moved — the sheets that just appeared have empty
+ *  overlays, and the markers on them have to be drawn again. */
+function updatePageWindow({ force = false } = {}) {
+  if (!doc || !pageBandModel || !bandEl) return;
+  const viewportHeight = viewportEl.clientHeight;
+  const { docY, offset } = scrollToDoc(
+    pageBandModel,
+    viewportHeight,
+    viewportEl.scrollTop - bandTopInScroller,
+  );
+  const overscan = pageWindowOverscan();
+  const range = pageRangeAt(pageBandModel, docY - overscan, docY + viewportHeight + overscan);
+  const moved = range.first !== pageWindow.first || range.last !== pageWindow.last;
+  if (!force && !moved && offset === bandOffset) return;
+
+  bandOffset = offset;
+  const previous = pageWindow;
+  pageWindow = range;
+  // Only a page that HAD a sheet can lose one: bounded by the window's size.
+  for (let i = previous.first; i <= previous.last; i++) {
+    if ((i < range.first || i > range.last) && pages[i]) dematerializePage(pages[i]);
+  }
+  for (let i = range.first; i <= range.last; i++) {
+    materializePage(i);
+    // The offset moves on every scroll once the document is compressed, so the
+    // sheets that stayed have to move with it.
+    pages[i].wrap.style.top = `${pageBandTop(i)}px`;
+  }
+  if (moved || force) {
+    paintOverlayLayer();
+    if (runningEditBand) drawRunningBands(runningEditBand);
+    syncPagesPanelToViewport();
+  }
+}
+
+/** The scroll owner for page materialization. Synchronous on purpose: a sheet
+ *  one frame late is a blank page under the reader's eyes, and every geometry
+ *  answer (`scaleOf`) before that frame would use a stale offset. */
+viewportEl.addEventListener("scroll", () => updatePageWindow(), { passive: true });
 
 /** Mount and paint a page's raster canvas if it has none. The RGBA buffer is
  *  freed back to WASM immediately after the blit so it never accumulates. */
@@ -3644,8 +3841,9 @@ function paintPagesInView() {
   if (!pages.length) return;
   const vr = viewportEl.getBoundingClientRect();
   const margin = vr.height;
-  for (let i = 0; i < pages.length; i++) {
+  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
     const page = pages[i];
+    if (!page?.wrap) continue;
     const r = page.wrap.getBoundingClientRect();
     const onscreen = r.bottom >= vr.top - margin && r.top <= vr.bottom + margin;
     page.visible = onscreen;
@@ -3653,109 +3851,6 @@ function paintPagesInView() {
   }
 }
 
-// ---- Print (⌘/Ctrl+P) --------------------------------------------------------
-// Printing must reproduce EVERY page, but the viewport keeps a live raster only
-// for on-screen pages (virtualization), so `window.print()` alone would emit
-// mostly-blank sheets. A dedicated print path renders each page independently
-// with `doc.renderPage` into an off-DOM `#printContainer` (one canvas per page
-// at the page's real physical size), calls the browser print dialog, then tears
-// the container down. It never touches the live `.page-wrap`/`.overlay`/canvas
-// set, so the normal virtualized state is preserved automatically — nothing to
-// restore. Each transient bitmap is `free()`d right after the blit (as
-// `paintPageCanvas` does) so a long document's print build never balloons tab
-// memory beyond the sheet canvases it must hold to print.
-
-// Print raster resolution. High enough for crisp printed text, low enough that
-// the transient per-page RGBA buffer (freed immediately) and the retained sheet
-// canvases stay modest even for a long document.
-const PRINT_DPI = 150;
-let printStyleEl = null;
-
-/** Remove the off-DOM print container and its injected stylesheet, if present.
- *  Idempotent, so it is safe to call defensively before a build and in the
- *  `finally` after `window.print()`. */
-function teardownPrint() {
-  document.getElementById("printContainer")?.remove();
-  printStyleEl?.remove();
-  printStyleEl = null;
-}
-
-/** Build the print-only stylesheet. On screen `#printContainer` is hidden; in
- *  print it is the ONLY visible element (all editor chrome is hidden) and each
- *  page sheet breaks to its own physical page. `@page` is sized to the document
- *  page with zero margin — the rendered raster already includes the document's
- *  own margins, so a sheet margin here would double them. */
-function buildPrintStyle(wIn, hIn) {
-  const style = document.createElement("style");
-  style.id = "printStyle";
-  style.textContent = `
-#printContainer { display: none; }
-@media print {
-  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-  body > *:not(#printContainer) { display: none !important; }
-  #printContainer { display: block !important; }
-  #printContainer .print-page { display: block; break-after: page; page-break-after: always; }
-  #printContainer .print-page:last-child { break-after: auto; page-break-after: auto; }
-  @page { size: ${wIn}in ${hIn}in; margin: 0; }
-}`;
-  return style;
-}
-
-/** Print the rendered document pages. Read-only, always allowed (no mutation
- *  gate, no unsaved-changes requirement). */
-function printDocument() {
-  if (!doc) return;
-  teardownPrint(); // clear any stale build from an interrupted prior print
-  const count = doc.pageCount;
-  if (!count) return;
-
-  // The sheet size (for `@page`) comes from the first page in inches. Each page
-  // canvas is additionally sized to its own physical dimensions, so a document
-  // with mixed page sizes still prints each page at its true proportion.
-  const first = doc.pageSize(0);
-  const sheetWIn = first.widthTwip / TWIPS_PER_INCH;
-  const sheetHIn = first.heightTwip / TWIPS_PER_INCH;
-  first.free();
-
-  const container = document.createElement("div");
-  container.id = "printContainer";
-  container.setAttribute("aria-hidden", "true");
-
-  for (let i = 0; i < count; i++) {
-    let bmp;
-    try {
-      bmp = doc.renderPage(i, PRINT_DPI);
-    } catch (err) {
-      console.error(`print render page ${i}`, err);
-      continue;
-    }
-    const canvas = document.createElement("canvas");
-    canvas.className = "print-page";
-    canvas.width = bmp.widthPx;
-    canvas.height = bmp.heightPx;
-    canvas.getContext("2d").putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
-    bmp.free(); // return the RGBA buffer to WASM now, not at GC.
-    // Present the high-res raster at the page's true physical size so it fills
-    // the (margin-0) sheet exactly and prints at full resolution.
-    const size = doc.pageSize(i);
-    canvas.style.width = `${size.widthTwip / TWIPS_PER_INCH}in`;
-    canvas.style.height = `${size.heightTwip / TWIPS_PER_INCH}in`;
-    size.free();
-    container.appendChild(canvas);
-  }
-
-  printStyleEl = buildPrintStyle(sheetWIn, sheetHIn);
-  document.head.appendChild(printStyleEl); // hides the container on screen first
-  document.body.appendChild(container);
-  try {
-    window.print();
-  } finally {
-    // `window.print()` blocks until the dialog is dismissed in Chromium/Firefox,
-    // so the sheets are gone as soon as printing ends — the viewport's live
-    // virtualized canvases were never disturbed.
-    teardownPrint();
-  }
-}
 
 async function renderAll() {
   if (!doc) return;
@@ -3773,12 +3868,13 @@ async function renderAll() {
   // the page box geometry (hence scroll height and hit-test scale) is stable.
   const cssPerTwip = (BASE_DPI * zoom) / TWIPS_PER_INCH;
 
-  // Build the replacement page set off-DOM and publish it atomically. Only the
-  // sheet-sized wraps + overlays are created here; the raster canvases are
-  // mounted lazily by the viewport observer, so a large document never rasters
-  // every page up front.
+  // Build the replacement page set off-DOM and publish it atomically. NO sheet
+  // elements are created here — only the page records and the band geometry
+  // they imply. Sheets, overlays and raster canvases are materialized for the
+  // pages near the viewport by `updatePageWindow`, so neither the node count
+  // nor the scroll height depends on how long the document is.
   const nextPages = [];
-  const fragment = document.createDocumentFragment();
+  const sizes = [];
   const renderingStatus =
     `Rendering ${count} page${count === 1 ? "" : "s"} at ${Math.round(zoom * 100)}%…`;
   setStatus(renderingStatus);
@@ -3787,40 +3883,48 @@ async function renderAll() {
     if (token !== renderToken) return;
 
     // The page box in twips — the domain of hit-testing and selection geometry,
-    // and the source of the wrap's fixed CSS size so it holds space whether or
-    // not a live canvas is currently mounted.
+    // and the source of the sheet's CSS size, so the page holds its space
+    // whether or not it currently has a sheet at all.
     const size = doc.pageSize(i);
     const wTwip = size.widthTwip;
     const hTwip = size.heightTwip;
     size.free();
-
-    const wrap = document.createElement("div");
-    wrap.className = "page-wrap";
-    const pageWidthPx = wTwip * cssPerTwip;
-    wrap.style.width = `${pageWidthPx}px`;
-    // Publish the sheet's rendered width so the stylesheet can size the review
-    // gutter against the space that is ACTUALLY spare. CSS cannot know this —
-    // it depends on paper size and zoom — and a gutter reserved from space that
-    // does not exist pushes the page off the side of the window (docs/64).
-    if (i === 0) viewportEl.style.setProperty("--page-width", `${pageWidthPx}px`);
-    wrap.style.height = `${hTwip * cssPerTwip}px`;
-
-    // A transparent overlay above the canvas holds the caret/selection we draw
-    // ourselves from engine geometry — so the highlight matches the raster
-    // exactly (doc 58: custom engine-driven selection, no overlay-vs-glyph drift).
-    const overlay = document.createElement("div");
-    overlay.className = "overlay";
-    wrap.appendChild(overlay);
-
-    fragment.appendChild(wrap);
-    nextPages.push({ pageNumber: i + 1, wrap, overlay, canvas: null, wTwip, hTwip, visible: false });
+    sizes.push({ widthTwip: wTwip, heightTwip: hTwip });
+    nextPages.push({
+      pageNumber: i + 1,
+      wrap: null,
+      overlay: null,
+      canvas: null,
+      wTwip,
+      hTwip,
+      visible: false,
+    });
   }
 
   if (token !== renderToken) return;
   pages = nextPages;
-  pagesEl.replaceChildren(ruler, fragment); // ruler sits above the pages, same width
+  pageBandModel = buildPageBand(sizes, cssPerTwip, { gap: PAGE_GAP_PX, maxScroll: MAX_SCROLL_PX });
+  // Publish the sheet's rendered width so the stylesheet can size the review
+  // gutter against the space that is ACTUALLY spare. CSS cannot know this —
+  // it depends on paper size and zoom — and a gutter reserved from space that
+  // does not exist pushes the page off the side of the window (docs/64).
+  if (count > 0) {
+    viewportEl.style.setProperty("--page-width", `${pageBandModel.widths[0]}px`);
+  }
+  bandEl = document.createElement("div");
+  bandEl.className = "page-band";
+  bandEl.style.width = `${pageBandModel.width}px`;
+  bandEl.style.height = `${pageBandModel.height}px`;
+  pageWindow = { first: 0, last: -1 };
+  bandOffset = 0;
+  pagesEl.replaceChildren(ruler, bandEl); // ruler sits above the pages, same width
   buildRuler();
-  observePages(); // wire the viewport observer to the new wraps
+  // Measured after the band is in the document and before any sheet is placed:
+  // the ruler and the viewport's padding sit above the band, and the mapping
+  // between scroll space and document space is band-local.
+  bandTopInScroller =
+    bandEl.getBoundingClientRect().top - viewportEl.getBoundingClientRect().top + viewportEl.scrollTop;
+  updatePageWindow({ force: true }); // materialize the sheets around the viewport
   paintPagesInView(); // paint what is on screen now; the observer handles scroll
   // The page set was replaced, so host chrome attached to the old wraps no
   // longer exists. Running-content identity remains model-owned; reconstruct
@@ -3841,9 +3945,13 @@ async function renderAll() {
 /** twip → CSS px scale for a page, from the wrap's live on-screen size, so it
  *  tracks the render under any zoom / DPR / CSS scaling. */
 function scaleOf(page) {
-  // Measured from the sheet-sized wrap (always present), so hit-test/selection
-  // geometry holds even when the page's raster canvas is virtualized away.
-  const rect = page.wrap.getBoundingClientRect();
+  // Measured from the sheet when there is one — so hit-test/selection geometry
+  // holds even when the page's raster canvas is virtualized away — and computed
+  // from the band otherwise. The two agree: the computed rect is precisely
+  // where `materializePage` would put the sheet. What this buys is that a
+  // question about a page nowhere near the viewport (a comment's anchor, a find
+  // match 20,000 pages down) has an answer instead of throwing.
+  const rect = page.wrap ? page.wrap.getBoundingClientRect() : virtualPageRect(page.pageNumber - 1);
   return { rect, sx: rect.width / page.wTwip, sy: rect.height / page.hTwip };
 }
 
@@ -3965,7 +4073,7 @@ function exitObjectEditMode() {
 
 /** Clears every page's caret/selection layer. */
 function clearOverlays() {
-  for (const p of pages) p.overlay.replaceChildren();
+  for (let i = pageWindow.first; i <= pageWindow.last; i++) pages[i]?.overlay?.replaceChildren();
 }
 
 /** Reads the current comment list once (JSON round-trip), or `[]` on
@@ -4155,7 +4263,15 @@ function paintReviewMarkers() {
 /** Draws the current selection from engine geometry: a highlight for a real
  *  range, else a caret at the focus (so a click — or a range with no visible
  *  rects — always shows a cursor). */
-function drawSelection() {
+/** Repaints everything the page overlays carry, and nothing else.
+ *
+ *  Split out of `drawSelection` because scrolling now creates and destroys
+ *  overlays: a sheet materialized by `updatePageWindow` arrives empty, and the
+ *  caret, selection, comment markers and checklist boxes that belong on it have
+ *  to be drawn again. The chrome around them (toolbar state, page number, the
+ *  comment column) does not change when the window moves, so it stays in
+ *  `drawSelection` and is not paid for on every scroll. */
+function paintOverlayLayer() {
   if (!doc) return;
   clearOverlays();
   paintReviewMarkers();
@@ -4170,6 +4286,11 @@ function drawSelection() {
     paintSelection(selection);
     paintTableResizeHandles(selection.focus);
   }
+}
+
+function drawSelection() {
+  if (!doc) return;
+  paintOverlayLayer();
   updateObjectSelectionState();
   updateObjectContextBar();
   updateToolbar();
@@ -5426,8 +5547,7 @@ function setRunningContext(band, page) {
  *  sheet — the cue has to sit beside the band, not over it. */
 function drawRunningBands(band) {
   clearRunningBands();
-  for (const page of pages) {
-    if (!page.wrap) continue;
+  for (const page of materializedPages()) {
     // Per PAGE, because the band belongs to the page's own section: a document
     // that turns landscape at page 5 has different margins there, and one
     // document-level band height drew the boundary in the wrong place on every
@@ -5498,8 +5618,7 @@ function pageInView() {
   const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
   let nearest = pages[0];
   let nearestDistance = Number.POSITIVE_INFINITY;
-  for (const page of pages) {
-    if (!page.wrap) continue;
+  for (const page of materializedPages()) {
     const rect = page.wrap.getBoundingClientRect();
     if (rect.top <= middle && rect.bottom >= middle) return page;
     const distance = rect.bottom < middle ? middle - rect.bottom : rect.top - middle;
@@ -6001,7 +6120,10 @@ function place(flat, kind) {
   if (flat.length < 5) return null;
   const [pageNumber, x, y, w, h] = flat;
   const page = pages[pageNumber - 1];
-  if (!page) return null;
+  // No sheet means the page is outside the window: nothing on screen to mark.
+  // A caller that must SHOW what it places scrolls there first
+  // (`scrollModelRectIntoView`), which materializes the page and repaints.
+  if (!page?.overlay) return null;
   const { sx, sy } = scaleOf(page);
   const el = document.createElement("div");
   el.className = kind;
@@ -6060,7 +6182,7 @@ function clearLinkHover() {
   pendingLinkHover = null;
   if (linkHoverFrame) cancelAnimationFrame(linkHoverFrame);
   linkHoverFrame = 0;
-  for (const page of pages) page.canvas?.classList.remove("link-hover");
+  for (const page of materializedPages()) page.canvas?.classList.remove("link-hover");
 }
 
 /** Throttles the model query used to make canvas-painted links visibly hoverable. */
@@ -6073,7 +6195,7 @@ function scheduleLinkHover(page, event) {
     pendingLinkHover = null;
     if (!pending || dragging || !pages.includes(pending.page)) return;
     const hit = linkAt(pending.page, pending);
-    for (const candidate of pages) {
+    for (const candidate of materializedPages()) {
       candidate.canvas?.classList.toggle("link-hover", candidate === pending.page && !!hit);
     }
   });
@@ -6594,9 +6716,10 @@ async function copySelection(event = null) {
 function pageFromEvent(event) {
   const wrap = event.target.closest?.(".page-wrap");
   if (!wrap) return null;
-  // Index among page wraps only — `pagesEl` also holds the ruler as a child, so
-  // indexing over all children would be off by the ruler's slot (dead clicks).
-  const idx = [...pagesEl.querySelectorAll(".page-wrap")].indexOf(wrap);
+  // The sheet's OWN page number, not its position among the sheets: the nth
+  // sheet is the nth page only while the reader is at the top of the document,
+  // so indexing by position hit-tests a scrolled-to click on the wrong page.
+  const idx = pageIndexOfWrap(wrap);
   return pages[idx] ?? null;
 }
 
@@ -6606,9 +6729,13 @@ function pageFromClientPoint(clientX, clientY) {
   if (direct) return direct;
   if (!pages.length) return null;
 
+  // Only the materialized pages: the page nearest a pointer is on screen by
+  // construction, and walking 25,556 records per pointer event is not.
   let best = null;
   let bestDistance = Infinity;
-  for (const page of pages) {
+  for (let i = pageWindow.first; i <= pageWindow.last; i++) {
+    const page = pages[i];
+    if (!page?.wrap) continue;
     const rect = page.wrap.getBoundingClientRect();
     const dx = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
     const dy = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
@@ -7521,9 +7648,12 @@ function buildObjectContextCommands(context) {
   // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
   const mutationEnabled = reviewMode === "editing";
   const mutationReason =
-    reviewMode === "viewing"
+    // Same rule as `blockMutationInViewing`: "turn on Editing" is advice the
+    // reader cannot act on when the DOCUMENT is the thing that is read-only.
+    readOnlyReason ||
+    (reviewMode === "viewing"
       ? "Turn on Editing to change this object"
-      : "Object changes cannot be tracked in Suggesting mode";
+      : "Object changes cannot be tracked in Suggesting mode");
   const commands = [];
 
   // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
@@ -8112,7 +8242,7 @@ const TAB_LETTER = ["L", "C", "R", "."];
 
 /** Rebuilds the ruler scale, margin zones, and ticks for the current page/zoom. */
 function buildRuler() {
-  if (!doc || !pages.length) {
+  if (!doc || !pages.length || !pageBandModel) {
     ruler.hidden = true;
     return;
   }
@@ -8122,7 +8252,10 @@ function buildRuler() {
     marginStart: g.marginStartTwip,
     marginEnd: g.marginEndTwip,
   };
-  const pageWidthPx = pages[0].wrap.getBoundingClientRect().width;
+  // The first page's rendered width, from the band geometry rather than from a
+  // sheet element: page 1 has no sheet at all once the reader has scrolled away
+  // from it, and the ruler still has to be the width of the paper.
+  const pageWidthPx = pageBandModel.widths[0];
   rulerScale = pageWidthPx / rulerGeom.width;
   ruler.style.width = `${pageWidthPx}px`;
   const px = (t) => t * rulerScale;
@@ -8562,6 +8695,52 @@ function repaintPage(i) {
   if (page.visible) paintPageCanvas(page, i);
 }
 
+/** Scroll to a rectangle the ENGINE reported — `[page, x, y, w, h]` in twips —
+ *  rather than to a DOM node that may not exist.
+ *
+ *  A find match 20,000 pages away, a comment anchor, a caret after a jump: none
+ *  has an overlay element until its page is materialized, and its page is not
+ *  materialized until something scrolls there. Model geometry plus the band's
+ *  arithmetic answers "where is that, in scroll coordinates" without either.
+ *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
+function scrollModelRectIntoView(flat, block = "nearest") {
+  if (!pageBandModel || !flat || flat.length < 5) return false;
+  const [pageNumber, , y, , h] = flat;
+  const page = pages[pageNumber - 1];
+  if (!page) return false;
+  const { sy } = scaleOf(page);
+  const top = pageBandModel.tops[pageNumber - 1] + y * sy;
+  const bottom = top + Math.max(1, h * sy);
+  const viewportHeight = viewportEl.clientHeight;
+  const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
+  let wanted = docY;
+  if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
+  else if (top < docY) wanted = top;
+  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight;
+  else return false;
+  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, Math.max(0, wanted));
+  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+  // Synchronously, not on the scroll event: the caller is about to look for the
+  // marker it just asked to be shown, and an event a frame later would hand it
+  // an empty page.
+  updatePageWindow();
+  paintPagesInView();
+  return true;
+}
+
+/** The engine rectangle the caret or selection occupies, or null. */
+function selectionModelRect() {
+  if (!doc || !selection) return null;
+  const { anchor, focus } = selection;
+  if (anchor.node !== focus.node || anchor.offset !== focus.offset) {
+    const rects = doc.selectionRects(anchor.node, anchor.offset, focus.node, focus.offset);
+    if (rects.length >= 5) return rects.slice(0, 5);
+  }
+  const caret = doc.caretRect(focus.node, focus.offset);
+  return caret.length >= 5 ? caret.slice(0, 5) : null;
+}
+
 /** Scroll one engine-derived overlay marker in the editor viewport (not an
  * arbitrary page ancestor). The selection is painted before this runs, so its
  * DOM rectangle is only a projection of model geometry, never a source of
@@ -8572,23 +8751,44 @@ function scrollOverlayIntoView(marker, block = "nearest") {
   const viewportRect = viewportEl.getBoundingClientRect();
   const current = viewportEl.scrollTop;
   const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
-  let target = current;
+  // A pixel of scroll is not a pixel of content once the document is
+  // compressed onto a bounded scroll range: it is `scale` of them (see
+  // `page_scroll.mjs`). A delta measured on screen therefore has to be divided
+  // by that before it becomes a scroll position, or every "scroll this into
+  // view" overshoots by the compression factor — which, above 2, oscillates
+  // instead of converging.
+  const perScrollPx = pageBandModel?.scale > 1 ? pageBandModel.scale : 1;
+  let delta = 0;
   if (block === "center") {
-    target = current + markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
+    delta = markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
   } else if (markerRect.top < viewportRect.top) {
-    target = current + markerRect.top - viewportRect.top;
+    delta = markerRect.top - viewportRect.top;
   } else if (markerRect.bottom > viewportRect.bottom) {
-    target = current + markerRect.bottom - viewportRect.bottom;
+    delta = markerRect.bottom - viewportRect.bottom;
   } else {
     return;
   }
+  const target = current + delta / perScrollPx;
   viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
 }
 
 /** Scroll the caret in the editor viewport. Navigation callers can request a
  * centered target so headings/anchors retain useful reading room. */
 function scrollCaretIntoView(block = "nearest") {
-  scrollOverlayIntoView(pagesEl.querySelector(".overlay .caret"), block);
+  const marker = pagesEl.querySelector(".overlay .caret");
+  // Two cases take the model path. No marker: the caret's page has no sheet,
+  // which is where a 25,556-page document spends most of its time. And a
+  // COMPRESSED band: a target computed from a screen delta is only as exact as
+  // the compression factor it is divided by, and near the ends of the scroll
+  // range it is not exact at all — measured 57 px short at the bottom of a
+  // 3,300-page document, which is a caret just off screen after an arrow key.
+  // Document space has no such error: `docToScroll` is the exact inverse of
+  // the mapping that placed the page.
+  if (!marker || pageBandModel?.scale > 1) {
+    if (scrollModelRectIntoView(selectionModelRect(), block)) paintOverlayLayer();
+    return;
+  }
+  scrollOverlayIntoView(marker, block);
 }
 
 /** Bring the current review selection's OWN on-canvas marker just into view when
@@ -8610,6 +8810,10 @@ function scrollReviewSelectionIntoView() {
     pagesEl.querySelector(".overlay .review-comment-marker-active, .overlay .review-revision-marker-active")
     || pagesEl.querySelector(".overlay .highlight")
     || pagesEl.querySelector(".overlay .caret");
+  if (!marker || pageBandModel?.scale > 1) {
+    if (scrollModelRectIntoView(selectionModelRect(), "nearest")) paintOverlayLayer();
+    return;
+  }
   scrollOverlayIntoView(marker, "nearest");
 }
 
@@ -8618,7 +8822,16 @@ function scrollReviewSelectionIntoView() {
  * made Previous/Next update the selection on an off-screen page without moving
  * the canvas. */
 function scrollFindMatchIntoView() {
-  scrollOverlayIntoView(pagesEl.querySelector(".overlay .highlight"), "center");
+  const marker = pagesEl.querySelector(".overlay .highlight");
+  // A match found on a page the reader is nowhere near has no highlight to
+  // scroll to until its page exists. This is the guard `find-far-page` covers:
+  // Find used to update the selection on an off-screen page and leave the
+  // canvas exactly where it was.
+  if (!marker || pageBandModel?.scale > 1) {
+    if (scrollModelRectIntoView(selectionModelRect(), "center")) paintOverlayLayer();
+    return;
+  }
+  scrollOverlayIntoView(marker, "center");
 }
 
 // ---- Unsaved-work tracking ---------------------------------------------------
@@ -8875,7 +9088,11 @@ function blockUntrackedInSuggesting({ paragraphLevel = false } = {}) {
  *  mutations and are unaffected. */
 function blockMutationInViewing() {
   if (reviewMode !== "viewing") return false;
-  setStatus("Viewing mode is read-only; switch to Editing to change the document", "error");
+  // "Switch to Editing" is advice the reader can act on — unless the document
+  // itself cannot be edited, in which case it is a wrong instruction. One
+  // policy function decides, so this and the engine-refusal path cannot drift
+  // (`docs/113` §8.3).
+  setStatus(mutationBlockedMessage({ editingUnavailableReason: readOnlyReason }), "error");
   focusEditorSurface();
   return true;
 }
@@ -8907,7 +9124,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     // simply no longer applies to this document. `apply_group` now restores
     // the pre-edit document and pushes the entry back before returning, so the
     // honest thing to say is that nothing changed (HF-045).
-    setStatus(editRefusalMessage(err), "error");
+    setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error");
     return false;
   }
   await applyEditResult(res);
@@ -11547,174 +11764,11 @@ const insertTablePopover = registerPopover(insertTableBtn, insertTableMenu, () =
   highlightGrid(0, 0);
 });
 
-// ---- Off-screen accessibility tree (docs/67 row 9) --------------------------
-/**
- * Rebuilds the read-only, off-screen structural mirror of the document from the
- * engine's `accessibilityTree()` projection so a screen reader can read the
- * canvas (which paints pixels only, exposing no structure). Headings become
- * `h1`–`h6` (levels 7–9 clamp to `h6`), list items group into `ul`/`ol`,
- * tables become real `table`/`tr`/`td`, and everything else is a `p`. This is
- * never an editing surface — the model stays the source of truth (docs/67 Open
- * Risks). Rebuilt on the same coalesced content-change frame as the outline.
- */
-/** How many top-level blocks the accessibility mirror projects at once.
- *
- *  Large enough that an ordinary document (sample.docx is 433 blocks) is still
- *  mirrored whole, small enough that a million-block document costs the same as
- *  a small one. */
-const A11Y_WINDOW_BLOCKS = 600;
-
-/** Where the current mirror window starts, so it stays put when there is no
- *  caret to anchor it to (a freshly opened document). */
-let a11yWindowStart = 0;
-
+/** Rebuilds the off-screen accessibility mirror for the caret's part of the
+ *  document. The projection itself lives in `a11y_mirror.mjs`; what stays here
+ *  is the two pieces of editor state it needs. */
 function buildAccessibilityTree() {
-  if (!a11yDocument) return;
-  if (!doc) {
-    a11yDocument.replaceChildren();
-    return;
-  }
-  // A WINDOW of the document, not all of it. The mirror used to project every
-  // block: for a 16,000-paragraph document that was 16,384 DOM nodes and 87% of
-  // the time to open it (6.9 s of 7.9 s), and a 65,000-paragraph one exhausted
-  // wasm32 memory and killed the tab — the whole document was serialized to
-  // JSON, marshalled, parsed and materialized (docs/104 HF-158). Page canvases
-  // were virtualized for exactly this reason; this never was.
-  //
-  // The window follows the caret, so assistive technology reads the part of the
-  // document being edited, and the engine only projects those blocks.
-  let nodes = [];
-  let total = 0;
-  let windowStart = 0;
-  try {
-    const caretBlock = selection?.focus?.node ? doc.blockIndexOf(selection.focus.node) : -1;
-    const anchor = caretBlock >= 0 ? caretBlock : a11yWindowStart;
-    windowStart = Math.max(0, anchor - Math.floor(A11Y_WINDOW_BLOCKS / 2));
-    const payload = JSON.parse(doc.accessibilityTreeWindow(windowStart, A11Y_WINDOW_BLOCKS));
-    total = Number(payload.total) || 0;
-    windowStart = Number(payload.start) || 0;
-    nodes = Array.isArray(payload.blocks) ? payload.blocks : [];
-    a11yWindowStart = windowStart;
-  } catch {
-    nodes = [];
-  }
-  const frag = document.createDocumentFragment();
-  // A list is a STACK of open lists, one per depth, because screen readers
-  // announce nesting from the lists they are given: a level-1 item has to sit in
-  // a list inside the level-0 item above it. Emitting every item as a sibling —
-  // which this did before `level` reached the projection — told assistive
-  // technology that an indented list was flat, even though the engine tracks the
-  // depth correctly and Tab really does demote into it.
-  let listStack = []; // [{ el, ordered }], innermost last
-  const flushList = () => {
-    if (listStack.length > 0) {
-      frag.appendChild(listStack[0].el);
-      listStack = [];
-    }
-  };
-  for (const node of Array.isArray(nodes) ? nodes : []) {
-    if (node.kind === "listItem") {
-      const depth = Math.max(0, Number(node.level) || 0);
-      const ordered = !!node.ordered;
-      // Leaving a level closes every list below it; switching between ordered and
-      // unordered at the same depth starts a new list, as it always did.
-      if (listStack.length > depth + 1) listStack.length = depth + 1;
-      if (listStack.length > 0 && listStack[listStack.length - 1].ordered !== ordered) {
-        listStack.length -= 1;
-      }
-      // Entering a deeper level nests the new list inside the last item of the
-      // level above; a gap in depth (level 2 with no level 1) is filled so the
-      // markup stays well formed rather than dropping the item.
-      while (listStack.length < depth + 1) {
-        const el = document.createElement(ordered ? "ol" : "ul");
-        const parent = listStack[listStack.length - 1];
-        if (parent) {
-          const host = parent.el.lastElementChild ?? parent.el.appendChild(document.createElement("li"));
-          host.appendChild(el);
-        }
-        listStack.push({ el, ordered });
-      }
-      const li = document.createElement("li");
-      li.textContent = String(node.text ?? "");
-      listStack[listStack.length - 1].el.appendChild(li);
-      continue;
-    }
-    flushList();
-    if (node.kind === "heading") {
-      const level = Math.min(6, Math.max(1, Number(node.level) || 1));
-      const heading = document.createElement(`h${level}`);
-      heading.textContent = String(node.text ?? "");
-      frag.appendChild(heading);
-    } else if (node.kind === "image") {
-      // A figure the engine found in the document. Reaching the `else` below
-      // would render it as an empty `<p>` — a picture announced as SILENCE,
-      // which is worse than announcing it badly.
-      //
-      // `alt` is the author's own description (the same text the object
-      // inspector writes). Without one the graphic is still announced, because a
-      // reader needs to know something is there that they are not being told
-      // about; a decorative `alt=""` would hide it entirely, and this engine
-      // cannot know the author meant that.
-      const image = document.createElement("img");
-      const alt = typeof node.alt === "string" ? node.alt.trim() : "";
-      image.setAttribute("src", "data:,");
-      image.setAttribute("alt", alt || "Image without a description");
-      frag.appendChild(image);
-    } else if (node.kind === "table") {
-      const table = document.createElement("table");
-      // A table's header geometry is what lets a reader say "Revenue, Q3" while
-      // moving through cells instead of reading a bare grid of numbers. The
-      // engine now reports which rows are headers (`w:tblHeader`, `cnfStyle`, or
-      // `tblLook`) and whether the first column heads its row.
-      const headerRows = new Set(
-        (Array.isArray(node.headerRows) ? node.headerRows : []).map(Number),
-      );
-      const rowHeaderColumn = node.rowHeaderColumn === true;
-      if (typeof node.caption === "string" && node.caption.trim()) {
-        const caption = document.createElement("caption");
-        caption.textContent = node.caption;
-        table.appendChild(caption);
-      }
-      if (typeof node.description === "string" && node.description.trim()) {
-        table.setAttribute("aria-description", node.description);
-      }
-      const thead = document.createElement("thead");
-      const tbody = document.createElement("tbody");
-      const rows = Array.isArray(node.rows) ? node.rows : [];
-      for (const [index, row] of rows.entries()) {
-        const tr = document.createElement("tr");
-        const isHeaderRow = headerRows.has(index);
-        for (const [column, cell] of (Array.isArray(row) ? row : []).entries()) {
-          // A header ROW heads its column; a header COLUMN heads its row.
-          const heads = isHeaderRow || (rowHeaderColumn && column === 0);
-          const el = document.createElement(heads ? "th" : "td");
-          if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
-          el.textContent = String(cell ?? "");
-          tr.appendChild(el);
-        }
-        (isHeaderRow ? thead : tbody).appendChild(tr);
-      }
-      if (thead.childElementCount > 0) table.appendChild(thead);
-      table.appendChild(tbody);
-      frag.appendChild(table);
-    } else {
-      const paragraph = document.createElement("p");
-      paragraph.textContent = String(node.text ?? "");
-      frag.appendChild(paragraph);
-    }
-  }
-  flushList();
-  // Say so when the mirror is a window, so a screen reader is not told a
-  // 6,000-block document is 300 blocks long.
-  if (total > nodes.length) {
-    const note = document.createElement("p");
-    note.className = "sr-only";
-    note.textContent =
-      `Showing blocks ${windowStart + 1} to ${windowStart + nodes.length} of ${total}. ` +
-      "Move the cursor to read another part of the document.";
-    frag.insertBefore(note, frag.firstChild);
-  }
-  a11yDocument.replaceChildren(frag);
+  renderAccessibilityMirror(doc, selection?.focus?.node ?? "");
 }
 
 // ---- Outline panel (heading tree → scroll-to) -------------------------------
@@ -11787,83 +11841,62 @@ function toggleOutline() {
 railOutline.addEventListener("click", toggleOutline);
 outlineClose.addEventListener("click", toggleOutline);
 
-/** Builds one thumbnail card per rendered page in the Pages navigator. */
-function buildPages() {
-  if (!doc || pagesPanel.hidden) return;
-  pagesBody.replaceChildren();
-  if (!pages.length) {
-    const empty = document.createElement("div");
-    empty.className = "outline-empty";
-    empty.textContent = "No pages yet.";
-    pagesBody.appendChild(empty);
-    return;
-  }
-  // A small live render per page, so each card shows the real page layout rather
-  // than a blank box. THUMB_DPI is low (a navigator preview, not readable text),
-  // and each transient bitmap is freed immediately — a whole-document panel of
-  // thumbnails stays a few MB even for long documents.
-  const THUMB_DPI = 24;
-  pages.forEach((page, index) => {
-    const n = page.pageNumber;
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "page-thumb";
-    card.dataset.page = String(n);
-    card.title = `Page ${n}`;
-    card.setAttribute("aria-label", `Page ${n}`);
-    const box = document.createElement("span");
-    box.className = "page-thumb-box";
-    box.style.aspectRatio = `${page.wTwip} / ${page.hTwip}`;
-    try {
-      const bmp = doc.renderPage(index, THUMB_DPI);
-      const canvas = document.createElement("canvas");
-      canvas.className = "page-thumb-canvas";
-      canvas.width = bmp.widthPx;
-      canvas.height = bmp.heightPx;
-      canvas
-        .getContext("2d")
-        .putImageData(new ImageData(bmp.rgba, bmp.widthPx, bmp.heightPx), 0, 0);
-      bmp.free(); // return the RGBA buffer to WASM now, not at GC.
-      box.appendChild(canvas);
-    } catch (err) {
-      // A page that fails to render still shows a (correctly proportioned) card.
-      console.error(`thumbnail page ${index}`, err);
-      box.classList.add("is-empty");
-    }
-    const num = document.createElement("span");
-    num.className = "page-thumb-num";
-    num.textContent = String(n);
-    card.append(box, num);
-    card.addEventListener("click", () => goToPage(n));
-    pagesBody.appendChild(card);
-  });
-  let cur = 1;
+/** The page the navigator marks as current: the caret's, falling back to the
+ *  one being read. It is NOT what the panel centres on — a reader who has
+ *  scrolled 6,000 pages away from their caret wants to see where they are. */
+function pagesPanelFocusPage() {
   if (selection) {
     const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
-    if (flat.length) cur = flat[0];
+    if (flat.length) return flat[0];
   }
-  reflectPagesSelection(cur);
+  return pageInView()?.pageNumber ?? 1;
+}
+
+/** Rebuilds the Pages navigator around one page — by default the one being
+ *  read. The panel shows a WINDOW of thumbnails (`pages_panel.mjs`), because a
+ *  card per page is a `renderPage` per page. */
+function buildPages(centre = null) {
+  if (!doc || pagesPanel.hidden) return;
+  const focus = pagesPanelFocusPage();
+  pagesPanelRange = renderPagesPanel({
+    doc,
+    pages,
+    current: centre ?? pageInView()?.pageNumber ?? focus,
+    body: pagesBody,
+    onJump: (n) => goToPage(n),
+  });
+  reflectPagesSelection(focus);
+}
+
+/** Follow the reader: when the viewport leaves the range of pages the panel is
+ *  showing, rebuild it around where they now are. Scrolling inside the shown
+ *  range costs nothing. */
+function syncPagesPanelToViewport() {
+  if (pagesPanel.hidden || !doc) return;
+  const visible = pageInView()?.pageNumber ?? 1;
+  if (visible < pagesPanelRange.start || visible > pagesPanelRange.end) buildPages(visible);
 }
 
 /** Scrolls page `n` into view using the single scroll owner, then highlights it. */
 function goToPage(n) {
   const page = pages[n - 1];
-  if (!page) return;
-  const wr = page.wrap.getBoundingClientRect();
-  const vp = viewportEl.getBoundingClientRect();
-  viewportEl.scrollTo({ top: Math.max(0, viewportEl.scrollTop + (wr.top - vp.top) - 16), behavior: "auto" });
+  if (!page || !pageBandModel) return;
+  // From the band's geometry, not from the sheet's rect: the page being jumped
+  // to is usually the one page in the document that has no sheet yet.
+  const viewportHeight = viewportEl.clientHeight;
+  const docY = Math.max(0, pageBandModel.tops[n - 1] - 16);
+  const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, docY);
+  const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
+  viewportEl.scrollTo({ top: Math.max(0, Math.min(max, target)), behavior: "auto" });
+  updatePageWindow();
+  paintPagesInView();
   reflectPagesSelection(n);
 }
 
 /** Keeps the Pages navigator's active card synchronized with the caret's page. */
 function reflectPagesSelection(pageNumber) {
   if (pagesPanel.hidden) return;
-  for (const card of pagesBody.querySelectorAll(".page-thumb")) {
-    const active = Number(card.dataset.page) === pageNumber;
-    card.classList.toggle("is-active", active);
-    if (active) card.setAttribute("aria-current", "page");
-    else card.removeAttribute("aria-current");
-  }
+  reflectPagesPanelSelection(pagesBody, pageNumber);
 }
 
 function togglePages() {
@@ -12539,7 +12572,7 @@ function editorCommands(context = { surface: "palette" }) {
         : "Autosave is off in an embedded editor",
       run: () => showDraftRecovery(),
     },
-    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", shortcut: "⌘P", run: () => printDocument() },
+    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", shortcut: "⌘P", run: () => printDocument(doc) },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
@@ -13191,42 +13224,12 @@ const shortcutsDialog = document.getElementById("shortcutsDialog");
 const shortcutsBody = document.getElementById("shortcutsBody");
 const shortcutsClose = document.getElementById("shortcutsClose");
 
-function shortcutGroups() {
-  const groups = new Map([["Moving around", navigationShortcuts()]]);
-  for (const command of editorCommands({ surface: "palette" })) {
-    if (!command.shortcut) continue;
-    const rows = groups.get(command.group) ?? [];
-    // A command can be listed twice by the registry (the same chord reached
-    // from two contexts); the reference shows each chord once.
-    if (rows.some((row) => row.keys === formatShortcut(command.shortcut))) continue;
-    rows.push({ keys: formatShortcut(command.shortcut), label: command.label });
-    groups.set(command.group, rows);
-  }
-  return [...groups].filter(([, rows]) => rows.length);
-}
-
 function buildShortcutsReference() {
   if (!shortcutsBody) return;
-  shortcutsBody.replaceChildren();
-  for (const [group, rows] of shortcutGroups()) {
-    const section = document.createElement("section");
-    section.className = "shortcuts-group";
-    const heading = document.createElement("h3");
-    heading.textContent = group;
-    section.appendChild(heading);
-    for (const row of rows) {
-      const line = document.createElement("div");
-      line.className = "shortcuts-row";
-      const label = document.createElement("span");
-      label.textContent = row.label;
-      const keys = document.createElement("span");
-      keys.className = "shortcuts-keys";
-      keys.textContent = row.keys;
-      line.append(label, keys);
-      section.appendChild(line);
-    }
-    shortcutsBody.appendChild(section);
-  }
+  renderShortcutsReference(
+    shortcutsBody,
+    shortcutGroups(editorCommands({ surface: "palette" }), navigationShortcuts(), formatShortcut),
+  );
 }
 
 const shortcutsModal = shortcutsDialog
@@ -13250,41 +13253,7 @@ function toggleShortcutsReference(open) {
 shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false));
 
 // ---- About -----------------------------------------------------------------
-// There was no About anywhere in the product: no version, no licence, no way
-// for someone reporting a bug to say which build they were on. The version
-// comes from `engineVersion()`, which the engine compiles from its own crate
-// manifest, so it cannot drift from what actually shipped.
-const aboutDialog = document.getElementById("aboutDialog");
-const aboutClose = document.getElementById("aboutClose");
-const aboutModal = aboutDialog
-  ? registerModal(aboutDialog, {
-      initialFocus: () => aboutClose,
-      fallbackFocus: () => pagesEl,
-    })
-  : null;
-
-function toggleAbout(open) {
-  if (!aboutModal) return;
-  if (open) {
-    const slot = document.getElementById("aboutVersion");
-    if (slot) {
-      // The engine may not have booted yet — About is a `noDoc` command, so it
-      // is reachable from the very first frame. Say so rather than printing a
-      // placeholder that reads like a version.
-      let version = "";
-      try {
-        version = engineVersion();
-      } catch {
-        version = "";
-      }
-      slot.textContent = version || "not loaded yet";
-    }
-    aboutModal.open();
-  } else {
-    aboutModal.close();
-  }
-}
-aboutClose?.addEventListener("click", () => toggleAbout(false));
+const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
 
 // ---- Bookmark manager ------------------------------------------------------
 // A Word/Docs-style bookmark surface over the engine's create/rename/delete ops
@@ -14696,7 +14665,7 @@ document.addEventListener("keydown", (e) => {
   // with no unsaved-changes requirement.
   if (!e.shiftKey && lower === "p" && doc) {
     e.preventDefault();
-    printDocument();
+    printDocument(doc);
   }
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
@@ -16695,7 +16664,13 @@ viewportEl.addEventListener(
 // Re-fit on viewport resize while a fit mode is active.
 let fitResizeRaf = 0;
 window.addEventListener("resize", () => {
-  if (zoomMode === "custom") return;
+  if (zoomMode === "custom") {
+    // The zoom is unchanged but the window is not: a different viewport height
+    // needs different sheets and gives the scroll mapping a new travel.
+    updatePageWindow({ force: true });
+    paintPagesInView();
+    return;
+  }
   cancelAnimationFrame(fitResizeRaf);
   fitResizeRaf = requestAnimationFrame(() => renderAll());
 });

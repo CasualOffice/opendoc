@@ -8,6 +8,7 @@ import {
   test,
   expect,
   MOD,
+  documentPageCount,
   shortcutHint,
 } from "./fixtures.mjs";
 
@@ -55,8 +56,13 @@ test("⌘P builds one print canvas per page, prints, then restores the viewport"
   await stubPrint(page);
   await gotoSampleEditor(page);
 
-  const pageCount = await page.locator(".page-wrap").count();
+  // The DOCUMENT's page count, not the number of sheets on screen: the viewer
+  // materializes a sheet only near the viewport (`docs/113` §8.6), and "one
+  // print canvas per page" is a claim about the document.
+  const pageCount = await documentPageCount(page);
   expect(pageCount).toBeGreaterThan(1); // the demo is multi-page
+  const sheetsBefore = await page.locator(".page-wrap").count();
+  expect(sheetsBefore).toBeLessThan(pageCount); // the viewport holds a window
 
   await page.keyboard.press(`${MOD}+p`);
 
@@ -73,7 +79,7 @@ test("⌘P builds one print canvas per page, prints, then restores the viewport"
   await expect(page.locator("#printContainer")).toHaveCount(0);
   await expect(page.locator("#printStyle")).toHaveCount(0);
   await expect(page.locator("#viewport")).toBeVisible();
-  expect(await page.locator(".page-wrap").count()).toBe(pageCount);
+  expect(await page.locator(".page-wrap").count()).toBe(sheetsBefore);
   expect(await page.locator(".page-wrap .page").count()).toBeGreaterThan(0);
 
   // Memory-budget invariant: printing must not leave every page's canvas alive.
@@ -101,7 +107,7 @@ test("Print is reachable from the command palette with its ⌘P hint", async ({
   await expect(item.locator(".cmd-hint")).toHaveText(shortcutHint("⌘P"));
   await item.click();
 
-  const pageCount = await page.locator(".page-wrap").count();
+  const pageCount = await documentPageCount(page);
   const calls = await page.evaluate(() => window.__printCalls);
   const printedCounts = await page.evaluate(() => window.__printPageCounts);
   expect(calls).toBe(1);
@@ -120,7 +126,7 @@ test("Print is offered in the File menu", async ({ page, consoleErrors }) => {
   await expect(item).toBeVisible();
   await item.click();
 
-  const pageCount = await page.locator(".page-wrap").count();
+  const pageCount = await documentPageCount(page);
   const printedCounts = await page.evaluate(() => window.__printPageCounts);
   expect(printedCounts).toEqual([pageCount]);
 

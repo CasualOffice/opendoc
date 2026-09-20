@@ -40,6 +40,12 @@ const REVIEW_DOM_NODE_BUDGET = 60_000;
 // of pages are ever live (visible band + one screenful of over-scan each way).
 const VIEWPORT_CANVAS_BOUND = 10;
 
+// The same bound now applies to the SHEETS, not only to their rasters
+// (`docs/113` §8.6): a page outside the window has no `.page-wrap` either, which
+// is what keeps the scroll container — and the node count — independent of the
+// page count.
+const VIEWPORT_SHEET_BOUND = 12;
+
 // A review fixture dense in both tracked changes (two revisions per body
 // paragraph) and comments (one per body paragraph, none threaded — the null-key
 // case the O(n²) bug tripped on). Opening it auto-enables the markup view.
@@ -73,19 +79,27 @@ function installWasmMemoryHook() {
 
 // The editor is ready once the WASM engine has booted, the document has opened,
 // its first render has settled (status cleared, not an error), and pages exist.
-async function waitForEditorReady(page, minWraps = 1) {
+async function waitForEditorReady(page, minPages = 1) {
   await page.waitForFunction(
     (min) => {
       const status = document.getElementById("status");
+      // The DOCUMENT's page count, from the indicator the user reads: only the
+      // pages near the viewport have sheets, so counting sheets would wait for
+      // a number that never arrives (`docs/113` §8.6).
+      const total = Number(
+        ((document.getElementById("statPages")?.textContent ?? "").match(/of\s+([\d,]+)/)?.[1] ?? "0")
+          .replace(/,/g, ""),
+      );
       return (
         status !== null &&
         status.textContent === "" &&
         !status.classList.contains("error") &&
-        document.querySelectorAll(".page-wrap").length >= min &&
+        total >= min &&
+        document.querySelectorAll(".page-wrap").length > 0 &&
         document.querySelectorAll("canvas.page").length > 0
       );
     },
-    minWraps,
+    minPages,
     { timeout: 45_000 },
   );
 }
@@ -119,7 +133,11 @@ async function measureMemory(page) {
       js,
       total: wasm + canvas + js,
       canvasCount: document.querySelectorAll("canvas.page").length,
-      pageCount: document.querySelectorAll(".page-wrap").length,
+      sheetCount: document.querySelectorAll(".page-wrap").length,
+      pageCount: Number(
+        ((document.getElementById("statPages")?.textContent ?? "").match(/of\s+([\d,]+)/)?.[1] ?? "0")
+          .replace(/,/g, ""),
+      ),
       showingChanges: document.body.classList.contains("showing-changes"),
       devicePixelRatio: window.devicePixelRatio,
     };
@@ -137,7 +155,7 @@ test("the standard document stays within the tab memory budget", async ({ page }
   const m = await measureMemory(page);
   console.log(
     `standard doc — total ${mb(m.total)} (wasm ${mb(m.wasm)}, canvas ${mb(m.canvas)}, ` +
-      `js ${mb(m.js)}); pages=${m.pageCount}, liveCanvases=${m.canvasCount}`,
+      `js ${mb(m.js)}); pages=${m.pageCount}, sheets=${m.sheetCount}, liveCanvases=${m.canvasCount}`,
   );
   expect(m.total).toBeLessThan(STANDARD_BUDGET);
 });
@@ -159,10 +177,13 @@ test("a 49-page document stays memory-bounded via page virtualization", async ({
   const m = await measureMemory(page);
   console.log(
     `49-page doc — total ${mb(m.total)} (wasm ${mb(m.wasm)}, canvas ${mb(m.canvas)}, ` +
-      `js ${mb(m.js)}); pages=${m.pageCount}, liveCanvases=${m.canvasCount}`,
+      `js ${mb(m.js)}); pages=${m.pageCount}, sheets=${m.sheetCount}, liveCanvases=${m.canvasCount}`,
   );
-  // The whole point of virtualization: only a handful of pages are ever live.
+  // The whole point of virtualization: only a handful of pages are ever live —
+  // and, since `docs/113` §8.6, only a handful even exist as elements.
   expect(m.canvasCount).toBeLessThan(m.pageCount);
+  expect(m.sheetCount).toBeLessThan(m.pageCount);
+  expect(m.sheetCount).toBeLessThanOrEqual(VIEWPORT_SHEET_BOUND);
   expect(m.total).toBeLessThan(LARGE_BUDGET);
 });
 
@@ -189,6 +210,7 @@ async function openReviewDocAndMeasure(page, { pageCount = 24 } = {}) {
   // any devicePixelRatio: only a viewport-bounded handful of canvases are live.
   expect(m.canvasCount).toBeLessThan(m.pageCount);
   expect(m.canvasCount).toBeLessThanOrEqual(VIEWPORT_CANVAS_BOUND);
+  expect(m.sheetCount).toBeLessThanOrEqual(VIEWPORT_SHEET_BOUND);
   return m;
 }
 
@@ -200,7 +222,7 @@ test("a comment-heavy review document stays memory- and DOM-bounded", async ({ p
   const m = await openReviewDocAndMeasure(page);
   console.log(
     `review doc (dpr ${m.devicePixelRatio}) — total ${mb(m.total)} (wasm ${mb(m.wasm)}, ` +
-      `canvas ${mb(m.canvas)}, js ${mb(m.js)}); pages=${m.pageCount}, liveCanvases=${m.canvasCount}, ` +
+      `canvas ${mb(m.canvas)}, js ${mb(m.js)}); pages=${m.pageCount}, sheets=${m.sheetCount}, liveCanvases=${m.canvasCount}, ` +
       `domNodes=${m.domNodes}, showingChanges=${m.showingChanges}`,
   );
 });
@@ -223,7 +245,7 @@ test.describe("at Retina devicePixelRatio 2", () => {
     expect(m.devicePixelRatio).toBeGreaterThan(1);
     console.log(
       `review doc (dpr ${m.devicePixelRatio}) — total ${mb(m.total)} (wasm ${mb(m.wasm)}, ` +
-        `canvas ${mb(m.canvas)}, js ${mb(m.js)}); pages=${m.pageCount}, liveCanvases=${m.canvasCount}, ` +
+        `canvas ${mb(m.canvas)}, js ${mb(m.js)}); pages=${m.pageCount}, sheets=${m.sheetCount}, liveCanvases=${m.canvasCount}, ` +
         `domNodes=${m.domNodes}, showingChanges=${m.showingChanges}`,
     );
   });

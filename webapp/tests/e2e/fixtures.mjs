@@ -60,6 +60,104 @@ export async function gotoEditor(page) {
   );
 }
 
+/**
+ * How many pages the DOCUMENT has, read from the status bar the user reads.
+ *
+ * Not `.page-wrap` count: the viewer materializes a sheet only for the pages
+ * near the viewport (`docs/113` §8.6), so counting sheets answers "how many
+ * pages are on screen", which for a 25,556-page document is about five. A spec
+ * that wants the document's own page count has to ask the document.
+ */
+export async function documentPageCount(page) {
+  const text = (await page.locator("#statPages").textContent()) ?? "";
+  const match = text.match(/of\s+([\d,]+)/);
+  if (!match) throw new Error(`the page indicator did not report a total: "${text}"`);
+  return Number(match[1].replace(/,/g, ""));
+}
+
+/**
+ * The sheet element for page `pageNumber` (1-based), scrolled into existence.
+ *
+ * `.page-wrap` used to be one element per page, so `nth(i)` was page `i + 1`
+ * and every page of every document was in the DOM whether anyone had scrolled
+ * to it or not. It is not any more (`docs/113` §8.6): a sheet exists only for
+ * the pages near the viewport, so `nth(i)` is page `i + 1` only while the
+ * reader is still at the top, and a spec that wants page 40 has to do what a
+ * reader does — scroll there.
+ *
+ * Deliberately uses nothing but the scroller and the sheets' own
+ * `data-page-number`, so it exercises the real scroll path rather than an app
+ * internal: it bisects the scroll range, which works for a 6-page document and
+ * for a 25,556-page one because the mapping from scroll position to document
+ * position is monotonic by construction.
+ */
+export async function pageSheet(page, pageNumber) {
+  const found = await page.evaluate(async (n) => {
+    const viewport = document.getElementById("viewport");
+    const sheet = () => document.querySelector(`.page-wrap[data-page-number="${n}"]`);
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const total = Number(
+      ((document.getElementById("statPages")?.textContent ?? "").match(/of\s+([\d,]+)/)?.[1] ?? "0")
+        .replace(/,/g, ""),
+    );
+    let lo = 0;
+    let hi = viewport.scrollHeight - viewport.clientHeight;
+    // One proportional guess first. Scroll position is linear in document
+    // position, so for a document of roughly equal pages this lands on (or
+    // beside) the page immediately, and the bisection below only has to clean
+    // up — which is what keeps a jump to page 25,556 from costing 14 rounds of
+    // rasterizing pages nobody asked for.
+    if (total > 1) {
+      viewport.scrollTop = (hi * (n - 1)) / (total - 1);
+      await frame();
+      await frame();
+    }
+    // Then bisect on the scroll position until the page is not merely in the
+    // DOM but under the reader's eyes. Deliberately NOT `scrollIntoView`: for
+    // a document tall enough to be compressed onto a bounded scroll range, a
+    // delta measured on screen is `scale` times too large as a scroll delta,
+    // so `scrollIntoView` overshoots — and above a factor of two it oscillates
+    // instead of converging. Bisection needs only that page position is
+    // monotonic in scroll position, which it is at every size.
+    for (let i = 0; i < 60; i++) {
+      const element = sheet();
+      if (element) {
+        const box = element.getBoundingClientRect();
+        const view = viewport.getBoundingClientRect();
+        // Aim the page's TOP just below the top of the viewport — what
+        // `scrollIntoView({ block: "start" })` would do if it could be trusted
+        // here. That shows the page's own top margin (where the header band
+        // and its marker live) AND leaves the page covering the middle of the
+        // viewport, which is what the editor's `pageInView()` answers with.
+        if (box.top >= view.top - 2 && box.top <= view.top + viewport.clientHeight / 2) break;
+        // Scrolling further moves content UP, so a page whose top is too low
+        // needs MORE scroll, and one whose top is off the top needs less.
+        if (box.top > view.top) lo = viewport.scrollTop;
+        else hi = viewport.scrollTop;
+      } else {
+        const numbers = [...document.querySelectorAll(".page-wrap")].map((wrap) =>
+          Number(wrap.dataset.pageNumber),
+        );
+        if (numbers.length === 0) break;
+        if (n < Math.min(...numbers)) hi = viewport.scrollTop;
+        else lo = viewport.scrollTop;
+      }
+      const next = (lo + hi) / 2;
+      // As close as scrolling gets: a document at either end, or a page the
+      // scroll granularity cannot centre any better.
+      if (Math.abs(next - viewport.scrollTop) < 0.5 && sheet()) break;
+      viewport.scrollTop = next;
+      // The viewer materializes its sheets from the scroll event, which the
+      // browser fires at the next rendering opportunity, not on assignment.
+      await frame();
+      await frame();
+    }
+    return !!sheet();
+  }, pageNumber);
+  if (!found) throw new Error(`page ${pageNumber} could not be scrolled to`);
+  return page.locator(`.page-wrap[data-page-number="${pageNumber}"]`);
+}
+
 // Clicks into the first rendered page to focus the editor surface and give
 // the engine an initial hit-tested caret, independent of the demo's exact
 // text layout.

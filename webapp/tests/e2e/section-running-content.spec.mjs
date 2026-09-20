@@ -16,7 +16,7 @@
 // "PORTRAIT FOOTER", then two LANDSCAPE pages whose section owns its own default
 // header, its own first-page header and its own footer, with 2" vertical margins
 // against the portrait section's 1".
-import { test, expect, MOD } from "./fixtures.mjs";
+import { test, expect, MOD, documentPageCount, pageSheet } from "./fixtures.mjs";
 
 const LANDSCAPE_PAGE = 4; // 0-based: page 5, the first page of the landscape section
 const PORTRAIT_PAGE = 0;
@@ -29,13 +29,22 @@ async function gotoSections(page) {
       return (
         status !== null &&
         status.textContent === "" &&
-        document.querySelectorAll(".page-wrap").length === 6 &&
+        document.querySelectorAll(".page-wrap").length > 0 &&
         document.body.dataset.fontsReady === "true"
       );
     },
     null,
     { timeout: 45_000 },
   );
+  // The document's own page count, not the number of sheets on screen: only
+  // the pages near the viewport have sheets (`docs/113` §8.6).
+  expect(await documentPageCount(page)).toBe(6);
+}
+
+/** A locator for one page's sheet, addressed by the page it IS rather than by
+ *  its position among the sheets that happen to exist. */
+function sheetOf(page, index) {
+  return page.locator(`#pages .page-wrap[data-page-number="${index + 1}"]`);
 }
 
 async function runCommand(page, label) {
@@ -49,17 +58,12 @@ async function runCommand(page, label) {
 /** Brings one page into the middle of the viewport — what "the page I am on"
  *  means to both the user and `pageInView()` — and waits for its raster. */
 async function showPage(page, index) {
-  await page.evaluate((i) => {
-    document.querySelectorAll("#pages .page-wrap")[i].scrollIntoView({ block: "center" });
-  }, index);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        (i) => !!document.querySelectorAll("#pages .page-wrap")[i].querySelector("canvas.page"),
-        index,
-      ),
-    )
-    .toBe(true);
+  // Scroll the page into existence first: a page outside the viewport has no
+  // sheet at all, so there is nothing to call `scrollIntoView` on.
+  await pageSheet(page, index + 1);
+  await sheetOf(page, index).evaluate((element) => element.scrollIntoView({ block: "center" }));
+  // Re-query rather than reuse a handle: the scroll can recycle the sheet.
+  await expect.poll(() => sheetOf(page, index).locator("canvas.page").count()).toBe(1);
 }
 
 /** An ink signature of the top band of a page's raster: how many dark pixels it
@@ -69,7 +73,9 @@ async function showPage(page, index) {
 async function headerInk(page, index) {
   await showPage(page, index);
   return page.evaluate((i) => {
-    const canvas = document.querySelectorAll("#pages .page-wrap")[i].querySelector("canvas.page");
+    const canvas = document
+      .querySelector(`#pages .page-wrap[data-page-number="${i + 1}"]`)
+      .querySelector("canvas.page");
     const band = Math.max(1, Math.round(canvas.height * 0.22));
     const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, band).data;
     let ink = 0;
@@ -87,8 +93,9 @@ async function headerInk(page, index) {
 /** A page's dashed running-band overlay height as a fraction of the sheet — the
  *  band is a margin, so the fraction is section geometry and zoom-independent. */
 async function bandFraction(page, index) {
+  await pageSheet(page, index + 1);
   return page.evaluate((i) => {
-    const wrap = document.querySelectorAll("#pages .page-wrap")[i];
+    const wrap = document.querySelector(`#pages .page-wrap[data-page-number="${i + 1}"]`);
     const band = wrap.querySelector(".running-band");
     if (!band) return null;
     return band.getBoundingClientRect().height / wrap.getBoundingClientRect().height;
@@ -110,9 +117,11 @@ test("the header band belongs to its own section: named, and drawn in that secti
   // Word names the section on the band once a document has more than one, which
   // is the only thing on screen that can explain why two pages show different
   // headers. Every page said just "Header".
-  await expect(page.locator("#pages .page-wrap").nth(PORTRAIT_PAGE).locator(".running-band-label"))
+  await pageSheet(page, PORTRAIT_PAGE + 1);
+  await expect(sheetOf(page, PORTRAIT_PAGE).locator(".running-band-label"))
     .toHaveText(/Section 1/);
-  await expect(page.locator("#pages .page-wrap").nth(LANDSCAPE_PAGE).locator(".running-band-label"))
+  await pageSheet(page, LANDSCAPE_PAGE + 1);
+  await expect(sheetOf(page, LANDSCAPE_PAGE).locator(".running-band-label"))
     .toHaveText(/Section 2/);
 
   // And the dashed boundary is that page's OWN top margin: 1" of an 11" portrait

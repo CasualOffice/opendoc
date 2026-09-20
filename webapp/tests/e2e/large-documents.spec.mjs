@@ -6,7 +6,11 @@
 // a 64-bit native host, plus an accessibility mirror that projected EVERY block
 // of the document into the DOM — 87% of the time to open a large file, and the
 // memory that killed the tab.
-import { test, expect, gotoEditor, MOD } from "./fixtures.mjs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { test, expect, documentPageCount, gotoEditor, pageSheet, MOD } from "./fixtures.mjs";
 
 const LINE = "examplefile.com - Sample Files\r\n"; // 32 bytes, as in the report
 
@@ -17,6 +21,17 @@ function textFile(paragraphs, name = "big.txt") {
     mimeType: "text/plain",
     buffer: Buffer.from(LINE.repeat(paragraphs)),
   };
+}
+
+/** The same, as a real file on disk. Past the ceiling the buffer is 57 MB and
+ *  Playwright refuses to marshal more than 50 MB inline; the picker reads a
+ *  file either way, which is the path under test. Returns its path, and the
+ *  directory to remove afterwards. */
+function textFileOnDisk(paragraphs, name = "big.txt") {
+  const directory = mkdtempSync(join(tmpdir(), "opendoc-large-"));
+  const path = join(directory, name);
+  writeFileSync(path, LINE.repeat(paragraphs));
+  return { path, directory };
 }
 
 async function paragraphCount(page) {
@@ -35,15 +50,21 @@ test("a document far past the ceiling is refused with a reason, and the editor s
 
   // One paragraph past the ceiling. It used to be 1,303,306 — the size of the
   // reported file — and that size now OPENS, through the windowed layout path
-  // (`docs/113`): measured at 110.5 s and 2,476 MB of wasm linear memory for
-  // 25,556 pages, against the 4.14 GiB the whole-layout path needed. The
-  // refusal still has to exist and still has to be readable, so this exercises
-  // it at the size where it now applies.
-  await page.locator("#file").setInputFiles(textFile(700_001, "40mb.docx"));
+  // plus the host's page band (`docs/113` §8.6): measured at 32.4 s and
+  // 2,503 MB of wasm linear memory for 25,556 pages, every one of them
+  // reachable. The refusal still has to exist and still has to be readable, so
+  // this exercises it at the size where it now applies — 57 MB of text, which
+  // only reaches the picker as a file on disk.
+  const oversized = textFileOnDisk(1_800_001, "40mb.txt");
+  try {
+    await page.locator("#file").setInputFiles(oversized.path);
+  } finally {
+    rmSync(oversized.directory, { recursive: true, force: true });
+  }
 
   const status = page.locator("#status");
-  await expect(status).toContainText("700,002 paragraphs", { timeout: 120_000 });
-  await expect(status).toContainText("700,000");
+  await expect(status).toContainText("1,800,002 paragraphs", { timeout: 120_000 });
+  await expect(status).toContainText("1,800,000");
   await expect(status).toContainText("Split it into smaller documents");
   // The message must never show a trap name, and the module must not have died.
   await expect(status).not.toContainText(/unreachable/i);
@@ -54,7 +75,7 @@ test("a document far past the ceiling is refused with a reason, and the editor s
 
   // The document that was already open is untouched and still editable.
   expect(await paragraphCount(page)).toBe(before);
-  await page.locator(".page-wrap").first().click({ position: { x: 120, y: 120 } });
+  await page.locator('.page-wrap[data-page-number="1"]').click({ position: { x: 120, y: 120 } });
   await page.keyboard.type("STILLALIVE");
   await page.keyboard.press(`${MOD}+f`);
   await page.locator("#findInput").fill("STILLALIVE");
@@ -108,15 +129,19 @@ test("a document too large to lay out whole opens windowed, and its far pages st
   await expect.poll(() => paragraphCount(page), { timeout: 5 * 60_000 }).toBe(paragraphs);
   expect(crashes, "the module must not abort").toEqual([]);
 
-  // The page count is the DOCUMENT's, not the resident window's. A windowed
-  // body that reported its window here would say five.
-  const wraps = await page.locator(".page-wrap").count();
-  expect(wraps, "every page of the document must exist for the host").toBeGreaterThan(5_000);
+  // The page count is the DOCUMENT's, not the resident window's and not the
+  // number of sheets on screen. A windowed body that reported its window here
+  // would say five; a host that counted its own sheets would say two.
+  const total = await documentPageCount(page);
+  expect(total, "every page of the document must be reachable for the host").toBeGreaterThan(5_000);
+  expect(
+    await page.locator(".page-wrap").count(),
+    "the sheets are a window on the document, not a copy of it",
+  ).toBeLessThan(20);
 
   // The last page — thousands of pages outside the window the document opened
   // with — must paint, and paint ink.
-  const last = page.locator(".page-wrap").nth(wraps - 1);
-  await last.scrollIntoViewIfNeeded();
+  const last = await pageSheet(page, total);
   await last.locator("canvas").waitFor({ state: "attached", timeout: 120_000 });
   const inked = await last.locator("canvas").evaluate((canvas) => {
     const context = canvas.getContext("2d", { willReadFrequently: true });
@@ -126,6 +151,41 @@ test("a document too large to lay out whole opens windowed, and its far pages st
     }
     return false;
   });
-  expect(inked, `page ${wraps} painted nothing`).toBe(true);
+  expect(inked, `page ${total} painted nothing`).toBe(true);
   expect(crashes).toEqual([]);
+
+  // docs/113 §8.3/§8.5 — a windowed document is READ-ONLY, because
+  // re-paginating after a keystroke is the peak this path exists to avoid. The
+  // engine refuses every edit at its atomic choke point; what the host owes is
+  // to SAY so up front and disable what cannot work, rather than offer live
+  // controls that refuse when pressed (`SKILL.md` §10).
+  const banner = page.locator("#viewingBanner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("one page-window at a time");
+  await expect(banner).toContainText("more than 262,144 paragraphs");
+  // There is nothing to switch to, so the escape hatch is not offered.
+  await expect(page.locator("#viewingBannerEdit")).toBeHidden();
+  // Editing and Suggesting cannot be chosen at all, and say why on hover.
+  for (const mode of ["editing", "suggesting", "viewing"]) {
+    const buttons = page.locator(`[data-review-mode="${mode}"]`);
+    for (let i = 0; i < (await buttons.count()); i++) {
+      await expect(buttons.nth(i)).toBeDisabled();
+      await expect(buttons.nth(i)).toHaveAttribute("title", /page-window at a time/);
+    }
+  }
+
+  // And typing says the same thing. "QZX" rather than any marker containing
+  // "@": the corpus has e-mail addresses in it and every search matches those.
+  const before = await page.locator("#a11yDocument").textContent();
+  await last.locator("canvas").click({ position: { x: 120, y: 120 } });
+  await page.keyboard.type("QZX");
+  const status = page.locator("#status");
+  await expect(status).toHaveClass(/error/);
+  await expect(status).toContainText("one page-window at a time");
+  // The message the host used to show for this — the one `edit_errors.mjs`
+  // gives every refusal it has nothing better to say about — sent the reader
+  // to inspect a selection that is perfectly fine.
+  await expect(status).not.toContainText("selection");
+  // No silent half-edit: the document is exactly what it was.
+  expect(await page.locator("#a11yDocument").textContent()).toBe(before);
 });
