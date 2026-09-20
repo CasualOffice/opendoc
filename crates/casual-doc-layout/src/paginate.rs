@@ -39,9 +39,13 @@ use crate::units::{Point, Rect, Size, Twip};
 /// extends *past* the margin:
 ///
 /// ```text
-/// body_top    = max(margin_top,    header_distance + header_height)
-/// body_bottom = max(margin_bottom, footer_distance + footer_height)
+/// body_top    = header_height == 0 ? margin_top    : max(margin_top,    header_distance + header_height)
+/// body_bottom = footer_height == 0 ? margin_bottom : max(margin_bottom, footer_distance + footer_height)
 /// ```
+///
+/// The zero-height guards are not an optimization: a section with no header part
+/// still carries `w:pgMar/@w:header` (usually the 720-twip default), so without
+/// them a headerless page reserves a band that does not exist.
 ///
 /// So a header shorter than the top margin costs the body nothing (the common
 /// case) — the previous implementation subtracted the full band height on top of
@@ -91,16 +95,34 @@ pub struct PageConfig {
 impl PageConfig {
     /// The y of the top of the body content area: the top margin, or the bottom of
     /// the header band if the band (nested at `header_distance`) reaches past it.
+    ///
+    /// A section with **no header** has no band at all, so `header_distance` must
+    /// not participate: Word starts the body at the top margin. Guarding on
+    /// `header_height == 0` matters because `w:pgMar/@w:header` is written on
+    /// every section whether or not a header part exists, and it is usually the
+    /// 720-twip default — larger than a narrow top margin. Without the guard a
+    /// headerless document with `top="567" header="737"` silently lost 170 twips
+    /// of body on every page to a header that does not exist.
     #[must_use]
     fn body_top(&self) -> Twip {
+        if self.header_height.is_zero() {
+            return self.margin_top;
+        }
         self.margin_top
             .max(self.header_distance + self.header_height)
     }
 
     /// The distance from the bottom page edge to the bottom of the body content
     /// area: the bottom margin, or the top of the footer band if it reaches past it.
+    ///
+    /// Mirrors [`body_top`](Self::body_top): with **no footer** there is no band,
+    /// so `footer_distance` must not participate and the body ends at the bottom
+    /// margin.
     #[must_use]
     fn body_bottom(&self) -> Twip {
+        if self.footer_height.is_zero() {
+            return self.margin_bottom;
+        }
         self.margin_bottom
             .max(self.footer_distance + self.footer_height)
     }

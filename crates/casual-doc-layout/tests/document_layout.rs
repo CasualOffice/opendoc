@@ -305,6 +305,16 @@ fn a_distinct_page_size_paginates_at_that_size_not_us_letter() {
     assert_eq!(config.page_size, Size::new(Twip(w), Twip(h)));
 }
 
+/// Only an **explicit** `lines` / `linesAndChars` grid type activates the line
+/// pitch. An omitted `w:type` does not.
+///
+/// The omitted case used to be listed with the active ones (`docs/100` §2 rule
+/// 1, "the producer form used by Word"). It is not: Word writes
+/// `<w:docGrid w:linePitch="360"/>` with no type into essentially every Latin
+/// `sectPr` it saves and lays those lines out on font metrics, and LibreOffice
+/// maps an absent type to no grid. Reading it as a grid over-paginated a real
+/// customer document from 5 pages to 7 — see
+/// `casual-doc-render/tests/pagination_fidelity.rs`.
 #[test]
 fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
     let shaper = ParleyShaper::new();
@@ -350,20 +360,23 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
         paginate_document(&document, &shaper)
     };
 
-    for grid_type in [
-        None,
-        Some(DocGridType::Lines),
-        Some(DocGridType::LinesAndChars),
-    ] {
+    for grid_type in [Some(DocGridType::Lines), Some(DocGridType::LinesAndChars)] {
         let layout = layout_for(grid_type);
         assert_eq!(first_line_height(&layout, node(100)), Twip(360));
         assert!(first_line_height(&layout, node(110)).raw() < 360);
         assert_eq!(first_line_height(&layout, node(120)), Twip(200));
     }
 
-    for grid_type in [Some(DocGridType::Default), Some(DocGridType::SnapToChars)] {
+    for grid_type in [
+        None,
+        Some(DocGridType::Default),
+        Some(DocGridType::SnapToChars),
+    ] {
         let layout = layout_for(grid_type);
-        assert!(first_line_height(&layout, node(100)).raw() < 360);
+        assert!(
+            first_line_height(&layout, node(100)).raw() < 360,
+            "{grid_type:?} must not snap lines to the pitch"
+        );
     }
 }
 
@@ -371,8 +384,12 @@ fn document_grid_pitch_honors_type_paragraph_and_exact_precedence() {
 fn document_grid_pitch_is_isolated_per_section() {
     let shaper = ParleyShaper::new();
     let mut first = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+    // An explicit line grid: only `lines`/`linesAndChars` activate the pitch,
+    // so a test about per-section pitch has to declare one.
+    first.doc_grid.grid_type = Some(DocGridType::Lines);
     first.doc_grid.line_pitch = Some(360);
     let mut second = section(10, (12_240, 15_840), 1_440, vec![], vec![], false);
+    second.doc_grid.grid_type = Some(DocGridType::Lines);
     second.doc_grid.line_pitch = Some(480);
     let body = vec![
         BlockNode::Paragraph(Paragraph {
@@ -405,6 +422,7 @@ fn document_grid_pitch_invalidates_cached_paragraph_geometry() {
     let shaper = ParleyShaper::new();
     let document_for = |pitch| {
         let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        boundary.doc_grid.grid_type = Some(DocGridType::Lines);
         boundary.doc_grid.line_pitch = Some(pitch);
         Document::new(
             node(1),
@@ -448,6 +466,7 @@ fn table_cells_join_the_document_grid_only_with_the_compatibility_switch() {
     let shaper = ParleyShaper::new();
     let layout_for = |adjust_line_height_in_table: bool| {
         let mut boundary = section(9, (12_240, 15_840), 1_440, vec![], vec![], false);
+        boundary.doc_grid.grid_type = Some(DocGridType::Lines);
         boundary.doc_grid.line_pitch = Some(360);
         let table = BlockNode::Table(Box::new(Table {
             id: node(200),

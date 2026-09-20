@@ -1,6 +1,7 @@
 # Document-grid line-pitch design
 
-Status: Accepted for the bounded body-flow slice (2026-08-12)
+Status: Accepted for the bounded body-flow slice (2026-08-12); section 2 rule 1
+corrected 2026-09-20 after it regressed a customer document
 
 ## 1. Problem
 
@@ -20,10 +21,40 @@ The ISO/IEC 29500 `docGrid` and `snapToGrid` rules establish these precedence
 rules:
 
 1. A positive `linePitch` on a section grid controls inter-line pitch for
-   paragraphs which snap to the grid. An omitted grid `type` with a positive
-   line pitch is the producer form used by Word and is treated as a line grid.
-   Explicit `lines` and `linesAndChars` also enable the line grid; explicit
-   `default` and `snapToChars` do not.
+   paragraphs which snap to the grid. Only an **explicit** `lines` or
+   `linesAndChars` grid type enables the line grid; explicit `default`,
+   explicit `snapToChars`, and an **omitted** `type` do not.
+
+   **Corrected 2026-09-20.** This rule originally read the omitted `type` as
+   "the producer form used by Word" and treated it as a line grid. That was
+   wrong and it over-paginated real documents. Word writes
+   `<w:docGrid w:linePitch="360"/>` with no `type` into the `sectPr` of
+   essentially every Latin document it saves, and it does not snap those lines
+   to 18 pt: the grid is a Page Setup -> Document Grid feature that is off
+   unless the author turns it on, at which point the type is written out.
+   ECMA-376 17.6.5 gives `w:type` no schema default, so an absent type is
+   "not specified", i.e. no grid; LibreOffice's writerfilter maps it to
+   `GRID_NONE`.
+
+   Measured on a customer A4 loan-agreement form carrying
+   `<w:docGrid w:linePitch="299"/>` and no `w:type`: the old rule rounded each
+   218-twip body line up to 299 and each 20 pt title line up to 598, producing
+   7 pages where Word's own last layout (four `w:lastRenderedPageBreak` marks)
+   and a LibreOffice PDF conversion both produce 5. Reverting rule 1 restores
+   5 and reproduces LibreOffice's title-line advance (368 twips) exactly.
+
+   The Medical corpus probe cited in section 1 also carries an omitted `type`
+   (`<w:docGrid w:linePitch="360"/>`), and LibreOffice's own line advances in
+   its 4-page conversion are 908, 786, 920, 990, 780, 1272 twips — no multiple
+   of 360, so the oracle is not snapping to that grid either. The 3-vs-4 page
+   gap that motivated this slice was therefore **not** caused by the grid, and
+   enabling the grid closed it by coincidence while over-paginating every other
+   untyped-`docGrid` document. With rule 1 corrected the probe is back at 3
+   pages against the oracle's 4; that gap is **re-opened as unexplained** and
+   whatever shortens those lines has to be measured on its own.
+   `crates/casual-doc-render/tests/pagination_fidelity.rs` pins the corrected
+   rule against a committed 2.6 KB fixture.
+
 2. Paragraph `snapToGrid` is style-cascaded. When it is never specified, it is
    effectively on while a line grid exists. Explicit false disables the grid.
 3. `lineRule="exact"` overrides the document-grid pitch.
@@ -86,8 +117,8 @@ The slice is accepted when tests prove:
 
 - positive line pitch rounds natural and `atLeast` line boxes upward;
 - exact spacing and paragraph `snapToGrid=false` bypass it;
-- omitted/`lines`/`linesAndChars` grid types activate line pitch while
-  `default`/`snapToChars` do not;
+- explicit `lines`/`linesAndChars` grid types activate line pitch while
+  omitted/`default`/`snapToChars` do not;
 - two sections can carry different pitches without cross-section leakage;
 - changing a single-section grid pitch invalidates cached paragraph geometry;
 - table cells remain unchanged by default and opt in only through
