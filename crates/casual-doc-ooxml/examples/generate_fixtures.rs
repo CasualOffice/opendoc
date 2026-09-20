@@ -74,6 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package(&cell_hit_routing_entries())?,
     )?;
 
+    fs::write(
+        output.join("tab-hit-offsets.docx"),
+        package(&entries_with_document(&tab_hit_offsets_document()))?,
+    )?;
+
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
         "customXml/item1.xml".to_owned(),
@@ -545,6 +550,96 @@ fn cell_hit_routing_document() -> Vec<u8> {
          xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
          xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
          xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <w:body>{body}</w:body></w:document>"
+    )
+    .into_bytes()
+}
+
+/// A caret-offset probe for **tab-indented** text, including a tab-indented
+/// paragraph that soft-wraps inside a table cell.
+///
+/// Shaped after the footer block of the owner's loan agreement, whose last page
+/// carries `\t\t\tThe Voice of the Tax Agent community. Since 1992` in a table
+/// cell. Clicking between the `h` and the `e` of `the` drew the caret exactly
+/// there and then typed three characters earlier, just after the `f` of `of`.
+///
+/// The mechanism is byte accounting, not geometry: a `w:tab` is one byte (`\t`)
+/// of the paragraph's model text, and the layout's tab layer threaded its caret
+/// byte cursor across tabs as if they were zero-width. Every glyph after a tab
+/// therefore carried a cluster one byte short per preceding tab. Because the
+/// caret is painted at the same stop the hit resolved to, the caret looked
+/// right and only the insertion was wrong — the editor showing one thing and
+/// doing another.
+///
+/// The fixture holds the three shapes that make the drift observable:
+///
+/// - **A body paragraph with three leading tabs**, so the drift is three bytes
+///   and cannot be mistaken for an off-by-one at a boundary.
+/// - **A tab-indented paragraph in a narrow table cell that soft-wraps**, so the
+///   second visual line is reached through the wrap repair as well as the tab
+///   cursor.
+/// - **A paragraph with a tab between two runs**, so the drift appears in the
+///   middle of a line rather than only at its start.
+/// - **A paragraph with a tab *and* a `PAGE` field**, which routes through the
+///   separate fielded-line assembly — a second byte cursor, with the same bug,
+///   that a fixture without a field never reaches.
+///
+/// Line heights are `w:lineRule="exact"` so assertions do not move with the
+/// installed fonts, and every x the tests use is taken from `caret_rect` rather
+/// than from a hard-coded column.
+fn tab_hit_offsets_document() -> Vec<u8> {
+    let line =
+        "<w:spacing w:line=\"240\" w:lineRule=\"exact\"/><w:rPr><w:sz w:val=\"18\"/></w:rPr>";
+    let run = |text: &str| {
+        format!(
+            "<w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr>\
+             <w:t xml:space=\"preserve\">{text}</w:t></w:r>"
+        )
+    };
+    let tab = "<w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:tab/></w:r>";
+
+    let mut body = String::new();
+    // 1. Three leading tabs before ordinary body text.
+    body.push_str(&format!(
+        "<w:p><w:pPr>{line}</w:pPr>{tab}{tab}{tab}{}</w:p>",
+        run("The Voice of the Tax Agent community. Since 1992")
+    ));
+    // 2. The same shape inside a narrow cell, wide enough that the text wraps.
+    body.push_str(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>",
+    );
+    body.push_str(&format!(
+        "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:pPr>{line}</w:pPr>{tab}{tab}{}</w:p></w:tc></w:tr>",
+        run("The Voice of the Tax Agent community. Since 1992 and for many years after that.")
+    ));
+    body.push_str("</w:tbl>");
+    // 3. A tab BETWEEN two runs, so the drift starts mid-line.
+    body.push_str(&format!(
+        "<w:p><w:pPr>{line}</w:pPr>{}{tab}{}</w:p>",
+        run("Name"),
+        run("The Voice of the Tax Agent")
+    ));
+    // 4. A tab in a paragraph that also carries a FIELD, which routes the line
+    //    through the separate fielded-line assembly rather than the tab layer —
+    //    a second byte cursor that has to agree with the first.
+    body.push_str(&format!(
+        "<w:p><w:pPr>{line}</w:pPr>{}{tab}{}\
+         <w:fldSimple w:instr=\" PAGE \">{}</w:fldSimple></w:p>",
+        run("Ref"),
+        run("The Voice of the Tax Agent"),
+        run("1")
+    ));
+    body.push_str(
+        "<w:sectPr><w:pgSz w:w=\"7200\" w:h=\"7200\"/>\
+         <w:pgMar w:top=\"600\" w:right=\"600\" w:bottom=\"600\" w:left=\"600\" \
+         w:header=\"300\" w:footer=\"300\"/></w:sectPr>",
+    );
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
          <w:body>{body}</w:body></w:document>"
     )
     .into_bytes()

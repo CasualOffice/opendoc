@@ -380,9 +380,27 @@ impl<'a> LayoutSnapshot<'a> {
         let idx = caret_start_line(&lines, pos)?;
         let lb = &lines[idx];
         let stops = stops_for(lb.line, lb.left);
+        // The LAST stop carrying `pos.offset`, not the first.
+        //
+        // One offset can own two stops. A run's trailing stop is emitted at "the
+        // next distinct offset on the line" (`stops_for`), and where the next run
+        // starts contiguously that is the next run's first cluster — so both the
+        // run's right edge and the next run's left edge claim it. Normally the two
+        // sit at the SAME x and the choice is immaterial. Across a tab they do
+        // not: the text before the tab ends at one x and the text after it starts
+        // at the tab column, hundreds of twips away.
+        //
+        // Taking the first match therefore painted the caret at the END OF THE
+        // TEXT BEFORE THE TAB for an offset whose character is drawn after it. On
+        // `Name\tThe Voice…` a click on the `T` resolved to offset 5 and the caret
+        // was drawn 841 twips to its left, back against `Name` — `hit_test` and
+        // `caret_rect` disagreeing about one offset, which is the whole thing this
+        // module must not do. The later stop is the one that belongs to the glyph
+        // that renders the offset, and the one `hit_test` picks when the pointer
+        // is on that glyph.
         let x = stops
             .iter()
-            .find(|s| s.offset == pos.offset)
+            .rfind(|s| s.offset == pos.offset)
             .map_or_else(|| nearest_stop(&stops, lb.left).x, |s| s.x);
         // Ascent + descent of the RUN AT THE INSERTION POINT, anchored on the
         // line's baseline. Two separate mistakes were folded into the old
@@ -1064,6 +1082,28 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
     };
 
     let mut stops = Vec::new();
+    // KNOWN DEFECT, not fixed here: a `w:tab` occupies one byte (`\t`) of the
+    // paragraph's model text but paints NO GLYPH, and every slot below is built
+    // from a glyph. So a tab's own offset — the caret slot immediately before
+    // the tab — has no stop. On `\t\t\tThe Voice…` offsets 0, 1 and 2 all resolve
+    // to the same painted x as offset 3, so clicking at the line's left edge
+    // lands after the indent and arrowing left across the indent does not move
+    // the caret. Word places the caret at the pen where each tab's advance
+    // begins.
+    //
+    // It cannot be repaired from here: a `Line` carries runs, and the tab
+    // advance is a GAP between two runs with no record of which offset opened
+    // it. The fix belongs where the gap is resolved (`tabs::layout_tabbed_line`
+    // and `flow::layout_fielded_line`) — they know each tab's offset and its
+    // pen — and needs `Line` to carry those glyphless slots, which is why it is
+    // not folded into this change.
+    //
+    // The same gap is why `next_after` below cannot name a tab: a run's trailing
+    // boundary resolves to the next offset that a GLYPH carries, skipping the
+    // tab's own byte, so the run's right edge and the following run's left edge
+    // both claim that one offset. `caret_rect_on` resolves that duplicate to the
+    // later stop so the caret is at least drawn on the glyph the offset names.
+    //
     // Markers are excluded: a list marker is furniture drawn ahead of the text
     // and owns no model position, so a caret stop at its glyphs maps a click
     // (and an arrow key) onto an offset the marker does not represent. That is

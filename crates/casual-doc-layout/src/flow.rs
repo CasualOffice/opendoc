@@ -4168,24 +4168,15 @@ fn collect_note_positions(items: &[FlowItem<'_>], base: u32) -> Vec<(u32, NoteMa
     let mut byte = base;
     let mut notes = Vec::new();
     for item in items {
-        match item {
-            FlowItem::Run(run) => {
-                byte = byte.saturating_add(run.text.len() as u32);
-            }
-            FlowItem::Field { value, .. } => {
-                byte = byte.saturating_add(value.len() as u32);
-            }
-            FlowItem::NoteReference(marker) => notes.push((byte, *marker)),
-            FlowItem::Tab
-            | FlowItem::PositionalTab { .. }
-            | FlowItem::Break(_)
-            | FlowItem::Image { .. }
-            | FlowItem::Math { .. }
-            | FlowItem::TextBox { .. }
-            | FlowItem::HorizontalRule(_)
-            | FlowItem::FloatBarrier { .. }
-            | FlowItem::FloatExclusion { .. } => {}
+        if let FlowItem::NoteReference(marker) = item {
+            notes.push((byte, *marker));
         }
+        // A note marker is placed on the line whose MODEL range covers its byte,
+        // so the cursor has to walk the model byte space — a tab is one byte, and
+        // a field's cached value is none of it. Counting the field's value here
+        // (and skipping the tab) drifted the marker past its own line whenever a
+        // paragraph carried either.
+        byte = byte.saturating_add(item.model_bytes());
     }
     notes
 }
@@ -5500,10 +5491,14 @@ fn layout_fielded_line(
     // Split at tabs into segments.
     let mut segments: Vec<Vec<&FlowItem<'_>>> = vec![Vec::new()];
     let mut tabs = Vec::new();
+    // Model bytes consumed by the tab that opens each segment after the first —
+    // parallel to `tabs`. A `w:tab` is a real `\t` in the paragraph's text.
+    let mut tab_bytes: Vec<u32> = Vec::new();
     for item in items {
         match item {
             FlowItem::Tab => {
                 tabs.push(tabs::TabKind::Ordinary);
+                tab_bytes.push(item.model_bytes());
                 segments.push(Vec::new());
             }
             FlowItem::PositionalTab {
@@ -5516,6 +5511,7 @@ fn layout_fielded_line(
                     relative_to: *relative_to,
                     leader: *leader,
                 });
+                tab_bytes.push(item.model_bytes());
                 segments.push(Vec::new());
             }
             _ => segments.last_mut().expect("non-empty").push(item),
@@ -5524,11 +5520,16 @@ fn layout_fielded_line(
     let has_tab = segments.len() > 1;
     // Thread the caret byte offset through the segments in visual/logical order so
     // each shaped run's clusters and the line's range address the paragraph's real
-    // model text. Tabs between segments are zero-width for offset purposes.
+    // model text — INCLUDING the tab characters between them, which are model text
+    // even though no segment shapes them.
     let mut byte = base;
     let measured: Vec<FieldedSegment> = segments
         .iter()
-        .map(|seg| {
+        .enumerate()
+        .map(|(index, seg)| {
+            if index > 0 {
+                byte = byte.saturating_add(tab_bytes[index - 1]);
+            }
             let m = measure_fielded_segment(shaper, node, seg, byte);
             byte = m.end_byte;
             m
@@ -14065,5 +14066,75 @@ mod tests {
             .flat_map(|(_, r)| r.glyphs.iter().map(|g| g.cluster))
             .collect();
         assert_eq!(label_clusters, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn a_note_reference_is_located_in_the_model_byte_space() {
+        // A note marker is attached to the line whose MODEL range covers its
+        // byte, so its cursor has to walk the same byte space
+        // `node_plain_text` defines — the one a caret offset and an edit share.
+        //
+        // Two items were counted wrongly, in opposite directions: a `w:tab` is
+        // one byte of the paragraph's text and was counted as none, and a
+        // field's cached value is none of it and was counted at its display
+        // width. On `Ref` + tab + `Body` + a 5-character field + a reference,
+        // that is 3 + 0 + 4 + 5 = 12 instead of the real 3 + 1 + 4 + 0 = 8, so
+        // the marker was charged to a line four bytes further on — a different
+        // line, on a paragraph that wraps.
+        use crate::text::{FieldKind, FieldStyle, NoteMarker};
+        use casual_doc_model::v1::{NoteId, NoteKind};
+
+        let styled = |text: &'static str| StyledRun {
+            text: text.into(),
+            requested_family: None,
+            font: FontId(0),
+            size: Twip::from_points(11),
+            character_scale_percent: 100,
+            bold: false,
+            italic: false,
+            letter_spacing: Twip::ZERO,
+            color: [0, 0, 0, 255],
+            decoration: Decoration::default(),
+            highlight: None,
+            shading: None,
+            baseline_shift: Twip::ZERO,
+        };
+        let items = vec![
+            FlowItem::Run(styled("Ref")),
+            FlowItem::Tab,
+            FlowItem::Run(styled("Body")),
+            FlowItem::Field {
+                kind: FieldKind::Passthrough,
+                value: "     ".to_owned(),
+                style: FieldStyle {
+                    font: FontId(0),
+                    size: Twip::from_points(11),
+                    character_scale_percent: 100,
+                    color: [0, 0, 0, 255],
+                    bold: false,
+                    italic: false,
+                    letter_spacing: Twip::ZERO,
+                    decoration: Decoration::default(),
+                },
+            },
+            FlowItem::NoteReference(NoteMarker {
+                kind: NoteKind::Footnote,
+                note: NoteId::new(NodeId::from_parts(201, 1).unwrap()),
+            }),
+        ];
+        let notes = collect_note_positions(&items, 0);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(
+            notes[0].0,
+            node_plain_text_len_of(&items),
+            "the reference sits at the end of the paragraph's MODEL text"
+        );
+        assert_eq!(notes[0].0, 8, "\"Ref\" + \\t + \"Body\" is 8 model bytes");
+    }
+
+    /// The model byte length of a flattened paragraph, from the one accounting
+    /// every byte cursor in the layout shares.
+    fn node_plain_text_len_of(items: &[FlowItem<'_>]) -> u32 {
+        crate::tabs::paragraph_model_bytes(items)
     }
 }

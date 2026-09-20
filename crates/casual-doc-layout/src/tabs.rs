@@ -143,6 +143,63 @@ pub enum FlowItem<'a> {
     },
 }
 
+impl FlowItem<'_> {
+    /// How many bytes of the paragraph's **model text** this item occupies.
+    ///
+    /// This is the single authority every byte cursor in the layout must advance
+    /// by. The model byte space is the one
+    /// [`flow::node_plain_text`](crate::flow::node_plain_text) produces and
+    /// `casual-doc-edit` addresses, so an offset the layout hands out (a glyph's
+    /// `cluster`, a [`Line`]'s `range`) only names the character the user clicked
+    /// while the two agree.
+    ///
+    /// The instance that made this necessary: a `w:tab` is **one byte** (`\t`) of
+    /// the paragraph's text, and the tab layer had been threading its byte cursor
+    /// across tabs as if they were zero-width. Every offset after a tab came back
+    /// one byte short per preceding tab, so on a tab-indented line the caret
+    /// painted where the user clicked (both the paint and the hit read the same
+    /// shifted stop) while typing inserted several characters earlier.
+    ///
+    /// KNOWN DIVERGENCE, not repaired here: a `w:sym` becomes a
+    /// [`FlowItem::Run`] whose text is the *resolved* glyph
+    /// ([`crate::symbol_map::resolve_symbol`]), which can be a different number of
+    /// UTF-8 bytes than the authored `w:char` the model text carries (a Wingdings
+    /// `0xF041` is 3 bytes in the model and resolves to a 1-byte `A`). Aligning
+    /// those requires one shared symbol resolution between `casual-doc-model` and
+    /// this crate; `paragraph_model_bytes` is deliberately written so that a
+    /// symbol paragraph fails the guard rather than passing quietly.
+    pub(crate) fn model_bytes(&self) -> u32 {
+        match self {
+            // The one non-run item that IS model text.
+            FlowItem::Tab => 1,
+            FlowItem::Run(run) => run.text.len() as u32,
+            // `w:ptab`, hard breaks, drawings, fields, notes, text boxes, rules and
+            // the float markers contribute no bytes — matching `node_plain_text`
+            // and `casual-doc-edit`'s `inline_text_len`, which skip them all.
+            FlowItem::PositionalTab { .. }
+            | FlowItem::Break(_)
+            | FlowItem::Image { .. }
+            | FlowItem::Math { .. }
+            | FlowItem::Field { .. }
+            | FlowItem::NoteReference(_)
+            | FlowItem::TextBox { .. }
+            | FlowItem::HorizontalRule(_)
+            | FlowItem::FloatBarrier { .. }
+            | FlowItem::FloatExclusion { .. } => 0,
+        }
+    }
+}
+
+/// The model byte length of a whole flattened paragraph — the value every line
+/// range in that paragraph must end at.
+#[must_use]
+pub fn paragraph_model_bytes(items: &[FlowItem<'_>]) -> u32 {
+    items
+        .iter()
+        .map(FlowItem::model_bytes)
+        .fold(0u32, u32::saturating_add)
+}
+
 /// Whether an item stream needs the tab/break layer at all: any tab, any hard
 /// break, or any `bar` tab stop (which draws even without a tab character). When
 /// this is `false`, the caller uses the base shaper directly.
@@ -343,9 +400,9 @@ pub(crate) enum TabKind {
 }
 
 /// Splits the item stream into hard-break-delimited [`Block`]s, assigning each run
-/// its node-relative byte offset (offsets accumulate over run text only; tabs and
-/// breaks are zero-width for offset purposes, matching the paragraph text being
-/// the concatenation of its runs).
+/// its node-relative byte offset. Offsets advance by each item's
+/// [`FlowItem::model_bytes`] — the paragraph's model text is **not** merely the
+/// concatenation of its runs, because a `w:tab` contributes a `\t`.
 fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
     let mut blocks = Vec::new();
     let mut byte = base;
@@ -365,6 +422,7 @@ fn split_blocks<'a>(items: &'a [FlowItem<'a>], base: u32) -> Vec<Block<'a>> {
             FlowItem::Tab => {
                 tabs.push(TabKind::Ordinary);
                 segments.push(Vec::new());
+                byte += item.model_bytes();
             }
             FlowItem::PositionalTab {
                 alignment,
@@ -1368,10 +1426,19 @@ mod tests {
             layout.lines[0].runs[0].origin.x < Twip::ZERO,
             "the hanging label must protrude left of the normal indent"
         );
+        // The model text is "eye protection" (14) + '\t' (1) + ":" (1) + '\t' (1),
+        // so the value run starts at byte 17. The old threshold of 15 assumed the
+        // two tabs occupied no bytes at all, which made it select the ":" run
+        // once the tabs were counted.
+        const VALUE_OFFSET: u32 = 14 + 1 + 1 + 1;
         let value_start = layout.lines[0]
             .runs
             .iter()
-            .find(|run| run.glyphs.first().is_some_and(|glyph| glyph.cluster >= 15))
+            .find(|run| {
+                run.glyphs
+                    .first()
+                    .is_some_and(|glyph| glyph.cluster >= VALUE_OFFSET)
+            })
             .expect("value run");
         assert!(
             value_start.origin.x.raw().abs() <= 2,
@@ -1431,9 +1498,12 @@ mod tests {
             constraints(),
             para_range(),
         );
-        // The '.' is byte offset 2 within "12.34"; its glyph's absolute x should
-        // land on the stop.
-        let dot_x = cluster_x(&layout.lines[0].runs, 2).expect("decimal glyph found");
+        // The paragraph's model text is "\t12.34" — the leading tab occupies byte
+        // 0 — so the '.' is byte 3, not byte 2. (It was byte 2 while the tab
+        // layer threaded its caret byte cursor across tabs as if they were
+        // zero-width, which is exactly the defect that made a click after a tab
+        // insert one byte per preceding tab too early.)
+        let dot_x = cluster_x(&layout.lines[0].runs, 3).expect("decimal glyph found");
         assert!(
             (dot_x.raw() - 2000).abs() <= 25,
             "the decimal point aligns to the stop (2000), got {}",
