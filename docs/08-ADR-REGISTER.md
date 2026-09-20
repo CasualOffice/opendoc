@@ -359,27 +359,38 @@ construct-family work reinforces the seams. This ADR does **not** choose OT vs C
 
 ## ADR-031 — PDF export backend and writer/subsetter build-vs-buy
 
-**Decision:** *Proposed, not yet accepted.* Add a `casual-doc-pdf` backend that
-transcribes the shared `DisplayList` (ADR-003) into a real, deterministic PDF with a
-selectable text layer and embedded **subset** fonts — never rasterized pages or
-outlined text. Editor↔PDF parity is guaranteed structurally (the exporter reuses the
-editor's layout pass verbatim and performs no layout of its own) and enforced by a CI
-golden. Word parity is *feature* parity (outline/links/metadata, then tagged PDF /
-PDF-A), delivered in phases; layout fidelity to Word is inherited from the layout
-engine, not re-implemented here. **This ADR must additionally choose** build-vs-buy for
-(a) the PDF container writer and (b) the TrueType/CFF font subsetter, evaluated against
-`deny.toml` and `unsafe_code = forbid`. Full design, phasing, and effort:
-`98-PDF-EXPORT-AND-PRINT-DESIGN.md`.
+**Decision:** *Accepted for Phase 0; build-vs-buy resolved as hand-rolled.* A
+`casual-doc-pdf` backend transcribes the shared `DisplayList` (ADR-003) into a real,
+deterministic PDF with a selectable text layer and embedded **subset** fonts — never
+rasterized pages or outlined text. Editor↔PDF parity is guaranteed structurally (the
+exporter reuses the editor's layout pass verbatim and performs no layout of its own).
+Word parity is *feature* parity (outline/links/metadata, then tagged PDF / PDF-A),
+delivered in phases; layout fidelity to Word is inherited from the layout engine, not
+re-implemented here.
+
+The two open sub-decisions are now settled: **(a)** the PDF container writer and
+**(b)** the TrueType font subsetter are both **hand-rolled**, adding no crate to
+`Cargo.lock`. The subsetter is small because it never renumbers glyphs — `Identity-H`
+plus `/CIDToGIDMap /Identity` lets it keep the glyph identity space and simply empty
+unused outlines, which is also what removes the "PDF drew a different glyph than the
+shaper chose" class of defect. CFF outlines are **not** subset; such a face is embedded
+whole and the export reports it. Three crates already in the tree are reused rather than
+added: `flate2`, `skrifa` and `image`. Full design, current support matrix and remaining
+work: `98-PDF-EXPORT-AND-PRINT-DESIGN.md` §"Implementation status".
 
 **Why:** the display-list seam already makes a PDF backend additive; the only open
 questions are the dependency posture (writer/subsetter) and the Phase-2 scope gate
 (tagged PDF / PDF-A). Recording them here keeps the "PDF generation backend" pending
 item from being decided implicitly in code.
 
-**Consequence:** blocks Phase 0 of the PDF work until (a)/(b) are chosen (moves the
-estimate by ~1.5 sprints); the Phase-2 accessibility/archival gate is a separate
+**Consequence:** Phase 0 is implemented and registered in `casual-doc-io` as the
+export-only `application.pdf` adapter, so a Rust host reaches it through the same
+registry seam as DOCX and ODT; the browser host is not wired to it yet, and doc 98 lists
+exactly what that wiring is. The Phase-2 accessibility/archival gate remains a separate
 in/out decision because it ≈ doubles the effort and shapes the semantic `StructureTree`
-from day one.
+from day one — nothing in Phase 0 forecloses it. Phase 1's semantic features (links,
+outline, destinations) stay blocked on that `StructureTree` bridge, which layout does not
+emit yet.
 
 ## ADR-032 — Keep `opt-level = 3`; buy WASM load time with delivery, not codegen
 
@@ -470,7 +481,7 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
 - native renderer: Skia, Vello, tiny-skia, wgpu custom, or hybrid;
 - internal text storage: rope, piece tree, or chunked sequence;
 - ~~collaboration operation model: OT vs CRDT~~ — superseded by **ADR-033** (proposed; owner decision 2026-09-15; see doc 107);
-- ~~PDF generation backend~~ — superseded by **ADR-031** (proposed; see doc 98);
+- ~~PDF generation backend~~ — superseded by **ADR-031** (Phase 0 accepted and implemented; see doc 98);
 - schema format: canonical CBOR encoding profile and golden vectors;
 - plugin ABI stability;
 - whether layout uses fixed-point units internally.
