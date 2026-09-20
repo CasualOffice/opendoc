@@ -525,23 +525,45 @@ impl<'a> LayoutSnapshot<'a> {
     }
 
     /// Moves the caret at `pos` vertically to the adjacent visual line, returning
-    /// the model position visually nearest the current caret x (its x-affinity).
+    /// the model position visually nearest `goal_x` — the column the run of
+    /// vertical moves is aiming at — or, with no goal, nearest the caret's own x.
     ///
     /// Navigation is in flow order, so the adjacent line may be on the previous or
     /// next page — moving down off the last line of a page lands on the first line
     /// of the next. Returns `None` at the document's top/bottom edge, or if `pos`
     /// itself does not resolve to a line.
+    ///
+    /// **Why the goal column is a parameter and not derived here (HF-164).** A
+    /// line shorter than the goal clamps the caret to its own end, and that
+    /// clamped x is all `pos` carries — so deriving the affinity from `pos`
+    /// alone loses the column the moment a run of Down presses crosses one short
+    /// line, and every line after it is entered at the short line's width. Word
+    /// and Docs both restore the original column, because the goal column is
+    /// state that belongs to the *run of moves*, not to any one position: it is
+    /// set by the first vertical move, preserved by the rest, and cleared by a
+    /// horizontal move, a click or an edit. Only the caller knows which of those
+    /// happened, so only the caller can own it — this function is given the
+    /// answer, in page-local twips, and stays a pure function of the layout.
     #[must_use]
-    pub fn move_vertical(&self, pos: ModelPos, dir: Direction) -> Option<ModelPos> {
+    pub fn move_vertical(
+        &self,
+        pos: ModelPos,
+        dir: Direction,
+        goal_x: Option<Twip>,
+    ) -> Option<ModelPos> {
         let lines = self.line_boxes();
         let cur = caret_start_line(&lines, pos)?;
 
-        // The x-affinity: the caret's current x on its own line.
-        let cur_stops = stops_for(lines[cur].line, lines[cur].left);
-        let affinity = cur_stops
-            .iter()
-            .find(|s| s.offset == pos.offset)
-            .map_or_else(|| nearest_stop(&cur_stops, lines[cur].left).x, |s| s.x);
+        // The x-affinity: the caller's goal column, else the caret's current x on
+        // its own line — which is also exactly what the caller measures to SET
+        // the goal, so a first move with no goal yet behaves identically.
+        let affinity = goal_x.unwrap_or_else(|| {
+            let cur_stops = stops_for(lines[cur].line, lines[cur].left);
+            cur_stops
+                .iter()
+                .find(|s| s.offset == pos.offset)
+                .map_or_else(|| nearest_stop(&cur_stops, lines[cur].left).x, |s| s.x)
+        });
 
         // Vertical movement is GEOMETRIC, not flow-ordered.
         //
@@ -1951,7 +1973,7 @@ mod tests {
         let start = ModelPos::new(node(50), 0);
         let (_, from) = snap.caret_rect(start).expect("a caret in the paragraph");
         let up = snap
-            .move_vertical(start, Direction::Up)
+            .move_vertical(start, Direction::Up, None)
             .expect("Up from inside the document is not the top");
         let (_, to) = snap.caret_rect(up).expect("a caret at the destination");
         assert!(
@@ -1959,6 +1981,81 @@ mod tests {
             "Up must move the caret UP: {} -> {}",
             from.origin.y.raw(),
             to.origin.y.raw()
+        );
+    }
+
+    /// HF-164: a short line must CLAMP the caret without consuming the column
+    /// the run of Down presses is aiming at.
+    ///
+    /// The reported walk, in twips rather than the pixels the owner measured:
+    /// a caret at x = 4440 on a long line, Down onto a three-glyph line (which
+    /// can only offer 1740), Down again onto an empty paragraph (1440), and the
+    /// long line after that must be entered at 4440 again. Deriving the
+    /// affinity from the position alone cannot do it — after the first clamp
+    /// the position IS the short line's end, and every line below is entered at
+    /// that width.
+    #[test]
+    fn a_short_line_clamps_the_caret_without_eating_the_goal_column() {
+        let owner = layout(&[
+            ltr_para(1, &[40]),
+            ltr_para(2, &[3]),
+            blank_para(3),
+            ltr_para(4, &[40]),
+        ]);
+        let snap = LayoutSnapshot::new(&owner);
+        let column_of = |pos| snap.caret_rect(pos).expect("a caret").1.origin.x.raw();
+
+        let start = ModelPos::new(node(1), 30);
+        let goal = Twip(column_of(start));
+        assert_eq!(
+            goal.raw(),
+            MARGIN + 30 * ADV,
+            "the column the walk starts at"
+        );
+
+        // Down, Down, Down — the goal column threaded through every press, as
+        // the host holds it for the whole run.
+        let short = snap
+            .move_vertical(start, Direction::Down, Some(goal))
+            .expect("Down onto the short line");
+        assert_eq!(
+            short,
+            ModelPos::new(node(2), 3),
+            "clamped to the short line"
+        );
+        assert_eq!(column_of(short), MARGIN + 3 * ADV, "…at its own end");
+
+        let empty = snap
+            .move_vertical(short, Direction::Down, Some(goal))
+            .expect("Down onto the empty paragraph");
+        assert_eq!(empty, ModelPos::new(node(3), 0));
+        assert_eq!(column_of(empty), MARGIN, "…which offers only the margin");
+
+        let restored = snap
+            .move_vertical(empty, Direction::Down, Some(goal))
+            .expect("Down onto the next long line");
+        assert_eq!(
+            column_of(restored),
+            goal.raw(),
+            "the long line below two short ones must be entered at the goal column, \
+             not at {}",
+            column_of(empty)
+        );
+
+        // And the other half of the rule: with no goal to keep (the first press
+        // of a run), the affinity is the caret's own x — which is exactly how
+        // the column is LOST when nobody carries it, and why the parameter has
+        // to exist at all.
+        let mut walk = start;
+        for _ in 0..3 {
+            walk = snap
+                .move_vertical(walk, Direction::Down, None)
+                .expect("the same three presses, uncarried");
+        }
+        assert_eq!(
+            column_of(walk),
+            MARGIN,
+            "without a goal column the walk is stuck at the empty paragraph's x"
         );
     }
 
@@ -2166,9 +2263,9 @@ mod tests {
         let n = node(1);
         // On line 1, one glyph in (offset 4, x = MARGIN + ADV).
         let start = ModelPos::new(n, 4);
-        let up = snap.move_vertical(start, Direction::Up).unwrap();
+        let up = snap.move_vertical(start, Direction::Up, None).unwrap();
         assert_eq!(up, ModelPos::new(n, 1), "up keeps the same visual column");
-        let down = snap.move_vertical(start, Direction::Down).unwrap();
+        let down = snap.move_vertical(start, Direction::Down, None).unwrap();
         assert_eq!(
             down,
             ModelPos::new(n, 7),
@@ -2176,7 +2273,7 @@ mod tests {
         );
         // Off the top of the document there is nowhere to go.
         assert!(
-            snap.move_vertical(ModelPos::new(n, 0), Direction::Up)
+            snap.move_vertical(ModelPos::new(n, 0), Direction::Up, None)
                 .is_none()
         );
     }
@@ -2195,7 +2292,7 @@ mod tests {
         assert_eq!(snap.caret_rect(last_on_page1).unwrap().0, 1);
 
         let down = snap
-            .move_vertical(last_on_page1, Direction::Down)
+            .move_vertical(last_on_page1, Direction::Down, None)
             .expect("there is a line below");
         assert_eq!(
             down.node,
@@ -2681,7 +2778,7 @@ mod tests {
 
         let from_top_left = ModelPos::new(node(100), 0);
         let down = snap
-            .move_vertical(from_top_left, Direction::Down)
+            .move_vertical(from_top_left, Direction::Down, None)
             .expect("there is a row below");
         assert_eq!(
             down.node,
@@ -2691,14 +2788,14 @@ mod tests {
 
         // And back up again returns to the column it came from.
         let up = snap
-            .move_vertical(down, Direction::Up)
+            .move_vertical(down, Direction::Up, None)
             .expect("there is a row above");
         assert_eq!(up.node, node(100), "Up returns to the same column");
 
         // The right-hand column navigates independently.
         let from_top_right = ModelPos::new(node(200), 0);
         let down_right = snap
-            .move_vertical(from_top_right, Direction::Down)
+            .move_vertical(from_top_right, Direction::Down, None)
             .expect("there is a row below");
         assert_eq!(
             down_right.node,

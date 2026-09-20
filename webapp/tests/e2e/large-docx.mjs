@@ -272,3 +272,52 @@ export function makeParagraphRevisionsDocx() {
     { name: "word/document.xml", data: enc.encode(paragraphRevisionsDocumentXml()) },
   ]);
 }
+
+// ---- Goal-column fixture (HF-164) -------------------------------------------
+// Pages of a repeating LONG / SHORT / EMPTY paragraph pattern: a paragraph that
+// wraps over several full-width lines, a line far too short to offer a column
+// from one of them, and an empty paragraph that can offer nothing but the left
+// margin. That is the shape the owner's document dropped the column on, and
+// the pattern repeats across an explicit page break, so a walk down it crosses
+// a page boundary with the column still held.
+//
+// The marker text is "QZX" rather than "@" deliberately: the corpus contains
+// e-mail addresses, so "@" is not a probe you can search a document for.
+
+const GOAL_LONG =
+  "The vertical goal column is the horizontal position a run of arrow presses keeps " +
+  "aiming at while it walks down the page, and it has to survive a line that is far " +
+  "too short to offer it, an empty paragraph that can offer nothing at all, and the " +
+  "boundary between one page and the page that follows it.";
+
+function goalColumnDocumentXml(pageCount, blocksPerPage) {
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const blocks = [];
+  for (let p = 0; p < pageCount; p++) {
+    for (let b = 0; b < blocksPerPage; b++) {
+      blocks.push(
+        `<w:p><w:r><w:t xml:space="preserve">${p + 1}.${b + 1} ${GOAL_LONG}</w:t></w:r></w:p>`,
+      );
+      blocks.push(`<w:p><w:r><w:t xml:space="preserve">QZX ${p + 1}.${b + 1}</w:t></w:r></w:p>`);
+      blocks.push(`<w:p/>`);
+    }
+    if (p < pageCount - 1) blocks.push(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`);
+  }
+  const sectPr = `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W}"><w:body>${blocks.join("")}${sectPr}</w:body></w:document>`;
+}
+
+/** A .docx of long / short / empty paragraphs, `pageCount` pages long. */
+export function makeGoalColumnDocx(pageCount = 4, blocksPerPage = 3) {
+  const enc = new TextEncoder();
+  return storedZip([
+    { name: "[Content_Types].xml", data: enc.encode(CONTENT_TYPES) },
+    { name: "_rels/.rels", data: enc.encode(ROOT_RELS) },
+    { name: "word/_rels/document.xml.rels", data: enc.encode(DOC_RELS) },
+    {
+      name: "word/document.xml",
+      data: enc.encode(goalColumnDocumentXml(pageCount, blocksPerPage)),
+    },
+  ]);
+}

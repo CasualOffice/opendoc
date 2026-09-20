@@ -67,7 +67,8 @@ import {
   slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
-import { recoverVerticalMove } from "./caret_probe.mjs";
+// One line, deliberately: main.js is on a line ratchet (`module_seams`).
+import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
   reviewCardSignature,
   reviewCommentIsReplyTo,
@@ -6384,6 +6385,7 @@ function onPointerDown(page, event) {
     return;
   }
   pendingFormat = null; // a click moves the caret → disarm typing format
+  verticalGoal.clear(); // …and puts the caret in a column of its own choosing
   tableSelection = null;
   dragging = true;
   pointerGesture = {
@@ -8985,6 +8987,7 @@ async function applyEditResult(res) {
   // user's own action — never the untouched load-time seed, even if the two
   // positions coincide.
   implicitCaretAt = null;
+  verticalGoal.clear(); // an edit ends a run of vertical moves (HF-164)
   selection = adoptEditPosition(node, offset);
   // A content mutation invalidates a row/column/table selection the same way it
   // invalidates an object selection. Without this the accent fill survives
@@ -9131,6 +9134,9 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
   return true;
 }
 
+/** The column a run of vertical caret moves is aiming at (HF-164). */
+const verticalGoal = createVerticalGoal();
+
 /** Move the caret by arrow key. Shift extends (moves the focus); plain collapses. */
 function navCaret(dir, extend) {
   if (!selection) return;
@@ -9145,6 +9151,7 @@ function navCaret(dir, extend) {
   pendingFormat = null; // caret moved → disarm typing format
   const collapseToStart = dir === "left" || dir === "wordLeft";
   const collapseToEnd = dir === "right" || dir === "wordRight";
+  const goalX = verticalGoal.columnFor(dir, selection.focus, () => caretColumn(selection.focus));
   const c =
     !extend && hasRange() && (collapseToStart || collapseToEnd)
       ? doc.selectionEdge(
@@ -9154,23 +9161,42 @@ function navCaret(dir, extend) {
           selection.focus.offset,
           collapseToEnd,
         )
-      : doc.moveCaret(selection.focus.node, selection.focus.offset, dir);
+      : doc.moveCaret(selection.focus.node, selection.focus.offset, dir, goalX ?? undefined);
   const to = { node: c.node, offset: c.offset };
   c.free();
-  // The engine's vertical move can dead-end around a table (HF-024, in the UP
-  // direction): it either returns the position it was given or slides the
-  // caret to the start of the SAME line, and either way the key does nothing
-  // visible — on the owner's document, sixty ArrowUps from the end moved the
-  // caret zero pixels. `recoverVerticalMove` accepts the engine's answer
-  // whenever it genuinely moved in the asked-for direction and only otherwise
-  // looks for the neighbouring line geometrically.
-  const next =
+  // The engine still dead-ends going UP out of a table: it answers with the
+  // position it was given and the key does nothing visible. `recoverVerticalMove`
+  // takes the engine's answer whenever it really moved and only otherwise finds
+  // the neighbouring line by hit-testing — and a rescued move is then put back
+  // on the run's goal column, which the probe's own geometry cannot know about.
+  const rescued =
     dir === "up" || dir === "down"
       ? recoverVerticalMove(dir, selection.focus, to, caretProbeIO())
       : to;
+  const next = rescued === to ? to : atGoalColumn(rescued, goalX);
+  verticalGoal.keep(goalX, next);
   selection = extend ? { anchor: selection.anchor, focus: next } : { anchor: next, focus: next };
   drawSelection();
   scrollCaretIntoView();
+}
+
+/** The caret's own column at `position` — page-local twips, the units the goal
+ *  column is held in — or null where the position has no geometry. */
+function caretColumn(position) {
+  return doc.caretRect(position.node, position.offset)[1] ?? null;
+}
+
+/** `position`, moved sideways onto `goalX` on its own line. The rescue probe
+ *  finds a LINE by hit-testing below/above the painted caret, and the caret's
+ *  x is not the column the run aims at once a short line has clamped it. */
+function atGoalColumn(position, goalX) {
+  const flat = goalX === null ? [] : doc.caretRect(position.node, position.offset);
+  if (flat.length < 5) return position;
+  const hit = doc.hitTest(flat[0], goalX, flat[2] + Math.round(flat[4] / 2));
+  if (!hit) return position;
+  const at = { node: hit.node, offset: hit.offset };
+  hit.free();
+  return at;
 }
 
 /** The geometry and model access `probeVerticalNeighbour` needs, bound to this
@@ -9201,23 +9227,6 @@ function selEndpoints() {
 /** Runs a toolbar edit thunk `(sNode, sOff, eNode, eOff) => EditResult`,
  *  preserving the selection (formatting does not collapse it) and repainting
  *  only the dirty pages. */
-/** The selection's two endpoints in document order. Ordering across paragraphs
- *  is the engine's answer, not the offsets': offsets are per-paragraph, so a
- *  backwards selection across paragraphs cannot be ordered by comparing them. */
-function orderedSelectionEnds() {
-  const { anchor, focus } = selection;
-  if (anchor.node === focus.node) {
-    const forward = anchor.offset <= focus.offset;
-    return forward ? [{ ...anchor }, { ...focus }] : [{ ...focus }, { ...anchor }];
-  }
-  const s = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, false);
-  const e = doc.selectionEdge(anchor.node, anchor.offset, focus.node, focus.offset, true);
-  const ends = [{ node: s.node, offset: s.offset }, { node: e.node, offset: e.offset }];
-  s.free();
-  e.free();
-  return ends;
-}
-
 /** A cross-paragraph edit while Suggesting, tracked (docs/108 phase 2).
  *
  *  `text` replaces the range; omit it for a plain deletion. The engine writes the
@@ -15210,6 +15219,7 @@ function navToPosition(caret, extend) {
   breakTypingSession();
   pendingFormat = null; // caret moved → disarm typing format
   const to = { node: caret.node, offset: caret.offset };
+  verticalGoal.clear();
   if (typeof caret.free === "function") caret.free();
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
@@ -15233,28 +15243,19 @@ function navByViewport(dir, extend) {
   const { rect: pageRect, sx, sy } = scaleOf(caretPage);
   const viewportRect = viewportEl.getBoundingClientRect();
   const distance = Math.max(48, viewportRect.height - 48);
-  const targetX = pageRect.left + x * sx + Math.max(1, (w * sx) / 2);
+  const column = verticalGoal.columnFor(dir, selection.focus, () => x) ?? x;
+  const targetX = pageRect.left + column * sx + Math.max(1, (w * sx) / 2);
   const targetY = pageRect.top + y * sy + (dir === "pageUp" ? -distance : distance);
   const page = pageFromClientPoint(targetX, targetY);
   if (!page) return;
   const to = anchorAt(page, clientPointEvent(targetX, targetY));
   if (!to) return;
+  verticalGoal.keep(column, to);
 
   selection = extend ? { anchor: selection.anchor, focus: to } : { anchor: to, focus: to };
   drawSelection();
   focusEditorSurface();
   scrollCaretIntoView();
-}
-
-function sameModelPosition(left, right) {
-  return left.node === right.node && left.offset === right.offset;
-}
-
-function selectionMatchesRange(current, start, end) {
-  return (
-    (sameModelPosition(current.anchor, start) && sameModelPosition(current.focus, end)) ||
-    (sameModelPosition(current.anchor, end) && sameModelPosition(current.focus, start))
-  );
 }
 
 /** Selects the active cell first, then the whole document on a repeated ⌘A. */
@@ -16323,7 +16324,7 @@ document.addEventListener("keydown", async (e) => {
       // A tracked Enter. Over a selection the range goes first, as its own
       // suggestion, then the break — the order Word writes them in.
       if (range) {
-        const [s, e] = orderedSelectionEnds();
+        const [s, e] = orderedSelectionEnds(selection, doc);
         const ok = s.node === e.node
           ? await runEdit(() => doc.suggestDelete(s.node, s.offset, e.offset, undefined, new Date().toISOString())).then(() => true)
           : await suggestAcrossParagraphs(s, e, null);
@@ -16382,7 +16383,7 @@ document.addEventListener("keydown", async (e) => {
     if (range) {
       pendingFormat = null; // typing over a selection uses the selection's own runs
       if (reviewMode === "suggesting" && anchor.node !== focus.node) {
-        const [s, e] = orderedSelectionEnds();
+        const [s, e] = orderedSelectionEnds(selection, doc);
         await suggestAcrossParagraphs(s, e, typed);
         return;
       }
