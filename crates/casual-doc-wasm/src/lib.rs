@@ -29960,6 +29960,41 @@ mod tests {
         );
     }
 
+    /// The engine half of this file — everything above the test module — with
+    /// line endings normalized.
+    ///
+    /// `include_str!` hands back the bytes as they sit on disk, and Git checks
+    /// this repository out with CRLF on Windows, so any pattern spanning a line
+    /// break silently stops matching there. That is not hypothetical: the
+    /// choke-point guard below passed on macOS and Linux and failed the
+    /// `platform (Windows-x64)` job on its first CI run, on the `expect` here.
+    ///
+    /// This is a function rather than two lines inlined into that test so the
+    /// CRLF case can be driven red on *every* platform. Inline, the repair was
+    /// untestable where it was written: with an LF file on disk, deleting the
+    /// normalization still passed locally and would have failed only on Windows
+    /// CI again — a guard whose own fix could not be mutation-proved.
+    fn engine_source(raw: &str) -> String {
+        let text = raw.replace("\r\n", "\n");
+        let tests_at = text
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("the test module marker");
+        text[..tests_at].to_owned()
+    }
+
+    /// Reading this crate's source must not depend on how Git checked it out.
+    #[test]
+    fn source_scanning_survives_windows_line_endings() {
+        let lf = include_str!("lib.rs").replace("\r\n", "\n");
+        let crlf = lf.replace('\n', "\r\n");
+        assert!(crlf.contains("\r\n"), "the fixture must actually be CRLF");
+        assert_eq!(
+            engine_source(&crlf),
+            engine_source(&lf),
+            "the engine slice must be identical however the file was checked out"
+        );
+    }
+
     /// Fixing the class, not the instance (SKILL §10): atomicity is worth having
     /// only while every mutation goes through the one place that provides it.
     /// This reads the crate's own source and fails the build the moment a second
@@ -29968,11 +30003,8 @@ mod tests {
     /// first place.
     #[test]
     fn every_model_mutation_goes_through_the_atomic_choke_point() {
-        const SOURCE: &str = include_str!("lib.rs");
-        let tests_at = SOURCE
-            .find("\n#[cfg(test)]\nmod tests {")
-            .expect("the test module marker");
-        let engine = &SOURCE[..tests_at];
+        let source = engine_source(include_str!("lib.rs"));
+        let engine = source.as_str();
 
         assert!(
             !engine.contains("casual_doc_edit::apply("),
