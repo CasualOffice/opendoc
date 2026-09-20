@@ -375,14 +375,23 @@ enum BodyLayout { Whole(PaginatedLayout), Windowed(Box<WindowedBody>) }
 and `WindowedBody` holds the `DocumentMeasures`, a `WindowPolicy`, the materialized
 window, and the **absolute** page range that window covers.
 
-**The surface really was narrower than the file's size suggests, and the reason is not
-the one §8 gave.** It is not that only `compose.rs` and `hittest.rs` read `Page::placed`
-— that is true but it is a fact about the layout crate. It is that
-`casual-doc-wasm`'s 30,000 lines reach the page list through exactly **three**
-accessors (`painted_layout`, `editing_layout`, and now `body_page_at`), because a
-previous defect cluster had already forced that discipline. Twenty-six call sites, all
-of them one of the three. That is what made this a reviewable change rather than a
-rewrite, and it is worth protecting.
+**The surface really was narrower than the file's size suggests, but not for the reason
+§8 gave, and the difference is worth writing down because the original claim reads as
+broader than it is.** Checked rather than taken on trust: `grep -rn '\.placed' crates`
+finds it in **eleven** non-test source files, not two — `paginate.rs` (52 references),
+`columns.rs` (24), `document_layout.rs` (11), `notes.rs` (9), plus `line_number.rs`,
+`anchor.rs`, `note_numbering.rs` and `windowed.rs`. What is true, and is what §8 meant,
+is that every one of those is a **producer**: they are the pipeline that fills a page.
+The only downstream **consumers** of a finished page's placed content are `compose.rs`
+(one site) and `hittest.rs` (four), and `casual-doc-wasm` itself has exactly one.
+
+The thing that actually made this tractable is a different one. `casual-doc-wasm`'s
+30,000 lines reach the page list through exactly **three** accessors —
+`painted_layout`, `editing_layout`, and now `body_page_at` — because an earlier defect
+cluster (answering a pixel question from the layout that did not paint it) had already
+forced that discipline. Twenty-six call sites, every one of them through one of the
+three. That is what made this a reviewable change rather than a rewrite, and it is worth
+protecting.
 
 Three properties the type enforces:
 
