@@ -7031,6 +7031,167 @@ mod tests {
         assert_eq!(d, before, "a refused delete must not have removed anything");
     }
 
+    /// [`apply`]'s contract — "On `Err`, `doc` is unchanged" — is load-bearing
+    /// outside this crate: `casual-doc-wasm`'s `apply_group` deliberately skips
+    /// its rollback snapshot for a **single**-op group because of it, which is
+    /// what keeps a keystroke `O(edit)` instead of `O(document)` (docs/107 §4).
+    /// An unasserted contract is a comment, so this drives a refusal through one
+    /// operation per family and asserts the WHOLE model is identical afterwards
+    /// — not just the paragraph the op named, because a walk that mutates as it
+    /// scans can disturb a sibling on its way to the error.
+    ///
+    /// Representative, not exhaustive: fifteen of the op set's families, chosen
+    /// for those that walk and mutate an inline or block list. HF-045.
+    #[test]
+    fn a_refused_operation_leaves_the_document_unchanged() {
+        use casual_doc_model::v1::BookmarkId;
+        use casual_doc_model::v1::Symbol;
+
+        let p = n(2);
+        // The symbol is an atomic four-byte leaf at 2..6: a range ending inside
+        // it is refused, but only once the walk has started splitting and
+        // removing inlines around it.
+        let fixture = || {
+            doc(vec![
+                BlockNode::Paragraph(Paragraph {
+                    id: p,
+                    properties: ParagraphProperties::default(),
+                    inlines: vec![
+                        run(4, "ab"),
+                        InlineNode::Symbol(Symbol {
+                            id: n(5),
+                            font: "Wingdings".to_owned(),
+                            char: 0x1_F600,
+                            properties: RunProperties::default(),
+                        }),
+                        run(6, "cd"),
+                    ],
+                }),
+                para(3, vec![run(7, "second")]),
+            ])
+        };
+        let straddle = Range {
+            start: Pos::new(p, 0),
+            end: Pos::new(p, 4),
+        };
+        // `FormatText`/`ClearFormatting`/`SetHyperlink` do not refuse a straddle
+        // (they format around the leaf they cannot split), so their refusal here
+        // is an end offset past the paragraph.
+        let beyond = Range {
+            start: Pos::new(p, 0),
+            end: Pos::new(p, 99),
+        };
+        let missing = n(9999);
+
+        let refusals: Vec<(&str, Operation)> = vec![
+            (
+                "InsertText past the end of the paragraph",
+                Operation::InsertText {
+                    at: Pos::new(p, 99),
+                    text: "x".to_owned(),
+                },
+            ),
+            (
+                "DeleteText across an atomic leaf",
+                Operation::DeleteText { range: straddle },
+            ),
+            (
+                "FormatText past the end of the paragraph",
+                Operation::FormatText {
+                    range: beyond,
+                    delta: FormatDelta {
+                        bold: Some(true),
+                        ..FormatDelta::default()
+                    },
+                },
+            ),
+            (
+                "ClearFormatting past the end of the paragraph",
+                Operation::ClearFormatting { range: beyond },
+            ),
+            (
+                "SetHyperlink past the end of the paragraph",
+                Operation::SetHyperlink {
+                    range: beyond,
+                    id: n(9000),
+                    target: Some(external("https://example.invalid/")),
+                    tooltip: None,
+                },
+            ),
+            (
+                "SplitParagraph on a node that is not there",
+                Operation::SplitParagraph {
+                    at: Pos::new(missing, 0),
+                    new_id: n(9001),
+                    properties: None,
+                },
+            ),
+            (
+                "JoinParagraphs with a second that is not there",
+                Operation::JoinParagraphs {
+                    first: p,
+                    second: missing,
+                    properties: None,
+                },
+            ),
+            (
+                "SetInlines on a node that is not there",
+                Operation::SetInlines {
+                    node: missing,
+                    inlines: vec![run(9002, "x")],
+                },
+            ),
+            (
+                "SetParagraphProperties on a node that is not there",
+                Operation::SetParagraphProperties {
+                    node: missing,
+                    properties: Box::new(ParagraphProperties::default()),
+                },
+            ),
+            (
+                "DeleteRow on something that is not a table",
+                Operation::DeleteRow { table: p, index: 0 },
+            ),
+            (
+                "DeleteColumn on something that is not a table",
+                Operation::DeleteColumn { table: p, index: 0 },
+            ),
+            (
+                "DeleteTable on something that is not a table",
+                Operation::DeleteTable { table: p },
+            ),
+            (
+                "DeleteObject on a node that is not there",
+                Operation::DeleteObject { object: missing },
+            ),
+            (
+                "DeleteBookmark for a bookmark that is not there",
+                Operation::DeleteBookmark {
+                    bookmark: BookmarkId::new(missing),
+                },
+            ),
+            (
+                "RemoveField for a field that is not there",
+                Operation::RemoveField { field: missing },
+            ),
+        ];
+
+        for (what, operation) in refusals {
+            let mut d = fixture();
+            let before = d.clone();
+            let mut ids = IdGenerator::new(9);
+            let error = apply(&mut d, &mut ids, &operation)
+                .err()
+                .unwrap_or_else(|| panic!("{what} must be refused, not applied"));
+            assert_eq!(
+                d, before,
+                "{what} was refused with {error:?} but still changed the document \
+                 — `apply`'s \"on Err, doc is unchanged\" contract is broken, and \
+                 casual-doc-wasm's single-op path relies on it"
+            );
+        }
+    }
+
     #[test]
     fn joining_paragraphs_leaves_the_document_valid() {
         let first = n(2);
