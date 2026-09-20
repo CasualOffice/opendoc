@@ -8,6 +8,8 @@ use zip::{CompressionMethod, ZipWriter};
 const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
 const NOTE_REFERENCES_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/><Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/></Types>"#;
 const VISUAL_CONTAINMENT_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+const CELL_HIT_ROUTING_CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+const CELL_HIT_ROUTING_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/cell-logo.png"/></Relationships>"#;
 const ROOT_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 const NOTE_REFERENCES_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/><Relationship Id="rIdEndnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/></Relationships>"#;
 const VISUAL_CONTAINMENT_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdVisualFloat" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/visual-float.png"/></Relationships>"#;
@@ -65,6 +67,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         output.join("pagination-fidelity.docx"),
         package(&pagination_fidelity_entries())?,
+    )?;
+
+    fs::write(
+        output.join("cell-hit-routing.docx"),
+        package(&cell_hit_routing_entries())?,
     )?;
 
     let mut unknown_safe = minimal_entries();
@@ -409,6 +416,135 @@ fn pagination_fidelity_document() -> Vec<u8> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
          xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <w:body>{body}</w:body></w:document>"
+    )
+    .into_bytes()
+}
+
+fn cell_hit_routing_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            cell_hit_routing_document(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            CELL_HIT_ROUTING_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            CELL_HIT_ROUTING_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/media/cell-logo.png".to_owned(),
+            VISUAL_FLOAT_PNG.to_vec(),
+            CompressionMethod::Stored,
+        ),
+    ]
+}
+
+/// A caret-routing probe for table cells whose clickable area carries **no
+/// text**, on a page the first viewport never shows.
+///
+/// Shaped after the owner's loan agreement, where clicking a form's empty value
+/// box and typing put the text into the LABEL cell beside it. Two rows, each
+/// deliberately taller than its content so most of every cell is blank:
+///
+/// - **Row 1 — `LOGO | TEXT`.** The left cell holds one inline picture 600 twips
+///   tall; the right cell holds several lines of text. Below the picture, a
+///   *right-cell* text line is vertically nearer to the pointer than the left
+///   cell's own line is, so a nearest-line search leaves the cell that was
+///   clicked.
+/// - **Row 2 — `LABEL | (empty)`.** Both cells are bottom-aligned in a 1200-twip
+///   row, so the top 960 twips of the empty value cell are blank and its single
+///   caret slot does not cover them. The empty cell paints nothing, so a search
+///   that skips text-free lines cannot see it at all.
+///
+/// The table sits on **page 2**, reached through an explicit page break: every
+/// browser spec in this repository operates inside the first viewport, which is
+/// precisely why this survived. Line heights are `w:lineRule="exact"` so the
+/// geometry the assertions rest on does not move with the installed fonts.
+fn cell_hit_routing_document() -> Vec<u8> {
+    let line =
+        "<w:spacing w:line=\"240\" w:lineRule=\"exact\"/><w:rPr><w:sz w:val=\"18\"/></w:rPr>";
+    let paragraph = |text: &str| {
+        format!(
+            "<w:p><w:pPr>{line}</w:pPr><w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr>\
+             <w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+        )
+    };
+    // A 1000x600 twip picture: 635 EMU per twip.
+    let picture_paragraph = format!(
+        "<w:p><w:pPr>{line}</w:pPr><w:r><w:drawing>\
+         <wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+         <wp:extent cx=\"635000\" cy=\"381000\"/>\
+         <wp:docPr id=\"1\" name=\"Cell logo\" descr=\"Generated cell-hit-routing logo\"/>\
+         <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <pic:pic><pic:nvPicPr><pic:cNvPr id=\"1\" name=\"cell-logo.png\"/><pic:cNvPicPr/></pic:nvPicPr>\
+         <pic:blipFill><a:blip r:embed=\"rIdLogo\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+         <pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"635000\" cy=\"381000\"/></a:xfrm>\
+         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr>\
+         </pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    );
+    let filler = "The first page exists only to push the table onto page two, where no browser specification in this repository has ever clicked. ".repeat(6);
+    let beside_the_logo = "Legal documents you can trust since two thousand and four, in a cell wide enough to wrap over several lines beside the picture. ".repeat(2);
+
+    let mut body = String::new();
+    body.push_str(&paragraph(&filler));
+    body.push_str("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>");
+    body.push_str(&paragraph("PAGE TWO TABLE"));
+    body.push_str(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+         <w:tblBorders>\
+         <w:top w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:left w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:bottom w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:right w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:insideH w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         <w:insideV w:val=\"single\" w:sz=\"8\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>",
+    );
+    // Row 1: a picture-only cell beside a wordy one, in a 2400-twip row.
+    body.push_str(&format!(
+        "<w:tr><w:trPr><w:trHeight w:val=\"2400\" w:hRule=\"atLeast\"/></w:trPr>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>{picture_paragraph}</w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr>",
+        paragraph(&beside_the_logo)
+    ));
+    // Row 2: the form shape — a label beside an EMPTY value cell, both pinned
+    // to the bottom of a 1200-twip row.
+    body.push_str(&format!(
+        "<w:tr><w:trPr><w:trHeight w:val=\"1200\" w:hRule=\"atLeast\"/></w:trPr>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/>\
+         <w:vAlign w:val=\"bottom\"/></w:tcPr>{}</w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/>\
+         <w:vAlign w:val=\"bottom\"/></w:tcPr><w:p><w:pPr>{line}</w:pPr></w:p></w:tc></w:tr>",
+        paragraph("Interest rate")
+    ));
+    body.push_str("</w:tbl>");
+    body.push_str(&paragraph("AFTER THE TABLE"));
+    body.push_str(
+        "<w:sectPr><w:pgSz w:w=\"7200\" w:h=\"7200\"/>\
+         <w:pgMar w:top=\"600\" w:right=\"600\" w:bottom=\"600\" w:left=\"600\" \
+         w:header=\"300\" w:footer=\"300\"/></w:sectPr>",
+    );
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+         xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
          <w:body>{body}</w:body></w:document>"
     )
     .into_bytes()

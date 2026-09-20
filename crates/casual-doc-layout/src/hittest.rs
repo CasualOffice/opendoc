@@ -93,6 +93,43 @@ struct CaretStop {
     offset: u32,
 }
 
+/// The page-local border box of a table cell, in absolute page-local twips.
+///
+/// This is the region a user perceives as "the box I clicked in", and it is much
+/// larger than the cell's text: it spans the whole grid-column width and the
+/// whole row (or merged-run) height, including the slack a `w:trHeight` or a
+/// `w:vAlign` leaves above and below the content, the blank area of a cell that
+/// holds only a picture, and the whole of a cell that holds nothing at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CellBox {
+    /// Page-local x of the cell's leading edge.
+    left: Twip,
+    /// Page-local x just past the cell's trailing edge.
+    right: Twip,
+    /// Page-local y of the cell's top edge.
+    top: Twip,
+    /// Page-local y just past the cell's bottom edge.
+    bottom: Twip,
+}
+
+impl CellBox {
+    /// Whether `x` (page-local) falls within the cell's horizontal span.
+    fn contains_x(&self, x: i32) -> bool {
+        x >= self.left.raw() && x < self.right.raw()
+    }
+
+    /// Whether the page-local point `(x, y)` falls inside the cell's border box.
+    fn contains(&self, x: i32, y: i32) -> bool {
+        self.contains_x(x) && y >= self.top.raw() && y < self.bottom.raw()
+    }
+
+    /// The box's area — the key that picks the INNERMOST of the nested cells
+    /// that contain a point.
+    fn area(&self) -> i64 {
+        i64::from((self.right - self.left).raw()) * i64::from((self.bottom - self.top).raw())
+    }
+}
+
 /// A single laid-out line located in absolute page-local coordinates. This is the
 /// flattened unit the snapshot walks; it is produced in flow order (pages in
 /// order, fragments in order, lines top-to-bottom), which is exactly document
@@ -104,11 +141,12 @@ struct LineBox<'a> {
     left: Twip,
     /// Page-local y of the top of the line.
     top: Twip,
-    /// The page-local x-range `[left, right)` of the table cell this line belongs to
-    /// (the innermost cell for a nested table). `None` for a body paragraph, which
-    /// spans the content width. Lets hit-testing route a click to the cell it lands
-    /// in rather than always the first cell of a row (which all share a y-band).
-    cell: Option<(Twip, Twip)>,
+    /// The page-local border box of the table cell this line belongs to (the
+    /// innermost cell for a nested table). `None` for a body paragraph, which
+    /// spans the content width. Lets hit-testing route a click to the cell it
+    /// lands in rather than to a same-row neighbour (which all share a y-band)
+    /// or to whichever line happens to be nearest.
+    cell: Option<CellBox>,
     /// The line itself.
     line: &'a Line,
 }
@@ -127,7 +165,7 @@ impl<'a> LineBox<'a> {
     /// Whether `x` (page-local) falls within this line's cell. A body line (no cell)
     /// contains every x — it is not competing with side-by-side cells.
     fn cell_contains_x(&self, x: i32) -> bool {
-        self.cell.is_none_or(|(l, r)| x >= l.raw() && x < r.raw())
+        self.cell.is_none_or(|cell| cell.contains_x(x))
     }
 
     /// Horizontal distance from `x` to this line's cell (0 inside; `i32::MAX` for a
@@ -135,8 +173,8 @@ impl<'a> LineBox<'a> {
     fn cell_x_distance(&self, x: i32) -> i32 {
         match self.cell {
             None => i32::MAX,
-            Some((l, _)) if x < l.raw() => l.raw() - x,
-            Some((_, r)) if x >= r.raw() => x - r.raw() + 1,
+            Some(cell) if x < cell.left.raw() => cell.left.raw() - x,
+            Some(cell) if x >= cell.right.raw() => x - cell.right.raw() + 1,
             Some(_) => 0,
         }
     }
@@ -191,10 +229,43 @@ impl<'a> LayoutSnapshot<'a> {
     #[must_use]
     pub fn hit_test(&self, page_number: u32, point: Point) -> Option<HitResult> {
         let lines = self.line_boxes_on(page_number);
-        let page_lines: Vec<&LineBox<'_>> = lines.iter().collect();
-        let first = *page_lines.first()?;
+        let mut page_lines: Vec<&LineBox<'_>> = lines.iter().collect();
+        if page_lines.is_empty() {
+            return None;
+        }
 
         let (x, y) = (point.x.raw(), point.y.raw());
+
+        // INVARIANT: a click inside a table cell resolves to a position inside
+        // THAT cell.
+        //
+        // A cell's border box is far larger than its text — the `w:trHeight` /
+        // `w:vAlign` slack above and below the content, the blank area around a
+        // picture, and the whole of an empty form field. Every one of those is a
+        // region with no text, and both selection rules below reason about
+        // LINES: the vertical-band rule cannot see a cell whose content does not
+        // cover `y`, and the nearest-line fallback demoted the cell to a
+        // tie-breaker *and* dropped text-free lines from the candidate set
+        // outright (`has_paintable_content`). Between them, a click in the blank
+        // upper half of an empty value cell resolved to the LABEL cell beside it,
+        // so the user typed into a different box than the one they clicked —
+        // silent, and a data-safety defect, not a cosmetic one.
+        //
+        // Confining the candidates first makes the cell a hard constraint for
+        // both rules, and for every text-free region at once. Nested tables
+        // resolve to the innermost containing cell (the smallest box), matching
+        // `collect_fragment`, which already reports the innermost cell per line.
+        // A cell that contributes no lines at all (a vertical-merge continuation)
+        // cannot be routed into and falls through to the page-wide search.
+        let innermost = page_lines
+            .iter()
+            .filter_map(|lb| lb.cell.filter(|cell| cell.contains(x, y)))
+            .min_by_key(CellBox::area);
+        let confined = innermost.is_some();
+        if let Some(cell) = innermost {
+            page_lines.retain(|lb| lb.cell == Some(cell));
+        }
+        let first = *page_lines.first()?;
 
         // Choose the target line by vertical band *and* horizontal cell, so a click
         // in a table row lands in the cell it falls in rather than always the first
@@ -222,10 +293,16 @@ impl<'a> LayoutSnapshot<'a> {
             // wide table cell even when a body paragraph was visibly closer. Keep
             // column routing as a tie-breaker so blank space between two columns
             // remains stable without making tables capture nearby clicks.
+            //
+            // Inside a cell the paintable filter is dropped: the candidates are
+            // already confined to the clicked cell, and there an empty paragraph
+            // is a legitimate target — clicking the blank space under a cell's
+            // last, empty paragraph must land in that paragraph, not jump back
+            // up to the text above it.
             let nearest = page_lines
                 .iter()
                 .copied()
-                .filter(|lb| lb.has_paintable_content())
+                .filter(|lb| confined || lb.has_paintable_content())
                 .min_by(|a, b| {
                     vertical_distance(a, y)
                         .cmp(&vertical_distance(b, y))
@@ -487,10 +564,8 @@ impl<'a> LayoutSnapshot<'a> {
                 Direction::Up => there < here,
             }
         };
-        let in_column = |lb: &LineBox<'_>| {
-            lb.cell
-                .is_none_or(|(left, right)| affinity >= left && affinity < right)
-        };
+        let in_column =
+            |lb: &LineBox<'_>| lb.cell.is_none_or(|cell| cell.contains_x(affinity.raw()));
         // Distance in visual order, so the nearest band wins; ties inside a band
         // are broken by horizontal distance from the affinity.
         let rank = |lb: &LineBox<'_>| {
@@ -502,20 +577,62 @@ impl<'a> LayoutSnapshot<'a> {
             };
             (vertical, (lb.left.raw() - affinity.raw()).abs())
         };
-        let best = |column_only: bool| {
-            lines
+        let ranked = |column_only: bool| {
+            let mut candidates: Vec<usize> = lines
                 .iter()
                 .enumerate()
                 .filter(|(_, lb)| beyond(lb) && (!column_only || in_column(lb)))
-                .min_by_key(|(_, lb)| rank(lb))
                 .map(|(index, _)| index)
+                .collect();
+            candidates.sort_by_key(|&index| rank(&lines[index]));
+            candidates
         };
-        let target = best(true).or_else(|| best(false))?;
 
-        let tgt = &lines[target];
-        let stops = stops_for(tgt.line, tgt.left);
-        let landed = nearest_stop(&stops, affinity);
-        Some(ModelPos::new(tgt.line.range.start.node, landed.offset))
+        // Candidates in preference order — and the first one that ACTUALLY MOVES
+        // THE CARET wins, which is not the same thing as the first one that is
+        // geometrically above/below.
+        //
+        // A `ModelPos` is a paragraph node plus a byte offset, and two different
+        // lines can share one. Both shapes dead-ended the arrow keys outright:
+        //
+        //   * Several lines of one paragraph carry the SAME start offset when
+        //     what precedes the text contributes no bytes — a paragraph holding
+        //     an anchored drawing group and a `<w:br/>` before its text has three
+        //     lines that all address offset 0. `move_vertical` answered with a
+        //     genuinely different LINE and an identical POSITION, so the caret
+        //     never left that paragraph no matter how many times Up was pressed.
+        //   * A soft-wrap boundary offset both ends one line and starts the next,
+        //     and `caret_start_line` resolves it to the NEXT line — so stepping up
+        //     onto the end of the line above answered a position that renders back
+        //     on the line the caret started from. `hit_test` already repairs this
+        //     with `visual_line_end`; navigation did not, and the two must agree.
+        //
+        // Both are invisible to an identity check on the returned position, so the
+        // acceptance test here is geometric: the answer has to resolve to a line
+        // that is genuinely beyond the current one.
+        for target in ranked(true).into_iter().chain(ranked(false)) {
+            let tgt = &lines[target];
+            let stops = stops_for(tgt.line, tgt.left);
+            let mut offset = nearest_stop(&stops, affinity).offset;
+            if tgt.line.line_break == LineBreak::Wrap
+                && offset == tgt.line.range.end.offset
+                && let Some(inside) = visual_line_end(tgt.line)
+            {
+                offset = inside;
+            }
+            let landed = ModelPos::new(tgt.line.range.start.node, offset);
+            if landed == pos {
+                continue;
+            }
+            let Some(resolved) = caret_start_line(&lines, landed) else {
+                continue;
+            };
+            if !beyond(&lines[resolved]) {
+                continue;
+            }
+            return Some(landed);
+        }
+        None
     }
 
     /// Flattens the layout into its lines, in flow (document) order, each located
@@ -862,7 +979,7 @@ fn collect_fragment<'a>(
     left: Twip,
     top: Twip,
     page: u32,
-    cell: Option<(Twip, Twip)>,
+    cell: Option<CellBox>,
     out: &mut Vec<LineBox<'a>>,
 ) {
     match fragment {
@@ -891,15 +1008,24 @@ fn collect_fragment<'a>(
         BlockFragment::TableRow { cells, .. } => {
             let row_height = fragment.height();
             for cell in cells {
-                // The cell's full page-local x-box (its grid-column span), used to
-                // route a click to this cell rather than a same-row neighbour. The
-                // innermost cell wins for nested tables (this overrides `cell`).
+                // The cell's full page-local border box — its grid-column span
+                // and its whole row/merge height, NOT the extent of its content.
+                // That is what a click has to be resolved against, so the blank
+                // parts of a cell (alignment slack, a picture's surroundings, an
+                // empty cell) still belong to the cell a user sees. Mirrors
+                // `find_cell_rect`. The innermost cell wins for nested tables
+                // (this overrides the inherited `cell`).
                 let cell_x0 = left + cell.x;
-                let cell_bounds = Some((cell_x0, cell_x0 + cell.width));
+                let cell_y0 = top + cell.cell_spacing.top;
+                let box_height = cell.box_height(row_height);
+                let cell_bounds = Some(CellBox {
+                    left: cell_x0,
+                    right: cell_x0 + cell.width,
+                    top: cell_y0,
+                    bottom: cell_y0 + box_height,
+                });
                 let cell_left = cell_x0 + cell.margins.start;
-                let mut cell_top = top
-                    + cell.cell_spacing.top
-                    + cell.content_y_offset(cell.box_height(row_height));
+                let mut cell_top = cell_y0 + cell.content_y_offset(box_height);
                 for block in &cell.blocks {
                     collect_fragment(block, cell_left, cell_top, page, cell_bounds, out);
                     cell_top = cell_top + block.height();
@@ -1012,9 +1138,20 @@ fn stops_for(line: &Line, left: Twip) -> Vec<CaretStop> {
         // for exactly that reason). The fix belongs in the shaper — either emit a
         // zero-glyph run at the aligned origin for an empty line, or carry the
         // line's resolved start on `Line` — and is tracked as such.
+        //
+        // The offset is the range's LOWER BOUND, not `range.start` literally.
+        // A paragraph whose only inline is a drawing is given the inverted range
+        // `[u32::MAX, 0]` by the line builder (measured on
+        // `fixtures/generated/cell-hit-routing.docx`, whose logo cell is exactly
+        // that). Taking `start` there answers `u32::MAX`, the edit layer refuses
+        // it as "text offset overflow", and a picture-only table cell cannot be
+        // typed into at all — the click is routed correctly and then thrown away.
+        // The inverted range is an upstream defect and is reported as one; a
+        // caret offset that no paragraph can hold is not something this function
+        // may hand out in the meantime.
         stops.push(CaretStop {
             x: left,
-            offset: line.range.start.offset,
+            offset: line.range.start.offset.min(line.range.end.offset),
         });
     }
     stops
@@ -1357,6 +1494,30 @@ mod tests {
         }
     }
 
+    /// The same, for `w:spacing/@w:before` — the gap a paragraph opens ABOVE its
+    /// own first line, which is whitespace outside every preceding block's box.
+    fn with_space_before(fragment: BlockFragment, space: Twip) -> BlockFragment {
+        match fragment {
+            BlockFragment::Paragraph {
+                id,
+                lines,
+                mut box_metrics,
+                break_control,
+                decor,
+            } => {
+                box_metrics.space_before = space;
+                BlockFragment::Paragraph {
+                    id,
+                    lines,
+                    box_metrics,
+                    break_control,
+                    decor,
+                }
+            }
+            other => other,
+        }
+    }
+
     /// An indented paragraph (list item / `w:ind`) resolves its caret and hits at
     /// the indented content column — where the renderer paints the glyphs — not
     /// left-shifted back to the page margin. Regression for the selection/caret
@@ -1456,6 +1617,351 @@ mod tests {
         assert_eq!(lines[0].top, Twip(910));
     }
 
+    /// A paragraph whose single line paints NOTHING a caret can aim at — the
+    /// layout of `<w:p/>`, which is what an empty table cell (a form's value box)
+    /// contains. It still owns one caret slot, and clicking the cell must find it.
+    fn blank_para(id: u64) -> BlockFragment {
+        let n = node(id);
+        BlockFragment::Paragraph {
+            id: n,
+            lines: LineLayout {
+                lines: vec![blank_line(n)],
+            },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
+        }
+    }
+
+    /// A paragraph whose single line carries only an inline picture — no glyph
+    /// runs at all. The shape of a logo cell.
+    fn image_para(id: u64, height: i32) -> BlockFragment {
+        let n = node(id);
+        let mut line = blank_line(n);
+        line.images = vec![crate::text::InlineImage {
+            media: "word/media/image1.png".to_owned(),
+            origin: Point::new(Twip::ZERO, Twip::ZERO),
+            size: Size::new(Twip(1_000), Twip(height)),
+            crop: None,
+        }];
+        line.ascent = Twip(height);
+        line.height = Twip(height);
+        BlockFragment::Paragraph {
+            id: n,
+            lines: LineLayout { lines: vec![line] },
+            box_metrics: BoxMetrics::default(),
+            break_control: BreakControl::default(),
+            decor: crate::block::ParagraphDecor::default(),
+        }
+    }
+
+    fn blank_line(n: NodeId) -> Line {
+        Line {
+            runs: Vec::new(),
+            ascent: Twip(LINE_H),
+            descent: Twip::ZERO,
+            height: Twip(LINE_H),
+            clip: false,
+            range: ModelRange::new(ModelPos::new(n, 0), ModelPos::new(n, 0)),
+            line_break: LineBreak::ParagraphEnd,
+            page_break_after: false,
+            bars: Vec::new(),
+            images: Vec::new(),
+            fields: Vec::new(),
+            notes: Vec::new(),
+            text_boxes: Vec::new(),
+            rules: Vec::new(),
+        }
+    }
+
+    /// A cell holding `blocks`, occupying grid columns `[x, x + width)`.
+    fn cell_of(
+        id: u64,
+        x: i32,
+        width: i32,
+        valign: crate::block::CellVAlign,
+        blocks: Vec<BlockFragment>,
+    ) -> crate::block::CellFragment {
+        use crate::block::{CellBorders, CellContentMargins, CellFragment, CellVerticalMerge};
+        CellFragment {
+            id: node(id),
+            grid_span: 1,
+            x: Twip(x),
+            width: Twip(width),
+            cell_spacing: Default::default(),
+            blocks,
+            margins: CellContentMargins::default(),
+            vertical_alignment: valign,
+            vertical_merge: CellVerticalMerge::None,
+            borders: CellBorders::default(),
+            table_borders: CellBorders::default(),
+            shading: None,
+        }
+    }
+
+    fn row_of(id: u64, height: i32, cells: Vec<crate::block::CellFragment>) -> BlockFragment {
+        BlockFragment::TableRow {
+            id: node(id),
+            table: node(id + 1),
+            cells,
+            height: Twip(height),
+            can_split: false,
+            header: false,
+            merge_keep_next: false,
+            clip: false,
+        }
+    }
+
+    /// THE INVARIANT: a click inside a table cell resolves to a position inside
+    /// THAT cell — including everywhere in the cell that carries no text.
+    ///
+    /// The owner's loan form is a grid of `label | value` rows where the value
+    /// cells are empty and the row is taller than one line. Clicking a value box
+    /// and typing put the text into the LABEL beside it: the empty cell's line
+    /// does not cover the clicked y (the content is bottom-aligned inside the
+    /// row), so hit-testing fell through to the nearest line that paints
+    /// something — the label. Silent, and in a different box than the user
+    /// clicked.
+    #[test]
+    fn clicking_an_empty_cell_stays_in_that_cell() {
+        use crate::block::CellVAlign;
+        // A 1200-twip row. The label wraps to three lines (720 twips) and the
+        // value cell holds one empty line (240); both are bottom-aligned, so the
+        // label's first line starts at +480 and the value's only line at +960.
+        // A click high in the value cell is therefore nearer to a LABEL line
+        // than to the value cell's own — which is exactly how the caret used to
+        // end up in the label.
+        let row = row_of(
+            10,
+            1_200,
+            vec![
+                cell_of(
+                    11,
+                    0,
+                    3_000,
+                    CellVAlign::Bottom,
+                    vec![ltr_para(100, &[10, 10, 10])],
+                ),
+                cell_of(12, 3_000, 3_000, CellVAlign::Bottom, vec![blank_para(200)]),
+            ],
+        );
+        let snap_owner = layout(&[row]);
+        let snap = LayoutSnapshot::new(&snap_owner);
+
+        // Every y inside the row, at the value column's x, must answer with the
+        // value cell — not only the sliver its one empty line happens to cover.
+        for dy in [10, 200, 600, 900, 1_100] {
+            let point = Point::new(Twip(MARGIN + 4_500), Twip(MARGIN + dy));
+            let hit = snap.hit_test(1, point).expect("a hit inside the row");
+            assert_eq!(
+                hit.pos.node,
+                node(200),
+                "click at +{dy} in the empty value cell must land in that cell"
+            );
+        }
+        // And the label column still answers with the label.
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 500), Twip(MARGIN + 200)))
+            .expect("a hit in the label cell");
+        assert_eq!(hit.pos.node, node(100));
+    }
+
+    /// The same invariant for a cell whose only content is a picture: the blank
+    /// area around the image belongs to the image's cell, not to the wordier
+    /// cell beside it, whose lines are vertically nearer to the click.
+    #[test]
+    fn clicking_an_image_only_cell_stays_in_that_cell() {
+        use crate::block::CellVAlign;
+        let row = row_of(
+            10,
+            2_400,
+            vec![
+                // A logo 600 twips tall at the top of a 2400-twip row: the other
+                // 1800 twips of the cell are blank.
+                cell_of(11, 0, 3_000, CellVAlign::Top, vec![image_para(100, 600)]),
+                // Eight lines of text beside it, so at any y below the logo a
+                // TEXT line is vertically closer than the image line.
+                cell_of(
+                    12,
+                    3_000,
+                    3_000,
+                    CellVAlign::Top,
+                    vec![ltr_para(200, &[3, 3, 3, 3, 3, 3, 3, 3])],
+                ),
+            ],
+        );
+        let owner = layout(&[row]);
+        let snap = LayoutSnapshot::new(&owner);
+
+        for dy in [100, 800, 1_500, 2_300] {
+            let point = Point::new(Twip(MARGIN + 500), Twip(MARGIN + dy));
+            let hit = snap.hit_test(1, point).expect("a hit inside the row");
+            assert_eq!(
+                hit.pos.node,
+                node(100),
+                "click at +{dy} in the picture cell must land in that cell"
+            );
+        }
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 4_000), Twip(MARGIN + 800)))
+            .expect("a hit in the text cell");
+        assert_eq!(hit.pos.node, node(200));
+    }
+
+    /// The blank space under a cell's last line is still inside the cell, so a
+    /// click there stays in the cell — it does not fall through to the block
+    /// below the table. (The complement of
+    /// `whitespace_between_table_and_body_prefers_the_closer_line`, which tests
+    /// the whitespace BELOW the row.)
+    #[test]
+    fn clicking_below_a_cells_text_stays_in_that_cell() {
+        use crate::block::CellVAlign;
+        let row = row_of(
+            10,
+            1_200,
+            vec![cell_of(
+                11,
+                0,
+                3_000,
+                CellVAlign::Top,
+                vec![ltr_para(100, &[4])],
+            )],
+        );
+        let owner = layout(&[row, ltr_para(30, &[4])]);
+        let snap = LayoutSnapshot::new(&owner);
+
+        // 1100 twips down the row: 860 twips below the cell's single line, and
+        // closer to the body paragraph that follows the table (which starts at
+        // +1200) than to the cell's own line (which ends at +240).
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 500), Twip(MARGIN + 1_100)))
+            .expect("a hit inside the cell");
+        assert_eq!(hit.pos.node, node(100), "still the cell the user clicked");
+    }
+
+    /// Inside a cell, an empty trailing paragraph is a legitimate caret target:
+    /// clicking the blank space under it lands THERE, not back up in the text
+    /// above it. Word and Docs both answer the last paragraph.
+    ///
+    /// The nearest-line fallback deliberately ignores empty lines so that a
+    /// click in a page margin does not park the caret in a blank paragraph when
+    /// a real one is available. That rule is about the page; inside one cell it
+    /// makes the cell's own last paragraph unreachable by mouse.
+    #[test]
+    fn clicking_under_a_cells_last_empty_paragraph_lands_in_that_paragraph() {
+        use crate::block::CellVAlign;
+        let row = row_of(
+            10,
+            1_600,
+            vec![cell_of(
+                11,
+                0,
+                3_000,
+                CellVAlign::Top,
+                vec![ltr_para(100, &[4]), blank_para(200)],
+            )],
+        );
+        let owner = layout(&[row]);
+        let snap = LayoutSnapshot::new(&owner);
+
+        // The text line covers [0,240) and the empty paragraph [240,480); the
+        // click is at +1200, in the cell's blank lower half and outside both.
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 500), Twip(MARGIN + 1_200)))
+            .expect("a hit inside the cell");
+        assert_eq!(
+            hit.pos.node,
+            node(200),
+            "the cell's last (empty) paragraph, not the text above it"
+        );
+    }
+
+    /// Nested tables resolve to the INNERMOST cell containing the point; the
+    /// outer cell's own paragraph does not capture a click inside the inner one.
+    #[test]
+    fn clicking_a_nested_cell_resolves_to_the_innermost_cell() {
+        use crate::block::CellVAlign;
+        let inner = row_of(
+            40,
+            800,
+            vec![cell_of(
+                41,
+                200,
+                1_000,
+                CellVAlign::Top,
+                vec![blank_para(300)],
+            )],
+        );
+        let outer = row_of(
+            10,
+            1_600,
+            vec![cell_of(
+                11,
+                0,
+                3_000,
+                CellVAlign::Top,
+                vec![ltr_para(100, &[4]), inner],
+            )],
+        );
+        let owner = layout(&[outer]);
+        let snap = LayoutSnapshot::new(&owner);
+
+        // The inner row sits under the outer cell's 240-twip paragraph, so the
+        // inner cell's box is x [200, 1200) and y [240, 1040) inside the outer
+        // cell. A point in its blank lower half belongs to the inner cell.
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 700), Twip(MARGIN + 900)))
+            .expect("a hit inside the nested cell");
+        assert_eq!(hit.pos.node, node(300), "the innermost cell wins");
+        // Outside the inner cell but inside the outer one: the outer cell.
+        let hit = snap
+            .hit_test(1, Point::new(Twip(MARGIN + 2_500), Twip(MARGIN + 900)))
+            .expect("a hit in the outer cell");
+        assert_eq!(hit.pos.node, node(100));
+    }
+
+    /// `move_vertical` must always leave the line it started on.
+    ///
+    /// Several lines of one paragraph share a `ModelPos` when what precedes the
+    /// text contributes no bytes — an anchored drawing group plus a `<w:br/>`
+    /// gives three lines that all address offset 0. The old search answered with
+    /// a different LINE and an identical POSITION, so Up was a no-op forever and
+    /// everything above that paragraph was unreachable from the keyboard. An
+    /// identity check on the returned position cannot see this, so the assertion
+    /// is geometric.
+    #[test]
+    fn move_up_always_leaves_the_line_it_started_on() {
+        let degenerate = {
+            let n = node(50);
+            let mut lines = Vec::new();
+            for _ in 0..3 {
+                lines.push(blank_line(n));
+            }
+            BlockFragment::Paragraph {
+                id: n,
+                lines: LineLayout { lines },
+                box_metrics: BoxMetrics::default(),
+                break_control: BreakControl::default(),
+                decor: crate::block::ParagraphDecor::default(),
+            }
+        };
+        let owner = layout(&[ltr_para(1, &[4]), degenerate]);
+        let snap = LayoutSnapshot::new(&owner);
+
+        let start = ModelPos::new(node(50), 0);
+        let (_, from) = snap.caret_rect(start).expect("a caret in the paragraph");
+        let up = snap
+            .move_vertical(start, Direction::Up)
+            .expect("Up from inside the document is not the top");
+        let (_, to) = snap.caret_rect(up).expect("a caret at the destination");
+        assert!(
+            to.origin.y.raw() < from.origin.y.raw(),
+            "Up must move the caret UP: {} -> {}",
+            from.origin.y.raw(),
+            to.origin.y.raw()
+        );
+    }
+
     #[test]
     fn hit_test_routes_a_click_to_the_clicked_column() {
         use crate::block::{
@@ -1541,7 +2047,11 @@ mod tests {
             merge_keep_next: false,
             clip: false,
         };
-        let paginated = layout(&[table, ltr_para(30, &[1])]);
+        // The body paragraph is pushed down by its own space-before, so the
+        // whitespace under test is BELOW the row — outside the cell's border box
+        // — and not the alignment slack inside the cell (which belongs to the
+        // cell; `clicking_below_a_cells_text_stays_in_that_cell` covers that).
+        let paginated = layout(&[table, with_space_before(ltr_para(30, &[1]), Twip(1000))]);
         let snap = LayoutSnapshot::new(&paginated);
         let lines = snap.line_boxes();
         let table_line = lines
@@ -1553,10 +2063,20 @@ mod tests {
             .find(|lb| lb.line.range.start.node == node(30))
             .expect("body line");
         assert!(body_line.top.raw() > table_line.bottom());
+        let cell_bottom = table_line
+            .cell
+            .expect("the table line knows its cell")
+            .bottom;
 
         // The x coordinate is inside the table's wide cell, but the y coordinate
-        // is in the whitespace between the blocks and closer to the body line.
-        let y = Twip((table_line.bottom() + body_line.top.raw()) / 2);
+        // is past the bottom of the cell, in the whitespace between the blocks,
+        // and closer to the body line.
+        let y = Twip(MARGIN + 1_200);
+        assert!(
+            y.raw() >= cell_bottom.raw(),
+            "the point is outside the cell"
+        );
+        assert!(y.raw() - table_line.bottom() > body_line.top.raw() - y.raw());
         let hit = snap
             .hit_test(1, Point::new(Twip(MARGIN + 500), y))
             .expect("whitespace still resolves");
