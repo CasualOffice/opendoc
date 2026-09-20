@@ -2432,12 +2432,14 @@ pub struct Math {
 
 /// Inline content supported by schema v1.
 //
-// `Run` is by far the largest and the most common variant (it carries the full
-// `RunProperties`, which grows as run-property coverage expands). Boxing it (or
-// its properties) would shrink the enum but add a heap allocation on the hot
-// path — most inline nodes are runs — and it ripples across every
-// construction/match site and the public API; tracked with the same follow-up
-// as `BlockNode` so it can land as one focused change.
+// Measured (`casual-doc-layout`'s `model_footprint` example): this enum is 416
+// bytes and its largest payload is `Run` at 400 — the *common* case, not a rare
+// one, so unlike `BlockNode` there is no rare variant to box. `Symbol` ties it
+// at 400 and `NoteNumberMark` follows at 384, but all three are large for the
+// same reason — each carries a full `RunProperties` by value — so boxing any of
+// them buys nothing while `Run` stays inline, and boxing `Run` would add a heap
+// allocation on the hottest path in the model. The remaining win here is
+// shrinking `RunProperties`, which shrinks all of them at once.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -2552,21 +2554,29 @@ pub struct Paragraph {
 }
 
 /// A body-level node.
-// `Table` is larger than `Paragraph` now that tables carry borders/margins.
-// Boxing it (or its properties) is a worthwhile memory optimization for
-// paragraph-heavy bodies, but it ripples across every construction/match site
-// and the enum is part of the public API; tracked as a follow-up so it can land
-// as one focused change rather than entangled with feature slices.
+//
+// A `Vec<BlockNode>` pays for the enum's *largest* variant on every element, so
+// the two rare-but-large variants are stored out of line: `Table` was 800 bytes
+// and `BlockSdt` 384, against a `Paragraph` of 352. Boxing them makes the enum
+// cost what a paragraph costs — which is what a body is nearly entirely made of
+// — for one pointer's indirection on the table/content-control paths, where a
+// heap allocation is already dwarfed by the rows or blocks being allocated.
+// `Paragraph` itself stays inline: it is the common case, and boxing it would
+// add an allocation per paragraph without shrinking anything (`docs/111` §4) —
+// which is exactly what the lint below now suggests, so it stays allowed. The
+// guard that matters is in `v1::tests`: `BlockNode` must not exceed `Paragraph`
+// plus a discriminant, which the lint cannot express.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BlockNode {
     /// A paragraph block.
     Paragraph(Paragraph),
-    /// A table block.
-    Table(Table),
-    /// A block-level content control wrapping block content.
-    Sdt(BlockSdt),
+    /// A table block. Boxed: see the note on this enum.
+    Table(Box<Table>),
+    /// A block-level content control wrapping block content. Boxed: see the
+    /// note on this enum.
+    Sdt(Box<BlockSdt>),
     /// An aggregated external content chunk (`w:altChunk`) referencing a preserved
     /// package part.
     AltChunk(AltChunk),

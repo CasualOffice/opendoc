@@ -174,7 +174,7 @@ fn alt_chunk_reserves_real_height_in_table_cell_flow() {
         properties: TableCellProperties::default(),
         blocks: vec![alt_chunk(62)],
     };
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: node(60),
         grid: vec![GridColumn {
             width_twips: Some(3000),
@@ -186,7 +186,7 @@ fn alt_chunk_reserves_real_height_in_table_cell_flow() {
             properties: TableRowProperties::default(),
             cells: vec![cell],
         }],
-    });
+    }));
     let galley = build_galley(&document(vec![table]), &shaper, CONTENT_WIDTH);
     assert_eq!(galley.len(), 1, "the table flows to one row fragment");
     let BlockFragment::TableRow { cells, height, .. } = &galley[0] else {
@@ -221,7 +221,7 @@ fn alt_chunk_contributes_real_intrinsic_width_for_autofit_columns() {
         properties: TableCellProperties::default(),
         blocks: vec![alt_chunk(72)],
     };
-    let table = BlockNode::Table(Table {
+    let table = BlockNode::Table(Box::new(Table {
         id: node(70),
         grid: vec![GridColumn { width_twips: None }],
         grid_change: None,
@@ -231,7 +231,7 @@ fn alt_chunk_contributes_real_intrinsic_width_for_autofit_columns() {
             properties: TableRowProperties::default(),
             cells: vec![cell],
         }],
-    });
+    }));
     let galley = build_galley(&document(vec![table]), &shaper, CONTENT_WIDTH);
     let BlockFragment::TableRow { cells, .. } = &galley[0] else {
         panic!("expected a table row fragment");

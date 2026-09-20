@@ -4464,7 +4464,9 @@ impl BodyParser<'_> {
             }
             b"tbl" if self.tables.is_active() => match self.tables.close_table() {
                 Some(table) => {
-                    if let Some(returned) = self.tables.push_block(BlockNode::Table(table)) {
+                    if let Some(returned) =
+                        self.tables.push_block(BlockNode::Table(Box::new(table)))
+                    {
                         self.blocks.push(returned);
                     }
                 }
@@ -5874,11 +5876,11 @@ impl BodyParser<'_> {
                     // drop it (parallel to the empty-text-box path).
                     self.reporter.report(b"sdtContent");
                 } else {
-                    let block = BlockNode::Sdt(BlockSdt {
+                    let block = BlockNode::Sdt(Box::new(BlockSdt {
                         id: frame.node_id,
                         properties: frame.sdt_properties,
                         blocks,
-                    });
+                    }));
                     // Route into the enclosing open cell, if any; otherwise the
                     // body root — exactly like a finished paragraph or table.
                     if let Some(returned) = self.tables.push_block(block) {

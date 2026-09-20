@@ -162,8 +162,15 @@ tells you less than you think.** Real examples from this repo:
 - **Never bisect with single runs of a possibly-flaky test.** Repeat 5× per ref. A false
   "this PR broke it" wastes more time than the bug.
 - **Known flaky under worker contention** — re-run in isolation before calling a failure a
-  regression: `context-menu.spec.mjs`, `header-footer-editing.spec.mjs`. Roughly 5 of 15
+  regression: `context-menu.spec.mjs`, `header-footer-editing.spec.mjs`,
+  `object-command-reach.spec.mjs`, `table-editing-ux.spec.mjs`. Roughly 5 of 15
   fail under `--repeat-each=3 --workers=4` on *clean main*.
+- **Clock-bound tests are a different failure, and retries do not help.** These wait on a
+  wall clock rather than on a state change, so they degrade under load no matter how
+  sound the code is: `draft-recovery.spec.mjs` (a 5 s autosave quiesce) and the Rust test
+  `an_absurdly_large_input_is_refused_quickly` (a 2 s budget — measured at 4.9 s in a full
+  workspace sweep and 0.21 s alone). Both failed once in a full parallel run and passed
+  3/3 isolated. Prefer waiting on an observable state change when writing a new one.
 - Distinguish *your* regression from pre-existing failure with evidence: stash, rebuild,
   run the same specs on `main`, compare.
 - Do not take a subagent's report at face value. Re-verify its load-bearing claim yourself.

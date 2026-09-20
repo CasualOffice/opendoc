@@ -191,7 +191,7 @@ fn nonempty_block_texts(import: &Import) -> Vec<String> {
 /// The first table in the body, if any.
 fn first_table(import: &Import) -> Option<&casual_doc_model::v1::Table> {
     import.document.body().iter().find_map(|block| match block {
-        BlockNode::Table(table) => Some(table),
+        BlockNode::Table(table) => Some(&**table),
         BlockNode::Paragraph(_) | BlockNode::Sdt(_) | BlockNode::AltChunk(_) => None,
     })
 }
@@ -5617,7 +5617,7 @@ fn block_content_controls_in_consecutive_notes_are_each_modeled() {
 
 fn find_block_sdt(blocks: &[BlockNode]) -> Option<&casual_doc_model::v1::BlockSdt> {
     blocks.iter().find_map(|block| match block {
-        BlockNode::Sdt(sdt) => Some(sdt),
+        BlockNode::Sdt(sdt) => Some(&**sdt),
         _ => None,
     })
 }

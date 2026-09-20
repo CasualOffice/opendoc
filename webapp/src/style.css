@@ -4074,6 +4074,73 @@ body.is-format-painting .page-wrap * {
 }
 .suggesting-banner button:hover { background: var(--accent-soft); }
 
+/* Crash-recovery offer (docs/112 §4.6, HF-011). Shares the banner's placement
+   and rhythm so the chrome stays one system, but carries the accent rather than
+   the warning palette: recovered work is good news, and the warning colours are
+   already spoken for by "your edits are being tracked". */
+.draft-recovery {
+  margin: 6px 8px 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+.draft-recovery[hidden] { display: none; }
+.draft-recovery-icon { color: var(--accent-strong); font-size: 18px; }
+.draft-recovery-body { flex: 1 1 auto; min-width: 0; }
+.draft-recovery-title { margin: 0; font-weight: 650; }
+.draft-recovery-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.draft-recovery-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.draft-recovery-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
+}
+.draft-recovery-meta { color: var(--muted); }
+.draft-recovery button {
+  border: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.draft-recovery button:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.draft-recovery-dismiss { color: var(--muted); flex: 0 0 auto; }
+.draft-recovery-dismiss .ms { font-size: 17px; }
+
+/* Autosave's footer indicator. Muted by default — it is reassurance — and it
+   takes the danger colour only in the one state the user may need to act on. */
+.draft-status {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.draft-status[hidden] { display: none; }
+.draft-status[data-draft-state="unavailable"] { color: var(--danger); font-weight: 600; }
+
 /* One scroll owner (Google Docs model): the comment column is an
    absolutely-positioned layer INSIDE `.viewport`'s scroll context, not a
    sibling `overflow:auto` container. It never scrolls on its own, so cards —

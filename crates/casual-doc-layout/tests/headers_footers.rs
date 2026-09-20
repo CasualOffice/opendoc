@@ -604,7 +604,7 @@ fn a_header_can_contain_a_nested_table() {
             }],
         }],
     };
-    let outer = BlockNode::Table(Table {
+    let outer = BlockNode::Table(Box::new(Table {
         id: node(220),
         grid: vec![GridColumn {
             width_twips: Some(4000),
@@ -617,10 +617,10 @@ fn a_header_can_contain_a_nested_table() {
             cells: vec![TableCell {
                 id: node(222),
                 properties: TableCellProperties::default(),
-                blocks: vec![BlockNode::Table(inner)],
+                blocks: vec![BlockNode::Table(Box::new(inner))],
             }],
         }],
-    });
+    }));
     let header = flow_header_footer(&doc, &[outer], &shaper, WIDTH);
 
     // The header flowed to a table row whose cell carries the nested table's row.

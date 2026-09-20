@@ -589,7 +589,7 @@ mod tests {
             .collect();
         blocks.push(note_ref_paragraph(1_200, note));
         blocks.extend((0..8).map(|i| paragraph(1_300 + i, "table tail line")));
-        BlockNode::Table(Table {
+        BlockNode::Table(Box::new(Table {
             id: node(950),
             grid: vec![GridColumn {
                 width_twips: Some(9_000),
@@ -605,7 +605,7 @@ mod tests {
                     blocks,
                 }],
             }],
-        })
+        }))
     }
 
     #[test]

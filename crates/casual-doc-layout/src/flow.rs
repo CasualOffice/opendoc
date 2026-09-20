@@ -7181,7 +7181,7 @@ mod tests {
         // A block-level content control wrapping two paragraphs. It is a
         // transparent wrapper: layout must recurse into its children rather than
         // dropping the whole subtree at zero height (the TOC/form-control bug).
-        let sdt = BlockNode::Sdt(BlockSdt {
+        let sdt = BlockNode::Sdt(Box::new(BlockSdt {
             id: NodeId::from_parts(20, 1).unwrap(),
             properties: SdtProperties::default(),
             blocks: vec![
@@ -7194,7 +7194,7 @@ mod tests {
                     vec![run_node(24, "inside two", RunProperties::default())],
                 ),
             ],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(&document(vec![sdt]), &shaper, Twip::from_points(400));
         // Both child paragraphs produce fragments...
@@ -7321,7 +7321,7 @@ mod tests {
                 vec![run_node(id + 200, text, RunProperties::default())],
             )],
         };
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(50, 1).unwrap(),
             grid: vec![
                 GridColumn {
@@ -7338,7 +7338,7 @@ mod tests {
                 properties: TableRowProperties::default(),
                 cells: vec![cell(60, "left cell"), cell(61, "right cell")],
             }],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(&document(vec![table]), &shaper, Twip::from_points(400));
         assert_eq!(galley.len(), 1, "the table flows to one row fragment");
@@ -7376,7 +7376,7 @@ mod tests {
             )],
         };
         // One declared column, three actual cells.
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(50, 1).unwrap(),
             grid: vec![GridColumn {
                 width_twips: Some(3000),
@@ -7388,7 +7388,7 @@ mod tests {
                 properties: TableRowProperties::default(),
                 cells: vec![cell(60, "one"), cell(61, "two"), cell(62, "three")],
             }],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(&document(vec![table]), &shaper, Twip::from_points(400));
         let BlockFragment::TableRow { cells, .. } = &galley[0] else {
@@ -7762,7 +7762,7 @@ mod tests {
                     paragraph(63, vec![run_node(64, "tagline", RunProperties::default())]),
                 ],
             };
-            let table = BlockNode::Table(Table {
+            let table = BlockNode::Table(Box::new(Table {
                 id: NodeId::from_parts(50, 1).unwrap(),
                 grid: vec![GridColumn {
                     width_twips: Some(6000),
@@ -7774,7 +7774,7 @@ mod tests {
                     properties: TableRowProperties::default(),
                     cells: vec![cell],
                 }],
-            });
+            }));
             let mut definitions = Definitions::default();
             definitions.media.insert(
                 media,
@@ -7877,7 +7877,7 @@ mod tests {
             properties: TableCellProperties::default(),
             blocks: vec![paragraph(61, vec![float]), tagline],
         };
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(50, 1).unwrap(),
             grid: vec![GridColumn {
                 width_twips: Some(6000),
@@ -7889,7 +7889,7 @@ mod tests {
                 properties: TableRowProperties::default(),
                 cells: vec![cell],
             }],
-        });
+        }));
         let mut definitions = Definitions::default();
         definitions.media.insert(
             media,
@@ -9212,7 +9212,7 @@ mod tests {
                 ],
             )],
         };
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(30, 1).unwrap(),
             grid: vec![GridColumn {
                 width_twips: Some(3000),
@@ -9224,7 +9224,7 @@ mod tests {
                 properties: TableRowProperties::default(),
                 cells: vec![cell],
             }],
-        });
+        }));
         let doc = document_with_definitions(vec![table], definitions);
         let shaper = ParleyShaper::new();
         let galley = build_galley(&doc, &shaper, Twip::from_points(400));
@@ -9851,13 +9851,21 @@ mod tests {
     /// Builds a single-row table galley and returns the row fragment's cells.
     fn flow_single_row(table: Table, width: Twip) -> BlockFragment {
         let shaper = ParleyShaper::new();
-        let mut galley = build_galley(&document(vec![BlockNode::Table(table)]), &shaper, width);
+        let mut galley = build_galley(
+            &document(vec![BlockNode::Table(Box::new(table))]),
+            &shaper,
+            width,
+        );
         galley.remove(0)
     }
 
     fn flow_table_rows(table: Table, width: Twip) -> Vec<BlockFragment> {
         let shaper = ParleyShaper::new();
-        build_galley(&document(vec![BlockNode::Table(table)]), &shaper, width)
+        build_galley(
+            &document(vec![BlockNode::Table(Box::new(table))]),
+            &shaper,
+            width,
+        )
     }
 
     // --- column-width solver (pure) ---
@@ -10702,7 +10710,7 @@ mod tests {
                 ],
             }],
         };
-        let doc = document_with_definitions(vec![BlockNode::Table(table)], definitions);
+        let doc = document_with_definitions(vec![BlockNode::Table(Box::new(table))], definitions);
         let galley = build_galley(&doc, &ParleyShaper::new(), Twip(6_000));
         let BlockFragment::TableRow { cells, .. } = &galley[0] else {
             panic!("expected a table row");
@@ -12015,8 +12023,10 @@ mod tests {
             },
         );
         let shaper = ParleyShaper::new();
-        let document =
-            document_with_definitions(vec![BlockNode::Table(styled)], definitions.clone());
+        let document = document_with_definitions(
+            vec![BlockNode::Table(Box::new(styled))],
+            definitions.clone(),
+        );
         let galley = build_galley(&document, &shaper, Twip(9000));
         let BlockFragment::TableRow {
             cells: header_row, ..
@@ -12046,7 +12056,7 @@ mod tests {
         // checkbox unticked) and only the base fill remains for every row.
         let look_disabled = build(Some(sid), TableLook::default());
         let document_disabled =
-            document_with_definitions(vec![BlockNode::Table(look_disabled)], definitions);
+            document_with_definitions(vec![BlockNode::Table(Box::new(look_disabled))], definitions);
         let galley_disabled = build_galley(&document_disabled, &shaper, Twip(9000));
         let BlockFragment::TableRow {
             cells: header_row_disabled,
@@ -12200,12 +12210,12 @@ mod tests {
 
         let shaper = ParleyShaper::new();
         let styled_doc = document_with_definitions(
-            vec![BlockNode::Table(build(Some(sid)))],
+            vec![BlockNode::Table(Box::new(build(Some(sid))))],
             definitions.clone(),
         );
         let styled = build_galley(&styled_doc, &shaper, Twip(9000));
         let unstyled_doc =
-            document_with_definitions(vec![BlockNode::Table(build(None))], definitions);
+            document_with_definitions(vec![BlockNode::Table(Box::new(build(None)))], definitions);
         let unstyled = build_galley(&unstyled_doc, &shaper, Twip(9000));
 
         fn row(fragment: &BlockFragment) -> (&[CellFragment], Twip) {
@@ -12302,7 +12312,7 @@ mod tests {
                     properties: TableCellProperties::default(),
                     blocks: vec![
                         paragraph(413, vec![run_node(414, "before", RunProperties::default())]),
-                        BlockNode::Table(nested),
+                        BlockNode::Table(Box::new(nested)),
                         paragraph(415, vec![run_node(416, "after", RunProperties::default())]),
                     ],
                 }],
@@ -12312,7 +12322,7 @@ mod tests {
         definitions.styles.insert(sid, style);
         let shaper = ParleyShaper::new();
         let galley = build_galley(
-            &document_with_definitions(vec![BlockNode::Table(outer)], definitions),
+            &document_with_definitions(vec![BlockNode::Table(Box::new(outer))], definitions),
             &shaper,
             Twip(9000),
         );
@@ -12759,7 +12769,7 @@ mod tests {
                 vec![run_node(id + 200, text, RunProperties::default())],
             )],
         };
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(50, 1).unwrap(),
             grid: vec![
                 GridColumn {
@@ -12776,7 +12786,7 @@ mod tests {
                 properties: TableRowProperties::default(),
                 cells: vec![cell(60, "a"), cell(61, "b")],
             }],
-        });
+        }));
         let text_box = InlineNode::TextBox(TextBox {
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
@@ -13074,7 +13084,7 @@ mod tests {
                 vec![run_node(32, "cell box", RunProperties::default())],
             )],
         });
-        let table = BlockNode::Table(Table {
+        let table = BlockNode::Table(Box::new(Table {
             id: NodeId::from_parts(40, 1).unwrap(),
             grid: vec![GridColumn {
                 width_twips: Some(2_000),
@@ -13090,7 +13100,7 @@ mod tests {
                     blocks: vec![paragraph(43, vec![text_box])],
                 }],
             }],
-        });
+        }));
         let shaper = ParleyShaper::new();
         let galley = build_galley(&document(vec![table]), &shaper, Twip(3_000));
         let BlockFragment::TableRow { cells, .. } = &galley[0] else {
