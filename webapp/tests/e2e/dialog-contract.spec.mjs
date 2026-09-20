@@ -294,6 +294,43 @@ for (const modal of MODALS) {
     expect(consoleErrors).toEqual([]);
   });
 
+  // Chrome text interpolates user data, and the measured guard above only sees
+  // whatever string the fixture happens to supply. It passed on `opendoc-demo.docx`
+  // while the owner's `General_Loan_On_lend_and_loan_from_SMSF_Agreement.docx` was
+  // painted past the card's right edge and clipped mid-word: CSS does not break on
+  // an underscore, so that filename is ONE 48-character token and a `fit-content`
+  // card cannot shrink below it.
+  //
+  // So the fixture must be hostile. A dialog that renders no interpolated text is
+  // skipped rather than asserted vacuously.
+  test(`${modal.name}: an unbreakable 60-character token cannot escape the card`, async ({
+    page,
+    consoleErrors,
+  }) => {
+    await modal.open(page);
+    await expect(dialog(page)).toBeVisible();
+    const TOKEN = "A_really_long_unbreakable_filename_token_with_no_spaces_1234.docx";
+    const planted = await page.evaluate(
+      ({ id, token }) => {
+        const root = document.getElementById(id);
+        const target = [...root.querySelectorAll("p, h2, .dialog-body, .dialog-note")].find(
+          (n) => (n.textContent || "").trim().length > 0,
+        );
+        if (!target) return false;
+        target.textContent = `${target.textContent.trim()} ${token}`;
+        return true;
+      },
+      { id: modal.id, token: TOKEN },
+    );
+    test.skip(!planted, "this dialog renders no interpolated text");
+    const clipped = await page.evaluate(measureClipping, modal.id);
+    expect(
+      clipped,
+      `#${modal.id} clips an unbreakable token instead of wrapping it:\n  ${clipped.join("\n  ")}`,
+    ).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
   test(`${modal.name}: opening moves focus in, Escape closes and restores it`, async ({
     page,
     consoleErrors,

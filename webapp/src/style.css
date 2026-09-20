@@ -1009,6 +1009,26 @@ body.modal-open {
   font-size: var(--icon-rail);
 }
 
+/* Chrome text interpolates user data — filenames, style names, search terms —
+ * and a filename is routinely one unbreakable token: CSS does not break on an
+ * underscore, so `General_Loan_On_lend_and_loan_from_SMSF_Agreement.docx` is a
+ * single 48-character word. A `fit-content` card cannot shrink below it, and
+ * the text was painted past the card's right edge and clipped mid-word. The
+ * measured guard missed it because its fixture was `opendoc-demo.docx`.
+ *
+ * `anywhere` rather than `break-word`: `break-word` still lets the unbreakable
+ * token set the element's min-content width, so a `fit-content` ancestor keeps
+ * sizing to it and the overflow comes back. `anywhere` lets the break count
+ * toward min-content, which is the whole point here. Applied at the text
+ * elements rather than the card so a deliberately non-wrapping control —
+ * a button label — is unaffected. */
+.dialog-heading h2,
+.dialog-heading p,
+.dialog-body,
+.dialog-note {
+  overflow-wrap: anywhere;
+}
+
 .dialog-heading h2 {
   margin: 0;
   color: var(--ink);
