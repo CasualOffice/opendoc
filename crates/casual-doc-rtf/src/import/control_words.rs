@@ -930,7 +930,12 @@ impl Importer<'_> {
         let borders: &mut dyn BorderSlots = match target {
             BorderTarget::Cell => &mut self.pending_cell.borders,
             BorderTarget::Paragraph => {
-                &mut self
+                // `ParagraphProperties::borders` is a `BoxedParagraphBorders`,
+                // which holds nothing until something asks to write one. Deref
+                // through it: reaching this arm means the document carried an
+                // explicit border control word, so allocating the set here is
+                // the allocation the newtype exists to defer, not an extra one.
+                &mut *self
                     .states
                     .last_mut()
                     .expect("root state")
