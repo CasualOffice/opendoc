@@ -51,6 +51,7 @@ use casual_doc_layout::page::{AnchorContent, Page, PaginatedLayout};
 use casual_doc_layout::paginate::PageConfig;
 use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
+use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_model::v1::BreakKind;
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
@@ -84,6 +85,11 @@ use std::str::FromStr;
 use wasm_bindgen::Clamped;
 use wasm_bindgen::prelude::*;
 
+mod window;
+
+use window::BodyLayout;
+use window::WindowedBody;
+
 /// Package admission limits for the viewer (64 MiB input, 256 MiB expanded) —
 /// the same envelope the native `render_gallery` probe uses, so a document that
 /// opens there opens here. All other bounds keep their [`PackageLimits::default`]
@@ -104,59 +110,90 @@ fn viewer_limits() -> PackageLimits {
 
 /// The largest document the browser editor will admit, in top-level blocks.
 ///
-/// Measured on this build, opening plain text in Chromium, after the
-/// accessibility mirror was virtualized:
+/// **Measured, through the browser, with the committed probe**
+/// `webapp/tests/e2e/viewer-ceiling-measurement.spec.mjs`
+/// (`MEASURE_VIEWER_CEILING=1 npx playwright test viewer-ceiling-measurement`;
+/// macOS arm64, headless Chromium, release wasm, the owner's own 32-byte line
+/// repeated). "wasm" is `WebAssembly.Memory.buffer.byteLength` after the open —
+/// linear memory never shrinks, so that reading *is* the high-water mark, and
+/// it is the number that decides whether a document opens at all. "last page"
+/// is whether the host can scroll to the final page and find ink on it:
 ///
-/// | blocks  | 16,385 | 32,769 | 65,537 | 131,073 | 262,145 |
-/// |---------|--------|--------|--------|---------|---------|
-/// | open    | 0.9 s  | 1.8 s  | 3.9 s  | 10.9 s  | 23.2 s  |
-/// | JS heap | 33 MB  | 39 MB  | 36 MB  | 53 MB   | 73 MB   |
+/// | blocks      | path     | open        | wasm     | JS heap | pages  | last page |
+/// |-------------|----------|------------:|---------:|--------:|-------:|-----------|
+/// | 65,537      | whole    | 9.1 s       | 359 MB   | 38 MB   | 1,286  | reached   |
+/// | 262,144     | whole    | 26.3-42.2 s | 1,222 MB | 57 MB   | 5,141  | reached   |
+/// | 262,146     | windowed | 17.3-31.2 s | 592 MB   | 33 MB   | 5,141  | reached   |
+/// | 600,000     | windowed | 21.6-73.0 s | 1,230 MB | 67 MB   | 11,765 | reached   |
+/// | **700,000** | windowed | 85.9-95.0 s | 1,314 MB | 74 MB   | 13,726 | reached   |
+/// | 800,000     | windowed | 118.7 s     | 1,442 MB | 91 MB   | 15,687 | **NOT reached** |
+/// | 1,303,306   | windowed | 110.5 s     | 2,476 MB | 139 MB  | 25,556 | **NOT reached** |
 ///
-/// Cost is linear in blocks and memory stays modest, so this is a patience
-/// ceiling rather than the memory cliff it used to be: before the mirror was
-/// windowed, 32,769 blocks took 24 s and 65,537 aborted the module outright
-/// (`docs/104` HF-158). The value is the largest size actually measured to
-/// open, not an extrapolation. Past it a document is refused with its real
-/// size and the limit.
+/// The last row is the **owner's own 41 MB file**, measured through the picker,
+/// not a synthetic stand-in (`VIEWER_CEILING_FILE=…` on the probe). Two things
+/// to read out of the table.
+///
+/// **Windowing works, and it is what moved this constant.** At the same
+/// 262,14x block count the windowed path holds **592 MB against 1,222 MB** and
+/// opens no slower. That is what makes 700,000 blocks — 2.7× the old ceiling —
+/// something the browser can actually hold, and it is why 1,303,306 paragraphs
+/// now fit in 2,476 MB of a wasm32 address space instead of the 4.14 GiB
+/// `docs/113` §6.4 measured for the whole path, which did not fit at all.
+///
+/// **The value stops at 700,000 because of the HOST, not the engine.** At
+/// 1,303,306 paragraphs the document opens, reports its true 25,556 pages, and
+/// every one of them is individually rasterizable. What the host cannot do is
+/// let the user scroll to them: the viewer builds one sheet per page, so the
+/// scroll container is pages × ~1,078 px, and a browser stops scrolling at
+/// 2^24 = 16,777,216 CSS px. Measured: at 800,000 blocks that container is
+/// 16,910,594 px and the final pages are unreachable; at 1,303,306 it is
+/// 27,549,376 px and the last third is. Admitting a document whose final pages
+/// cannot be reached would be the silent version of a refusal, which is the
+/// thing this constant exists to avoid. Lifting it needs a virtualized scroll
+/// container in the host (`webapp/src`), outside this crate — `docs/113` §8
+/// records it as the next thing owed.
+///
+/// Timing is the noisy half, as it was in `docs/113` §6.4: the same 600,000-block
+/// open measured 21.6 s and 73.0 s on a shared laptop, and 700,000 measured
+/// 85.9, 88.5 and 95.0 s, while each row's wasm figure reproduced to the
+/// megabyte. Opening is still linear in blocks and still slow; windowing makes a
+/// document **fit**, not open faster (`docs/104` HF-077).
+///
+/// The value is the largest size actually measured to open, not an
+/// extrapolation. Past it a document is refused with its real size and the
+/// limit.
 ///
 /// This does NOT bound file SIZE. A 200 MiB DOCX is large because of its
 /// images, and its block count is ordinary; `viewer_limits` admits it.
 ///
-/// ## Why this did not move when windowed layout landed
+/// ## The two ceilings, and which one this is
 ///
-/// `docs/113` §6 steps 4 and 5 made the layout engine able to open the
-/// owner's 1,303,306-paragraph file. Measured with the committed
-/// `casual-doc-layout` `layout_footprint` example (macOS arm64, release, the
-/// owner's own paragraph shape at its own size; peak is a 50 ms RSS sample of
-/// the child process):
+/// This is the ceiling for a document the viewer lays out **one window at a
+/// time** (`docs/113`). `MAX_WHOLE_LAYOUT_BLOCKS` below is the — lower —
+/// ceiling for one it has to lay out whole, which is every document a window
+/// cannot serve: footnotes, anchored floats, multiple sections or columns,
+/// margin line numbering, per-page note restart.
+const MAX_VIEWER_BLOCKS: usize = 700_000;
+
+/// The largest document the viewer will lay out **whole**, in top-level blocks
+/// — every page paginated and resident before the first frame.
 ///
-/// | 1,303,306 paragraphs | `paginate_document` | `measure_document` + one window |
-/// |---|---:|---:|
-/// | pages | 29,621 | 29,621 |
-/// | per paragraph | 3,378 B | 1,021 B |
-/// | resident | 4.10 GiB | 1.24 GiB |
-/// | **peak RSS** | **4.14 GiB** | **1.23 GiB** |
-/// | time | 8.6-34.6 s | 8.3-33.7 s |
+/// This is the value `MAX_VIEWER_BLOCKS` held before windowing, unchanged,
+/// because the measurement behind it has not changed: it is still "the largest
+/// size actually measured to open" through the full `paginate_document` path.
+/// Two kinds of document still take that path and are still bounded by it:
 ///
-/// Timing is a range because it is the noisy half of the measurement (six runs
-/// on a shared 16 GiB laptop, 8.3-38 s for the same work) while the memory
-/// figures reproduced to within 0.4%. Both columns move together: the windowed
-/// open pays the same single shaping pass, so windowing does not make opening
-/// faster, it makes it fit.
+/// - one below the windowing threshold, where laying out whole keeps every
+///   capability a window cannot serve (editing, the show-changes preview);
+/// - one a window is *refused* for ([`NotWindowable`]) at any size.
 ///
-/// 4.14 GiB does not fit a wasm32 address space, which is the measured reason
-/// that file is refused rather than slow. 1.23 GiB does.
-///
-/// **But `open_document_as` below still calls `paginate_document`**, so the
-/// browser still pays the left-hand column, and this constant is a *measured*
-/// ceiling — "the largest size actually measured to open". Raising it on the
-/// strength of a number the product does not yet reach would trade an honest
-/// refusal for `RuntimeError: unreachable`, which is exactly the regression
-/// `docs/104` HF-158 exists for. It moves when `WasmDocument` holds a window
-/// instead of a whole `PaginatedLayout` — and when the browser-side open cost
-/// above (23.2 s at 262,145 blocks, linear) is addressed, since at 1.3M
-/// blocks that alone is minutes (`docs/104` HF-077).
-const MAX_VIEWER_BLOCKS: usize = 262_144;
+/// A document past this that a window cannot serve is refused with the reason,
+/// not silently truncated and not aborted — see `not_windowable_refusal`.
+/// It is also the point at which windowing switches on, deliberately: at or
+/// below it nothing about the viewer changes, so no document that opens today
+/// loses a capability to this work; above it the alternative to a window is not
+/// a smaller feature set but a refusal to open at all.
+const MAX_WHOLE_LAYOUT_BLOCKS: usize = 262_144;
 
 /// Plain-text admission for the viewer. [`PlainTextLimits::default`] is sized
 /// for a 64-bit native host; the browser needs its own ceiling for the same
@@ -205,6 +242,43 @@ fn too_many_blocks(found: usize) -> String {
          memory. Split it into smaller documents, or open it in a desktop word processor.",
         thousands(found),
         thousands(MAX_VIEWER_BLOCKS),
+    )
+}
+
+/// The message for a document past [`MAX_WHOLE_LAYOUT_BLOCKS`] that the windowed
+/// path **cannot** serve, so there is no path left that can lay it out.
+///
+/// It is deliberately a different message from [`too_many_blocks`], because the
+/// limit it names is a different one and the reason it applies is a property of
+/// this document that the user can act on. "Too many paragraphs" alone would be
+/// confidently wrong here: a document of exactly this size without the footnote
+/// (or the floating image, or the second section) opens.
+fn not_windowable_refusal(found: usize, reason: NotWindowable, ceiling: usize) -> String {
+    format!(
+        "This document has {} paragraphs and {}, so the browser editor has to lay it out whole, \
+         and the most it can hold whole is {}. Split it into smaller documents, or open it in a \
+         desktop word processor.",
+        thousands(found),
+        reason.reason(),
+        thousands(ceiling),
+    )
+}
+
+/// The refusal an operation gets when the document is open one window at a time
+/// and that operation needs every page at once.
+///
+/// `docs/113` §8: a page outside the window is not an empty page, so a
+/// capability that would silently act on an empty layout has to say so instead.
+/// The two are `apply_group` (every model mutation — re-paginating 1.3M
+/// paragraphs after each keystroke is the 4.14 GiB peak this path exists to
+/// avoid) and the show-changes preview (a second whole-document layout).
+fn windowed_not_available(what: &str) -> String {
+    format!(
+        "This document is open one page-window at a time because it has more than {} paragraphs, \
+         which is the most the browser editor can lay out whole. {what} needs the whole document \
+         laid out at once, so it is not available here. Export the document, or split it into \
+         smaller ones.",
+        thousands(MAX_WHOLE_LAYOUT_BLOCKS),
     )
 }
 
@@ -267,7 +341,9 @@ impl EditContext {
 #[wasm_bindgen]
 pub struct WasmDocument {
     document: Document,
-    layout: PaginatedLayout,
+    /// The body pages: the whole document's, or one window of them for a
+    /// document too large to lay out whole (`docs/113` §8, [`BodyLayout`]).
+    layout: BodyLayout,
     /// A read-only "show changes" markup layout (docs/93), present only while the
     /// host has toggled `setShowChanges(true)`. When present, `renderPage` /
     /// `pageCount` render from it (struck deletions, author-colored insertions,
@@ -582,7 +658,11 @@ impl core::fmt::Debug for WasmDocument {
         // `ParleyShaper` is opaque; report the shape a
         // caller can act on without dumping the whole model.
         f.debug_struct("WasmDocument")
-            .field("pages", &self.editing_layout().page_count())
+            // The document's page count, not the resident window's — a debug
+            // line reading "pages: 3" for a 29,621-page document is the same
+            // lie as an API that reports it.
+            .field("pages", &self.layout.page_count())
+            .field("windowed", &self.layout.is_windowed())
             .field("media_parts", &self.document.definitions().media.len())
             .finish_non_exhaustive()
     }
@@ -665,12 +745,23 @@ impl WasmDocument {
     }
 
     /// The number of laid-out pages.
+    ///
+    /// The document's real count in every mode. A windowed body takes it from
+    /// the measure tier, which `docs/113` §6.4 measured as identical to
+    /// `paginate_document`'s (29,621 pages on the owner's file) — reporting the
+    /// resident window's length here would tell a host with 29,621 pages that
+    /// it had five, and every page past the fifth would simply not exist as far
+    /// as the viewer, the scrollbar, printing and `NUMPAGES` were concerned.
     #[wasm_bindgen(getter, js_name = pageCount)]
     #[must_use]
     pub fn page_count(&self) -> u32 {
+        let pages = match self.markup_layout.as_ref() {
+            Some(markup) => markup.page_count(),
+            None => self.layout.page_count(),
+        };
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
-        u32::try_from(self.painted_layout().page_count()).unwrap_or(u32::MAX)
+        u32::try_from(pages).unwrap_or(u32::MAX)
     }
 
     /// Toggles the read-only "show changes" markup view (docs/93). When on, a
@@ -678,10 +769,17 @@ impl WasmDocument {
     /// underlined insertions, highlighted comment ranges) and `renderPage` /
     /// `pageCount` render from it; caret/selection/hit-test always use the editing
     /// layout, so this is a pure read-only preview. Toggling off drops it. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Throws for a document laid out one window at a time: the markup view is
+    /// a **second** whole-document layout, which is the peak `docs/113` §6.4
+    /// measured at 4.14 GiB on the owner's file. Silently leaving the preview
+    /// off would be worse — the host's toggle would read "on" while nothing on
+    /// screen had changed.
     #[wasm_bindgen(js_name = setShowChanges)]
-    pub fn set_show_changes(&mut self, on: bool) {
-        self.markup_layout =
-            on.then(|| paginate_document_view(&self.document, &self.shaper, ReviewView::Markup));
+    pub fn set_show_changes(&mut self, on: bool) -> Result<(), JsValue> {
+        self.set_show_changes_inner(on).map_err(to_js)
     }
 
     /// Whether the read-only markup view is currently shown.
@@ -689,6 +787,27 @@ impl WasmDocument {
     #[must_use]
     pub fn showing_changes(&self) -> bool {
         self.markup_layout.is_some()
+    }
+
+    /// Why this document cannot be edited, or the empty string when it can be.
+    ///
+    /// One document in the product is read-only: one too large to lay out
+    /// whole, which the viewer opens one page-window at a time (`docs/113`).
+    /// Every edit is refused at the atomic choke point, with this sentence.
+    ///
+    /// It is a getter rather than only an error because a host must be able to
+    /// **show a disabled control with a reason** instead of a control that
+    /// looks live and then refuses — `SKILL.md` §10, "never a dead control".
+    /// The host does not read it yet; `docs/113` §8 records that as the work
+    /// this seam exists for, rather than leaving it to be discovered.
+    #[wasm_bindgen(getter, js_name = editingUnavailableReason)]
+    #[must_use]
+    pub fn editing_unavailable_reason(&self) -> String {
+        if self.layout.is_windowed() {
+            windowed_not_available("Editing")
+        } else {
+            String::new()
+        }
     }
 
     /// Whether the document has at least one user action available to undo.
@@ -741,7 +860,7 @@ impl WasmDocument {
     ///
     /// Throws if `index` is out of range or the surface size is invalid.
     #[wasm_bindgen(js_name = renderPage)]
-    pub fn render_page(&self, index: u32, dpi: f32) -> Result<PageBitmap, JsValue> {
+    pub fn render_page(&mut self, index: u32, dpi: f32) -> Result<PageBitmap, JsValue> {
         self.render_page_inner(index, dpi).map_err(to_js)
     }
 
@@ -6578,7 +6697,8 @@ impl WasmDocument {
             // object. It used to report the editing layout's, which differs from
             // `pageCount` exactly when markup is shown — an SDK inconsistency
             // waiting for someone to believe one of the two numbers.
-            pages: self.painted_layout().page_count() as u32,
+            // The document's real page count, not the resident window's.
+            pages: self.page_count(),
         }
     }
 
@@ -9623,16 +9743,60 @@ impl WasmDocument {
         )
     }
 
+    /// The page box of absolute page `index` for a **windowed** body, from the
+    /// measure tier, without materializing the page — or `None` when the body
+    /// is not windowed (or the markup preview is on, which is only ever built
+    /// for a whole body) and the ordinary section-resolved path applies.
+    fn windowed_page_box(&self, index: usize) -> Option<Size> {
+        if self.markup_layout.is_some() || !self.layout.is_windowed() {
+            return None;
+        }
+        self.layout.page_box_at(index)
+    }
+
+    /// See [`WasmDocument::set_show_changes`]. Returns a plain message so native
+    /// tests exercise the same path as the `#[wasm_bindgen]` boundary.
+    fn set_show_changes_inner(&mut self, on: bool) -> Result<(), String> {
+        if on && self.layout.is_windowed() {
+            return Err(windowed_not_available("The show-changes preview"));
+        }
+        self.markup_layout =
+            on.then(|| paginate_document_view(&self.document, &self.shaper, ReviewView::Markup));
+        Ok(())
+    }
+
     /// See [`WasmDocument::page_size`].
     fn page_size_inner(&self, index: u32) -> Result<PageSize, String> {
-        // The SAME layout `render_page` draws from. `page_count` and `render_page`
-        // both read the markup layout while show-changes is on, but this asked the
-        // editing layout — and markup materialises struck-through deletions that
-        // the editing layout gives zero width, so markup can hold more pages. A
-        // host looping `0..pageCount` then hit "page index N out of range" partway
-        // through and left the viewer blank or stale, with no user action needed.
-        let page = self.render_page_of(index)?;
-        let size = self.page_box(page);
+        // Answered WITHOUT moving the window. A host builds one wrapper per
+        // page and asks each one's size before rendering anything, so routing
+        // this through the window re-flowed and re-paginated once per page of
+        // the document: 121.1 s to open 262,146 blocks against 35.8 s whole,
+        // for a question the measure tier already holds. See
+        // `BodyLayout::page_box_at`.
+        //
+        // The layout is the SAME one `render_page` draws from. `page_count` and
+        // `render_page` both read the markup layout while show-changes is on,
+        // but this asked the editing layout — and markup materialises
+        // struck-through deletions that the editing layout gives zero width, so
+        // markup can hold more pages. A host looping `0..pageCount` then hit
+        // "page index N out of range" partway through and left the viewer blank
+        // or stale, with no user action needed.
+        let total = self.page_count();
+        if index >= total {
+            return Err(format!("page index {index} out of range (0..{total})"));
+        }
+        let size = match self.windowed_page_box(index as usize) {
+            // Windowed: from the outline, no page materialized.
+            Some(size) => size,
+            // Whole (and the markup preview, which is only ever whole): the
+            // page's own section geometry, exactly as before — a multi-section
+            // document reports per-section boxes, and this path is the one that
+            // does it.
+            None => {
+                let page = self.render_page_of(index)?;
+                self.page_box(page)
+            }
+        };
         Ok(PageSize {
             width_twip: size.width.raw(),
             height_twip: size.height.raw(),
@@ -9640,7 +9804,12 @@ impl WasmDocument {
     }
 
     /// See [`WasmDocument::render_page`].
-    fn render_page_inner(&self, index: u32, dpi: f32) -> Result<PageBitmap, String> {
+    fn render_page_inner(&mut self, index: u32, dpi: f32) -> Result<PageBitmap, String> {
+        // Windowed body: this is the seam that moves the window. Every page of
+        // the document is rasterizable through it, in any order — which is what
+        // makes printing, thumbnails and a scroll to page 22,215 all work
+        // against a layout that holds five pages.
+        self.ensure_page_resident(index);
         let page = self.render_page_of(index)?;
         let size = self.page_box(page);
         let width_px = size.width.to_device_px(dpi).ceil() as u32;
@@ -9681,7 +9850,17 @@ impl WasmDocument {
         // A newly registered face can change how existing runs resolve, so every
         // cached fragment is potentially stale — drop the whole cache and re-shape.
         self.galley_cache = GalleyCache::new();
-        self.layout = paginate_document(&self.document, &self.shaper);
+        // A windowed body re-measures and rebuilds the window it was showing
+        // rather than paginating whole. It is the same single shaping pass a
+        // full re-pagination costs, at the bounded peak — and it is not
+        // optional: a new face moves page boundaries, so the measure tier a
+        // scroll resumes from would otherwise describe the document as it was
+        // before the font arrived.
+        if self.layout.is_windowed() {
+            self.layout.remeasure(&self.document, &self.shaper);
+            return;
+        }
+        self.layout = BodyLayout::Whole(paginate_document(&self.document, &self.shaper));
         // A new face re-shapes the markup view as much as the editing one, and
         // the markup view is what is on screen while it exists.
         if self.markup_layout.is_some() {
@@ -10121,6 +10300,17 @@ impl WasmDocument {
     /// refused op leaves `doc` unchanged. That keeps the per-keystroke path
     /// clone-free and `O(edit)`, per `docs/107` §4.
     fn apply_group(&mut self, ops: &[Operation]) -> Result<(Pos, Vec<Operation>), String> {
+        // A windowed body cannot re-paginate after a mutation: `finish_edit`
+        // re-runs `paginate_document_cached` over the whole document, which is
+        // the 4.14 GiB peak windowing exists to avoid, and a re-measure is a
+        // full shaping pass — 8.3-33.7 s on the owner's file (`docs/113` §6.4)
+        // — per keystroke. So the mutation is refused HERE, before the model
+        // changes, rather than allowed to land against a layout that cannot be
+        // brought up to date. Refusing at the atomic choke point is what makes
+        // this one line cover all 47 operations.
+        if self.layout.is_windowed() {
+            return Err(windowed_not_available("Editing"));
+        }
         let snapshot = (ops.len() > 1).then(|| self.document.clone());
         let mut inverses = Vec::with_capacity(ops.len());
         let mut caret = Pos::new(self.document.id(), 0);
@@ -10183,7 +10373,9 @@ impl WasmDocument {
             }
             None => dirty_pages(self.editing_layout(), &new_layout),
         };
-        self.layout = new_layout;
+        // Whole by construction: `apply_group` refuses every mutation on a
+        // windowed body, so nothing reaches here with one.
+        self.layout = BodyLayout::Whole(new_layout);
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
@@ -11410,8 +11602,43 @@ impl WasmDocument {
     /// the cause of three separate defect clusters, so the rule is stated once
     /// here and the accessors below are named after the QUESTION rather than the
     /// field, to make each call site say which one it is asking.
+    ///
+    /// **Windowed documents.** For a body laid out one window at a time this is
+    /// the window — the pages that were actually painted — which is exactly
+    /// what a question that started as a pixel is about. It is *not* every page
+    /// of the document, so it must never be used to count pages or to index a
+    /// page by absolute position; [`Self::page_count`] and
+    /// [`Self::body_page_at`] are the accessors for those, and they are correct
+    /// in both modes. See the consumer table on [`BodyLayout`].
     fn painted_layout(&self) -> &PaginatedLayout {
-        self.markup_layout.as_ref().unwrap_or(&self.layout)
+        self.markup_layout
+            .as_ref()
+            .unwrap_or_else(|| self.layout.resident())
+    }
+
+    /// The painted page at absolute index `index`, if it is resident.
+    ///
+    /// `None` means "not resident" — never an empty page. Callers that must not
+    /// fail call [`Self::ensure_page_resident`] first, which moves the window.
+    fn body_page_at(&self, index: usize) -> Option<&Page> {
+        match self.markup_layout.as_ref() {
+            Some(markup) => markup.pages.get(index),
+            None => self.layout.page_at(index),
+        }
+    }
+
+    /// Moves the page window, if there is one, so absolute page `index` can be
+    /// answered for. A no-op for a whole layout and for the markup preview
+    /// (which is only ever built for a whole layout).
+    ///
+    /// Returns whether a window was built, which is what the guard that a
+    /// re-render of the same page does no work counts.
+    fn ensure_page_resident(&mut self, index: u32) -> bool {
+        if self.markup_layout.is_some() {
+            return false;
+        }
+        self.layout
+            .ensure_resident(&self.document, &self.shaper, index as usize)
     }
 
     /// The editing layout, for bookkeeping that is deliberately independent of
@@ -11422,7 +11649,7 @@ impl WasmDocument {
     /// rectangle that will be drawn, this is the wrong one — use
     /// [`Self::painted_layout`].
     fn editing_layout(&self) -> &PaginatedLayout {
-        &self.layout
+        self.layout.resident()
     }
 
     /// A snapshot of the layout that produced the pixels, which is what every
@@ -11466,14 +11693,20 @@ impl WasmDocument {
         ModelPos::new(pos.node, markup_to_editing_offset(&segments, pos.offset))
     }
 
-    /// The page to render for `index`, from [`WasmDocument::active_layout`].
+    /// The page to render for `index`, from [`WasmDocument::painted_layout`].
+    ///
+    /// Callers must have called [`WasmDocument::ensure_page_resident`] for
+    /// `index` first — this is `&self` so that the returned borrow does not
+    /// keep the document mutably borrowed while it is drawn. An index inside
+    /// the document that is nonetheless not resident is reported as such rather
+    /// than rendered blank.
     fn render_page_of(&self, index: u32) -> Result<&Page, String> {
-        let layout = self.painted_layout();
-        layout.pages.get(index as usize).ok_or_else(|| {
-            format!(
-                "page index {index} out of range (0..{})",
-                layout.page_count()
-            )
+        let total = self.page_count();
+        if index >= total {
+            return Err(format!("page index {index} out of range (0..{total})"));
+        }
+        self.body_page_at(index as usize).ok_or_else(|| {
+            format!("page {index} of {total} is not resident; the page window was not moved to it")
         })
     }
 
@@ -17941,6 +18174,26 @@ fn open_document(bytes: &[u8]) -> Result<WasmDocument, String> {
 }
 
 fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocument, String> {
+    open_document_bounded(bytes, selection, MAX_WHOLE_LAYOUT_BLOCKS)
+}
+
+/// [`open_document_as`] with the whole-layout ceiling supplied.
+///
+/// One number decides three things, which is why it is one parameter: at or
+/// below it the document is laid out whole exactly as it always was; above it
+/// the windowed path is used if the document allows it; and above it a document
+/// the windowed path refuses has no path left and is refused with the reason.
+///
+/// It is a parameter for exactly one reason: so the windowed path and its
+/// refusal can be tested on documents small enough to also lay out whole, and
+/// the two compared page for page. A test that had to build 262,145 paragraphs
+/// to reach the windowed path would be slow enough not to be run, and would
+/// have nothing affordable to compare the result against.
+fn open_document_bounded(
+    bytes: &[u8],
+    selection: FormatSelection,
+    whole_layout_ceiling: usize,
+) -> Result<WasmDocument, String> {
     if let Some(refusal) = viewer_admission_error(bytes) {
         return Err(refusal);
     }
@@ -17960,6 +18213,7 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
     if blocks > MAX_VIEWER_BLOCKS {
         return Err(too_many_blocks(blocks));
     }
+    let windowed = blocks > whole_layout_ceiling;
     let source_format = imported.format.format.as_str().to_owned();
     let mut report = imported.report;
     let document = imported.document;
@@ -17979,9 +18233,25 @@ fn open_document_as(bytes: &[u8], selection: FormatSelection) -> Result<WasmDocu
     // ordering the adapter owns.
     report_embedded_font_failures(&mut report, &embedded_fonts);
     let import_report_json = compatibility_report_json(&report)?;
-    // One call: per-section geometry, flowed headers/footers, anchored drawings,
-    // and page-number fields — the same entry point the native renderer uses.
-    let layout = paginate_document(&document, &shaper);
+    // Below the windowing threshold: one call for per-section geometry, flowed
+    // headers/footers, anchored drawings, and page-number fields — the same
+    // entry point the native renderer uses, and the same one this has always
+    // taken, so nothing about a document that already opened changes.
+    //
+    // Above it, the whole-document layout is the 4.14 GiB peak `docs/113` §6.4
+    // measured on the owner's file, which does not fit a wasm32 address space.
+    // Try the windowed path; a document a window cannot serve is refused with
+    // the reason rather than attempted and aborted.
+    let layout = if windowed {
+        match WindowedBody::open(&document, &shaper) {
+            Ok(body) => BodyLayout::Windowed(Box::new(body)),
+            Err(reason) => {
+                return Err(not_windowable_refusal(blocks, reason, whole_layout_ceiling));
+            }
+        }
+    } else {
+        BodyLayout::Whole(paginate_document(&document, &shaper))
+    };
     let default_config = document_page_config(&document);
 
     // Edits allocate run ids in a namespace derived from — but distinct from —
@@ -20719,7 +20989,7 @@ mod tests {
     /// yields a device bitmap whose dimensions and RGBA length agree.
     #[test]
     fn render_page_dimensions_are_consistent() {
-        let doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut doc = open_document(RICH_DOCX).expect("open corpus docx");
         let dpi = 96.0;
 
         for i in 0..doc.page_count() {
@@ -20800,14 +21070,24 @@ mod tests {
     /// The pre-check is cheap: it counts newlines rather than importing, so the
     /// refusal is immediate even for a file far past the ceiling. The real report
     /// was a 40 MB file that took 17 seconds to fail.
+    ///
+    /// The size here is one paragraph past the ceiling rather than the owner's
+    /// 1,303,306, because that file is now **inside** the ceiling and opens (it
+    /// is covered by `the_owners_file_shape_opens_through_the_windowed_path`).
+    /// The budget is 15 s rather than the original 2 s: `docs/105` records this
+    /// test as clock-bound and measured at 4.9 s under a full parallel sweep
+    /// against 0.21 s alone, and the property it is defending — "did not import
+    /// first" — is separated from that noise by more than an order of magnitude,
+    /// because importing this input takes minutes in a debug build.
     #[test]
     fn an_absurdly_large_input_is_refused_quickly() {
-        let bytes = text_of_lines(1_303_305);
+        let lines = MAX_VIEWER_BLOCKS + 1;
+        let bytes = text_of_lines(lines);
         let started = std::time::Instant::now();
         let error = open_document(&bytes).expect_err("must refuse");
-        assert!(error.contains("1,303,306 paragraphs"), "{error}");
+        assert!(error.contains(&thousands(lines + 1)), "{error}");
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(2),
+            started.elapsed() < std::time::Duration::from_secs(15),
             "refusing took {:?}; it must not import first",
             started.elapsed(),
         );
@@ -20884,6 +21164,361 @@ mod tests {
     fn a_document_just_inside_the_ceiling_opens() {
         let doc = open_document(&text_of_lines(1_000)).expect("must open");
         assert!(doc.page_count() > 0);
+    }
+
+    // ---- docs/113 §8: a viewer that holds a window, not every page ----------
+
+    /// The whole-layout ceiling a windowing test runs at. Small enough that a
+    /// few hundred paragraphs reach the windowed path, so the same document can
+    /// also be opened whole and the two compared.
+    const TEST_WHOLE_CEILING: usize = 8;
+
+    /// A plain-text document of `lines` lines, opened through the windowed path.
+    fn open_windowed(lines: usize) -> WasmDocument {
+        let doc = open_document_bounded(
+            &text_of_lines(lines),
+            FormatSelection::Auto,
+            TEST_WHOLE_CEILING,
+        )
+        .expect("must open");
+        assert!(
+            doc.layout.is_windowed(),
+            "this fixture must reach the windowed path, or the test below proves nothing"
+        );
+        doc
+    }
+
+    /// The same document opened the way it always was — every page resident.
+    fn open_whole(lines: usize) -> WasmDocument {
+        let doc = open_document_bounded(&text_of_lines(lines), FormatSelection::Auto, usize::MAX)
+            .expect("must open");
+        assert!(
+            !doc.layout.is_windowed(),
+            "the control must not be windowed"
+        );
+        doc
+    }
+
+    /// The invariant the whole design rests on, carried across the wasm boundary:
+    /// **a windowed page equals the same page of a whole layout, field for
+    /// field** — placed content with every glyph, running header and footer,
+    /// resolved `PAGE`/`NUMPAGES`, page borders.
+    ///
+    /// `casual-doc-layout`'s `tests/windowed_document.rs` asserts this of the
+    /// engine. This asserts it of what the *viewer* hands a host, which is the
+    /// thing that can silently return an empty off-window page.
+    #[test]
+    fn every_page_of_a_windowed_document_equals_the_whole_layout_field_for_field() {
+        let lines = 600;
+        let mut windowed = open_windowed(lines);
+        let whole = open_whole(lines);
+        let total = whole.page_count();
+        assert!(
+            total > 6,
+            "the fixture must be longer than one window ({total} pages)"
+        );
+        assert_eq!(
+            windowed.page_count(),
+            total,
+            "a windowed document must report the document's page count"
+        );
+
+        // Forwards, then backwards, then a jump: every order a host can ask in.
+        let order: Vec<u32> = (0..total)
+            .chain((0..total).rev())
+            .chain([total / 2, 0, total - 1])
+            .collect();
+        for index in order {
+            assert!(
+                windowed.ensure_page_resident(index)
+                    || windowed.body_page_at(index as usize).is_some(),
+                "page {index} was neither resident nor brought in"
+            );
+            let got = windowed
+                .body_page_at(index as usize)
+                .unwrap_or_else(|| panic!("page {index} is not resident after the window moved"));
+            let want = whole
+                .body_page_at(index as usize)
+                .expect("the control holds every page");
+            assert_eq!(
+                got, want,
+                "windowed page {index} of {total} differs from the whole layout"
+            );
+        }
+    }
+
+    /// The pixels, not just the structure: a page outside the window must
+    /// rasterize to the same bytes as the whole layout's, which an empty page
+    /// cannot do.
+    #[test]
+    fn a_page_outside_the_window_rasterizes_to_the_same_pixels() {
+        let lines = 600;
+        let mut windowed = open_windowed(lines);
+        let mut whole = open_whole(lines);
+        let total = whole.page_count();
+        // A low dpi keeps the comparison cheap; it is the same raster path.
+        let dpi = 24.0;
+        // Deliberately not page 0: the first window already holds it, so it
+        // would pass whether or not the window ever moves. The last page and a
+        // backwards jump are the ones that need the window to follow.
+        for index in [total - 1, total / 2, 1, total - 1] {
+            // `render_page_inner`, not `render_page`: the error is a plain
+            // String, so a failure reads as the reason rather than as
+            // wasm-bindgen refusing to format a `JsValue` off-target.
+            let got = windowed
+                .render_page_inner(index, dpi)
+                .unwrap_or_else(|error| panic!("windowed render of page {index}: {error}"));
+            let want = whole
+                .render_page_inner(index, dpi)
+                .unwrap_or_else(|error| panic!("whole render of page {index}: {error}"));
+            assert_eq!(
+                (got.width_px(), got.height_px()),
+                (want.width_px(), want.height_px()),
+                "page {index} rasterized at a different size"
+            );
+            assert_eq!(
+                got.rgba().0,
+                want.rgba().0,
+                "page {index} of {total} rasterized to different pixels"
+            );
+        }
+    }
+
+    /// Page geometry, for a host that loops `0..pageCount` building one wrapper
+    /// per page before it renders anything — the loop the viewer and printing
+    /// both run.
+    ///
+    /// Every page's box must be answerable, and answerable **without moving the
+    /// window**: the window is left where it was and the whole sweep still
+    /// agrees with the whole layout page for page. Routing this through the
+    /// window instead cost 121.1 s to open 262,146 blocks against 35.8 s whole.
+    #[test]
+    fn every_page_size_of_a_windowed_document_is_answerable_without_moving_the_window() {
+        let lines = 600;
+        let windowed = open_windowed(lines);
+        let whole = open_whole(lines);
+        let before = windowed.layout.windowed().expect("windowed").range();
+        for index in 0..whole.page_count() {
+            let got = windowed.page_size_inner(index).expect("windowed page size");
+            let want = whole.page_size_inner(index).expect("whole page size");
+            assert_eq!(
+                (got.width_twip(), got.height_twip()),
+                (want.width_twip(), want.height_twip()),
+                "page {index} reported a different box"
+            );
+        }
+        assert_eq!(
+            windowed.layout.windowed().expect("windowed").range(),
+            before,
+            "asking every page's size must not have moved the window"
+        );
+    }
+
+    /// The count a scrollbar, a status bar and `NUMPAGES` all read. Reporting
+    /// the resident window here would make a 13-page document five pages long,
+    /// and the eight it did not mention would simply not exist for the host.
+    #[test]
+    fn a_windowed_document_reports_the_documents_page_count_not_the_windows() {
+        let lines = 600;
+        let windowed = open_windowed(lines);
+        let whole = open_whole(lines);
+        assert_eq!(windowed.page_count(), whole.page_count());
+        assert_eq!(windowed.document_stats().pages(), whole.page_count());
+        let resident = windowed.layout.resident().page_count();
+        assert!(
+            resident < whole.page_count() as usize,
+            "the window must be smaller than the document, or this test is vacuous \
+             ({resident} resident of {} pages)",
+            whole.page_count()
+        );
+    }
+
+    /// Editing is refused, loudly, before the model changes.
+    ///
+    /// A windowed body cannot re-paginate: `finish_edit` re-runs the whole
+    /// document, which is the 4.14 GiB peak this path exists to avoid. Letting
+    /// the edit land against a layout that can never be brought up to date is
+    /// the silent version of this, and is what `AGENTS.md` forbids.
+    #[test]
+    fn a_windowed_document_refuses_to_edit_and_says_why() {
+        let mut doc = open_windowed(600);
+        let before = doc.document_stats().words();
+        let first = doc
+            .ordered_paragraphs()
+            .first()
+            .expect("the document has paragraphs")
+            .0;
+        let message = doc
+            .apply(Operation::InsertText {
+                at: Pos::new(first, 0),
+                text: "x".to_string(),
+            })
+            .expect_err("a windowed document must refuse an edit");
+        assert!(
+            message.contains("one page-window at a time"),
+            "the refusal must say why: {message}"
+        );
+        assert!(
+            message.contains(&thousands(MAX_WHOLE_LAYOUT_BLOCKS)),
+            "the refusal must name the limit: {message}"
+        );
+        assert_eq!(
+            doc.document_stats().words(),
+            before,
+            "a refused edit must leave the document exactly as it was"
+        );
+    }
+
+    /// The host needs to be able to ASK, not only to be refused — a ribbon that
+    /// looks live and then says no is `SKILL.md` §10's dead control.
+    #[test]
+    fn a_windowed_document_says_editing_is_unavailable_before_it_is_asked() {
+        let windowed = open_windowed(600);
+        let whole = open_whole(600);
+        assert!(
+            whole.editing_unavailable_reason().is_empty(),
+            "an ordinary document must not claim to be read-only"
+        );
+        let reason = windowed.editing_unavailable_reason();
+        assert!(
+            reason.contains("one page-window at a time"),
+            "the reason must say why: {reason}"
+        );
+        // The same sentence the refusal itself carries, so a host that shows
+        // this and a host that catches the error say the same thing.
+        assert_eq!(reason, windowed_not_available("Editing"));
+    }
+
+    /// The show-changes preview is a SECOND whole-document layout, so it is
+    /// refused too — rather than silently leaving the toggle on with nothing
+    /// changed on screen.
+    #[test]
+    fn a_windowed_document_refuses_the_show_changes_preview() {
+        let mut doc = open_windowed(600);
+        let error = doc
+            .set_show_changes_inner(true)
+            .expect_err("a windowed document must refuse the markup preview");
+        assert!(error.contains("show-changes preview"), "{error}");
+        assert!(!doc.showing_changes());
+        // Turning it OFF is always fine — it is what it already is.
+        doc.set_show_changes_inner(false)
+            .expect("off is always allowed");
+    }
+
+    /// A refusal to *window* is not a refusal to *open*. A document with
+    /// footnotes cannot be windowed (a footnote reserves a band that changes
+    /// the height pagination fills), so it is laid out whole, and everything
+    /// about it keeps working.
+    #[test]
+    fn a_document_with_footnotes_is_laid_out_whole_not_refused() {
+        const FOOTNOTES_DOCX: &[u8] =
+            include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx");
+        // Below the ceiling: the ordinary path, unchanged.
+        let mut doc = open_document_bounded(FOOTNOTES_DOCX, FormatSelection::Auto, usize::MAX)
+            .expect("a document with footnotes must open");
+        assert!(!doc.layout.is_windowed());
+        assert!(doc.page_count() > 0);
+        doc.render_page(0, 24.0).expect("it must still render");
+
+        // And the engine really does refuse to window it, so the branch above
+        // is the fallback and not a coincidence.
+        let imported = builtin_registry_with_limits(viewer_limits(), viewer_text_limits())
+            .import(
+                DetectionRequest {
+                    bytes: FOOTNOTES_DOCX,
+                    selection: FormatSelection::Auto,
+                    file_name_hint: None,
+                    mime_hint: None,
+                },
+                true,
+            )
+            .expect("import");
+        let shaper = ParleyShaper::new();
+        let refused = WindowedBody::open(&imported.document, &shaper)
+            .err()
+            .unwrap_or_else(|| panic!("this fixture must be one the windowed path refuses"));
+        assert_eq!(refused, NotWindowable::BodyFootnotes);
+    }
+
+    /// Past the whole-layout ceiling AND unwindowable: there is no path left, so
+    /// the refusal names the size, the reason and the limit. "Too many
+    /// paragraphs" alone would be confidently wrong — the same document without
+    /// its footnotes opens.
+    #[test]
+    fn a_document_that_cannot_be_windowed_or_held_whole_names_its_reason() {
+        const FOOTNOTES_DOCX: &[u8] =
+            include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx");
+        let error = open_document_bounded(FOOTNOTES_DOCX, FormatSelection::Auto, 2)
+            .expect_err("past the ceiling and unwindowable must refuse");
+        assert!(
+            error.contains("the body references footnotes"),
+            "the refusal must name the reason: {error}"
+        );
+        assert!(
+            error.contains("lay it out whole"),
+            "the refusal must name which limit applies: {error}"
+        );
+        assert!(
+            !error.to_lowercase().contains("unreachable"),
+            "leaks a trap name: {error}"
+        );
+    }
+
+    /// The window moves when the host leaves it, and **only** then. A viewer
+    /// that rebuilt on every `renderPage` would re-shape the same paragraphs
+    /// for every page of a scroll, which is the thrash `docs/113` §4 Q3 names.
+    #[test]
+    fn a_window_is_built_when_the_host_leaves_it_and_not_before() {
+        let mut doc = open_windowed(600);
+        let total = doc.page_count();
+        let opening = doc.layout.windowed().expect("windowed").range();
+        assert!(
+            opening.end > opening.start && opening.end < total as usize,
+            "the opening window must be a real, partial window: {opening:?} of {total}"
+        );
+        assert!(
+            !doc.ensure_page_resident(0),
+            "page 0 is in the opening window; asking for it must build nothing"
+        );
+
+        let far = total - 1;
+        assert!(
+            doc.ensure_page_resident(far),
+            "the last page is outside the opening window and must be built"
+        );
+        let moved = doc.layout.windowed().expect("windowed").range();
+        assert!(
+            moved.start > opening.start,
+            "the window must have moved: {opening:?} -> {moved:?}"
+        );
+        assert!(
+            !doc.ensure_page_resident(far),
+            "asking for the same page again must build nothing"
+        );
+    }
+
+    /// Registering a font re-measures a windowed body instead of paginating it
+    /// whole, and the page it was showing is still the page the whole layout
+    /// has.
+    #[test]
+    fn registering_a_font_remeasures_a_windowed_body() {
+        let lines = 600;
+        let mut windowed = open_windowed(lines);
+        let whole = open_whole(lines);
+        let before = windowed.page_count();
+        windowed.register_fallback_font(
+            casual_doc_layout::fonts::ROBOTO_REGULAR,
+            vec!["Hani".to_string()],
+        );
+        assert!(windowed.layout.is_windowed(), "it must stay windowed");
+        assert_eq!(windowed.page_count(), before);
+        let index = before / 2;
+        windowed.ensure_page_resident(index);
+        assert_eq!(
+            windowed.body_page_at(index as usize),
+            whole.body_page_at(index as usize),
+            "a re-measured window must still equal the whole layout"
+        );
     }
 
     /// The ceiling is on BLOCKS, not bytes: the package limits admit a 200 MiB
@@ -21104,7 +21739,8 @@ mod tests {
         );
 
         // Markup keeps every character; the final view drops the struck text.
-        d.set_show_changes(false);
+        d.set_show_changes_inner(false)
+            .expect("a whole layout always allows the markup preview");
         assert_eq!(d.paragraph_text(node_id(&ids[0]).unwrap()), "Al");
         assert_eq!(d.paragraph_text(node_id(&ids[1]).unwrap()), "ta");
 
@@ -21800,7 +22436,7 @@ mod tests {
     /// on the error path, which panics off-wasm.
     #[test]
     fn out_of_range_page_is_an_error() {
-        let doc = open_document(RICH_DOCX).expect("open corpus docx");
+        let mut doc = open_document(RICH_DOCX).expect("open corpus docx");
         assert!(doc.page_size_inner(doc.page_count()).is_err());
         assert!(doc.render_page_inner(doc.page_count(), 96.0).is_err());
     }
@@ -22601,7 +23237,7 @@ mod tests {
         let mut d = WasmDocument {
             edit_context: EditContext::Body,
             document,
-            layout,
+            layout: BodyLayout::Whole(layout),
             markup_layout: None,
             shaper,
             resources: DocumentResources::default(),
@@ -23032,7 +23668,7 @@ mod tests {
         let d = WasmDocument {
             edit_context: EditContext::Body,
             document,
-            layout,
+            layout: BodyLayout::Whole(layout),
             markup_layout: None,
             shaper,
             resources: DocumentResources::default(),
@@ -23299,7 +23935,7 @@ mod tests {
         let mut d = WasmDocument {
             edit_context: EditContext::Body,
             document,
-            layout,
+            layout: BodyLayout::Whole(layout),
             markup_layout: None,
             shaper,
             resources: DocumentResources::default(),
@@ -26459,7 +27095,7 @@ mod tests {
         WasmDocument {
             edit_context: EditContext::Body,
             document,
-            layout,
+            layout: BodyLayout::Whole(layout),
             markup_layout: None,
             shaper,
             resources,
@@ -28420,7 +29056,7 @@ mod tests {
         let handle = WasmDocument {
             edit_context: EditContext::Body,
             document,
-            layout,
+            layout: BodyLayout::Whole(layout),
             markup_layout: None,
             shaper,
             resources: DocumentResources::default(),
@@ -28450,7 +29086,7 @@ mod tests {
             ModelRange::new(ModelPos::new(source_id, 0), ModelPos::new(source_id, 7)),
             "tabs position paint but consume no byte in the layout anchor space"
         );
-        let rects = LayoutSnapshot::new(&handle.layout).selection_rects(links[0].range);
+        let rects = LayoutSnapshot::new(handle.layout.resident()).selection_rects(links[0].range);
         let (page, rect) = rects.first().copied().expect("linked TOC row geometry");
         let point = Point::new(
             rect.origin.x + Twip(rect.size.width.raw() / 2),
@@ -28719,7 +29355,8 @@ mod tests {
             .expect("a non-empty paragraph");
         let node = node_id.to_string();
 
-        d.set_show_changes(true);
+        d.set_show_changes_inner(true)
+            .expect("a whole layout always allows the markup preview");
         // Compared by digest: an inequality assertion over a few megabytes of
         // RGBA prints the whole buffer on failure and buries the reason.
         fn ink(bitmap: &PageBitmap) -> u64 {
@@ -28751,7 +29388,8 @@ mod tests {
     #[test]
     fn every_rendered_page_also_reports_a_size() {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
-        d.set_show_changes(true);
+        d.set_show_changes_inner(true)
+            .expect("a whole layout always allows the markup preview");
         let count = d.page_count();
         assert!(count >= 1);
         for index in 0..count {
@@ -28963,16 +29601,19 @@ mod tests {
         let mut d = open_document(RICH_DOCX).expect("open corpus docx");
         assert!(!d.showing_changes(), "off by default");
 
-        d.set_show_changes(true);
+        d.set_show_changes_inner(true)
+            .expect("a whole layout always allows the markup preview");
         assert!(d.showing_changes(), "toggled on");
         assert!(d.page_count() >= 1);
         // Rendering reads the markup layout without panicking.
         d.render_page(0, 96.0).expect("render markup page 0");
 
-        d.set_show_changes(false);
+        d.set_show_changes_inner(false)
+            .expect("a whole layout always allows the markup preview");
         assert!(!d.showing_changes(), "toggled off");
         // Idempotent off.
-        d.set_show_changes(false);
+        d.set_show_changes_inner(false)
+            .expect("a whole layout always allows the markup preview");
         assert!(!d.showing_changes());
     }
 
@@ -29272,11 +29913,11 @@ mod tests {
         );
         // And the page the user asked about is the one that now shows it.
         assert!(
-            !d.layout.pages[4].header.is_empty(),
+            !d.layout.resident().pages[4].header.is_empty(),
             "page 5 now has a placed header"
         );
         assert!(
-            d.layout.pages[0].header.is_empty(),
+            d.layout.resident().pages[0].header.is_empty(),
             "page 1, in the section the user was not on, does not"
         );
     }
@@ -29317,7 +29958,7 @@ mod tests {
         // Page 5 is the landscape section's FIRST page, so it is the page whose
         // band changed — the whole point of the toggle.
         let first_page_header = sections_header_nodes(&d, 720);
-        let placed = d.layout.pages[4]
+        let placed = d.layout.resident().pages[4]
             .header
             .iter()
             .filter_map(|placed| match &placed.fragment {
