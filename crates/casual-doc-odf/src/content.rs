@@ -10140,10 +10140,10 @@ fn build_document(
             let run_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
             vec![BlockNode::Paragraph(Paragraph {
                 id: paragraph_id,
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: run_id,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: comment.body.clone(),
                 })],
             })]
@@ -10493,7 +10493,7 @@ fn build_paragraph(
     };
     Ok(Paragraph {
         id,
-        properties,
+        properties: properties.into(),
         inlines: build_inlines(
             &draft.inlines,
             ids,
@@ -10515,7 +10515,7 @@ fn build_paragraph(
 fn build_empty_paragraph(ids: &mut IdGenerator) -> Result<BlockNode, OdfError> {
     Ok(BlockNode::Paragraph(Paragraph {
         id: ids.next_id().map_err(|_| OdfError::InvalidModel)?,
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: Vec::new(),
     }))
 }
@@ -10954,7 +10954,7 @@ fn build_group_children(
                 let group_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
                 let nested_children =
                     build_group_children(nested, nmin_x, nmin_y, ids, media, media_cursor)?;
-                children.push(GroupChild::Group(WordprocessingGroup {
+                children.push(GroupChild::Group(Box::new(WordprocessingGroup {
                     id: group_id,
                     anchor: None,
                     relative_height: None,
@@ -10972,7 +10972,7 @@ fn build_group_children(
                         rotation: None,
                     },
                     children: nested_children,
-                }));
+                })));
             }
         }
     }
@@ -11023,7 +11023,7 @@ fn build_inlines(
                 }
                 InlineNode::Run(Run {
                     id,
-                    properties,
+                    properties: properties.into(),
                     text: text.clone(),
                 })
             }
@@ -11035,7 +11035,7 @@ fn build_inlines(
             InlineDraft::Hyperlink {
                 target,
                 inlines: children,
-            } => InlineNode::Hyperlink(Hyperlink {
+            } => InlineNode::Hyperlink(Box::new(Hyperlink {
                 id,
                 target: target.clone(),
                 tooltip: None,
@@ -11054,7 +11054,7 @@ fn build_inlines(
                     groups,
                     group_media_ids,
                 )?,
-            }),
+            })),
             InlineDraft::BookmarkStart(_) => InlineNode::BookmarkStart(BookmarkStart {
                 id,
                 bookmark: bookmark.ok_or(OdfError::InvalidModel)?,
@@ -11080,7 +11080,7 @@ fn build_inlines(
                     }),
                     _ => None,
                 };
-                InlineNode::Drawing(Drawing {
+                InlineNode::Drawing(Box::new(Drawing {
                     id,
                     media,
                     extent,
@@ -11090,7 +11090,7 @@ fn build_inlines(
                     flip_h: false,
                     flip_v: false,
                     rotation: None,
-                })
+                }))
             }
             InlineDraft::AnchoredDrawing(index) => {
                 let media = *anchored_media_ids
@@ -11099,7 +11099,7 @@ fn build_inlines(
                 let draft = anchored_drawings
                     .get(*index)
                     .ok_or(OdfError::InvalidModel)?;
-                InlineNode::AnchoredDrawing(AnchoredDrawing {
+                InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
                     id,
                     media,
                     extent: Extent {
@@ -11150,7 +11150,7 @@ fn build_inlines(
                     flip_h: draft.flip_h,
                     flip_v: draft.flip_v,
                     rotation: None,
-                })
+                }))
             }
             InlineDraft::Shape(index) => {
                 let draft = shapes.get(*index).ok_or(OdfError::InvalidModel)?;
@@ -11267,13 +11267,13 @@ fn build_inlines(
                     children,
                 })
             }
-            InlineDraft::Field(kind) => InlineNode::Field(Field {
+            InlineDraft::Field(kind) => InlineNode::Field(Box::new(Field {
                 id,
                 instruction: field_instruction(kind),
                 kind: kind.clone(),
                 inlines: Vec::new(),
                 form: None,
-            }),
+            })),
             InlineDraft::CommentReference(index) => {
                 InlineNode::CommentReference(CommentReference {
                     id,
@@ -11290,11 +11290,11 @@ fn build_inlines(
                     let run_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
                     vec![InlineNode::Run(Run {
                         id: run_id,
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: body.clone(),
                     })]
                 };
-                InlineNode::TextBox(TextBox {
+                InlineNode::TextBox(Box::new(TextBox {
                     id,
                     anchor: None,
                     relative_height: None,
@@ -11307,10 +11307,10 @@ fn build_inlines(
                     body_properties: Default::default(),
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: paragraph_id,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines,
                     })],
-                })
+                }))
             }
             InlineDraft::FormField(control) => {
                 let (instruction, kind) = match &control.kind {
@@ -11334,7 +11334,7 @@ fn build_inlines(
                         }),
                     ),
                 };
-                InlineNode::Field(Field {
+                InlineNode::Field(Box::new(Field {
                     id,
                     instruction: instruction.to_owned(),
                     kind: FieldKind::Other {
@@ -11351,7 +11351,7 @@ fn build_inlines(
                         exit_macro: None,
                         kind,
                     }),
-                })
+                }))
             }
             InlineDraft::Revision {
                 kind,
@@ -11359,7 +11359,7 @@ fn build_inlines(
                 date,
                 revision_id,
                 inlines: children,
-            } => InlineNode::Revision(Revision {
+            } => InlineNode::Revision(Box::new(Revision {
                 id,
                 kind: *kind,
                 author: author.clone(),
@@ -11381,7 +11381,7 @@ fn build_inlines(
                     groups,
                     group_media_ids,
                 )?,
-            }),
+            })),
         });
     }
     Ok(inlines)

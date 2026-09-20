@@ -82,10 +82,10 @@ fn document(embedded: EmbeddedFontSet) -> Document {
         node(1),
         vec![BlockNode::Paragraph(Paragraph {
             id: node(10),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Run(Run {
                 id: node(11),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: "iiiWWW".to_owned(),
             })],
         })],

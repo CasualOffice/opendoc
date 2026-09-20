@@ -450,10 +450,10 @@ mod tests {
     fn paragraph(id: u64, text: &str) -> BlockNode {
         BlockNode::Paragraph(Paragraph {
             id: node(id),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Run(Run {
                 id: node(id + 10_000),
-                properties: RunProperties::default(),
+                properties: RunProperties::default().into(),
                 text: text.to_string(),
             })],
         })
@@ -470,11 +470,11 @@ mod tests {
     fn typed_note_ref_paragraph(id: u64, note: NoteId, kind: NoteKind) -> BlockNode {
         BlockNode::Paragraph(Paragraph {
             id: node(id),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 InlineNode::Run(Run {
                     id: node(id + 10_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "reference".to_string(),
                 }),
                 InlineNode::NoteReference(NoteReference {
@@ -493,11 +493,11 @@ mod tests {
             .join(" ");
         BlockNode::Paragraph(Paragraph {
             id: node(id),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 InlineNode::Run(Run {
                     id: node(id + 10_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text,
                 }),
                 InlineNode::NoteReference(NoteReference {
@@ -507,7 +507,7 @@ mod tests {
                 }),
                 InlineNode::Run(Run {
                     id: node(id + 30_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: " tail".to_string(),
                 }),
             ],
@@ -1252,16 +1252,16 @@ mod tests {
     fn note_number_mark_paragraph(id: u64, text: &str) -> BlockNode {
         BlockNode::Paragraph(Paragraph {
             id: node(id),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: vec![
                 InlineNode::NoteNumberMark(NoteNumberMark {
                     id: node(id + 40_000),
                     kind: NoteKind::Footnote,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                 }),
                 InlineNode::Run(Run {
                     id: node(id + 10_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: text.to_string(),
                 }),
             ],

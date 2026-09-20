@@ -35,7 +35,7 @@ fn node(id: u64) -> NodeId {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -43,7 +43,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph(id: u64, text: &str) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines: vec![run(id + 1, text)],
     })
 }
@@ -58,11 +58,11 @@ fn alt_chunk_part() -> EmbeddedPart {
 }
 
 fn alt_chunk(id: u64) -> BlockNode {
-    BlockNode::AltChunk(AltChunk {
+    BlockNode::AltChunk(Box::new(AltChunk {
         id: node(id),
         part: alt_chunk_part(),
         properties: AltChunkProperties::default(),
-    })
+    }))
 }
 
 fn document(body: Vec<BlockNode>) -> Document {

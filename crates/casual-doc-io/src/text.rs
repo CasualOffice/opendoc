@@ -309,14 +309,14 @@ fn document_from_text(text: &str) -> Result<Document, AdapterError> {
             if !segment.is_empty() {
                 inlines.push(InlineNode::Run(Run {
                     id: next_id(&mut ids)?,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: segment.to_owned(),
                 }));
             }
         }
         body.push(BlockNode::Paragraph(Paragraph {
             id: paragraph_id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines,
         }));
     }

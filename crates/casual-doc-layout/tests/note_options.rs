@@ -42,7 +42,7 @@ fn node(id: u64) -> NodeId {
 fn paragraph_with(id: u64, inlines: Vec<InlineNode>, properties: ParagraphProperties) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines,
     })
 }
@@ -50,7 +50,7 @@ fn paragraph_with(id: u64, inlines: Vec<InlineNode>, properties: ParagraphProper
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -105,7 +105,7 @@ fn note_body(id: u64, kind: NoteKind, text: &str) -> Note {
                 InlineNode::NoteNumberMark(NoteNumberMark {
                     id: node(id + 1),
                     kind,
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                 }),
                 run(id + 2, text),
             ],

@@ -68,7 +68,7 @@ const CELL_BODY_BAND: u64 = 1_000_000;
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
@@ -76,7 +76,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 fn paragraph(id: u64, properties: ParagraphProperties, text: &str) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines: vec![run(id + RUN_BAND, text)],
     })
 }
@@ -201,7 +201,7 @@ fn numbered_paragraph(id: u64, text: &str) -> BlockNode {
                 level: 0,
             }),
             ..ParagraphProperties::default()
-        },
+        }.into(),
         inlines: vec![run(id + RUN_BAND, text)],
     })
 }
@@ -274,13 +274,13 @@ fn drop_cap_pair(id: u64) -> Vec<BlockNode> {
                     vertical_space_twips: None,
                 }),
                 ..ParagraphProperties::default()
-            },
+            }.into(),
             inlines: vec![InlineNode::Run(Run {
                 id: node(id + RUN_BAND),
                 properties: RunProperties {
                     size_half_points: Some(117),
                     ..RunProperties::default()
-                },
+                }.into(),
                 text: "D".to_owned(),
             })],
         }),
@@ -293,7 +293,7 @@ fn drop_cap_pair(id: u64) -> Vec<BlockNode> {
 }
 
 fn alt_chunk(id: u64) -> BlockNode {
-    BlockNode::AltChunk(AltChunk {
+    BlockNode::AltChunk(Box::new(AltChunk {
         id: node(id),
         part: EmbeddedPart {
             relationship_id: "rId9".to_owned(),
@@ -303,7 +303,7 @@ fn alt_chunk(id: u64) -> BlockNode {
             part_name: "word/afchunk.htm".to_owned(),
         },
         properties: AltChunkProperties::default(),
-    })
+    }))
 }
 
 /// Every fixture the streaming path is asserted over. Each name says which

@@ -1110,7 +1110,7 @@ impl Importer<'_> {
             },
         ));
         self.resources.insert(part_name, picture.into_bytes());
-        let drawing = InlineNode::Drawing(Drawing {
+        let drawing = InlineNode::Drawing(Box::new(Drawing {
             id: next_id(&mut self.ids)?,
             media: media_id,
             extent,
@@ -1120,7 +1120,7 @@ impl Importer<'_> {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         self.push_inline(drawing)
     }
 }

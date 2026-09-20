@@ -43,25 +43,25 @@ fn node(id: u64) -> NodeId {
 fn run(id: u64, text: &str) -> InlineNode {
     InlineNode::Run(Run {
         id: node(id),
-        properties: RunProperties::default(),
+        properties: RunProperties::default().into(),
         text: text.to_owned(),
     })
 }
 
 fn field(id: u64, instruction: &str, cached: &str) -> InlineNode {
-    InlineNode::Field(Field {
+    InlineNode::Field(Box::new(Field {
         id: node(id),
         instruction: instruction.to_owned(),
         kind: casual_doc_model::v1::FieldKind::parse(instruction),
         inlines: vec![run(id + 1, cached)],
         form: None,
-    })
+    }))
 }
 
 fn paragraph(id: u64, inlines: Vec<InlineNode>) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties: ParagraphProperties::default(),
+        properties: ParagraphProperties::default().into(),
         inlines,
     })
 }
@@ -74,7 +74,7 @@ fn page_break(id: u64, text: &str) -> BlockNode {
         properties: ParagraphProperties {
             page_break_before: true,
             ..ParagraphProperties::default()
-        },
+        }.into(),
         inlines: vec![run(id + 1, text)],
     })
 }
@@ -527,8 +527,8 @@ fn a_header_can_contain_an_inline_image() {
     // The header holds a drawing (300×200 twips from its EMU extent).
     let header_block = BlockNode::Paragraph(Paragraph {
         id: node(200),
-        properties: ParagraphProperties::default(),
-        inlines: vec![InlineNode::Drawing(Drawing {
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![InlineNode::Drawing(Box::new(Drawing {
             id: node(201),
             media: media_id,
             extent: Some(Extent {
@@ -541,7 +541,7 @@ fn a_header_can_contain_an_inline_image() {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        })],
+        }))],
     });
     let header = flow_header_footer(&doc, &[header_block], &shaper, WIDTH);
     let running = RunningContent {

@@ -31,10 +31,10 @@ fn node(id: u64) -> NodeId {
 fn paragraph_with(id: u64, text: &str, properties: ParagraphProperties) -> BlockNode {
     BlockNode::Paragraph(Paragraph {
         id: node(id),
-        properties,
+        properties: properties.into(),
         inlines: vec![InlineNode::Run(Run {
             id: node(id + 1),
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text: text.to_owned(),
         })],
     })

@@ -1249,10 +1249,10 @@ mod cached_pagination_tests {
                 let id = i as u64 + 1;
                 BlockNode::Paragraph(Paragraph {
                     id: node(id),
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![InlineNode::Run(Run {
                         id: node(id + 1_000),
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: (*text).to_owned(),
                     })],
                 })
@@ -1269,10 +1269,10 @@ mod cached_pagination_tests {
             Note {
                 blocks: vec![BlockNode::Paragraph(Paragraph {
                     id: node(9_101),
-                    properties: ParagraphProperties::default(),
+                    properties: ParagraphProperties::default().into(),
                     inlines: vec![InlineNode::Run(Run {
                         id: node(9_102),
-                        properties: RunProperties::default(),
+                        properties: RunProperties::default().into(),
                         text: "cached endnote body".to_owned(),
                     })],
                 })],
@@ -1281,16 +1281,16 @@ mod cached_pagination_tests {
         let body = vec![
             BlockNode::Paragraph(Paragraph {
                 id: node(9_103),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: node(9_104),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "body".to_owned(),
                 })],
             }),
             BlockNode::Paragraph(Paragraph {
                 id: node(9_105),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::NoteReference(NoteReference {
                     id: node(9_106),
                     kind: NoteKind::Endnote,
@@ -1458,10 +1458,10 @@ mod cached_pagination_tests {
             20,
             BlockNode::Paragraph(Paragraph {
                 id: node(900),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: node(1_900),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: "A newly inserted paragraph of prose.".to_owned(),
                 })],
             }),
@@ -1520,13 +1520,13 @@ mod cross_paragraph_float_tests {
     fn paragraph(id: u64, text: String, extra: Vec<InlineNode>) -> BlockNode {
         let mut inlines = vec![InlineNode::Run(Run {
             id: node(id + 100),
-            properties: RunProperties::default(),
+            properties: RunProperties::default().into(),
             text,
         })];
         inlines.extend(extra);
         BlockNode::Paragraph(Paragraph {
             id: node(id),
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines,
         })
     }
@@ -1542,7 +1542,7 @@ mod cross_paragraph_float_tests {
                 part_name: "word/media/float.png".to_owned(),
             },
         );
-        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+        let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: node(901),
             media,
             extent: Extent {
@@ -1570,7 +1570,7 @@ mod cross_paragraph_float_tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         let target = node(2);
         let prose = "following paragraph text wraps beside the floating object ".repeat(90);
         let document = Document::new(
@@ -1597,7 +1597,7 @@ mod cross_paragraph_float_tests {
                 part_name: "word/media/backward-float.png".to_owned(),
             },
         );
-        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+        let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: node(921),
             media,
             extent: Extent {
@@ -1625,7 +1625,7 @@ mod cross_paragraph_float_tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         let target = node(11);
         let document = Document::new(
             node(998),
@@ -1752,7 +1752,7 @@ mod cross_paragraph_float_tests {
                 part_name: "word/media/table-float.png".to_owned(),
             },
         );
-        let drawing = InlineNode::AnchoredDrawing(AnchoredDrawing {
+        let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
             id: node(941),
             media,
             extent: Extent {
@@ -1780,7 +1780,7 @@ mod cross_paragraph_float_tests {
             flip_h: false,
             flip_v: false,
             rotation: None,
-        });
+        }));
         let table_id = node(950);
         let cell_paragraph = node(953);
         let table = BlockNode::Table(Box::new(Table {
@@ -1798,10 +1798,10 @@ mod cross_paragraph_float_tests {
                     properties: TableCellProperties::default(),
                     blocks: vec![BlockNode::Paragraph(Paragraph {
                         id: cell_paragraph,
-                        properties: ParagraphProperties::default(),
+                        properties: ParagraphProperties::default().into(),
                         inlines: vec![InlineNode::Run(Run {
                             id: node(954),
-                            properties: RunProperties::default(),
+                            properties: RunProperties::default().into(),
                             text: "table cell text wraps beside the page relative float "
                                 .repeat(20),
                         })],

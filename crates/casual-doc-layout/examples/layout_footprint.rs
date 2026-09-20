@@ -126,10 +126,10 @@ fn big_body(n: u64) -> Vec<BlockNode> {
             let id = i + 1;
             BlockNode::Paragraph(Paragraph {
                 id: node(id),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: node(id + 10_000_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: SENTENCE.to_owned(),
                 })],
             })
@@ -550,10 +550,10 @@ fn owner_document_of(n: u64) -> Document {
             let id = i + 1;
             BlockNode::Paragraph(Paragraph {
                 id: node(id),
-                properties: ParagraphProperties::default(),
+                properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Run(Run {
                     id: node(id + 2_000_000_000),
-                    properties: RunProperties::default(),
+                    properties: RunProperties::default().into(),
                     text: LINE.to_owned(),
                 })],
             })

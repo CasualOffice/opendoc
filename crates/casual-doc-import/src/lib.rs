@@ -1234,7 +1234,7 @@ pub(crate) fn import_with_sources(
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
         body.push(BlockNode::Paragraph(Paragraph {
             id,
-            properties: ParagraphProperties::default(),
+            properties: ParagraphProperties::default().into(),
             inlines: Vec::new(),
         }));
     }

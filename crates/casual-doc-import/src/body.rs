@@ -4140,11 +4140,11 @@ impl BodyParser<'_> {
             b"altChunk" => {
                 if let Some(chunk) = self.pending_alt_chunk.take() {
                     let id = self.next_id()?;
-                    let block = BlockNode::AltChunk(AltChunk {
+                    let block = BlockNode::AltChunk(Box::new(AltChunk {
                         id,
                         part: chunk.part,
                         properties: chunk.properties,
-                    });
+                    }));
                     if let Some(returned) = self.tables.push_block(block) {
                         self.blocks.push(returned);
                     }
@@ -4908,7 +4908,7 @@ impl BodyParser<'_> {
                     children: builder.children,
                 };
                 if let Some(parent) = self.group_stack.last_mut() {
-                    parent.children.push(GroupChild::Group(nested));
+                    parent.children.push(GroupChild::Group(Box::new(nested)));
                 } else {
                     self.reporter.report(b"grpSp");
                 }
@@ -6589,7 +6589,7 @@ impl BodyParser<'_> {
         }
         let block = BlockNode::Paragraph(Paragraph {
             id: paragraph_id,
-            properties: std::mem::take(&mut self.paragraph_properties),
+            properties: std::mem::take(&mut self.paragraph_properties).into(),
             inlines,
         });
         // Route into the open table cell, if any; otherwise the body root.
@@ -6607,7 +6607,7 @@ impl BodyParser<'_> {
                 let id = self.next_id()?;
                 Ok(InlineNode::Run(Run {
                     id,
-                    properties,
+                    properties: properties.into(),
                     text,
                 }))
             }
@@ -6630,7 +6630,7 @@ impl BodyParser<'_> {
                 rotation,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Drawing(Drawing {
+                Ok(InlineNode::Drawing(Box::new(Drawing {
                     id,
                     media,
                     extent,
@@ -6640,7 +6640,7 @@ impl BodyParser<'_> {
                     flip_h,
                     flip_v,
                     rotation,
-                }))
+                })))
             }
             Segment::AnchoredDrawing {
                 media,
@@ -6655,7 +6655,7 @@ impl BodyParser<'_> {
                 rotation,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::AnchoredDrawing(AnchoredDrawing {
+                Ok(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
                     id,
                     media,
                     extent,
@@ -6667,7 +6667,7 @@ impl BodyParser<'_> {
                     flip_h,
                     flip_v,
                     rotation,
-                }))
+                })))
             }
             Segment::EmbeddedObject {
                 kind,
@@ -6678,7 +6678,7 @@ impl BodyParser<'_> {
                 prog_id,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::EmbeddedObject(EmbeddedObject {
+                Ok(InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
                     id,
                     kind,
                     part,
@@ -6686,7 +6686,7 @@ impl BodyParser<'_> {
                     preview,
                     extent,
                     prog_id,
-                }))
+                })))
             }
             Segment::Hyperlink {
                 target,
@@ -6698,12 +6698,12 @@ impl BodyParser<'_> {
                 for child in children {
                     inlines.push(self.segment_to_inline(child)?);
                 }
-                Ok(InlineNode::Hyperlink(Hyperlink {
+                Ok(InlineNode::Hyperlink(Box::new(Hyperlink {
                     id,
                     target,
                     tooltip,
                     inlines,
-                }))
+                })))
             }
             Segment::Field {
                 instruction,
@@ -6716,13 +6716,13 @@ impl BodyParser<'_> {
                     inlines.push(self.segment_to_inline(child)?);
                 }
                 let kind = FieldKind::parse(&instruction);
-                Ok(InlineNode::Field(Field {
+                Ok(InlineNode::Field(Box::new(Field {
                     id,
                     instruction,
                     kind,
                     inlines,
                     form,
-                }))
+                })))
             }
             Segment::Math {
                 omml,
@@ -6730,12 +6730,12 @@ impl BodyParser<'_> {
                 expression,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::Math(Math {
+                Ok(InlineNode::Math(Box::new(Math {
                     id,
                     omml,
                     text,
                     expression,
-                }))
+                })))
             }
             Segment::Symbol {
                 font,
@@ -6747,7 +6747,7 @@ impl BodyParser<'_> {
                     id,
                     font,
                     char,
-                    properties,
+                    properties: properties.into(),
                 }))
             }
             Segment::HorizontalRule {
@@ -6788,7 +6788,7 @@ impl BodyParser<'_> {
             }
             // A text box is already fully built (id and inner ids allocated while
             // parsing its content), so it converts directly.
-            Segment::TextBox(text_box) => Ok(InlineNode::TextBox(text_box)),
+            Segment::TextBox(text_box) => Ok(InlineNode::TextBox(Box::new(text_box))),
             Segment::Group(group) => Ok(InlineNode::Group(group)),
             Segment::NoteReference { kind, note } => {
                 let id = self.next_id()?;
@@ -6799,7 +6799,7 @@ impl BodyParser<'_> {
                 Ok(InlineNode::NoteNumberMark(NoteNumberMark {
                     id,
                     kind,
-                    properties,
+                    properties: properties.into(),
                 }))
             }
             Segment::CommentReference { comment } => {
@@ -6833,7 +6833,7 @@ impl BodyParser<'_> {
                 for child in children {
                     inlines.push(self.segment_to_inline(child)?);
                 }
-                Ok(InlineNode::Revision(Revision {
+                Ok(InlineNode::Revision(Box::new(Revision {
                     id,
                     kind,
                     author,
@@ -6841,7 +6841,7 @@ impl BodyParser<'_> {
                     revision_id,
                     editor_group: None,
                     inlines,
-                }))
+                })))
             }
             Segment::BookmarkStart { bookmark } => {
                 let id = self.next_id()?;
@@ -6859,14 +6859,14 @@ impl BodyParser<'_> {
                 date,
             } => {
                 let id = self.next_id()?;
-                Ok(InlineNode::MoveRangeStart(MoveRangeStart {
+                Ok(InlineNode::MoveRangeStart(Box::new(MoveRangeStart {
                     id,
                     kind,
                     move_id,
                     name,
                     author,
                     date,
-                }))
+                })))
             }
             Segment::MoveRangeEnd { kind, move_id } => {
                 let id = self.next_id()?;
@@ -6882,11 +6882,11 @@ impl BodyParser<'_> {
                 for child in children {
                     inlines.push(self.segment_to_inline(child)?);
                 }
-                Ok(InlineNode::Sdt(InlineSdt {
+                Ok(InlineNode::Sdt(Box::new(InlineSdt {
                     id,
                     properties,
                     inlines,
-                }))
+                })))
             }
         }
     }
