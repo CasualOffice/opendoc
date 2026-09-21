@@ -1,3 +1,4 @@
+use casual_doc_model::v1::MAX_DESCR_BYTES;
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
     InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
@@ -2316,6 +2317,57 @@ fn inline_drawing_carries_alt_text_and_crop() {
     );
     // Both fields are modeled, so the drawing is not reported as under-modeled.
     assert!(!features(&import).contains(&"drawing"));
+}
+
+/// `descr=""` is an ABSENT alt text, not a lost one.
+///
+/// Word writes an empty `@descr` on drawings that simply have no alt text, and
+/// it was falling into the "some detail here is unmodeled" branch. Three of the
+/// five `drawing` findings in the owner's corpus came from this — documents
+/// that lost nothing, reported as having lost something, which is what buries
+/// the findings that are real (the same shape as the `w:shd` false loss).
+#[test]
+fn an_empty_alt_text_is_absent_rather_than_lost() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr=""/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr, None, "an empty alt text is no alt text");
+    assert!(
+        !features(&import).contains(&"drawing"),
+        "nothing was lost, so nothing should be reported: {:?}",
+        features(&import),
+    );
+}
+
+/// An alt text too long to store IS a loss, and must still be reported — this
+/// is the half the change above must not take with it.
+#[test]
+fn an_over_long_alt_text_is_still_reported_as_lost() {
+    let long = "A".repeat(MAX_DESCR_BYTES + 1);
+    let inline = format!(
+        r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr="{long}"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr, None, "it was too long to store");
+    assert!(
+        features(&import).contains(&"drawing"),
+        "alt text a screen reader needed was dropped in silence",
+    );
 }
 
 #[test]

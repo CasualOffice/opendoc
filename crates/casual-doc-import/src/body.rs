@@ -2657,13 +2657,19 @@ impl BodyParser<'_> {
             // an anchor's `descr`, and — since P1G-OBJ-MODEL — on an inline drawing's
             // `pending_inline_descr` too. An over-long value is reported, not stored.
             b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
-                Some(descr) if !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES => {
+                Some(descr) if descr.is_empty() => {}
+                Some(descr) if descr.len() <= MAX_DESCR_BYTES => {
                     if let Some(anchor) = self.pending_anchor.as_mut() {
                         anchor.descr = Some(descr);
                     } else {
                         self.pending_inline_descr = Some(descr);
                     }
                 }
+                // Only an alt text too long to store is a loss. `descr=""` is
+                // not: it carries nothing, Word writes it on drawings that have
+                // no alt text at all, and calling it unmodeled detail put three
+                // of this corpus's five `drawing` findings on documents that
+                // lost nothing — the same false-loss shape as `w:shd`.
                 Some(_) => self.drawing_extra = true,
                 None => {}
             },
