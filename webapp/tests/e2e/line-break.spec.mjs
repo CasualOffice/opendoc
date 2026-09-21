@@ -11,7 +11,14 @@
 // the existing `RemoveInlineObject`. The closed op set (ADR-030, invariant I2)
 // stays closed, and undo/redo and the transaction log work without knowing the
 // gesture exists.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  applyParagraphStyle,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+} from "./fixtures.mjs";
 
 const mirror = (page) => page.locator("#a11yDocument");
 
@@ -75,7 +82,7 @@ test("Shift+Enter in a list item does not start a second item", async ({
   await gotoEditor(page);
   await freshParagraph(page);
 
-  await page.locator("#paragraphStyle").selectOption("Normal");
+  await applyParagraphStyle(page, "Normal");
   await page.keyboard.type("one");
   await page.locator("#bulletList").click();
   await expect(page.locator("#bulletList")).toHaveAttribute("aria-pressed", "true");

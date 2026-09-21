@@ -1,26 +1,23 @@
-// The Home ribbon's Styles group carries a Word-style visual gallery of style
-// cards, each drawn in its own style. Clicking a card applies that named
-// paragraph style over the current selection through the SAME engine path as
-// the dropdown (`setParagraphStyle` via `runToolbarEdit`), so it inherits the
-// Viewing/Suggesting gating and history. This spec proves the three behaviours
-// the gallery must guarantee: a card applies a real style (reflected back from
-// `paragraphStyleAt` into the mirror select and the active card), the apply is
-// a single undoable action, and it fails closed in read-only Viewing mode.
+// The Home ribbon's Styles group is a Word-style visual gallery of style cards, each
+// drawn in its own style — and, since docs/114, the ONE control the band offers for
+// paragraph styles. Clicking a card applies that named paragraph style over the
+// current selection through `setParagraphStyle` via `runToolbarEdit`, so it inherits
+// the Viewing/Suggesting gating and history. This spec proves the three behaviours the
+// gallery must guarantee: a card applies a real style (reflected back from
+// `paragraphStyleAt` into `data-active-style` and the active card), the apply is a
+// single undoable action, and it fails closed in read-only Viewing mode.
+//
+// What the SHORT list offers, and that nothing became unreachable, is
+// `styles-control.spec.mjs`.
 import {
   test,
   expect,
   gotoEditor,
   clickIntoFirstPage,
   moveCaretToDocStart,
+  reflectedParagraphStyle as reflectedStyle,
   setReviewMode,
 } from "./fixtures.mjs";
-
-// The paragraph style reflected at the caret. `#paragraphStyle` is set straight
-// from `doc.paragraphStyleAt(...)` on every toolbar refresh, so its value is the
-// DOM-visible proxy for the engine's paragraph style — no test-only hook needed.
-async function reflectedStyle(page) {
-  return page.locator("#paragraphStyle").inputValue();
-}
 
 // Picks a gallery card whose style differs from the one currently applied, so
 // clicking it is a genuine change with something to undo. Returns its style name.
@@ -49,7 +46,7 @@ test("clicking a gallery card applies its style and the change undoes as one act
   await card.click();
 
   // The visible change: the caret's paragraph now carries the clicked style
-  // (mirror select reflects `paragraphStyleAt`) and the card is marked active.
+  // (`data-active-style` reflects `paragraphStyleAt`) and the card is marked active.
   await expect.poll(() => reflectedStyle(page)).toBe(target);
   await expect(card).toHaveAttribute("aria-selected", "true");
   // The apply is a real, undoable edit.
@@ -117,44 +114,10 @@ test("arrow keys rove focus across the gallery cards (listbox keyboard model)", 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a style beyond the inline quick set is reachable via 'More styles' and applies", async ({
-  page,
-  consoleErrors,
-}) => {
-  await gotoEditor(page);
-  await clickIntoFirstPage(page);
-  await moveCaretToDocStart(page);
-
-  // The inline strip shows only the capped quick set; the document defines more.
-  const inline = await page.$$eval("#stylesGallery .style-card", (cards) =>
-    cards.map((c) => c.dataset.style),
-  );
-  const allStyles = await page.$$eval("#paragraphStyle option", (opts) =>
-    opts.map((o) => o.value).filter(Boolean),
-  );
-  const current = await reflectedStyle(page);
-  // A style that is NOT one of the inline quick cards and differs from the caret's,
-  // so applying it is a genuine change reachable ONLY through the More popover.
-  const beyond = allStyles.find((s) => !inline.includes(s) && s !== current);
-  expect(
-    beyond,
-    "fixture should define a style beyond the inline quick set to prove reachability",
-  ).toBeTruthy();
-
-  // Open the "More styles" popover; the beyond-the-strip style has a card there.
-  await page.locator("#stylesMoreBtn").click();
-  const panel = page.locator("#stylesMorePanel");
-  await expect(panel).toBeVisible();
-  const card = panel.locator(`.style-card[data-style="${beyond}"]`);
-  await expect(card).toBeVisible();
-
-  await card.click();
-
-  // It applied through the same engine path (reflected back into the mirror
-  // select), the popover closed, and the edit is a single undoable action.
-  await expect.poll(() => reflectedStyle(page)).toBe(beyond);
-  await expect(panel).toBeHidden();
-  await expect(page.locator("#undoBtn")).toBeEnabled();
-
-  expect(consoleErrors).toEqual([]);
-});
+// A test for the "▾ More styles" popover used to live here. That popover listed every
+// paragraph style in the document as cards — the same long list the deleted
+// `#paragraphStyle` select carried, reached through a side door — and it is gone
+// (docs/114 §5): the band offers a short list, the full stylesheet lives in the
+// command palette and Paragraph properties. The reachability it was proving is now
+// proved against those surfaces, in `styles-control.spec.mjs`, which is stronger: it
+// requires EVERY defined style to have a palette row rather than one example.

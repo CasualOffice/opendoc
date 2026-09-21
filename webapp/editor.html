@@ -345,11 +345,19 @@
             <span class="rgroup-label">Paragraph</span>
           </div>
           <div class="rgroup rgroup-styles" data-group="styles">
+            <!-- ONE Styles control (docs/114). This group used to hold three for
+                 the same job: a native <select> listing every style in the
+                 document flat, a three-card strip, and a "▾" popover listing
+                 every style again. Word puts a curated Quick Styles gallery in
+                 the ribbon and keeps the full list in a pane; Docs offers six
+                 named styles and nothing else. So the band offers a SHORT list —
+                 the recommended styles the document defines, plus the styles it
+                 is actually using — and the complete stylesheet stays reachable
+                 off the band, from the command palette ("Style: <name>") and
+                 Paragraph properties ▸ Style. Nothing is dropped from the model:
+                 this is what is offered for authoring, not what is supported. -->
             <div class="rgroup-ctl styles-ctl">
-              <label class="ctl style-select" title="Paragraph style">
-                <select id="paragraphStyle" aria-label="Paragraph style"><option value="">Style</option></select>
-              </label>
-              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"><button id="stylesMoreBtn" type="button" class="styles-more-btn" title="More styles" aria-label="More styles" aria-haspopup="listbox" aria-expanded="false"><span class="ms" aria-hidden="true">expand_more</span></button></div>
+              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"></div>
             </div>
             <span class="rgroup-label">Styles</span>
           </div>
@@ -829,12 +837,6 @@
     </div>
     <div id="tableStyleMenu" class="context-menu table-style-menu" hidden role="menu" aria-label="Table styles"></div>
 
-    <!-- Full Styles gallery: the scrollable "More styles" popover revealed by the
-         ribbon's ▾ affordance. Holds a live-preview card for EVERY paragraph
-         style so the whole set is reachable from the gallery, not just the four
-         inline quick cards. Populated by buildStylesGallery(). -->
-    <div id="stylesMorePanel" class="styles-more-panel" hidden role="listbox" aria-label="All paragraph styles"></div>
-
     <!-- Font family picker: searchable, each name in its own typeface, a
          recently-used group above the full list (docs/63 §3 popover pattern). -->
     <div id="fontMenu" class="context-menu font-menu" hidden role="dialog" aria-label="Font">
@@ -1052,7 +1054,7 @@
             <input id="linkUrlInput" type="text" autocomplete="off" spellcheck="false" inputmode="url" placeholder="https://example.com" aria-label="Web address" />
           </div>
           <div id="linkModePlacePanel" class="link-mode-panel" role="tabpanel" aria-labelledby="linkModePlace" hidden>
-            <select id="linkPlaceSelect" aria-label="Place in this document">
+            <select id="linkPlaceSelect" class="dialog-select" aria-label="Place in this document">
               <option value="">Choose a bookmark…</option>
             </select>
             <p id="linkPlaceEmpty" class="dialog-field-note" hidden>No bookmarks yet. Add one from the Bookmarks manager to link to it.</p>

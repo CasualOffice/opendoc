@@ -452,89 +452,62 @@ cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
 replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
 
-// Quick Styles gallery — populated from the document's real styles alongside
-// the visible all-styles `#paragraphStyle` selector. Both controls apply through
-// the same `setParagraphStyle` path.
+// The Styles gallery — the ONE control the band offers for paragraph styles (docs/114).
+// It replaces three: a `#paragraphStyle` select listing every style in the document
+// flat, this strip, and a "▾" popover listing every style again. Word puts a curated
+// Quick Styles gallery in the ribbon and the full list in a pane; Docs offers six named
+// styles and nothing else. So the band offers a SHORT list and the full stylesheet stays
+// reachable off it — the palette's `Style: <name>` rows and Paragraph properties ▸ Style.
+// Import, cascade, layout, render and round-trip are untouched: this is what is offered
+// for AUTHORING, not what is supported.
 const stylesGallery = document.getElementById("stylesGallery");
-// The ▾ affordance and the scrollable popover it reveals. The inline strip shows
-// only a few quick styles; the popover lists EVERY document style so the whole
-// set is reachable from the gallery, not just via the separate `#paragraphStyle`
-// dropdown. `stylesMorePopover` is the toolbar-popover manager entry, wired up
-// once in the popover section further below.
-const stylesMoreBtn = document.getElementById("stylesMoreBtn");
-const stylesMorePanel = document.getElementById("stylesMorePanel");
-let stylesMorePopover = null;
 
-// How many quick-access cards the width-constrained inline ribbon strip shows.
-// The remaining styles live in the "More styles" ▾ popover (Word's collapsed
-// gallery row + its More expander), so LOWERING this never hides any style —
-// it only moves one card behind the ▾, which already holds the full set.
-//
-// Three, not four. The Home band has to fit 1280px without a horizontal
-// scrollbar (docs/64, guarded by ribbon-home.spec.mjs), and four cards only fit
-// there by shrinking each one to about 40px — which rendered the gallery as
-// "No… Bo… H… Ca…". A row of four unreadable buttons is worth less than three
-// you can actually read, because the entire reason this strip exists instead of
-// just the dropdown beside it is that you can see what you are picking.
-const QUICK_STYLE_COUNT = 3;
+// What the band may offer, in priority order: Word's Quick Styles set intersected with
+// the six names Docs offers. Only the ones the document really defines are offered.
+const RECOMMENDED_STYLES = [
+  "Normal", "Body Text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3",
+  "Heading 4", "Quote", "Intense Quote", "List Paragraph", "List", "Caption", "Strong", "Emphasis",
+];
 
-// Roving-tabindex keyboard navigation for a Styles listbox: the group is a
-// single Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the
-// option cards, matching the WAI-ARIA listbox pattern. Enter/Space already
-// activate a focused card natively (they are <button>s), which applies the
-// style. Attached once per container so repeated `buildStylesGallery` rebuilds
-// never stack duplicate listeners. Shared by the inline strip and the popover.
-function attachGalleryRoving(container) {
-  if (!container) return;
-  container.addEventListener("keydown", (event) => {
-    const cards = [...container.querySelectorAll(".style-card")];
-    if (!cards.length) return;
-    const current = document.activeElement;
-    const index = cards.indexOf(current);
-    let next = -1;
-    switch (event.key) {
-      case "ArrowRight":
-      case "ArrowDown":
-        next = index < 0 ? 0 : (index + 1) % cards.length;
-        break;
-      case "ArrowLeft":
-      case "ArrowUp":
-        next = index < 0 ? cards.length - 1 : (index - 1 + cards.length) % cards.length;
-        break;
-      case "Home":
-        next = 0;
-        break;
-      case "End":
-        next = cards.length - 1;
-        break;
-      default:
-        return;
-    }
-    event.preventDefault();
-    for (const card of cards) card.tabIndex = card === cards[next] ? 0 : -1;
-    cards[next].focus();
-  });
-}
-attachGalleryRoving(stylesGallery);
-attachGalleryRoving(stylesMorePanel);
+// Hard cap on the cards. SIX: exactly Docs' number, and the bottom of the range Word's
+// gallery shows at 1280px. The previous 3 was chosen against a width budget rather than
+// a competitor, and the 14-entry dropdown beside it was never a decision at all.
+// Raising this re-admits the long list to the band.
+const OFFERED_STYLE_COUNT = 6;
 
-// Esc inside the popover closes it and returns focus to the ▾ button (the global
-// popover Escape handler dismisses it too, but without restoring focus).
-if (stylesMorePanel) {
-  stylesMorePanel.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeStylesMorePanel({ restoreFocus: true });
-    }
-  });
-}
+// Styles the document is USING, offered alongside the recommended ones — otherwise
+// opening a file whose paragraphs use `Quotation` leaves the user unable to see or
+// re-apply it. Word adds in-use styles to its gallery too. This is what the CHROME
+// observed (styles the caret visited, plus ones applied this session), not a document
+// scan: there is no `stylesInUse()` on the engine and walking every paragraph from JS
+// is O(n) in document size, which docs/107 §4 forbids. Pruned on document load.
+const stylesInUse = new Set();
 
-/** Draws a gallery card's label IN the style it represents, from the engine's
- *  resolved preview (font family/size/weight/slant/underline/color) — Word's
- *  Styles gallery. Degrades to the plain slug look if the preview is
- *  unavailable. The preview font size is clamped so a 28pt Title still fits the
- *  dense 30px card while keeping the visible hierarchy. */
+/** The paragraph style at the caret. The deleted select held this; the active card
+ *  and `#stylesGallery`'s `data-active-style` hold it now. */
+let activeParagraphStyle = "";
+
+// Roving-tabindex keyboard navigation for the Styles listbox: the group is a single
+// Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the option cards,
+// matching the WAI-ARIA listbox pattern. Enter/Space already activate a focused card
+// natively (they are <button>s), which applies the style. Bound to the container once,
+// so repeated `renderStylesGallery` rebuilds never stack duplicate listeners.
+const STYLE_ROVE_STEP = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+stylesGallery.addEventListener("keydown", (event) => {
+  const cards = [...stylesGallery.querySelectorAll(".style-card")];
+  if (!cards.length) return;
+  const at = cards.indexOf(document.activeElement);
+  const step = STYLE_ROVE_STEP[event.key];
+  let next;
+  if (step) next = at < 0 ? (step > 0 ? 0 : cards.length - 1) : (at + step + cards.length) % cards.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = cards.length - 1;
+  else return;
+  event.preventDefault();
+  for (const card of cards) card.tabIndex = card === cards[next] ? 0 : -1;
+  cards[next].focus();
+});
+
 /** Resolves any CSS color string to sRGB bytes.
  *
  *  Via canvas rather than a regex: the browser hands back `rgb()`, `color(srgb
@@ -602,6 +575,10 @@ function refreshStyleCardPreviews() {
   }
 }
 
+/** Draws a card's label IN the style it represents, from the engine's resolved preview
+ *  (family/size/weight/slant/underline/colour) — Word's Styles gallery. Degrades to the
+ *  plain slug look when no preview is available; the size is clamped so a 28pt Title
+ *  still fits the dense 30px card while keeping the visible hierarchy. */
 function applyStyleCardPreview(label, name) {
   if (!doc || typeof doc.stylePreview !== "function") return;
   let preview;
@@ -638,9 +615,8 @@ function applyStyleCardPreview(label, name) {
 }
 
 /** Builds one gallery option card drawn IN its own style. `index === 0` makes it
- *  the container's initial roving Tab stop. `fromPanel` cards additionally close
- *  the "More styles" popover after applying (Word closes the gallery on pick). */
-function makeStyleCard(name, index, { fromPanel = false } = {}) {
+ *  the container's initial roving Tab stop. */
+function makeStyleCard(name, index) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const card = document.createElement("button");
   card.type = "button";
@@ -649,9 +625,10 @@ function makeStyleCard(name, index, { fromPanel = false } = {}) {
   card.setAttribute("role", "option");
   card.setAttribute("aria-selected", "false");
   // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
-  // among the rest (see attachGalleryRoving).
+  // among the rest (see the gallery's keydown handler).
   card.tabIndex = index === 0 ? 0 : -1;
   card.title = name;
+  card.disabled = !styleCardsEnabled;
   const label = document.createElement("span");
   label.className = "style-card-name";
   label.textContent = name;
@@ -660,80 +637,104 @@ function makeStyleCard(name, index, { fromPanel = false } = {}) {
   card.addEventListener("click", () => {
     if (card.disabled) return;
     runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-    if (fromPanel) closeStylesMorePanel({ restoreFocus: true });
+    // Back to the document, as Word and Docs do after a gallery pick and as `chooseFont`
+    // already did. Focus stayed on the card before, so the next keystroke went to a
+    // button; the select hid this by handing focus back on change.
+    focusEditorSurface();
   });
   return card;
 }
 
-/** Rebuilds the Styles gallery from the document's style names: a short inline
- *  quick-access strip on the ribbon plus the full-set "More styles" popover, so
- *  every paragraph style is reachable from the gallery. */
-function buildStylesGallery(styles) {
-  if (!stylesGallery) return;
-  // Drop the previous cards but keep the static ▾ "More styles" button, which the
-  // popover manager holds a reference to.
-  for (const card of stylesGallery.querySelectorAll(".style-card")) card.remove();
-  // Order styles with the common built-ins first; the rest follow document order.
-  const preferred = ["Normal", "Body Text", "Title", "Heading 1", "Heading 2", "Subtitle"];
-  const ordered = [];
-  for (const preferredName of preferred) {
-    const match = styles.find((name) => name.toLowerCase() === preferredName.toLowerCase());
-    if (match && !ordered.includes(match)) ordered.push(match);
-  }
-  for (const name of styles) if (!ordered.includes(name)) ordered.push(name);
+/** Whether a style can be applied right now. `updateToolbar` owns this; a card built
+ *  later reads it, so a new card is never live while the band is greyed. The refusal
+ *  REASON lives once on the group (`#stylesGallery`'s title), not on every card. */
+let styleCardsEnabled = false;
 
-  // Inline quick strip: a handful of cards, inserted before the ▾ button.
-  const shown = ordered.slice(0, QUICK_STYLE_COUNT);
-  for (const [i, name] of shown.entries()) {
-    const card = makeStyleCard(name, i);
-    if (stylesMoreBtn) stylesGallery.insertBefore(card, stylesMoreBtn);
-    else stylesGallery.appendChild(card);
-  }
-  if (stylesMoreBtn) stylesMoreBtn.hidden = ordered.length <= QUICK_STYLE_COUNT;
+/** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
+ *  once per registry change, not per caret move: `offeredStyles` is on the
+ *  per-keystroke path, and matching 15 names case-insensitively against every defined
+ *  style there would be O(15n) a keystroke. */
+let definedStyles = new Set();
+let recommendedHere = [];
 
-  // Full popover: a card for EVERY style, so nothing is gallery-unreachable.
-  if (stylesMorePanel) {
-    stylesMorePanel.replaceChildren();
-    for (const [i, name] of ordered.entries()) {
-      stylesMorePanel.appendChild(makeStyleCard(name, i, { fromPanel: true }));
-    }
+/** The SHORT list the band offers, in card order: recommended styles the document
+ *  defines, then styles it is known to be using, capped at `OFFERED_STYLE_COUNT`.
+ *  The caret's style is guaranteed a slot even when the cap is full — it displaces
+ *  the last entry rather than falling off, because the user must always be able to
+ *  see what they are in and re-apply it. Word gets there by scrolling its gallery. */
+function offeredStyles() {
+  const offered = [...recommendedHere];
+  const add = (n) => { if (n && definedStyles.has(n) && !offered.includes(n)) offered.push(n); };
+  for (const name of stylesInUse) add(name);
+  const capped = offered.slice(0, OFFERED_STYLE_COUNT);
+  const active = activeParagraphStyle;
+  if (active && definedStyles.has(active) && !capped.includes(active)) {
+    if (capped.length >= OFFERED_STYLE_COUNT) capped.pop();
+    capped.push(active);
   }
+  return capped;
 }
 
-/** Marks the card(s) matching the reflected paragraph style active and keeps
- *  each container's roving Tab stop on that style — for both the inline strip and
- *  the "More styles" popover. */
-function reflectActiveCards(container) {
-  if (!container) return;
-  const active = paragraphStyleSel.value;
-  const cards = [...container.querySelectorAll(".style-card")];
+/** Rebuilds the cards, but only when the offered set actually changed. This is on the
+ *  per-keystroke path (`updateToolbar` runs on every caret move and the offered set
+ *  depends on the caret's style), so rebuilding unconditionally would discard hover and
+ *  focus every cursor move and re-resolve a preview per card per keystroke. */
+function renderStylesGallery() {
+  const wanted = offeredStyles();
+  const current = [...stylesGallery.querySelectorAll(".style-card")].map((c) => c.dataset.style);
+  if (current.length === wanted.length && current.every((name, i) => name === wanted[i])) return;
+  stylesGallery.replaceChildren(...wanted.map((name, i) => makeStyleCard(name, i)));
+}
+
+/** Rebuilds the gallery for a (re)loaded document or a changed style registry. The
+ *  full stylesheet is NOT put on the band (docs/114 §5). */
+function buildStylesGallery(styles) {
+  definedStyles = new Set(styles);
+  // Matched case-insensitively, so `body text` from an ODT package still counts.
+  const byName = new Map(styles.map((s) => [s.toLowerCase(), s]));
+  recommendedHere = RECOMMENDED_STYLES.map((s) => byName.get(s.toLowerCase())).filter(Boolean);
+  // A style remembered from the previous document is not in use in this one, and a
+  // name that no longer exists cannot be applied.
+  for (const name of [...stylesInUse]) if (!definedStyles.has(name)) stylesInUse.delete(name);
+  // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
+  // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
+  // and the cards would keep previewing the old one. `ribbon-home` caught that.
+  stylesGallery.replaceChildren();
+  renderStylesGallery();
+  syncStylesGalleryActive();
+}
+
+/** Highlights the card matching the reflected style, keeps the roving Tab stop on it,
+ *  and publishes it on the container so the chrome has one answer to "what style is
+ *  the caret in" now that the select is gone. */
+function syncStylesGalleryActive() {
+  const active = activeParagraphStyle;
+  stylesGallery.dataset.activeStyle = active;
+  const name = active ? `Paragraph styles, current style ${active}` : "Paragraph styles";
+  stylesGallery.setAttribute("aria-label", name);
+  const cards = [...stylesGallery.querySelectorAll(".style-card")];
   let tabStop = cards.findIndex((card) => card.dataset.style === active);
-  if (tabStop < 0) tabStop = 0; // no active style visible → first card is the Tab stop
+  if (tabStop < 0) tabStop = 0; // no active style offered → first card is the Tab stop
   for (const [i, card] of cards.entries()) {
-    const isActive = card.dataset.style === active;
-    card.setAttribute("aria-selected", String(isActive));
-    // Keep the roving Tab stop on the applied style so Tab lands where the
-    // caret already is (arrow keys still reach every card).
+    card.setAttribute("aria-selected", String(card.dataset.style === active));
+    // The roving Tab stop stays on the applied style, so Tab lands where the caret
+    // already is (arrow keys still reach every card).
     card.tabIndex = i === tabStop ? 0 : -1;
   }
-}
-
-/** Highlights the gallery card(s) matching the reflected paragraph style. */
-function syncStylesGalleryActive() {
-  reflectActiveCards(stylesGallery);
-  reflectActiveCards(stylesMorePanel);
-  // The inline strip sits inside the ribbon band, and the band owns exactly one
-  // Tab stop across everything it holds. Re-assert that after the strip has
-  // published its own internal stop, or the band grows a second Tab stop on
-  // every caret move — which is precisely how it had three to begin with.
+  // The band owns exactly one Tab stop across everything it holds. Re-assert that
+  // after the strip publishes its own internal stop, or the band grows a second one
+  // on every caret move — which is precisely how it came to have three.
   syncRibbonTabStops();
 }
 
-/** Closes the "More styles" popover, optionally restoring focus to its button. */
-function closeStylesMorePanel({ restoreFocus = false } = {}) {
-  if (!stylesMorePopover || !stylesMorePanel || stylesMorePanel.hidden) return;
-  closePopover(stylesMorePopover);
-  if (restoreFocus && stylesMoreBtn) stylesMoreBtn.focus();
+/** Records the style at the caret and keeps the offered set in step. A style the caret
+ *  visits is one the document is using, so it joins `stylesInUse` and stays offered
+ *  after the caret leaves. */
+function reflectParagraphStyle(name) {
+  activeParagraphStyle = name || "";
+  if (activeParagraphStyle) stylesInUse.add(activeParagraphStyle);
+  renderStylesGallery();
+  syncStylesGalleryActive();
 }
 
 // --- Named-style edits: update-from-selection and create-from-selection ------
@@ -2608,7 +2609,6 @@ const growFontBtn = document.getElementById("growFont");
 const shrinkFontBtn = document.getElementById("shrinkFont");
 const changeCaseBtn = document.getElementById("changeCaseBtn");
 const changeCaseMenu = document.getElementById("changeCaseMenu");
-const paragraphStyleSel = document.getElementById("paragraphStyle");
 const runControls = [
   superBtn,
   subBtn,
@@ -2635,7 +2635,6 @@ const paraControls = [
   numberedListBtn,
   restartListBtn,
   continueListBtn,
-  paragraphStyleSel,
 ];
 const saveBtn = document.getElementById("save");
 const saveFormatEl = document.getElementById("saveFormat");
@@ -9431,6 +9430,12 @@ function updateToolbar() {
   // enabled whenever there is a selection.
   for (const el of runControls) el.disabled = !hasSel;
   for (const el of paraControls) el.disabled = !hasSel;
+  // Style cards are rebuilt as the offered set changes, so they cannot live in the
+  // static `paraControls` list — but they must still refuse honestly rather than being
+  // clickable buttons that do nothing (§10, "never a dead control").
+  styleCardsEnabled = hasSel;
+  stylesGallery.title = hasSel ? "" : "Place the caret in a paragraph to apply a style";
+  for (const c of stylesGallery.querySelectorAll(".style-card")) c.disabled = !hasSel;
 
   const align = hasSel && doc ? doc.alignmentAt(selection.focus.node, selection.focus.offset) : "start";
   for (const [key, btn] of Object.entries(alignBtns)) {
@@ -9519,8 +9524,10 @@ function updateToolbar() {
   superBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sup));
   subBtn.setAttribute("aria-pressed", verticalAlignMixed ? "mixed" : String(sub));
 
-  // Reflect the current paragraph style + spacing + list kind.
-  paragraphStyleSel.value = hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "";
+  // Reflect the current paragraph style + spacing + list kind. The style at the
+  // caret is a style the document is USING, so reflecting it also keeps it offered
+  // by the gallery after the caret moves on (docs/114 §5.3).
+  reflectParagraphStyle(hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "");
   if (hasSel && doc) for (const p of popovers) if (!p.menu.hidden) p.reflect();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
   bulletListBtn.setAttribute("aria-pressed", String(listKind === "bullet"));
@@ -9642,19 +9649,20 @@ function updateToolbar() {
   if (!outlinePanel.hidden) reflectOutlineSelection();
 }
 
-/** Fills the paragraph-style dropdown from the open document's styles. */
+/** Republishes the open document's styles. Paragraph properties ▸ Style gets the
+ *  COMPLETE list — it plays the part of Word's Styles pane, and with the palette's
+ *  `Style: <name>` rows it is what keeps every style in the stylesheet reachable now
+ *  that the band offers a short list (docs/114 §5.5). */
 function populateStyles() {
   const styles = doc ? doc.listStyles() : [];
-  for (const select of [paragraphStyleSel, paraPanelStyle]) {
-    select.replaceChildren();
-    for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = label;
-      select.appendChild(opt);
-    }
+  paraPanelStyle.replaceChildren();
+  for (const [value, label] of [["", "Style"], ...styles.map((s) => [s, s])]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    paraPanelStyle.appendChild(opt);
   }
-  // The visible Styles gallery mirrors the same style list.
+  // The band's gallery offers the short list drawn from the same registry.
   buildStylesGallery(styles);
   scheduleRibbonOverflow();
 }
@@ -10169,25 +10177,9 @@ function registerPopover(btn, menu, reflect) {
 
 tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
 
-// The "More styles" ▾ popover reuses the same anchored-menu manager (outside-
-// click + Escape dismissal, single-open, anchored positioning). Its reflect()
-// re-marks the active style each time it opens.
-if (stylesMoreBtn && stylesMorePanel) {
-  stylesMorePopover = registerPopover(stylesMoreBtn, stylesMorePanel, syncStylesGalleryActive);
-  // When the ▾ opens the popover, move focus into it (onto the active/first card)
-  // so keyboard users land in the list; a close toggle leaves focus on the button.
-  const focusIntoMorePanel = () => {
-    if (stylesMorePanel.hidden) return;
-    const card =
-      stylesMorePanel.querySelector('.style-card[tabindex="0"]') ||
-      stylesMorePanel.querySelector(".style-card");
-    card?.focus();
-  };
-  // Registered after `registerPopover`, so on the same click it runs after the
-  // popover has opened. (It used to hang off mousedown, which is where the
-  // popover opened before commands moved to mouse-up — docs/104 HF-069.)
-  stylesMoreBtn.addEventListener("click", focusIntoMorePanel);
-}
+// No "More styles" ▾ popover here any more: it listed every style in the document as
+// cards — the deleted select's long list reached through a side door — and the band is
+// not where the full stylesheet belongs (docs/114 §5).
 
 // `pointerdown` — the phase every other dismissable surface uses (#556). The
 // last holdout on `mousedown`, which a pen or a consumed touch never produces.
@@ -15123,11 +15115,6 @@ function applyFontFamily(family) {
     runToolbarEdit((a, b, c, d) => doc.setFont(a, b, c, d, family)),
   );
 }
-paragraphStyleSel.addEventListener("change", () => {
-  const name = paragraphStyleSel.value;
-  runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-});
-
 /** Surfaces the compatibility-finding count from an import or export in the
  *  status chip; hidden when there is nothing to report. */
 function showCompatibilityFindings(count, phase) {
@@ -17921,7 +17908,9 @@ const COMPACT_TOOLBAR = [
   null,
   { kind: "select", control: "zoom", label: "Zoom", width: 76 },
   null,
-  { kind: "select", control: "style", label: "Paragraph style", width: 132 },
+  // The same `#stylesGallery` element the ribbon owns, adopted rather than cloned
+  // (see ADOPTED_CONTROL_IDS). Compact CSS lays its short list out as one row.
+  { kind: "gallery", control: "style", label: "Paragraph style", width: 227 },
   null,
   { kind: "select", control: "font", label: "Font", width: 136 },
   null,
@@ -17962,7 +17951,7 @@ let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" 
 /** The ribbon-owned controls the compact bar borrows, by row `control` key. */
 const ADOPTED_CONTROL_IDS = {
   zoom: "zoom",
-  style: "paragraphStyle",
+  style: "stylesGallery",
   font: "fontFamily",
   size: "fontSize",
 };
@@ -18003,13 +17992,13 @@ function renderCompactToolbar() {
       host.appendChild(sep);
       continue;
     }
-    // A "select"/"stepper" row ADOPTS the live element the ribbon already owns —
-    // `#zoom`, `#paragraphStyle`, `#fontFamily`, `#fontSize` — rather than
+    // A "select"/"stepper"/"gallery" row ADOPTS the live element the ribbon already
+    // owns — `#zoom`, `#stylesGallery`, `#fontFamily`, `#fontSize` — rather than
     // cloning it. One element means one set of listeners, one reflected value
     // and one disabled state, so the two chromes cannot drift apart; a clone
     // would be a second answer to "what font is this?". `releaseAdoptedControls`
     // puts each one back exactly where it came from.
-    if (entry.kind === "select" || entry.kind === "stepper") {
+    if (entry.kind === "select" || entry.kind === "stepper" || entry.kind === "gallery") {
       const el = document.getElementById(ADOPTED_CONTROL_IDS[entry.control]);
       if (!el) continue;
       if (!adoptedHome.has(el)) {
