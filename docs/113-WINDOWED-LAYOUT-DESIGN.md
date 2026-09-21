@@ -499,6 +499,11 @@ limit), but it is now the thing in the way.
    110.5 s, because two thirds of that was the host building 25,556 sheet elements, not
    the engine — but still linear in blocks, still with no budget, progress or cancel.
    `docs/104` HF-077. Windowing did not change the shaping pass and was never going to.
+   **Now measured and designed in `docs/114`**: import is 0.83 s of it and the measure
+   pass is 7.78 s (88%), the main thread is blocked 17,077 ms and then 16,981 ms again
+   when the web fonts land, and the answer is not to yield during the pass but to stop
+   doing it at open — which reverses this document's own §4 Q1 (exact page count from the
+   first frame) in favour of an estimate that is labelled as one.
 4. **`ScrollCoalescer` still has no host consumer.** `window_of` returns a
    `ViewportLayout` and the coalescer decides when to ask for one; the facade instead
    moves its window from `renderPage`, which is correct and is what the existing host

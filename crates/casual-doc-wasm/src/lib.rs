@@ -173,6 +173,25 @@ fn viewer_limits() -> PackageLimits {
 /// extrapolation. Past it a document is refused with its real size and the
 /// limit.
 ///
+/// ## Every row above is time to COMPLETE, and that is the wrong question
+///
+/// `docs/114`. The probe now also reports the longest single main-thread task,
+/// because "it completed in 47 s" and "the tab was dead for 47 s" are the same
+/// number describing different things, and only the second one is what the
+/// reader experiences. Measured on the owner's file: **17,077 ms blocked, then
+/// 16,981 ms again** when the web fonts land and the document is re-measured.
+/// Nothing paints in either stretch, no click lands, and no progress bar could
+/// move if there were one.
+///
+/// That cost is ~13 µs/block of uninterrupted main thread, so **no value of
+/// this constant is both interactive and useful**: a 300 ms budget is ~23,000
+/// blocks, two orders of magnitude below documents that open perfectly well
+/// today. The constant is therefore not the lever — the open path is
+/// (`docs/114` §7: measure a prefix, extend in the background, report
+/// `Page X of ~Y` until it is exact). It is left at 1,800,000 with that said
+/// out loud, and it moves next on a time-to-interactive measurement rather than
+/// a time-to-complete one.
+///
 /// This does NOT bound file SIZE. A 200 MiB DOCX is large because of its
 /// images, and its block count is ordinary; `viewer_limits` admits it.
 ///
@@ -11283,9 +11302,7 @@ impl WasmDocument {
     /// A paragraph with no objects is absent rather than mapped to two empty
     /// vectors, so a plain-text document of 1.3M paragraphs builds an empty map
     /// and allocates nothing per paragraph.
-    fn object_nodes_by_paragraph(
-        &self,
-    ) -> HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)> {
+    fn object_nodes_by_paragraph(&self) -> ObjectNodesByParagraph {
         let definitions = self.document.definitions();
         let mut out = HashMap::new();
         visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
@@ -12389,6 +12406,12 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
 /// would not have finished at all on the owner's file. One walk that carries the
 /// node is the fix, and it is the only fix: a faster by-id lookup would still be
 /// the wrong shape. `docs/114`.
+/// Every paragraph that carries an inline drawing or inline text box, by id:
+/// the drawings (with their resolved media part name) and the text boxes, both
+/// in document order. Built by
+/// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
+type ObjectNodesByParagraph = HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)>;
+
 fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
     for block in blocks {
         match block {
@@ -21815,7 +21838,8 @@ mod tests {
                  a document-wide read resolves ids once, not once per node",
             );
             assert_eq!(
-                one, two,
+                one,
+                two,
                 "{name} scanned the document {one} times at {SMALL} blocks and {two} times at \
                  {} — the cost grows with the document, which is the quadratic shape that hung \
                  the Outline panel (`docs/114`)",
