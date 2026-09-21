@@ -20,6 +20,7 @@ import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { OBJECT_LABELS, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, offeredStyleNames, previewPx, styleSlug } from "./style_picker.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
@@ -5156,9 +5157,13 @@ function traverseObjects(step) {
   // wrap-around below already handles "no current object" by starting at either
   // end, so seeding a first selection needs no extra machinery.
   if (!doc) return;
+  // Inside a group Tab walks that group's children; at the top level, the
+  // top-level objects. `object_traversal.mjs` carries why the one flat list
+  // that used to serve both made every shape but a group's first unreachable.
+  const inside = traversalRoot(objectSelection?.ref);
   let objects;
   try {
-    objects = JSON.parse(doc.objectOrder());
+    objects = JSON.parse(inside ? doc.objectDescendants(inside) : doc.objectOrder());
   } catch {
     return;
   }
@@ -5166,14 +5171,7 @@ function traverseObjects(step) {
   const current = objectSelection
     ? objects.findIndex((entry) => entry.node === objectSelection.node)
     : -1;
-  // An object that has vanished from the order (deleted, or scrolled out of a
-  // layout that no longer places it) restarts from whichever end we moved toward.
-  const next =
-    current < 0
-      ? step > 0
-        ? 0
-        : objects.length - 1
-      : (current + step + objects.length) % objects.length;
+  const next = nextObjectIndex(objects.length, current, step);
   const target = objects[next];
   selectObject(target.node, target.kind, null, target.anchored, target);
   // `selectObject` repaints synchronously, so the outline it just drew is the
@@ -5181,7 +5179,7 @@ function traverseObjects(step) {
   // like nothing happened.
   scrollOverlayIntoView(pagesEl.querySelector(".overlay .object-outline"));
   // Screen readers get no handles to look at, so the position is announced.
-  setStatus(`${OBJECT_LABELS[target.kind] ?? "Object"} ${next + 1} of ${objects.length}`);
+  setStatus(traversalAnnouncement(target.kind, next, objects.length, Boolean(inside)));
 }
 
 /** Descends a selected multi-child group to its first paint-ordered leaf. The
@@ -10549,8 +10547,6 @@ selHighlightMenu.addEventListener("click", (e) => handleHighlightMenuClick(e, se
 
 /** What the context bar calls each kind of object. A shape used to read
  *  "Image", which also handed it a Crop button it has no source rectangle for. */
-const OBJECT_LABELS = { image: "Image", textbox: "Text box", shape: "Shape", group: "Group" };
-
 /** The preset shapes Insert ▸ Shapes offers — every geometry the engine models
  *  and the renderer draws. Naming them here keeps the menu honest: a gallery of
  *  shapes that do not render would be worse than a short one that does. */
