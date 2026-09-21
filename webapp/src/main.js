@@ -3960,6 +3960,26 @@ function currentStoryKey() {
   return "body";
 }
 
+/** Ticks the form checkbox at the caret position `node`/`offset`, and reports
+ *  whether it did.
+ *
+ *  The engine answers "is this inside a checkbox control", so the host never
+ *  has to know where content controls are — it asks about whatever the pointer
+ *  or the caret landed on. Gated through `runEdit` like every other mutation,
+ *  so Viewing refuses it and Suggesting tracks it. */
+function toggleFormCheckboxAt(node, offset) {
+  if (!doc || !node) return false;
+  let control = null;
+  try {
+    control = doc.formCheckboxAt(node, offset ?? 0) ?? null;
+  } catch {
+    return false;
+  }
+  if (!control) return false;
+  runEdit(() => doc.toggleFormCheckbox(control));
+  return true;
+}
+
 function anchorAt(page, event) {
   const { x, y } = pointToTwip(page, event);
   // While a header or footer is open, a point inside a running band belongs to
@@ -6424,6 +6444,14 @@ function onPointerDown(page, event) {
   if (!anchor) {
     updateObjectSelectionState();
     updateObjectContextBar();
+    return;
+  }
+  // A click on a FORM CHECKBOX ticks it rather than placing a caret beside a
+  // glyph. Word and ONLYOFFICE both do this (`docs/118` §2), and it is the
+  // difference between the owner's Medical Incident Report Form being a form
+  // and being a picture of one: eight controls, none of them tickable.
+  if (toggleFormCheckboxAt(anchor.node, anchor.offset)) {
+    event.preventDefault();
     return;
   }
   pendingFormat = null; // a click moves the caret → disarm typing format
@@ -15945,6 +15973,17 @@ document.addEventListener("keydown", async (e) => {
         e.preventDefault();
         return;
       }
+    }
+  }
+
+  // Space ticks the form checkbox the caret is in, as in Word — the keyboard
+  // half of the click in `onPointerDown` (`docs/118` §2). Collapsed caret and
+  // no modifier only: Ctrl+Space below is Clear Formatting, and a Space over a
+  // selection is a replacement, not a toggle.
+  if (key === " " && !e.ctrlKey && !e.metaKey && !e.altKey && !hasRange() && selection) {
+    if (toggleFormCheckboxAt(selection.focus.node, selection.focus.offset)) {
+      e.preventDefault();
+      return;
     }
   }
 
