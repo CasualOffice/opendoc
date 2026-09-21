@@ -1,4 +1,4 @@
-// The Styles control, after docs/114: ONE control, a SHORT list, and the full
+// The Styles control, after docs/115: ONE control, a SHORT list, and the full
 // stylesheet still reachable — off the ribbon.
 //
 // The owner reported this four times. The Styles group carried three controls for one
@@ -11,6 +11,9 @@
 //
 // So these are the assertions that can actually fail on the defect:
 //
+//   0. the one control is a DROPDOWN that names the caret's style unopened, which
+//      is the shape the owner asked for and the one Docs ships. A card gallery
+//      passes every assertion below and is still the wrong control;
 //   1. exactly one control in the Home band applies a paragraph style;
 //   2. the band does not offer every style — it offers at most six;
 //   3. a style the document is USING is always offered, even outside those six;
@@ -28,16 +31,33 @@ import {
   openCommandPalette,
 } from "./fixtures.mjs";
 
-/** The style at the caret. `#stylesGallery`'s `data-active-style` is written straight
+/** The style at the caret. `#stylesTrigger`'s `data-active-style` is written straight
  *  from `doc.paragraphStyleAt(...)` on every toolbar refresh, so it is the DOM-visible
  *  proxy for the engine's paragraph style — the role the deleted select used to play. */
 async function reflectedStyle(page) {
-  return page.locator("#stylesGallery").getAttribute("data-active-style");
+  return page.locator("#stylesTrigger").getAttribute("data-active-style");
 }
 
-/** The styles the band currently offers, in card order. */
+/** Opens the Styles menu and leaves it open. */
+async function openStyles(page) {
+  await page.locator("#stylesTrigger").click();
+  await expect(page.locator("#stylesMenu")).toBeVisible();
+}
+
+/** The styles the band currently offers, in menu order. Leaves the menu closed. */
 async function offered(page) {
-  return page.$$eval("#stylesGallery .style-card", (cards) => cards.map((c) => c.dataset.style));
+  await openStyles(page);
+  const names = await page.$$eval("#stylesMenu .style-option", (rows) =>
+    rows.map((row) => row.dataset.style),
+  );
+  await page.keyboard.press("Escape");
+  return names;
+}
+
+/** Picks a style from the menu. */
+async function pickStyle(page, name) {
+  await openStyles(page);
+  await page.locator(`#stylesMenu .style-option[data-style="${name}"]`).click();
 }
 
 /** Every paragraph style the open document defines, read from the surface that still
@@ -53,10 +73,97 @@ async function allDefinedStyles(page) {
 async function applyStyleFromPalette(page, name) {
   await openCommandPalette(page);
   await page.locator("#cmdInput").fill(`Style: ${name}`);
-  const row = page.locator(`#cmdList .cmd-item[data-command-id="style.${name}"]`);
+  const row = page.locator(
+    `#cmdList .cmd-item[data-command-id="style.${name}"]`,
+  );
   await expect(row, `the palette must offer "Style: ${name}"`).toBeVisible();
   await row.click();
 }
+
+test("the Styles control is a dropdown that names the caret's style unopened", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The shape, asserted on its own, because every other test in this file passed
+  // against a card gallery — which is what shipped, and which the owner rejected.
+  // "One control offering at most six styles" was satisfied by six always-visible
+  // cards; what was missing is a control that reads as a dropdown and says which
+  // style you are in without being opened. That is Google Docs' shape and it is
+  // the one asked for.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  const trigger = page.locator("#stylesTrigger");
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+
+  // Closed to begin with, and nothing of the list is on the band.
+  await expect(page.locator("#stylesMenu")).toBeHidden();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  const bandRows = await page
+    .locator('.ribbon-panel[data-panel="home"] .style-option')
+    .count();
+  expect(bandRows, "the options belong in the popup, not on the band").toBe(0);
+
+  // It names the current style with the menu shut. A gallery cannot do this, and
+  // it is the one thing the deleted 14-entry select did that was worth keeping.
+  const current = await reflectedStyle(page);
+  expect(
+    current,
+    "the caret is in a paragraph, so it is in a style",
+  ).toBeTruthy();
+  await expect(page.locator("#stylesTriggerLabel")).toHaveText(current);
+
+  // Opening shows the short list and marks the current one.
+  await trigger.click();
+  await expect(page.locator("#stylesMenu")).toBeVisible();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.locator(`#stylesMenu .style-option[data-style="${current}"]`),
+  ).toHaveAttribute("aria-selected", "true");
+
+  // Clicking away closes it — the defect the owner reported about the product's
+  // dropdowns generally, asserted here because this one is new.
+  await page.mouse.click(5, 5);
+  await expect(page.locator("#stylesMenu")).toBeHidden();
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("each option is drawn in the style it applies", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The reason this is a product popup and not a native <select>: an OS popup
+  // renders every row in the system font, so "Heading 1" would be a word rather
+  // than a picture of what applying it does. If the rows all render identically
+  // the control may as well be native, and the trade made here is not paid for.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await openStyles(page);
+
+  const rows = await page.$$eval(
+    "#stylesMenu .style-option .style-option-name",
+    (labels) =>
+      labels.map((el) => {
+        const cs = getComputedStyle(el);
+        return {
+          style: el.closest(".style-option").dataset.style,
+          size: parseFloat(cs.fontSize),
+          weight: cs.fontWeight,
+        };
+      }),
+  );
+  expect(rows.length).toBeGreaterThan(1);
+  const distinct = new Set(rows.map((r) => `${r.size}/${r.weight}`));
+  expect(
+    distinct.size,
+    `every row renders identically (${rows.map((r) => `${r.style} ${r.size}px/${r.weight}`).join(", ")})`,
+  ).toBeGreaterThan(1);
+
+  expect(consoleErrors).toEqual([]);
+});
 
 test("exactly one control in the Home band applies a paragraph style", async ({
   page,
@@ -77,15 +184,17 @@ test("exactly one control in the Home band applies a paragraph style", async ({
   // control identifies itself, so a re-added strip, popover trigger or duplicate
   // card set anywhere else in the band fails here.
   const strays = await band.evaluate((panel) => {
-    const gallery = panel.querySelector("#stylesGallery");
+    const trigger = panel.querySelector("#stylesTrigger");
     return [...panel.querySelectorAll("[data-style], select")]
-      .filter((el) => !gallery.contains(el))
+      .filter((el) => el !== trigger && !trigger.contains(el))
       .map((el) => el.id || el.dataset.style || el.tagName);
   });
   expect(strays, "the band must hold exactly one Styles control").toEqual([]);
 
-  // The one control is a listbox of real, applying cards.
-  await expect(page.locator('#stylesGallery[role="listbox"]')).toHaveCount(1);
+  // The one control is a dropdown, and its list is real and applying.
+  await expect(
+    page.locator('#stylesTrigger[aria-haspopup="listbox"]'),
+  ).toHaveCount(1);
   expect((await offered(page)).length).toBeGreaterThan(1);
 
   expect(consoleErrors).toEqual([]);
@@ -102,7 +211,7 @@ test("the band offers a SHORT list, not every style in the document", async ({
   const defined = await allDefinedStyles(page);
 
   // Six is the cap: exactly what Docs offers, and the bottom of Word's visible
-  // gallery range (docs/114 §§2–4). `OFFERED_STYLE_COUNT`.
+  // gallery range (docs/115 §§2–4). `OFFERED_STYLE_COUNT`.
   expect(cards.length, `offered: ${cards.join(", ")}`).toBeLessThanOrEqual(6);
   // And it really is a SHORTENING — the document defines more than the band offers.
   // This is the assertion the three-control era could never have passed: both the
@@ -133,7 +242,10 @@ test("a style the document is using stays offered, and applies from the band", a
   // A style the SHORT list does not offer — so it can only become offered by being
   // put to use in the document.
   const outside = defined.find((name) => !before.includes(name));
-  expect(outside, "the fixture should define a style beyond the offered set").toBeTruthy();
+  expect(
+    outside,
+    "the fixture should define a style beyond the offered set",
+  ).toBeTruthy();
 
   await applyStyleFromPalette(page, outside);
 
@@ -141,21 +253,28 @@ test("a style the document is using stays offered, and applies from the band", a
   // guarantee that makes deleting the select cost nothing. Word reaches the same
   // guarantee by scrolling its gallery to the applied style.
   await expect.poll(() => reflectedStyle(page)).toBe(outside);
-  const card = page.locator(`#stylesGallery .style-card[data-style="${outside}"]`);
-  await expect(card).toBeVisible();
-  await expect(card).toHaveAttribute("aria-selected", "true");
+  // The trigger says so without being opened — the one thing the deleted select
+  // did that a card gallery did not.
+  await expect(page.locator("#stylesTriggerLabel")).toHaveText(outside);
+  await openStyles(page);
+  const option = page.locator(
+    `#stylesMenu .style-option[data-style="${outside}"]`,
+  );
+  await expect(option).toBeVisible();
+  await expect(option).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
   // Still short.
   expect((await offered(page)).length).toBeLessThanOrEqual(6);
 
   // It stays offered after the caret leaves it, so the user can re-apply it
   // elsewhere — which is the whole point of tracking in-use styles.
   const elsewhere = before.find((name) => name !== outside);
-  await page.locator(`#stylesGallery .style-card[data-style="${elsewhere}"]`).click();
+  await pickStyle(page, elsewhere);
   await expect.poll(() => reflectedStyle(page)).toBe(elsewhere);
   expect(await offered(page)).toContain(outside);
 
   // And re-applying it from the band is a real, single-undo edit.
-  await card.click();
+  await pickStyle(page, outside);
   await expect.poll(() => reflectedStyle(page)).toBe(outside);
   await page.locator("#undoBtn").click();
   await expect.poll(() => reflectedStyle(page)).toBe(elsewhere);
@@ -190,7 +309,9 @@ test("every style the document defines stays reachable from two surfaces off the
   for (const name of defined) {
     await openCommandPalette(page);
     await page.locator("#cmdInput").fill(`Style: ${name}`);
-    const count = await page.locator(`#cmdList .cmd-item[data-command-id="style.${name}"]`).count();
+    const count = await page
+      .locator(`#cmdList .cmd-item[data-command-id="style.${name}"]`)
+      .count();
     if (count === 0) missing.push(name);
     await page.keyboard.press("Escape");
   }
@@ -210,13 +331,17 @@ test("every <select> in the chrome wears the product's field, not the OS's", asy
     list.map((el) => {
       const cs = getComputedStyle(el);
       return {
-        which: el.id || el.className || `${el.parentElement?.className} > select`,
+        which:
+          el.id || el.className || `${el.parentElement?.className} > select`,
         appearance: cs.appearance,
         hasCaret: cs.backgroundImage !== "none",
       };
     }),
   );
-  expect(raw.length, "the chrome should still have dialog/menu selects").toBeGreaterThan(4);
+  expect(
+    raw.length,
+    "the chrome should still have dialog/menu selects",
+  ).toBeGreaterThan(4);
 
   // Computed style, not the presence of a rule: `.ctl select` sets the `background`
   // SHORTHAND, so a shared `background-image` rule placed above it would be reset and
@@ -225,7 +350,7 @@ test("every <select> in the chrome wears the product's field, not the OS's", asy
   expect(
     bare,
     "a <select> is rendering OS chrome. One interaction model for one job " +
-      "(docs/114 §6): every select in the chrome carries the shared appearance " +
+      "(docs/115 §6): every select in the chrome carries the shared appearance " +
       "treatment and the product's caret.",
   ).toEqual([]);
 
@@ -242,29 +367,37 @@ test("the compact chrome borrows the SAME Styles control, and the ribbon gets it
   const offeredInRibbon = await offered(page);
   expect(offeredInRibbon.length).toBeGreaterThan(1);
 
-  // Compact mode ADOPTS `#stylesGallery` rather than cloning it, so the two chromes
+  // Compact mode ADOPTS `#stylesTrigger` rather than cloning it, so the two chromes
   // cannot drift about what the offered set is or which style is current. Nothing
   // covered compact mode before, and this change moved what it adopts from the
-  // deleted `#paragraphStyle` to the gallery — so a broken adoption would have
-  // shipped as a Styles control that simply was not there.
+  // deleted `#paragraphStyle` to the gallery and now to the trigger — so a broken
+  // adoption would ship as a Styles control that simply was not there.
   await page.locator("#modeCompact").click();
-  const adopted = page.locator("#compactToolbar #stylesGallery");
+  const adopted = page.locator("#compactToolbar #stylesTrigger");
   await expect(adopted).toBeVisible();
-  expect(await offered(page), "the same element, so the same offered set").toEqual(offeredInRibbon);
+  expect(
+    await offered(page),
+    "the same element, so the same offered set",
+  ).toEqual(offeredInRibbon);
   // And it still applies: one element means one set of listeners. Asserted rather than
-  // guarded by an `if` — the gallery offers more than one style and the caret is in one
+  // guarded by an `if` — the menu offers more than one style and the caret is in one
   // of them, so a missing target is a defect, not a reason to skip the assertion.
   const current = await reflectedStyle(page);
   const target = offeredInRibbon.find((s) => s !== current);
-  expect(target, "the offered set should hold a style other than the caret's").toBeTruthy();
-  await adopted.locator(`.style-card[data-style="${target}"]`).click();
+  expect(
+    target,
+    "the offered set should hold a style other than the caret's",
+  ).toBeTruthy();
+  await pickStyle(page, target);
   await expect.poll(() => reflectedStyle(page)).toBe(target);
 
   // Leaving compact mode must put the element BACK in the ribbon, not leave a hole
   // where the Styles group was — `releaseAdoptedControls` is what guarantees that.
   await page.locator("#modeRibbon").click();
-  await expect(page.locator('.ribbon-panel[data-panel="home"] #stylesGallery')).toBeVisible();
-  await expect(page.locator("#compactToolbar #stylesGallery")).toHaveCount(0);
+  await expect(
+    page.locator('.ribbon-panel[data-panel="home"] #stylesTrigger'),
+  ).toBeVisible();
+  await expect(page.locator("#compactToolbar #stylesTrigger")).toHaveCount(0);
   expect(await offered(page)).toEqual(offeredInRibbon);
 
   expect(consoleErrors).toEqual([]);

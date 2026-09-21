@@ -20,6 +20,7 @@ import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { RECOMMENDED_STYLES, offeredStyleNames, previewPx, styleSlug } from "./style_picker.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
 import {
@@ -452,7 +453,7 @@ cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
 replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
 
-// The Styles gallery — the ONE control the band offers for paragraph styles (docs/114).
+// The Styles control — the ONE control the band offers for paragraph styles (docs/115).
 // It replaces three: a `#paragraphStyle` select listing every style in the document
 // flat, this strip, and a "▾" popover listing every style again. Word puts a curated
 // Quick Styles gallery in the ribbon and the full list in a pane; Docs offers six named
@@ -460,20 +461,9 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 // reachable off it — the palette's `Style: <name>` rows and Paragraph properties ▸ Style.
 // Import, cascade, layout, render and round-trip are untouched: this is what is offered
 // for AUTHORING, not what is supported.
-const stylesGallery = document.getElementById("stylesGallery");
-
-// What the band may offer, in priority order: Word's Quick Styles set intersected with
-// the six names Docs offers. Only the ones the document really defines are offered.
-const RECOMMENDED_STYLES = [
-  "Normal", "Body Text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3",
-  "Heading 4", "Quote", "Intense Quote", "List Paragraph", "List", "Caption", "Strong", "Emphasis",
-];
-
-// Hard cap on the cards. SIX: exactly Docs' number, and the bottom of the range Word's
-// gallery shows at 1280px. The previous 3 was chosen against a width budget rather than
-// a competitor, and the 14-entry dropdown beside it was never a decision at all.
-// Raising this re-admits the long list to the band.
-const OFFERED_STYLE_COUNT = 6;
+const stylesTrigger = document.getElementById("stylesTrigger");
+const stylesTriggerLabel = document.getElementById("stylesTriggerLabel");
+const stylesMenu = document.getElementById("stylesMenu");
 
 // Styles the document is USING, offered alongside the recommended ones — otherwise
 // opening a file whose paragraphs use `Quotation` leaves the user unable to see or
@@ -484,28 +474,26 @@ const OFFERED_STYLE_COUNT = 6;
 const stylesInUse = new Set();
 
 /** The paragraph style at the caret. The deleted select held this; the active card
- *  and `#stylesGallery`'s `data-active-style` hold it now. */
+ *  and `#stylesTrigger`'s label and `data-active-style` hold it now. */
 let activeParagraphStyle = "";
 
-// Roving-tabindex keyboard navigation for the Styles listbox: the group is a single
-// Tab stop and Left/Right/Up/Down (plus Home/End) move focus between the option cards,
-// matching the WAI-ARIA listbox pattern. Enter/Space already activate a focused card
-// natively (they are <button>s), which applies the style. Bound to the container once,
-// so repeated `renderStylesGallery` rebuilds never stack duplicate listeners.
-const STYLE_ROVE_STEP = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-stylesGallery.addEventListener("keydown", (event) => {
-  const cards = [...stylesGallery.querySelectorAll(".style-card")];
-  if (!cards.length) return;
-  const at = cards.indexOf(document.activeElement);
+// Up/Down move between the options while the menu is open, matching every other
+// product popover in the band and the WAI-ARIA listbox pattern. Enter and Space
+// activate a focused option natively (they are <button>s). Bound once to the
+// container, so rebuilding the options never stacks duplicate listeners.
+const STYLE_ROVE_STEP = { ArrowDown: 1, ArrowUp: -1 };
+stylesMenu.addEventListener("keydown", (event) => {
+  const options = [...stylesMenu.querySelectorAll(".style-option")];
+  if (!options.length) return;
+  const at = options.indexOf(document.activeElement);
   const step = STYLE_ROVE_STEP[event.key];
   let next;
-  if (step) next = at < 0 ? (step > 0 ? 0 : cards.length - 1) : (at + step + cards.length) % cards.length;
+  if (step) next = at < 0 ? (step > 0 ? 0 : options.length - 1) : (at + step + options.length) % options.length;
   else if (event.key === "Home") next = 0;
-  else if (event.key === "End") next = cards.length - 1;
+  else if (event.key === "End") next = options.length - 1;
   else return;
   event.preventDefault();
-  for (const card of cards) card.tabIndex = card === cards[next] ? 0 : -1;
-  cards[next].focus();
+  options[next].focus();
 });
 
 /** Resolves any CSS color string to sRGB bytes.
@@ -564,22 +552,24 @@ function applyPreviewInk(label) {
 // surface, which is the exact bug, just reached by the more common route.
 window
   .matchMedia("(prefers-color-scheme: dark)")
-  .addEventListener("change", () => refreshStyleCardPreviews());
+  .addEventListener("change", () => refreshStylePreviews());
 
 /** Re-decides every card's preview color. The cards are built once per document,
  *  but the surface under them changes with the theme, and a decision made against
  *  the light palette is not valid against the dark one. */
-function refreshStyleCardPreviews() {
-  for (const label of document.querySelectorAll(".style-card-name[data-preview-color]")) {
+function refreshStylePreviews() {
+  for (const label of document.querySelectorAll(".style-option-name[data-preview-color]")) {
     applyPreviewInk(label);
   }
 }
 
-/** Draws a card's label IN the style it represents, from the engine's resolved preview
- *  (family/size/weight/slant/underline/colour) — Word's Styles gallery. Degrades to the
- *  plain slug look when no preview is available; the size is clamped so a 28pt Title
- *  still fits the dense 30px card while keeping the visible hierarchy. */
-function applyStyleCardPreview(label, name) {
+/** Draws an option's label IN the style it represents, from the engine's resolved
+ *  preview (family/size/weight/slant/underline/colour) — which is the whole reason
+ *  the list is a product popup rather than a native `<select>`: an OS popup renders
+ *  every row in the system font, so "Heading 1" would be a word rather than a
+ *  picture of what applying it does. Degrades to the plain label when no preview is
+ *  available; the size is clamped so a 28pt Title stays a menu row. */
+function applyStylePreview(label, name) {
   if (!doc || typeof doc.stylePreview !== "function") return;
   let preview;
   try {
@@ -590,11 +580,8 @@ function applyStyleCardPreview(label, name) {
   if (!preview) return;
   const family = preview.fontFamily;
   if (family) label.style.fontFamily = `"${family.replace(/"/g, "")}", sans-serif`;
-  const size = preview.sizePoints;
-  if (size > 0) {
-    // Map the point size into the card's bounded px range, preserving hierarchy.
-    label.style.fontSize = `${Math.max(11, Math.min(17, Math.round(size * 0.9)))}px`;
-  }
+  const px = previewPx(preview.sizePoints);
+  if (px) label.style.fontSize = `${px}px`;
   label.style.fontWeight = preview.bold ? "700" : "450";
   label.style.fontStyle = preview.italic ? "italic" : "normal";
   label.style.textDecoration = preview.underline ? "underline" : "none";
@@ -607,47 +594,47 @@ function applyStyleCardPreview(label, name) {
   // the label was painted, correctly, in a color nobody could see. Word never has
   // to solve this because its gallery is always light. Ours follows the theme, so
   // the pairing has to be judged every time it changes — hence the authored value
-  // is kept on the element and re-decided in `refreshStyleCardPreviews`.
+  // is kept on the element and re-decided in `refreshStylePreviews`.
   label.dataset.previewColor = preview.color || "";
   applyPreviewInk(label);
   const align = preview.alignment;
   label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
 }
 
-/** Builds one gallery option card drawn IN its own style. `index === 0` makes it
- *  the container's initial roving Tab stop. */
-function makeStyleCard(name, index) {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-  const card = document.createElement("button");
-  card.type = "button";
-  card.className = `style-card style-card-${slug}`;
-  card.dataset.style = name;
-  card.setAttribute("role", "option");
-  card.setAttribute("aria-selected", "false");
-  // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
-  // among the rest (see the gallery's keydown handler).
-  card.tabIndex = index === 0 ? 0 : -1;
-  card.title = name;
-  card.disabled = !styleCardsEnabled;
+/** Builds one option row, drawn IN the style it applies — with a tick on the one
+ *  the caret is already in, which is how Docs and every menu-shaped picker says
+ *  "you are here". */
+function makeStyleOption(name) {
+  const slug = styleSlug(name);
+  const option = document.createElement("button");
+  option.type = "button";
+  option.className = `menu-item style-option style-option-${slug}`;
+  option.dataset.style = name;
+  option.setAttribute("role", "option");
+  option.setAttribute("aria-selected", "false");
+  const check = document.createElement("span");
+  check.className = "menu-check";
+  check.setAttribute("aria-hidden", "true");
+  option.appendChild(check);
   const label = document.createElement("span");
-  label.className = "style-card-name";
+  label.className = "style-option-name";
   label.textContent = name;
-  applyStyleCardPreview(label, name);
-  card.appendChild(label);
-  card.addEventListener("click", () => {
-    if (card.disabled) return;
+  applyStylePreview(label, name);
+  option.appendChild(label);
+  option.addEventListener("click", () => {
     runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-    // Back to the document, as Word and Docs do after a gallery pick and as `chooseFont`
-    // already did. Focus stayed on the card before, so the next keystroke went to a
-    // button; the select hid this by handing focus back on change.
+    closePopover(stylesPopover);
+    // Back to the document, as Word and Docs do after a style pick and as
+    // `chooseFont` already does.
     focusEditorSurface();
   });
-  return card;
+  return option;
 }
 
-/** Whether a style can be applied right now. `updateToolbar` owns this; a card built
- *  later reads it, so a new card is never live while the band is greyed. The refusal
- *  REASON lives once on the group (`#stylesGallery`'s title), not on every card. */
+/** Whether a style can be applied right now. `updateToolbar` owns this; the trigger
+ *  carries it, and the refusal REASON lives once on the trigger's title rather than
+ *  on each option — a disabled option in an open menu is worse than a control that
+ *  says it cannot open. */
 let styleCardsEnabled = false;
 
 /** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
@@ -657,37 +644,30 @@ let styleCardsEnabled = false;
 let definedStyles = new Set();
 let recommendedHere = [];
 
-/** The SHORT list the band offers, in card order: recommended styles the document
- *  defines, then styles it is known to be using, capped at `OFFERED_STYLE_COUNT`.
- *  The caret's style is guaranteed a slot even when the cap is full — it displaces
- *  the last entry rather than falling off, because the user must always be able to
- *  see what they are in and re-apply it. Word gets there by scrolling its gallery. */
+/** The SHORT list the menu offers. The rule itself is `offeredStyleNames`. */
 function offeredStyles() {
-  const offered = [...recommendedHere];
-  const add = (n) => { if (n && definedStyles.has(n) && !offered.includes(n)) offered.push(n); };
-  for (const name of stylesInUse) add(name);
-  const capped = offered.slice(0, OFFERED_STYLE_COUNT);
-  const active = activeParagraphStyle;
-  if (active && definedStyles.has(active) && !capped.includes(active)) {
-    if (capped.length >= OFFERED_STYLE_COUNT) capped.pop();
-    capped.push(active);
-  }
-  return capped;
+  return offeredStyleNames({
+    recommended: recommendedHere,
+    inUse: stylesInUse,
+    defined: definedStyles,
+    active: activeParagraphStyle,
+  });
 }
 
-/** Rebuilds the cards, but only when the offered set actually changed. This is on the
- *  per-keystroke path (`updateToolbar` runs on every caret move and the offered set
- *  depends on the caret's style), so rebuilding unconditionally would discard hover and
- *  focus every cursor move and re-resolve a preview per card per keystroke. */
+/** Rebuilds the option rows, but only when the offered set actually changed. This is
+ *  on the per-keystroke path (`updateToolbar` runs on every caret move and the offered
+ *  set depends on the caret's style), so rebuilding unconditionally would re-resolve a
+ *  preview per option per keystroke — and would tear the menu out from under a pointer
+ *  while it is open. */
 function renderStylesGallery() {
   const wanted = offeredStyles();
-  const current = [...stylesGallery.querySelectorAll(".style-card")].map((c) => c.dataset.style);
+  const current = [...stylesMenu.querySelectorAll(".style-option")].map((c) => c.dataset.style);
   if (current.length === wanted.length && current.every((name, i) => name === wanted[i])) return;
-  stylesGallery.replaceChildren(...wanted.map((name, i) => makeStyleCard(name, i)));
+  stylesMenu.replaceChildren(...wanted.map((name) => makeStyleOption(name)));
 }
 
-/** Rebuilds the gallery for a (re)loaded document or a changed style registry. The
- *  full stylesheet is NOT put on the band (docs/114 §5). */
+/** Rebuilds the menu for a (re)loaded document or a changed style registry. The
+ *  full stylesheet is NOT put on the band (docs/115 §5). */
 function buildStylesGallery(styles) {
   definedStyles = new Set(styles);
   // Matched case-insensitively, so `body text` from an ODT package still counts.
@@ -698,32 +678,38 @@ function buildStylesGallery(styles) {
   for (const name of [...stylesInUse]) if (!definedStyles.has(name)) stylesInUse.delete(name);
   // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
   // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
-  // and the cards would keep previewing the old one. `ribbon-home` caught that.
-  stylesGallery.replaceChildren();
+  // and the rows would keep previewing the old one. `ribbon-home` caught that.
+  stylesMenu.replaceChildren();
   renderStylesGallery();
   syncStylesGalleryActive();
 }
 
-/** Highlights the card matching the reflected style, keeps the roving Tab stop on it,
- *  and publishes it on the container so the chrome has one answer to "what style is
- *  the caret in" now that the select is gone. */
+/** Puts the caret's style on the trigger, ticks it in the menu, and publishes it
+ *  on the control so the chrome has one answer to "what style is the caret in".
+ *
+ *  The trigger's LABEL is the whole of what the deleted 14-entry select
+ *  contributed that the card gallery did not: a control that says, without being
+ *  opened, which style you are in. Docs does exactly this. */
 function syncStylesGalleryActive() {
   const active = activeParagraphStyle;
-  stylesGallery.dataset.activeStyle = active;
-  const name = active ? `Paragraph styles, current style ${active}` : "Paragraph styles";
-  stylesGallery.setAttribute("aria-label", name);
-  const cards = [...stylesGallery.querySelectorAll(".style-card")];
-  let tabStop = cards.findIndex((card) => card.dataset.style === active);
-  if (tabStop < 0) tabStop = 0; // no active style offered → first card is the Tab stop
-  for (const [i, card] of cards.entries()) {
-    card.setAttribute("aria-selected", String(card.dataset.style === active));
-    // The roving Tab stop stays on the applied style, so Tab lands where the caret
-    // already is (arrow keys still reach every card).
-    card.tabIndex = i === tabStop ? 0 : -1;
+  stylesTrigger.dataset.activeStyle = active;
+  // A style outside the offered six is still shown on the trigger — it is what
+  // the caret is in, and a control reporting something else is worse than one
+  // reporting a style it cannot re-offer. `offeredStyles` gives it a slot anyway.
+  stylesTriggerLabel.textContent = active || "Normal";
+  stylesTrigger.classList.toggle("is-placeholder", !active);
+  stylesTrigger.setAttribute(
+    "aria-label",
+    active ? `Paragraph style: ${active}` : "Paragraph style",
+  );
+  for (const option of stylesMenu.querySelectorAll(".style-option")) {
+    const selected = option.dataset.style === active;
+    option.setAttribute("aria-selected", String(selected));
+    option.classList.toggle("is-selected", selected);
   }
   // The band owns exactly one Tab stop across everything it holds. Re-assert that
-  // after the strip publishes its own internal stop, or the band grows a second one
-  // on every caret move — which is precisely how it came to have three.
+  // after the control publishes its own, or the band grows a second one on every
+  // caret move — which is precisely how it came to have three.
   syncRibbonTabStops();
 }
 
@@ -1161,7 +1147,7 @@ if (ribbonBodyEl) {
 // is suppressed only while the control is actively hovered so it never appears
 // alongside the custom one, and is restored on leave (keeping dynamic titles and
 // accessibility intact).
-const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .style-card";
+const TIP_SELECTOR = ".fmt, .ribbon-tab, .review-mode-seg, .styles-trigger";
 const ribbonTooltip = document.createElement("div");
 ribbonTooltip.className = "ribbon-tooltip";
 ribbonTooltip.setAttribute("role", "tooltip");
@@ -9434,8 +9420,8 @@ function updateToolbar() {
   // static `paraControls` list — but they must still refuse honestly rather than being
   // clickable buttons that do nothing (§10, "never a dead control").
   styleCardsEnabled = hasSel;
-  stylesGallery.title = hasSel ? "" : "Place the caret in a paragraph to apply a style";
-  for (const c of stylesGallery.querySelectorAll(".style-card")) c.disabled = !hasSel;
+  stylesTrigger.disabled = !hasSel;
+  stylesTrigger.title = hasSel ? "Paragraph style" : "Place the caret in a paragraph to apply a style";
 
   const align = hasSel && doc ? doc.alignmentAt(selection.focus.node, selection.focus.offset) : "start";
   for (const [key, btn] of Object.entries(alignBtns)) {
@@ -9526,7 +9512,7 @@ function updateToolbar() {
 
   // Reflect the current paragraph style + spacing + list kind. The style at the
   // caret is a style the document is USING, so reflecting it also keeps it offered
-  // by the gallery after the caret moves on (docs/114 §5.3).
+  // by the gallery after the caret moves on (docs/115 §5.3).
   reflectParagraphStyle(hasSel && doc ? doc.paragraphStyleAt(selection.focus.node) : "");
   if (hasSel && doc) for (const p of popovers) if (!p.menu.hidden) p.reflect();
   const listKind = hasSel && doc ? doc.listStyleAt(selection.focus.node) : "";
@@ -9652,7 +9638,7 @@ function updateToolbar() {
 /** Republishes the open document's styles. Paragraph properties ▸ Style gets the
  *  COMPLETE list — it plays the part of Word's Styles pane, and with the palette's
  *  `Style: <name>` rows it is what keeps every style in the stylesheet reachable now
- *  that the band offers a short list (docs/114 §5.5). */
+ *  that the band offers a short list (docs/115 §5.5). */
 function populateStyles() {
   const styles = doc ? doc.listStyles() : [];
   paraPanelStyle.replaceChildren();
@@ -10177,9 +10163,22 @@ function registerPopover(btn, menu, reflect) {
 
 tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
 
-// No "More styles" ▾ popover here any more: it listed every style in the document as
-// cards — the deleted select's long list reached through a side door — and the band is
-// not where the full stylesheet belongs (docs/114 §5).
+// The Styles control: ONE trigger showing the caret's style, opening a SHORT list —
+// Google Docs' shape exactly (docs/115). Not a native `<select>`, because the reason
+// the list is worth opening is that each row is drawn in the style it applies, and an
+// OS popup renders every row in the system font. Not a card gallery either: a gallery
+// spends band width on options nobody is choosing right now and never says, unopened,
+// which style you are in.
+//
+// Still no "More styles" ▾: that listed every style in the document, which is the
+// deleted 14-entry select's long list reached through a side door. The full
+// stylesheet stays off the band — command palette, Paragraph properties (docs/115 §5).
+const stylesPopover = registerPopover(stylesTrigger, stylesMenu, () => {
+  // Rebuild on open rather than on every caret move: the offered set depends on the
+  // caret's style, and the menu is not on screen while the caret is moving.
+  renderStylesGallery();
+  syncStylesGalleryActive();
+});
 
 // `pointerdown` — the phase every other dismissable surface uses (#556). The
 // last holdout on `mousedown`, which a pen or a consumed touch never produces.
@@ -17354,7 +17353,7 @@ function applySettings() {
   root.style.setProperty("--accent", settings.accent);
   // The gallery is built per document, but its legibility decisions were made
   // against whatever palette was live at the time.
-  refreshStyleCardPreviews();
+  refreshStylePreviews();
 
   for (const b of themeSeg.querySelectorAll("button")) {
     const checked = b.dataset.theme === settings.theme;
@@ -17908,7 +17907,7 @@ const COMPACT_TOOLBAR = [
   null,
   { kind: "select", control: "zoom", label: "Zoom", width: 76 },
   null,
-  // The same `#stylesGallery` element the ribbon owns, adopted rather than cloned
+  // The same `#stylesTrigger` element the ribbon owns, adopted rather than cloned
   // (see ADOPTED_CONTROL_IDS). Compact CSS lays its short list out as one row.
   { kind: "gallery", control: "style", label: "Paragraph style", width: 227 },
   null,
@@ -17951,7 +17950,7 @@ let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" 
 /** The ribbon-owned controls the compact bar borrows, by row `control` key. */
 const ADOPTED_CONTROL_IDS = {
   zoom: "zoom",
-  style: "stylesGallery",
+  style: "stylesTrigger",
   font: "fontFamily",
   size: "fontSize",
 };
@@ -17993,7 +17992,7 @@ function renderCompactToolbar() {
       continue;
     }
     // A "select"/"stepper"/"gallery" row ADOPTS the live element the ribbon already
-    // owns — `#zoom`, `#stylesGallery`, `#fontFamily`, `#fontSize` — rather than
+    // owns — `#zoom`, `#stylesTrigger`, `#fontFamily`, `#fontSize` — rather than
     // cloning it. One element means one set of listeners, one reflected value
     // and one disabled state, so the two chromes cannot drift apart; a clone
     // would be a second answer to "what font is this?". `releaseAdoptedControls`
