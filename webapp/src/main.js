@@ -2664,12 +2664,12 @@ const statPages = document.getElementById("statPages");
 // present at the logical page size (the wrap's CSS box) via the canvas element.
 const BASE_DPI = 96;
 
-/** Cap on the devicePixelRatio factor used for the raster *backing store*.
- * Text stays crisp at 1.5× while the RGBA pixel buffers shrink ~×0.56 relative
- * to a Retina dpr of 2 (memory reduction: pixel count scales with dpr²). The
- * CSS/logical page size is always the true logical size — independent of dpr —
- * so scroll height and hit-test geometry never depend on the display density. */
-const MAX_BACKING_DPR = 1.5;
+/** Cap on the devicePixelRatio factor for the raster *backing store*. Was 1.5,
+ * which on a Retina display rasterized at 1.5x and stretched by 1.33x — read as
+ * "pixelated". The memory it bought is no longer needed (#566/#570, and canvases
+ * mount only near the viewport). Capped so a dpr-3 phone does not pay 4x for an
+ * invisible gain. Logical page size is dpr-independent: never moves a hit-test. */
+const MAX_BACKING_DPR = 2;
 
 /** The clamped devicePixelRatio used only for the raster backing store. */
 function backingDpr() {
