@@ -6,6 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   OBJECT_LABELS,
+  clickDescendsIntoGroup,
+  escapeClimbsToGroup,
   nextObjectIndex,
   traversalAnnouncement,
   traversalRoot,
@@ -69,4 +71,72 @@ test("every kind the engine reports has a name", () => {
   for (const kind of ["image", "textbox", "shape", "group"]) {
     assert.ok(OBJECT_LABELS[kind], `${kind} has no label`);
   }
+});
+
+// --- clicking into a group (docs/117) ----------------------------------------
+
+const groupHit = { kind: "group", root: "g1" };
+
+test("the first click on a group does NOT descend", () => {
+  // docs/117 §5 rule 1, and the half a naive fix breaks: a group has to stay
+  // pickable, movable and deletable as one thing. Both Word and ONLYOFFICE
+  // select the group on a first click.
+  assert.equal(clickDescendsIntoGroup(null, groupHit, false), false);
+  assert.equal(clickDescendsIntoGroup(undefined, groupHit, false), false);
+  // A different object was held: this click is a first click on THIS group.
+  assert.equal(
+    clickDescendsIntoGroup(
+      { root: "other", subject: "other" },
+      groupHit,
+      false,
+    ),
+    false,
+  );
+});
+
+test("a click on a group already in hand descends", () => {
+  // Word's second click — the gesture the owner was performing.
+  assert.equal(
+    clickDescendsIntoGroup({ root: "g1", subject: "g1" }, groupHit, false),
+    true,
+  );
+});
+
+test("a click elsewhere in a group whose child is held descends again", () => {
+  // The third click, onto a different shape. Holding a child must not make the
+  // group opaque again.
+  assert.equal(
+    clickDescendsIntoGroup({ root: "g1", subject: "s2" }, groupHit, false),
+    true,
+  );
+});
+
+test("a click on the child already held does not re-resolve", () => {
+  // That click is the start of a drag. Re-resolving there fights the gesture.
+  assert.equal(
+    clickDescendsIntoGroup({ root: "g1", subject: "s2" }, groupHit, true),
+    false,
+  );
+});
+
+test("only a group is descended into", () => {
+  for (const kind of ["image", "textbox", "shape", undefined]) {
+    assert.equal(
+      clickDescendsIntoGroup(
+        { root: "g1", subject: "g1" },
+        { kind, root: "g1" },
+        false,
+      ),
+      false,
+      `${kind} is not a group`,
+    );
+  }
+});
+
+test("Escape climbs out of a group, and only out of a group", () => {
+  assert.equal(escapeClimbsToGroup({ root: "g1", subject: "s2" }), true);
+  // A selected GROUP is its own root: Escape leaves, it does not climb to
+  // itself and trap the user.
+  assert.equal(escapeClimbsToGroup({ root: "g1", subject: "g1" }), false);
+  assert.equal(escapeClimbsToGroup(null), false);
 });

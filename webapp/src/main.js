@@ -20,7 +20,8 @@ import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
-import { OBJECT_LABELS, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
+import { createGlyphPicker } from "./glyph_picker.mjs";
+import { OBJECT_LABELS, clickDescendsIntoGroup, escapeClimbsToGroup, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, offeredStyleNames, previewPx, styleSlug } from "./style_picker.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
@@ -5182,6 +5183,52 @@ function traverseObjects(step) {
   setStatus(traversalAnnouncement(target.kind, next, objects.length, Boolean(inside)));
 }
 
+/** Escape from a shape inside a group selects the GROUP. `escapeClimbsToGroup`
+ *  is the rule; this is the DOM half. */
+function climbOutOfGroup() {
+  const ref = objectSelection?.ref;
+  if (!escapeClimbsToGroup(ref)) return false;
+  // The parent group is a TOP-LEVEL object, so it is in the ordinary order;
+  // there is no second lookup to add to the engine for this.
+  let group = null;
+  try {
+    group = JSON.parse(doc.objectOrder()).find((entry) => entry.node === ref.root) ?? null;
+  } catch {
+    return false;
+  }
+  // The engine can no longer describe the parent — a group deleted out from
+  // under the selection. Collapsing to the caret is the honest fallback: a
+  // selection naming a node that is gone is worse than none.
+  if (!group) return false;
+  selectObject(
+    group.node,
+    group.kind,
+    selection?.focus || null,
+    group.anchored,
+    group,
+  );
+  return true;
+}
+
+/** Selects the shape under the pointer when the click lands in a group that is
+ *  already held. `clickDescendsIntoGroup` is the rule; this is the DOM half. */
+function descendIntoSelectedGroup(object, page, x, y) {
+  const held = objectSelection?.ref;
+  const onHeldChild =
+    !!held && held.subject !== held.root && pointInsideObject(objectSelection.node, page, x, y);
+  if (!clickDescendsIntoGroup(held, object, onHeldChild)) return false;
+  const child = doc.objectDescendantAt(object.root, page.pageNumber, x, y);
+  if (!child) return false;
+  const node = child.node;
+  const kind = child.kind;
+  const anchored = child.anchored;
+  const descriptor = { ...objectCapabilities(child), ...objectReference(child, node) };
+  child.free?.();
+  selectObject(node, kind, selection?.focus || null, anchored, descriptor);
+  setStatus(`${OBJECT_LABELS[kind] ?? "Object"} inside group selected`);
+  return true;
+}
+
 /** Descends a selected multi-child group to its first paint-ordered leaf. The
  *  engine returns the complete root/subject/path reference and capabilities;
  *  the host never reconstructs group structure from canvas geometry. */
@@ -6312,6 +6359,24 @@ function onPointerDown(page, event) {
     objectSelection?.mode === "editing" &&
     pointInsideObject(objectSelection.node, page, x, y);
   const object = editingHere ? null : doc.objectAt(page.pageNumber, x, y);
+  // A SECOND click inside a group selects the shape under the pointer, the way
+  // Word and PowerPoint do: the first click picks the group up as a unit, the
+  // next one reaches into it.
+  //
+  // Without this a group was a wall. `objectAt` deliberately answers with the
+  // group root — correct for the first click — and nothing ever asked a
+  // different question, so clicking a shape inside a group selected the group,
+  // every time, however many times you clicked. The only way in was Tab (and
+  // only since #574) or a double-click, which skips selection entirely and
+  // drops straight into typing. On the owner's Medical form, whose drawings are
+  // one group of four, that is the whole of "they're all grouped and I can't
+  // edit them".
+  const descended = object ? descendIntoSelectedGroup(object, page, x, y) : null;
+  if (descended) {
+    object.free?.();
+    event.preventDefault();
+    return;
+  }
   if (object) {
     const node = object.node;
     const kind = object.kind;
@@ -14109,165 +14174,22 @@ async function insertGlyphAtCaret(glyph) {
  *  keyword search, roving arrow-key grid navigation, insertion (keep-open), and
  *  Esc / backdrop / Done dismissal — mirroring the field dialog's focus-trap and
  *  return-focus contract. */
-function createGlyphPicker({ dialogId, gridId, tabsId, searchId, emptyId, closeId, doneId, groups, tabsAreEmoji }) {
-  const dialog = document.getElementById(dialogId);
-  const grid = document.getElementById(gridId);
-  const tabs = document.getElementById(tabsId);
-  const search = document.getElementById(searchId);
-  const empty = document.getElementById(emptyId);
-  const closeBtn = document.getElementById(closeId);
-  const doneBtn = document.getElementById(doneId);
-  if (!dialog || !grid || !tabs || !search) return { open: () => {} };
 
-  let returnFocus = null;
-  let activeGroup = 0;
-
-  // One tab button per category. Emoji tabs show the category's glyph; symbol
-  // tabs show the category name (which fits the narrower label).
-  groups.forEach((group, index) => {
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "glyph-tab";
-    tab.dataset.groupIndex = String(index);
-    tab.setAttribute("role", "tab");
-    tab.title = group.name;
-    tab.setAttribute("aria-label", group.name);
-    tab.textContent = tabsAreEmoji ? group.icon : group.name;
-    tab.addEventListener("click", () => {
-      search.value = "";
-      selectGroup(index);
-    });
-    tabs.append(tab);
-  });
-
-  function currentItems() {
-    const query = search.value.trim().toLowerCase();
-    if (query) {
-      return groups
-        .flatMap((group) => group.items)
-        .filter((item) => item.n.toLowerCase().includes(query) || item.c === query);
-    }
-    return groups[activeGroup].items;
-  }
-
-  function renderGrid() {
-    const items = currentItems();
-    grid.replaceChildren();
-    for (const item of items) {
-      const cell = document.createElement("button");
-      cell.type = "button";
-      cell.className = "glyph-cell";
-      cell.tabIndex = -1;
-      cell.textContent = item.c;
-      cell.title = tabsAreEmoji ? item.n : `${item.n} (U+${item.c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`;
-      cell.setAttribute("aria-label", item.n);
-      cell.dataset.glyph = item.c;
-      cell.addEventListener("click", () => insertGlyphAtCaret(item.c));
-      grid.append(cell);
-    }
-    const first = grid.querySelector(".glyph-cell");
-    if (first) first.tabIndex = 0;
-    grid.hidden = items.length === 0;
-    if (empty) empty.hidden = items.length !== 0;
-  }
-
-  function selectGroup(index) {
-    activeGroup = index;
-    for (const tab of tabs.querySelectorAll(".glyph-tab")) {
-      const on = Number(tab.dataset.groupIndex) === index && !search.value.trim();
-      tab.classList.toggle("is-active", on);
-      tab.setAttribute("aria-selected", String(on));
-    }
-    renderGrid();
-  }
-
-  // Roving-tabindex arrow navigation across the grid; Enter/Space fire the
-  // button's own click, so insertion (keep-open) is shared with pointer use.
-  grid.addEventListener("keydown", (event) => {
-    const cells = [...grid.querySelectorAll(".glyph-cell")];
-    if (!cells.length) return;
-    const current = cells.indexOf(document.activeElement);
-    if (current < 0) return;
-    let next = -1;
-    if (event.key === "ArrowRight") next = current + 1;
-    else if (event.key === "ArrowLeft") next = current - 1;
-    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      // Columns = how many cells share the first cell's top edge.
-      const top0 = cells[0].offsetTop;
-      let cols = cells.findIndex((cell) => cell.offsetTop > top0);
-      if (cols < 0) cols = cells.length;
-      next = current + (event.key === "ArrowDown" ? cols : -cols);
-    } else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = cells.length - 1;
-    else return;
-    if (next < 0 || next >= cells.length) {
-      event.preventDefault();
-      return;
-    }
-    event.preventDefault();
-    cells[current].tabIndex = -1;
-    cells[next].tabIndex = 0;
-    cells[next].focus();
-  });
-
-  // A query flattens all categories into a filtered result set and clears the
-  // active tab highlight; clearing it restores the current category.
-  search.addEventListener("input", () => selectGroup(activeGroup));
-
-  function close() {
-    if (dialog.hidden) return;
-    dialog.hidden = true;
-    const trigger = tabsAreEmoji ? insertEmojiBtn : insertSymbolBtn;
-    trigger?.setAttribute("aria-expanded", "false");
-    const to = returnFocus;
-    returnFocus = null;
-    if (to && typeof to.focus === "function" && document.contains(to)) to.focus({ preventScroll: true });
-    else focusEditorSurface();
-  }
-
-  dialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      close();
-    }
-  });
-  closeBtn?.addEventListener("click", () => close());
-  doneBtn?.addEventListener("click", () => close());
-
-  function open() {
-    // An open document is the only precondition — Word's Insert ▸ Symbol and
-    // Docs' Insert ▸ Special characters are never gated on a prior click.
-    if (!doc) return;
-    // Viewing is read-only; fail closed before opening (mirrors the link dialog)
-    // so the picker never opens onto a dead insert. Suggesting is allowed — the
-    // insert routes through the tracked suggestion path.
-    if (blockMutationInViewing()) return;
-    // Keep insert tools mutually exclusive in the document-side column. A
-    // second picker must replace the first, never stack over the canvas or
-    // recreate the old modal-overlay experience.
-    const siblingId = tabsAreEmoji ? "symbolDialog" : "emojiDialog";
-    const sibling = document.getElementById(siblingId);
-    if (sibling && !sibling.hidden) sibling.hidden = true;
-    returnFocus = document.activeElement;
-    search.value = "";
-    selectGroup(0);
-    dialog.hidden = false;
-    const trigger = tabsAreEmoji ? insertEmojiBtn : insertSymbolBtn;
-    trigger?.setAttribute("aria-expanded", "true");
-    queueMicrotask(() => search.focus());
-  }
-
-  return { open };
-}
-
+const glyphPickerHost = {
+  insertGlyph: insertGlyphAtCaret,
+  blockedInViewing: blockMutationInViewing,
+  returnFocusToEditor: focusEditorSurface,
+  isDocumentOpen: () => doc !== null,
+};
 const symbolPicker = createGlyphPicker({
   dialogId: "symbolDialog", gridId: "symbolGrid", tabsId: "symbolTabs", searchId: "symbolSearch",
-  emptyId: "symbolEmpty", closeId: "symbolClose", doneId: "symbolDone", groups: SYMBOL_GROUPS, tabsAreEmoji: false,
+  emptyId: "symbolEmpty", closeId: "symbolClose", doneId: "symbolDone", groups: SYMBOL_GROUPS,
+  tabsAreEmoji: false, triggerId: "insertSymbolBtn", ...glyphPickerHost,
 });
 const emojiPicker = createGlyphPicker({
   dialogId: "emojiDialog", gridId: "emojiGrid", tabsId: "emojiTabs", searchId: "emojiSearch",
-  emptyId: "emojiEmpty", closeId: "emojiClose", doneId: "emojiDone", groups: EMOJI_GROUPS, tabsAreEmoji: true,
+  emptyId: "emojiEmpty", closeId: "emojiClose", doneId: "emojiDone", groups: EMOJI_GROUPS,
+  tabsAreEmoji: true, triggerId: "insertEmojiBtn", ...glyphPickerHost,
 });
 
 function openSymbolPicker() {
@@ -15972,7 +15894,7 @@ document.addEventListener("keydown", async (e) => {
       e.preventDefault();
       if (objectSelection.mode === "editing") {
         objectSelection = { ...objectSelection, mode: "selected" };
-      } else {
+      } else if (!climbOutOfGroup()) {
         objectSelection = null; // collapse to the surrounding-text caret
       }
       clearObjectStatus();
