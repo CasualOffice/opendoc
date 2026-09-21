@@ -125,12 +125,6 @@ quietly alter. Both halves are worth a PR of their own:
   text-box paragraph is collected twice. This affects word count and text
   extraction, not just cost.
 
-## Rust — `casual-doc-layout`
-
-| location | pattern | what bounds it | cost at 1.3M paragraphs | verdict |
-| --- | --- | --- | --- | --- |
-| `collect_band_block` → `find_paragraph`, `src/anchor.rs:1024`/`:1040` | the lookup `collect()`s **every header (or footer) block into a fresh `Vec`** before searching it, once per band paragraph | header/footer content per placed band fragment, per page | header content is small, but the allocation is per paragraph per band per page — tens of thousands of throwaway `Vec`s on a long document | **FIX** (drop the `collect()`; iterate lazily) |
-
 ## JavaScript — `webapp/src/**`
 
 `webapp/` is another agent's file domain in this session, so these are mapped and
@@ -149,6 +143,101 @@ operation on the hottest possible loop.
 | `scanAllMatches`, `webapp/src/main.js:14786` | up to `FIND_SCAN_CAP` (5000) `findText` calls per keystroke in the Find box | explicitly capped, `Set` used for cycle detection | deliberate, bounded trade-off | **FINE** |
 | `a11y_mirror.mjs:30`, `pages_panel.mjs:56`, `page_scroll.mjs:204` (binary search), `mountReviewWindow` `main.js:2520` | windowed / virtualised / O(log n) | viewport window | — | **FINE** — these are the pattern the rows above still need |
 | `buildOutline` `main.js:11781`, `refreshBookmarkList` `:13338`, `populateStyles` `:9646`, `clipboard.mjs`, `drafts.mjs` | per-row listener, full list rebuild | headings / bookmarks / style definitions / clipboard payload / open editing slots — none scale with paragraph count | — | **FINE** |
+
+## Rust — `casual-doc-layout`, `casual-doc-render`, `casual-doc-pdf`
+
+The headline here is not a quadratic, it is **four independent full-document
+traversals on the path whose own doc comment promises `O(edit)`**. Each is one
+linear pass; stacked and run per keystroke on a 1.3M-paragraph document the
+symptom is the same. Every row marked VERIFIED below was re-read directly rather
+than taken on a sweep's word.
+
+| location | pattern | what bounds it | cost at 1.3M paragraphs | verdict |
+| --- | --- | --- | --- | --- |
+| `contains_drop_cap_pair`, `src/flow.rs:1572`, called from `build_galley_cached_labeled` `:820` | `blocks.windows(2).any(…)` over the **whole body**, and `effective_drop_cap_frame` resolves each pair through the style cascade — `resolve_paragraph_in_table`, with no cheap short-circuit (VERIFIED) | every adjacent paragraph pair in the body | ~1.3M cascade resolutions **per keystroke**, on the function documented as "what makes an edit `O(edit)` rather than `O(document)`" | **HANDOFF — worst layout row** |
+| `build_section_runs_cached`, `src/document_layout.rs:1188` and `:1193` | `section_break_points(document.body(), …)` then `referenced_endnotes(document.body())`, both unconditional for the single-trailing-section case the code itself calls the common one (VERIFIED) | whole body, twice | two more full walks per keystroke | **HANDOFF** |
+| `resolve_note_labels` → `document_order_note_refs`, `src/note_numbering.rs:237`/`:364` | a third full walk of the body *and every inline* for note references — duplicating the endnote walk above | whole body | a third full walk per keystroke; `cuts.iter().find(…)` inside its per-block loop adds O(sections) per block | **HANDOFF** |
+| `place_floats`, `src/anchor.rs:57`, from `finish_pagination_pass` `src/document_layout.rs:882` | walks every paragraph's **inline list** for anchors, on every pass, including documents with no floats | whole body's inlines | a fourth full walk per keystroke, at the finest granularity of the four | **HANDOFF** |
+| `finish_pagination_pass`, `src/document_layout.rs:850` | re-places running content, resolves `PAGE`/`NUMPAGES`, page borders and page-number labels for **every page of the document** on every cached call; `page_number_labels_for` (`src/paginate.rs:1636`) adds a linear section lookup per page | every page | 20–100k pages reprocessed per keystroke instead of the pages the edit touched | **HANDOFF** |
+| `window_of` → `blocks_with_endnotes`, `src/windowed.rs:455` | the fixed `Cow::Borrowed` fast path is guarded on "no endnotes", not on "no scroll" — a document with **one** endnote falls back to `blocks.to_vec()`, the whole body, per window build (VERIFIED) | every scroll/viewport change | the original ~1.3 GB transient clone, back, on every scroll frame | **HANDOFF — highest-severity regression risk** |
+| `collect_band_block` → `find_paragraph`, `src/anchor.rs:1024`/`:1040` | the lookup `collect()`ed every header (or footer) block into a fresh `Vec` before searching it, once per band paragraph | header/footer definitions — **small**, so this was never quadratic | tens of thousands of throwaway `Vec`s across a long document's pages | **FIXED** (allocation only — the search itself was correctly bounded) |
+| `ImageTable::use_image`, `casual-doc-pdf/src/picture.rs:128` | `self.unresolved.iter().any(…)` over a growing `Vec<String>` | distinct *unresolvable* media keys | only bites a corrupt import with thousands of dangling media parts; should be a `HashSet` | **HANDOFF (low)** |
+| `first_dirty_fragment` `src/incremental.rs:143`, `repaginate_with_stats` `src/paginate.rs:380` | one linear diff pass over the galley per edit | whole galley, single pass | the necessary kind of O(n), not the accidental kind | **FINE** |
+| `blocks_with_endnotes` `src/document_layout.rs:469`, `flow_blocks_into`'s float floor `src/flow.rs:~1405` | both carry comments documenting a *previous* quadratic / 1.3 GB-clone bug at that exact site | — | already fixed; recorded because this family has recurred here before | **FINE (history)** |
+| `MeasureSink::drain_to` `src/measure.rs:882` `pending.remove(0)`, `StyleCascade::new`/`style_chain` `src/cascade.rs:69`/`:88`, everything in `hittest.rs`, `compose.rs`, `numbering.rs`, `fonts.rs`, `shape.rs`, all of `casual-doc-render`, `casual-doc-pdf/src/subset.rs` | front-of-vector mutation capped at 2 by construction; style chain capped at 64; per-page / per-line / per-row / fixed-table scans | a page, a line, a table row, a font table | — | **FINE** — none of these touch the body |
+
+## Rust — `casual-doc-edit`, `-export`, `-import`, `-model`, `-transaction`, `-selection`, `-odf`, `-io`
+
+| location | pattern | what bounds it | cost at 1.3M paragraphs | verdict |
+| --- | --- | --- | --- | --- |
+| `Operation::UpdateReviewState`, `casual-doc-edit/src/lib.rs:1569` | `paragraphs[..index].iter().any(…)` — a rescan of the entries already seen, per entry — **plus** `find_paragraph_any` per entry | the op's own paragraph list; "accept all changes" passes one entry per affected paragraph, so k can be the document (VERIFIED) | O(k²) + O(k·n) ≈ 1.7 × 10¹² | **FIXED** (set + one index) |
+| the same arm's second loop, `casual-doc-edit/src/lib.rs:~1586` and its rollback | `find_paragraph_mut` per entry, and `blocks_owning_mut` → `surface_of` per entry (two walks each) | same | still O(k·n) — the **mutable** side needs a path index, not a reference index | **HANDOFF — named below** |
+| every `Operation::*` arm of `apply`, `casual-doc-edit/src/lib.rs:887`–`2200` | each edit locates its one target with 1–4 linear walks (`blocks_owning_mut`, `find_paragraph_mut`, `find_table_mut`, `find_cell_mut`, `find_shape_mut`) | one node per edit — but each *lookup* is O(document) | plain typing is O(document) per keystroke; a session touching every paragraph is O(n²) | **HANDOFF** (per-keystroke O(document) is the other lane's subject; the fix is a path index, one mechanism for both) |
+| ~14 arms calling `doc.validate()` after mutating — `SetObjectDescr`, `DeleteObject`, `SetCoreProperties`, `UpdateReviewState`, `SetSectionGeometry`, `SetStyleDefinition`, `CreateBookmark`, `DeleteBookmark`, `InsertField`, `InsertInlineObject`, `RemoveInlineObject`, `RemoveField`, `InsertNote`, `RemoveNote` | `Document::validate` (`casual-doc-model/src/v1/document.rs:160` → `:423` → `:816`) re-derives every node id into a `BTreeSet` and re-checks every paragraph's style/numbering refs | whole body | a **second** full pass on top of the lookup, per such edit | **HANDOFF** |
+| `casual-doc-transaction/src/lib.rs:297` | `let mut working = document.clone();` — a deep clone of the entire document per transaction (VERIFIED) | whole document | O(n) copy per transaction, with a keystroke-shaped op vocabulary | **HANDOFF** — and it bears on ADR-033: the OT path must not be built on a per-transaction full clone |
+| `casual-doc-model/src/document.rs:66`/`:75`/`:127`/`:131` (schema **v0** model) | `body.iter().find_map(…)` / `.position(…)` per lookup | whole body | the same defect on a second model, used by `-transaction` and `-selection` | **HANDOFF** |
+| `TextSelection::validate`, `casual-doc-selection/src/lib.rs:71` | two O(n) `document.paragraph(…)` scans per selection change (anchor + focus) | whole body, per caret move | caret movement alone would be O(n) per keypress wherever this model is live | **HANDOFF** |
+| `notes_xml` / `comments_xml`, `casual-doc-export/src/semantic.rs:1493`/`:1538` | `own_media.iter().any(…)` dedup instead of a set, restarted per note/comment | distinct images referenced from notes/comments | O(k²) for a note- and image-heavy document; not the reported hang | **HANDOFF (low)** |
+| `vml_textbox_segment`, `casual-doc-import/src/body.rs:5219` | `self.pending_vml_textboxes.remove(0)` | pending VML text boxes | O(k²) shifting; matters for legacy-VML-heavy imports | **HANDOFF (low)** |
+| `write_paragraph`'s section lookup, `casual-doc-export/src/semantic.rs:3920` | `sections.iter().find(…)`, but only for a paragraph that actually carries a section break | section count | negligible | **FINE** |
+| `Shared::new`'s recent-entry scan, `casual-doc-model/src/v1/intern.rs:96` (capped at 8), style/numbering resolution via `BTreeMap` in `-import`/`-odf`, `resolve_style` memoized in `casual-doc-odf/src/content.rs:1560`, `resolve_numbering_level` (≤9 levels), `related_part` (8 fixed calls), `casual-doc-io/src/pdf.rs:212` | constant-bounded scans, map lookups, or memoized resolution | fixed small sets | — | **FINE** |
+
+No quadratic string work exists in these crates: every writer uses `push_str` /
+`Writer::write_event`, and there is no `String::insert`/`remove` or `replace`
+chain over document-sized text anywhere in production code.
+
+## What this change actually fixed
+
+Twelve document-bounded call sites, all in `casual-doc-wasm` except the last two:
+
+1. `document_outline` — the confirmed hang.
+2. `collect_a11y_blocks` / `accessibility_tree` — lookup removed entirely.
+3. `page_setup_sections`.
+4. `can_continue_list` — and it drives a toolbar enabled state, so it ran on selection change.
+5. `continue_list_inner`.
+6. `set_list_format`.
+7. `restart_list`.
+8. `copy_rich_runs_inner` — Select All, Copy.
+9. `suggest_range_edit`.
+10. `create_style_from_selection`, `apply_paragraph_props_as`, `apply_indent_props` — the last with *two* per-node walks, the table-row test and the property read.
+11. `paragraph_decision_ops` and `collect_changed_review_paragraphs` — Accept All / Reject All / delete a comment.
+12. `casual-doc-edit`'s `UpdateReviewState` prevalidation (set + index), and `casual-doc-layout`'s band-anchor allocation.
+
+Each is either walk-once-and-carry or one `ParagraphIndex`. Behaviour is
+unchanged: the index is pinned against both walking helpers by
+`the_paragraph_index_answers_exactly_what_the_linear_walks_answer`, and the whole
+workspace suite passes.
+
+## The named handoff list
+
+Nothing below is fixed here. Each is a location, not a theme.
+
+**Per-keystroke O(document) work — the non-blocking-open lane**
+
+1. `crates/casual-doc-layout/src/flow.rs:820`/`:1572` — `contains_drop_cap_pair` full-body scan with a cascade resolution per pair, on the incremental galley builder. Worst of these.
+2. `crates/casual-doc-layout/src/document_layout.rs:1188` and `:1193` — two unconditional full-body scans in `build_section_runs_cached`.
+3. `crates/casual-doc-layout/src/note_numbering.rs:237`/`:364` — a third full walk, duplicating (2)'s endnote work.
+4. `crates/casual-doc-layout/src/anchor.rs:57` via `document_layout.rs:882` — `place_floats` walks every paragraph's inlines every pass.
+5. `crates/casual-doc-layout/src/document_layout.rs:850` — every page reprocessed per cached call.
+6. `crates/casual-doc-layout/src/windowed.rs:455` — one endnote reinstates the whole-body clone, per scroll frame.
+7. `crates/casual-doc-wasm/src/lib.rs:10446` — `ordered_paragraphs` allocates a `String` per paragraph to read its length, per call, on caret paths; and appends every non-body surface twice.
+8. `crates/casual-doc-wasm/src/lib.rs:12328` — `collect_block_text_all_surfaces` collects text-box paragraphs twice (they are both a listed surface and descended into), which affects word count and text extraction, not only cost.
+9. `crates/casual-doc-wasm/src/lib.rs:13319` — `review_surfaces` copies every surface (`to_vec`) on each review command.
+
+**The mutable half of the lookup family — needs a path index**
+
+10. `crates/casual-doc-edit/src/lib.rs` — `find_paragraph_mut`, `find_paragraph_any_mut`, `blocks_owning_mut`/`surface_of`, `find_table_mut`, `find_cell_mut`, `find_shape_mut`. A `ParagraphIndex` cannot serve these: it hands out shared references. The one mechanism that would is a **path index** (`NodeId → (Surface, Vec<usize>)`, built by the same walk, descended with the existing `vec_at_path_mut`), which would also retire the `surface_of`-then-walk double pass. That is a design change, not a rename, so it is not smuggled into a performance PR. It is what `UpdateReviewState`'s second loop and every `apply` arm need.
+11. `crates/casual-doc-model/src/v1/document.rs:160` — `validate()` after ~14 op arms: a second full pass per edit. Needs either incremental validation or validation of the touched subtree.
+12. `crates/casual-doc-transaction/src/lib.rs:297` — the per-transaction full document clone; bears directly on ADR-033.
+13. `crates/casual-doc-selection/src/lib.rs:71` and `crates/casual-doc-model/src/document.rs:66` — the same linear-lookup defect on the schema-v0 model, on the caret path.
+
+**JavaScript — the webapp lane** (rows 1–7 of the JavaScript table above)
+
+14. `webapp/src/main.js:4172` `paintReviewMarkers`, `:1560` `updateReviewControls`, `:6017` `paintChecklistMarkers`, `:1823` `renderReviewMarginItems`, `webapp/src/review_layout.mjs:128` `reviewCardSignature`, `webapp/src/main.js:3877` `renderAll`, `webapp/src/print.mjs:79` `printDocument`.
+
+**Small and cheap**
+
+15. `crates/casual-doc-pdf/src/picture.rs:128` (`Vec` → `HashSet`), `crates/casual-doc-export/src/semantic.rs:1493`/`:1538` (same), `crates/casual-doc-import/src/body.rs:5219` (`remove(0)` → an index cursor), `crates/casual-doc-layout/src/note_numbering.rs:384` and `crates/casual-doc-layout/src/paginate.rs:1636` (linear section lookups → binary search).
 
 ## Rule this audit suggests is missing from the contract
 

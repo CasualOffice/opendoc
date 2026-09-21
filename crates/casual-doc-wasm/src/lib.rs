@@ -13,6 +13,7 @@
 //! boundary (doc 57 §3): `render_page(i, dpi)` rasterizes at `dpi`, where
 //! `device_px = twip / 1440 * dpi`.
 
+use casual_doc_edit::ParagraphIndex;
 use casual_doc_edit::SplitProperties;
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
@@ -4803,13 +4804,17 @@ impl WasmDocument {
             },
         );
 
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
         let ordered = self.ordered_paragraphs();
         let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
             return Err(to_js("paragraph not found".into()));
         };
         let mut ops = Vec::new();
         for (id, _) in ordered.into_iter().skip(index) {
-            let Some(properties) = paragraph_properties(&self.document, id) else {
+            let Some(properties) = by_id.properties(id) else {
                 continue;
             };
             let Some(numbering) = properties.numbering else {
@@ -4870,14 +4875,16 @@ impl WasmDocument {
         if self.list_format(current.instance) == Some(NumberFormat::Bullet) {
             return false;
         }
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
         let ordered = self.ordered_paragraphs();
         let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
             return false;
         };
         for (id, _) in ordered[..index].iter().rev() {
-            let Some(numbering) =
-                paragraph_properties(&self.document, *id).and_then(|p| p.numbering)
-            else {
+            let Some(numbering) = by_id.properties(*id).and_then(|p| p.numbering) else {
                 continue;
             };
             if self.list_format(numbering.instance) == Some(NumberFormat::Bullet)
@@ -5041,26 +5048,30 @@ impl WasmDocument {
 
         // Repoint the contiguous run sharing the caret's list instance, keeping
         // each paragraph's own level.
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
         let ordered = self.ordered_paragraphs();
         let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
             return Err(to_js("paragraph not found".into()));
         };
         let mut run: Vec<NodeId> = vec![start_node];
         for (id, _) in ordered[..index].iter().rev() {
-            match paragraph_properties(&self.document, *id).and_then(|p| p.numbering) {
+            match by_id.properties(*id).and_then(|p| p.numbering) {
                 Some(n) if n.instance == current.instance => run.push(*id),
                 _ => break,
             }
         }
         for (id, _) in ordered.iter().skip(index + 1) {
-            match paragraph_properties(&self.document, *id).and_then(|p| p.numbering) {
+            match by_id.properties(*id).and_then(|p| p.numbering) {
                 Some(n) if n.instance == current.instance => run.push(*id),
                 _ => break,
             }
         }
         let mut ops = Vec::with_capacity(run.len());
         for id in run {
-            let Some(properties) = paragraph_properties(&self.document, id) else {
+            let Some(properties) = by_id.properties(id) else {
                 continue;
             };
             let Some(numbering) = properties.numbering else {
@@ -6490,11 +6501,16 @@ impl WasmDocument {
             return "null".to_string();
         }
         let mut current = sections[0].id.node_id();
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
         for (paragraph, _) in self.ordered_paragraphs() {
             if paragraph.to_string() == node {
                 break;
             }
-            if let Some(section) = paragraph_properties(&self.document, paragraph)
+            if let Some(section) = by_id
+                .properties(paragraph)
                 .and_then(|properties| properties.section_break)
             {
                 current = section.node_id();
@@ -8095,13 +8111,18 @@ impl WasmDocument {
             Err(message) if message == "review command made no change" => {}
             Err(message) => return Err(message),
         }
-        let first = paragraph_properties(&self.document, nodes[0])
+        // A suggestion over a Select-All range is bounded by the document, and
+        // `paragraph_properties` walks it per node — one index, one walk.
+        let by_id = ParagraphIndex::build(&self.document);
+        let first = by_id
+            .properties(nodes[0])
             .ok_or_else(|| "paragraph not found".to_string())?;
         let partial_first = start.offset > 0;
         let mut decided: BTreeMap<NodeId, ParagraphProperties> = BTreeMap::new();
         let mut merges = Vec::new();
         for (index, node) in nodes.iter().enumerate() {
-            let current = paragraph_properties(&self.document, *node)
+            let current = by_id
+                .properties(*node)
                 .ok_or_else(|| "paragraph not found".to_string())?;
             let mut next = current.clone();
             if index < last {
@@ -9149,8 +9170,13 @@ impl WasmDocument {
             id,
             style: Some(Box::new(style)),
         }];
+        // Select All makes this loop document-bounded, and resolving each id with
+        // `paragraph_properties` walks the whole document per node — so one index,
+        // built by a single walk, and the properties are read out before the
+        // mutable borrow the ops need.
+        let by_id = ParagraphIndex::build(&self.document);
         for node in self.paragraphs_in_selection(start, end) {
-            if let Some(mut props) = paragraph_properties(&self.document, node) {
+            if let Some(mut props) = by_id.properties(node) {
                 props.style_ref = Some(id);
                 ops.push(Operation::SetParagraphProperties {
                     node,
@@ -9207,26 +9233,37 @@ impl WasmDocument {
         // paragraph properties (a Heading/Title style's outlineLvl is inherited,
         // not written on the paragraph), so headings in real documents are found.
         let cascade = StyleCascade::new(self.document.definitions());
+        // One index over every paragraph, built by a single walk. Resolving each
+        // id with `paragraph_properties` instead walked the whole document per
+        // node: on a 1.3M-paragraph file that is ~1.7e12 block visits for a panel
+        // that returns an empty list, and it never finishes.
+        let index = ParagraphIndex::build(&self.document);
         nodes
             .into_iter()
             .filter_map(|(id, text)| {
-                let level = self.heading_level_of(id, &cascade)?;
+                let direct = index.properties(id)?;
+                let level = self.heading_level_of(&direct, &cascade)?;
                 let t = text.trim();
                 (!t.is_empty()).then(|| format!("{level}\t{id}\t{}", t.replace('\t', " ")))
             })
             .collect()
     }
 
-    /// The heading level of paragraph `node` (1-based; 1 = top), or `None` if it is
-    /// not a heading. Robust across how producers mark headings:
+    /// The heading level of a paragraph with these own (direct) properties
+    /// (1-based; 1 = top), or `None` if it is not a heading.
+    ///
+    /// It takes the properties rather than a `NodeId` because resolving an id
+    /// meant `paragraph_properties`, a linear walk of every surface — and both
+    /// callers are already looking straight at the paragraph, so the lookup made
+    /// walking the document to read the outline quadratic in its length. Robust
+    /// across how producers mark headings:
     /// 1. the **effective** `outlineLvl` (resolved through the whole style chain);
     /// 2. otherwise, walk the paragraph's style + its `basedOn` ancestors for a
     ///    style that carries its own `outlineLvl` or a `Title`/`Heading N` name
     ///    (so a custom style *based on* Heading 2 is still found).
-    fn heading_level_of(&self, node: NodeId, cascade: &StyleCascade) -> Option<u8> {
-        let direct = paragraph_properties(&self.document, node)?;
+    fn heading_level_of(&self, direct: &ParagraphProperties, cascade: &StyleCascade) -> Option<u8> {
         if let Some(level) = cascade
-            .resolve_paragraph(&direct)
+            .resolve_paragraph(direct)
             .outline_level
             .filter(|l| *l <= 8)
         {
@@ -9384,7 +9421,9 @@ impl WasmDocument {
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         let text = trimmed.to_owned();
-                        if let Some(level) = self.heading_level_of(paragraph.id, cascade) {
+                        if let Some(level) =
+                            self.heading_level_of(paragraph.properties.get(), cascade)
+                        {
                             out.push(A11yBlockJson::Heading { level, text });
                         } else if let Some(reference) = paragraph.properties.numbering.as_ref() {
                             out.push(A11yBlockJson::ListItem {
@@ -10746,18 +10785,21 @@ impl WasmDocument {
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
         let mut ops = Vec::new();
-        for node in self.paragraphs_in_selection(start, end) {
-            if let Some(mut props) = paragraph_properties(&self.document, node) {
-                let current = props.clone();
-                f(&mut props);
-                let props = self
-                    .track_paragraph_change(&current, props)
-                    .map_err(to_js)?;
-                ops.push(Operation::SetParagraphProperties {
-                    node,
-                    properties: Box::new(props),
-                });
-            }
+        // Read every selected paragraph's properties through ONE index first.
+        // Select All makes this loop document-bounded, and `paragraph_properties`
+        // walks the whole document per node; the index is also dropped before the
+        // `&mut self` call below, which is why the read is a separate pass.
+        let selected = self.selected_properties(start, end);
+        for (node, mut props) in selected {
+            let current = props.clone();
+            f(&mut props);
+            let props = self
+                .track_paragraph_change(&current, props)
+                .map_err(to_js)?;
+            ops.push(Operation::SetParagraphProperties {
+                node,
+                properties: Box::new(props),
+            });
         }
         if ops.is_empty() {
             return Err(to_js("no paragraph in selection".into()));
@@ -10812,21 +10854,27 @@ impl WasmDocument {
             .order_endpoints(start_node, start_offset, end_node, end_offset)
             .map_err(to_js)?;
         let mut ops = Vec::new();
-        for node in self.paragraphs_in_selection(start, end) {
-            if locate_table_row(&self.document, node).is_some() {
-                continue; // never indent a table-cell paragraph from the ruler
-            }
-            if let Some(mut props) = paragraph_properties(&self.document, node) {
-                let current = props.clone();
-                f(&mut props);
-                let props = self
-                    .track_paragraph_change(&current, props)
-                    .map_err(to_js)?;
-                ops.push(Operation::SetParagraphProperties {
-                    node,
-                    properties: Box::new(props),
-                });
-            }
+        // Both the table-row test and the property read were linear walks of the
+        // whole document, once per selected paragraph — two quadratics in one
+        // loop under Select All. One index answers both, in one walk.
+        let selected: Vec<(NodeId, ParagraphProperties)> = {
+            let by_id = ParagraphIndex::build(&self.document);
+            self.paragraphs_in_selection(start, end)
+                .into_iter()
+                .filter(|node| !by_id.in_table_row(*node))
+                .filter_map(|node| by_id.properties(node).map(|props| (node, props)))
+                .collect()
+        };
+        for (node, mut props) in selected {
+            let current = props.clone();
+            f(&mut props);
+            let props = self
+                .track_paragraph_change(&current, props)
+                .map_err(to_js)?;
+            ops.push(Operation::SetParagraphProperties {
+                node,
+                properties: Box::new(props),
+            });
         }
         if ops.is_empty() {
             return Err(to_js("no body paragraph in selection".into()));
@@ -10854,6 +10902,10 @@ impl WasmDocument {
             return Err("continue numbering requires a numbered list item".into());
         }
 
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
         let ordered = self.ordered_paragraphs();
         let Some(index) = ordered.iter().position(|(id, _)| *id == start_node) else {
             return Err("paragraph not found".into());
@@ -10864,9 +10916,7 @@ impl WasmDocument {
         // there is nothing to continue; a different instance is the list to rejoin.
         let mut target_instance = None;
         for (id, _) in ordered[..index].iter().rev() {
-            let Some(numbering) =
-                paragraph_properties(&self.document, *id).and_then(|p| p.numbering)
-            else {
+            let Some(numbering) = by_id.properties(*id).and_then(|p| p.numbering) else {
                 continue;
             };
             if self.list_format(numbering.instance) == Some(NumberFormat::Bullet) {
@@ -10889,7 +10939,7 @@ impl WasmDocument {
         // following run that shared its current instance and level.
         let mut ops = Vec::new();
         for (id, _) in ordered.into_iter().skip(index) {
-            let Some(properties) = paragraph_properties(&self.document, id) else {
+            let Some(properties) = by_id.properties(id) else {
                 continue;
             };
             let Some(numbering) = properties.numbering else {
@@ -11511,6 +11561,21 @@ impl WasmDocument {
             .map(|(id, _)| *id)
     }
 
+    /// Every selected paragraph with its own properties, resolved through ONE
+    /// [`ParagraphIndex`] rather than a linear walk per node.
+    ///
+    /// Under Select All the selection *is* the document, so resolving each id
+    /// with `paragraph_properties` made every paragraph-formatting command
+    /// quadratic in document length. The index is built and dropped inside this
+    /// method so callers can go on to take `&mut self`.
+    fn selected_properties(&self, start: Pos, end: Pos) -> Vec<(NodeId, ParagraphProperties)> {
+        let by_id = ParagraphIndex::build(&self.document);
+        self.paragraphs_in_selection(start, end)
+            .into_iter()
+            .filter_map(|node| by_id.properties(node).map(|props| (node, props)))
+            .collect()
+    }
+
     /// The paragraph node ids the selection touches, in document order.
     fn paragraphs_in_selection(&self, start: Pos, end: Pos) -> Vec<NodeId> {
         if start.node == end.node {
@@ -11828,6 +11893,10 @@ impl WasmDocument {
         }
 
         let mut out = Vec::new();
+        // Copying a Select-All range walks every paragraph, and resolving each id
+        // with `find_paragraph_any` walks the whole document again — so one index,
+        // built by a single walk.
+        let by_id = ParagraphIndex::build(&self.document);
         for (idx, (node, text)) in nodes.iter().enumerate().take(ei + 1).skip(si) {
             if idx > si {
                 out.push(ClipboardRun {
@@ -11841,7 +11910,7 @@ impl WasmDocument {
             if lo >= hi {
                 continue;
             }
-            let Some(paragraph) = find_paragraph_any(&self.document, node) else {
+            let Some(paragraph) = by_id.paragraph(node) else {
                 continue;
             };
             paragraph_rich_runs(&self.document, paragraph, lo as u32, hi as u32, &mut out);
@@ -13274,14 +13343,15 @@ fn review_paragraph_body(document: &Document, node: NodeId) -> Result<Vec<BlockN
 }
 
 fn collect_changed_review_paragraphs(
-    document: &Document,
+    by_id: &ParagraphIndex<'_>,
     blocks: &[BlockNode],
     out: &mut Vec<ReviewParagraphState>,
 ) -> Result<(), String> {
     for block in blocks {
         match block {
             BlockNode::Paragraph(paragraph) => {
-                let previous = find_paragraph_any(document, paragraph.id)
+                let previous = by_id
+                    .paragraph(paragraph.id)
                     .ok_or_else(|| "review command introduced an unknown paragraph".to_owned())?;
                 if previous.inlines != paragraph.inlines {
                     out.push(ReviewParagraphState {
@@ -13293,12 +13363,12 @@ fn collect_changed_review_paragraphs(
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        collect_changed_review_paragraphs(document, &cell.blocks, out)?;
+                        collect_changed_review_paragraphs(by_id, &cell.blocks, out)?;
                     }
                 }
             }
             BlockNode::Sdt(sdt) => {
-                collect_changed_review_paragraphs(document, &sdt.blocks, out)?;
+                collect_changed_review_paragraphs(by_id, &sdt.blocks, out)?;
             }
             BlockNode::AltChunk(_) => {}
         }
@@ -13330,8 +13400,11 @@ fn update_review_operation_across(
     comments: Option<DefinitionMap<CommentId, Comment>>,
 ) -> Result<Operation, String> {
     let mut paragraphs = Vec::new();
+    // One index for the whole diff: this walks every paragraph of every surface,
+    // and resolving each id against the pre-edit document walked it again.
+    let by_id = ParagraphIndex::build(document);
     for blocks in surfaces {
-        collect_changed_review_paragraphs(document, blocks, &mut paragraphs)?;
+        collect_changed_review_paragraphs(&by_id, blocks, &mut paragraphs)?;
     }
     if paragraphs.is_empty() && comments.is_none() {
         return Err("review command made no change".to_owned());
@@ -13348,7 +13421,8 @@ fn update_review_operation(
     comments: Option<DefinitionMap<CommentId, Comment>>,
 ) -> Result<Operation, String> {
     let mut paragraphs = Vec::new();
-    collect_changed_review_paragraphs(document, body, &mut paragraphs)?;
+    let by_id = ParagraphIndex::build(document);
+    collect_changed_review_paragraphs(&by_id, body, &mut paragraphs)?;
     if paragraphs.is_empty() && comments.is_none() {
         return Err("review command made no change".to_owned());
     }
@@ -15814,10 +15888,14 @@ fn paragraph_decision_ops(
         }
     }
     let mut ops = property_ops;
+    // One index: the merge loop resolved a paragraph per revision, and each
+    // `find_paragraph_any` walks every surface.
+    let by_id = ParagraphIndex::build(document);
     for (first, second) in merges.into_iter().rev() {
-        let survivor = decided.get(&second).cloned().or_else(|| {
-            find_paragraph_any(document, second).map(|paragraph| paragraph.properties.get().clone())
-        });
+        let survivor = decided
+            .get(&second)
+            .cloned()
+            .or_else(|| by_id.properties(second));
         let Some(survivor) = survivor else { continue };
         decided.insert(first, survivor.clone());
         ops.push(Operation::JoinParagraphs {
@@ -30834,6 +30912,141 @@ mod tests {
         assert!(
             snapshots[0] > choke && snapshots[0] < end,
             "the one snapshot must be the choke point's own"
+        );
+    }
+
+    /// A plain-text document of `paragraphs` lines — the shape of the owner's
+    /// 1,303,306-paragraph file, and deliberately heading-free so the outline it
+    /// produces is empty.
+    fn plain_text_document(paragraphs: usize) -> WasmDocument {
+        let mut text = String::new();
+        for i in 0..paragraphs {
+            if i > 0 {
+                text.push('\n');
+            }
+            text.push_str("Line ");
+            text.push_str(&i.to_string());
+        }
+        open_document(text.as_bytes()).expect("open plain text")
+    }
+
+    /// The blocks the paragraph lookups examine while `f` runs.
+    fn lookup_visits(document: &WasmDocument, f: impl Fn(&WasmDocument)) -> u64 {
+        casual_doc_edit::reset_block_visits();
+        f(document);
+        casual_doc_edit::block_visits()
+    }
+
+    /// `documentOutline` must cost work proportional to the document, not to its
+    /// square.
+    ///
+    /// It looped over every node and called `paragraph_properties`, a linear walk
+    /// of every surface to find one paragraph — about 1.7e12 block visits on a
+    /// 1.3M-paragraph document, for a panel that returns an empty list because
+    /// that document has no headings. It never finishes.
+    ///
+    /// The guard is a **ratio**, not a clock: a millisecond threshold cannot tell
+    /// a quadratic apart from a slow constant, and is flaky under load. Doubling
+    /// the document must roughly double the blocks examined.
+    #[test]
+    fn the_outline_panel_is_linear_in_document_length() {
+        let small_n = 400;
+        let small_doc = plain_text_document(small_n);
+        let large_doc = plain_text_document(small_n * 2);
+        let small = lookup_visits(&small_doc, |d| {
+            assert!(
+                d.document_outline().is_empty(),
+                "a plain-text document has no headings"
+            );
+        });
+        let large = lookup_visits(&large_doc, |d| {
+            assert!(d.document_outline().is_empty());
+        });
+        assert!(
+            large < small * 3,
+            "outline work must roughly double, not quadruple: {small} block visits \
+             at {small_n} paragraphs and {large} at {}",
+            small_n * 2
+        );
+    }
+
+    /// The same guard for the accessibility projection, which reads every
+    /// paragraph's heading level while already holding the paragraph — so it must
+    /// not resolve ids at all, and its lookup cost must not grow with the
+    /// document.
+    #[test]
+    fn the_accessibility_projection_is_linear_in_document_length() {
+        let small_n = 400;
+        let small_doc = plain_text_document(small_n);
+        let large_doc = plain_text_document(small_n * 2);
+        let small = lookup_visits(&small_doc, |d| {
+            assert!(
+                d.accessibility_tree().len() > small_n,
+                "a tree per paragraph"
+            );
+        });
+        let large = lookup_visits(&large_doc, |d| {
+            assert!(!d.accessibility_tree().is_empty());
+        });
+        assert!(
+            large < small * 3 || (small == 0 && large == 0),
+            "accessibility projection work must not grow superlinearly: {small} \
+             block visits at {small_n} paragraphs and {large} at {}",
+            small_n * 2
+        );
+    }
+
+    /// Page Setup resolves the section a node belongs to by scanning the
+    /// paragraphs before it. Scanning is inherent; walking the whole document per
+    /// scanned paragraph was not.
+    #[test]
+    fn page_setup_section_lookup_is_linear_in_document_length() {
+        let small_n = 400;
+        // A plain-text import defines no section, and `pageSetupSections` returns
+        // early without scanning when there is none — so give each document one.
+        let with_section = |paragraphs: usize| {
+            let mut d = plain_text_document(paragraphs);
+            d.document
+                .definitions_mut()
+                .sections
+                .push(sections_boundary(
+                    9_001,
+                    (12_240, 15_840),
+                    1_440,
+                    vec![],
+                    vec![],
+                    false,
+                ));
+            d
+        };
+        let small_doc = with_section(small_n);
+        let large_doc = with_section(small_n * 2);
+        let last_of = |d: &WasmDocument| {
+            d.ordered_paragraphs()
+                .last()
+                .map(|(id, _)| id.to_string())
+                .expect("a paragraph")
+        };
+        let small_last = last_of(&small_doc);
+        let large_last = last_of(&large_doc);
+        // The guard is only meaningful if the scan actually runs, which it does
+        // only for a document that defines a section.
+        assert_ne!(
+            small_doc.page_setup_sections(&small_last),
+            "null",
+            "the document must define a section, or this guard cannot fail"
+        );
+        let small = lookup_visits(&small_doc, |d| {
+            let _ = d.page_setup_sections(&small_last);
+        });
+        let large = lookup_visits(&large_doc, |d| {
+            let _ = d.page_setup_sections(&large_last);
+        });
+        assert!(
+            large < small * 3 || (small == 0 && large == 0),
+            "page-setup section lookup must not grow superlinearly: {small} block \
+             visits at {small_n} paragraphs and {large} at {}",
+            small_n * 2
         );
     }
 }

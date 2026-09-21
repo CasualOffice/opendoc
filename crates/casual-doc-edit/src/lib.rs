@@ -28,6 +28,7 @@ use casual_doc_model::v1::{
 };
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -1565,13 +1566,19 @@ pub fn apply(
             if paragraphs.is_empty() && comments.is_none() {
                 return Err(EditError::EmptyEdit);
             }
-            for (index, paragraph) in paragraphs.iter().enumerate() {
-                if paragraphs[..index]
-                    .iter()
-                    .any(|previous| previous.node == paragraph.node)
-                    || find_paragraph_any(doc, paragraph.node).is_none()
-                {
-                    return Err(EditError::NodeNotFound);
+            {
+                // "Accept all changes" passes one entry per affected paragraph, so
+                // this list can be the whole document. Rescanning the entries
+                // already seen made the duplicate check quadratic in its own
+                // length, and resolving each node walked every surface again; a
+                // set and one index answer both in a single pass. The first
+                // duplicate or unknown node still decides, in list order.
+                let by_id = ParagraphIndex::build(doc);
+                let mut seen: HashSet<NodeId> = HashSet::with_capacity(paragraphs.len());
+                for paragraph in paragraphs {
+                    if !seen.insert(paragraph.node) || by_id.paragraph(paragraph.node).is_none() {
+                        return Err(EditError::NodeNotFound);
+                    }
                 }
             }
 
@@ -4358,17 +4365,18 @@ fn note_blocks(n: usize) {
 #[derive(Debug, Default)]
 pub struct ParagraphIndex<'a> {
     by_id: HashMap<NodeId, &'a Paragraph>,
+    in_table_row: HashSet<NodeId>,
 }
 
 impl<'a> ParagraphIndex<'a> {
     /// Indexes every paragraph on every surface of `document` in one walk.
     #[must_use]
     pub fn build(document: &'a Document) -> Self {
-        let mut by_id: HashMap<NodeId, &'a Paragraph> = HashMap::new();
+        let mut index = Self::default();
         for blocks in surface_block_lists(document) {
-            index_blocks(blocks, &mut by_id);
+            index_blocks(blocks, false, &mut index);
         }
-        Self { by_id }
+        index
     }
 
     /// The paragraph `id` names, wherever it lives — the O(1) counterpart of
@@ -4386,6 +4394,19 @@ impl<'a> ParagraphIndex<'a> {
             .map(|paragraph| paragraph.properties.get().clone())
     }
 
+    /// Whether the paragraph is a direct child of a table cell's block list —
+    /// exactly the condition [`locate_table_row`] answers `Some` for, and the
+    /// O(1) counterpart of calling it only to ask `is_some()`.
+    ///
+    /// "Direct child" is the whole condition: a paragraph inside a content
+    /// control inside a cell, or inside a text box inside a cell, is not one,
+    /// because `locate_table_row`'s own membership test does not descend past
+    /// the cell's own block list.
+    #[must_use]
+    pub fn in_table_row(&self, id: NodeId) -> bool {
+        self.in_table_row.contains(&id)
+    }
+
     /// How many distinct paragraphs are indexed.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -4401,7 +4422,7 @@ impl<'a> ParagraphIndex<'a> {
 
 /// Records every paragraph in `blocks`, mirroring [`find_paragraph`]'s descent so
 /// the index answers exactly what the walk would have found.
-fn index_blocks<'a>(blocks: &'a [BlockNode], out: &mut HashMap<NodeId, &'a Paragraph>) {
+fn index_blocks<'a>(blocks: &'a [BlockNode], in_cell: bool, out: &mut ParagraphIndex<'a>) {
     note_blocks(blocks.len());
     for block in blocks {
         match block {
@@ -4409,27 +4430,32 @@ fn index_blocks<'a>(blocks: &'a [BlockNode], out: &mut HashMap<NodeId, &'a Parag
                 // The paragraph is recorded BEFORE its inline text boxes are
                 // walked, because that is the order the linear search tried
                 // them in: it compared the block's own id first.
-                out.entry(paragraph.id).or_insert(paragraph);
+                out.by_id.entry(paragraph.id).or_insert(paragraph);
+                if in_cell {
+                    out.in_table_row.insert(paragraph.id);
+                }
                 index_inlines(&paragraph.inlines, out);
             }
             BlockNode::Table(table) => {
                 for row in &table.rows {
                     for cell in &row.cells {
-                        index_blocks(&cell.blocks, out);
+                        index_blocks(&cell.blocks, true, out);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, out),
+            // A content control inside a cell does NOT carry the cell flag on:
+            // `locate_table_row` tests the cell's own block list and stops there.
+            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, false, out),
             BlockNode::AltChunk(_) => {}
         }
     }
 }
 
 /// The inline half of [`index_blocks`], mirroring `find_paragraph_in_inlines`.
-fn index_inlines<'a>(inlines: &'a [InlineNode], out: &mut HashMap<NodeId, &'a Paragraph>) {
+fn index_inlines<'a>(inlines: &'a [InlineNode], out: &mut ParagraphIndex<'a>) {
     for inline in inlines {
         match inline {
-            InlineNode::TextBox(text_box) => index_blocks(&text_box.blocks, out),
+            InlineNode::TextBox(text_box) => index_blocks(&text_box.blocks, false, out),
             InlineNode::Hyperlink(link) => index_inlines(&link.inlines, out),
             InlineNode::Field(field) => index_inlines(&field.inlines, out),
             InlineNode::Group(group) => index_group(&group.children, out),
@@ -4439,10 +4465,10 @@ fn index_inlines<'a>(inlines: &'a [InlineNode], out: &mut HashMap<NodeId, &'a Pa
 }
 
 /// The shape-group half of [`index_blocks`], mirroring `find_paragraph_in_group`.
-fn index_group<'a>(children: &'a [GroupChild], out: &mut HashMap<NodeId, &'a Paragraph>) {
+fn index_group<'a>(children: &'a [GroupChild], out: &mut ParagraphIndex<'a>) {
     for child in children {
         match child {
-            GroupChild::TextBox(text_box) => index_blocks(&text_box.blocks, out),
+            GroupChild::TextBox(text_box) => index_blocks(&text_box.blocks, false, out),
             GroupChild::Group(nested) => index_group(&nested.children, out),
             GroupChild::Picture(_) | GroupChild::Shape(_) => {}
         }
@@ -10515,7 +10541,16 @@ mod tests {
                     cells: vec![TableCell {
                         id: n(13),
                         properties: TableCellProperties::default(),
-                        blocks: vec![para(10, vec![run(14, "cell")])],
+                        blocks: vec![
+                            para(10, vec![run(14, "cell")]),
+                            // A control INSIDE a cell: `locate_table_row` does
+                            // not see through one, so the index must not either.
+                            BlockNode::Sdt(Box::new(casual_doc_model::v1::BlockSdt {
+                                id: n(15),
+                                properties: casual_doc_model::v1::SdtProperties::default(),
+                                blocks: vec![para(16, vec![run(17, "control in a cell")])],
+                            })),
+                        ],
                     }],
                 }],
             })),
@@ -10526,7 +10561,18 @@ mod tests {
             })),
         ];
         let document = Document::new(n(1000), body, definitions).expect("valid document");
-        let ids = vec![n(2), n(30), n(40), n(10), n(20), n(50), n(60), n(70), n(80)];
+        let ids = vec![
+            n(2),
+            n(30),
+            n(40),
+            n(10),
+            n(16),
+            n(20),
+            n(50),
+            n(60),
+            n(70),
+            n(80),
+        ];
         (document, ids)
     }
 
@@ -10553,6 +10599,11 @@ mod tests {
                 index.properties(id),
                 paragraph_properties(&document, id),
                 "index and walk disagree about paragraph {id}'s properties"
+            );
+            assert_eq!(
+                index.in_table_row(id),
+                locate_table_row(&document, id).is_some(),
+                "index and walk disagree about whether paragraph {id} is in a table row"
             );
         }
         let absent = n(4242);
