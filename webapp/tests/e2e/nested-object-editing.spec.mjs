@@ -31,8 +31,11 @@ async function findObject(page, box) {
   for (let fy = 0.05; fy < 0.4; fy += 0.02) {
     for (let fx = 0.1; fx < 0.85; fx += 0.06) {
       await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
-      const kind = await page.locator("#pages").getAttribute("data-object-kind");
-      if (kind) return { x: box.x + box.width * fx, y: box.y + box.height * fy, kind };
+      const kind = await page
+        .locator("#pages")
+        .getAttribute("data-object-kind");
+      if (kind)
+        return { x: box.x + box.width * fx, y: box.y + box.height * fy, kind };
     }
   }
   return null;
@@ -74,19 +77,25 @@ test("a grouped text box can be entered and edited, leaving the body alone", asy
   const bodyBefore = await page.locator("#a11yDocument").textContent();
 
   await page.mouse.dblclick(found.x, found.y);
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
   // Entering re-renders; a key pressed mid-render is dropped.
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
 
   await page.keyboard.type("NESTED");
-  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
+  await expect(page.locator("#undoBtn")).toHaveAttribute(
+    "aria-label",
+    "Undo Typing",
+  );
   // It went into the grouped box, not the document body.
   expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a grouped text box keeps inside clicks and follows the two-step Escape grammar", async ({
+test("a grouped text box keeps inside clicks and Escape climbs out one level at a time", async ({
   page,
   consoleErrors,
 }) => {
@@ -141,11 +150,28 @@ test("a grouped text box keeps inside clicks and follows the two-step Escape gra
   );
   expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
 
+  // Escape climbs one level per press, which for a shape INSIDE a group is
+  // three: editing → that shape → its group → the document (`docs/117` §5
+  // rule 4). It used to drop from the shape straight to the document, so the
+  // group the user had just entered was gone and re-selecting it meant
+  // clicking again from scratch.
   await page.keyboard.press("Escape");
   await expect(page.locator("#pages")).toHaveAttribute(
     "data-object-mode",
     "selected",
   );
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-kind",
+    "textbox",
+  );
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-kind",
+    "group",
+  );
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-path", "");
+
   await page.keyboard.press("Escape");
   await expect(page.locator("#pages")).not.toHaveAttribute(
     "data-object-mode",
@@ -193,7 +219,10 @@ test("clicking the body exits a grouped text box and sends typing to the body", 
   expect(consoleErrors).toEqual([]);
 });
 
-test("a floating text box can be entered and edited", async ({ page, consoleErrors }) => {
+test("a floating text box can be entered and edited", async ({
+  page,
+  consoleErrors,
+}) => {
   const box = await open(page, FLOATING);
   const found = await findObject(page, box);
   expect(found).not.toBeNull();
@@ -201,10 +230,16 @@ test("a floating text box can be entered and edited", async ({ page, consoleErro
   const bodyBefore = await page.locator("#a11yDocument").textContent();
 
   await page.mouse.dblclick(found.x, found.y);
-  await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
+  await expect(page.locator("#pages")).toHaveAttribute(
+    "data-object-mode",
+    "editing",
+  );
   await page.keyboard.type("FLOAT");
 
-  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
+  await expect(page.locator("#undoBtn")).toHaveAttribute(
+    "aria-label",
+    "Undo Typing",
+  );
   expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
 
   expect(consoleErrors).toEqual([]);
