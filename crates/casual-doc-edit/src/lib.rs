@@ -26,6 +26,8 @@ use casual_doc_model::v1::{
     Style, StyleId, Table, TableCell, TableCellProperties, TableProperties, TableRow,
     UnderlineStyle, VerticalAlignment,
 };
+use std::cell::Cell;
+use std::collections::HashMap;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -4262,6 +4264,9 @@ fn find_paragraph_in_inlines(inlines: &[InlineNode], id: NodeId) -> Option<&Para
 }
 
 pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
+    // Charged to the complexity counter: this is the linear walk whose use inside
+    // a per-node loop is the quadratic defect the guards watch for.
+    note_blocks(blocks.len());
     for block in blocks {
         match block {
             BlockNode::Paragraph(p) if p.id == id => return Some(p),
@@ -4293,6 +4298,155 @@ pub fn find_paragraph(blocks: &[BlockNode], id: NodeId) -> Option<&Paragraph> {
         }
     }
     None
+}
+
+/// How many blocks the paragraph lookups in this crate have examined on this
+/// thread since [`reset_block_visits`].
+///
+/// This is instrumentation for *complexity* guards. [`find_paragraph`] and
+/// [`paragraph_properties`] are linear walks, so a caller that invokes one per
+/// node is quadratic in document size — the defect that made a heading panel
+/// never return on a 1.3M-paragraph document. A guard builds documents of `n`
+/// and `2n` blocks, runs the operation, and asserts this count roughly
+/// *doubles* rather than quadrupling; a millisecond threshold cannot tell a
+/// quadratic apart from a slow constant, and is flaky under load besides.
+///
+/// The count is thread-local, so guards running in parallel do not observe each
+/// other's work, and it is an upper bound on the blocks examined (a walk that
+/// returns early still charges its whole block list) — deterministic for a
+/// given document and operation, which is all a ratio needs.
+#[must_use]
+pub fn block_visits() -> u64 {
+    BLOCK_VISITS.with(Cell::get)
+}
+
+/// Zeroes the [`block_visits`] counter for this thread.
+pub fn reset_block_visits() {
+    BLOCK_VISITS.with(|visits| visits.set(0));
+}
+
+thread_local! {
+    static BLOCK_VISITS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Charges `n` block visits to this thread's counter.
+fn note_blocks(n: usize) {
+    BLOCK_VISITS.with(|visits| visits.set(visits.get().saturating_add(n as u64)));
+}
+
+/// Every paragraph in a document, keyed by node id — one hash index built by a
+/// single walk, for callers that would otherwise call [`find_paragraph_any`] or
+/// [`paragraph_properties`] once per node.
+///
+/// Those two resolve a paragraph by **walking every surface**, which reads like
+/// an accessor at the call site and is a linear scan. Calling one inside a loop
+/// over the document is therefore quadratic: the outline panel did exactly that
+/// and cost ~1.7 × 10¹² block visits on a 1.3M-paragraph document, for a panel
+/// that returned an empty list. The established answer is an index — build the
+/// map once per operation, then look up in O(1).
+///
+/// The index is deliberately **not** cached on the document: it borrows the
+/// paragraphs it points at, so storing it beside them would be self-referential,
+/// and a stale index is a correctness bug where a rebuilt one is merely O(n).
+/// One build per operation already turns the quadratic into a linear pass.
+///
+/// Resolution is identical to the walking helpers, including which paragraph
+/// wins if an id somehow appears twice: the surfaces are visited in
+/// [`surface_block_lists`] order, each block list in document order, and a
+/// paragraph is recorded before the walk descends into the text boxes it holds —
+/// so the first match the walk would have returned is the one indexed.
+#[derive(Debug, Default)]
+pub struct ParagraphIndex<'a> {
+    by_id: HashMap<NodeId, &'a Paragraph>,
+}
+
+impl<'a> ParagraphIndex<'a> {
+    /// Indexes every paragraph on every surface of `document` in one walk.
+    #[must_use]
+    pub fn build(document: &'a Document) -> Self {
+        let mut by_id: HashMap<NodeId, &'a Paragraph> = HashMap::new();
+        for blocks in surface_block_lists(document) {
+            index_blocks(blocks, &mut by_id);
+        }
+        Self { by_id }
+    }
+
+    /// The paragraph `id` names, wherever it lives — the O(1) counterpart of
+    /// [`find_paragraph_any`].
+    #[must_use]
+    pub fn paragraph(&self, id: NodeId) -> Option<&'a Paragraph> {
+        self.by_id.get(&id).copied()
+    }
+
+    /// The properties of paragraph `id` (a clone) — the O(1) counterpart of
+    /// [`paragraph_properties`].
+    #[must_use]
+    pub fn properties(&self, id: NodeId) -> Option<ParagraphProperties> {
+        self.paragraph(id)
+            .map(|paragraph| paragraph.properties.get().clone())
+    }
+
+    /// How many distinct paragraphs are indexed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_id.len()
+    }
+
+    /// Whether the document held no paragraph at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_id.is_empty()
+    }
+}
+
+/// Records every paragraph in `blocks`, mirroring [`find_paragraph`]'s descent so
+/// the index answers exactly what the walk would have found.
+fn index_blocks<'a>(blocks: &'a [BlockNode], out: &mut HashMap<NodeId, &'a Paragraph>) {
+    note_blocks(blocks.len());
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                // The paragraph is recorded BEFORE its inline text boxes are
+                // walked, because that is the order the linear search tried
+                // them in: it compared the block's own id first.
+                out.entry(paragraph.id).or_insert(paragraph);
+                index_inlines(&paragraph.inlines, out);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        index_blocks(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => index_blocks(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// The inline half of [`index_blocks`], mirroring `find_paragraph_in_inlines`.
+fn index_inlines<'a>(inlines: &'a [InlineNode], out: &mut HashMap<NodeId, &'a Paragraph>) {
+    for inline in inlines {
+        match inline {
+            InlineNode::TextBox(text_box) => index_blocks(&text_box.blocks, out),
+            InlineNode::Hyperlink(link) => index_inlines(&link.inlines, out),
+            InlineNode::Field(field) => index_inlines(&field.inlines, out),
+            InlineNode::Group(group) => index_group(&group.children, out),
+            _ => {}
+        }
+    }
+}
+
+/// The shape-group half of [`index_blocks`], mirroring `find_paragraph_in_group`.
+fn index_group<'a>(children: &'a [GroupChild], out: &mut HashMap<NodeId, &'a Paragraph>) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => index_blocks(&text_box.blocks, out),
+            GroupChild::Group(nested) => index_group(&nested.children, out),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
 }
 
 /// A source of fresh run identities. Backed by
@@ -5199,6 +5353,7 @@ fn find_paragraph_in_inlines_mut(inlines: &mut [InlineNode], id: NodeId) -> Opti
 }
 
 fn find_paragraph_mut(blocks: &mut [BlockNode], id: NodeId) -> Option<&mut Paragraph> {
+    note_blocks(blocks.len());
     // Two passes, as `find_table_mut` does: a returned borrow in a loop that also
     // recurses trips the borrow checker, so the direct hit at this level is found
     // by index first and only then borrowed.
@@ -10256,6 +10411,207 @@ mod tests {
         assert!(
             reopened.definitions().footnotes.contains_key(&note),
             "the created footnote survived the round trip"
+        );
+    }
+
+    /// A document holding a paragraph on every surface and in every nesting the
+    /// linear search descends into: body, table cell, content control, inline
+    /// text box, a text box inside a shape group, header, footer, footnote and
+    /// endnote. Returns the document and every paragraph id in it.
+    fn every_surface_document() -> (Document, Vec<NodeId>) {
+        use casual_doc_model::v1::{
+            GroupTextBox, GroupTransform, PointEmu, TextBox, WordprocessingGroup,
+        };
+
+        let extent = Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        };
+        let text_box = |id: u64, inner: u64, text_id: u64| TextBox {
+            id: n(id),
+            anchor: None,
+            relative_height: None,
+            extent: None,
+            fill: None,
+            border: None,
+            body_properties: TextBoxBodyProperties::default(),
+            blocks: vec![para(inner, vec![run(text_id, "boxed")])],
+        };
+
+        let mut definitions = Definitions::default();
+        definitions.headers.insert(
+            HeaderFooterId::new(n(51)),
+            HeaderFooter {
+                blocks: vec![para(50, vec![run(52, "header")])],
+            },
+        );
+        definitions.footers.insert(
+            HeaderFooterId::new(n(61)),
+            HeaderFooter {
+                blocks: vec![para(60, vec![run(62, "footer")])],
+            },
+        );
+        definitions.footnotes.insert(
+            NoteId::new(n(71)),
+            Note {
+                blocks: vec![para(70, vec![run(72, "footnote")])],
+            },
+        );
+        definitions.endnotes.insert(
+            NoteId::new(n(81)),
+            Note {
+                blocks: vec![para(80, vec![run(82, "endnote")])],
+            },
+        );
+
+        let body = vec![
+            BlockNode::Paragraph(Paragraph {
+                id: n(2),
+                properties: ParagraphProperties {
+                    alignment: Some(casual_doc_model::v1::Alignment::Center),
+                    ..ParagraphProperties::default()
+                }
+                .into(),
+                inlines: vec![
+                    run(3, "body"),
+                    InlineNode::TextBox(Box::new(text_box(31, 30, 32))),
+                    InlineNode::Group(Box::new(WordprocessingGroup {
+                        id: n(41),
+                        anchor: None,
+                        relative_height: None,
+                        extent,
+                        transform: GroupTransform {
+                            offset: PointEmu { x_emu: 0, y_emu: 0 },
+                            extent,
+                            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                            child_extent: extent,
+                            flip_h: false,
+                            flip_v: false,
+                            rotation: None,
+                        },
+                        children: vec![GroupChild::TextBox(GroupTextBox {
+                            id: n(42),
+                            offset: PointEmu { x_emu: 0, y_emu: 0 },
+                            extent,
+                            blocks: vec![para(40, vec![run(43, "boxed in a group")])],
+                            fill: None,
+                            border: None,
+                            body_properties: TextBoxBodyProperties::default(),
+                            flip_h: false,
+                            flip_v: false,
+                            rotation: None,
+                        })],
+                    })),
+                ],
+            }),
+            BlockNode::Table(Box::new(Table {
+                id: n(11),
+                grid: Vec::new(),
+                grid_change: None,
+                properties: TableProperties::default(),
+                rows: vec![TableRow {
+                    id: n(12),
+                    properties: casual_doc_model::v1::TableRowProperties::default(),
+                    cells: vec![TableCell {
+                        id: n(13),
+                        properties: TableCellProperties::default(),
+                        blocks: vec![para(10, vec![run(14, "cell")])],
+                    }],
+                }],
+            })),
+            BlockNode::Sdt(Box::new(casual_doc_model::v1::BlockSdt {
+                id: n(21),
+                properties: casual_doc_model::v1::SdtProperties::default(),
+                blocks: vec![para(20, vec![run(22, "control")])],
+            })),
+        ];
+        let document = Document::new(n(1000), body, definitions).expect("valid document");
+        let ids = vec![n(2), n(30), n(40), n(10), n(20), n(50), n(60), n(70), n(80)];
+        (document, ids)
+    }
+
+    /// [`ParagraphIndex`] is a performance change, so it must answer **exactly**
+    /// what the linear walks answer — for every surface and every nesting, and
+    /// for an id no surface owns.
+    #[test]
+    fn the_paragraph_index_answers_exactly_what_the_linear_walks_answer() {
+        let (document, ids) = every_surface_document();
+        let index = ParagraphIndex::build(&document);
+        assert_eq!(
+            index.len(),
+            ids.len(),
+            "every paragraph on every surface is indexed exactly once"
+        );
+        assert!(!index.is_empty());
+        for id in ids {
+            assert_eq!(
+                index.paragraph(id).map(|p| p.id),
+                find_paragraph_any(&document, id).map(|p| p.id),
+                "index and walk disagree about which paragraph {id} is"
+            );
+            assert_eq!(
+                index.properties(id),
+                paragraph_properties(&document, id),
+                "index and walk disagree about paragraph {id}'s properties"
+            );
+        }
+        let absent = n(4242);
+        assert!(index.paragraph(absent).is_none());
+        assert_eq!(
+            index.properties(absent),
+            paragraph_properties(&document, absent)
+        );
+    }
+
+    /// A flat document of `blocks` paragraphs, for the complexity guards.
+    fn flat_document(blocks: u64) -> Document {
+        let body = (0..blocks)
+            .map(|i| para(2 + i * 2, vec![run(3 + i * 2, "text")]))
+            .collect();
+        Document::new(n(1_000_000), body, Definitions::default()).expect("valid document")
+    }
+
+    /// Reading every paragraph's properties through the index must cost work
+    /// proportional to the document, not to its square.
+    ///
+    /// The guard is a **ratio**, not a clock: a millisecond threshold cannot tell
+    /// a quadratic apart from a slow constant and is flaky under load. Doubling
+    /// the document must roughly double the blocks examined; resolving each
+    /// paragraph with [`paragraph_properties`] instead quadruples it.
+    #[test]
+    fn reading_every_paragraph_through_the_index_is_linear_in_the_document() {
+        fn visits(blocks: u64) -> u64 {
+            let document = flat_document(blocks);
+            let ids: Vec<NodeId> = document
+                .body()
+                .iter()
+                .filter_map(|block| match block {
+                    BlockNode::Paragraph(paragraph) => Some(paragraph.id),
+                    _ => None,
+                })
+                .collect();
+            reset_block_visits();
+            let index = ParagraphIndex::build(&document);
+            let found = ids
+                .iter()
+                .filter(|id| index.properties(**id).is_some())
+                .count();
+            assert_eq!(found as u64, blocks, "every paragraph resolves");
+            block_visits()
+        }
+
+        let small_n = 400;
+        let small = visits(small_n);
+        let large = visits(small_n * 2);
+        assert!(
+            small > 0,
+            "the counter must observe the index build, or this guard cannot fail"
+        );
+        assert!(
+            large < small * 3,
+            "work must roughly double, not quadruple: {small} visits at {small_n} \
+             blocks and {large} at {}",
+            small_n * 2
         );
     }
 }
