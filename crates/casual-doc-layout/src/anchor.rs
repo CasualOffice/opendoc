@@ -1039,9 +1039,14 @@ fn collect_band_block(
 /// definitions (headers or footers), so its floating inlines can be resolved.
 fn find_paragraph(document: &Document, id: NodeId, band: PageScope) -> Option<&BlockNode> {
     let defs = document.definitions();
-    let stores: Vec<&BlockNode> = match band {
-        PageScope::Header => defs.headers.iter().flat_map(|(_, hf)| &hf.blocks).collect(),
-        PageScope::Footer => defs.footers.iter().flat_map(|(_, hf)| &hf.blocks).collect(),
+    // Iterated lazily rather than collected: this runs once per band paragraph
+    // per placed band fragment per page, and collecting every header (or footer)
+    // block into a fresh `Vec` first made that an allocation per lookup — tens of
+    // thousands of throwaway vectors on a long document, for a search that stops
+    // at the first match anyway.
+    let stores: Box<dyn Iterator<Item = &BlockNode>> = match band {
+        PageScope::Header => Box::new(defs.headers.iter().flat_map(|(_, hf)| &hf.blocks)),
+        PageScope::Footer => Box::new(defs.footers.iter().flat_map(|(_, hf)| &hf.blocks)),
         PageScope::Body => return None,
     };
     for block in stores {
