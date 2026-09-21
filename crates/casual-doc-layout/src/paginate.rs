@@ -243,6 +243,80 @@ pub fn paginate_measures(
     }
 }
 
+/// [`paginate_measures`] resumed from `checkpoint`, over the measures from
+/// galley index `base` onward.
+///
+/// The measure-tier counterpart of [`paginate_from_based`], and it exists for
+/// the same reason: a document measured in chunks (`docs/116` §7 — measure a
+/// prefix at open, extend in the background) must not re-paginate from page one
+/// on every extension, which would make extending a long document quadratic in
+/// its length. It resumes at the last checkpoint instead, so each extension
+/// costs one checkpoint interval plus the new chunk however far in it is.
+///
+/// The pages it returns are numbered absolutely and are field-for-field what a
+/// whole [`paginate_measures`] of the same measures would have produced from
+/// `checkpoint.page_index` on, and the checkpoints it records carry absolute
+/// galley indices. Both are asserted against a whole pass in
+/// `tests/windowed_document.rs`.
+///
+/// # Panics
+///
+/// If the checkpoint names a position or a repeated header row before `base`:
+/// the slice does not contain what the resume would have to read, and a page
+/// produced anyway would be a wrong one.
+#[must_use]
+pub fn paginate_measures_from(
+    measures: &[FragmentMeasure],
+    base: u32,
+    config: &PageConfig,
+    checkpoint_interval: usize,
+    checkpoint: &Checkpoint,
+) -> MeasureLayout {
+    assert!(
+        checkpoint.at.fragment >= base && checkpoint.table_headers.iter().all(|i| *i >= base),
+        "a resumed measure pagination must contain everything its checkpoint names \
+         (base {base}, checkpoint at {:?}, headers {:?})",
+        checkpoint.at,
+        checkpoint.table_headers,
+    );
+    let local = Checkpoint {
+        page_index: checkpoint.page_index,
+        at: FlowPos {
+            fragment: checkpoint.at.fragment - base,
+            line: checkpoint.at.line,
+        },
+        current_table: checkpoint.current_table,
+        table_headers: checkpoint.table_headers.iter().map(|i| i - base).collect(),
+    };
+    let mut p = Paginator::new(
+        config,
+        measures,
+        Vec::new(),
+        local.page_index as usize,
+        local.at,
+        None,
+        &[],
+    );
+    p.checkpoint_interval = checkpoint_interval;
+    p.seed_table_context(&local);
+    p.run(local.at.fragment as usize);
+    p.flush();
+    for page in &mut p.pages {
+        page.flow.start.fragment += base;
+        page.flow.end.fragment += base;
+    }
+    for recorded in &mut p.checkpoints {
+        recorded.at.fragment += base;
+        for header in &mut recorded.table_headers {
+            *header += base;
+        }
+    }
+    MeasureLayout {
+        pages: p.pages,
+        checkpoints: p.checkpoints,
+    }
+}
+
 /// Paginates the pages from `checkpoint` onward, without paginating anything
 /// above it.
 ///
