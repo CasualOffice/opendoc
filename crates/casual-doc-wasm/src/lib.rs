@@ -73,7 +73,10 @@ use casual_doc_model::v1::{
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
-use casual_doc_model::v1::{GroupChild, HeaderFooterId, HeaderFooterKind};
+use casual_doc_model::v1::{
+    GroupChild, HeaderFooterId, HeaderFooterKind, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
+    Symbol,
+};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -4672,6 +4675,128 @@ impl WasmDocument {
         self.apply_paragraph_props_as(node, 0, node, 0, HistoryKind::ListFormatting, move |p| {
             p.numbering = Some(NumberingRef { instance, level });
         })
+    }
+
+    /// The form checkbox containing `node` — which may be the control itself or
+    /// a run inside it — with its current state. Searched across every surface,
+    /// because a form's controls sit in table cells as often as in the body.
+    fn find_form_checkbox(&self, node: NodeId) -> Option<(NodeId, SdtCheckbox)> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() {
+                found = find_checkbox_containing(&paragraph.inlines, node);
+            }
+        });
+        found
+    }
+
+    /// The paragraph whose inlines hold `node`, across every surface. The
+    /// paragraph is what `SetInlines` addresses.
+    fn paragraph_containing_inline(&self, node: NodeId) -> Option<NodeId> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() && inlines_contain_node(&paragraph.inlines, node) {
+                found = Some(paragraph.id);
+            }
+        });
+        found
+    }
+
+    /// The **form checkbox** (`w14:checkbox` content control) at the caret
+    /// position `node`/`offset`, or `undefined`.
+    ///
+    /// A position is a PARAGRAPH and a byte offset into its text — the same
+    /// pair a hit test returns — so the host asks this about wherever the
+    /// pointer or the caret landed and never has to know where content
+    /// controls are. Asking by node id alone was wrong: the id a hit test
+    /// hands back is the paragraph's, which is not inside the control.
+    ///
+    /// Distinct from `checkboxStateAt` above, which is a CHECKLIST list item —
+    /// a bullet whose marker happens to be a box. This is Word's content
+    /// control: a form field with its own checked flag and its own pair of
+    /// glyphs (`docs/118` §2).
+    #[wasm_bindgen(js_name = formCheckboxAt)]
+    #[must_use]
+    pub fn form_checkbox_at(&self, node: &str, offset: u32) -> Option<String> {
+        let nid = NodeId::from_str(node).ok()?;
+        let (sdt, _) = self.find_form_checkbox_at(nid, offset)?;
+        Some(sdt.to_string())
+    }
+
+    /// Whether the form checkbox `node` is ticked: `1` ticked, `0` not, `-1`
+    /// when `node` is not a form checkbox.
+    #[wasm_bindgen(js_name = formCheckboxChecked)]
+    #[must_use]
+    pub fn form_checkbox_checked(&self, node: &str) -> i32 {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return -1;
+        };
+        match self.find_form_checkbox(nid) {
+            Some((_, checkbox)) => i32::from(checkbox.checked),
+            None => -1,
+        }
+    }
+
+    /// The form checkbox at a caret position, with its state. The paragraph is
+    /// resolved once and its inlines are walked in order, so the span each
+    /// control occupies in the paragraph's text is the span the caret is
+    /// compared against.
+    fn find_form_checkbox_at(&self, node: NodeId, offset: u32) -> Option<(NodeId, SdtCheckbox)> {
+        let paragraph = find_paragraph_any(&self.document, node)?;
+        checkbox_at_offset(&paragraph.inlines, offset, &mut 0)
+    }
+
+    /// Ticks or unticks the form checkbox at `node`, as one undoable action.
+    ///
+    /// Both competitors agree on this interaction, so none of it is invented
+    /// (`docs/118` §2). ONLYOFFICE's `CInlineLevelSdt.ToggleCheckBox` flips the
+    /// flag and then **rewrites the control's content** to the checked or
+    /// unchecked symbol — the glyph is content, not decoration — and Word does
+    /// the same on a click or on Space. So does this: the flag moves and the
+    /// run inside the control is replaced with the glyph the document itself
+    /// declared in `w14:checkedState` / `w14:uncheckedState`, keeping that
+    /// run's formatting so a 16pt teal box stays 16pt and teal.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not inside a form checkbox, so a host cannot wire this to
+    /// an arbitrary click and silently corrupt a paragraph.
+    #[wasm_bindgen(js_name = toggleFormCheckbox)]
+    pub fn toggle_form_checkbox(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        self.toggle_form_checkbox_inner(node).map_err(to_js)
+    }
+
+    /// [`toggle_form_checkbox`](Self::toggle_form_checkbox) with a plain error,
+    /// so the behaviour is reachable from a native test — a `JsValue` cannot be
+    /// constructed off a wasm target, and an operation this consequential
+    /// should not be guarded only in a browser.
+    fn toggle_form_checkbox_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let (sdt_id, checkbox) = self
+            .find_form_checkbox(nid)
+            .ok_or_else(|| "not a form checkbox".to_owned())?;
+        let paragraph = self
+            .paragraph_containing_inline(sdt_id)
+            .ok_or_else(|| "the checkbox has no paragraph".to_owned())?;
+        let want = !checkbox.checked;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| "the checkbox has no paragraph".to_owned())?;
+        let mut inlines = source.inlines.clone();
+        if !toggle_checkbox_in_inlines(&mut inlines, sdt_id, want) {
+            return Err("not a form checkbox".to_owned());
+        }
+        let caret = Pos {
+            node: paragraph,
+            offset: 0,
+        };
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            caret,
+            HistoryKind::Formatting,
+        )
     }
 
     /// The checked state of the checklist item at `node`: `1` checked, `0`
@@ -12394,6 +12519,231 @@ fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>
 /// `collect_block_text` over EVERY block surface, not just the body. Word count,
 /// endpoint ordering and text extraction all stopped at the body edge, so header,
 /// footer and note text was invisible to them.
+/// Walks `inlines` (and the SDTs nested in them) for the form checkbox whose
+/// id is `sdt`, sets its checked flag to `want`, and rewrites its content to
+/// the glyph the document declared for that state. Reports whether it found one.
+///
+/// Rewriting the content is the whole of it: the glyph a reader sees is a
+/// normal run inside the control, not a decoration the renderer draws, so a
+/// flag that moved without the run moving would show a ticked box as unticked
+/// (`docs/118` §2 — ONLYOFFICE's `private_UpdateCheckBoxContent` does exactly
+/// this, and Word's file format is why both must).
+/// Every paragraph on every block surface. Written on the existing
+/// `surface_block_lists` walk so a new surface is taught to this and to text
+/// extraction at once, rather than only to whichever remembered.
+fn visit_paragraphs_in(document: &Document, visit: &mut impl FnMut(&Paragraph)) {
+    fn walk(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => visit(paragraph),
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            walk(&cell.blocks, visit);
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => walk(&sdt.blocks, visit),
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+    for blocks in surface_block_lists(document) {
+        walk(blocks, visit);
+    }
+}
+
+fn toggle_checkbox_in_inlines(inlines: &mut [InlineNode], sdt: NodeId, want: bool) -> bool {
+    for inline in inlines {
+        match inline {
+            InlineNode::Sdt(node) if node.id == sdt => {
+                let Some(SdtControlData::Checkbox(checkbox)) = node.properties.data.as_mut() else {
+                    return false;
+                };
+                checkbox.checked = want;
+                let symbol = if want {
+                    checkbox.checked_state.clone()
+                } else {
+                    checkbox.unchecked_state.clone()
+                };
+                let Some(glyph) = symbol.as_ref().and_then(checkbox_glyph) else {
+                    // The document declared no glyph for this state, so there
+                    // is nothing correct to draw. The flag alone would show the
+                    // wrong box, which is worse than refusing.
+                    return false;
+                };
+                rewrite_checkbox_content(
+                    &mut node.inlines,
+                    glyph,
+                    symbol.as_ref().and_then(|s| s.font.as_deref()),
+                );
+                return true;
+            }
+            InlineNode::Sdt(node) => {
+                if toggle_checkbox_in_inlines(&mut node.inlines, sdt, want) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if toggle_checkbox_in_inlines(&mut link.inlines, sdt, want) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The form checkbox whose text span covers `offset`, walking `inlines` in
+/// order and advancing `seen` by each one's own plain-text length.
+///
+/// A caret sitting immediately after the glyph counts as inside it, which is
+/// where a click on the right-hand half of the box puts it — the alternative
+/// is a box that ticks from one side and not the other.
+fn checkbox_at_offset(
+    inlines: &[InlineNode],
+    offset: u32,
+    seen: &mut u32,
+) -> Option<(NodeId, SdtCheckbox)> {
+    for inline in inlines {
+        let start = *seen;
+        let length = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+        let end = start.saturating_add(length);
+        match inline {
+            InlineNode::Sdt(sdt) => {
+                if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
+                    && offset >= start
+                    && offset <= end
+                {
+                    return Some((sdt.id, checkbox.clone()));
+                }
+                let mut inner = start;
+                if let Some(found) = checkbox_at_offset(&sdt.inlines, offset, &mut inner) {
+                    *seen = end;
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let mut inner = start;
+                if let Some(found) = checkbox_at_offset(&link.inlines, offset, &mut inner) {
+                    *seen = end;
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+        *seen = end;
+    }
+    None
+}
+
+/// The form checkbox containing `node`, if any: its id and its current state.
+/// `node` is whatever a hit test returned, so this searches the control's own
+/// id and the ids of the runs inside it.
+fn find_checkbox_containing(inlines: &[InlineNode], node: NodeId) -> Option<(NodeId, SdtCheckbox)> {
+    for inline in inlines {
+        match inline {
+            InlineNode::Sdt(sdt) => {
+                if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
+                    && (sdt.id == node || inlines_contain_node(&sdt.inlines, node))
+                {
+                    return Some((sdt.id, checkbox.clone()));
+                }
+                if let Some(found) = find_checkbox_containing(&sdt.inlines, node) {
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(found) = find_checkbox_containing(&link.inlines, node) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `node` is one of these inlines, or of anything nested in them.
+///
+/// A checkbox's content is a `w:sym`, and the toggle rewrites it in place
+/// keeping the id — so a lookup that knew only about runs found the control
+/// before the first click and lost it after, which made the second click a
+/// no-op and the box un-untickable.
+fn inlines_contain_node(inlines: &[InlineNode], node: NodeId) -> bool {
+    inlines.iter().any(|inline| match inline {
+        InlineNode::Run(run) => run.id == node,
+        InlineNode::Symbol(symbol) => symbol.id == node,
+        InlineNode::Sdt(sdt) => sdt.id == node || inlines_contain_node(&sdt.inlines, node),
+        InlineNode::Hyperlink(link) => inlines_contain_node(&link.inlines, node),
+        _ => false,
+    })
+}
+
+/// The character a `w14:checkedState` / `w14:uncheckedState` names. `@w14:val`
+/// is a hex code point; Wingdings-style symbol fonts write it in the private
+/// use area (`F0A3`), which is where the font puts the glyph.
+fn checkbox_glyph(symbol: &SdtCheckboxSymbol) -> Option<char> {
+    char::from_u32(u32::from_str_radix(symbol.val.trim(), 16).ok()?)
+}
+
+/// Replaces the control's content with the glyph for its new state.
+///
+/// A Word checkbox's content is a `w:sym` — an [`InlineNode::Symbol`] carrying
+/// a font and a code point — so that is what is written back, keeping the
+/// existing glyph's font and run formatting so a 16pt teal box stays 16pt and
+/// teal. Rewriting it as plain text would lose the symbol font and draw a `£`.
+///
+/// The PRIVATE-USE offset is taken from the document rather than assumed.
+/// `w14:checkedState w14:val="0052"` names character 0x52 *in the named font*,
+/// and Word writes that glyph in content as `w:char="F052"`. Which spelling
+/// this document uses is visible in the glyph already there, so the existing
+/// one decides: a control whose current symbol sits in the PUA gets a PUA
+/// replacement, and one that does not, does not.
+fn rewrite_checkbox_content(inlines: &mut Vec<InlineNode>, glyph: char, font: Option<&str>) {
+    const PRIVATE_USE_BASE: u32 = 0xF000;
+
+    let existing = inlines.iter().find_map(|inline| match inline {
+        InlineNode::Symbol(symbol) => Some((
+            symbol.id,
+            symbol.properties.get().clone(),
+            symbol.font.clone(),
+            symbol.char >= PRIVATE_USE_BASE,
+        )),
+        InlineNode::Run(run) => Some((
+            run.id,
+            run.properties.get().clone(),
+            font.unwrap_or_default().to_owned(),
+            false,
+        )),
+        _ => None,
+    });
+    // A control with no content at all cannot supply an id, and minting one
+    // here would hand out an id the document's allocator does not know about.
+    // Leaving the content alone keeps the model valid.
+    let Some((id, properties, existing_font, in_private_use)) = existing else {
+        return;
+    };
+    let face = font.filter(|f| !f.is_empty()).unwrap_or(&existing_font);
+    if face.is_empty() {
+        return; // a symbol with no font cannot resolve; refuse rather than guess
+    }
+    let code = u32::from(glyph);
+    let code = if in_private_use && code < 0x100 {
+        PRIVATE_USE_BASE + code
+    } else {
+        code
+    };
+    inlines.clear();
+    inlines.push(InlineNode::Symbol(Box::new(Symbol {
+        id,
+        font: face.to_owned(),
+        char: code,
+        properties: properties.into(),
+    })));
+}
+
 fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, String)>) {
     for blocks in surface_block_lists(document) {
         collect_block_text(blocks, out);
@@ -21598,6 +21948,136 @@ mod tests {
             !error.to_lowercase().contains("unreachable"),
             "leaks a trap name: {error}"
         );
+    }
+
+    /// A form checkbox ticks, unticks, and comes back on undo.
+    ///
+    /// `docs/118` §2: the Medical Incident Report Form carries eight of these
+    /// and not one of them could be ticked — click, Space and double-click were
+    /// all no-ops, so a form opened as a picture of a form. The control was
+    /// fully modelled the whole time; the operation did not exist.
+    #[test]
+    fn a_form_checkbox_ticks_and_unticks() {
+        use casual_doc_model::v1::{Definitions, InlineSdt, SdtControlKind, SdtProperties};
+        let id = |n: u64| NodeId::from_parts(n, 311).unwrap();
+        // Wingdings 2, exactly as the owner's form declares it: A3 empty box,
+        // 52 ticked box.
+        let checkbox = SdtCheckbox {
+            checked: false,
+            checked_state: Some(SdtCheckboxSymbol {
+                val: "0052".to_owned(),
+                font: Some("Wingdings 2".to_owned()),
+            }),
+            unchecked_state: Some(SdtCheckboxSymbol {
+                val: "00A3".to_owned(),
+                font: Some("Wingdings 2".to_owned()),
+            }),
+        };
+        let run = Run {
+            id: id(4),
+            properties: RunProperties::default().into(),
+            text: "\u{a3}".to_owned(),
+        };
+        let sdt = InlineNode::Sdt(Box::new(InlineSdt {
+            id: id(3),
+            properties: SdtProperties {
+                control_kind: Some(SdtControlKind::Checkbox),
+                data: Some(SdtControlData::Checkbox(checkbox)),
+                ..SdtProperties::default()
+            },
+            inlines: vec![InlineNode::Run(run)],
+        }));
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: id(2),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![sdt],
+        });
+        let document =
+            Document::new(id(1), vec![paragraph], Definitions::default()).expect("valid");
+        let package = write_document(&document, &BTreeMap::new()).expect("write");
+        let mut doc = open_document(&package).expect("open");
+
+        // Ids are reassigned on import, so the run is found in the OPENED
+        // document — and it is the run that is asked about, because a run is
+        // what a hit test returns and a host must not have to know where
+        // content controls are.
+        let run_node = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Sdt(sdt) = inline {
+                        for inner in &sdt.inlines {
+                            if let InlineNode::Run(run) = inner {
+                                found.get_or_insert(run.id);
+                            }
+                        }
+                    }
+                }
+            });
+            found
+                .expect("the imported document has a run inside the control")
+                .to_string()
+        };
+        // Asked the way the host asks: a paragraph and a caret offset, which
+        // is what a hit test returns.
+        let paragraph_node = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                if found.is_none()
+                    && paragraph
+                        .inlines
+                        .iter()
+                        .any(|inline| matches!(inline, InlineNode::Sdt(_)))
+                {
+                    found = Some(paragraph.id);
+                }
+            });
+            found.expect("a paragraph holding the control").to_string()
+        };
+        let control = doc
+            .form_checkbox_at(&paragraph_node, 0)
+            .expect("offset 0 is inside the form checkbox");
+        let _ = &run_node;
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "starts unticked");
+
+        doc.toggle_form_checkbox_inner(&run_node).expect("tick");
+        assert_eq!(doc.form_checkbox_checked(&control), 1, "ticked");
+        let text = |d: &WasmDocument| {
+            let mut nodes = Vec::new();
+            collect_block_text_all_surfaces(&d.document, &mut nodes);
+            nodes.into_iter().map(|(_, t)| t).collect::<String>()
+        };
+        assert!(
+            text(&doc).contains('\u{52}'),
+            "the CONTENT must become the ticked glyph, not just the flag — the \
+             box a reader sees is a run, not a decoration: {:?}",
+            text(&doc),
+        );
+
+        doc.toggle_form_checkbox_inner(&run_node).expect("untick");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "unticked again");
+        assert!(text(&doc).contains('\u{a3}'));
+
+        // One undo step, as in Word and as in ONLYOFFICE's
+        // `CChangesSdtPrCheckBoxChecked`.
+        doc.toggle_form_checkbox_inner(&run_node).expect("tick");
+        doc.undo().expect("undo");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "undo restores it");
+        assert!(text(&doc).contains('\u{a3}'), "and restores the glyph");
+    }
+
+    /// The toggle refuses anything that is not a form checkbox, so a host
+    /// cannot wire it to an arbitrary click and quietly rewrite a paragraph.
+    #[test]
+    fn toggling_something_that_is_not_a_form_checkbox_is_refused() {
+        let doc = open_document(b"Just a line of text").expect("open");
+        let mut doc = doc;
+        let mut nodes = Vec::new();
+        collect_block_text_all_surfaces(&doc.document, &mut nodes);
+        let node = nodes.first().expect("a paragraph").0.to_string();
+        assert_eq!(doc.form_checkbox_checked(&node), -1);
+        assert!(doc.form_checkbox_at(&node, 0).is_none());
+        assert!(doc.toggle_form_checkbox_inner(&node).is_err());
     }
 
     /// The window moves when the host leaves it, and **only** then. A viewer
