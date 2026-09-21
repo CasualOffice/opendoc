@@ -254,6 +254,36 @@ Corollaries that follow from the same habit:
 - Counts in docs must be **derived, not hand-maintained**. Hand-maintained numbers have
   drifted into false public claims twice (`104` read 114/47 against an actual 146/54).
 
+### Performance is a gate, not a hope
+
+This repository enforces correctness six ways and performance not at all. There is no
+CI job that would notice an O(n²) in a core path, and that is exactly how one shipped:
+`documentOutline` called `paragraph_properties` per node, and that helper walks the
+document linearly to find one paragraph — 1.3M × 1.3M block visits on a real customer
+file, for a panel that returned an empty list. The owner found it by waiting minutes for
+a panel to open. No test was ever going to.
+
+So, until a perf job exists in CI, these are the rules:
+
+- **State the complexity of anything that touches the document, in the doc comment.**
+  If it is not O(1) or O(viewport), say what it is and why that is acceptable.
+- **Never call a lookup-by-id inside a loop over ids.** `paragraph_properties`,
+  `find_paragraph` and their siblings are **linear scans**; they look like accessors at
+  the call site. Walk once and carry what you need.
+- **Per-interaction work is O(1) in document size** (`docs/107` §4, an owner constraint).
+  A click, a keystroke, a scroll. If an interaction is O(document) anywhere, that is a
+  defect regardless of how fast it feels on the fixture.
+- **Anything O(document) must not run on the main thread**, must show real progress, and
+  must be cancellable. Opening, panels that enumerate the document, find-all, counts,
+  export. A frozen tab is a hung tab whatever the profiler says.
+- **Guard complexity, not milliseconds.** Build documents of *n* and *2n* and assert the
+  work roughly doubles. A timing threshold is flaky and cannot tell a slow constant from
+  a quadratic; a doubling test catches the thing that actually kills a large document.
+- **"Completes in a harness" is not "usable in a tab."** Measure time to *interactive*.
+  `MAX_VIEWER_BLOCKS` was raised to 1,800,000 on a Playwright run that merely finished,
+  which admitted documents that freeze the tab for 30–110 seconds — strictly worse than
+  the honest refusal it replaced.
+
 ## 9. Evidence rules — these exist because the public page lied twice
 
 `webapp/fidelity.html` carried fabricated claims on two separate occasions.
