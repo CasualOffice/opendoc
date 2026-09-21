@@ -1,4 +1,4 @@
-// Guards the chrome's ONE dropdown model (docs/114 §6).
+// Guards the chrome's ONE dropdown model (docs/115 §6).
 //
 // The owner reported the same defect four times: "styles dropdown and font still
 // have two different ones, OS and product dropdown still". Two separate mistakes
@@ -66,7 +66,7 @@ test("the ribbon band contains no native <select>", () => {
     [],
     "a native <select> is in the ribbon band. The band's pickers are product " +
       "popovers (the Styles gallery, the font menu); an OS dropdown beside them is " +
-      "the inconsistency docs/114 closes. Put the control in a popover, or add it " +
+      "the inconsistency docs/115 closes. Put the control in a popover, or add it " +
       "to RIBBON_SELECT_EXEMPTIONS with a reason.",
   );
 });
@@ -77,25 +77,35 @@ test("the Styles group offers exactly one control", () => {
   assert.ok(start > 0, "the Home band should still have a Styles group");
   const group = source.slice(start, source.indexOf('<span class="rgroup-label">Styles', start));
 
-  // One listbox, no select, and no second trigger. The group held three controls
-  // for one job — a select, this gallery and a "▾" popover that listed every style
-  // over again — and every one of them called `setParagraphStyle`.
+  // One trigger, no select, and no second entry point. The group held three
+  // controls for one job — a select, a card gallery and a "▾" popover that listed
+  // every style over again — and every one of them called `setParagraphStyle`.
   assert.equal(
     (group.match(/<select\b/g) ?? []).length,
     0,
     "the Styles group must not carry a <select>",
   );
   assert.equal(
-    (group.match(/role="listbox"/g) ?? []).length,
-    1,
-    "the Styles group must expose exactly one listbox — the gallery",
-  );
-  assert.equal(
     (group.match(/aria-haspopup=/g) ?? []).length,
+    1,
+    "the Styles group must expose exactly one dropdown trigger. Two is the defect " +
+      "the owner reported four times; zero means the gallery is back on the band " +
+      "instead of behind a trigger (docs/115 §5)",
+  );
+  assert.ok(
+    group.includes('id="stylesTrigger"'),
+    "the one control is `#stylesTrigger`, which the compact chrome adopts by id",
+  );
+  // The LIST lives in the popover layer, not in the band. A gallery rendered
+  // inline satisfies every other assertion here.
+  assert.equal(
+    (group.match(/role="listbox"/g) ?? []).length,
     0,
-    "the Styles group must not carry a second entry point: the '▾ More styles' " +
-      "popover listed every paragraph style again, which is the long list the " +
-      "deleted select carried, reached through a side door (docs/114 §5)",
+    "the option list belongs in `#stylesMenu`, off the band, not inside the group",
+  );
+  assert.ok(
+    /id="stylesMenu"[^>]*role="listbox"/.test(source),
+    "`#stylesMenu` must be the listbox the trigger opens",
   );
 });
 

@@ -3428,104 +3428,129 @@ body.compact-mode {
 }
 
 .styles-ctl {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  /* Sized by its cards, not by a constant — see `.style-card`'s max-width for why
-     the cap is a backstop rather than the normal sizing path. */
-  width: auto;
-  max-width: 244px;
-  min-width: 0;
-}
-
-/* TWO rows of content-sized cards, in EXACTLY the footprint the old
-   select-above-a-strip composition occupied: 227px × 62px (30 + 2 + 30). Same space,
-   twice the capacity — six offered styles instead of three, and the Home band's
-   ~10px of slack at 1280px is untouched, so no group is exiled into the "⋯" overflow.
-
-   Wrapping flex rather than a fixed-column grid, because `ribbon-legibility.spec.mjs`
-   holds the harder line and it is the right one: a card that ellipsises to "Bo…"
-   defeats the only reason a gallery exists instead of a list of names. Equal columns
-   cut "Heading 1" (which wants ~92px) down to the width of "List". So each card keeps
-   its natural width and the row wraps, exactly as the single-row strip sized itself.
-   `.style-card`'s max-width is the backstop against a pathologically long name. */
-.styles-gallery {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 2px;
-  width: 227px;
-  height: 62px;
-  overflow: hidden;
-  padding: 0;
-}
-
-.style-card {
-  display: flex;
   align-items: center;
-  justify-content: flex-start;
-  /* Natural width, wrapping into the gallery's two rows. `flex: 1 1 0` once gave
-   * every card an equal share of a fixed budget, so "Normal" and "Heading 1" were
-   * both cut to three characters. */
-  flex: 0 0 auto;
   min-width: 0;
-  /* A backstop, not the sizing path: a name long enough to fill a whole row would
-   * push the others out of the gallery's `overflow: hidden`. Every name the
-   * recommended set can produce fits well inside this; an in-use style with a very
-   * long name ellipsises here rather than displacing the rest of the gallery. */
-  max-width: 110px;
-  height: 30px;
-  padding: 3px 4px;
+}
+
+/* ONE control, Google Docs' shape: a trigger labelled with the style the caret is
+   in, opening a short list. It occupies the same 227px the select-above-a-strip
+   composition and then the two-row card gallery each occupied, so the Home band's
+   ~10px of slack at 1280px is untouched and no group is exiled into the "⋯" menu.
+
+   Wide enough for the names the recommended set can produce ("Intense Quote" is
+   the longest) without ellipsis; a custom in-use style with a very long name
+   ellipsises here and the `title` carries the whole of it, which is the same trade
+   `.font-family-trigger` makes and for the same reason. */
+.styles-control {
+  width: 227px;
+  min-width: 0;
+}
+
+.styles-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  width: 100%;
+  height: var(--h-control);
+  padding: 0 4px 0 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
-  font: inherit;
+  font-size: var(--fs-body);
   cursor: pointer;
+  transition: border-color 0.11s, background 0.11s;
+}
+
+.styles-trigger:hover:not(:disabled) {
+  border-color: var(--accent-line);
+}
+
+.styles-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.styles-trigger:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 1px;
+}
+
+.styles-trigger[aria-expanded="true"] {
+  border-color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.styles-trigger-label {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.style-card:hover:not(:disabled) {
-  border-color: var(--accent-text);
-  background: var(--accent-soft);
+/* No document open, or the caret is nowhere: the trigger still names a style so
+   the control is not an empty box, but it reads as unset. */
+.styles-trigger.is-placeholder .styles-trigger-label {
+  color: var(--muted);
 }
 
-.style-card[aria-selected="true"] {
-  border-color: var(--accent-text);
-  box-shadow: inset 0 0 0 1px var(--accent-text);
+.styles-trigger-caret {
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
 }
 
-/* Keyboard focus ring for arrow-key roving between cards (listbox model). */
-.style-card:focus-visible {
-  outline: 2px solid var(--accent-text);
-  outline-offset: 1px;
+/* The list. Each row is drawn IN the style it applies — that is the whole reason
+   this is a product popup and not a native `<select>`, whose rows an OS renders in
+   the system font. Six rows at their own sizes, so the menu is short enough to
+   never need a scrollbar at the cap. */
+.styles-menu {
+  min-width: 227px;
+  max-width: 320px;
+  padding: 4px;
 }
 
-.style-card:disabled {
-  opacity: 0.5;
-  cursor: default;
+.style-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  /* Tall enough for a Title row at its preview size, and uniform so the list does
+     not look ragged; the preview sizes are clamped in `applyStylePreview`. */
+  min-height: 30px;
+  padding: 4px 8px;
+  text-align: left;
 }
 
-.style-card-name {
+.style-option-name {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: var(--fs-small);
   font-weight: 450;
 }
 
-/* Fallback look for the well-known built-in styles. The gallery now draws each
-   card IN its own style from the engine's resolved `stylePreview` (font
-   family/size/weight/slant/underline/color, applied inline in `main.js`), which
-   overrides these class rules. These remain as a graceful degrade for when the
-   preview is unavailable (e.g. before a document's engine is ready). */
-.style-card-title .style-card-name { font-size: 15px; font-weight: 700; }
-.style-card-heading-1 .style-card-name { font-size: 12px; font-weight: 700; }
-.style-card-heading-2 .style-card-name { font-size: 13px; font-weight: 650; }
-.style-card-heading-3 .style-card-name { font-size: 12.5px; font-weight: 600; }
-.style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
-.style-card-normal .style-card-name { font-size: 12px; font-weight: 450; }
+/* The tick uses the chrome's one check mark (`.menu-check`, opacity-toggled) so the
+   Styles menu says "you are here" the same way every other menu in the product does. */
+.style-option.is-selected .menu-check {
+  opacity: 1;
+}
+
+.style-option.is-selected {
+  color: var(--accent-text);
+}
+
+/* Fallback look for the well-known built-in styles. Each row is normally drawn in
+   its own style from the engine's resolved `stylePreview` (family/size/weight/
+   slant/underline/color, applied inline in `main.js`), which overrides these. They
+   remain as a graceful degrade for when the preview is unavailable — before a
+   document's engine is ready, say. */
+.style-option-title .style-option-name { font-size: 19px; font-weight: 700; }
+.style-option-subtitle .style-option-name { font-size: 14px; font-weight: 500; color: var(--muted); }
+.style-option-heading-1 .style-option-name { font-size: 17px; font-weight: 700; }
+.style-option-heading-2 .style-option-name { font-size: 15px; font-weight: 650; }
+.style-option-heading-3 .style-option-name { font-size: 14px; font-weight: 600; }
+.style-option-normal .style-option-name { font-size: 13px; font-weight: 450; }
 
 /* Overflow "⋯" button + menu — collects groups that don't fit the width. */
 .ribbon-overflow-btn {
@@ -3588,17 +3613,12 @@ body.compact-mode {
   flex-wrap: wrap;
 }
 
-/* In the 560px overflow popover the offered styles get room to breathe: the same
-   cards, wrapping across the popover's width rather than the band's 227px, and as
-   many rows as they need instead of the band's fixed two. */
-.ribbon-overflow-menu .styles-ctl {
+/* In the 560px overflow popover the control gets the popover's width instead of
+   the band's 227px. */
+.ribbon-overflow-menu .styles-ctl,
+.ribbon-overflow-menu .styles-control {
   width: 100%;
   max-width: none;
-}
-
-.ribbon-overflow-menu .styles-gallery {
-  width: 100%;
-  height: auto;
 }
 
 /* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
@@ -5490,18 +5510,16 @@ body.ribbon-mode .compact-toolbar { display: none; }
   outline-offset: -2px;
   border-color: transparent;
 }
-/* The Styles gallery is the SAME element the ribbon owns, adopted rather than cloned
-   (docs/114 §5.6). The compact bar is one dense 30px row, so its two-row grid lays out
-   as a single row here and scrolls sideways if the offered set fills it; the cards keep
-   their own border, because a borderless card is not readable as a button. */
-.compact-toolbar .styles-gallery.cadopted {
-  flex-wrap: nowrap;
+/* The Styles trigger is the SAME element the ribbon owns, adopted rather than cloned
+   (docs/115 §5.6). The compact bar is one dense 30px row and much narrower than the
+   band, so the trigger narrows here and lets its label ellipsise — the `title` and
+   the open menu both still carry the whole name. It keeps its own border, because a
+   borderless control is not readable as a dropdown. */
+.compact-toolbar .styles-trigger.cadopted {
+  width: 132px;
   height: 30px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
 }
-.compact-toolbar .styles-gallery.cadopted .style-card:not(:hover):not(:focus-visible) {
+.compact-toolbar .styles-trigger.cadopted:not(:hover):not(:focus-visible) {
   border-color: var(--line-strong);
 }
 .compact-sep {

@@ -345,7 +345,7 @@
             <span class="rgroup-label">Paragraph</span>
           </div>
           <div class="rgroup rgroup-styles" data-group="styles">
-            <!-- ONE Styles control (docs/114). This group used to hold three for
+            <!-- ONE Styles control (docs/115). This group used to hold three for
                  the same job: a native <select> listing every style in the
                  document flat, a three-card strip, and a "▾" popover listing
                  every style again. Word puts a curated Quick Styles gallery in
@@ -357,7 +357,12 @@
                  Paragraph properties ▸ Style. Nothing is dropped from the model:
                  this is what is offered for authoring, not what is supported. -->
             <div class="rgroup-ctl styles-ctl">
-              <div id="stylesGallery" class="styles-gallery" role="listbox" aria-label="Paragraph styles"></div>
+              <div class="ctl styles-control" title="Paragraph style">
+                <button type="button" id="stylesTrigger" class="styles-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="stylesMenu" aria-label="Paragraph style">
+                  <span id="stylesTriggerLabel" class="styles-trigger-label">Normal</span>
+                  <span class="ms styles-trigger-caret" aria-hidden="true">arrow_drop_down</span>
+                </button>
+              </div>
             </div>
             <span class="rgroup-label">Styles</span>
           </div>
@@ -769,6 +774,8 @@
         </footer>
       </section>
     </div>
+
+    <div id="stylesMenu" class="context-menu styles-menu" hidden role="listbox" aria-label="Paragraph styles"></div>
 
     <div id="spacingMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line and paragraph spacing">
       <div class="menu-heading">Line spacing</div>

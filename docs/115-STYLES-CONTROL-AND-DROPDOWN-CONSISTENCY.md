@@ -70,6 +70,29 @@ document defines. A `.docx` opened in Docs with thirty custom styles still shows
 | opendoc, **before** | **3** cards **and** a flat **14**-entry OS select **and** a 14-card popover | — | none |
 | opendoc, **after** | up to **6** — recommended ∩ document, plus the style in use | command palette, Paragraph properties | command palette search |
 
+**Revision (same day).** The first implementation of "one control, six styles" was a
+two-row **card gallery** sitting open on the band. Every guard in §7 passed against it,
+and the owner rejected it on sight: *"i need a dropdown but native and fewer options
+like our competitors like google docs."* The count was right and the shape was wrong,
+which is the failure mode this document was supposed to prevent — §3 records that Docs
+offers its six from **one toolbar dropdown labelled with the applied style**, and the
+implementation took the number from Docs and the shape from Word.
+
+So the control is now a dropdown: `#stylesTrigger`, labelled with the style at the
+caret, opening `#stylesMenu` with the same six. Two things change as a consequence.
+
+- **The trigger names the current style with nothing open.** That is the one thing the
+  deleted 14-entry select did that the gallery did not, and §5.3 had to argue the
+  highlighted card away as an adequate substitute. It no longer has to.
+- **The list is not a native `<select>`**, even though "native" is the word the owner
+  used, and this is the one place this document departs from the literal request. An
+  OS popup renders every row in the system font, and the entire reason the list is
+  worth opening rather than reading is that each row is drawn *in the style it
+  applies*. A native select would show six identical words. `each option is drawn in
+  the style it applies` is the guard, and flattening the rows fails it. Everything
+  else about the control is a dropdown: one trigger, a caret, a label, click-outside
+  and Escape to close, and no second entry point on the band.
+
 Neither product shows more than ~8 in the ribbon, neither uses a flat dropdown of every
 style, and neither presents two controls for the choice. We were doing all three.
 
@@ -77,9 +100,10 @@ style, and neither presents two controls for the choice. We were doing all three
 
 **One control. A short list. Everything still supported internally.**
 
-1. **`#stylesGallery` is the only Styles control in the band**, and the only one anywhere in
+1. **`#stylesTrigger` is the only Styles control in the band**, and the only one anywhere in
    the ribbon or compact chrome. `#paragraphStyle` (the native select) and `#stylesMoreBtn` /
    `#stylesMorePanel` (the `▾` and its full-list popover) are **deleted**, not hidden.
+   It is a dropdown labelled with the caret's style, opening a six-row product popup.
 2. **The offered list is short and capped at six.** `RECOMMENDED_STYLES` is the intersection
    of Word's Quick Styles and Docs' six, in priority order; the gallery offers those of them
    the open document actually defines. **Six**, because that is Docs' number exactly and the
@@ -109,7 +133,7 @@ style, and neither presents two controls for the choice. We were doing all three
      Styles-pane equivalent.
    Neither is in the band, which is exactly where the owner did not want them.
 6. **Compact chrome adopts the same element.** `ADOPTED_CONTROL_IDS.style` points at
-   `#stylesGallery`; compact CSS lays the same cards out as one scrollable row. One element,
+   `#stylesTrigger`; compact CSS narrows it and lets the label ellipsise. One element,
    one reflect path, two chromes — no clone that can drift.
 
 ### Trade-offs, stated
@@ -188,19 +212,30 @@ already had, so the band's 10 px of slack is unchanged and remains margin, not b
 A guard asserting "the Styles control exists" passed through the entire three-control period.
 The guards that can actually catch this class:
 
-1. **One control per job.** Every element in the Home band that applies a paragraph style must
-   be a descendant of the single `#stylesGallery`, and the band must contain no `<select>`.
+0. **The control is a dropdown that names the caret's style unopened.** Asserted on
+   its own, because every other guard here passed against the card gallery. The band
+   must carry exactly one `aria-haspopup` trigger and no option rows; the trigger's
+   label must equal the reflected style; the menu must open, mark the current style,
+   and close on an outside click. Putting the options back on the band fails it with
+   "the options belong in the popup, not on the band"; labelling the trigger "Styles"
+   instead of the style fails it too.
+1. **Each row is drawn in the style it applies.** The justification for a product
+   popup over an OS one, so it is guarded rather than asserted in prose: at least two
+   distinct (weight, size) pairs across the rows. Flattening the previews fails it —
+   "every row renders identically (Normal 13px/450, Body Text 13px/450, …)".
+2. **One control per job.** Every element in the Home band that applies a paragraph style must
+   be the single `#stylesTrigger`, and the band must contain no `<select>`.
    Re-adding `#paragraphStyle` — or any second style picker — fails it.
-2. **The ribbon does not list every style.** The number of cards in the band is at most 6 and
+3. **The ribbon does not list every style.** The number of rows offered is at most 6 and
    strictly fewer than the styles the document defines. Uncapping the list fails it.
-3. **The in-use style is always offered.** Put the caret in a style outside the recommended
+4. **The in-use style is always offered.** Put the caret in a style outside the recommended
    set; its card must be present and `aria-selected`, and stay offered after the caret leaves.
    Deleting the in-use step fails it.
-4. **Reachability ≥ 2 surfaces** (§10): every style the document defines is reachable as a
+5. **Reachability ≥ 2 surfaces** (§10): every style the document defines is reachable as a
    `Style: <name>` palette row **and** in Paragraph properties. Neither alone counts, and it
    is asked of *every* defined style rather than of one example.
-5. **Select chrome**, as above, from computed style.
-6. **The compact chrome borrows the same element.** Nothing covered compact mode before, and
+6. **Select chrome**, as above, from computed style.
+7. **The compact chrome borrows the same element.** Nothing covered compact mode before, and
    this change moved what it adopts from the deleted `#paragraphStyle` to the gallery — a
    broken adoption would have shipped as a Styles control that simply was not there. The
    guard asserts the adopted element is the gallery, that it offers the same set, that it

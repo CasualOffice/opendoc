@@ -17,9 +17,9 @@ import {
 // gallery applies a real style).
 
 async function ribbonHasNoHScroll(page) {
-  return page.locator('.ribbon-panel[data-panel="home"]').evaluate(
-    (el) => el.scrollWidth <= el.clientWidth + 1,
-  );
+  return page
+    .locator('.ribbon-panel[data-panel="home"]')
+    .evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
 }
 
 test("the Home ribbon never horizontally scrolls; narrow widths collapse groups into the overflow menu", async ({
@@ -36,7 +36,9 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   // Editing mode follows the Vellum reference into the footer and remains
   // visible independently of Home-band overflow; the requested Home control is
   // mirrored from the same mode state.
-  await expect(page.locator('#reviewModeControl [data-review-mode="suggesting"]')).toBeVisible();
+  await expect(
+    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
+  ).toBeVisible();
   await expect(page.locator("#ribbonReviewModeControl")).toBeVisible();
 
   // Undo/Redo occupy distinct rows; Clipboard and Editing expose their authored
@@ -52,7 +54,9 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
     ["cutBtn", "copyBtn", "findBtn", "replaceBtn"].every((id) => {
       const button = document.getElementById(id).getBoundingClientRect();
       const icon = document.querySelector(`#${id} .ms`).getBoundingClientRect();
-      const label = document.querySelector(`#${id} .fmt-big-label`).getBoundingClientRect();
+      const label = document
+        .querySelector(`#${id} .fmt-big-label`)
+        .getBoundingClientRect();
       return (
         icon.left >= button.left &&
         icon.right <= button.right &&
@@ -65,13 +69,19 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   expect(tileContentFits).toBe(true);
 
   const highlightDividerClearance = await page.evaluate(() => {
-    const highlight = document.querySelector(".color-control-highlight").getBoundingClientRect();
-    const fontGroup = document.querySelector('[data-group="font"]').getBoundingClientRect();
+    const highlight = document
+      .querySelector(".color-control-highlight")
+      .getBoundingClientRect();
+    const fontGroup = document
+      .querySelector('[data-group="font"]')
+      .getBoundingClientRect();
     return fontGroup.right - highlight.right;
   });
   expect(highlightDividerClearance).toBeGreaterThanOrEqual(12);
 
-  await page.locator('#ribbonReviewModeControl [data-review-mode="suggesting"]').click();
+  await page
+    .locator('#ribbonReviewModeControl [data-review-mode="suggesting"]')
+    .click();
   await expect(
     page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
   ).toHaveAttribute("aria-pressed", "true");
@@ -89,7 +99,9 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   await page.locator("#ribbonOverflowBtn").click();
   const menu = page.locator("#ribbonOverflowMenu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator(".rgroup-label", { hasText: "Paragraph" })).toBeVisible();
+  await expect(
+    menu.locator(".rgroup-label", { hasText: "Paragraph" }),
+  ).toBeVisible();
   await expect(menu.locator("#alignCenter")).toBeVisible();
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -144,14 +156,20 @@ test("overflowed icon controls keep tooltips and the command surface restores fo
   expect(consoleErrors).toEqual([]);
 });
 
-test("ribbon tabs use roving focus and arrow-key activation", async ({ page, consoleErrors }) => {
+test("ribbon tabs use roving focus and arrow-key activation", async ({
+  page,
+  consoleErrors,
+}) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
   await page.locator("#tabHome").focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.locator("#tabInsert")).toBeFocused();
-  await expect(page.locator("#tabInsert")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#tabInsert")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.locator("#tabHome")).toHaveAttribute("tabindex", "-1");
   await expect(page.locator("#panelInsert")).toBeVisible();
 
@@ -203,15 +221,18 @@ test("the Styles gallery applies a real style and stays inside the band's width 
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  const gallery = page.locator("#stylesGallery");
-  await expect(gallery.locator(".style-card").first()).toBeVisible();
+  const trigger = page.locator("#stylesTrigger");
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const menu = page.locator("#stylesMenu");
   // A SHORT list, capped at six — what Docs offers and the bottom of Word's visible
-  // gallery range (docs/114). `styles-control.spec.mjs` owns the list's composition;
+  // gallery range (docs/115). `styles-control.spec.mjs` owns the list's composition;
   // here the concern is only that this band still holds it.
-  const cards = await gallery.locator(".style-card").count();
-  expect(cards).toBeGreaterThan(1);
-  expect(cards).toBeLessThanOrEqual(6);
+  const rows = await menu.locator(".style-option").count();
+  expect(rows).toBeGreaterThan(1);
+  expect(rows).toBeLessThanOrEqual(6);
   expect((await definedParagraphStyles(page)).length).toBeGreaterThan(4);
+  await page.keyboard.press("Escape");
 
   // The width budget, stated as a number rather than as "the same width as the
   // control above it" — there is no control above it any more. 234px is what the
@@ -220,33 +241,33 @@ test("the Styles gallery applies a real style and stays inside the band's width 
   // into the "⋯" overflow. The no-horizontal-scrollbar rule at the top of this file
   // is the other half of the same guarantee.
   const groupWidth = await page.evaluate(
-    () => document.querySelector('[data-group="styles"]').getBoundingClientRect().width,
+    () =>
+      document.querySelector('[data-group="styles"]').getBoundingClientRect()
+        .width,
   );
   expect(groupWidth).toBeLessThanOrEqual(234);
 
-  // Apply the first offered style; the gallery reflects the active style back
-  // (its card becomes aria-selected), proving the click ran a real edit that
-  // the reflection path picked up.
-  const firstCard = gallery.locator(".style-card").first();
-  const styleName = await firstCard.getAttribute("data-style");
-  await firstCard.click();
-  await expect(
-    gallery.locator(`.style-card[data-style="${styleName}"]`),
-  ).toHaveAttribute("aria-selected", "true");
+  // Apply the first offered style; the trigger reflects it back by NAME, proving
+  // the click ran a real edit that the reflection path picked up.
+  await trigger.click();
+  const firstRow = menu.locator(".style-option").first();
+  const styleName = await firstRow.getAttribute("data-style");
+  await firstRow.click();
+  await expect(page.locator("#stylesTriggerLabel")).toHaveText(styleName);
   // And the control publishes the same answer for the rest of the chrome.
   await expect.poll(() => reflectedParagraphStyle(page)).toBe(styleName);
 
   expect(consoleErrors).toEqual([]);
 });
 
-// Reads the computed (weight, px size, style) of every gallery card's label —
-// what the user actually sees rendered in each card.
+// Reads the computed (weight, px size, style) of every menu row's label — what the
+// user actually sees rendered in each row. Requires the menu to be open.
 async function galleryCardLooks(page) {
-  return page.$$eval("#stylesGallery .style-card .style-card-name", (labels) =>
+  return page.$$eval("#stylesMenu .style-option .style-option-name", (labels) =>
     labels.map((el) => {
       const cs = getComputedStyle(el);
       return {
-        style: el.closest(".style-card").dataset.style,
+        style: el.closest(".style-option").dataset.style,
         weight: cs.fontWeight,
         size: cs.fontSize,
         italic: cs.fontStyle,
@@ -255,24 +276,25 @@ async function galleryCardLooks(page) {
   );
 }
 
-test("each Styles gallery card is drawn IN its own style (model-driven preview)", async ({
+test("each Styles menu row is drawn IN its own style (model-driven preview)", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
+  await page.locator("#stylesTrigger").click();
   const looks = await galleryCardLooks(page);
   // Bounded by OFFERED_STYLE_COUNT — see the count assertion above for why it is 6.
   expect(looks.length).toBeGreaterThan(1);
   expect(looks.length).toBeLessThanOrEqual(6);
-  // Every card's label carries an inline preview weight (the engine-resolved
+  // Every row's label carries an inline preview weight (the engine-resolved
   // style drove it), never the bare default only.
   for (const look of looks) {
     expect(["400", "450", "500", "600", "650", "700"]).toContain(look.weight);
   }
-  // The cards genuinely differ — a real visual hierarchy, not a row of identical
-  // labels: at least two distinct (weight, size) pairs across the gallery.
+  // The rows genuinely differ — a real visual hierarchy, not a list of identical
+  // labels: at least two distinct (weight, size) pairs across the menu.
   const distinct = new Set(looks.map((l) => `${l.weight}/${l.size}`));
   expect(distinct.size).toBeGreaterThanOrEqual(2);
 
@@ -294,7 +316,10 @@ test("Create style from selection adds a new paragraph style and applies it", as
   await page.keyboard.press(`${MOD}+Shift+p`);
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.locator("#cmdInput").fill("Create style from selection");
-  await page.locator(".cmd-item", { hasText: "Create style from selection" }).first().click();
+  await page
+    .locator(".cmd-item", { hasText: "Create style from selection" })
+    .first()
+    .click();
 
   const dialog = page.locator("#styleNameDialog");
   await expect(dialog).toBeVisible();
@@ -303,20 +328,27 @@ test("Create style from selection adds a new paragraph style and applies it", as
   await expect(dialog).toBeHidden();
 
   // The style registry gained the new style and the caret's paragraph now uses it.
-  await expect.poll(async () => (await definedParagraphStyles(page)).length).toBe(before + 1);
+  await expect
+    .poll(async () => (await definedParagraphStyles(page)).length)
+    .toBe(before + 1);
   await expect.poll(() => reflectedParagraphStyle(page)).toBe("E2E Callout");
-  expect((await definedParagraphStyles(page)).filter((s) => s === "E2E Callout")).toHaveLength(1);
+  expect(
+    (await definedParagraphStyles(page)).filter((s) => s === "E2E Callout"),
+  ).toHaveLength(1);
   // A brand-new style is a style the document is now USING, so the band offers it —
   // otherwise creating a style would leave it unreachable from the control that
-  // created it (docs/114 §5.3).
+  // created it (docs/115 §5.3).
+  await expect(page.locator("#stylesTriggerLabel")).toHaveText("E2E Callout");
+  await page.locator("#stylesTrigger").click();
   await expect(
-    page.locator('#stylesGallery .style-card[data-style="E2E Callout"]'),
+    page.locator('#stylesMenu .style-option[data-style="E2E Callout"]'),
   ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
 
   expect(consoleErrors).toEqual([]);
 });
 
-test("Update <style> to match selection reflows the style and its gallery preview", async ({
+test("Update <style> to match selection reflows the style and its menu preview", async ({
   page,
   consoleErrors,
 }) => {
@@ -328,29 +360,42 @@ test("Update <style> to match selection reflows the style and its gallery previe
   const styleName = await reflectedParagraphStyle(page);
   expect(styleName).not.toBe("");
 
-  // The caret's style ALWAYS has a card now (docs/114 §5.3 pins it into the offered
+  // The caret's style ALWAYS has a row now (docs/115 §5.3 pins it into the offered
   // set), so this is asserted rather than guarded by an `if` — a conditional here would
   // have quietly skipped the only assertion that proves the reflow.
-  const cardName = () =>
-    page.locator(`#stylesGallery .style-card[data-style="${styleName}"] .style-card-name`);
-  await expect(cardName()).toHaveCount(1);
-  const weightBefore = await cardName().evaluate((el) => getComputedStyle(el).fontWeight);
+  const rowName = () =>
+    page.locator(
+      `#stylesMenu .style-option[data-style="${styleName}"] .style-option-name`,
+    );
+  const weightOfRow = async () => {
+    await page.locator("#stylesTrigger").click();
+    const weight = await rowName().evaluate(
+      (el) => getComputedStyle(el).fontWeight,
+    );
+    await page.keyboard.press("Escape");
+    return weight;
+  };
+  await page.locator("#stylesTrigger").click();
+  await expect(rowName()).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  const weightBefore = await weightOfRow();
 
   // Toggle bold on the selection, then redefine the style to match it.
   await page.keyboard.press(`${MOD}+b`);
   await page.keyboard.press(`${MOD}+Shift+p`);
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.locator("#cmdInput").fill("match selection");
-  await page.locator(".cmd-item", { hasText: "match selection" }).first().click();
+  await page
+    .locator(".cmd-item", { hasText: "match selection" })
+    .first()
+    .click();
 
-  // The redefined style is still applied and its gallery card's rendered weight changed
+  // The redefined style is still applied and its menu row's rendered weight changed
   // to match the new definition (proving every paragraph using the style now reflows
-  // through the new run props, and that the card's preview is rebuilt on a DEFINITION
+  // through the new run props, and that the row's preview is rebuilt on a DEFINITION
   // change and not only when the offered NAMES change).
   await expect.poll(() => reflectedParagraphStyle(page)).toBe(styleName);
-  await expect
-    .poll(() => cardName().evaluate((el) => getComputedStyle(el).fontWeight))
-    .not.toBe(weightBefore);
+  await expect.poll(weightOfRow).not.toBe(weightBefore);
 
   expect(consoleErrors).toEqual([]);
 });
