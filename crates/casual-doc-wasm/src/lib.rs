@@ -31181,8 +31181,12 @@ mod tests {
         let large = lookup_visits(&large_doc, |d| {
             assert!(d.document_outline().is_empty());
         });
+        // Zero at both sizes is the strongest outcome, not a hole: the walk now
+        // carries each paragraph, so it resolves no id at all and there is no
+        // ratio to take. Reintroducing a per-node `paragraph_properties` makes
+        // the count nonzero AND quadratic, which fails the ratio arm.
         assert!(
-            large < small * 3,
+            large < small * 3 || (small == 0 && large == 0),
             "outline work must roughly double, not quadruple: {small} block visits \
              at {small_n} paragraphs and {large} at {}",
             small_n * 2
