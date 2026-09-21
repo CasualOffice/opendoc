@@ -1,4 +1,4 @@
-# 114 — The Styles control, and one dropdown model for the chrome
+# 115 — The Styles control, and one dropdown model for the chrome
 
 Status: accepted, implemented in `fix/one-styles-control`.
 Scope: `webapp/editor.html`, `webapp/src/main.js`, `webapp/src/style.css`. **No crate changes.**
