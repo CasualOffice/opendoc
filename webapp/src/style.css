@@ -1516,7 +1516,11 @@ body.modal-open {
   border-bottom: none;
 }
 
-.dialog-select {
+/* `.dialog-field select` is here too, because the object inspector builds five of
+   them from a template string with no class, and they were rendering raw OS chrome
+   in the middle of a product panel (docs/114 §6). */
+.dialog-select,
+.dialog-field select {
   width: 100%;
   height: var(--h-field);
   padding: 0 30px 0 10px;
@@ -1528,7 +1532,8 @@ body.modal-open {
   font-size: var(--fs-body);
 }
 
-.dialog-select:focus {
+.dialog-select:focus,
+.dialog-field select:focus {
   outline: none;
   border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -1827,11 +1832,21 @@ body.modal-open {
   padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  /* `background-color`, NOT the `background` shorthand: this rule is (0,1,1) and the
+     shared select treatment is (0,1,0), so the shorthand would win on specificity
+     regardless of order and reset the caret image to none. `styles-control.spec.mjs`
+     caught exactly that here, from computed style. */
+  background-color: var(--surface);
   color: var(--ink);
   font: inherit;
   font-size: var(--fs-body);
   font-weight: 450;
+}
+
+/* Room on the right for the shared select caret. After the shorthand above, which
+   would otherwise reset it (same specificity, later wins). */
+.link-body select {
+  padding-right: 26px;
 }
 
 .link-body input:focus,
@@ -3403,9 +3418,10 @@ body.compact-mode {
   line-height: 1;
 }
 
-/* Styles follows the intended Vellum composition: one visible all-styles
-   selector above four quick-preview cards. The selector, not horizontal
-   scrolling, guarantees every imported/custom style is reachable. */
+/* Styles is ONE control now (docs/114): a gallery of up to six preview cards. The
+   all-styles `<select>` that used to sit above it, and the "▾ More styles" popover
+   that listed every style again, are both gone — the full stylesheet lives in the
+   command palette and in Paragraph properties, off the band. */
 .rgroup-styles {
   min-width: 0;
   padding-inline: 3px;
@@ -3415,40 +3431,31 @@ body.compact-mode {
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  /* Sized by its cards, not by a constant. The strip used to be pinned to 202px
-     with every card at `flex: 1 1 0`, so the cards divided that fixed budget
-     between them and each name ellipsised down to an initial. Letting the group
-     take its content's width means a card is as wide as its name needs, and the
-     card count (QUICK_STYLE_COUNT) is what keeps the band inside the 1280px
-     no-scrollbar budget. The cap is a backstop against a pathologically long
-     style name, not the normal sizing path. */
+  /* Sized by its cards, not by a constant — see `.style-card`'s max-width for why
+     the cap is a backstop rather than the normal sizing path. */
   width: auto;
   max-width: 244px;
   min-width: 0;
 }
 
-.style-select,
-.style-select select {
-  width: 100%;
-  max-width: none;
-}
+/* TWO rows of content-sized cards, in EXACTLY the footprint the old
+   select-above-a-strip composition occupied: 227px × 62px (30 + 2 + 30). Same space,
+   twice the capacity — six offered styles instead of three, and the Home band's
+   ~10px of slack at 1280px is untouched, so no group is exiled into the "⋯" overflow.
 
-.style-select select {
-  height: 30px;
-}
-
-/* Stronger than the later generic `.ctl select { max-width: 150px }`: the
-   style selector must cover the same complete width as its preview row. */
-.styles-ctl .style-select select {
-  width: 100%;
-  max-width: none;
-}
-
+   Wrapping flex rather than a fixed-column grid, because `ribbon-legibility.spec.mjs`
+   holds the harder line and it is the right one: a card that ellipsises to "Bo…"
+   defeats the only reason a gallery exists instead of a list of names. Equal columns
+   cut "Heading 1" (which wants ~92px) down to the width of "List". So each card keeps
+   its natural width and the row wraps, exactly as the single-row strip sized itself.
+   `.style-card`'s max-width is the backstop against a pathologically long name. */
 .styles-gallery {
   display: flex;
-  align-items: stretch;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: 2px;
-  width: 100%;
+  width: 227px;
+  height: 62px;
   overflow: hidden;
   padding: 0;
 }
@@ -3457,13 +3464,16 @@ body.compact-mode {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  /* Size to the label, not to an equal share of the group. `flex: 1 1 0` gave
-   * every card the same width regardless of its name, so "Normal" and
-   * "Heading 1" were both cut to three characters. Shrinking is still allowed,
-   * but only down to a width where a name is still recognisable. */
+  /* Natural width, wrapping into the gallery's two rows. `flex: 1 1 0` once gave
+   * every card an equal share of a fixed budget, so "Normal" and "Heading 1" were
+   * both cut to three characters. */
   flex: 0 0 auto;
   min-width: 0;
-  max-width: none;
+  /* A backstop, not the sizing path: a name long enough to fill a whole row would
+   * push the others out of the gallery's `overflow: hidden`. Every name the
+   * recommended set can produce fits well inside this; an in-use style with a very
+   * long name ellipsises here rather than displacing the rest of the gallery. */
+  max-width: 110px;
   height: 30px;
   padding: 3px 4px;
   border: 1px solid var(--line-strong);
@@ -3516,70 +3526,6 @@ body.compact-mode {
 .style-card-heading-3 .style-card-name { font-size: 12.5px; font-weight: 600; }
 .style-card-subtitle .style-card-name { font-size: 12px; font-weight: 500; color: var(--muted); }
 .style-card-normal .style-card-name { font-size: 12px; font-weight: 450; }
-
-/* "More styles" ▾ affordance: a compact expander pinned to the end of the inline
-   strip. It keeps its natural width (the cards flex to fill the rest) so the
-   gallery still spans the same width as the style dropdown above it. */
-.styles-more-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--ink);
-  cursor: pointer;
-}
-
-.styles-more-btn[hidden] {
-  display: none;
-}
-
-.styles-more-btn:hover {
-  border-color: var(--accent-text);
-  background: var(--accent-soft);
-}
-
-.styles-more-btn:focus-visible {
-  outline: 2px solid var(--accent-text);
-  outline-offset: 1px;
-}
-
-.styles-more-btn .ms {
-  font-size: 18px;
-  line-height: 1;
-}
-
-/* The full Styles gallery revealed by the ▾ button: a scrollable, theme-aware
-   popover holding a live-preview card for every paragraph style. */
-.styles-more-panel {
-  position: fixed;
-  z-index: var(--z-selection-toolbar);
-  display: grid;
-  grid-template-columns: repeat(2, minmax(150px, 1fr));
-  gap: 4px;
-  width: min(360px, calc(100vw - 16px));
-  max-height: min(360px, calc(100vh - 160px));
-  overflow-y: auto;
-  padding: 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  background: var(--surface);
-  box-shadow: var(--shadow-popover);
-}
-
-.styles-more-panel[hidden] {
-  display: none;
-}
-
-.styles-more-panel .style-card {
-  flex: none;
-  height: 34px;
-}
 
 /* Overflow "⋯" button + menu — collects groups that don't fit the width. */
 .ribbon-overflow-btn {
@@ -3642,10 +3588,16 @@ body.compact-mode {
   flex-wrap: wrap;
 }
 
-.ribbon-overflow-menu .styles-ctl,
-.ribbon-overflow-menu .styles-gallery {
+/* In the 560px overflow popover the six slots get room to breathe: four wider
+   columns instead of three narrow ones, and the same cards. */
+.ribbon-overflow-menu .styles-ctl {
   width: 100%;
   max-width: none;
+}
+
+.ribbon-overflow-menu .styles-gallery {
+  grid-template-columns: repeat(4, minmax(68px, 1fr));
+  width: 100%;
 }
 
 /* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
@@ -5537,6 +5489,22 @@ body.ribbon-mode .compact-toolbar { display: none; }
   outline-offset: -2px;
   border-color: transparent;
 }
+/* The Styles gallery is the SAME element the ribbon owns, adopted rather than cloned
+   (docs/114 §5.6). The compact bar is one dense 30px row, so its two-row grid lays out
+   as a single row here and scrolls sideways if the offered set fills it; the cards keep
+   their own border, because a borderless card is not readable as a button. */
+.compact-toolbar .styles-gallery.cadopted {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 68px;
+  grid-auto-rows: 30px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.compact-toolbar .styles-gallery.cadopted .style-card:not(:hover):not(:focus-visible) {
+  border-color: var(--line-strong);
+}
 .compact-sep {
   width: 1px;
   height: 24px;
@@ -7060,4 +7028,40 @@ body:not(.doc-loaded) .drop-title {
 
 .running-marker[hidden] {
   display: none;
+}
+
+/* ---- ONE select treatment for the whole chrome (docs/114 §6) ---------------- */
+/* Before this, `.ctl select` alone was restyled (`appearance: none` plus the
+   product's own caret) while `.dialog-select`, `.menu-select` and `.save-format`
+   rendered raw OS chrome — so the native selects were not even consistent with each
+   other, and one of them sat in the ribbon band directly above a custom gallery.
+   The band now has NO `<select>` at all; what is left is in dialogs and menu rows,
+   where a platform popup over a long list is the right affordance. Those wear the
+   product's field and the product's caret.
+
+   Placed last on purpose: `.ctl select` sets the `background` SHORTHAND earlier in
+   this file, which resets `background-image`. Same specificity, later rule wins.
+   `tests/select_chrome.test.mjs` fails the build if a `<select>` in editor.html is
+   not covered by this selector list, and `styles-control.spec.mjs` re-checks it from
+   COMPUTED style, so a rule that is present but overridden still fails.
+
+   The caret is a data-URI SVG. Its `%236a7078` is the palette's `--muted`, inlined
+   because a url() cannot read a custom property; `style_tokens.test.mjs` scans for
+   `#rrggbb` literals, which this is not, and this grey is legible in both themes. */
+.ctl select,
+.dialog-select,
+.dialog-field select,
+.menu-select,
+.save-format {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236a7078'><path d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+
+/* `.menu-select` was `padding: 0 6px`, which would put its text under the caret. */
+.menu-select {
+  padding: 0 24px 0 8px;
 }

@@ -267,6 +267,45 @@ export async function expectSaveEnabled(page) {
   await page.keyboard.press("Escape");
 }
 
+// --- Paragraph styles ---------------------------------------------------------
+// Six specs read `#paragraphStyle` — a native `<select>` that listed every style in
+// the document — to answer two different questions: "what style is the caret in?"
+// and "what styles does this document define?". When that control was deleted
+// (docs/114: the ribbon offers a SHORT list, one control) every one of them broke,
+// which is the same pattern as the `expectEditorFocused` cleanup: a spec asserting a
+// MECHANISM rather than the guarantee has to be patched each time the mechanism
+// moves. These three helpers are the guarantee. If the Styles control changes shape
+// again, this is the only place that moves.
+
+/** The paragraph style at the caret. `#stylesGallery`'s `data-active-style` is
+ *  written straight from `doc.paragraphStyleAt(...)` on every toolbar refresh. */
+export async function reflectedParagraphStyle(page) {
+  return page.locator("#stylesGallery").getAttribute("data-active-style");
+}
+
+/** Every paragraph style the open document defines. Read from Paragraph properties ▸
+ *  Style, which carries the COMPLETE list — the band deliberately does not. */
+export async function definedParagraphStyles(page) {
+  return page.$$eval("#paraPanelStyle option", (opts) => opts.map((o) => o.value).filter(Boolean));
+}
+
+/** Applies a named paragraph style, from the band when it offers that style and from
+ *  the command palette otherwise — so a caller does not have to know which of the two
+ *  surfaces currently carries it. Waits for the change to be reflected back. */
+export async function applyParagraphStyle(page, name) {
+  const card = page.locator(`#stylesGallery .style-card[data-style="${name}"]`);
+  if ((await card.count()) > 0) {
+    await card.click();
+  } else {
+    await runAppMenuCommand(page, "help", "help.commands");
+    await page.locator("#cmdInput").fill(`Style: ${name}`);
+    const row = page.locator(`#cmdList .cmd-item[data-command-id="style.${name}"]`);
+    await expect(row, `"Style: ${name}" should be reachable from the palette`).toBeVisible();
+    await row.click();
+  }
+  await expect.poll(() => reflectedParagraphStyle(page)).toBe(name);
+}
+
 // --- Platform-correct shortcut hints -----------------------------------------
 // Specs asserted hint text as a literal "⌘P". That is the Mac rendering; on
 // Linux the same command renders "Ctrl+P", so those assertions passed on the

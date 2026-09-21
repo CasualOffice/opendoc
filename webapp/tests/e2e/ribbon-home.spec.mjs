@@ -1,4 +1,12 @@
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  definedParagraphStyles,
+  gotoEditor,
+  clickIntoFirstPage,
+  reflectedParagraphStyle,
+  MOD,
+} from "./fixtures.mjs";
 
 // docs/64 — the Home ribbon mirrors template.png: a single no-wrap band of
 // labeled groups. Two hard rules this suite guards:
@@ -188,7 +196,7 @@ test("the ribbon collapses to a compact tab strip and expands again", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("the Styles selector exposes every style and the quick gallery applies a real style", async ({
+test("the Styles gallery applies a real style and stays inside the band's width budget", async ({
   page,
   consoleErrors,
 }) => {
@@ -197,18 +205,24 @@ test("the Styles selector exposes every style and the quick gallery applies a re
 
   const gallery = page.locator("#stylesGallery");
   await expect(gallery.locator(".style-card").first()).toBeVisible();
-  // Three, not four. The band has to fit 1280px without a horizontal scrollbar
-  // (asserted at the top of this file), and a fourth card only fits by shrinking
-  // all of them until every name ellipsises to an initial. The dropped style is
-  // not lost — it moves behind the ▾ "More styles" popover, which already holds
-  // the full set and is exercised further down. See QUICK_STYLE_COUNT.
-  await expect(gallery.locator(".style-card")).toHaveCount(3);
-  expect(await page.locator("#paragraphStyle option").count()).toBeGreaterThan(4);
-  const styleWidths = await page.evaluate(() => [
-    document.querySelector("#paragraphStyle").getBoundingClientRect().width,
-    document.querySelector("#stylesGallery").getBoundingClientRect().width,
-  ]);
-  expect(Math.abs(styleWidths[0] - styleWidths[1])).toBeLessThanOrEqual(1);
+  // A SHORT list, capped at six — what Docs offers and the bottom of Word's visible
+  // gallery range (docs/114). `styles-control.spec.mjs` owns the list's composition;
+  // here the concern is only that this band still holds it.
+  const cards = await gallery.locator(".style-card").count();
+  expect(cards).toBeGreaterThan(1);
+  expect(cards).toBeLessThanOrEqual(6);
+  expect((await definedParagraphStyles(page)).length).toBeGreaterThan(4);
+
+  // The width budget, stated as a number rather than as "the same width as the
+  // control above it" — there is no control above it any more. 234px is what the
+  // group measured when it still carried the select, and the Home band had 10px of
+  // slack at 1280px, so the group must not grow past that or a whole group is exiled
+  // into the "⋯" overflow. The no-horizontal-scrollbar rule at the top of this file
+  // is the other half of the same guarantee.
+  const groupWidth = await page.evaluate(
+    () => document.querySelector('[data-group="styles"]').getBoundingClientRect().width,
+  );
+  expect(groupWidth).toBeLessThanOrEqual(234);
 
   // Apply the first offered style; the gallery reflects the active style back
   // (its card becomes aria-selected), proving the click ran a real edit that
@@ -219,8 +233,8 @@ test("the Styles selector exposes every style and the quick gallery applies a re
   await expect(
     gallery.locator(`.style-card[data-style="${styleName}"]`),
   ).toHaveAttribute("aria-selected", "true");
-  // The hidden reflection select mirrors the same value.
-  await expect(page.locator("#paragraphStyle")).toHaveValue(styleName);
+  // And the control publishes the same answer for the rest of the chrome.
+  await expect.poll(() => reflectedParagraphStyle(page)).toBe(styleName);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -249,8 +263,9 @@ test("each Styles gallery card is drawn IN its own style (model-driven preview)"
   await clickIntoFirstPage(page);
 
   const looks = await galleryCardLooks(page);
-  // Matches QUICK_STYLE_COUNT — see the count assertion above for why it is 3.
-  expect(looks.length).toBe(3);
+  // Bounded by OFFERED_STYLE_COUNT — see the count assertion above for why it is 6.
+  expect(looks.length).toBeGreaterThan(1);
+  expect(looks.length).toBeLessThanOrEqual(6);
   // Every card's label carries an inline preview weight (the engine-resolved
   // style drove it), never the bare default only.
   for (const look of looks) {
@@ -274,7 +289,7 @@ test("Create style from selection adds a new paragraph style and applies it", as
   await page.keyboard.press(`${MOD}+Home`);
   await page.keyboard.press("Shift+End");
 
-  const before = await page.locator("#paragraphStyle option").count();
+  const before = (await definedParagraphStyles(page)).length;
 
   await page.keyboard.press(`${MOD}+Shift+p`);
   await expect(page.locator("#cmdPalette")).toBeVisible();
@@ -288,9 +303,15 @@ test("Create style from selection adds a new paragraph style and applies it", as
   await expect(dialog).toBeHidden();
 
   // The style registry gained the new style and the caret's paragraph now uses it.
-  await expect(page.locator("#paragraphStyle option")).toHaveCount(before + 1);
-  await expect(page.locator("#paragraphStyle")).toHaveValue("E2E Callout");
-  await expect(page.locator('#paragraphStyle option[value="E2E Callout"]')).toHaveCount(1);
+  await expect.poll(async () => (await definedParagraphStyles(page)).length).toBe(before + 1);
+  await expect.poll(() => reflectedParagraphStyle(page)).toBe("E2E Callout");
+  expect((await definedParagraphStyles(page)).filter((s) => s === "E2E Callout")).toHaveLength(1);
+  // A brand-new style is a style the document is now USING, so the band offers it —
+  // otherwise creating a style would leave it unreachable from the control that
+  // created it (docs/114 §5.3).
+  await expect(
+    page.locator('#stylesGallery .style-card[data-style="E2E Callout"]'),
+  ).toHaveAttribute("aria-selected", "true");
 
   expect(consoleErrors).toEqual([]);
 });
@@ -304,7 +325,7 @@ test("Update <style> to match selection reflows the style and its gallery previe
   await page.keyboard.press(`${MOD}+Home`);
   await page.keyboard.press("Shift+End");
 
-  const styleName = await page.locator("#paragraphStyle").inputValue();
+  const styleName = await reflectedParagraphStyle(page);
   expect(styleName).not.toBe("");
 
   const cardName = () =>
@@ -325,7 +346,7 @@ test("Update <style> to match selection reflows the style and its gallery previe
   // The redefined style is still applied and, when previewed in the gallery, the
   // card's rendered weight changed to match the new definition (proving every
   // paragraph using the style now reflows through the new run props).
-  await expect(page.locator("#paragraphStyle")).toHaveValue(styleName);
+  await expect.poll(() => reflectedParagraphStyle(page)).toBe(styleName);
   if (looksInGallery) {
     await expect
       .poll(() => cardName().evaluate((el) => getComputedStyle(el).fontWeight))
