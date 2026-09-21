@@ -123,6 +123,10 @@ pub enum AnchorContent {
         /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         border: Option<AnchorStroke>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
+        /// `None` is fully opaque.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
     },
     /// A rectangle (a group's background/foreground shape).
     Rectangle {

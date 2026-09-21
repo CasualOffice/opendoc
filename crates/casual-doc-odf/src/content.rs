@@ -10925,6 +10925,7 @@ fn build_group_children(
                 let media_id = *media.get(*media_cursor).ok_or(OdfError::InvalidModel)?;
                 *media_cursor += 1;
                 children.push(GroupChild::Picture(GroupPicture {
+                    opacity: None,
                     id: child_id,
                     media: media_id,
                     offset: PointEmu {
@@ -11081,6 +11082,7 @@ fn build_inlines(
                     _ => None,
                 };
                 InlineNode::Drawing(Box::new(Drawing {
+                    opacity: None,
                     id,
                     media,
                     extent,
@@ -11100,6 +11102,7 @@ fn build_inlines(
                     .get(*index)
                     .ok_or(OdfError::InvalidModel)?;
                 InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                    opacity: None,
                     id,
                     media,
                     extent: Extent {

@@ -5823,6 +5823,7 @@ mod tests {
                 inlines: vec![
                     run(3, "before"),
                     InlineNode::Drawing(Box::new(Drawing {
+                        opacity: None,
                         id: drawing_id,
                         media,
                         extent: Some(Extent {
@@ -5983,6 +5984,7 @@ mod tests {
                 inlines: vec![
                     run(3, "anchor"),
                     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        opacity: None,
                         id: float_id,
                         media,
                         extent: Extent {
@@ -6085,6 +6087,7 @@ mod tests {
     ) -> InlineNode {
         use casual_doc_model::v1::{Drawing, Extent};
         InlineNode::Drawing(Box::new(Drawing {
+            opacity: None,
             id: n(id),
             media,
             extent: Some(Extent {
@@ -6512,6 +6515,7 @@ mod tests {
         let media = MediaId::new(NodeId::from_parts(7, 903).unwrap());
         let float_id = n(60);
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: float_id,
             media,
             extent: Extent {

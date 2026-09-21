@@ -557,6 +557,7 @@ fn each_refusal_is_reachable_and_names_its_own_reason() {
         id: node(63_900),
         properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: node(63_901),
             media: MediaId::new(node(63_500)),
             extent: Extent {

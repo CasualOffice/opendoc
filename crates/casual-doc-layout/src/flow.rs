@@ -8103,6 +8103,7 @@ mod tests {
         // line must start to the RIGHT of the logo — not under it.
         let logo_width = Twip(2000);
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
             extent: Extent {
@@ -8221,6 +8222,7 @@ mod tests {
         let logo_width = Twip(2000);
         let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
             extent: Extent {
@@ -10927,6 +10929,7 @@ mod tests {
             id: node(714),
             properties: SdtProperties::default(),
             inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                opacity: None,
                 id: node(702),
                 media,
                 extent: Some(Extent {
@@ -11064,6 +11067,7 @@ mod tests {
             blocks: vec![paragraph(
                 722,
                 vec![InlineNode::Drawing(Box::new(Drawing {
+                    opacity: None,
                     id: node(723),
                     media,
                     extent: Some(Extent {
@@ -12758,6 +12762,7 @@ mod tests {
             inlines: vec![
                 run_node(12, "before ", RunProperties::default()),
                 InlineNode::Drawing(Box::new(Drawing {
+                    opacity: None,
                     id: NodeId::from_parts(11, 1).unwrap(),
                     media: media_id,
                     // 190500 × 127000 EMU (635 EMU/twip) → 300 × 200 twips.
@@ -12875,6 +12880,7 @@ mod tests {
             inlines: vec![
                 run_node(22, "Paragraph with an image: ", RunProperties::default()),
                 InlineNode::Drawing(Box::new(Drawing {
+                    opacity: None,
                     id: NodeId::from_parts(21, 1).unwrap(),
                     extent: Some(Extent {
                         width_emu: 152_400,
@@ -12977,6 +12983,7 @@ mod tests {
                 id: NodeId::from_parts(id, 1).unwrap(),
                 properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                    opacity: None,
                     id: NodeId::from_parts(id + 100, 1).unwrap(),
                     media: media_id,
                     extent: Some(Extent {
@@ -13251,6 +13258,7 @@ mod tests {
             id: NodeId::from_parts(21, 1).unwrap(),
             properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                opacity: None,
                 id: NodeId::from_parts(22, 1).unwrap(),
                 media: media_id,
                 extent: Some(Extent {

@@ -1111,6 +1111,7 @@ impl Importer<'_> {
         ));
         self.resources.insert(part_name, picture.into_bytes());
         let drawing = InlineNode::Drawing(Box::new(Drawing {
+            opacity: None,
             id: next_id(&mut self.ids)?,
             media: media_id,
             extent,
