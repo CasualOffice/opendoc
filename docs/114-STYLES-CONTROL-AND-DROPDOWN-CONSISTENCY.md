@@ -120,18 +120,32 @@ style, and neither presents two controls for the choice. We were doing all three
 - **Cost:** a style that is neither recommended nor yet visited takes two surfaces-worth of
   keystrokes (palette, or the Paragraph dialog) instead of one dropdown. That is the point of
   the change, and it is Docs' behaviour exactly.
-- **Cost:** on a document defining few recommended styles the last grid row is partly empty
-  (the demo document offers 5 of 6). Honest — Word's gallery is equally short on such a
-  document — and the grid's width is fixed either way, so the band never shifts.
-- **Benefit:** the Styles group gets **narrower** (234 px → 215 px), returning 19 px to a
-  Home band that had 10 px of slack.
+- **Cost:** on a document defining few recommended styles the second row is partly empty
+  (the demo document offers 5 of 6 — Normal, Body Text, Heading 1, List, Caption). Honest:
+  Word's gallery is equally short on such a document, and the gallery's box is fixed either
+  way, so the band never shifts as the caret moves.
+- **Measured:** the group occupies **exactly** the footprint the old select-above-a-strip
+  composition did — 227 × 62 px, so 234 px of band including padding, unchanged before and
+  after, with the Home band's slack still 10 px at 1280 px and no horizontal scrollbar.
+  Same space, twice the capacity.
+- **Why wrapping flex and not a fixed-column grid:** equal columns are tidier, but
+  `ribbon-legibility.spec.mjs` holds the harder and correct line — a card that ellipsises to
+  "Bo…" defeats the only reason a gallery exists instead of a list of names. "Heading 1"
+  renders at ~92 px at its preview size and equal thirds of 227 px cut it to the width of
+  "List". Cards keep their natural width and the row wraps, exactly as the single-row strip
+  sized itself; `.style-card`'s `max-width` is the backstop against a pathological name.
 - **Rejected: Docs' single dropdown** (delete the gallery, keep one trigger). Less code, but
   it throws away the live per-style previews, which are the reason a gallery exists; and a
   ribbon's Styles *group* is a gallery in every product that has a ribbon.
 - **Rejected: keeping a product trigger above the cards.** Visually that is what the owner
   reported — two stacked entry points — and it fails the one-control guard below on purpose.
 - **Rejected: a scrolling gallery or a `▾` expander for the remainder.** Both re-admit the
-  long list to the band through a side door.
+  long list to the band through a side door. (The compact bar does scroll the SHORT list
+  sideways, because it is one 30 px row rather than two — that is the same six cards in a
+  narrower box, not a route to the other eight styles.)
+- **Rejected: extending `#linkPlaceSelect` and the object inspector's five classless selects
+  by hand.** They were found by the computed-style guard, not by reading, and the fix is the
+  shared rule plus `.dialog-field select` so the next one is covered on arrival.
 
 ## 6. One dropdown model for the chrome
 
@@ -165,8 +179,9 @@ is OS chrome. It is **not** converted here, for a stated reason: a product combo
 caret affordance, which widens the Font group by ~16 px, and the Home band has ~10 px of
 slack at 1280 px — it would exile a whole group into the `⋯` overflow. Word's own size box is
 likewise an editable field rather than a pure picker, so this is the least-wrong place for the
-remaining inconsistency. Recorded as open rather than left implicit. (The 19 px this change
-returns is not spent on it: that slack is the band's margin, not a budget to consume.)
+remaining inconsistency. Recorded as open rather than left implicit. This change returns no
+width to spend on it either — the Styles group deliberately lands on exactly the footprint it
+already had, so the band's 10 px of slack is unchanged and remains margin, not budget.
 
 ## 7. The guards, and why the obvious ones are worthless
 
@@ -182,8 +197,14 @@ The guards that can actually catch this class:
    set; its card must be present and `aria-selected`, and stay offered after the caret leaves.
    Deleting the in-use step fails it.
 4. **Reachability ≥ 2 surfaces** (§10): every style the document defines is reachable as a
-   `Style: <name>` palette row **and** in Paragraph properties. Neither alone counts.
+   `Style: <name>` palette row **and** in Paragraph properties. Neither alone counts, and it
+   is asked of *every* defined style rather than of one example.
 5. **Select chrome**, as above, from computed style.
+6. **The compact chrome borrows the same element.** Nothing covered compact mode before, and
+   this change moved what it adopts from the deleted `#paragraphStyle` to the gallery — a
+   broken adoption would have shipped as a Styles control that simply was not there. The
+   guard asserts the adopted element is the gallery, that it offers the same set, that it
+   still applies, and that leaving compact mode puts it **back** in the ribbon.
 
 Each was driven red by mutating `main.js`/`style.css` before being accepted; the mutations and
 their verbatim output are in the branch's commit message.

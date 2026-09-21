@@ -3588,16 +3588,17 @@ body.compact-mode {
   flex-wrap: wrap;
 }
 
-/* In the 560px overflow popover the six slots get room to breathe: four wider
-   columns instead of three narrow ones, and the same cards. */
+/* In the 560px overflow popover the offered styles get room to breathe: the same
+   cards, wrapping across the popover's width rather than the band's 227px, and as
+   many rows as they need instead of the band's fixed two. */
 .ribbon-overflow-menu .styles-ctl {
   width: 100%;
   max-width: none;
 }
 
 .ribbon-overflow-menu .styles-gallery {
-  grid-template-columns: repeat(4, minmax(68px, 1fr));
   width: 100%;
+  height: auto;
 }
 
 /* Delayed hover/focus tooltip for icon-only ribbon controls (docs/64 §3). */
@@ -5494,10 +5495,8 @@ body.ribbon-mode .compact-toolbar { display: none; }
    as a single row here and scrolls sideways if the offered set fills it; the cards keep
    their own border, because a borderless card is not readable as a button. */
 .compact-toolbar .styles-gallery.cadopted {
-  grid-template-columns: none;
-  grid-auto-flow: column;
-  grid-auto-columns: 68px;
-  grid-auto-rows: 30px;
+  flex-wrap: nowrap;
+  height: 30px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;

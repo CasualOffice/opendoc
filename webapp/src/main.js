@@ -452,14 +452,14 @@ cutBtn.addEventListener("click", () => { cut(); });
 copyBtn.addEventListener("click", () => { copySelection(); });
 replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.click(); });
 
-// The Styles gallery — the ONE control the band offers for paragraph styles
-// (docs/114). It replaces three: a `#paragraphStyle` select listing every style in the
-// document flat, this strip, and a "▾" popover listing every style again. Word puts a
-// curated Quick Styles gallery in the ribbon and the full list in a pane; Docs offers
-// six named styles and nothing else. So the band offers a SHORT list and the full
-// stylesheet stays reachable off it — the palette's `Style: <name>` rows and Paragraph
-// properties ▸ Style. Import, cascade, layout, render and round-trip are untouched:
-// this is what is offered for AUTHORING, not what is supported.
+// The Styles gallery — the ONE control the band offers for paragraph styles (docs/114).
+// It replaces three: a `#paragraphStyle` select listing every style in the document
+// flat, this strip, and a "▾" popover listing every style again. Word puts a curated
+// Quick Styles gallery in the ribbon and the full list in a pane; Docs offers six named
+// styles and nothing else. So the band offers a SHORT list and the full stylesheet stays
+// reachable off it — the palette's `Style: <name>` rows and Paragraph properties ▸ Style.
+// Import, cascade, layout, render and round-trip are untouched: this is what is offered
+// for AUTHORING, not what is supported.
 const stylesGallery = document.getElementById("stylesGallery");
 
 // What the band may offer, in priority order: Word's Quick Styles set intersected with
@@ -471,8 +471,8 @@ const RECOMMENDED_STYLES = [
 
 // Hard cap on the cards. SIX: exactly Docs' number, and the bottom of the range Word's
 // gallery shows at 1280px. The previous 3 was chosen against a width budget rather than
-// against a competitor, and the 14-entry dropdown beside it was never a decision at
-// all. Raising this re-admits the long list to the band.
+// a competitor, and the 14-entry dropdown beside it was never a decision at all.
+// Raising this re-admits the long list to the band.
 const OFFERED_STYLE_COUNT = 6;
 
 // Styles the document is USING, offered alongside the recommended ones — otherwise
@@ -625,7 +625,7 @@ function makeStyleCard(name, index) {
   card.setAttribute("role", "option");
   card.setAttribute("aria-selected", "false");
   // Roving tabindex: only the first card is a Tab stop; arrow keys move focus
-  // among the rest (see attachGalleryRoving).
+  // among the rest (see the gallery's keydown handler).
   card.tabIndex = index === 0 ? 0 : -1;
   card.title = name;
   card.disabled = !styleCardsEnabled;
@@ -637,9 +637,9 @@ function makeStyleCard(name, index) {
   card.addEventListener("click", () => {
     if (card.disabled) return;
     runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
-    // Back to the document, as Word and Docs do after a gallery pick and as
-    // `chooseFont` already did. Focus used to stay on the card, so the next keystroke
-    // went to a button; the select hid this by handing focus back on change.
+    // Back to the document, as Word and Docs do after a gallery pick and as `chooseFont`
+    // already did. Focus stayed on the card before, so the next keystroke went to a
+    // button; the select hid this by handing focus back on change.
     focusEditorSurface();
   });
   return card;
@@ -650,9 +650,12 @@ function makeStyleCard(name, index) {
  *  REASON lives once on the group (`#stylesGallery`'s title), not on every card. */
 let styleCardsEnabled = false;
 
-/** The styles the document defines, as `listStyles()` last reported them, so the
- *  offered set can be recomputed without asking the engine again. */
-let definedStyles = [];
+/** What `listStyles()` last reported, and `RECOMMENDED_STYLES` ∩ that — both resolved
+ *  once per registry change, not per caret move: `offeredStyles` is on the
+ *  per-keystroke path, and matching 15 names case-insensitively against every defined
+ *  style there would be O(15n) a keystroke. */
+let definedStyles = new Set();
+let recommendedHere = [];
 
 /** The SHORT list the band offers, in card order: recommended styles the document
  *  defines, then styles it is known to be using, capped at `OFFERED_STYLE_COUNT`.
@@ -660,26 +663,22 @@ let definedStyles = [];
  *  the last entry rather than falling off, because the user must always be able to
  *  see what they are in and re-apply it. Word gets there by scrolling its gallery. */
 function offeredStyles() {
-  const defined = new Set(definedStyles);
-  const offered = [];
-  const add = (n) => { if (n && defined.has(n) && !offered.includes(n)) offered.push(n); };
-  for (const name of RECOMMENDED_STYLES) {
-    // Case-insensitively, so `body text` from an ODT package still matches.
-    add(definedStyles.find((s) => s.toLowerCase() === name.toLowerCase()));
-  }
+  const offered = [...recommendedHere];
+  const add = (n) => { if (n && definedStyles.has(n) && !offered.includes(n)) offered.push(n); };
   for (const name of stylesInUse) add(name);
   const capped = offered.slice(0, OFFERED_STYLE_COUNT);
-  if (activeParagraphStyle && defined.has(activeParagraphStyle) && !capped.includes(activeParagraphStyle)) {
+  const active = activeParagraphStyle;
+  if (active && definedStyles.has(active) && !capped.includes(active)) {
     if (capped.length >= OFFERED_STYLE_COUNT) capped.pop();
-    capped.push(activeParagraphStyle);
+    capped.push(active);
   }
   return capped;
 }
 
 /** Rebuilds the cards, but only when the offered set actually changed. This is on the
  *  per-keystroke path (`updateToolbar` runs on every caret move and the offered set
- *  depends on the caret's style), so rebuilding unconditionally would throw away hover
- *  and focus on every cursor move and re-resolve a preview per card per keystroke. */
+ *  depends on the caret's style), so rebuilding unconditionally would discard hover and
+ *  focus every cursor move and re-resolve a preview per card per keystroke. */
 function renderStylesGallery() {
   const wanted = offeredStyles();
   const current = [...stylesGallery.querySelectorAll(".style-card")].map((c) => c.dataset.style);
@@ -690,10 +689,13 @@ function renderStylesGallery() {
 /** Rebuilds the gallery for a (re)loaded document or a changed style registry. The
  *  full stylesheet is NOT put on the band (docs/114 §5). */
 function buildStylesGallery(styles) {
-  definedStyles = [...styles];
+  definedStyles = new Set(styles);
+  // Matched case-insensitively, so `body text` from an ODT package still counts.
+  const byName = new Map(styles.map((s) => [s.toLowerCase(), s]));
+  recommendedHere = RECOMMENDED_STYLES.map((s) => byName.get(s.toLowerCase())).filter(Boolean);
   // A style remembered from the previous document is not in use in this one, and a
   // name that no longer exists cannot be applied.
-  for (const name of [...stylesInUse]) if (!definedStyles.includes(name)) stylesInUse.delete(name);
+  for (const name of [...stylesInUse]) if (!definedStyles.has(name)) stylesInUse.delete(name);
   // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
   // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
   // and the cards would keep previewing the old one. `ribbon-home` caught that.
@@ -715,8 +717,8 @@ function syncStylesGalleryActive() {
   if (tabStop < 0) tabStop = 0; // no active style offered → first card is the Tab stop
   for (const [i, card] of cards.entries()) {
     card.setAttribute("aria-selected", String(card.dataset.style === active));
-    // Keep the roving Tab stop on the applied style so Tab lands where the
-    // caret already is (arrow keys still reach every card).
+    // The roving Tab stop stays on the applied style, so Tab lands where the caret
+    // already is (arrow keys still reach every card).
     card.tabIndex = i === tabStop ? 0 : -1;
   }
   // The band owns exactly one Tab stop across everything it holds. Re-assert that
@@ -725,9 +727,9 @@ function syncStylesGalleryActive() {
   syncRibbonTabStops();
 }
 
-/** Records the style at the caret and keeps the offered set in step. A style the
- *  caret visits is one the document is using, so it joins `stylesInUse` and stays
- *  offered after the caret leaves it. */
+/** Records the style at the caret and keeps the offered set in step. A style the caret
+ *  visits is one the document is using, so it joins `stylesInUse` and stays offered
+ *  after the caret leaves. */
 function reflectParagraphStyle(name) {
   activeParagraphStyle = name || "";
   if (activeParagraphStyle) stylesInUse.add(activeParagraphStyle);
@@ -17908,7 +17910,7 @@ const COMPACT_TOOLBAR = [
   null,
   // The same `#stylesGallery` element the ribbon owns, adopted rather than cloned
   // (see ADOPTED_CONTROL_IDS). Compact CSS lays its short list out as one row.
-  { kind: "gallery", control: "style", label: "Paragraph style", width: 200 },
+  { kind: "gallery", control: "style", label: "Paragraph style", width: 227 },
   null,
   { kind: "select", control: "font", label: "Font", width: 136 },
   null,

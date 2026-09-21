@@ -173,24 +173,19 @@ test("every style the document defines stays reachable from two surfaces off the
   const defined = await allDefinedStyles(page);
   expect(defined.length).toBeGreaterThan(6);
 
-  // Surface 1 — Paragraph properties ▸ Style: the full list, in a dialog. This is the
-  // list `allDefinedStyles` just read, so assert it is genuinely reachable rather
-  // than merely present in the DOM.
+  // Surface 1 — Paragraph properties ▸ Style: the full list, in a dialog. `defined` was
+  // read from that select, so this proves the surface is genuinely OPENABLE rather than
+  // merely present in the DOM, and that it offers every style the band does not.
   await page.locator("#paraOptsBtn").click();
   await expect(page.locator("#paragraphPropertiesPanel")).toBeVisible();
   await expect(page.locator("#paraPanelStyle")).toBeVisible();
+  for (const name of await offered(page)) expect(defined).toContain(name);
   await page.keyboard.press("Escape");
 
   // Surface 2 — the command palette, searchable by name (Word's Apply Styles). EVERY
-  // style must have a row: shortening the band is only acceptable because nothing
-  // became unreachable, and "most of them are in the palette" is not that.
-  await openCommandPalette(page);
-  const rows = await page.$$eval("#cmdList .cmd-item", (items) =>
-    items.map((i) => i.dataset.commandId),
-  );
-  // The palette virtualises/filters, so ask it for each style by name rather than
-  // expecting all of them in one unfiltered render.
-  await page.keyboard.press("Escape");
+  // style must have a row: shortening the band is only acceptable because nothing became
+  // unreachable, and "most of them are in the palette" is not that. Asked one name at a
+  // time because the palette filters, so an unfiltered render is not the whole set.
   const missing = [];
   for (const name of defined) {
     await openCommandPalette(page);
@@ -200,7 +195,6 @@ test("every style the document defines stays reachable from two surfaces off the
     await page.keyboard.press("Escape");
   }
   expect(missing, "every defined style needs a palette row").toEqual([]);
-  expect(rows.length).toBeGreaterThan(0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -234,6 +228,44 @@ test("every <select> in the chrome wears the product's field, not the OS's", asy
       "(docs/114 §6): every select in the chrome carries the shared appearance " +
       "treatment and the product's caret.",
   ).toEqual([]);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the compact chrome borrows the SAME Styles control, and the ribbon gets it back", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  const offeredInRibbon = await offered(page);
+  expect(offeredInRibbon.length).toBeGreaterThan(1);
+
+  // Compact mode ADOPTS `#stylesGallery` rather than cloning it, so the two chromes
+  // cannot drift about what the offered set is or which style is current. Nothing
+  // covered compact mode before, and this change moved what it adopts from the
+  // deleted `#paragraphStyle` to the gallery — so a broken adoption would have
+  // shipped as a Styles control that simply was not there.
+  await page.locator("#modeCompact").click();
+  const adopted = page.locator("#compactToolbar #stylesGallery");
+  await expect(adopted).toBeVisible();
+  expect(await offered(page), "the same element, so the same offered set").toEqual(offeredInRibbon);
+  // And it still applies: one element means one set of listeners. Asserted rather than
+  // guarded by an `if` — the gallery offers more than one style and the caret is in one
+  // of them, so a missing target is a defect, not a reason to skip the assertion.
+  const current = await reflectedStyle(page);
+  const target = offeredInRibbon.find((s) => s !== current);
+  expect(target, "the offered set should hold a style other than the caret's").toBeTruthy();
+  await adopted.locator(`.style-card[data-style="${target}"]`).click();
+  await expect.poll(() => reflectedStyle(page)).toBe(target);
+
+  // Leaving compact mode must put the element BACK in the ribbon, not leave a hole
+  // where the Styles group was — `releaseAdoptedControls` is what guarantees that.
+  await page.locator("#modeRibbon").click();
+  await expect(page.locator('.ribbon-panel[data-panel="home"] #stylesGallery')).toBeVisible();
+  await expect(page.locator("#compactToolbar #stylesGallery")).toHaveCount(0);
+  expect(await offered(page)).toEqual(offeredInRibbon);
 
   expect(consoleErrors).toEqual([]);
 });

@@ -328,13 +328,13 @@ test("Update <style> to match selection reflows the style and its gallery previe
   const styleName = await reflectedParagraphStyle(page);
   expect(styleName).not.toBe("");
 
+  // The caret's style ALWAYS has a card now (docs/114 §5.3 pins it into the offered
+  // set), so this is asserted rather than guarded by an `if` — a conditional here would
+  // have quietly skipped the only assertion that proves the reflow.
   const cardName = () =>
     page.locator(`#stylesGallery .style-card[data-style="${styleName}"] .style-card-name`);
-  const looksInGallery = (await cardName().count()) > 0;
-
-  const weightBefore = looksInGallery
-    ? await cardName().evaluate((el) => getComputedStyle(el).fontWeight)
-    : null;
+  await expect(cardName()).toHaveCount(1);
+  const weightBefore = await cardName().evaluate((el) => getComputedStyle(el).fontWeight);
 
   // Toggle bold on the selection, then redefine the style to match it.
   await page.keyboard.press(`${MOD}+b`);
@@ -343,15 +343,14 @@ test("Update <style> to match selection reflows the style and its gallery previe
   await page.locator("#cmdInput").fill("match selection");
   await page.locator(".cmd-item", { hasText: "match selection" }).first().click();
 
-  // The redefined style is still applied and, when previewed in the gallery, the
-  // card's rendered weight changed to match the new definition (proving every
-  // paragraph using the style now reflows through the new run props).
+  // The redefined style is still applied and its gallery card's rendered weight changed
+  // to match the new definition (proving every paragraph using the style now reflows
+  // through the new run props, and that the card's preview is rebuilt on a DEFINITION
+  // change and not only when the offered NAMES change).
   await expect.poll(() => reflectedParagraphStyle(page)).toBe(styleName);
-  if (looksInGallery) {
-    await expect
-      .poll(() => cardName().evaluate((el) => getComputedStyle(el).fontWeight))
-      .not.toBe(weightBefore);
-  }
+  await expect
+    .poll(() => cardName().evaluate((el) => getComputedStyle(el).fontWeight))
+    .not.toBe(weightBefore);
 
   expect(consoleErrors).toEqual([]);
 });
