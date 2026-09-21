@@ -796,12 +796,20 @@ impl WasmDocument {
 
     /// The number of laid-out pages.
     ///
-    /// The document's real count in every mode. A windowed body takes it from
-    /// the measure tier, which `docs/113` §6.4 measured as identical to
-    /// `paginate_document`'s (29,621 pages on the owner's file) — reporting the
-    /// resident window's length here would tell a host with 29,621 pages that
-    /// it had five, and every page past the fifth would simply not exist as far
-    /// as the viewer, the scrollbar, printing and `NUMPAGES` were concerned.
+    /// A windowed body takes it from the measure tier, which `docs/113` §6.4
+    /// measured as identical to `paginate_document`'s (29,621 pages on the
+    /// owner's file) — reporting the resident window's length here would tell
+    /// a host with 29,621 pages that it had five, and every page past the
+    /// fifth would simply not exist as far as the viewer, the scrollbar,
+    /// printing and `NUMPAGES` were concerned.
+    ///
+    /// These pages are always real pages, never estimates. While a long
+    /// document is still being measured in the background (`docs/116` §7) this
+    /// is the count of the part measured so far, and
+    /// [`page_count_is_exact`](Self::page_count_is_exact) is `false`; a host
+    /// that shows a total to the reader must ask that too, and
+    /// [`estimated_page_count`](Self::estimated_page_count) for the number to
+    /// show beside a `~`.
     #[wasm_bindgen(getter, js_name = pageCount)]
     #[must_use]
     pub fn page_count(&self) -> u32 {
@@ -812,6 +820,53 @@ impl WasmDocument {
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
         u32::try_from(pages).unwrap_or(u32::MAX)
+    }
+
+    /// Whether [`page_count`](Self::page_count) is the whole document's, or
+    /// only of the prefix measured so far.
+    ///
+    /// The one flag every surface that shows or uses a total reads: the page
+    /// indicator, `NUMPAGES`, printing and the scrollbar. `AGENTS.md` — a
+    /// number that is not exact is never presented as though it were.
+    #[wasm_bindgen(getter, js_name = pageCountIsExact)]
+    #[must_use]
+    pub fn page_count_is_exact(&self) -> bool {
+        // The markup (show-changes) view is always laid out whole; it is
+        // refused for a windowed body.
+        self.markup_layout.is_some() || self.layout.page_count_is_exact()
+    }
+
+    /// The document's page count, or — while it is being measured — an
+    /// ESTIMATE scaled from the prefix measured so far.
+    ///
+    /// Equal to [`page_count`](Self::page_count) once
+    /// [`page_count_is_exact`](Self::page_count_is_exact) is true. Show it
+    /// only with a marker that says it is approximate.
+    #[wasm_bindgen(getter, js_name = estimatedPageCount)]
+    #[must_use]
+    pub fn estimated_page_count(&self) -> u32 {
+        let pages = match self.markup_layout.as_ref() {
+            Some(markup) => markup.page_count(),
+            None => self.layout.estimated_page_count(),
+        };
+        u32::try_from(pages).unwrap_or(u32::MAX)
+    }
+
+    /// Measures the next `blocks` top-level blocks of a document opened on a
+    /// prefix, and returns whether it is now measured whole.
+    ///
+    /// The host drives this from idle time between frames, sizing `blocks` to
+    /// the slice of main thread it is willing to spend (`docs/116` §7). Cheap
+    /// and `true` for a document that was never partial, so a host can call it
+    /// unconditionally rather than branch on how the document opened.
+    ///
+    /// Pages already reported do not move: pagination is a forward fill and a
+    /// windowable document has nothing that can reach back past a page
+    /// boundary, which `extending_a_prefix_never_moves_a_page_it_already_reported`
+    /// asserts in the layout crate.
+    #[wasm_bindgen(js_name = extendMeasures)]
+    pub fn extend_measures(&mut self, blocks: usize) -> bool {
+        self.layout.extend(&self.document, &self.shaper, blocks)
     }
 
     /// Toggles the read-only "show changes" markup view (docs/93). When on, a
@@ -21704,6 +21759,72 @@ mod tests {
             !error.to_lowercase().contains("unreachable"),
             "leaks a trap name: {error}"
         );
+    }
+
+    /// A document longer than the open budget opens on a PREFIX, says its page
+    /// count is not exact, and converges on the real one as the host extends
+    /// it.
+    ///
+    /// This is `docs/116` §7's trade made observable at the seam a host uses.
+    /// The failure it exists to catch is not "the count is wrong" — it is a
+    /// prefix count presented as the document's, which is what every surface
+    /// would do if `pageCountIsExact` did not exist or always answered true.
+    #[test]
+    fn a_document_past_the_open_budget_opens_on_a_prefix_and_converges() {
+        // Above `OPEN_BLOCK_BUDGET` (20,000), so the open path has to stop
+        // short. Below it there is nothing to observe.
+        let mut doc = open_windowed(24_000);
+        assert!(
+            !doc.page_count_is_exact(),
+            "a 24,000-block document cannot have been measured whole in a 20,000-block budget",
+        );
+        let prefix_pages = doc.page_count();
+        assert!(prefix_pages > 0, "the prefix must be a real, usable prefix");
+        assert!(
+            doc.estimated_page_count() > prefix_pages,
+            "an estimate equal to the measured count reads as exact and is not: {} vs {}",
+            doc.estimated_page_count(),
+            prefix_pages,
+        );
+
+        let mut rounds = 0;
+        while !doc.extend_measures(4_000) {
+            rounds += 1;
+            assert!(rounds < 100, "extension did not converge");
+        }
+        assert!(doc.page_count_is_exact());
+        assert_eq!(
+            doc.estimated_page_count(),
+            doc.page_count(),
+            "once exact, the estimate IS the count",
+        );
+        assert!(
+            doc.page_count() > prefix_pages,
+            "measuring the rest of the document must find more pages: {} then {}",
+            prefix_pages,
+            doc.page_count(),
+        );
+
+        // And the converged count is the one a document laid out whole has.
+        let whole = open_whole(24_000);
+        assert_eq!(
+            doc.page_count(),
+            whole.page_count(),
+            "a document measured in the background must end up the same document",
+        );
+    }
+
+    /// `extendMeasures` is safe and cheap on a body that was never partial, so
+    /// a host can drive it unconditionally instead of asking how the document
+    /// opened — the branch it would otherwise write is the one that gets it
+    /// wrong.
+    #[test]
+    fn extending_a_whole_body_is_a_no_op_that_reports_completion() {
+        let mut doc = open_whole(600);
+        let before = doc.page_count();
+        assert!(doc.extend_measures(1_000));
+        assert!(doc.page_count_is_exact());
+        assert_eq!(doc.page_count(), before);
     }
 
     /// The window moves when the host leaves it, and **only** then. A viewer
