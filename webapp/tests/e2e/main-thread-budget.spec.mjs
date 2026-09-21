@@ -1,6 +1,6 @@
 // One guard, parameterised over the operations that touch the whole document.
 //
-// `docs/114`: the tab freezes when something the main thread does costs more
+// `docs/116`: the tab freezes when something the main thread does costs more
 // the bigger the document is. Three of those were found one owner report at a
 // time — opening a file, opening the Outline panel, and an ordinary click — so
 // the guard is written over the LIST rather than over any one of them. A new
@@ -60,7 +60,7 @@ const OPERATIONS = [
   {
     name: "a click into the page",
     // `objectAt` alone was 1,437 ms of a 1,399 ms click at 20,000 blocks before
-    // `docs/114`; it is now 0.7 ms and this measures no long task at all.
+    // `docs/116`; it is now 0.7 ms and this measures no long task at all.
     budget: 500,
     async run(page) {
       await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 70 } });
@@ -98,7 +98,7 @@ test.describe("main-thread budget on a large document", () => {
 
     try {
       // Opening is itself an operation, and it is the one still owed a fix
-      // (`docs/114` §7: 88% of it is one uninterruptible measure pass). This
+      // (`docs/116` §7: 88% of it is one uninterruptible measure pass). This
       // budget is therefore a RATCHET on the current state — 419 ms measured —
       // not a claim that opening is interactive. It must come down when the
       // measure pass goes lazy, never up.

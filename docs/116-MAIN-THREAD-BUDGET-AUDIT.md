@@ -1,4 +1,4 @@
-# 114 — Every operation whose cost scales with the document
+# 116 — Every operation whose cost scales with the document
 
 **Status:** audit complete; the three quadratic reads are fixed and guarded, the
 rest is enumerated with measurements and sequenced. **Opened:** 2026-09-21.
@@ -173,9 +173,24 @@ added to its list.
 | `main.js` `buildOutline` DOM build | O(headings) | every edit while the panel is open |
 | `main.js` `scanAllMatches` | O(blocks) per keystroke in the find box (capped at 5,000 matches) | typing a query |
 
-`ordered_paragraphs` also appends headers, footers and both note stores twice —
-`collect_block_text_all_surfaces` already includes them — so every one of those
-paragraphs is walked and allocated twice in an ordering the caret relies on.
+`ordered_paragraphs` — **fixed here.** It appended headers, footers and both note
+stores a second time by hand after the walk that already includes them, so every
+running-content and note paragraph appeared **twice** in the ordering the caret,
+`order_endpoints` and `selection_subranges` resolve positions against, and every
+consumer walked them twice. It also built an owned `String` per paragraph to
+measure its length and drop it. Both gone: one walk, one reused buffer, every
+paragraph once. Guarded by
+`the_paragraph_ordering_lists_every_paragraph_once`, which is non-vacuous by
+construction — it fails if the fixture has no header paragraph to be duplicated
+— and was driven red by re-adding one append:
+
+```
+assertion `left == right` failed: header paragraph
+0000000000000001000000000000001c appears 2 times
+```
+
+The remaining cost of this family is the walk itself, which is Shape B and needs
+§7's seam or an id index, not another local fix.
 
 ### 4.4 Linear on a user command, unbounded and unyielded
 

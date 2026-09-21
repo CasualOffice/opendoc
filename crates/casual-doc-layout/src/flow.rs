@@ -3121,7 +3121,18 @@ pub fn node_plain_text_with_projection(
     out
 }
 
-fn append_node_plain_text(inlines: &[InlineNode], projection: ReviewProjection, out: &mut String) {
+/// [`node_plain_text_with_projection`] into a caller-owned buffer.
+///
+/// Public so a caller that asks the same question about every paragraph of a
+/// document can reuse one `String` instead of allocating one per paragraph and
+/// dropping it immediately — on a 1.3M-paragraph document that allocation was
+/// the bulk of the cost of ordering two endpoints (`docs/116` §4.3). It appends;
+/// clear the buffer between paragraphs.
+pub fn append_node_plain_text(
+    inlines: &[InlineNode],
+    projection: ReviewProjection,
+    out: &mut String,
+) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => out.push_str(&run.text),

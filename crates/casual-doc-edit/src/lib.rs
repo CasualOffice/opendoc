@@ -61,7 +61,7 @@ fn note_document_scan() {
 /// Counted by [`surface_block_lists`] and [`surface_of`], the two entry points
 /// every by-id read goes through. One relaxed per-call increment, no allocation;
 /// it is a diagnostic, not a feature flag, so the guard measures the same code
-/// the product ships. `docs/114`.
+/// the product ships. `docs/116`.
 #[must_use]
 pub fn document_scans() -> usize {
     DOCUMENT_SCANS.with(core::cell::Cell::get)

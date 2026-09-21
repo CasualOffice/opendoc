@@ -1,6 +1,6 @@
 //! Where an open spends its time: import, then the measure-tier pass.
 //!
-//! The committed artifact behind `docs/114` §3. That section says import costs
+//! The committed artifact behind `docs/116` §3. That section says import costs
 //! 0.83 s of the owner's 1,303,306-paragraph file and the measure pass costs
 //! 7.78 s — 88% of the open — and the whole design decision about opening
 //! lazily rests on that split, so the split has to be reproducible rather than

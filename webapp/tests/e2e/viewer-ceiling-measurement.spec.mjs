@@ -30,7 +30,7 @@
 //   size being openable, when what it means is a tab that is dead for 110 s.
 //   Time to COMPLETE is patience; time the main thread is unavailable is
 //   whether the page is a page at all — nothing paints, no click lands, no
-//   progress bar can move and no cancel button can be pressed (`docs/114`).
+//   progress bar can move and no cancel button can be pressed (`docs/116`).
 // - **wasm memory** — `WebAssembly.Memory.buffer.byteLength` after the open.
 //   Linear memory never shrinks, so this reading IS the high-water mark, and
 //   it is the number that decides whether a document opens at all: past a
