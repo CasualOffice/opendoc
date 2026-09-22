@@ -72,9 +72,9 @@ declared symbols, and under Suggesting it is a tracked change.**
 | 1 | **A form checkbox cannot be ticked** | Medical form, 8 controls | browser: click / Space / double-click all no-ops |
 | 2 | **The checkbox is invisible to assistive technology** | Medical form | the a11y mirror carries raw `U+F0A3` / `U+F052` — Wingdings 2 private-use code points, which a screen reader reads as nothing. No `role` attribute appears anywhere in `#a11yDocument` |
 | 3 | **Text inside a grouped shape never reaches assistive technology** | Medical form, loan | HF-169, filed 2026-09-22: `collect_a11y_group_images` walks a group for pictures and drops `GroupChild::TextBox` |
-| 4 | **Custom-path shapes are drawn as plain rectangles** | loan, 5 shapes | the model's `ShapeGeometry` has 7 presets plus `Other`, documented as "drawn as its bounding rectangle"; `a:custGeom` with `moveTo`/`lnTo`/`ahLst` arrowheads has no representation, so an arrow becomes a box |
-| 5 | **Picture transparency is ignored** | loan, 5 pictures | `a:alphaModFix amt="20000"` — a 20% watermark logo — has no field in the model, so it paints solid. Model/import/layout wiring is on `feat/picture-transparency` |
-| 6 | **Warped text is drawn flat** | loan, 20 | `a:prstTxWarp` unmodelled |
+| 4 | **Custom-path shapes fall back to their bounding rectangle** | loan, 5 shapes | `ShapeGeometry` has 7 presets plus `Other`, "drawn as its bounding rectangle"; `a:custGeom` has no representation. **Re-measured 2026-09-23 and this row was overstated** — see §6 |
+| 5 | ~~Picture transparency is ignored~~ | loan, 5 pictures | **Fixed (#579)**: `a:alphaModFix` now renders, exports and round-trips, in the raster backend and in PDF |
+| 6 | ~~Warped text is drawn flat~~ | loan, 20 | **NOT A GAP** — see §6 |
 
 ## 4. Not gaps — corrections to what I told the owner in #575
 
@@ -114,3 +114,57 @@ it too. The tab freeze on it was never a DOCX problem; it is the
 5. **Picture transparency** (§3 row 5) — already part-built.
 6. **Custom geometry** (§3 row 4) and **text warp** (row 6), both real
    engine work.
+
+
+## 6. Re-measured 2026-09-23 — two of my own rows above were wrong
+
+A second, wider sweep measured every element of the corpus against the source.
+It corrected §3 twice, and both corrections are of the same kind I made in §4:
+a feature *named* in a document is not a feature *used* by it.
+
+**Row 6, warped text — not a gap at all.** All 22 `a:prstTxWarp` in the corpus
+(20 in the loan, 2 in the Medical form) carry `prst="textNoShape"`, which is
+DrawingML's value for *no warp*; Word writes it into every `wps:bodyPr`. There
+is no warped text anywhere in these documents. ONLYOFFICE agrees so strongly
+that it special-cases the same token in four places — its "is there a warp"
+predicate is literally `prstTxWarp && preset !== "textNoShape"`, and it
+normalises an *absent* element *to* `textNoShape` when reporting to its UI.
+The row is closed as a non-gap for this corpus. Watermarks and real WordArt
+remain genuinely unmodelled; nothing here exercises them.
+
+**Row 4, custom geometry — mis-described, and near-harmless here.** The five
+`a:custGeom` shapes in the loan agreement are byte-identical: a
+`6660515 × 1270` EMU box — 1270 EMU is **0.1 pt** tall — holding one
+`moveTo(0,0) → lnTo(6660057,0)` path with a solid `#29D19E` 1.5 pt stroke and
+no fill. They are **thin green horizontal rules**, not arrows. The `a:ahLst` I
+cited is the *adjust-handle* list and is empty; arrowheads are
+`a:headEnd`/`a:tailEnd` and these shapes have neither. Painting the bounding
+rectangle of a 0.1 pt box with a 1.5 pt stroke already produces approximately
+the intended line. Custom geometry is still a real gap for the ~180 unmodelled
+presets behind `ShapeGeometry::Other` (tracker FID-L-04) — but **this corpus
+is not the justification for it**, and my "an arrow becomes a box" line was
+invented from the element names rather than measured.
+
+**And the `tab ×28` I left unattributed in §4 is now attributed, and real.**
+The stops carry `w:val="num"`, a legal `ST_TabJc` value that `apply_tab_stop`
+and `read_style_tab_stops` do not map, so the stop is dropped and reported —
+46 of them across the NDA and both `fannest` files. List text sits at the
+default 720-twip grid instead of its authored position. ONLYOFFICE keeps the
+`num` token and treats it as a left tab whose position test is inclusive
+rather than exclusive, which is the whole recipe.
+
+### What the wider sweep found that this document missed entirely
+
+Ranked; the full evidence is in the sweep, and the rows it recommends are
+being filed into `109` separately.
+
+| | gap | scale | why it matters |
+| --- | --- | --- | --- |
+| 1 | **621 findings that report a loss where nothing was lost** | 12 of 12 documents; 276 on the loan alone | the webapp shows the count to the reader. `w:proofErr` alone is 110. The §4 class is far larger than §4 knew |
+| 2 | **CJK text has no bundled face on the browser build** | 2 documents, 9,576 characters — **53% of their text** | tofu, the worst possible outcome, and the largest single visible defect in the corpus |
+| 3 | **Legacy `w:ffData` form fields cannot be filled** | the loan agreement: **92 FORMTEXT + 19 FORMCHECKBOX** | §2 fixed the `w14:checkbox` SDT. This is the *other* form mechanism, fourteen times bigger, and the loan agreement is exactly as unfillable as the Medical form was |
+| 4 | **`w:documentProtection w:edit="forms"` is imported and never enforced** | the loan agreement | Word locks the body and Tab-cycles the fields; we let the user type over the contract |
+| 5 | **A hyperlink on a picture or shape is dropped** | Medical form, 4 links | the logo is clickable in Word and inert here |
+
+Items 3 and 4 belong together and supersede §5's ordering: the next form
+work is legacy fields plus protection, not accessibility.

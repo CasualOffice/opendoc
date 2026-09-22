@@ -3506,9 +3506,19 @@ body.compact-mode {
    the system font. Six rows at their own sizes, so the menu is short enough to
    never need a scrollbar at the cap. */
 .styles-menu {
-  min-width: 227px;
-  max-width: 320px;
+  min-width: 260px;
+  max-width: 340px;
   padding: 4px;
+}
+
+/* The full style list is here, so it scrolls rather than growing the popover
+   off the screen — a document can define forty paragraph styles and all of
+   them are reachable. The suggested group sits above it and is short. */
+.styles-menu-list {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .style-option {

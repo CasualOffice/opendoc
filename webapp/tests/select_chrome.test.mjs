@@ -103,9 +103,21 @@ test("the Styles group offers exactly one control", () => {
     0,
     "the option list belongs in `#stylesMenu`, off the band, not inside the group",
   );
+  // The popover is a DIALOG holding a filter field and a listbox — the shape
+  // `#fontMenu` already uses, and the correct ARIA once a list has a search
+  // box above it. Asserting `role="listbox"` on the popover itself was right
+  // only while the menu was a bare list.
   assert.ok(
-    /id="stylesMenu"[^>]*role="listbox"/.test(source),
-    "`#stylesMenu` must be the listbox the trigger opens",
+    /id="stylesMenu"[^>]*role="dialog"/.test(source),
+    "`#stylesMenu` must be the dialog the trigger opens",
+  );
+  assert.ok(
+    /id="stylesMenuList"[^>]*role="listbox"/.test(source),
+    "`#stylesMenuList` must be the listbox inside it",
+  );
+  assert.ok(
+    source.includes('id="stylesMenuInput"'),
+    "the full style list is reachable by typing, not only by scrolling",
   );
 });
 

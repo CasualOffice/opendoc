@@ -22,7 +22,8 @@ import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { OBJECT_LABELS, clickDescendsIntoGroup, escapeClimbsToGroup, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
-import { RECOMMENDED_STYLES, offeredStyleNames, previewPx, styleSlug } from "./style_picker.mjs";
+import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
+import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
 import {
@@ -466,6 +467,9 @@ replaceBtn.addEventListener("click", () => { if (!findBtn.disabled) findBtn.clic
 const stylesTrigger = document.getElementById("stylesTrigger");
 const stylesTriggerLabel = document.getElementById("stylesTriggerLabel");
 const stylesMenu = document.getElementById("stylesMenu");
+const stylesMenuInput = document.getElementById("stylesMenuInput");
+const stylesMenuList = document.getElementById("stylesMenuList");
+const stylesMenuEmpty = document.getElementById("stylesMenuEmpty");
 
 // Styles the document is USING, offered alongside the recommended ones — otherwise
 // opening a file whose paragraphs use `Quotation` leaves the user unable to see or
@@ -485,7 +489,7 @@ let activeParagraphStyle = "";
 // container, so rebuilding the options never stacks duplicate listeners.
 const STYLE_ROVE_STEP = { ArrowDown: 1, ArrowUp: -1 };
 stylesMenu.addEventListener("keydown", (event) => {
-  const options = [...stylesMenu.querySelectorAll(".style-option")];
+  const options = [...stylesMenuList.querySelectorAll(".style-option")];
   if (!options.length) return;
   const at = options.indexOf(document.activeElement);
   const step = STYLE_ROVE_STEP[event.key];
@@ -497,111 +501,6 @@ stylesMenu.addEventListener("keydown", (event) => {
   event.preventDefault();
   options[next].focus();
 });
-
-/** Resolves any CSS color string to sRGB bytes.
- *
- *  Via canvas rather than a regex: the browser hands back `rgb()`, `color(srgb
- *  ...)`, `color-mix(...)` and `oklab(...)` depending on how the value was
- *  authored and whether a transition is in flight, and a regex that assumes one
- *  form reads another's components as RGB. Canvas understands every CSS color
- *  syntax, including ones that do not exist yet. */
-let colorProbeContext = null;
-function resolveColor(value) {
-  if (!value) return null;
-  if (!colorProbeContext) {
-    colorProbeContext = document
-      .createElement("canvas")
-      .getContext("2d", { willReadFrequently: true });
-  }
-  const ctx = colorProbeContext;
-  // An unparseable value leaves fillStyle untouched, so a sentinel distinguishes
-  // "transparent black" from "the browser rejected this string".
-  ctx.fillStyle = "#ff00ff";
-  ctx.fillStyle = value;
-  if (ctx.fillStyle === "#ff00ff" && !/^#ff00ff$|magenta/i.test(value.trim())) return null;
-  ctx.clearRect(0, 0, 1, 1);
-  ctx.fillRect(0, 0, 1, 1);
-  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-  return { r, g, b, a: a / 255 };
-}
-
-/** The background a gallery card's label is actually painted on: the first
- *  opaque ancestor, since the card itself is usually transparent. */
-function effectiveBackground(element) {
-  for (let node = element; node && node.nodeType === 1; node = node.parentElement) {
-    const color = resolveColor(getComputedStyle(node).backgroundColor);
-    if (color && color.a === 1) return color;
-  }
-  return resolveColor(getComputedStyle(document.body).backgroundColor);
-}
-
-/** Paints the authored preview color if it is legible here, otherwise falls back
- *  to the card's theme ink. */
-function applyPreviewInk(label) {
-  const authored = label.dataset.previewColor;
-  if (!authored) {
-    label.style.color = "";
-    return;
-  }
-  const ink = resolveColor(authored);
-  const background = effectiveBackground(label);
-  label.style.color = previewInkIsLegible(ink, background) ? authored : "";
-}
-
-// On the "System" setting no attribute changes when the OS flips to dark, so
-// nothing above would fire — but the palette underneath the cards has changed
-// completely. Without this the gallery keeps light-theme decisions on a dark
-// surface, which is the exact bug, just reached by the more common route.
-window
-  .matchMedia("(prefers-color-scheme: dark)")
-  .addEventListener("change", () => refreshStylePreviews());
-
-/** Re-decides every card's preview color. The cards are built once per document,
- *  but the surface under them changes with the theme, and a decision made against
- *  the light palette is not valid against the dark one. */
-function refreshStylePreviews() {
-  for (const label of document.querySelectorAll(".style-option-name[data-preview-color]")) {
-    applyPreviewInk(label);
-  }
-}
-
-/** Draws an option's label IN the style it represents, from the engine's resolved
- *  preview (family/size/weight/slant/underline/colour) — which is the whole reason
- *  the list is a product popup rather than a native `<select>`: an OS popup renders
- *  every row in the system font, so "Heading 1" would be a word rather than a
- *  picture of what applying it does. Degrades to the plain label when no preview is
- *  available; the size is clamped so a 28pt Title stays a menu row. */
-function applyStylePreview(label, name) {
-  if (!doc || typeof doc.stylePreview !== "function") return;
-  let preview;
-  try {
-    preview = doc.stylePreview(name);
-  } catch {
-    return; // unknown style — keep the plain label (graceful degrade)
-  }
-  if (!preview) return;
-  const family = preview.fontFamily;
-  if (family) label.style.fontFamily = `"${family.replace(/"/g, "")}", sans-serif`;
-  const px = previewPx(preview.sizePoints);
-  if (px) label.style.fontSize = `${px}px`;
-  label.style.fontWeight = preview.bold ? "700" : "450";
-  label.style.fontStyle = preview.italic ? "italic" : "normal";
-  label.style.textDecoration = preview.underline ? "underline" : "none";
-  // Explicit RGB colors preview as authored — but only when they are actually
-  // legible on the card. Automatic/theme colors resolve to an empty string and
-  // inherit the card's theme-aware ink.
-  //
-  // A document's colors are absolute and the chrome's are not. Word's built-in
-  // Heading 1 is #2F5496, which sits at about 1.7:1 on the dark theme's surface:
-  // the label was painted, correctly, in a color nobody could see. Word never has
-  // to solve this because its gallery is always light. Ours follows the theme, so
-  // the pairing has to be judged every time it changes — hence the authored value
-  // is kept on the element and re-decided in `refreshStylePreviews`.
-  label.dataset.previewColor = preview.color || "";
-  applyPreviewInk(label);
-  const align = preview.alignment;
-  label.style.textAlign = align === "start" ? "left" : align === "end" ? "right" : align;
-}
 
 /** Builds one option row, drawn IN the style it applies — with a tick on the one
  *  the caret is already in, which is how Docs and every menu-shaped picker says
@@ -621,7 +520,7 @@ function makeStyleOption(name) {
   const label = document.createElement("span");
   label.className = "style-option-name";
   label.textContent = name;
-  applyStylePreview(label, name);
+  applyStylePreview(label, name, (style) => doc?.stylePreview?.(style));
   option.appendChild(label);
   option.addEventListener("click", () => {
     runToolbarEdit((a, b, c, d) => doc.setParagraphStyle(a, b, c, d, name), { paragraphLevel: true });
@@ -646,14 +545,36 @@ let styleCardsEnabled = false;
 let definedStyles = new Set();
 let recommendedHere = [];
 
-/** The SHORT list the menu offers. The rule itself is `offeredStyleNames`. */
+/** The suggested group, narrowed to WHERE THE CARET IS. The rule itself is
+ *  `offeredStyleNames`; this is only the question "where are we". */
 function offeredStyles() {
   return offeredStyleNames({
     recommended: recommendedHere,
     inUse: stylesInUse,
     defined: definedStyles,
     active: activeParagraphStyle,
+    contexts: caretContexts(caretStyleContext()),
   });
+}
+
+/** The caret's surroundings, as the style list cares about them. Every signal
+ *  is one the toolbar already reads on the same refresh, so this adds no
+ *  per-keystroke engine work. */
+function caretStyleContext() {
+  const node = selection?.focus?.node;
+  if (!doc || !node) return {};
+  let story = "body";
+  if (runningEditBand === "header" || runningEditBand === "footer") story = runningEditBand;
+  let inTable = false;
+  let listKind = "";
+  try {
+    inTable = doc.inTable(node);
+    listKind = doc.listStyleAt(node) || "";
+  } catch {
+    // A node the engine no longer has (mid-edit) is not a context; the
+    // general list is still correct, just not narrowed.
+  }
+  return { story, inTable, listKind };
 }
 
 /** Rebuilds the option rows, but only when the offered set actually changed. This is
@@ -662,10 +583,24 @@ function offeredStyles() {
  *  preview per option per keystroke — and would tear the menu out from under a pointer
  *  while it is open. */
 function renderStylesGallery() {
-  const wanted = offeredStyles();
-  const current = [...stylesMenu.querySelectorAll(".style-option")].map((c) => c.dataset.style);
-  if (current.length === wanted.length && current.every((name, i) => name === wanted[i])) return;
-  stylesMenu.replaceChildren(...wanted.map((name) => makeStyleOption(name)));
+  const { suggested, rest } = styleMenuGroups({
+    suggested: offeredStyles(),
+    defined: definedStyles,
+    query: stylesMenuInput.value,
+  });
+  stylesMenuList.replaceChildren();
+  // The split is the point: "what you probably want here" and "what this
+  // document has" mean different things, and Word's Styles pane makes the
+  // same one with its Recommended / All filter.
+  if (suggested.length && rest.length) {
+    stylesMenuList.appendChild(makeMenuHeading("Suggested"));
+  }
+  for (const name of suggested) stylesMenuList.appendChild(makeStyleOption(name));
+  if (rest.length) {
+    if (suggested.length) stylesMenuList.appendChild(makeMenuHeading("All styles"));
+    for (const name of rest) stylesMenuList.appendChild(makeStyleOption(name));
+  }
+  stylesMenuEmpty.hidden = suggested.length + rest.length > 0;
 }
 
 /** Rebuilds the menu for a (re)loaded document or a changed style registry. The
@@ -681,7 +616,8 @@ function buildStylesGallery(styles) {
   // Force the rebuild `renderStylesGallery` skips when the offered NAMES are
   // unchanged: "Update <style> to match selection" changes a DEFINITION, not a name,
   // and the rows would keep previewing the old one. `ribbon-home` caught that.
-  stylesMenu.replaceChildren();
+  stylesMenuInput.value = "";
+  stylesMenuList.replaceChildren();
   renderStylesGallery();
   syncStylesGalleryActive();
 }
@@ -704,7 +640,7 @@ function syncStylesGalleryActive() {
     "aria-label",
     active ? `Paragraph style: ${active}` : "Paragraph style",
   );
-  for (const option of stylesMenu.querySelectorAll(".style-option")) {
+  for (const option of stylesMenuList.querySelectorAll(".style-option")) {
     const selected = option.dataset.style === active;
     option.setAttribute("aria-selected", String(selected));
     option.classList.toggle("is-selected", selected);
@@ -10264,9 +10200,11 @@ tableStylePopover = registerPopover(tableStyleBtn, tableStyleMenu, () => {});
 // Still no "More styles" ▾: that listed every style in the document, which is the
 // deleted 14-entry select's long list reached through a side door. The full
 // stylesheet stays off the band — command palette, Paragraph properties (docs/115 §5).
+stylesMenuInput.addEventListener("input", () => renderStylesGallery());
 const stylesPopover = registerPopover(stylesTrigger, stylesMenu, () => {
-  // Rebuild on open rather than on every caret move: the offered set depends on the
-  // caret's style, and the menu is not on screen while the caret is moving.
+  // Rebuild on open rather than on every caret move: the suggested set depends
+  // on the caret's style, and the menu is not on screen while the caret moves.
+  stylesMenuInput.value = "";
   renderStylesGallery();
   syncStylesGalleryActive();
 });
