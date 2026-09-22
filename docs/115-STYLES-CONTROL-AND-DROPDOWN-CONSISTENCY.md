@@ -243,3 +243,102 @@ The guards that can actually catch this class:
 
 Each was driven red by mutating `main.js`/`style.css` before being accepted; the mutations and
 their verbatim output are in the branch's commit message.
+
+## 8. The COMPACT bar's width budget (added 2026-09-23, `109` HF-179)
+
+§6 above records the ribbon's budget — the Home band has a hard **1280 px no-scrollbar**
+target with about 10 px of slack — and that rule has shaped several decisions in this
+document. The compact bar had **no equivalent**: nothing said how wide it was allowed to be,
+nothing measured it, and so it was 141 px too wide at the very viewport the other chrome is
+budgeted against. This section establishes the missing budget, because a second chrome that
+needs a wider screen than the first is not a compact one.
+
+### What it measured before
+
+On the `?fixture=rich` demo document, in compact mode, Chromium:
+
+| Viewport | Bar `clientWidth` | Content `scrollWidth` | Overflowing by |
+| --- | ---: | ---: | ---: |
+| 1280 × 800 | 1272 | 1413 | **141 px** |
+
+It did not stop scrolling until a **1421 px** viewport — so it scrolled on a 1280, a 1366
+and a 1400 px screen, and at 1152 px, which is what a 1440 px display gives you at the 125 %
+scale the owner was using. The widest controls, rendered:
+
+| Control | Rendered | Why that was wrong |
+| --- | ---: | --- |
+| `#stylesTrigger` | 227 px | The layout table set an inline `min-width: 227px` **on top of** a stylesheet rule that had already designed this control at 132 px (§5.6). The inline value won, and 95 px of the bar went with it. |
+| `#fontFamily` | 136 px | 14 px **wider than the ribbon's own** authored 122 px, which the `.font-family-trigger` rule justifies against the 1280 px budget. No reason was recorded for the divergence. |
+| `#fontSize` | 72 px | A number input with its native spinner, in a bar that already carries Docs' − and + either side of it. |
+| four align buttons | 136 px | Google Docs ships **one** align dropdown here. |
+
+### The budget
+
+> **The compact bar must present its whole declared control set, inline, at a 1280 × 800
+> viewport — the same width the ribbon's Home band is budgeted against. Below that width it
+> folds into the `⋯` menu. It never scrolls sideways, at any width.**
+
+`overflow-x` on `.compact-toolbar` is `hidden`, not `auto`: a toolbar that scrolls hides
+controls behind a gesture nobody makes. What does not fit moves into a `⋯` overflow menu
+whole group at a time, which is `updateRibbonOverflow`'s algorithm applied to the second
+chrome and what Google Docs' own toolbar does at narrow widths.
+
+### What it measures now
+
+| Control | Before | After | What happens to the longest real value |
+| --- | ---: | ---: | --- |
+| `#stylesTrigger` | 227 px | **140 px** | "Heading 1" measures 61 px in the 68 px label box this leaves, so it reads in full. The longest style a default document offers — "Header and Footer", 115 px — ellipsises; the `title` and the open menu both carry the whole name, which is the trade §5 already accepted for the font trigger. |
+| `#fontFamily` | 136 px | **122 px** | Identical to the ribbon at the same width: long family names ellipsise and `ribbon-legibility.spec.mjs` already asserts the `title` keeps them. |
+| `#fontSize` | 72 px | **58 px** | The spinner is suppressed in this bar only (− and + do that job two controls away). `1638`, the largest size the format allows, still fits without clipping — asserted, because 56 px did not. |
+| alignment | 136 px | **~47 px** | One dropdown whose icon reports the caret's alignment, holding the same four registry commands. |
+
+Result: every one of the twelve groups is inline at any viewport **≥ 1261 px**, so 1280 px
+leaves **19 px of slack** — and unlike the ribbon, running out of slack now folds a group
+into `⋯` instead of producing a scrollbar. At 1152 px three groups fold and stay reachable.
+
+### Grouping, and where each decision comes from
+
+The owner asked for grouping "like in google docs", so nothing here is invented:
+
+| Decision | Source |
+| --- | --- |
+| One align dropdown holding left / center / right / justify | **Google Docs**: "the align dropdown in the main toolbar will left align, center, right align, and justify selected text" |
+| Its icon reports the current alignment rather than being fixed | **Google Docs** — the only thing that makes one button as informative as the four it replaces |
+| Checklist, bulleted and numbered adjacent as one group | **Google Docs** places the three together; ours was missing two of them entirely |
+| Flush inside a group, gap between groups, a rule at seven boundaries | **Google Docs**' toolbar rhythm. Rules sit left of the align run, which in Docs is one undivided stretch through to clear-formatting |
+| `role="group"` with a name per group | **Existing pattern**: the ribbon's `.rgroup` treatment (`ribbon-keyboard.spec.mjs` asserts it there) |
+| A `⋯` overflow that folds whole groups right-to-left, pinned groups last | **Existing pattern**: `updateRibbonOverflow`; and **Google Docs**' own narrow-width behaviour |
+| A single button opening a menu, rather than a split button | **Existing pattern**: `registerPopover`, which is also what puts the new menu under the light-dismiss contract |
+
+### The three controls that were never there
+
+Three rows of the layout table named ids from the **context menu**, which the command
+registry does not answer: `paragraph.bullets`, `paragraph.numbering` and `comment.add`
+(the registry calls them `paragraph.list.bullet`, `paragraph.list.numbered` and
+`review.comment`). `renderCompactToolbar`'s `if (!command) continue` dropped all three in
+silence, so the compact chrome shipped with **no bulleted list, no numbered list and no Add
+comment button** while its own declaration claimed otherwise. The comment above the table
+asserted that a `compact-parity.spec.mjs` failed the build on exactly this; the file did not
+exist. This is §9's evidence rule in miniature — a gate claimed in prose had never run.
+
+### The guards
+
+In `webapp/tests/e2e/compact-toolbar.spec.mjs`. Each was driven red by reintroducing the
+defect; the mutations and their verbatim output are in the branch's commit message.
+
+1. **The budget.** At 1280 × 800 the bar does not scroll, the `⋯` button is hidden, nothing
+   is folded, and the twelve groups are inline in order. This is the load-bearing one:
+   widening any control or adding one turns it red, which is what stops the bar growing back.
+2. **Narrow is not useless.** Ceilings on the three control widths, plus "Heading 1" not
+   ellipsised in the style trigger and `1638` not clipped in the size box.
+3. **Declared is rendered.** Read from `compactCommandIds()` rather than restated, so a row
+   added to the table is covered on arrival — the guard that was claimed and missing.
+4. **The align dropdown.** All four commands present with their own `aria-label`s, applying
+   really aligns, the trigger then reports it, and the menu light-dismisses.
+5. **The list group.** Checklist, bullets and numbering all present, and the document agrees
+   they applied.
+6. **Folding, not scrolling.** At 1152 × 800 the bar still does not scroll, something is
+   folded, the union of inline and folded is still the whole set, and the folded groups are
+   visible in the menu.
+7. **The ribbon gets its borrowed controls back**, each to its own home — `#zoom` returns to
+   the status bar, not to the band — and the size box gets its spinner back.
