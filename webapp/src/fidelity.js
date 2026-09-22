@@ -31,7 +31,7 @@ const FIDELITY = [
   },
   {
     family: "Tables",
-    note: "Insert, row/column, merge/split, sort, formula, style, borders, sizing. Not yet reaching layout: floating tables (`w:tblpPr`, which render inline), cell `noWrap`, `fitText`, `hideMark` and cell `textDirection`, style-provided row properties/margins/spacing, and exact art/compound borders (which fall back to solid).",
+    note: "Insert, row/column, merge/split, sort, formula, style, borders, sizing. Positioned tables (`w:tblpPr`) now place on the float layer with text wrapping beside them, at the top level of the body; nested/header ones and page-splitting are not there. Not yet reaching layout: cell `noWrap`, `fitText`, `hideMark` and cell `textDirection`, style-provided row properties/margins/spacing, and exact art/compound borders (which fall back to solid).",
     modeled: "full", rendered: "partial", editable: "full", roundtrips: "full",
   },
   {

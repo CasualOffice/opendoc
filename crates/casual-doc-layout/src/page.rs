@@ -209,6 +209,18 @@ pub enum AnchorContent {
         /// Resolved content offset and overflow clipping.
         content_layout: crate::text::TextBoxContentLayout,
     },
+    /// A **positioned (floating) table** — `w:tblPr/w:tblpPr` — lifted out of
+    /// block flow and placed against a page/margin/text reference frame, with
+    /// the body text wrapping around it (the engine's `table_float` pass).
+    ///
+    /// Its rows are the ordinary [`BlockFragment::TableRow`]s the flow engine
+    /// produces, positioned relative to the anchor rectangle's origin, so the
+    /// table paints, hit-tests and carries its cells' model identity exactly as
+    /// an in-flow table does — the only difference is who computed its rect.
+    Table {
+        /// The flowed rows, stacked from the anchor rectangle's origin.
+        rows: Vec<BlockFragment>,
+    },
 }
 
 /// A floating object resolved to its absolute rectangle and stacking key on a
