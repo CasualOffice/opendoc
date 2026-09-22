@@ -68,6 +68,7 @@ pub(crate) fn parse(
                         in_compat,
                         note_scope,
                         &element,
+                        false,
                         &mut settings,
                         reporter,
                     ),
@@ -80,6 +81,7 @@ pub(crate) fn parse(
                     in_compat,
                     note_scope,
                     &element,
+                    true,
                     &mut settings,
                     reporter,
                 );
@@ -114,6 +116,7 @@ fn on_setting(
     in_compat: bool,
     note_scope: Option<NoteScope>,
     element: &BytesStart<'_>,
+    self_closing: bool,
     settings: &mut DocumentSettings,
     reporter: &mut Reporter,
 ) {
@@ -129,7 +132,7 @@ fn on_setting(
                     reporter.report(local);
                 }
             }
-            _ => reporter.report(local),
+            _ => reporter.report_element(local, element, self_closing),
         }
         return;
     }
@@ -137,7 +140,7 @@ fn on_setting(
         && level == 2
     {
         if !apply_note_child(scope, local, element, settings) {
-            reporter.report(local);
+            reporter.report_element(local, element, self_closing);
         }
         return;
     }
@@ -151,7 +154,7 @@ fn on_setting(
         return;
     }
     if !apply_setting(local, element, settings) {
-        reporter.report(local);
+        reporter.report_element(local, element, self_closing);
     }
 }
 
@@ -185,6 +188,15 @@ fn apply_note_child(
             Some(value) => props.number_restart = Some(value),
             None => return false,
         },
+        // `<w:footnote w:id="-1"/>` / `<w:endnote w:id="0"/>` inside the
+        // document-default note properties is a REFERENCE to the stock separator
+        // and continuation-separator notes by id. The notes themselves carry no
+        // document meaning — this engine's layout draws the rule above the notes
+        // for itself, so `body::close_note` skips them — and a pointer to
+        // something that carries no meaning carries none either. Reporting it
+        // described a loss that did not happen, twice per container across seven
+        // documents of the owner's corpus (HF-174).
+        b"footnote" | b"endnote" => {}
         _ => return false,
     }
     true

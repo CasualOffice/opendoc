@@ -124,6 +124,64 @@ reported" is a stated policy with a guard rather than an oversight.
 | Pure OPC plumbing (`[Content_Types].xml`, `_rels/*`) | Regenerated deterministically from the model. Not data. |
 | `mc:Ignorable` (and the other markup-compatibility processing attributes) | A directive naming which namespace prefixes a consumer may ignore. It carries no document content, and a writer emits its own correct value. Plumbing, in the same sense as the content-type manifest. |
 
+### The no-op class — markup that says a feature is *absent*
+
+Added 2026-09-23 with the implementation (`109` HF-174). The importer had been
+treating **unrecognised** as **lost**, and the two are not the same thing. A
+sweep over the owner's fifteen-document corpus measured **701 findings that
+described losses which had not happened**, on documents whose real findings
+numbered in the tens — which is exactly how the report becomes something a
+caller filters out, the outcome the section above exists to prevent.
+
+The rule is not "these tags are boring". It is: **an element whose value equals
+the state the model already has carries no meaning to lose.** Where that depends
+on the value, so does the arm. The class is `mapped` + `not-applicable`
+(`MappedComplete`), and by the rule above that disposition is not enumerated.
+
+| Markup | Condition | Why nothing is lost |
+| --- | --- | --- |
+| `w:proofErr` | always | Where Word's spell/grammar checker last drew a squiggle. A cache of a check, not a statement about the document. |
+| `w:lastRenderedPageBreak` | always | Where Word's pagination last fell. This engine paginates for itself, and the cached value is wrong the moment a font or margin differs. |
+| `w:nsid`, `w:tmpl` | always | Word's list-gallery identity for an abstract numbering definition. Nothing in the package joins on them; numbering resolves through `w:abstractNumId`/`w:numId`. |
+| `wp14:sizeRelH`, `wp14:sizeRelV` | always | A wrapper carrying only `@relativeFrom`; the percentage inside decides whether relative sizing is on. |
+| `wp14:pctWidth`, `wp14:pctHeight` | value is `0` | Zero means relative sizing is **off**, and Word writes the element anyway. A non-zero percentage is a size the model (which sizes in EMU) does not carry, and it is reported. |
+| `wps:cNvSpPr`, `wps:cNvCnPr`, `wpg:cNvGrpSpPr`, `wps:txbx` | always | Non-visual property wrappers and the text-box wrapper, beside `pic:cNvPr`/`pic:cNvPicPr` which were already excluded. Their children (`a:spLocks`, `w:txbxContent`) are judged, or imported, on their own. |
+| `a:effectLst` | self-closing | An empty effect list is DrawingML for "no effects". A populated one is a lost shadow or glow, and is reported. |
+| `a:spLocks` | no attributes | Locks nothing. A lock that locks something is a restriction the document asked for and did not get, and is reported. |
+| `a14:useLocalDpi` | `val` is false | Asks that a picture *not* be rescaled to the authoring DPI, which is what this engine does. |
+| `a:prstTxWarp` | `prst="textNoShape"` | DrawingML's token for *no* warp; Word writes it into every `wps:bodyPr`. ONLYOFFICE special-cases the same token in four places. A real preset is unmodeled and is reported. |
+| `w:clrSchemeMapping` | the default mapping | The permutation every consumer already assumes when the element is absent. A swapped slot inverts real colours and is reported. |
+| `w:characterSpacingControl` | `val="doNotCompress"` | The schema default, and this engine's behaviour. `compressPunctuation` is real East Asian justification and is reported. |
+| `w:tl2br`, `w:tr2bl` | `val` is `nil`/`none`/absent | "There is no diagonal here", written as part of a complete border set. A drawn diagonal is unmodeled geometry and is reported through its container. |
+| `mc:Fallback` | a `mc:Choice` was selected | The alternative to a branch that was read *in full*; ECMA-376 Part 3 requires the branches to describe the same content. A skipped `mc:Choice` is the opposite case and stays reported. |
+| A `separator`/`continuationSeparator` note, and the `w:footnote`/`w:endnote` reference to it in `w:footnotePr`/`w:endnotePr` | the note holds no text, drawing, object, field or table | Word's stock rule above the notes, which this engine's layout draws for itself. Word also lets a user *replace* that rule, and a separator note holding content of its own is reported. |
+
+Four members of the sweep's list were checked and are **not** in the class,
+recorded here so the decision is not re-litigated from the tag name:
+
+- **`w:autoRedefine`** — "update this style automatically as I format". Its
+  presence is not a default (the default is off), so it says something, and this
+  engine drops it. Reported, like the other editor preferences
+  (`w:savePreviewPicture`, `w:doNotAutoCompressPictures`) already are.
+- **`wps:style`** — the shape's theme style reference. Its `a:lnRef`/`a:fillRef`/
+  `a:effectRef`/`a:fontRef` children are *suppressed*, not imported: a shape
+  styled only through the theme comes out with the wrong fill and stroke. The
+  wrapper is the honest place to say so until the reference is resolved.
+- **`a:miter`** — selects a miter line join. `@lim="800000"` being Word's default
+  says nothing about the join itself, and this engine models no join at all, so
+  "nothing was lost" is not established. Reported.
+- **`w:docPartUnique`** — a building-block property the model does not carry.
+  Empty is not the same as meaningless: the element's presence is the value.
+
+**Open question, recorded rather than settled.** `w:nsid`/`w:tmpl` and `w:rsid*`
+are both per-session bookkeeping, and they are treated differently: the first
+pair is excluded outright, the second is reported once per document as a class
+(below). The distinction drawn is that an rsid identifies *content* — which
+editing session wrote this run, which Word's compare and merge apply to the
+user's own text — while an nsid identifies where a *list template* came from,
+and no feature of the document depends on it. If a consumer for `w:nsid` is ever
+found, it belongs in the rsid class rather than in the table above.
+
 ### Revision-save IDs (`w:rsid*`) — reported once per document, as a class
 
 `w:rsid*` attributes (`rsidR`, `rsidRPr`, `rsidRDefault`, `rsidP`, `rsidDel`,
