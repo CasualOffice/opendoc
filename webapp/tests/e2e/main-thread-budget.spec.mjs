@@ -67,6 +67,27 @@ const OPERATIONS = [
     },
   },
   {
+    name: "moving the pointer across the page",
+    // The hover router (`docs/109` HF-179) asks the engine what is under the
+    // pointer once per animation frame — `bandAt`, then `objectAt`, then a
+    // caret hit test and a form-checkbox lookup, then `linkAt`. Each is bounded
+    // (`objectAt` is 0.7 ms at this size since `docs/116`) but they are asked
+    // far more often than anything else in this list, so this row is the one
+    // that notices if any of them ever becomes a document scan again. A hover
+    // must never be the thing that stalls the frame loop.
+    budget: 300,
+    async run(page) {
+      const box = await page.locator(".page-wrap").first().boundingBox();
+      for (let i = 0; i < 40; i += 1) {
+        await page.mouse.move(box.x + 40 + i * 12, box.y + 40 + i * 9);
+      }
+      // …and it has to have actually ROUTED. Without this the row would measure
+      // a sweep over a surface whose router had silently stopped answering on a
+      // large document, and 0 ms is under every budget.
+      await expect(page.locator(".page-wrap .page[data-pointer-target]")).toHaveCount(1);
+    },
+  },
+  {
     name: "opening the Outline panel",
     // `documentOutline` was 5,565 ms at this exact size, and ~1.6 hours of
     // arithmetic on the owner's file. It is now ~1 ms.

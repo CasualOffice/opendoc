@@ -56,6 +56,10 @@ const PURE_MODULES = [
   "glyph_sets.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
+  // The whole target -> cursor mapping. Its DOM half is `pointer_hover.mjs`;
+  // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
+  // hover cascade with plain objects, with no browser and no engine.
+  "pointer_cursor.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what
