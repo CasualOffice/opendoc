@@ -21,6 +21,23 @@ const HISTORY = "That history step can no longer be applied — the document is 
 /** The engine prefixes a refused history step with `undo failed:` / `redo failed:`. */
 const HISTORY_FAILURE = /^(undo|redo) failed:/;
 
+/** The engine's marker for a refusal it has ALREADY written as a sentence for
+ *  the reader.
+ *
+ *  Most engine errors are internal vocabulary and must be translated here. But
+ *  some refusals are decisions only the engine can explain — a document whose
+ *  `w:documentProtection` permits nothing but its form fields is refused for a
+ *  reason that has no equivalent on this side, and "that edit isn't supported
+ *  for this selection yet" is actively wrong about it: the selection is fine,
+ *  the DOCUMENT is locked, and the reader is left hunting a selection that
+ *  will never work.
+ *
+ *  So the engine marks those and they pass through verbatim. A prefix rather
+ *  than a list of remembered sentences, because a list is a second place to
+ *  update and the next such refusal would silently fall back to the generic
+ *  one — the defect this is fixing. */
+const EXPLAINED = /^refused: /;
+
 /** Viewing mode: a choice the reader made and can unmake, so the sentence says
  *  how. It is only true when the DOCUMENT is not itself read-only. */
 const VIEWING = "Viewing mode is read-only; switch to Editing to change the document";
@@ -65,5 +82,6 @@ export function editRefusalMessage(error, context = {}) {
   const unavailable = String(context.editingUnavailableReason ?? "");
   if (unavailable) return unavailable;
   const text = String(error?.message ?? error ?? "");
+  if (EXPLAINED.test(text)) return text.replace(EXPLAINED, "");
   return HISTORY_FAILURE.test(text) ? HISTORY : GENERIC;
 }

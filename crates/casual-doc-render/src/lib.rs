@@ -29,7 +29,7 @@ use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
-use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
@@ -185,7 +185,9 @@ pub fn render(
                 fill,
                 stroke,
             } => {
-                if let Some(path) = polygon_path(points, dpi) {
+                // The flat `PaintItem::Polygon` (table furniture, callout tails) is
+                // always a closed figure; only a DrawingML shape can be open.
+                if let Some(path) = polygon_path(points, true, dpi) {
                     paint_path(
                         surface,
                         &path,
@@ -239,6 +241,7 @@ pub fn render(
                 rect,
                 crop,
                 transform,
+                opacity,
             } => {
                 render_image(
                     id,
@@ -249,6 +252,7 @@ pub fn render(
                     media,
                     clip_stack.last(),
                     object_transform(transform.as_ref(), dpi),
+                    *opacity,
                 );
             }
             PaintItem::Line { from, to, stroke } => {
@@ -307,6 +311,7 @@ fn render_image(
     media: &dyn MediaSource,
     clip: Option<&Mask>,
     transform: Transform,
+    opacity: Option<u32>,
 ) {
     let Some(bytes) = media.media_bytes(media_id) else {
         return;
@@ -354,8 +359,19 @@ fn render_image(
     // object transform (rotation/flip about the box center) is applied AFTER the
     // placement, so the picture rotates in page space.
     let placement = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
+    // `a:alphaModFix@amt` scales the picture's alpha: 20000 is 20% opaque,
+    // which is how Word writes a watermark (ECMA-376 §20.1.8.1 — the amount is
+    // the alpha to scale TO, not the transparency). Absent is fully opaque.
+    //
+    // ONLYOFFICE models the same thing as a `CAlphaModFix` effect on the
+    // blipFill with an `amt` in the same 0..100000 range; their transparency
+    // SLIDER inverts it on the way in, which is a property of that control and
+    // not of the format, so it is not copied here.
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
+        opacity: opacity.map_or(1.0, |amount| {
+            (amount as f32 / OPACITY_FULL as f32).clamp(0.0, 1.0)
+        }),
         ..PixmapPaint::default()
     };
     surface.pixmap.draw_pixmap(
@@ -1364,9 +1380,14 @@ fn ellipse_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
     PathBuilder::from_oval(SkRect::from_xywh(x, y, width, height)?)
 }
 
-fn polygon_path(points: &[Point], dpi: f32) -> Option<tiny_skia::Path> {
+/// Builds the device path for a polyline. A CLOSED path needs three vertices to
+/// enclose anything; an OPEN one needs only two, which is exactly the shape a
+/// custom-geometry horizontal rule has (docs/119), so the minimum depends on
+/// `closed` — a fixed three-vertex floor silently dropped every two-point
+/// freeform.
+fn polygon_path(points: &[Point], closed: bool, dpi: f32) -> Option<tiny_skia::Path> {
     let (first, rest) = points.split_first()?;
-    if rest.len() < 2 {
+    if rest.len() < if closed { 2 } else { 1 } {
         return None;
     }
     let mut builder = PathBuilder::new();
@@ -1374,7 +1395,9 @@ fn polygon_path(points: &[Point], dpi: f32) -> Option<tiny_skia::Path> {
     for point in rest {
         builder.line_to(point.x.to_device_px(dpi), point.y.to_device_px(dpi));
     }
-    builder.close();
+    if closed {
+        builder.close();
+    }
     builder.finish()
 }
 
@@ -1492,9 +1515,10 @@ fn render_shape(
             rounded_rect_path(*rect, *radius, dpi),
             device_bounds(*rect, dpi),
         ),
-        ShapeGeometry::Polygon { points } => {
-            (polygon_path(points, dpi), polygon_bounds(points, dpi))
-        }
+        ShapeGeometry::Polygon { points, closed } => (
+            polygon_path(points, *closed, dpi),
+            polygon_bounds(points, dpi),
+        ),
         ShapeGeometry::Line { from, to } => {
             let mut builder = PathBuilder::new();
             builder.move_to(from.x.to_device_px(dpi), from.y.to_device_px(dpi));
@@ -2570,6 +2594,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect,
             crop: None,
@@ -2592,6 +2617,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect,
             crop,
@@ -2600,6 +2626,77 @@ mod tests {
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
         surface
+    }
+
+    /// Renders one `Image` paint item at `opacity` (per-100000, `None` opaque)
+    /// into the same box as [`render_one_image`], onto a WHITE page — a
+    /// watermark is only visible as a lightening of what is behind it, so a
+    /// transparent surface would measure nothing.
+    fn render_one_image_at_opacity(media_bytes: Vec<u8>, opacity: Option<u32>) -> Surface {
+        use casual_doc_layout::units::Size;
+        let mut media = MapMediaSource::new();
+        media.insert("pic", media_bytes);
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Rect {
+            rect: Rect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(50), Twip(50))),
+            fill: Some(DisplayColor::WHITE),
+            stroke: None,
+        });
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect,
+            crop: None,
+            transform: None,
+            opacity,
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        surface
+    }
+
+    /// A picture at `a:alphaModFix amt="20000"` paints at 20% — the watermark
+    /// in the owner's loan agreement, which was painting solid.
+    ///
+    /// The model, the import, the flow, the display list and the renderer all
+    /// had to carry it; a break anywhere in that chain shows up here as a
+    /// picture that is still opaque.
+    #[test]
+    fn a_picture_with_an_alpha_paints_lighter_than_an_opaque_one() {
+        let black = solid_image(4, 4, [0, 0, 0, 255], image::ImageFormat::Png);
+        let opaque = render_one_image_at_opacity(black.clone(), None);
+        let faint = render_one_image_at_opacity(black, Some(20_000));
+
+        // Centre of the picture box, well inside it at this scale.
+        let opaque_px = pixel_at(&opaque, 50, 25, 25);
+        let faint_px = pixel_at(&faint, 50, 25, 25);
+        assert!(
+            opaque_px[0] < 32,
+            "the control must be a solid black picture: {opaque_px:?}",
+        );
+        assert!(
+            faint_px[0] > opaque_px[0] + 64,
+            "a 20% picture must paint far lighter over white than an opaque one \
+             (opaque {opaque_px:?}, 20% {faint_px:?})",
+        );
+        // …and still be visible: 20% is faint, not absent.
+        assert!(
+            faint_px[0] < 250,
+            "a 20% picture must still be drawn, not skipped: {faint_px:?}",
+        );
+    }
+
+    /// Full opacity is indistinguishable from no alpha at all, so a document
+    /// that writes the no-op explicitly renders identically.
+    #[test]
+    fn a_fully_opaque_alpha_renders_as_no_alpha() {
+        let black = solid_image(4, 4, [0, 0, 0, 255], image::ImageFormat::Png);
+        let absent = render_one_image_at_opacity(black.clone(), None);
+        let explicit = render_one_image_at_opacity(black, Some(100_000));
+        assert_eq!(absent.data(), explicit.data());
     }
 
     /// An `w×h` PNG whose left half is `left` and right half is `right`.
@@ -2811,6 +2908,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "missing".to_owned(),
             rect,
             crop: None,
@@ -2845,6 +2943,7 @@ mod tests {
         media.insert("junk", vec![1, 2, 3, 4, 5, 6, 7, 8]);
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "junk".to_owned(),
             rect,
             crop: None,
@@ -3062,6 +3161,7 @@ mod tests {
         media.insert("pic", bytes);
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect: Rect::new(
                 Point::new(Twip(10), Twip(10)),
@@ -3205,6 +3305,114 @@ mod tests {
         assert!(
             pixel_at(&solid, 100, 11, 10)[0] < 100,
             "a solid stroke paints the same span with no gap"
+        );
+    }
+
+    /// An OPEN custom-geometry path is stroked along the path, not around the
+    /// box it lives in (docs/119, `109` FID-G-01).
+    ///
+    /// The test is written as pixels rather than as a type assertion on purpose:
+    /// the defect this closes is "a freeform paints as its bounding rectangle",
+    /// and the only assertion that can tell those apart is whether the edges the
+    /// path does NOT visit are painted. The path runs along the TOP of a tall
+    /// box, so a rectangle fallback paints the bottom edge and the open polyline
+    /// does not.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn an_open_path_strokes_its_segments_and_leaves_the_rest_of_the_box_blank() {
+        let polyline = |closed| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Polygon {
+                    points: vec![
+                        Point::new(Twip(10), Twip(10)),
+                        Point::new(Twip(90), Twip(10)),
+                        Point::new(Twip(90), Twip(50)),
+                    ],
+                    closed,
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 2.0,
+                    dash: DashStyle::Solid,
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 100, 60)
+        };
+        let open = polyline(false);
+
+        // The two authored segments are stroked: the top edge and the right edge.
+        assert!(
+            pixel_at(&open, 100, 50, 10)[0] < 100,
+            "the moveTo -> lnTo segment is stroked (got {:?})",
+            pixel_at(&open, 100, 50, 10)
+        );
+        assert!(
+            pixel_at(&open, 100, 90, 30)[0] < 100,
+            "the second segment is stroked"
+        );
+        // The path's bounding box is (10,10)-(90,50). Its LEFT and BOTTOM edges
+        // are never visited, so they must stay blank — these are exactly the two
+        // pixels a bounding-rectangle fallback would paint, and they are why
+        // this guard is written in pixels rather than as a type assertion.
+        for (x, y, edge) in [(10, 30, "left"), (50, 50, "bottom")] {
+            assert!(
+                pixel_at(&open, 100, x, y)[0] > 200,
+                "the unvisited {edge} edge of the box stays blank (got {:?})",
+                pixel_at(&open, 100, x, y)
+            );
+        }
+
+        // And the same vertices WITH `a:close` do join back up along the
+        // diagonal (10,10)-(90,50), which passes through (50,30). The flag is
+        // load-bearing in both directions, not just "open is the new default".
+        let closed = polyline(true);
+        assert!(
+            pixel_at(&closed, 100, 50, 30)[0] < 100,
+            "a closed path strokes the closing edge (got {:?})",
+            pixel_at(&closed, 100, 50, 30)
+        );
+        assert!(
+            pixel_at(&open, 100, 50, 30)[0] > 200,
+            "and the open one does not (got {:?})",
+            pixel_at(&open, 100, 50, 30)
+        );
+    }
+
+    /// A two-vertex open path — the shape of every rule in the owner's loan
+    /// agreement — paints. A closed polygon needs three vertices to enclose
+    /// anything, and a single minimum for both silently dropped these.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_two_point_open_path_is_not_dropped_as_a_degenerate_polygon() {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Polygon {
+                points: vec![
+                    Point::new(Twip(5), Twip(10)),
+                    Point::new(Twip(95), Twip(10)),
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 2.0,
+                dash: DashStyle::Solid,
+            }),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 20);
+        assert!(
+            pixel_at(&surface, 100, 50, 10)[0] < 100,
+            "the two-point rule is painted (got {:?})",
+            pixel_at(&surface, 100, 50, 10)
         );
     }
 

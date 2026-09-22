@@ -530,6 +530,7 @@ fn a_header_can_contain_an_inline_image() {
         id: node(200),
         properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+            opacity: None,
             id: node(201),
             media: media_id,
             extent: Some(Extent {

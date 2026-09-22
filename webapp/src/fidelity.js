@@ -41,12 +41,12 @@ const FIDELITY = [
   },
   {
     family: "Images & inline drawings",
-    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. A picture can be inserted (from a file or the clipboard), selected, resized, moved, wrapped, reordered, cropped by dragging its handles, described (alt text), and deleted. Replacing an existing picture\u2019s bytes in place, authoring rotation/flip, and picture borders and effects are not there.",
+    note: "PNG, JPEG, GIF, BMP, TIFF, and WEBP decode and render as true in-flow boxes (with crop/scale) and round-trip. SVG vector paths/shapes rasterize on the native build; SVG text — and all SVG on the browser (WASM) build — falls back to a placeholder, as do EMF/WMF metafiles and undecodable images. A picture can be inserted (from a file or the clipboard), selected, resized, moved, wrapped, reordered, cropped by dragging its handles, described (alt text), and deleted. Picture transparency (`a:alphaModFix`) renders at the authored alpha and round-trips, so a watermark stays faint instead of painting solid. Replacing an existing picture\u2019s bytes in place, authoring rotation/flip or transparency, and picture borders and other effects are not there.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {
     family: "Text boxes & shapes",
-    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders; text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Editing: a text box or preset shape can be inserted, selected, moved, resized, wrapped, reordered and deleted; box CONTENT edits with the full text pipeline (inline, floating, and inside a shape group); a shape\u2019s fill and outline colour/weight are editable. Rotation and flip authoring, custom geometry, and text-box body properties (internal margins, vertical anchor, autofit) are not.",
+    note: "Shape geometry (bounded presets + adjustments), fill (solid and multi-stop gradient), outline (color/width/dash/arrowheads), rotation/flip, and the tight/through wrap contour are typed and round-trip. Custom geometry (custGeom paths) is retained verbatim, not typed — so semantic-mode round-trip stays partial for those. Rendering paints preset shapes with solid/gradient fills, outlines (dash + head/tail arrowheads), rotation/flip, and picture-frame borders; text is contained/clipped to the box. Custom (custGeom) paths, vertical text, linked boxes, and rotated text-box content remain unpainted. Editing: a text box or preset shape can be inserted, selected, moved, resized, wrapped, reordered and deleted; box CONTENT edits with the full text pipeline (inline, floating, and inside a shape group); a shape inside a group is reached the way Word does it \u2014 the first click takes the group as a unit, the next click takes the shape under the pointer, nested groups included, and Escape climbs back out one level at a time; a shape\u2019s fill and outline colour/weight are editable. Rotation and flip authoring, custom geometry, and text-box body properties (internal margins, vertical anchor, autofit) are not.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "partial",
   },
   {
@@ -66,8 +66,13 @@ const FIDELITY = [
   },
   {
     family: "Fields",
-    note: "PAGE / NUMPAGES recompute; other fields use cached results and do not soft-wrap. Not editable as fields.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "PAGE / NUMPAGES recompute; other fields use cached results and do not soft-wrap. A legacy form field is operable: a FORMCHECKBOX (`w:ffData/w:checkBox`) paints its box from its own state and ticks on click or Space as one undo step, and text typed at a FORMTEXT lands INSIDE the field, so it is the field's result on save rather than a run beside it. A field's result is part of the paragraph's text for the caret, hit-testing and the accessibility mirror \u2014 it used to be invisible to all three, so every caret after a filled field drifted. Dropdown form fields (`w:ddList`) still cannot be operated, and no other field kind is editable as a field.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
+  },
+  {
+    family: "Document protection & forms",
+    note: "`w:documentProtection w:edit=\"forms\" w:enforcement=\"1\"` is enforced: every edit outside a form field is refused, and the refusal says the document is protected rather than blaming the selection. Filling the form \u2014 typing in a FORMTEXT, ticking a FORMCHECKBOX \u2014 is what protection exists to allow, so it still works. The other `w:edit` modes (`readOnly`, `comments`, `trackedChanges`) and the `w:permStart`/`w:permEnd` editable ranges are modeled and round-trip but are NOT enforced yet, and no password or hash is verified \u2014 protection here is an authoring contract, not a security boundary.",
+    modeled: "full", rendered: "none", editable: "partial", roundtrips: "full",
   },
   {
     family: "Math (OMML)",
@@ -106,7 +111,7 @@ const FIDELITY = [
   },
   {
     family: "Content controls (w:sdt)",
-    note: "SDT wrappers model and round-trip; content flows and edits as ordinary paragraphs, and checkbox content-controls paint their checked/unchecked state glyph. Control bounding chrome, placeholder/prompt text, and dropdown/combo/date-picker chrome are not rendered.",
+    note: "SDT wrappers model and round-trip; content flows and edits as ordinary paragraphs. A checkbox content-control paints its checked/unchecked state glyph AND can be ticked — click it or press Space with the caret in it, one undo step, the declared `w14:checkedState`/`w14:uncheckedState` glyph swapping as the content (Word and ONLYOFFICE both work this way). Until then a form opened as a picture of a form. Control bounding chrome, placeholder/prompt text, and dropdown/combo/date-picker chrome are not rendered, and those three control kinds cannot be operated.",
     modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
   },
   {

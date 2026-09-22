@@ -14,6 +14,7 @@
 import {
   test,
   expect,
+  definedParagraphStyles,
   gotoEditor,
   clickIntoFirstPage,
   expectEditorFocused,
@@ -55,11 +56,9 @@ test("File ▸ New blank document creates an empty, editable, one-page document"
   await expect(page.locator("#a11yDocument")).toContainText("Hello");
   await expect(page.locator("#documentStateText")).toHaveText("Edited");
 
-  // It is a real word-processing document, not a text dump: the paragraph-style
-  // selector is populated, which only happens when the package carried styles.
-  const styles = await page
-    .locator("#paragraphStyle option")
-    .evaluateAll((options) => options.map((o) => o.value).filter(Boolean));
+  // It is a real word-processing document, not a text dump: the style registry is
+  // populated, which only happens when the package carried styles.
+  const styles = await definedParagraphStyles(page);
   expect(styles.length, "a blank document must arrive with paragraph styles").toBeGreaterThan(0);
 
   expect(consoleErrors).toEqual([]);

@@ -76,6 +76,9 @@ pub enum FlowItem<'a> {
         /// The source-rectangle crop (`a:srcRect`), if the picture is cropped
         /// (`P1G-OBJ-MODEL`).
         crop: Option<casual_doc_model::v1::CropRect>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
+        /// `None` is fully opaque.
+        opacity: Option<u32>,
     },
     /// A typed equation pre-laid out into an atomic glyph/rule box.
     Math {
@@ -97,6 +100,15 @@ pub enum FlowItem<'a> {
         value: String,
         /// The run styling, so the field pass can reshape a new value.
         style: FieldStyle,
+        /// How many bytes of the paragraph's MODEL text this field occupies.
+        ///
+        /// Not `value.len()`. The two differ for a `PAGE` field, whose painted
+        /// value is recomputed after pagination while the model still holds the
+        /// producer's cached result - and for one with no cached result at all,
+        /// which paints a placeholder that is not model text. The caret is
+        /// mapped through the model, so this is what the line's byte cursor
+        /// advances by.
+        model_len: u32,
     },
     /// A footnote/endnote reference side-channel marker. The visible reference
     /// glyph is represented by an adjacent [`FlowItem::Run`]; this zero-width item
@@ -170,17 +182,21 @@ impl FlowItem<'_> {
     /// symbol paragraph fails the guard rather than passing quietly.
     pub(crate) fn model_bytes(&self) -> u32 {
         match self {
-            // The one non-run item that IS model text.
+            // The non-run items that ARE model text.
             FlowItem::Tab => 1,
             FlowItem::Run(run) => run.text.len() as u32,
-            // `w:ptab`, hard breaks, drawings, fields, notes, text boxes, rules and
-            // the float markers contribute no bytes — matching `node_plain_text`
+            // A field contributes the cached result it SHOWS, which is what
+            // `node_plain_text` reports and what an edit is applied against.
+            // Never the painted value, which for a `PAGE` field is recomputed
+            // after pagination and for an empty one is a placeholder.
+            FlowItem::Field { model_len, .. } => *model_len,
+            // `w:ptab`, hard breaks, drawings, notes, text boxes, rules and the
+            // float markers contribute no bytes — matching `node_plain_text`
             // and `casual-doc-edit`'s `inline_text_len`, which skip them all.
             FlowItem::PositionalTab { .. }
             | FlowItem::Break(_)
             | FlowItem::Image { .. }
             | FlowItem::Math { .. }
-            | FlowItem::Field { .. }
             | FlowItem::NoteReference(_)
             | FlowItem::TextBox { .. }
             | FlowItem::HorizontalRule(_)

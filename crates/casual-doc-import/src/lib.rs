@@ -40,6 +40,7 @@ mod font_table;
 mod math;
 mod media;
 mod metadata;
+mod noop;
 mod numbering;
 mod opaque;
 mod properties;

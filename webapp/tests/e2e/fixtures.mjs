@@ -71,7 +71,8 @@ export async function gotoEditor(page) {
 export async function documentPageCount(page) {
   const text = (await page.locator("#statPages").textContent()) ?? "";
   const match = text.match(/of\s+([\d,]+)/);
-  if (!match) throw new Error(`the page indicator did not report a total: "${text}"`);
+  if (!match)
+    throw new Error(`the page indicator did not report a total: "${text}"`);
   return Number(match[1].replace(/,/g, ""));
 }
 
@@ -94,11 +95,16 @@ export async function documentPageCount(page) {
 export async function pageSheet(page, pageNumber) {
   const found = await page.evaluate(async (n) => {
     const viewport = document.getElementById("viewport");
-    const sheet = () => document.querySelector(`.page-wrap[data-page-number="${n}"]`);
-    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const sheet = () =>
+      document.querySelector(`.page-wrap[data-page-number="${n}"]`);
+    const frame = () =>
+      new Promise((resolve) => requestAnimationFrame(resolve));
     const total = Number(
-      ((document.getElementById("statPages")?.textContent ?? "").match(/of\s+([\d,]+)/)?.[1] ?? "0")
-        .replace(/,/g, ""),
+      (
+        (document.getElementById("statPages")?.textContent ?? "").match(
+          /of\s+([\d,]+)/,
+        )?.[1] ?? "0"
+      ).replace(/,/g, ""),
     );
     let lo = 0;
     let hi = viewport.scrollHeight - viewport.clientHeight;
@@ -129,14 +135,18 @@ export async function pageSheet(page, pageNumber) {
         // here. That shows the page's own top margin (where the header band
         // and its marker live) AND leaves the page covering the middle of the
         // viewport, which is what the editor's `pageInView()` answers with.
-        if (box.top >= view.top - 2 && box.top <= view.top + viewport.clientHeight / 2) break;
+        if (
+          box.top >= view.top - 2 &&
+          box.top <= view.top + viewport.clientHeight / 2
+        )
+          break;
         // Scrolling further moves content UP, so a page whose top is too low
         // needs MORE scroll, and one whose top is off the top needs less.
         if (box.top > view.top) lo = viewport.scrollTop;
         else hi = viewport.scrollTop;
       } else {
-        const numbers = [...document.querySelectorAll(".page-wrap")].map((wrap) =>
-          Number(wrap.dataset.pageNumber),
+        const numbers = [...document.querySelectorAll(".page-wrap")].map(
+          (wrap) => Number(wrap.dataset.pageNumber),
         );
         if (numbers.length === 0) break;
         if (n < Math.min(...numbers)) hi = viewport.scrollTop;
@@ -162,7 +172,10 @@ export async function pageSheet(page, pageNumber) {
 // the engine an initial hit-tested caret, independent of the demo's exact
 // text layout.
 export async function clickIntoFirstPage(page) {
-  await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
+  await page
+    .locator(".page-wrap .page")
+    .first()
+    .click({ position: { x: 60, y: 60 } });
 }
 
 /**
@@ -198,7 +211,9 @@ export async function moveCaretToDocStart(page) {
 // Suggesting / Viewing) lives in the persistent footer. Selects `mode` and
 // confirms its segment became the pressed one.
 export async function setReviewMode(page, mode) {
-  const button = page.locator(`#reviewModeControl [data-review-mode="${mode}"]`);
+  const button = page.locator(
+    `#reviewModeControl [data-review-mode="${mode}"]`,
+  );
   await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");
 }
@@ -240,9 +255,17 @@ export async function openAppMenu(page, menu) {
  *  rather than silently doing nothing. */
 export async function runAppMenuCommand(page, menu, commandId) {
   await openAppMenu(page, menu);
-  const row = page.locator(`#appMenuPopover .app-menu-item[data-command="${commandId}"]`);
-  await expect(row, `${commandId} should be reachable from the ${menu} menu`).toBeVisible();
-  await expect(row, `${commandId} should be enabled in the ${menu} menu`).toBeEnabled();
+  const row = page.locator(
+    `#appMenuPopover .app-menu-item[data-command="${commandId}"]`,
+  );
+  await expect(
+    row,
+    `${commandId} should be reachable from the ${menu} menu`,
+  ).toBeVisible();
+  await expect(
+    row,
+    `${commandId} should be enabled in the ${menu} menu`,
+  ).toBeEnabled();
   await row.click();
 }
 
@@ -261,10 +284,74 @@ export async function saveDocument(page) {
 /** Asserts File ▸ Save is present and enabled without invoking it. */
 export async function expectSaveEnabled(page) {
   await openAppMenu(page, "file");
-  const row = page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]');
+  const row = page.locator(
+    '#appMenuPopover .app-menu-item[data-command="file.save"]',
+  );
   await expect(row).toBeVisible();
   await expect(row).toBeEnabled();
   await page.keyboard.press("Escape");
+}
+
+// --- Paragraph styles ---------------------------------------------------------
+// Six specs read `#paragraphStyle` — a native `<select>` that listed every style in
+// the document — to answer two different questions: "what style is the caret in?"
+// and "what styles does this document define?". When that control was deleted
+// (docs/115: the ribbon offers a SHORT list, one control) every one of them broke,
+// which is the same pattern as the `expectEditorFocused` cleanup: a spec asserting a
+// MECHANISM rather than the guarantee has to be patched each time the mechanism
+// moves. These three helpers are the guarantee. If the Styles control changes shape
+// again, this is the only place that moves.
+
+/** The paragraph style at the caret. `#stylesTrigger`'s `data-active-style` is
+ *  written straight from `doc.paragraphStyleAt(...)` on every toolbar refresh, and
+ *  its visible label carries the same value. */
+export async function reflectedParagraphStyle(page) {
+  return page.locator("#stylesTrigger").getAttribute("data-active-style");
+}
+
+/** The styles the band currently OFFERS, in order — the short list, read by opening
+ *  the control. Closes it again, so a caller can ask without changing what is open. */
+export async function offeredParagraphStyles(page) {
+  await page.locator("#stylesTrigger").click();
+  const names = await page.$$eval("#stylesMenu .style-option", (els) =>
+    els.map((el) => el.dataset.style),
+  );
+  await page.keyboard.press("Escape");
+  return names;
+}
+
+/** Every paragraph style the open document defines. Read from Paragraph properties ▸
+ *  Style, which carries the COMPLETE list — the band deliberately does not. */
+export async function definedParagraphStyles(page) {
+  return page.$$eval("#paraPanelStyle option", (opts) =>
+    opts.map((o) => o.value).filter(Boolean),
+  );
+}
+
+/** Applies a named paragraph style, from the band when it offers that style and from
+ *  the command palette otherwise — so a caller does not have to know which of the two
+ *  surfaces currently carries it. Waits for the change to be reflected back. */
+export async function applyParagraphStyle(page, name) {
+  await page.locator("#stylesTrigger").click();
+  const option = page.locator(
+    `#stylesMenu .style-option[data-style="${name}"]`,
+  );
+  if ((await option.count()) > 0) {
+    await option.click();
+  } else {
+    await page.keyboard.press("Escape");
+    await runAppMenuCommand(page, "help", "help.commands");
+    await page.locator("#cmdInput").fill(`Style: ${name}`);
+    const row = page.locator(
+      `#cmdList .cmd-item[data-command-id="style.${name}"]`,
+    );
+    await expect(
+      row,
+      `"Style: ${name}" should be reachable from the palette`,
+    ).toBeVisible();
+    await row.click();
+  }
+  await expect.poll(() => reflectedParagraphStyle(page)).toBe(name);
 }
 
 // --- Platform-correct shortcut hints -----------------------------------------
@@ -278,9 +365,14 @@ export async function expectSaveEnabled(page) {
 // `formatShortcut` is the function the app itself renders hints with, so
 // deriving the expectation from it means the spec cannot disagree with the UI
 // about what a chord looks like on the platform it is running on.
-import { formatShortcut, APPLE_PLATFORM, STANDARD_PLATFORM } from "../../src/keyboard.mjs";
+import {
+  formatShortcut,
+  APPLE_PLATFORM,
+  STANDARD_PLATFORM,
+} from "../../src/keyboard.mjs";
 
-const TEST_PLATFORM = process.platform === "darwin" ? APPLE_PLATFORM : STANDARD_PLATFORM;
+const TEST_PLATFORM =
+  process.platform === "darwin" ? APPLE_PLATFORM : STANDARD_PLATFORM;
 
 /** The hint text the editor will render for a Mac-notation chord, here. */
 export function shortcutHint(appleNotation) {

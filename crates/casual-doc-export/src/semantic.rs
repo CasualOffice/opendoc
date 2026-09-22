@@ -48,19 +48,19 @@ use casual_doc_model::v1::{
     LevelJustification, LevelSuffix, LineEnd, LineEndKind, LineEndSize, LineNumberRestart,
     LineRule, MarkRevision, MarkRevisionKind, MediaId, MediaReference, MoveKind, Note, NoteId,
     NoteKind, NoteNumberRestart, NotePosition, NoteProperties, NumberFormat, NumberingInstance,
-    NumberingInstanceId, NumberingLevel, PageBorderDisplay, PageBorderOffset, PageOrientation,
-    PageVerticalAlignment, ParagraphProperties, Person, PointEmu, PositionalTabAlignment,
-    PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange, RevisionKind, RgbColor,
-    Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    SdtControlKind, SdtDate, SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionType,
-    ShapeAdjustment, ShapeGeometry, ShapeStroke, Style, StyleId, StyleKind, TabAlignment,
-    TabLeader, Table, TableAnchor, TableBorders, TableCell, TableCellProperties,
-    TableFloatPosition, TableLayout, TableOverlap, TableProperties, TableRow, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign, TableYAlign, TextBox,
-    TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxVerticalAnchor,
-    TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef, VerticalAlign,
-    VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition, VerticalTextAlignment,
-    WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
+    NumberingInstanceId, NumberingLevel, OPACITY_FULL, PageBorderDisplay, PageBorderOffset,
+    PageOrientation, PageVerticalAlignment, ParagraphProperties, Person, PointEmu,
+    PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, ProofState, PropChange,
+    RevisionKind, RgbColor, Rgba, RunFontHint, RunProperties, SchemeColor, SdtCheckbox,
+    SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDate, SdtListItem, SdtLock,
+    SdtProperties, SectionBoundary, SectionType, ShapeAdjustment, ShapeGeometry, ShapeStroke,
+    Style, StyleId, StyleKind, TabAlignment, TabLeader, Table, TableAnchor, TableBorders,
+    TableCell, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap, TableProperties,
+    TableRow, TableRowProperties, TableStyleOverride, TableStyleRegion, TableWidth, TableXAlign,
+    TableYAlign, TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow,
+    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, ThemeColorRef, ThemeFontRef,
+    VerticalAlign, VerticalAlignment, VerticalAnchor, VerticalMerge, VerticalPosition,
+    VerticalTextAlignment, WidthType, WordprocessingGroup, WrapMode, Zoom, ZoomMode,
 };
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
@@ -4784,8 +4784,11 @@ fn write_inline(
                 &embed,
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
-                drawing.crop.as_ref(),
-                drawing.border,
+                PictureAppearance {
+                    crop: drawing.crop.as_ref(),
+                    opacity: drawing.opacity,
+                    border: drawing.border,
+                },
                 Xfrm2D {
                     rotation: drawing.rotation,
                     flip_h: drawing.flip_h,
@@ -4942,8 +4945,7 @@ fn write_drawing(
     embed: &str,
     extent: Option<&Extent>,
     descr: Option<&str>,
-    crop: Option<&CropRect>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
@@ -4968,7 +4970,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop, border, xfrm)?;
+    write_pic_graphic(w, embed, cx, cy, look, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -5007,13 +5009,44 @@ fn write_src_rect(
     Ok(())
 }
 
+/// Writes `a:blip`'s `a:alphaModFix` when the picture is not fully opaque.
+///
+/// `@amt` is the alpha to scale TO, in 1000ths of a percent (ECMA-376
+/// §20.1.8.1): `20000` is the 20% watermark Word writes. Full opacity is the
+/// absence of the element, so it is not written — round-tripping a no-op as an
+/// element would add markup the source did not have.
+/// How a picture LOOKS, as opposed to where it sits: the source crop, the
+/// alpha, and the frame outline.
+///
+/// Grouped because the three travel together through every picture writer and
+/// because passing them separately put three of those writers over clippy's
+/// argument limit — which is the lint noticing the same thing.
+#[derive(Clone, Copy, Debug, Default)]
+struct PictureAppearance<'a> {
+    crop: Option<&'a CropRect>,
+    opacity: Option<u32>,
+    border: Option<ShapeStroke>,
+}
+
+fn write_alpha_mod_fix(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    opacity: Option<u32>,
+) -> Result<(), ExportError> {
+    let Some(amount) = opacity.filter(|amount| *amount < OPACITY_FULL) else {
+        return Ok(());
+    };
+    let mut el = start("a:alphaModFix");
+    el.push_attribute(("amt", amount.to_string().as_str()));
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
 fn write_pic_graphic(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     cx: i64,
     cy: i64,
-    crop: Option<&CropRect>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
@@ -5036,8 +5069,17 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
-    w.write_event(Event::Empty(blip)).map_err(pkg)?;
-    write_src_rect(w, crop)?;
+    if look.opacity.is_some_and(|amount| amount < OPACITY_FULL) {
+        // The effect is a CHILD of `a:blip`, so the element can no longer be
+        // self-closing.
+        w.write_event(Event::Start(blip)).map_err(pkg)?;
+        write_alpha_mod_fix(w, look.opacity)?;
+        w.write_event(Event::End(BytesEnd::new("a:blip")))
+            .map_err(pkg)?;
+    } else {
+        w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    }
+    write_src_rect(w, look.crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))
@@ -5072,8 +5114,8 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     // A framed picture keeps its `a:ln` outline (schema order: after the geometry).
     // Absent border = no `a:ln` (the default), so it is only written when present.
-    if border.is_some() {
-        write_outline(w, border)?;
+    if look.border.is_some() {
+        write_outline(w, look.border)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -5146,8 +5188,11 @@ fn write_anchored_drawing(
         embed,
         cx,
         cy,
-        drawing.crop.as_ref(),
-        drawing.border,
+        PictureAppearance {
+            crop: drawing.crop.as_ref(),
+            opacity: drawing.opacity,
+            border: drawing.border,
+        },
         Xfrm2D {
             rotation: drawing.rotation,
             flip_h: drawing.flip_h,
@@ -5310,8 +5355,11 @@ fn write_wgp(
                         &embed,
                         picture.offset,
                         picture.extent,
-                        picture.crop.as_ref(),
-                        picture.border,
+                        PictureAppearance {
+                            crop: picture.crop.as_ref(),
+                            opacity: picture.opacity,
+                            border: picture.border,
+                        },
                         Xfrm2D {
                             rotation: picture.rotation,
                             flip_h: picture.flip_h,
@@ -5375,8 +5423,7 @@ fn write_group_picture(
     embed: &str,
     offset: PointEmu,
     extent: Extent,
-    crop: Option<&CropRect>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
@@ -5394,8 +5441,17 @@ fn write_group_picture(
         .map_err(pkg)?;
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
-    w.write_event(Event::Empty(blip)).map_err(pkg)?;
-    write_src_rect(w, crop)?;
+    if look.opacity.is_some_and(|amount| amount < OPACITY_FULL) {
+        // The effect is a CHILD of `a:blip`, so the element can no longer be
+        // self-closing.
+        w.write_event(Event::Start(blip)).map_err(pkg)?;
+        write_alpha_mod_fix(w, look.opacity)?;
+        w.write_event(Event::End(BytesEnd::new("a:blip")))
+            .map_err(pkg)?;
+    } else {
+        w.write_event(Event::Empty(blip)).map_err(pkg)?;
+    }
+    write_src_rect(w, look.crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))
@@ -5409,8 +5465,8 @@ fn write_group_picture(
     write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
     // A framed grouped picture keeps its `a:ln` outline (only when present).
-    if border.is_some() {
-        write_outline(w, border)?;
+    if look.border.is_some() {
+        write_outline(w, look.border)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -5441,11 +5497,19 @@ fn write_group_shape(
         shape.flip_h,
         shape.flip_v,
     )?;
-    let preset = shape
-        .preset
-        .as_deref()
-        .unwrap_or_else(|| geometry_prst(shape.geometry));
-    write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
+    // A recovered custom geometry is re-emitted as the `a:custGeom` it was.
+    // Without this the shape is rewritten to `prst="rect"` on every save, which
+    // is the one place this row actually DESTROYS data rather than mis-drawing
+    // it (docs/119 §2).
+    if let Some(path) = &shape.path {
+        write_cust_geom(w, path)?;
+    } else {
+        let preset = shape
+            .preset
+            .as_deref()
+            .unwrap_or_else(|| geometry_prst(shape.geometry));
+        write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
+    }
     if let Some(fill) = &shape.fill {
         write_fill(w, fill)?;
     }
@@ -5580,6 +5644,60 @@ fn write_prst_geom_with_adjustments(
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an `a:custGeom` for a recovered custom path (docs/119).
+///
+/// The empty `a:avLst`/`a:gdLst`/`a:ahLst`/`a:cxnLst` are written because Word
+/// writes them and an empty DrawingML container states that the feature is
+/// absent, so emitting them asserts nothing that was not in the source. `@w` /
+/// `@h` are written only when non-zero, which is exactly the "no path
+/// coordinate space" default of ECMA-376 §20.1.9.15.
+fn write_cust_geom(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    path: &casual_doc_model::v1::ShapePath,
+) -> Result<(), ExportError> {
+    use casual_doc_model::v1::ShapePathCommand;
+
+    w.write_event(Event::Start(start("a:custGeom")))
+        .map_err(pkg)?;
+    for empty in ["a:avLst", "a:gdLst", "a:ahLst", "a:cxnLst"] {
+        w.write_event(Event::Empty(start(empty))).map_err(pkg)?;
+    }
+    w.write_event(Event::Start(start("a:pathLst")))
+        .map_err(pkg)?;
+    let mut path_element = start("a:path");
+    if path.width_emu > 0 {
+        path_element.push_attribute(("w", path.width_emu.to_string().as_str()));
+    }
+    if path.height_emu > 0 {
+        path_element.push_attribute(("h", path.height_emu.to_string().as_str()));
+    }
+    w.write_event(Event::Start(path_element)).map_err(pkg)?;
+    for command in &path.commands {
+        let (name, point) = match command {
+            ShapePathCommand::MoveTo { point } => ("a:moveTo", *point),
+            ShapePathCommand::LineTo { point } => ("a:lnTo", *point),
+            ShapePathCommand::Close => {
+                w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
+                continue;
+            }
+        };
+        w.write_event(Event::Start(start(name))).map_err(pkg)?;
+        let mut pt = start("a:pt");
+        pt.push_attribute(("x", point.x_emu.to_string().as_str()));
+        pt.push_attribute(("y", point.y_emu.to_string().as_str()));
+        w.write_event(Event::Empty(pt)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new(name)))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:path")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:pathLst")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:custGeom")))
         .map_err(pkg)?;
     Ok(())
 }

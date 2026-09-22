@@ -39,7 +39,7 @@ export function composite(fg, bg) {
   };
 }
 
-/** The floor a style-card preview colour has to clear to be used as authored.
+/** The floor a style preview colour has to clear to be used as authored.
  *
  *  Deliberately below the 4.5:1 body-text floor. A gallery card is a 30px
  *  decorative preview of a style, not prose, and holding it to the prose bar

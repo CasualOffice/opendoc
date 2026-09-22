@@ -21,9 +21,9 @@ use casual_doc_model::v1::{
     MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
     MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
     NoteKind, NoteNumberMark, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
-    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
-    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu,
-    PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
+    OPACITY_FULL, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering,
+    PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties,
+    PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
     PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
     SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
@@ -37,6 +37,7 @@ use casual_doc_model::v1::{
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::NumberFormat;
+use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -75,6 +76,7 @@ enum Segment {
         extent: Option<Extent>,
         descr: Option<String>,
         crop: Option<CropRect>,
+        opacity: Option<u32>,
         border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
@@ -199,6 +201,7 @@ enum Segment {
         descr: Option<String>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
+        opacity: Option<u32>,
         border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
@@ -308,6 +311,9 @@ struct ShapeBuilder {
     geometry: ShapeGeometry,
     preset: Option<String>,
     adjustments: Vec<ShapeAdjustment>,
+    /// The recovered `a:custGeom` path, if the geometry is inside the modeled
+    /// straight-line subset (docs/119).
+    path: Option<ShapePath>,
     in_adjustment_list: bool,
     fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
@@ -317,6 +323,9 @@ struct ShapeBuilder {
     descr: Option<String>,
     /// The picture's `a:srcRect` crop, for a picture child, if declared.
     srcrect: Option<CropRect>,
+    /// The picture's `a:alphaModFix` opacity, for a picture child, if declared
+    /// and not fully opaque.
+    opacity: Option<u32>,
     /// The flowed block content of a `w:txbxContent` inside this shape, if any.
     textbox_blocks: Option<Vec<BlockNode>>,
     /// The shape's text-body box model and overflow/autofit policy.
@@ -326,6 +335,52 @@ struct ShapeBuilder {
     flip_h: bool,
     flip_v: bool,
     rotation: Option<i32>,
+}
+
+/// Accumulator for an open `a:custGeom` on the current shape (docs/119).
+///
+/// Collects the straight-line subset of `a:pathLst/a:path` — `a:moveTo`,
+/// `a:lnTo`, `a:close` — and latches [`unsupported`](Self::unsupported) the
+/// moment anything outside that subset appears (a curve, a guide formula, a
+/// guide-named coordinate, an adjust handle, a second subpath). A latched
+/// accumulator produces NO path, so the shape keeps painting its bounding
+/// rectangle and the `custGeom` loss keeps being reported: the modeled subset is
+/// never allowed to half-describe a geometry it cannot draw.
+#[derive(Default)]
+struct CustomGeometry {
+    /// `a:path@w` of the single supported subpath (`0` = absolute EMU).
+    width_emu: i64,
+    /// `a:path@h` of the single supported subpath (`0` = absolute EMU).
+    height_emu: i64,
+    /// Commands collected so far, in path order.
+    commands: Vec<ShapePathCommand>,
+    /// How many `a:path` children have been opened; more than one is out of
+    /// scope for this slice.
+    paths: usize,
+    /// The command an `a:pt` child will complete (`a:moveTo`/`a:lnTo`).
+    pending: Option<PathVertexKind>,
+    /// Something outside the modeled subset was seen.
+    unsupported: bool,
+}
+
+impl CustomGeometry {
+    /// Appends a command, latching `unsupported` rather than growing past
+    /// [`MAX_SHAPE_PATH_COMMANDS`] — a truncated path is a WRONG path, so an
+    /// over-long geometry falls back to its bounding rectangle and is reported.
+    fn push(&mut self, command: ShapePathCommand) {
+        if self.commands.len() >= MAX_SHAPE_PATH_COMMANDS {
+            self.unsupported = true;
+            return;
+        }
+        self.commands.push(command);
+    }
+}
+
+/// Which path command an `a:pt` inside an open `a:custGeom` completes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathVertexKind {
+    Move,
+    Line,
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -680,6 +735,7 @@ struct ContentFrame {
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
     pending_srcrect: Option<CropRect>,
+    pending_opacity: Option<u32>,
     pending_inline_descr: Option<String>,
     /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
     /// picture (no open shape builder), consumed by `commit_drawing`.
@@ -870,6 +926,7 @@ struct BodyParser<'a> {
     /// The `a:srcRect` crop of the open lone/inline (non-group) picture; consumed
     /// by `commit_drawing` for the inline or anchored drawing.
     pending_srcrect: Option<CropRect>,
+    pending_opacity: Option<u32>,
     /// The `wp:docPr@descr` alt text of the open lone/inline drawing (no anchor);
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
@@ -926,6 +983,10 @@ struct BodyParser<'a> {
     /// `w:drawing` closes and `commit_drawing` emits it. Saved/restored across a
     /// text-box frame.
     pending_group: Option<WordprocessingGroup>,
+    /// The open `a:custGeom` on `pending_shape`, if any. Not saved across a
+    /// text-box frame: a `w:txbxContent` can only appear after the shape's
+    /// `wps:spPr` has closed, so a custom geometry is never open across one.
+    cust_geom: Option<CustomGeometry>,
     /// Which `a:xfrm` the next `a:off`/`a:ext`/`a:chOff`/`a:chExt` routes to.
     xfrm_target: XfrmTarget,
     /// Depth of an open `a:ln` (outline), so a `solidFill` inside it colors the
@@ -935,6 +996,16 @@ struct BodyParser<'a> {
     /// `a:fontRef` in `wps:style`). A `schemeClr` inside one selects a theme style
     /// index, NOT the shape's actual fill/stroke, so color capture is suppressed.
     style_ref_depth: u32,
+    /// The text of an open `wp14:pctWidth`/`wp14:pctHeight` — a drawing's size as
+    /// a percentage of its `wp14:sizeRelH`/`sizeRelV` reference edge, in
+    /// thousandths of a percent.
+    ///
+    /// Captured (bounded, like `wp:posOffset`) because the VALUE decides whether
+    /// anything was lost: `0` means relative sizing is off, which is every one of
+    /// the 63 in the owner's corpus, and Word writes the element anyway. A
+    /// non-zero percentage is a size this model does not carry, and it is
+    /// reported at the element's close.
+    relative_size_pct: Option<String>,
     /// The `a:ln@w` outline width (EMU) of the open outline.
     ln_width_emu: i64,
     /// The `a:prstDash@val` dash pattern captured inside the open `a:ln`, applied
@@ -1095,6 +1166,11 @@ struct BodyParser<'a> {
     current_note: Option<(String, NodeId, CommentMeta)>,
     /// Whether the open note is a skipped separator/continuation note.
     skip_note: bool,
+    /// Whether the open skipped note holds content Word's stock separator never
+    /// does — text, a drawing, an embedded object or a table. Word lets a user
+    /// EDIT the footnote separator, so a customised one is a real loss; a stock
+    /// one is not. See `close_note`.
+    skip_note_customised: bool,
     /// Collected notes/comments: (source `w:id`, allocated id, metadata, blocks).
     notes: Vec<(String, NodeId, CommentMeta, Vec<BlockNode>)>,
     /// When set (`b"hdr"`/`b"ftr"`), the parser reads a header/footer part whose
@@ -1190,6 +1266,7 @@ impl<'a> BodyParser<'a> {
             pending_embed: None,
             pending_extent: None,
             pending_srcrect: None,
+            pending_opacity: None,
             pending_inline_descr: None,
             pending_flip_h: false,
             pending_flip_v: false,
@@ -1207,6 +1284,7 @@ impl<'a> BodyParser<'a> {
             group_stack: Vec::new(),
             pending_shape: None,
             pending_group: None,
+            cust_geom: None,
             xfrm_target: XfrmTarget::None,
             ln_depth: 0,
             ln_width_emu: 0,
@@ -1221,6 +1299,7 @@ impl<'a> BodyParser<'a> {
             pending_picture_border: None,
             picture_border_color: None,
             style_ref_depth: 0,
+            relative_size_pct: None,
             pending_color: None,
             palette,
             pending_alt_chunk: None,
@@ -1270,6 +1349,7 @@ impl<'a> BodyParser<'a> {
             note_container,
             current_note: None,
             skip_note: false,
+            skip_note_customised: false,
             notes: Vec::new(),
             hf_root: None,
             header_ids: inputs.header_ids,
@@ -1532,7 +1612,7 @@ impl BodyParser<'_> {
                     if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
                         self.begin_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element)?;
+                        self.on_start(element.local_name().as_ref(), &element, false)?;
                     }
                 }
                 Event::Empty(element) => {
@@ -1540,7 +1620,7 @@ impl BodyParser<'_> {
                         // A degenerate self-closing math root: retain the lone tag.
                         self.emit_empty_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element)?;
+                        self.on_start(element.local_name().as_ref(), &element, true)?;
                         self.on_end(element.local_name().as_ref())?;
                     }
                 }
@@ -1567,6 +1647,18 @@ impl BodyParser<'_> {
                         && anchor.capture_buffer.len() + decoded.len() <= 64
                     {
                         anchor.capture_buffer.push_str(&decoded);
+                    }
+                }
+                // A `wp14:pctWidth`/`pctHeight` value: bounded, and kept out of
+                // the paragraph flow exactly like the anchor axes above.
+                Event::Text(text) if self.relative_size_pct.is_some() => {
+                    let raw = text.into_inner();
+                    let raw =
+                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
+                    if let Some(buffer) = self.relative_size_pct.as_mut()
+                        && buffer.len() + raw.len() <= 32
+                    {
+                        buffer.push_str(raw);
                     }
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
@@ -1894,7 +1986,16 @@ impl BodyParser<'_> {
         }
     }
 
-    fn on_start(&mut self, local: &[u8], element: &BytesStart<'_>) -> Result<(), ImportError> {
+    /// Handles one element start. `self_closing` is whether the source wrote
+    /// `<x/>` rather than `<x>`; it is carried because emptiness is the whole
+    /// question for part of the no-op class (`noop::carries_no_meaning_when`),
+    /// and a start tag alone cannot answer it.
+    fn on_start(
+        &mut self,
+        local: &[u8],
+        element: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Result<(), ImportError> {
         // While skipping a non-selected AlternateContent branch, ignore every
         // element (counting depth so the matching close ends the skip).
         if self.mc_skip_depth > 0 {
@@ -1909,6 +2010,14 @@ impl BodyParser<'_> {
         }
         self.report_identity_attributes(local, element);
         match local {
+            // Inside an open `a:custGeom`, the whole subtree routes to the
+            // geometry accumulator. This arm is FIRST because `a:moveTo` and the
+            // tracked-move revision `w:moveTo` share a local name — the importer
+            // matches on the local name only, so a path vertex reaching the
+            // revision arm below would open a spurious tracked move (docs/119).
+            _ if self.cust_geom.is_some() => {
+                self.custom_geometry_start(local, element);
+            }
             // Property-change tracked revisions carry a nested copy of the PREVIOUS
             // property container (e.g. `w:rPrChange > w:rPr`). We snapshot the
             // just-completed CURRENT properties aside and reset the live
@@ -2010,6 +2119,32 @@ impl BodyParser<'_> {
             _ if self.note_container == Some(local) && self.in_document => {
                 self.open_note(element)?;
             }
+            // Inside a skipped separator / continuation-separator note. Nothing
+            // here is reported — the note itself is the finding, and only if it
+            // turns out to be customised (`close_note`). Placed AFTER the arm
+            // above so the NEXT `w:footnote` still opens; before every other
+            // arm so the separator's `w:p`, `w:r`, `w:separator` and paragraph
+            // properties cannot reach a catch-all with no container open.
+            _ if self.skip_note => {
+                // What a stock separator never holds. Any of it means the user
+                // replaced Word's rule with content of their own, and that
+                // content IS dropped here.
+                if matches!(
+                    local,
+                    b"t" | b"delText"
+                        | b"sym"
+                        | b"drawing"
+                        | b"pict"
+                        | b"object"
+                        | b"tbl"
+                        | b"altChunk"
+                        | b"fldChar"
+                        | b"fldSimple"
+                        | b"instrText"
+                ) {
+                    self.skip_note_customised = true;
+                }
+            }
             // A header/footer part's root (`w:hdr`/`w:ftr`) is its single block
             // container: enable document reporting and block parsing.
             _ if self.hf_root == Some(local) => {
@@ -2045,7 +2180,16 @@ impl BodyParser<'_> {
                     frame.selected = true;
                 } else {
                     self.mc_skip_depth = 1;
-                    self.reporter.report(local);
+                    // An `mc:Fallback` reached with a branch already selected is
+                    // the alternative to something this importer read IN FULL —
+                    // that is what a fallback IS, and ECMA-376 Part 3 requires
+                    // the branches to describe the same content. Nothing was
+                    // lost by not reading it twice. A skipped `mc:Choice` is the
+                    // opposite case and still reports: the branch that was taken
+                    // instead is by construction the poorer one.
+                    if local != b"Fallback" {
+                        self.reporter.report(local);
+                    }
                 }
             }
             // A text box carries block content: parse it in a fresh, suspended
@@ -2457,6 +2601,7 @@ impl BodyParser<'_> {
                     self.pending_embed = None;
                     self.pending_extent = None;
                     self.pending_srcrect = None;
+                    self.pending_opacity = None;
                     self.pending_inline_descr = None;
                     self.pending_flip_h = false;
                     self.pending_flip_v = false;
@@ -2471,6 +2616,7 @@ impl BodyParser<'_> {
                     self.xfrm_target = XfrmTarget::None;
                     self.ln_depth = 0;
                     self.style_ref_depth = 0;
+                    self.relative_size_pct = None;
                     self.pending_color = None;
                 }
             }
@@ -2503,6 +2649,12 @@ impl BodyParser<'_> {
                     });
                 }
             }
+            // A relative size's percentage. Opening the capture is what makes the
+            // text arm in the event loop collect it; the decision — report or not
+            // — is taken at the close, when the value is known.
+            b"pctWidth" | b"pctHeight" if self.drawing_depth > 0 => {
+                self.relative_size_pct = Some(String::new());
+            }
             b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
                 self.pending_embed = attribute_value(element, b"embed");
@@ -2532,6 +2684,29 @@ impl BodyParser<'_> {
                         shape.srcrect = Some(crop);
                     } else {
                         self.pending_srcrect = Some(crop);
+                    }
+                }
+            }
+            // The picture's opacity (`a:blip/a:alphaModFix@amt`, ST_PositivePercentage
+            // — thousandths of a percent). This is how Word writes a watermark: the
+            // same picture drawn at 20%. Routed exactly as the crop above is.
+            //
+            // `100000` is fully opaque and is dropped rather than modeled, so a
+            // producer that writes the no-op explicitly does not become a document
+            // carrying a field that changes nothing — the same rule the identity
+            // `a:srcRect` follows.
+            b"alphaModFix" if self.blipfill_depth > 0 => {
+                let amount = attribute_value(element, b"amt")
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .unwrap_or(OPACITY_FULL)
+                    .min(OPACITY_FULL);
+                if amount < OPACITY_FULL {
+                    if let Some(shape) =
+                        self.pending_shape.as_mut().filter(|shape| shape.is_picture)
+                    {
+                        shape.opacity = Some(amount);
+                    } else {
+                        self.pending_opacity = Some(amount);
                     }
                 }
             }
@@ -2657,13 +2832,19 @@ impl BodyParser<'_> {
             // an anchor's `descr`, and — since P1G-OBJ-MODEL — on an inline drawing's
             // `pending_inline_descr` too. An over-long value is reported, not stored.
             b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
-                Some(descr) if !descr.is_empty() && descr.len() <= MAX_DESCR_BYTES => {
+                Some(descr) if descr.is_empty() => {}
+                Some(descr) if descr.len() <= MAX_DESCR_BYTES => {
                     if let Some(anchor) = self.pending_anchor.as_mut() {
                         anchor.descr = Some(descr);
                     } else {
                         self.pending_inline_descr = Some(descr);
                     }
                 }
+                // Only an alt text too long to store is a loss. `descr=""` is
+                // not: it carries nothing, Word writes it on drawings that have
+                // no alt text at all, and calling it unmodeled detail put three
+                // of this corpus's five `drawing` findings on documents that
+                // lost nothing — the same false-loss shape as `w:shd`.
                 Some(_) => self.drawing_extra = true,
                 None => {}
             },
@@ -2717,12 +2898,14 @@ impl BodyParser<'_> {
                     geometry: ShapeGeometry::Rectangle,
                     preset: None,
                     adjustments: Vec::new(),
+                    path: None,
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
                     embed: None,
                     descr: None,
                     srcrect: None,
+                    opacity: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                     flip_h: false,
@@ -2743,12 +2926,14 @@ impl BodyParser<'_> {
                     geometry: ShapeGeometry::Rectangle,
                     preset: None,
                     adjustments: Vec::new(),
+                    path: None,
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
                     embed: None,
                     descr: None,
                     srcrect: None,
+                    opacity: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                     flip_h: false,
@@ -2905,13 +3090,20 @@ impl BodyParser<'_> {
                     self.reporter.report(b"gd");
                 }
             }
+            // A custom geometry (`a:custGeom`) replaces any preset: the shape is
+            // `Other` with no retained preset token and no preset adjustments.
+            // Opening the accumulator routes the whole subtree to
+            // `custom_geometry_start`; `finish_custom_geometry` decides on the
+            // close whether a path was recovered or the loss is reported
+            // (docs/119 §6).
             b"custGeom" if self.pending_shape.is_some() => {
                 if let Some(shape) = self.pending_shape.as_mut() {
                     shape.geometry = ShapeGeometry::Other;
                     shape.preset = None;
                     shape.adjustments.clear();
+                    shape.path = None;
                 }
-                self.reporter.report(b"custGeom");
+                self.cust_geom = Some(CustomGeometry::default());
             }
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
@@ -4040,17 +4232,19 @@ impl BodyParser<'_> {
             // dataBinding, list entries, date/checkbox detail, end-mark `w:rPr`) is
             // the reported long tail. Placed BEFORE the generic rPr/pPr/flow arms
             // so a `w:sdtPr` `w:rPr` can never leak into run/paragraph flow.
-            _ if self.sdt_prop_depth > 0 => self.reporter.report(local),
+            _ if self.sdt_prop_depth > 0 => {
+                self.reporter.report_element(local, element, self_closing);
+            }
             _ if self.rpr_depth > 0 => {
                 if !apply_run_property(&mut self.run_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // Paragraph-mark `w:rPr` children: the pilcrow's own run formatting,
             // accumulated separately from both the run rPr and the paragraph props.
             _ if self.mark_rpr_depth > 0 => {
                 if !apply_run_property(&mut self.mark_run_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // A `w:pPr` child, but NOT one inside the paragraph mark's `w:rPr`
@@ -4060,7 +4254,7 @@ impl BodyParser<'_> {
             // mark run is modeled.
             _ if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => {
                 if !apply_paragraph_property(&mut self.paragraph_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // Known DrawingML scaffolding for an embedded picture is consumed
@@ -4071,7 +4265,7 @@ impl BodyParser<'_> {
             // (the object round-trips as a first-class reference to its preserved
             // parts, so the presentation shape is not separately modeled).
             _ if self.object_depth > 0 && is_object_scaffolding(local) => {}
-            _ if self.in_document => self.reporter.report(local),
+            _ if self.in_document => self.reporter.report_element(local, element, self_closing),
             _ => {}
         }
         Ok(())
@@ -4092,6 +4286,26 @@ impl BodyParser<'_> {
             return Ok(());
         }
         match local {
+            // The mirror of the `on_start` arm: an open `a:custGeom` owns every
+            // close in its subtree. FIRST for the same reason — `</a:moveTo>`
+            // would otherwise reach the tracked-revision close arms below and
+            // commit a revision the document never opened (docs/119).
+            b"custGeom" if self.cust_geom.is_some() => {
+                self.finish_custom_geometry();
+            }
+            _ if self.cust_geom.is_some() => {}
+            // A relative size closes. `0` (and an absent or unreadable value) is
+            // relative sizing switched OFF — the model's own state, so nothing
+            // was lost and nothing is reported. A real percentage IS lost: the
+            // model sizes a drawing in EMU, so the object will not track its
+            // margin or column when the page changes.
+            b"pctWidth" | b"pctHeight" => {
+                if let Some(buffer) = self.relative_size_pct.take()
+                    && buffer.trim().parse::<i64>().is_ok_and(|pct| pct != 0)
+                {
+                    self.reporter.report(local);
+                }
+            }
             // Close of a modeled property-change capture: the prior snapshot has
             // accumulated into the live accumulator, so restore the saved current
             // properties with the built change attached. Placed BEFORE the skip
@@ -4731,6 +4945,110 @@ impl BodyParser<'_> {
     /// anchor is open, else inline). A bare anchored shape is normalized to the
     /// existing group-of-one float model; a bare inline shape remains reported
     /// until the in-flow composite-box slice is implemented.
+    /// Routes one element inside an open `a:custGeom` into the geometry
+    /// accumulator (docs/119 §6).
+    ///
+    /// `O(1)` per element. The modeled subset is `a:pathLst`, a single `a:path`,
+    /// and `a:moveTo`/`a:lnTo`/`a:close` with integer `a:pt` coordinates. The
+    /// empty containers Word always writes (`a:avLst`, `a:gdLst`, `a:ahLst`,
+    /// `a:cxnLst`) and the text rectangle `a:rect` are ignored rather than
+    /// treated as losses, because an empty DrawingML container states that the
+    /// feature is ABSENT (`docs/118` §4). Anything else latches `unsupported`,
+    /// which is what keeps a curve or a guide formula from being silently
+    /// flattened into straight lines.
+    fn custom_geometry_start(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        // Read the attributes before borrowing the accumulator mutably.
+        let path_w = attr_i64(element, b"w");
+        let path_h = attr_i64(element, b"h");
+        let pt = (attr_i64(element, b"x"), attr_i64(element, b"y"));
+        let Some(geometry) = self.cust_geom.as_mut() else {
+            return;
+        };
+        match local {
+            // Empty-by-default containers, and the text rectangle, which does not
+            // participate in the outline.
+            b"pathLst" | b"avLst" | b"gdLst" | b"ahLst" | b"cxnLst" | b"rect" => {}
+            b"path" => {
+                geometry.paths += 1;
+                if geometry.paths > 1 {
+                    // A second subpath needs its own coordinate space and its own
+                    // `@fill`/`@stroke`; out of scope for this slice.
+                    geometry.unsupported = true;
+                    return;
+                }
+                // An absent or negative `@w`/`@h` means "no path coordinate
+                // space": the coordinates are absolute EMU (docs/119 §3).
+                geometry.width_emu = path_w.filter(|w| *w > 0).unwrap_or(0);
+                geometry.height_emu = path_h.filter(|h| *h > 0).unwrap_or(0);
+            }
+            b"moveTo" => geometry.pending = Some(PathVertexKind::Move),
+            b"lnTo" => geometry.pending = Some(PathVertexKind::Line),
+            b"close" => geometry.push(ShapePathCommand::Close),
+            b"pt" => {
+                let Some(kind) = geometry.pending.take() else {
+                    // An `a:pt` outside a `a:moveTo`/`a:lnTo` belongs to a command
+                    // this slice does not model (an `a:arcTo` control point, say).
+                    geometry.unsupported = true;
+                    return;
+                };
+                // A coordinate may be a GUIDE NAME rather than an integer
+                // (`x="wd2"`). Evaluating those is the guide-formula language,
+                // which is `109` FID-G-02, so a named coordinate is unsupported
+                // rather than approximated.
+                let (Some(x_emu), Some(y_emu)) = pt else {
+                    geometry.unsupported = true;
+                    return;
+                };
+                let point = PointEmu { x_emu, y_emu };
+                geometry.push(match kind {
+                    PathVertexKind::Move => ShapePathCommand::MoveTo { point },
+                    PathVertexKind::Line => ShapePathCommand::LineTo { point },
+                });
+            }
+            // Curves, arcs, guides, adjust handles, connection sites, extensions.
+            _ => geometry.unsupported = true,
+        }
+    }
+
+    /// Closes an open `a:custGeom`: attaches the recovered path to the shape, or
+    /// reports the geometry as an omission and leaves the shape painting its
+    /// bounding rectangle (docs/119 §6).
+    ///
+    /// A path is accepted only when it is a single subpath that STARTS with a
+    /// `moveTo`, has exactly one `moveTo` (a second one is a disjoint subpath),
+    /// draws at least one segment, and stayed inside the modeled subset.
+    fn finish_custom_geometry(&mut self) {
+        let Some(geometry) = self.cust_geom.take() else {
+            return;
+        };
+        let moves = geometry
+            .commands
+            .iter()
+            .filter(|command| matches!(command, ShapePathCommand::MoveTo { .. }))
+            .count();
+        let usable = !geometry.unsupported
+            && geometry.paths == 1
+            && moves == 1
+            && matches!(
+                geometry.commands.first(),
+                Some(ShapePathCommand::MoveTo { .. })
+            )
+            && geometry
+                .commands
+                .iter()
+                .any(|command| matches!(command, ShapePathCommand::LineTo { .. }));
+        match (usable, self.pending_shape.as_mut()) {
+            (true, Some(shape)) => {
+                shape.path = Some(ShapePath {
+                    width_emu: geometry.width_emu,
+                    height_emu: geometry.height_emu,
+                    commands: geometry.commands,
+                });
+            }
+            _ => self.reporter.report(b"custGeom"),
+        }
+    }
+
     fn commit_shape(&mut self) -> Result<(), ImportError> {
         let Some(mut shape) = self.pending_shape.take() else {
             return Ok(());
@@ -4834,6 +5152,7 @@ impl BodyParser<'_> {
                 extent: shape.extent,
                 descr: shape.descr,
                 crop: shape.srcrect,
+                opacity: shape.opacity,
                 // A grouped picture's `pic:spPr/a:ln` frame is captured as the
                 // shape's stroke (via the shared outline path).
                 border: shape.stroke,
@@ -4867,6 +5186,7 @@ impl BodyParser<'_> {
             geometry: shape.geometry,
             preset: shape.preset,
             adjustments: shape.adjustments,
+            path: shape.path,
             fill: shape.fill,
             stroke: shape.stroke,
             flip_h: shape.flip_h,
@@ -4972,6 +5292,7 @@ impl BodyParser<'_> {
         // inline picture stays a `Drawing`.
         let anchor = self.pending_anchor.take();
         let crop = self.pending_srcrect.take();
+        let opacity = self.pending_opacity.take();
         let border = self.pending_picture_border.take();
         let inline_descr = self.pending_inline_descr.take();
         let flip_h = std::mem::take(&mut self.pending_flip_h);
@@ -4988,6 +5309,7 @@ impl BodyParser<'_> {
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
                             crop,
+                            opacity,
                             border,
                             flip_h,
                             flip_v,
@@ -5009,6 +5331,7 @@ impl BodyParser<'_> {
                         extent,
                         descr: inline_descr,
                         crop,
+                        opacity,
                         border,
                         flip_h,
                         flip_v,
@@ -5128,6 +5451,7 @@ impl BodyParser<'_> {
                         extent: None,
                         descr: None,
                         crop: None,
+                        opacity: None,
                         border: None,
                         flip_h: false,
                         flip_v: false,
@@ -5172,6 +5496,7 @@ impl BodyParser<'_> {
                     descr: None,
                     relative_height,
                     crop: None,
+                    opacity: None,
                     border: None,
                     flip_h: false,
                     flip_v: false,
@@ -5194,6 +5519,7 @@ impl BodyParser<'_> {
                 extent,
                 descr: None,
                 crop: None,
+                opacity: None,
                 border: None,
                 flip_h: false,
                 flip_v: false,
@@ -5292,6 +5618,7 @@ impl BodyParser<'_> {
             geometry,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill,
             stroke,
             flip_h: false,
@@ -5331,6 +5658,7 @@ impl BodyParser<'_> {
             geometry: ShapeGeometry::Line,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill: vml_fill(&drawing.fill),
             stroke: vml_stroke(&drawing.stroke),
             flip_h: false,
@@ -5720,6 +6048,7 @@ impl BodyParser<'_> {
             pending_embed: self.pending_embed.take(),
             pending_extent: self.pending_extent.take(),
             pending_srcrect: self.pending_srcrect.take(),
+            pending_opacity: self.pending_opacity.take(),
             pending_inline_descr: self.pending_inline_descr.take(),
             pending_flip_h: std::mem::take(&mut self.pending_flip_h),
             pending_flip_v: std::mem::take(&mut self.pending_flip_v),
@@ -5794,6 +6123,7 @@ impl BodyParser<'_> {
         self.pending_embed = frame.pending_embed;
         self.pending_extent = frame.pending_extent;
         self.pending_srcrect = frame.pending_srcrect;
+        self.pending_opacity = frame.pending_opacity;
         self.pending_inline_descr = frame.pending_inline_descr;
         self.pending_flip_h = frame.pending_flip_h;
         self.pending_flip_v = frame.pending_flip_v;
@@ -5894,7 +6224,8 @@ impl BodyParser<'_> {
 
     /// Opens a note (`w:footnote`/`w:endnote`) as a block container. Separator and
     /// continuation-separator notes (a non-`normal` `w:type`) are presentation and
-    /// are skipped (reported). A content note allocates its id in document order.
+    /// are skipped; whether skipping them loses anything is decided at the close
+    /// (`close_note`). A content note allocates its id in document order.
     fn open_note(&mut self, element: &BytesStart<'_>) -> Result<(), ImportError> {
         self.close_note()?;
         let is_content = attribute_value(element, b"type")
@@ -5902,7 +6233,7 @@ impl BodyParser<'_> {
             .unwrap_or(true);
         if !is_content {
             self.skip_note = true;
-            self.reporter.report(self.note_container.unwrap_or(b"note"));
+            self.skip_note_customised = false;
             return Ok(());
         }
         self.skip_note = false;
@@ -5957,7 +6288,24 @@ impl BodyParser<'_> {
             let blocks = std::mem::take(&mut self.blocks);
             self.notes.push((source_id, node_id, meta, blocks));
         }
+        // A separator / continuation-separator note. Word writes four of these
+        // into every document that has a notes part, whether or not it has a
+        // single note, and they hold one paragraph with one `<w:separator/>`
+        // run: they are a request to draw the rule above the notes, which this
+        // engine's layout draws for itself. Reporting them — and every `w:p`,
+        // `w:r`, `w:pPr` and `w:separator` inside them, which is what happened
+        // while the subtree was walked with no container open — described a loss
+        // that did not happen, 140 times over the owner's corpus (HF-174).
+        //
+        // The loss that WOULD be real is a customised separator: Word lets a
+        // user replace the rule with their own content, and that content is
+        // dropped here. So the note is reported when it holds something the
+        // stock one never does.
+        if self.skip_note && self.skip_note_customised {
+            self.reporter.report(self.note_container.unwrap_or(b"note"));
+        }
         self.skip_note = false;
+        self.skip_note_customised = false;
         Ok(())
     }
 
@@ -6624,6 +6972,7 @@ impl BodyParser<'_> {
                 extent,
                 descr,
                 crop,
+                opacity,
                 border,
                 flip_h,
                 flip_v,
@@ -6631,6 +6980,7 @@ impl BodyParser<'_> {
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Box::new(Drawing {
+                    opacity,
                     id,
                     media,
                     extent,
@@ -6649,6 +6999,7 @@ impl BodyParser<'_> {
                 descr,
                 relative_height,
                 crop,
+                opacity,
                 border,
                 flip_h,
                 flip_v,
@@ -6656,6 +7007,7 @@ impl BodyParser<'_> {
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                    opacity,
                     id,
                     media,
                     extent,
@@ -7372,6 +7724,21 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"nvPicPr"
             | b"cNvPr"
             | b"cNvPicPr"
+            // The non-visual property wrappers for the other DrawingML shape
+            // kinds, beside `pic:cNvPicPr` which was already here: a shape
+            // (`wps:cNvSpPr`), a connector (`wps:cNvCnPr`) and a group
+            // (`wpg:cNvGrpSpPr`). They hold an id, a name and lock hints — the
+            // locks report on their own terms through `a:spLocks`, and the
+            // identity is not document meaning. Reporting the wrapper while
+            // consuming what is inside it described a loss that did not happen
+            // (HF-174).
+            | b"cNvSpPr"
+            | b"cNvCnPr"
+            | b"cNvGrpSpPr"
+            // `wps:txbx` is the wrapper around a shape's `w:txbxContent`, which
+            // the text-box arm imports in full. The wrapper itself carries
+            // nothing.
+            | b"txbx"
             | b"picLocks"
             | b"hlinkClick"
             | b"spPr"
@@ -7380,7 +7747,6 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"ext"
             | b"prstGeom"
             | b"avLst"
-            | b"custGeom"
             | b"ln"
             | b"noFill"
             | b"solidFill"

@@ -459,12 +459,79 @@ fn decode_text_string(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| char::from(*byte)).collect()
 }
 
+/// A watermark exports faint, not solid.
+///
+/// `a:alphaModFix` is constant alpha over the whole picture, which is exactly
+/// what a PDF `ExtGState` `/ca` expresses. Without it, printing the owner's
+/// loan agreement turned a 20% watermark into a solid block over the text.
+#[test]
+fn a_transparent_picture_exports_with_a_constant_alpha_state() {
+    use casual_doc_layout::display::{DisplayList, PaintItem};
+    use casual_doc_layout::units::{Point, Rect, Size, Twip};
+
+    let mut media = MapMediaSource::new();
+    media.insert("word/media/logo.png", encode_png(64, 48));
+
+    let faint = {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Image {
+            opacity: Some(20_000),
+            media: "word/media/logo.png".to_owned(),
+            rect: Rect::new(
+                Point::new(Twip(1440), Twip(1440)),
+                Size::new(Twip(2880), Twip(2160)),
+            ),
+            crop: None,
+            transform: None,
+        });
+        list
+    };
+    let export = write_pdf(
+        &[page_of(&faint)],
+        &casual_doc_pdf::BundledFontSource,
+        &media,
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let text = String::from_utf8_lossy(&export.bytes).into_owned();
+    assert!(
+        text.contains("/ExtGState"),
+        "a transparent picture needs a graphics state to carry its alpha"
+    );
+    // 20% of 255 is 51; the state is written as a 0..1 constant alpha.
+    assert!(
+        text.contains("/ca 0.2"),
+        "the alpha must be the AUTHORED 20%, not opaque or inverted: \
+         {}",
+        text.lines()
+            .filter(|line| line.contains("/ca"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    assert!(export.findings.is_empty(), "{:?}", export.findings);
+
+    // The opaque control writes no alpha state at all, so an ordinary picture
+    // does not pay for this.
+    let opaque = write_pdf(
+        &[page_of(&image_list())],
+        &casual_doc_pdf::BundledFontSource,
+        &media,
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    assert!(
+        !String::from_utf8_lossy(&opaque.bytes).contains("/ExtGState"),
+        "an opaque picture must not emit a graphics state"
+    );
+}
+
 /// A display list placing one picture, for the picture guards.
 fn image_list() -> casual_doc_layout::display::DisplayList {
     use casual_doc_layout::display::{DisplayList, PaintItem};
     use casual_doc_layout::units::{Point, Rect, Size, Twip};
     let mut list = DisplayList::new();
     list.push(PaintItem::Image {
+        opacity: None,
         media: "word/media/logo.png".to_owned(),
         rect: Rect::new(
             Point::new(Twip(1440), Twip(1440)),

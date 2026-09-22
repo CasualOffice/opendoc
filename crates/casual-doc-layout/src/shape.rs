@@ -1073,6 +1073,7 @@ impl ParleyShaper {
                                     Twip(inline_box.height.round() as i32),
                                 ),
                                 crop: image.crop,
+                                opacity: image.opacity,
                             });
                         } else if let Some(math_index) =
                             (inline_box.id as usize).checked_sub(objects.images.len())

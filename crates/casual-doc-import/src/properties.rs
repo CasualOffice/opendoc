@@ -751,17 +751,28 @@ pub(crate) fn parse_shading(element: &BytesStart<'_>) -> (Shading, bool) {
         attribute_value(element, b"val").as_deref(),
         None | Some("clear") | Some("nil")
     );
-    let pattern_color_default = matches!(
-        attribute_value(element, b"color").as_deref(),
-        None | Some("auto")
-    ) && attribute_value(element, b"themeColor").is_none();
+    // `@w:color`/`@w:themeColor` — the PATTERN's foreground — is deliberately not
+    // consulted. It used to be, and it made the report claim losses that cannot
+    // happen.
+    //
+    // A `clear`/`nil` pattern paints no foreground at all (ECMA-376 §17.3.5: the
+    // mask is empty, so only `@w:fill` shows), and Word writes a `@w:color`
+    // beside a clear shading routinely — `new.docx` in the owner's corpus
+    // carries 439 of them in `styles.xml`, not one of them visible, every one
+    // reported as shading this import had dropped. The compatibility report is
+    // the answer to "what did this import lose", so 439 entries that lost
+    // nothing bury the handful that did.
+    //
+    // And on a pattern that IS painted the foreground adds nothing either: the
+    // pattern itself is already unmodeled, so `!pattern_modeled` below reports
+    // it. There is no case where the foreground decides the answer.
     // A `themeFill` token we could not map (unknown, not the explicit `none`) is a
     // visible background we would silently drop — report it as degraded.
     let theme_fill_unmapped = theme_fill.is_none()
         && theme_fill_attr
             .as_deref()
             .is_some_and(|value| value != "none");
-    let degraded = !pattern_modeled || !pattern_color_default || theme_fill_unmapped;
+    let degraded = !pattern_modeled || theme_fill_unmapped;
     (Shading { fill, theme_fill }, degraded)
 }
 
@@ -772,6 +783,56 @@ mod tests {
     /// `<w:jc w:val="…"/>` as the parser sees it.
     fn jc(value: &str) -> BytesStart<'static> {
         BytesStart::from_content(format!(r#"w:jc w:val="{value}""#), 4).into_owned()
+    }
+
+    /// `<w:shd …/>` as the parser sees it.
+    fn shd(attrs: &str) -> BytesStart<'static> {
+        BytesStart::from_content(format!("w:shd {attrs}"), 5).into_owned()
+    }
+
+    /// A pattern foreground beside a `clear` pattern is not a loss, because a
+    /// `clear` pattern paints no foreground (ECMA-376 §17.3.5).
+    ///
+    /// Word writes this constantly. `new.docx` in the owner's corpus carries
+    /// **439** of them in `styles.xml`, every one invisible, and every one was
+    /// reported as shading this import had dropped — which buries the entries
+    /// that describe a real loss under entries that describe none.
+    #[test]
+    fn a_pattern_colour_on_a_clear_shading_is_not_reported_as_lost() {
+        for attrs in [
+            // Exactly the form `new.docx` uses, 397 times.
+            r#"w:val="clear" w:color="ffffff" w:themeColor="text1" w:themeTint="0D" w:fill="f2f2f2""#,
+            // The same with no `@w:val` at all, which defaults to no pattern.
+            r#"w:color="ffffff" w:fill="f2f2f2""#,
+            r#"w:val="nil" w:color="ff0000""#,
+        ] {
+            let (shading, degraded) = parse_shading(&shd(attrs));
+            assert!(!degraded, "reported a loss that cannot be seen: {attrs}");
+            // And the fill it CAN see is still read.
+            if attrs.contains("f2f2f2") {
+                assert!(
+                    shading.fill.is_some(),
+                    "the visible half was dropped: {attrs}"
+                );
+            }
+        }
+    }
+
+    /// A pattern that is actually painted is still a loss, and must still be
+    /// reported — the model carries the fill and nothing else, so a `pct25` in
+    /// red over white comes out as plain white. This is the half the change
+    /// above must not take with it.
+    #[test]
+    fn a_painted_pattern_is_still_reported_as_lost() {
+        for attrs in [
+            r#"w:val="pct25" w:color="ff0000" w:fill="ffffff""#,
+            r#"w:val="diagStripe" w:themeColor="accent1" w:fill="ffffff""#,
+            // The pattern itself, with a default foreground, was always a loss.
+            r#"w:val="pct50" w:fill="ffffff""#,
+        ] {
+            let (_, degraded) = parse_shading(&shd(attrs));
+            assert!(degraded, "a visible pattern was dropped silently: {attrs}");
+        }
     }
 
     /// `docs/105` FID-L-18. `w:jc="distribute"` asks for inter-*character*

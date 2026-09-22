@@ -206,6 +206,11 @@ pub struct Extent {
 /// percent).
 pub const CROP_FULL: i32 = 100_000;
 
+/// Fully opaque, in the units DrawingML's `a:alphaModFix@amt` uses (1000ths of
+/// a percent). A picture at this opacity is indistinguishable from one with no
+/// `a:alphaModFix` at all, so the importer models neither.
+pub const OPACITY_FULL: u32 = 100_000;
+
 /// The bound applied to each [`CropRect`] edge at import. Word authors
 /// `0..=CROP_FULL`, but DrawingML `a:srcRect` also permits a small negative value
 /// (an *outset* / padding), so the range is bounded rather than assumed
@@ -278,6 +283,15 @@ pub struct Drawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -522,6 +536,15 @@ pub struct AnchoredDrawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -779,6 +802,60 @@ pub const MAX_SHAPE_GUIDE_NAME_BYTES: usize = 64;
 /// Maximum UTF-8 length of an adjustment-guide formula.
 pub const MAX_SHAPE_FORMULA_BYTES: usize = 256;
 
+/// Maximum path commands retained for one custom shape geometry
+/// (`a:custGeom/a:pathLst/a:path`). A bound, not a fidelity target: a hand-drawn
+/// freeform is tens of points, and the cap stops a hostile package from turning
+/// one shape into an unbounded vertex list (docs/119 §6).
+pub const MAX_SHAPE_PATH_COMMANDS: usize = 1024;
+
+/// One command of a custom shape geometry path (`a:custGeom/a:pathLst/a:path`).
+///
+/// Only the straight-line subset is modeled: `a:moveTo`, `a:lnTo` and
+/// `a:close`. Curves (`a:cubicBezTo`, `a:quadBezTo`, `a:arcTo`) and
+/// guide-formula coordinates are deliberately absent — a geometry using them is
+/// not imported as a path at all, so this enum never half-describes one
+/// (docs/119 §6).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ShapePathCommand {
+    /// Start a subpath at a point (`a:moveTo/a:pt`).
+    MoveTo {
+        /// The point, in the path's own coordinate space.
+        point: PointEmu,
+    },
+    /// Draw a straight segment to a point (`a:lnTo/a:pt`).
+    LineTo {
+        /// The point, in the path's own coordinate space.
+        point: PointEmu,
+    },
+    /// Close the subpath back to its starting point (`a:close`).
+    Close,
+}
+
+/// A custom shape geometry path (`a:custGeom/a:pathLst/a:path`): an ordered
+/// command list in its own coordinate space.
+///
+/// [`width_emu`](Self::width_emu) / [`height_emu`](Self::height_emu) are
+/// `a:path@w` / `@h`. Per ECMA-376 Part 1 §20.1.9.15 they default to `0`, and
+/// the default is meaningful: a **positive** value is the extent of the path's
+/// own coordinate space, so a coordinate maps to the shape box by
+/// `x / width_emu`; **zero** means the coordinates are absolute EMU offsets from
+/// the shape's top-left and do NOT scale with the box. The two axes are
+/// independent — the loan-agreement rules in docs/119 set `@w` and omit `@h`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShapePath {
+    /// `a:path@w`: the path coordinate space's width, or `0` for absolute EMU.
+    #[serde(default)]
+    pub width_emu: i64,
+    /// `a:path@h`: the path coordinate space's height, or `0` for absolute EMU.
+    #[serde(default)]
+    pub height_emu: i64,
+    /// The commands, in path order. Always starts with a
+    /// [`ShapePathCommand::MoveTo`].
+    pub commands: Vec<ShapePathCommand>,
+}
+
 /// One ordered DrawingML preset adjustment (`a:avLst/a:gd`).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -840,6 +917,15 @@ pub struct GroupPicture {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -1076,6 +1162,15 @@ pub struct GroupShape {
     /// Ordered preset adjustment guides (`a:avLst/a:gd`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adjustments: Vec<ShapeAdjustment>,
+    /// The authored custom geometry (`a:custGeom/a:pathLst/a:path`), when the
+    /// shape declares one this build can draw. `Some` always wins over
+    /// [`geometry`](Self::geometry), which stays [`ShapeGeometry::Other`] so
+    /// nothing mistakes a freeform for a preset. `None` for a preset shape, and
+    /// also for a custom geometry outside the modeled subset — which keeps
+    /// painting its bounding rectangle and keeps reporting the loss
+    /// (docs/119 §6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<ShapePath>,
     /// The fill (`a:solidFill`/`a:gradFill`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill: Option<Fill>,
@@ -1621,6 +1716,30 @@ pub struct FormCheckBox {
     /// The current checked state (`w:checked`, `CT_OnOff`), if declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
+}
+
+impl FormCheckBox {
+    /// The box character this checkbox shows for its current state.
+    ///
+    /// U+25A1 WHITE SQUARE / U+2611 BALLOT BOX WITH CHECK: the same widely
+    /// covered BMP box glyphs the symbol map resolves legacy Wingdings
+    /// checkboxes to, so they paint reliably (U+2610 BALLOT BOX is often
+    /// absent and renders blank).
+    ///
+    /// It lives on the model because three crates need the same answer. A
+    /// `FORMCHECKBOX` has no content: the box is SYNTHESISED from this state,
+    /// so layout (which paints it), the edit crate (which measures how many
+    /// bytes it occupies) and the accessibility mirror (which reads it aloud)
+    /// each need it, and any two of them disagreeing puts the caret somewhere
+    /// the box is not.
+    #[must_use]
+    pub fn glyph(&self) -> char {
+        if self.checked.or(self.default).unwrap_or(false) {
+            '\u{2611}'
+        } else {
+            '\u{25A1}'
+        }
+    }
 }
 
 /// A drop-down form field's configuration (`w:ddList`).

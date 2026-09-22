@@ -1,3 +1,4 @@
+use casual_doc_model::v1::MAX_DESCR_BYTES;
 use casual_doc_model::v1::{
     Alignment, BlockNode, Break, BreakKind, Color, DocumentProtectionEdit, HyperlinkTarget,
     InlineNode, LevelJustification, LevelSuffix, MathExpression, MoveKind, NumberFormat, Paragraph,
@@ -2318,6 +2319,95 @@ fn inline_drawing_carries_alt_text_and_crop() {
     assert!(!features(&import).contains(&"drawing"));
 }
 
+/// `descr=""` is an ABSENT alt text, not a lost one.
+///
+/// Word writes an empty `@descr` on drawings that simply have no alt text, and
+/// it was falling into the "some detail here is unmodeled" branch. Three of the
+/// five `drawing` findings in the owner's corpus came from this — documents
+/// that lost nothing, reported as having lost something, which is what buries
+/// the findings that are real (the same shape as the `w:shd` false loss).
+#[test]
+fn an_empty_alt_text_is_absent_rather_than_lost() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr=""/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr, None, "an empty alt text is no alt text");
+    assert!(
+        !features(&import).contains(&"drawing"),
+        "nothing was lost, so nothing should be reported: {:?}",
+        features(&import),
+    );
+}
+
+/// An alt text too long to store IS a loss, and must still be reported — this
+/// is the half the change above must not take with it.
+#[test]
+fn an_over_long_alt_text_is_still_reported_as_lost() {
+    let long = "A".repeat(MAX_DESCR_BYTES + 1);
+    let inline = format!(
+        r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1" descr="{long}"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+    );
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.descr, None, "it was too long to store");
+    assert!(
+        features(&import).contains(&"drawing"),
+        "alt text a screen reader needed was dropped in silence",
+    );
+}
+
+/// A picture's `a:alphaModFix` is the alpha to scale TO, in 1000ths of a
+/// percent — this is how Word writes a watermark, and the owner's loan
+/// agreement has five pictures at 20% that were painting solid.
+#[test]
+fn a_picture_alpha_is_imported_as_an_opacity() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="20000"/></a:blip></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.opacity, Some(20_000));
+}
+
+/// Full opacity is the absence of the effect, so writing the no-op explicitly
+/// must not become a modelled field — the same rule the identity `a:srcRect`
+/// follows.
+#[test]
+fn a_fully_opaque_alpha_is_not_modelled() {
+    for amt in ["100000", "120000"] {
+        let inline = format!(
+            r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="{amt}"/></a:blip></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+        );
+        let document = format!(
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+        );
+        let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+        let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+        let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected an inline drawing");
+        };
+        assert_eq!(drawing.opacity, None, "amt={amt} is fully opaque");
+    }
+}
+
 #[test]
 fn inline_drawing_identity_srcrect_is_dropped_as_no_crop() {
     // An all-zero `a:srcRect` is the identity crop; it must model as `crop: None`,
@@ -3728,7 +3818,16 @@ fn alternate_content_selects_one_branch_and_does_not_duplicate() {
     );
     let text_box = find_textbox(&para.inlines).expect("text box modeled");
     assert_eq!(tb_block_text(&text_box.blocks), "Boxed");
-    assert!(features(&import).contains(&"Fallback"));
+    // The fallback is NOT a finding. This assertion used to be its inverse, and
+    // it was pinning a false loss: the branch beside it was read in full, and
+    // ECMA-376 Part 3 requires the two branches to describe the same content —
+    // "Boxed" in a text box, both times, as the assertions above just checked.
+    // 23 of the owner's corpus's 621 no-loss findings were this (HF-174).
+    assert!(
+        !features(&import).contains(&"Fallback"),
+        "the branch we did not need to read is not a loss: {:?}",
+        features(&import),
+    );
 }
 
 /// A choice requiring a vocabulary the model cannot represent — an ink
@@ -7364,4 +7463,554 @@ fn corpus() -> [(&'static str, &'static [u8]); 6] {
             include_bytes!("../../../fixtures/generated/unknown-safe-part.docx").as_slice(),
         ),
     ]
+}
+
+// ---------------------------------------------------------------------------
+// Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01.
+// ---------------------------------------------------------------------------
+
+/// The four `a:custGeom` shapes of `fixtures/generated/custom-geometry.docx`, in
+/// document order. Every one of them is a lone anchored `wps:wsp`, which the
+/// importer normalises into a group of one.
+fn custom_geometry_shapes(import: &Import) -> Vec<&casual_doc_model::v1::GroupShape> {
+    use casual_doc_model::v1::GroupChild;
+
+    let mut shapes = Vec::new();
+    for block in import.document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for inline in &paragraph.inlines {
+            let InlineNode::Group(group) = inline else {
+                continue;
+            };
+            for child in &group.children {
+                if let GroupChild::Shape(shape) = child {
+                    shapes.push(shape);
+                }
+            }
+        }
+    }
+    shapes
+}
+
+fn custom_geometry_import() -> Import {
+    let bytes = include_bytes!("../../../fixtures/generated/custom-geometry.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    import_package(&mut package, ImportConfig::default()).unwrap()
+}
+
+#[test]
+fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
+    use casual_doc_model::v1::{PointEmu, ShapeGeometry, ShapePathCommand};
+
+    let import = custom_geometry_import();
+    let shapes = custom_geometry_shapes(&import);
+    assert_eq!(shapes.len(), 4, "four freeforms");
+
+    // 1. The owner's loan-agreement rule: `@w` set, `@h` omitted (so the y axis
+    //    is absolute EMU), one segment, NOT closed.
+    let rule = shapes[0];
+    assert_eq!(
+        rule.geometry,
+        ShapeGeometry::Other,
+        "a freeform is never mistaken for a preset"
+    );
+    assert_eq!(
+        rule.preset, None,
+        "no preset token is retained beside a path"
+    );
+    let path = rule.path.as_ref().expect("the open rule carries its path");
+    assert_eq!(path.width_emu, 6_660_515, "a:path@w");
+    assert_eq!(path.height_emu, 0, "a:path@h is absent: absolute EMU");
+    assert_eq!(
+        path.commands,
+        vec![
+            ShapePathCommand::MoveTo {
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::LineTo {
+                point: PointEmu {
+                    x_emu: 6_660_057,
+                    y_emu: 0,
+                },
+            },
+        ],
+    );
+
+    // 2. A closed triangle with both axes scaled.
+    let triangle = shapes[1]
+        .path
+        .as_ref()
+        .expect("the triangle carries a path");
+    assert_eq!((triangle.width_emu, triangle.height_emu), (100, 100));
+    assert_eq!(
+        triangle.commands.last(),
+        Some(&ShapePathCommand::Close),
+        "an authored a:close survives as a Close command"
+    );
+    assert_eq!(triangle.commands.len(), 4);
+}
+
+#[test]
+fn an_unsupported_custom_geometry_keeps_its_rectangle_and_stays_reported() {
+    use casual_doc_model::v1::ShapeGeometry;
+
+    let import = custom_geometry_import();
+    let shapes = custom_geometry_shapes(&import);
+
+    // 3. A cubic Bezier and 4. a guide-named coordinate are both outside the
+    //    modeled subset. Neither may be flattened into the straight segments it
+    //    is NOT: no path, so the bounding rectangle still paints.
+    for (index, what) in [(2, "a cubic Bezier"), (3, "a guide-named coordinate")] {
+        assert!(
+            shapes[index].path.is_none(),
+            "{what} must not produce a path"
+        );
+        assert_eq!(shapes[index].geometry, ShapeGeometry::Other);
+    }
+
+    // And the loss is still named, exactly twice: once per unsupported shape,
+    // and NOT for the two we now draw. A guard that only checked the supported
+    // side would pass while the unsupported side fell silent.
+    let custgeom: u32 = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == "custGeom")
+        .map(|entry| entry.occurrences)
+        .sum();
+    assert_eq!(
+        custgeom, 2,
+        "custGeom is reported for the two geometries we cannot draw, and only those"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// HF-174 — markup that carries no meaning must not be reported as a loss.
+//
+// The class, its reasoning and its boundary live in `crate::noop` and in
+// `docs/35-DISPOSITION-TAXONOMY.md`. These are the end-to-end guards: they run
+// through the real importer, and every conditional member is asserted in BOTH
+// directions, because the failure mode of this change is the inverse of the
+// defect it fixes — silencing a loss that really happened.
+// ---------------------------------------------------------------------------
+
+/// Namespace declarations the no-op fixtures need spelled correctly: `wps`
+/// decides whether the `mc:Choice` below is readable, and `wp14`/`a14` are the
+/// extension vocabularies most of this class lives in.
+const NO_OP_NS: &str = concat!(
+    r#" xmlns:w="urn:w" xmlns:r="urn:r" xmlns:mc="urn:mc" xmlns:wp="urn:wp""#,
+    r#" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:v="urn:v""#,
+    r#" xmlns:wp14="urn:wp14" xmlns:a14="urn:a14""#,
+    r#" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+    r#" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape""#,
+);
+
+/// Imports a document with every part this class touches, so one fixture can
+/// assert the whole report rather than one parser's slice of it.
+fn import_every_part(
+    document: &[u8],
+    styles: Option<&[u8]>,
+    numbering: Option<&[u8]>,
+    settings: Option<&[u8]>,
+    footnotes: Option<&[u8]>,
+    endnotes: Option<&[u8]>,
+) -> Import {
+    let footnotes = footnotes.map(part_sources);
+    let endnotes = endnotes.map(part_sources);
+    import_with_sources(
+        document,
+        styles,
+        numbering,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        settings,
+        footnotes.as_ref(),
+        endnotes.as_ref(),
+        &[],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap()
+}
+
+/// Word's stock separator and continuation-separator notes, in the shape every
+/// document in the owner's corpus writes them.
+fn stock_separator_notes(container: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?><w:{container}s xmlns:w="urn:w">
+        <w:{container} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:{container}>
+        <w:{container} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:{container}>
+        </w:{container}s>"#
+    )
+}
+
+/// A document carrying the part of the no-op class that lives in the body, in
+/// the forms Word writes them, and losing nothing.
+fn no_op_document() -> String {
+    format!(
+        r#"<?xml version="1.0"?><w:document{NO_OP_NS}><w:body>
+        <w:p>
+          <w:proofErr w:type="spellStart"/>
+          <w:r><w:t>Aardvark</w:t></w:r>
+          <w:proofErr w:type="spellEnd"/>
+          <w:r><w:lastRenderedPageBreak/><w:t xml:space="preserve"> crossed the page.</w:t></w:r>
+        </w:p>
+        <w:p><mc:AlternateContent>
+          <mc:Choice Requires="w14"><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Choice>
+          <mc:Fallback><w:r><w:t xml:space="preserve">Once.</w:t></w:r></mc:Fallback>
+        </mc:AlternateContent></w:p>
+        <w:tbl><w:tr><w:tc>
+          <w:tcPr><w:tcBorders><w:tl2br w:val="nil"/><w:tr2bl w:val="nil"/></w:tcBorders></w:tcPr>
+          <w:p><w:r><w:t>Cell</w:t></w:r></w:p>
+        </w:tc></w:tr></w:tbl>
+        </w:body></w:document>"#
+    )
+}
+
+/// The DrawingML half of the class, on the `wps:wsp` text-box shape Word writes
+/// it into.
+///
+/// A separate fixture from [`no_op_document`] because an inline text-box shape
+/// raises a `drawing` finding of its own — a different false loss, of the same
+/// family, outside this change's scope — so this one asserts the ABSENCE of each
+/// class member rather than an empty report.
+fn no_op_shape_document() -> String {
+    format!(
+        r#"<?xml version="1.0"?><w:document{NO_OP_NS}><w:body>
+        <w:p><w:r><mc:AlternateContent>
+          <mc:Choice Requires="wps"><w:drawing><wp:inline><a:graphic><a:graphicData><wps:wsp>
+            <wps:cNvSpPr txBox="1"><a:spLocks/></wps:cNvSpPr>
+            <wps:spPr>
+              <a:effectLst/>
+              <a:extLst><a:ext uri="urn:ext"><a14:useLocalDpi val="0"/></a:ext></a:extLst>
+            </wps:spPr>
+            <wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx>
+            <wps:bodyPr><a:prstTxWarp prst="textNoShape"/></wps:bodyPr>
+          </wps:wsp></a:graphicData></a:graphic>
+          <wp14:sizeRelH relativeFrom="margin"><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH>
+          <wp14:sizeRelV relativeFrom="margin"><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV>
+          </wp:inline></w:drawing></mc:Choice>
+          <mc:Fallback><w:pict><v:shape><v:textbox>
+            <w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent>
+          </v:textbox></v:shape></w:pict></mc:Fallback>
+        </mc:AlternateContent></w:r></w:p>
+        </w:body></w:document>"#
+    )
+}
+
+/// Every feature name this change stops a healthy drawing from raising.
+const DRAWING_NO_OP_FEATURES: &[&str] = &[
+    "sizeRelH",
+    "sizeRelV",
+    "pctWidth",
+    "pctHeight",
+    "effectLst",
+    "spLocks",
+    "useLocalDpi",
+    "prstTxWarp",
+    "cNvSpPr",
+    "txbx",
+    "Fallback",
+];
+
+/// A numbering part whose only unmapped markup is Word's list-template identity.
+const NO_OP_NUMBERING: &[u8] = br#"<?xml version="1.0"?><w:numbering xmlns:w="urn:w">
+    <w:abstractNum w:abstractNumId="0"><w:nsid w:val="072B1C85"/><w:tmpl w:val="0409000F"/>
+      <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+    </w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>"#;
+
+/// A settings part carrying the default colour-scheme mapping, the default
+/// character-spacing control, and the two stock separator references.
+const NO_OP_SETTINGS: &[u8] = br#"<?xml version="1.0"?><w:settings xmlns:w="urn:w">
+    <w:clrSchemeMapping w:bg1="light1" w:t1="dark1" w:bg2="light2" w:t2="dark2" w:accent1="accent1" w:accent2="accent2" w:accent3="accent3" w:accent4="accent4" w:accent5="accent5" w:accent6="accent6" w:hyperlink="hyperlink" w:followedHyperlink="followedHyperlink"/>
+    <w:characterSpacingControl w:val="doNotCompress"/>
+    <w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>
+    <w:endnotePr><w:endnote w:id="-1"/><w:endnote w:id="0"/></w:endnotePr>
+    </w:settings>"#;
+
+/// A styles part whose table style declares both diagonals absent.
+const NO_OP_STYLES: &[u8] = br#"<?xml version="1.0"?><w:styles xmlns:w="urn:w">
+    <w:style w:type="table" w:styleId="Grid"><w:name w:val="Grid"/><w:tblPr><w:tblBorders>
+      <w:top w:val="single" w:sz="4"/><w:tl2br w:val="nil"/><w:tr2bl w:val="nil"/>
+    </w:tblBorders></w:tblPr></w:style>
+    </w:styles>"#;
+
+/// **The guard this whole change exists for.**
+///
+/// `35-DISPOSITION-TAXONOMY.md` states the rule: *"an ordinary document produces
+/// an empty report"*, because a report that fires on healthy files is one every
+/// caller learns to filter out. Before this change this document raised
+/// twenty-nine findings, every one of them describing a loss that had not
+/// happened; over the owner's fifteen-document corpus the same markup raised
+/// **701** of them (HF-174).
+#[test]
+fn a_document_that_loses_nothing_reports_nothing() {
+    let import = import_every_part(
+        no_op_document().as_bytes(),
+        Some(NO_OP_STYLES),
+        Some(NO_OP_NUMBERING),
+        Some(NO_OP_SETTINGS),
+        Some(stock_separator_notes("footnote").as_bytes()),
+        Some(stock_separator_notes("endnote").as_bytes()),
+    );
+
+    // The content really did arrive: a report is only meaningful about a
+    // document that was actually read.
+    let text = tb_block_text(import.document.body());
+    assert!(
+        text.contains("Aardvark crossed the page.")
+            && text.contains("Once.")
+            && text.contains("Cell"),
+        "the fixture did not import: {text:?}"
+    );
+
+    assert!(
+        import.report.entries.is_empty(),
+        "a document that lost nothing reported: {:?}",
+        features(&import),
+    );
+}
+
+/// The DrawingML half: a shape whose every extension element says "this feature
+/// is off" raises none of them.
+#[test]
+fn a_shape_that_loses_nothing_reports_none_of_this_class() {
+    let import = import_every_part(
+        no_op_shape_document().as_bytes(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        tb_block_text(import.document.body()).contains("Boxed"),
+        "the fixture did not import"
+    );
+    for feature in DRAWING_NO_OP_FEATURES {
+        assert!(
+            !features(&import).contains(feature),
+            "{feature} reported a loss that did not happen: {:?}",
+            features(&import),
+        );
+    }
+}
+
+/// The other half, and the one that matters: give each conditional member of the
+/// class something real to say, and every one must still be reported. A blanket
+/// allowlist would pass the test above and fail this one.
+#[test]
+fn the_same_markup_carrying_something_is_still_reported() {
+    for (from, to, feature) in [
+        // A populated effect list is a shadow or a glow this model does not paint.
+        (
+            "<a:effectLst/>",
+            r#"<a:effectLst><a:outerShdw blurRad="50800"/></a:effectLst>"#,
+            "effectLst",
+        ),
+        // A lock that locks something is a restriction the document asked for
+        // and did not get.
+        ("<a:spLocks/>", r#"<a:spLocks noResize="1"/>"#, "spLocks"),
+        // `val="1"` asks for the picture to be rescaled to the authoring DPI.
+        (
+            r#"<a14:useLocalDpi val="0"/>"#,
+            r#"<a14:useLocalDpi val="1"/>"#,
+            "useLocalDpi",
+        ),
+        // A real preset is WordArt geometry, and it is not modeled.
+        (
+            r#"<a:prstTxWarp prst="textNoShape"/>"#,
+            r#"<a:prstTxWarp prst="textArchUp"/>"#,
+            "prstTxWarp",
+        ),
+        // A non-zero percentage is a size that tracks the page, which a model
+        // that sizes in EMU does not carry.
+        (
+            "<wp14:pctWidth>0</wp14:pctWidth>",
+            "<wp14:pctWidth>50000</wp14:pctWidth>",
+            "pctWidth",
+        ),
+        (
+            "<wp14:pctHeight>0</wp14:pctHeight>",
+            "<wp14:pctHeight>25000</wp14:pctHeight>",
+            "pctHeight",
+        ),
+    ] {
+        let document = no_op_shape_document().replace(from, to);
+        assert!(
+            document.contains(to),
+            "the fixture no longer carries {from}, so this row proves nothing"
+        );
+        let import = import_every_part(document.as_bytes(), None, None, None, None, None);
+        assert!(
+            features(&import).contains(&feature),
+            "{feature} was dropped in silence after swapping in {to}: {:?}",
+            features(&import),
+        );
+    }
+}
+
+/// The settings and styles halves of the same pairing.
+#[test]
+fn a_settings_or_style_value_that_is_not_the_default_is_still_reported() {
+    let settings = String::from_utf8(NO_OP_SETTINGS.to_vec()).unwrap();
+
+    // A colour-scheme mapping that swaps background for text inverts real colours.
+    let inverted = settings.replace(r#"w:bg1="light1""#, r#"w:bg1="dark1""#);
+    let import = import_every_part(
+        no_op_document().as_bytes(),
+        None,
+        None,
+        Some(inverted.as_bytes()),
+        None,
+        None,
+    );
+    assert!(
+        features(&import).contains(&"clrSchemeMapping"),
+        "an inverted colour mapping was dropped in silence: {:?}",
+        features(&import),
+    );
+
+    // Punctuation compression is real East Asian justification behaviour.
+    let compressed = settings.replace("doNotCompress", "compressPunctuation");
+    let import = import_every_part(
+        no_op_document().as_bytes(),
+        None,
+        None,
+        Some(compressed.as_bytes()),
+        None,
+        None,
+    );
+    assert!(
+        features(&import).contains(&"characterSpacingControl"),
+        "punctuation compression was dropped in silence: {:?}",
+        features(&import),
+    );
+
+    // A diagonal with an actual style is geometry the model has no slot for; it
+    // is reported through its container, `w:tblBorders`.
+    let diagonal = String::from_utf8(NO_OP_STYLES.to_vec()).unwrap().replace(
+        r#"<w:tl2br w:val="nil"/>"#,
+        r#"<w:tl2br w:val="single" w:sz="8"/>"#,
+    );
+    let import = import_every_part(
+        no_op_document().as_bytes(),
+        Some(diagonal.as_bytes()),
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        features(&import).contains(&"tblBorders"),
+        "a drawn diagonal border was dropped in silence: {:?}",
+        features(&import),
+    );
+}
+
+/// Word lets a user replace the footnote separator with content of their own,
+/// and that content IS dropped here. Skipping Word's stock separator must not
+/// become "never look inside a separator note".
+#[test]
+fn a_customised_note_separator_is_still_reported() {
+    let customised = br#"<?xml version="1.0"?><w:footnotes xmlns:w="urn:w">
+        <w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:t>notes follow</w:t></w:r></w:p></w:footnote>
+        </w:footnotes>"#;
+    let import = import_every_part(
+        no_op_document().as_bytes(),
+        None,
+        None,
+        None,
+        Some(customised),
+        None,
+    );
+    assert!(
+        features(&import).contains(&"footnote"),
+        "a separator the user wrote themselves was dropped in silence: {:?}",
+        features(&import),
+    );
+}
+
+/// The committed real-producer corpus, pinned to an exact finding count per
+/// document.
+///
+/// A count is the only assertion that fails in BOTH directions: a new false loss
+/// pushes it up, and silencing a real one pushes it down. These eight documents
+/// carry Word's and LibreOffice's own output, so the numbers move when the
+/// importer's honesty moves — which is the point. When a number here changes,
+/// the diff must say which finding appeared or disappeared and why.
+#[test]
+fn the_corpus_reports_exactly_these_findings() {
+    let corpus: [(&str, &[u8], u32); 8] = [
+        // 75 before HF-174: the stock footnote and endnote separators, and
+        // every `w:p`, `w:r`, `w:pPr`, `w:rPr` and `w:separator` inside them,
+        // were 16 of those findings and described no loss. What is left is
+        // `w:tab`, `w:tabs`, `w:formProt` and `w:themeFontLang`.
+        (
+            "real-producer-footnotes",
+            include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
+            59,
+        ),
+        (
+            "real-producer-header-footer",
+            include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
+            59,
+        ),
+        (
+            "real-producer-hyperlinks",
+            include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
+            5,
+        ),
+        (
+            "real-producer-libreoffice",
+            include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
+            5,
+        ),
+        (
+            "real-producer-rich",
+            include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
+            5,
+        ),
+        (
+            "real-producer-table-list",
+            include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
+            59,
+        ),
+        (
+            "real-producer-table-merges",
+            include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
+            5,
+        ),
+        // A document that loses nothing, and says so.
+        (
+            "synthetic-rich-metadata",
+            include_bytes!("../../../fixtures/corpus/synthetic-rich-metadata.docx"),
+            0,
+        ),
+    ];
+
+    for (name, bytes, expected) in corpus {
+        let import = import_bytes(bytes);
+        let occurrences: u32 = import
+            .report
+            .entries
+            .iter()
+            .map(|entry| entry.occurrences)
+            .sum();
+        assert_eq!(
+            occurrences,
+            expected,
+            "{name}.docx reported {occurrences} findings, not {expected}: {:?}",
+            features(&import),
+        );
+    }
 }

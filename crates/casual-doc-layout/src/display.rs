@@ -109,6 +109,12 @@ pub struct ShapeOutline {
     pub dash: DashStyle,
 }
 
+/// The default for a serialized [`ShapeGeometry::Polygon`] that predates the
+/// `closed` field: every polygon that could be written then was closed.
+fn closed_polygon() -> bool {
+    true
+}
+
 /// The geometry primitive of a painted [`PaintItem::Shape`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ShapeGeometry {
@@ -129,10 +135,16 @@ pub enum ShapeGeometry {
         /// The corner radius in twips.
         radius: Twip,
     },
-    /// A closed polygon in path order.
+    /// A polyline in path order, closed (a polygon) or open.
     Polygon {
         /// The vertices in path order.
         points: Vec<Point>,
+        /// Whether the last vertex joins back to the first. `false` strokes an
+        /// open path — an unclosed `a:custGeom` (docs/119). Defaults to `true`
+        /// so a display list serialized before this field still deserializes as
+        /// the closed polygon it was.
+        #[serde(default = "closed_polygon")]
+        closed: bool,
     },
     /// A straight line / connector.
     Line {
@@ -235,6 +247,11 @@ pub enum PaintItem {
         /// The rotation/flip applied about the image's center (`a:xfrm`), if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transform: Option<ShapeTransform>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent.
+        /// `None` is fully opaque — which is what an absent `a:alphaModFix`
+        /// means, and how Word writes every picture that is not a watermark.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
     },
     /// A straight line / connector between two points (a floating DrawingML line
     /// shape or `wps:cxnSp` straight connector).

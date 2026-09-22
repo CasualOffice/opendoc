@@ -675,18 +675,48 @@ impl Reporter {
 
     /// Reports an element the model does not represent.
     ///
-    /// Revision-save-ID markup is folded into its document-level class here
-    /// rather than at each call site: the `w:rsid` element appears in both
-    /// `styles.xml` and `settings.xml` and reaches this sink through two
-    /// different catch-alls, so a per-site rule is a rule that the next catch-all
-    /// forgets. Routing at the single choke point makes the class total.
+    /// Two classes are routed here rather than at each call site, because the
+    /// `w:rsid` element appears in both `styles.xml` and `settings.xml` and
+    /// reaches this sink through two different catch-alls: a per-site rule is a
+    /// rule that the next catch-all forgets. Routing at the single choke point
+    /// makes both classes total.
+    ///
+    /// - Revision-save-ID markup folds into its document-level class
+    ///   ([`Reporter::report_rsid`]).
+    /// - Markup that carries no document meaning at all raises nothing
+    ///   (`noop::carries_no_meaning`, and `35-DISPOSITION-TAXONOMY.md`). An
+    ///   *unrecognised* construct is not the same thing as a *lost* one, and
+    ///   conflating them put 621 findings that describe no loss in front of the
+    ///   owner's fifteen-document corpus (HF-174).
     pub(crate) fn report(&mut self, local: &[u8]) {
         if is_revision_save_id_element(local) {
             self.report_rsid();
             return;
         }
+        if crate::noop::carries_no_meaning(local) {
+            return;
+        }
         let feature = String::from_utf8_lossy(local).into_owned();
         self.insert(feature, FeatureLocation::element(local), Finding::Omitted);
+    }
+
+    /// Reports an element the model does not represent, consulting the element
+    /// itself first.
+    ///
+    /// The difference from [`Reporter::report`] is the conditional half of the
+    /// no-op class: `<a:effectLst/>` is "no effects" and `<a:effectLst>…</a:effectLst>`
+    /// is a lost shadow; the name cannot tell them apart, and only the element
+    /// can. `self_closing` is whether the source wrote `<x/>`.
+    pub(crate) fn report_element(
+        &mut self,
+        local: &[u8],
+        element: &quick_xml::events::BytesStart<'_>,
+        self_closing: bool,
+    ) {
+        if crate::noop::carries_no_meaning_when(local, element, self_closing) {
+            return;
+        }
+        self.report(local);
     }
 
     /// Reports an element that is structurally invalid or unusable — refused,

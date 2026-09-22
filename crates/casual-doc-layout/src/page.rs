@@ -104,6 +104,12 @@ fn solid_dash() -> DashStyle {
     DashStyle::Solid
 }
 
+/// The default for a serialized `AnchorContent::Polygon` that predates the
+/// `closed` field: every polygon that could be written then was closed.
+fn closed_polygon() -> bool {
+    true
+}
+
 fn is_solid_dash(dash: &DashStyle) -> bool {
     matches!(dash, DashStyle::Solid)
 }
@@ -123,6 +129,10 @@ pub enum AnchorContent {
         /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         border: Option<AnchorStroke>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
+        /// `None` is fully opaque.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
     },
     /// A rectangle (a group's background/foreground shape).
     Rectangle {
@@ -150,11 +160,20 @@ pub enum AnchorContent {
         /// The outline, if stroked.
         stroke: Option<AnchorStroke>,
     },
-    /// A closed polygon whose page-local vertices are already resolved.
+    /// A polyline whose page-local vertices are already resolved — closed
+    /// (a polygon) or open.
     Polygon {
-        /// Vertices in path order. Typed presets currently produce three or four
-        /// points; arbitrary package-provided paths never enter this primitive.
+        /// Vertices in path order. Typed presets produce three or four points; a
+        /// custom geometry (`a:custGeom`) produces its authored vertices,
+        /// bounded by `MAX_SHAPE_PATH_COMMANDS` (docs/119).
         points: Vec<Point>,
+        /// Whether the last vertex joins back to the first (`a:close`, and every
+        /// typed preset). `false` strokes an open path, which is what an
+        /// unclosed `a:custGeom` means and what Word's own VML fallback for one
+        /// writes (docs/119 §4). Defaults to `true` so a display list serialized
+        /// before this field still deserializes as the closed polygon it was.
+        #[serde(default = "closed_polygon")]
+        closed: bool,
         /// The fill (solid or gradient), if filled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fill: Option<Fill>,

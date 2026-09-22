@@ -72,8 +72,11 @@ use casual_doc_model::v1::{
     VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{
+    DocumentProtectionEdit, FormCheckBox, FormFieldKind, GroupChild, HeaderFooterId,
+    HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
+};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
-use casual_doc_model::v1::{GroupChild, HeaderFooterId, HeaderFooterKind};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -432,6 +435,15 @@ pub struct WasmDocument {
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
     typing_history: Option<TypingHistory>,
+    /// Set only while a FORM-AWARE action is running, so it may edit a document
+    /// protected with `w:documentProtection w:edit="forms"`.
+    ///
+    /// The shape is ONLYOFFICE's and deliberately so: deny by default in the
+    /// one choke point, and let the handful of call sites that are allowed to
+    /// write into a locked document opt in explicitly. An allow-list of
+    /// operations would be the wrong axis — the same `SetInlines` is legitimate
+    /// inside a field and forbidden outside one.
+    editing_a_form_field: bool,
     /// Numeric `w:id` allocator for editor-authored revisions. Imported opaque
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
@@ -1893,6 +1905,76 @@ impl WasmDocument {
         self.commit_anchor(object, anchor)
     }
 
+    /// Moves a shape INSIDE a group by a page-space delta, as one undoable
+    /// action.
+    ///
+    /// The gesture is the same drag a top-level object gets, and until now it
+    /// silently moved the whole group: both the drag and the arrow-nudge call
+    /// `setObjectAnchorPosition(root, …)`, which is the only move that existed
+    /// (`docs/109` HF-173). `ObjectCapabilities::group_child` advertised
+    /// `can_move: true` the whole time, so the capability was a promise the
+    /// engine could not keep.
+    ///
+    /// The delta arrives in PAGE space, because that is what a pointer
+    /// produces, and is converted into the group's child space here — a group
+    /// scales its children by `extent / child_extent`, so a 40-twip drag on a
+    /// half-scale group is an 80-twip change to the child's own offset. Doing
+    /// that arithmetic in the host would put the group's coordinate system in
+    /// two places.
+    ///
+    /// Expressed through `SetInlines`, so the closed operation set is
+    /// unchanged and this composes with undo and OT like any other edit.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not a shape inside a group, so a host cannot wire the
+    /// gesture to an arbitrary object and quietly move something else.
+    #[wasm_bindgen(js_name = moveGroupChildBy)]
+    pub fn move_group_child_by(
+        &mut self,
+        node: &str,
+        dx_emu: f64,
+        dy_emu: f64,
+    ) -> Result<EditResult, JsValue> {
+        self.move_group_child_by_inner(node, dx_emu, dy_emu)
+            .map_err(to_js)
+    }
+
+    /// [`move_group_child_by`](Self::move_group_child_by) with a plain error,
+    /// so the behaviour is reachable from a native test.
+    fn move_group_child_by_inner(
+        &mut self,
+        node: &str,
+        dx_emu: f64,
+        dy_emu: f64,
+    ) -> Result<EditResult, String> {
+        let child = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let paragraph = self
+            .paragraph_containing_inline_deep(child)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let mut inlines = source.inlines.clone();
+        if !move_group_child_in_inlines(&mut inlines, child, dx_emu, dy_emu) {
+            return Err("not a shape inside a group".to_owned());
+        }
+        let caret = Pos {
+            node: paragraph,
+            offset: 0,
+        };
+        // `ObjectMove`, not `Formatting`: the undo entry is what the reader
+        // sees on the Undo button, and "Undo Formatting" for a shape they just
+        // dragged describes a different action from the one they took.
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            caret,
+            HistoryKind::ObjectMove,
+        )
+    }
+
     /// Changes a **floating** object's text-wrap mode (docs/85 §5.3), committing
     /// one undoable `SetAnchor`. Accepts `"square"`, `"tight"`, `"through"`,
     /// `"topAndBottom"`, `"behind"` (wrap-none behind the text), and `"front"`
@@ -2084,6 +2166,7 @@ impl WasmDocument {
             },
         );
         let drawing = Drawing {
+            opacity: None,
             id: drawing_id,
             media: media_id,
             extent: Some(Extent {
@@ -2214,6 +2297,9 @@ impl WasmDocument {
             geometry,
             preset: None,
             adjustments: Vec::new(),
+            // Insert-shape authors a preset, never a freeform: there is no
+            // Edit-Points gesture yet (docs/119 §6 "out of scope").
+            path: None,
             // A line is a stroke, not a filled region; filling one would paint a
             // rectangle behind a hairline.
             fill: (geometry != ShapeGeometry::Line).then_some(Fill::Solid(Rgba {
@@ -4746,6 +4832,158 @@ impl WasmDocument {
         self.apply_paragraph_props_as(node, 0, node, 0, HistoryKind::ListFormatting, move |p| {
             p.numbering = Some(NumberingRef { instance, level });
         })
+    }
+
+    /// The form checkbox containing `node` — which may be the control itself or
+    /// a run inside it — with its current state. Searched across every surface,
+    /// because a form's controls sit in table cells as often as in the body.
+    fn find_form_checkbox(&self, node: NodeId) -> Option<(NodeId, SdtCheckbox)> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() {
+                found = find_checkbox_containing(&paragraph.inlines, node);
+            }
+        });
+        found
+    }
+
+    /// The paragraph holding the group child `node`, across every surface.
+    fn paragraph_containing_inline_deep(&self, node: NodeId) -> Option<NodeId> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() && paragraph_holds_group_child(paragraph, node) {
+                found = Some(paragraph.id);
+            }
+        });
+        found
+    }
+
+    /// The paragraph whose inlines hold `node`, across every surface. The
+    /// paragraph is what `SetInlines` addresses.
+    fn paragraph_containing_inline(&self, node: NodeId) -> Option<NodeId> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() && inlines_contain_node(&paragraph.inlines, node) {
+                found = Some(paragraph.id);
+            }
+        });
+        found
+    }
+
+    /// The **form checkbox** (`w14:checkbox` content control) at the caret
+    /// position `node`/`offset`, or `undefined`.
+    ///
+    /// A position is a PARAGRAPH and a byte offset into its text — the same
+    /// pair a hit test returns — so the host asks this about wherever the
+    /// pointer or the caret landed and never has to know where content
+    /// controls are. Asking by node id alone was wrong: the id a hit test
+    /// hands back is the paragraph's, which is not inside the control.
+    ///
+    /// Distinct from `checkboxStateAt` above, which is a CHECKLIST list item —
+    /// a bullet whose marker happens to be a box. This is Word's content
+    /// control: a form field with its own checked flag and its own pair of
+    /// glyphs (`docs/118` §2).
+    #[wasm_bindgen(js_name = formCheckboxAt)]
+    #[must_use]
+    pub fn form_checkbox_at(&self, node: &str, offset: u32) -> Option<String> {
+        let nid = NodeId::from_str(node).ok()?;
+        let (sdt, _) = self.find_form_checkbox_at(nid, offset)?;
+        Some(sdt.to_string())
+    }
+
+    /// Whether the form checkbox `node` is ticked: `1` ticked, `0` not, `-1`
+    /// when `node` is not a form checkbox.
+    #[wasm_bindgen(js_name = formCheckboxChecked)]
+    #[must_use]
+    pub fn form_checkbox_checked(&self, node: &str) -> i32 {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return -1;
+        };
+        match self.find_form_checkbox(nid) {
+            Some((_, checkbox)) => i32::from(checkbox.checked),
+            None => -1,
+        }
+    }
+
+    /// The form checkbox at a caret position, with its state. The paragraph is
+    /// resolved once and its inlines are walked in order, so the span each
+    /// control occupies in the paragraph's text is the span the caret is
+    /// compared against.
+    fn find_form_checkbox_at(&self, node: NodeId, offset: u32) -> Option<(NodeId, SdtCheckbox)> {
+        let paragraph = find_paragraph_any(&self.document, node)?;
+        checkbox_at_offset(&paragraph.inlines, offset, &mut 0)
+    }
+
+    /// Ticks or unticks the form checkbox at `node`, as one undoable action.
+    ///
+    /// Both competitors agree on this interaction, so none of it is invented
+    /// (`docs/118` §2). ONLYOFFICE's `CInlineLevelSdt.ToggleCheckBox` flips the
+    /// flag and then **rewrites the control's content** to the checked or
+    /// unchecked symbol — the glyph is content, not decoration — and Word does
+    /// the same on a click or on Space. So does this: the flag moves and the
+    /// run inside the control is replaced with the glyph the document itself
+    /// declared in `w14:checkedState` / `w14:uncheckedState`, keeping that
+    /// run's formatting so a 16pt teal box stays 16pt and teal.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not inside a form checkbox, so a host cannot wire this to
+    /// an arbitrary click and silently corrupt a paragraph.
+    #[wasm_bindgen(js_name = toggleFormCheckbox)]
+    pub fn toggle_form_checkbox(&mut self, node: &str) -> Result<EditResult, JsValue> {
+        self.toggle_form_checkbox_inner(node).map_err(to_js)
+    }
+
+    /// [`toggle_form_checkbox`](Self::toggle_form_checkbox) with a plain error,
+    /// so the behaviour is reachable from a native test — a `JsValue` cannot be
+    /// constructed off a wasm target, and an operation this consequential
+    /// should not be guarded only in a browser.
+    fn toggle_form_checkbox_inner(&mut self, node: &str) -> Result<EditResult, String> {
+        let nid = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let (sdt_id, checkbox) = self
+            .find_form_checkbox(nid)
+            .ok_or_else(|| "not a form checkbox".to_owned())?;
+        let paragraph = self
+            .paragraph_containing_inline(sdt_id)
+            .ok_or_else(|| "the checkbox has no paragraph".to_owned())?;
+        let want = !checkbox.checked;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| "the checkbox has no paragraph".to_owned())?;
+        let mut inlines = source.inlines.clone();
+        if !toggle_checkbox_in_inlines(&mut inlines, sdt_id, want) {
+            return Err("not a form checkbox".to_owned());
+        }
+        let caret = Pos {
+            node: paragraph,
+            offset: 0,
+        };
+        self.apply_form_action(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            caret,
+            HistoryKind::Formatting,
+        )
+    }
+
+    /// Applies an action that is ALLOWED to write into a forms-protected
+    /// document, because it IS the operation of a form field.
+    ///
+    /// The explicit opt-in `refuse_if_protected` looks for. Ticking a checkbox
+    /// is a `SetInlines` on its paragraph, indistinguishable by shape from
+    /// typing over the contract around it — the difference is the intent of
+    /// the call site, so the call site declares it.
+    fn apply_form_action(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+        kind: HistoryKind,
+    ) -> Result<EditResult, String> {
+        self.editing_a_form_field = true;
+        let applied = self.apply_action_caret_as(ops, caret, kind);
+        self.editing_a_form_field = false;
+        applied
     }
 
     /// The checked state of the checklist item at `node`: `1` checked, `0`
@@ -10466,7 +10704,67 @@ impl WasmDocument {
     /// `a_refused_operation_leaves_the_document_unchanged` asserts — that a
     /// refused op leaves `doc` unchanged. That keeps the per-keystroke path
     /// clone-free and `O(edit)`, per `docs/107` §4.
+    /// Refuses an edit that `w:documentProtection w:edit="forms"` forbids.
+    ///
+    /// Word locks the body of a forms-protected document and lets only its form
+    /// fields accept input; the owner's loan agreement declares exactly that
+    /// (`w:edit="forms" w:enforcement="1"`) and we let the user type over the
+    /// whole contract (`docs/109` HF-175).
+    ///
+    /// Enforced HERE, in the engine's one choke point, and not in the host:
+    /// ONLYOFFICE keeps the rule in its controller but leaves the actual
+    /// restriction to its UI layer, so an embedder driving their engine
+    /// directly gets no protection at all. A host that forgets is not a
+    /// document that unlocks.
+    ///
+    /// `w:enforcement="0"` means the setting is remembered but not applied,
+    /// which is a real state Word round-trips — so the flag is checked, not
+    /// just the mode.
+    fn refuse_if_protected(&self, ops: &[Operation]) -> Result<(), String> {
+        if self.editing_a_form_field {
+            return Ok(());
+        }
+        let Some(protection) = self
+            .document
+            .definitions()
+            .settings
+            .document_protection
+            .as_ref()
+        else {
+            return Ok(());
+        };
+        if protection.edit != DocumentProtectionEdit::Forms || !protection.enforcement {
+            return Ok(());
+        }
+        for op in ops {
+            if !self.op_is_inside_a_form_field(op) {
+                return Err("refused: This document is protected: only its form \
+                     fields can be edited"
+                    .to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether an operation writes inside an ENABLED text form field's result.
+    ///
+    /// A disabled field (`<w:enabled w:val="0"/>`) is locked like the body —
+    /// it is a field the author closed, not one they left open.
+    fn op_is_inside_a_form_field(&self, op: &Operation) -> bool {
+        let Some((node, offset)) = operation_write_position(op) else {
+            // An operation this check cannot place is refused rather than
+            // waved through: an unplaceable write into a locked document is
+            // exactly the case where guessing is wrong.
+            return false;
+        };
+        let Some(paragraph) = find_paragraph_any(&self.document, node) else {
+            return false;
+        };
+        text_form_field_at_offset(&paragraph.inlines, offset, &mut 0)
+    }
+
     fn apply_group(&mut self, ops: &[Operation]) -> Result<(Pos, Vec<Operation>), String> {
+        self.refuse_if_protected(ops)?;
         // A windowed body cannot re-paginate after a mutation: `finish_edit`
         // re-runs `paginate_document_cached` over the whole document, which is
         // the 4.14 GiB peak windowing exists to avoid, and a re-measure is a
@@ -12502,6 +12800,476 @@ fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>
 /// `collect_block_text` over EVERY block surface, not just the body. Word count,
 /// endpoint ordering and text extraction all stopped at the body edge, so header,
 /// footer and note text was invisible to them.
+/// Moves the group child `child` by a PAGE-space delta, converting into the
+/// group's child space. Reports whether it found one.
+///
+/// A group maps its child space onto its parent box by
+/// `extent / child_extent` (`a:xfrm`'s `a:ext` over `a:chExt`), so a drag
+/// measured on the page scales by the INVERSE on the way in. A degenerate or
+/// absent child extent means no scaling rather than a division by zero.
+fn move_group_child_in_inlines(
+    inlines: &mut [InlineNode],
+    child: NodeId,
+    dx_emu: f64,
+    dy_emu: f64,
+) -> bool {
+    for inline in inlines {
+        match inline {
+            InlineNode::Sdt(sdt) => {
+                if move_group_child_in_inlines(&mut sdt.inlines, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if move_group_child_in_inlines(&mut link.inlines, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            InlineNode::Group(group) => {
+                if move_child_in_group(group, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// [`move_group_child_in_inlines`] within one group, descending into nested
+/// groups — whose own scale compounds with their parent's, which is why the
+/// factor is carried down rather than recomputed from the top.
+fn move_child_in_group(
+    group: &mut WordprocessingGroup,
+    child: NodeId,
+    dx_emu: f64,
+    dy_emu: f64,
+) -> bool {
+    let (sx, sy) = child_space_scale(&group.transform);
+    let (dx, dy) = (dx_emu * sx, dy_emu * sy);
+    for entry in &mut group.children {
+        match entry {
+            GroupChild::Picture(picture) if picture.id == child => {
+                picture.offset = shifted(picture.offset, dx, dy);
+                return true;
+            }
+            GroupChild::TextBox(text_box) if text_box.id == child => {
+                text_box.offset = shifted(text_box.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Shape(shape) if shape.id == child => {
+                shape.offset = shifted(shape.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Group(nested) if nested.id == child => {
+                nested.transform.offset = shifted(nested.transform.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Group(nested) => {
+                // The delta handed down is already in THIS group's child
+                // space, which is the nested group's parent space.
+                if move_child_in_group(nested, child, dx, dy) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Page-space to child-space scale for a group transform. `1.0` when the group
+/// declares no usable child extent, which is the identity mapping the layout
+/// already assumes in that case.
+fn child_space_scale(transform: &GroupTransform) -> (f64, f64) {
+    let axis = |child: i64, parent: i64| {
+        if child > 0 && parent > 0 {
+            child as f64 / parent as f64
+        } else {
+            1.0
+        }
+    };
+    (
+        axis(transform.child_extent.width_emu, transform.extent.width_emu),
+        axis(
+            transform.child_extent.height_emu,
+            transform.extent.height_emu,
+        ),
+    )
+}
+
+/// `point` shifted by a child-space delta, clamped to the EMU domain the model
+/// validates against.
+fn shifted(point: PointEmu, dx: f64, dy: f64) -> PointEmu {
+    PointEmu {
+        x_emu: ((point.x_emu as f64 + dx).round() as i64).clamp(-MAX_EMU, MAX_EMU),
+        y_emu: ((point.y_emu as f64 + dy).round() as i64).clamp(-MAX_EMU, MAX_EMU),
+    }
+}
+
+/// The paragraph whose inlines hold `node` at ANY depth — including inside a
+/// drawing group, which `paragraph_containing_inline` does not descend into.
+fn paragraph_holds_group_child(paragraph: &Paragraph, node: NodeId) -> bool {
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
+        inlines.iter().any(|inline| match inline {
+            InlineNode::Group(group) => group_holds(group, node),
+            InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
+            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+            _ => false,
+        })
+    }
+    fn group_holds(group: &WordprocessingGroup, node: NodeId) -> bool {
+        group.children.iter().any(|child| match child {
+            GroupChild::Picture(picture) => picture.id == node,
+            GroupChild::TextBox(text_box) => text_box.id == node,
+            GroupChild::Shape(shape) => shape.id == node,
+            GroupChild::Group(nested) => nested.id == node || group_holds(nested, node),
+        })
+    }
+    in_inlines(&paragraph.inlines, node)
+}
+
+/// Walks `inlines` (and the SDTs nested in them) for the form checkbox whose
+/// id is `sdt`, sets its checked flag to `want`, and rewrites its content to
+/// the glyph the document declared for that state. Reports whether it found one.
+///
+/// Rewriting the content is the whole of it: the glyph a reader sees is a
+/// normal run inside the control, not a decoration the renderer draws, so a
+/// flag that moved without the run moving would show a ticked box as unticked
+/// (`docs/118` §2 — ONLYOFFICE's `private_UpdateCheckBoxContent` does exactly
+/// this, and Word's file format is why both must).
+/// Every paragraph on every block surface. Written on the existing
+/// `surface_block_lists` walk so a new surface is taught to this and to text
+/// extraction at once, rather than only to whichever remembered.
+fn visit_paragraphs_in(document: &Document, visit: &mut impl FnMut(&Paragraph)) {
+    fn walk(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
+        for block in blocks {
+            match block {
+                BlockNode::Paragraph(paragraph) => visit(paragraph),
+                BlockNode::Table(table) => {
+                    for row in &table.rows {
+                        for cell in &row.cells {
+                            walk(&cell.blocks, visit);
+                        }
+                    }
+                }
+                BlockNode::Sdt(sdt) => walk(&sdt.blocks, visit),
+                BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+    for blocks in surface_block_lists(document) {
+        walk(blocks, visit);
+    }
+}
+
+fn toggle_checkbox_in_inlines(inlines: &mut [InlineNode], sdt: NodeId, want: bool) -> bool {
+    for inline in inlines {
+        match inline {
+            // A legacy FORMCHECKBOX needs no content rewrite: layout
+            // synthesises the box glyph from `checked` on every pass
+            // (`form_checkbox_glyph_run`), so the flag IS the rendering. The
+            // SDT below is the opposite — there the glyph is a real run and
+            // has to move with the flag.
+            InlineNode::Field(field) if field.id == sdt => {
+                let Some(form) = field.form.as_mut() else {
+                    return false;
+                };
+                let FormFieldKind::CheckBox(checkbox) = &mut form.kind else {
+                    return false;
+                };
+                checkbox.checked = Some(want);
+                return true;
+            }
+            InlineNode::Sdt(node) if node.id == sdt => {
+                let Some(SdtControlData::Checkbox(checkbox)) = node.properties.data.as_mut() else {
+                    return false;
+                };
+                checkbox.checked = want;
+                let symbol = if want {
+                    checkbox.checked_state.clone()
+                } else {
+                    checkbox.unchecked_state.clone()
+                };
+                let Some(glyph) = symbol.as_ref().and_then(checkbox_glyph) else {
+                    // The document declared no glyph for this state, so there
+                    // is nothing correct to draw. The flag alone would show the
+                    // wrong box, which is worse than refusing.
+                    return false;
+                };
+                rewrite_checkbox_content(
+                    &mut node.inlines,
+                    glyph,
+                    symbol.as_ref().and_then(|s| s.font.as_deref()),
+                );
+                return true;
+            }
+            InlineNode::Sdt(node) => {
+                if toggle_checkbox_in_inlines(&mut node.inlines, sdt, want) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if toggle_checkbox_in_inlines(&mut link.inlines, sdt, want) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The form checkbox whose text span covers `offset`, walking `inlines` in
+/// order and advancing `seen` by each one's own plain-text length.
+///
+/// A caret sitting immediately after the glyph counts as inside it, which is
+/// where a click on the right-hand half of the box puts it — the alternative
+/// is a box that ticks from one side and not the other.
+fn checkbox_at_offset(
+    inlines: &[InlineNode],
+    offset: u32,
+    seen: &mut u32,
+) -> Option<(NodeId, SdtCheckbox)> {
+    for inline in inlines {
+        let start = *seen;
+        let length = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+        let end = start.saturating_add(length);
+        match inline {
+            // A LEGACY form checkbox (`w:fldChar`+`w:ffData`, FORMCHECKBOX) is
+            // the other mechanism Word has for the same control, and the one
+            // the owner's loan agreement uses 19 times. Its state lives on the
+            // field rather than in a content control, and layout synthesises
+            // the box glyph from that state — so the caller gets the same
+            // answer for both and the gesture does not have to know which
+            // kind it is holding.
+            InlineNode::Field(field) => {
+                if let Some(form) = field.form.as_ref()
+                    && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                    && offset >= start
+                    && offset <= end
+                {
+                    return Some((field.id, legacy_as_sdt_checkbox(checkbox)));
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
+                    && offset >= start
+                    && offset <= end
+                {
+                    return Some((sdt.id, checkbox.clone()));
+                }
+                let mut inner = start;
+                if let Some(found) = checkbox_at_offset(&sdt.inlines, offset, &mut inner) {
+                    *seen = end;
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let mut inner = start;
+                if let Some(found) = checkbox_at_offset(&link.inlines, offset, &mut inner) {
+                    *seen = end;
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+        *seen = end;
+    }
+    None
+}
+
+/// The form checkbox containing `node`, if any: its id and its current state.
+/// `node` is whatever a hit test returned, so this searches the control's own
+/// id and the ids of the runs inside it.
+fn find_checkbox_containing(inlines: &[InlineNode], node: NodeId) -> Option<(NodeId, SdtCheckbox)> {
+    for inline in inlines {
+        match inline {
+            // The legacy mechanism, addressed by the field's own id or by any
+            // run of its cached result.
+            InlineNode::Field(field) => {
+                if let Some(form) = field.form.as_ref()
+                    && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                    && (field.id == node || inlines_contain_node(&field.inlines, node))
+                {
+                    return Some((field.id, legacy_as_sdt_checkbox(checkbox)));
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
+                    && (sdt.id == node || inlines_contain_node(&sdt.inlines, node))
+                {
+                    return Some((sdt.id, checkbox.clone()));
+                }
+                if let Some(found) = find_checkbox_containing(&sdt.inlines, node) {
+                    return Some(found);
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if let Some(found) = find_checkbox_containing(&link.inlines, node) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether `node` is one of these inlines, or of anything nested in them.
+///
+/// A checkbox's content is a `w:sym`, and the toggle rewrites it in place
+/// keeping the id — so a lookup that knew only about runs found the control
+/// before the first click and lost it after, which made the second click a
+/// no-op and the box un-untickable.
+fn inlines_contain_node(inlines: &[InlineNode], node: NodeId) -> bool {
+    inlines.iter().any(|inline| match inline {
+        InlineNode::Run(run) => run.id == node,
+        InlineNode::Symbol(symbol) => symbol.id == node,
+        InlineNode::Sdt(sdt) => sdt.id == node || inlines_contain_node(&sdt.inlines, node),
+        InlineNode::Field(field) => field.id == node || inlines_contain_node(&field.inlines, node),
+        InlineNode::Hyperlink(link) => inlines_contain_node(&link.inlines, node),
+        _ => false,
+    })
+}
+
+/// Where an operation writes, as a paragraph and a byte offset, when it has a
+/// single definite position. `None` for a structural operation whose target is
+/// not one point in one paragraph.
+fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
+    match op {
+        Operation::InsertText { at, .. } => Some((at.node, at.offset)),
+        Operation::DeleteText { range }
+        | Operation::FormatText { range, .. }
+        | Operation::ClearFormatting { range }
+        | Operation::SetHyperlink { range, .. } => Some((range.start.node, range.start.offset)),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Some((*node, 0))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `offset` falls inside the RESULT of an enabled text form field.
+///
+/// The result is the cached content between `w:fldChar separate` and `end` —
+/// the part a person fills in. The instruction and the field characters
+/// themselves are not editable even in a forms-protected document.
+fn text_form_field_at_offset(inlines: &[InlineNode], offset: u32, seen: &mut u32) -> bool {
+    for inline in inlines {
+        let start = *seen;
+        let length = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+        let end = start.saturating_add(length);
+        match inline {
+            InlineNode::Field(field) => {
+                let fillable = field.form.as_ref().is_some_and(|form| {
+                    matches!(form.kind, FormFieldKind::TextInput(_)) && form.enabled.unwrap_or(true)
+                });
+                if fillable && offset >= start && offset <= end {
+                    return true;
+                }
+                let mut inner = start;
+                if text_form_field_at_offset(&field.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                let mut inner = start;
+                if text_form_field_at_offset(&sdt.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let mut inner = start;
+                if text_form_field_at_offset(&link.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        *seen = end;
+    }
+    false
+}
+
+/// A legacy `w:ffData` checkbox seen through the SDT checkbox shape, so one
+/// lookup answers for both mechanisms.
+///
+/// `checked` falls back to `w:default` and then to off, which is Word's own
+/// precedence and the one `form_checkbox_glyph_run` already paints with. The
+/// state glyphs are `None`: a legacy checkbox declares no symbols, and layout
+/// draws reliably-covered BMP boxes rather than a producer's symbol font.
+fn legacy_as_sdt_checkbox(checkbox: &FormCheckBox) -> SdtCheckbox {
+    SdtCheckbox {
+        checked: checkbox.checked.or(checkbox.default).unwrap_or(false),
+        checked_state: None,
+        unchecked_state: None,
+    }
+}
+
+/// The character a `w14:checkedState` / `w14:uncheckedState` names. `@w14:val`
+/// is a hex code point; Wingdings-style symbol fonts write it in the private
+/// use area (`F0A3`), which is where the font puts the glyph.
+fn checkbox_glyph(symbol: &SdtCheckboxSymbol) -> Option<char> {
+    char::from_u32(u32::from_str_radix(symbol.val.trim(), 16).ok()?)
+}
+
+/// Replaces the control's content with the glyph for its new state.
+///
+/// A Word checkbox's content is a `w:sym` — an [`InlineNode::Symbol`] carrying
+/// a font and a code point — so that is what is written back, keeping the
+/// existing glyph's font and run formatting so a 16pt teal box stays 16pt and
+/// teal. Rewriting it as plain text would lose the symbol font and draw a `£`.
+///
+/// The PRIVATE-USE offset is taken from the document rather than assumed.
+/// `w14:checkedState w14:val="0052"` names character 0x52 *in the named font*,
+/// and Word writes that glyph in content as `w:char="F052"`. Which spelling
+/// this document uses is visible in the glyph already there, so the existing
+/// one decides: a control whose current symbol sits in the PUA gets a PUA
+/// replacement, and one that does not, does not.
+fn rewrite_checkbox_content(inlines: &mut Vec<InlineNode>, glyph: char, font: Option<&str>) {
+    const PRIVATE_USE_BASE: u32 = 0xF000;
+
+    let existing = inlines.iter().find_map(|inline| match inline {
+        InlineNode::Symbol(symbol) => Some((
+            symbol.id,
+            symbol.properties.get().clone(),
+            symbol.font.clone(),
+            symbol.char >= PRIVATE_USE_BASE,
+        )),
+        InlineNode::Run(run) => Some((
+            run.id,
+            run.properties.get().clone(),
+            font.unwrap_or_default().to_owned(),
+            false,
+        )),
+        _ => None,
+    });
+    // A control with no content at all cannot supply an id, and minting one
+    // here would hand out an id the document's allocator does not know about.
+    // Leaving the content alone keeps the model valid.
+    let Some((id, properties, existing_font, in_private_use)) = existing else {
+        return;
+    };
+    let face = font.filter(|f| !f.is_empty()).unwrap_or(&existing_font);
+    if face.is_empty() {
+        return; // a symbol with no font cannot resolve; refuse rather than guess
+    }
+    let code = u32::from(glyph);
+    let code = if in_private_use && code < 0x100 {
+        PRIVATE_USE_BASE + code
+    } else {
+        code
+    };
+    inlines.clear();
+    inlines.push(InlineNode::Symbol(Box::new(Symbol {
+        id,
+        font: face.to_owned(),
+        char: code,
+        properties: properties.into(),
+    })));
+}
+
 fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, String)>) {
     for blocks in surface_block_lists(document) {
         collect_block_text(blocks, out);
@@ -17049,6 +17817,17 @@ fn inlines_anchor_len(document: &Document, inlines: &[InlineNode]) -> u32 {
 }
 
 fn field_anchor_len(field: &casual_doc_model::v1::Field) -> u32 {
+    // A legacy `FORMCHECKBOX` is one position wide, because that is what the
+    // reader sees: layout synthesises a single box character from the field's
+    // state, and `node_plain_text` now reports that same character. All three
+    // have to agree or the caret lands somewhere the box is not - the offsets
+    // the checkbox gesture is resolved against come from the plain text, and
+    // the positions an edit is applied at come from here.
+    if let Some(form) = field.form.as_ref()
+        && let FormFieldKind::CheckBox(checkbox) = &form.kind
+    {
+        return checkbox.glyph().len_utf8() as u32;
+    }
     let cached = field.inlines.iter().fold(0u32, |total, inline| {
         let len = match inline {
             InlineNode::Run(run) => run.text.len() as u32,
@@ -18570,6 +19349,7 @@ fn open_document_bounded(
         undo: Vec::new(),
         redo: Vec::new(),
         typing_history: None,
+        editing_a_form_field: false,
         revision_ids,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
@@ -21827,6 +22607,477 @@ mod tests {
         assert_eq!(doc.page_count(), before);
     }
 
+    /// Dragging a shape inside a group moves THAT SHAPE, and leaves the group
+    /// where it is.
+    ///
+    /// `docs/109` HF-173, reported after #577 as "individual dragging is not
+    /// possible in grouped things". Selection descended correctly, but the
+    /// only move that existed was `setObjectAnchorPosition(root, …)`, so the
+    /// gesture moved the whole group — measured at the time as a 40px drag on
+    /// a child moving the group 40px.
+    #[test]
+    fn a_shape_inside_a_group_moves_without_moving_the_group() {
+        const NESTED: &[u8] = include_bytes!("../../../fixtures/generated/nested-group.docx");
+        let mut doc = open_document(NESTED).expect("open");
+
+        // The group, its anchor, and its first child's offset — before.
+        let snapshot = |doc: &WasmDocument| {
+            let mut out = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Group(group) = inline
+                        && out.is_none()
+                    {
+                        let child = group.children.iter().find_map(|c| match c {
+                            GroupChild::TextBox(b) => Some((b.id, b.offset)),
+                            GroupChild::Shape(sh) => Some((sh.id, sh.offset)),
+                            GroupChild::Picture(p) => Some((p.id, p.offset)),
+                            GroupChild::Group(_) => None,
+                        });
+                        out = child.map(|(id, offset)| (group.transform.offset, id, offset));
+                    }
+                }
+            });
+            out.expect("the fixture has a group with a leaf child")
+        };
+
+        let (group_before, child, child_before) = snapshot(&doc);
+        doc.move_group_child_by_inner(&child.to_string(), 100_000.0, 50_000.0)
+            .expect("move the child");
+
+        let (group_after, _, child_after) = snapshot(&doc);
+        assert_eq!(
+            group_after, group_before,
+            "the GROUP must not move — that is the whole defect",
+        );
+        assert_ne!(
+            child_after, child_before,
+            "the CHILD must move — selection descended but the drag did not",
+        );
+
+        // Undo restores it exactly, as one step.
+        doc.undo().expect("undo");
+        let (_, _, child_undone) = snapshot(&doc);
+        assert_eq!(child_undone, child_before, "one undo puts the shape back");
+    }
+
+    /// The page-space delta is converted into the group's child space: a group
+    /// drawn at half its child space moves its child twice as far in child
+    /// units for the same drag on screen. Getting this wrong is a shape that
+    /// lags or races the pointer.
+    #[test]
+    fn a_group_child_move_is_scaled_into_child_space() {
+        use casual_doc_model::v1::{
+            Extent, GroupShape, GroupTransform, PointEmu, ShapeGeometry, WordprocessingGroup,
+        };
+        let id = |n: u64| NodeId::from_parts(n, 907).unwrap();
+        // Child space is TWICE the parent box, so a page delta halves.
+        let group = WordprocessingGroup {
+            id: id(3),
+            anchor: None,
+            relative_height: None,
+            extent: Extent {
+                width_emu: 1_000_000,
+                height_emu: 1_000_000,
+            },
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 1_000_000,
+                },
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: Extent {
+                    width_emu: 2_000_000,
+                    height_emu: 2_000_000,
+                },
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            children: vec![GroupChild::Shape(GroupShape {
+                id: id(4),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 100_000,
+                    height_emu: 100_000,
+                },
+                geometry: ShapeGeometry::Rectangle,
+                preset: None,
+                adjustments: Vec::new(),
+                path: None,
+                fill: None,
+                stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })],
+        };
+        let mut inlines = vec![InlineNode::Group(Box::new(group))];
+        assert!(move_group_child_in_inlines(
+            &mut inlines,
+            id(4),
+            100_000.0,
+            0.0
+        ));
+        let InlineNode::Group(group) = &inlines[0] else {
+            panic!("group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("shape");
+        };
+        assert_eq!(
+            shape.offset.x_emu, 200_000,
+            "a page delta of 100,000 in a group whose child space is 2x must \
+             move the child 200,000 child units",
+        );
+    }
+
+    /// Filling a legacy `FORMTEXT` puts the text INSIDE the field.
+    ///
+    /// `docs/109` HF-175. Three functions answered "how long is this
+    /// paragraph" and a legacy field made them disagree: `node_plain_text`
+    /// contributed nothing for it, `inline_text_len` in the edit crate
+    /// contributed nothing either, and `field_anchor_len` in this crate counted
+    /// its cached result. So in any paragraph holding a filled `FORMTEXT` — 111
+    /// of them across the owner's corpus — the caret and the edit disagreed
+    /// about where the text was.
+    ///
+    /// Landing inside is not cosmetic. A value typed BESIDE the field is not
+    /// part of the field, so it is not the field's result on save, Word does
+    /// not see the form as filled, and the next person to tab through the form
+    /// finds the blank still blank with the answer sitting next to it.
+    #[test]
+    fn filling_a_legacy_text_form_field_writes_into_the_field() {
+        const LEGACY: &[u8] = include_bytes!("../../../fixtures/generated/legacy-form.docx");
+        let mut doc = open_document(LEGACY).expect("open");
+
+        let (paragraph, field_id, before_len) = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::TextInput(_)))
+                        && found.is_none()
+                    {
+                        found =
+                            Some((p.id, field.id, node_plain_text(&field.inlines).len() as u32));
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMTEXT field")
+        };
+
+        // The whole paragraph's length must already agree with its plain text,
+        // or the offset below means nothing.
+        let text = node_plain_text(
+            &find_paragraph_any(&doc.document, paragraph)
+                .unwrap()
+                .inlines,
+        );
+        let at = text.len() as u32;
+        doc.apply(Operation::InsertText {
+            at: Pos::new(paragraph, at),
+            text: "Ada".to_owned(),
+        })
+        .expect("a FORMTEXT must accept input");
+
+        let field = {
+            let p = find_paragraph_any(&doc.document, paragraph).unwrap();
+            p.inlines
+                .iter()
+                .find_map(|inline| match inline {
+                    InlineNode::Field(field) if field.id == field_id => Some(field),
+                    _ => None,
+                })
+                .expect("the field must still be there")
+        };
+        assert!(
+            node_plain_text(&field.inlines).contains("Ada"),
+            "the value must be the FIELD's result, not a run beside it: {:?}",
+            node_plain_text(&field.inlines),
+        );
+        assert_eq!(
+            node_plain_text(&field.inlines).len() as u32,
+            before_len + 3,
+            "the field grew by exactly what was typed",
+        );
+    }
+
+    /// A forms-protected document refuses edits outside its form fields, and
+    /// accepts them inside.
+    ///
+    /// `docs/109` HF-175. The owner's loan agreement declares
+    /// `w:documentProtection w:edit="forms" w:enforcement="1"` and we let the
+    /// user type over the whole contract — measured in the browser before this
+    /// change: typing in ordinary body text landed and produced an undo entry.
+    #[test]
+    fn a_forms_protected_document_locks_everything_but_its_fields() {
+        const PROTECTED: &[u8] = include_bytes!("../../../fixtures/generated/forms-protected.docx");
+        let mut doc = open_document(PROTECTED).expect("open");
+
+        // Ordinary body text is locked.
+        let body = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                if found.is_none() && node_plain_text(&p.inlines).contains("End of form") {
+                    found = Some(p.id);
+                }
+            });
+            found.expect("the fixture has ordinary body text")
+        };
+        let refusal = doc
+            .apply(Operation::InsertText {
+                at: Pos::new(body, 0),
+                text: "QZX".to_owned(),
+            })
+            .expect_err("typing over a protected contract must be refused");
+        assert!(
+            refusal.contains("protected"),
+            "the refusal must say why, not fail silently: {refusal}",
+        );
+
+        // …and the form field is not.
+        let field_paragraph = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::TextInput(_)))
+                        && found.is_none()
+                    {
+                        found = Some(p.id);
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMTEXT field")
+        };
+        // The field's result begins after the "Name: " literal, so aim inside it.
+        let text = {
+            let p = find_paragraph_any(&doc.document, field_paragraph).unwrap();
+            node_plain_text(&p.inlines)
+        };
+        let inside = text.len() as u32;
+        doc.apply(Operation::InsertText {
+            at: Pos::new(field_paragraph, inside),
+            text: "Ada".to_owned(),
+        })
+        .expect("a form field must still accept input");
+
+        // And ticking a checkbox is a form action, so it is allowed too.
+        let control = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::CheckBox(_)))
+                        && found.is_none()
+                    {
+                        found = Some(field.id);
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMCHECKBOX")
+        };
+        doc.toggle_form_checkbox_inner(&control.to_string())
+            .expect("ticking a checkbox is a form action");
+        assert_eq!(doc.form_checkbox_checked(&control.to_string()), 1);
+    }
+
+    /// The owner's loan agreement uses the OTHER form mechanism — legacy
+    /// `w:fldChar`+`w:ffData` FORMCHECKBOX, 19 of them — and the same gesture
+    /// has to tick those too.
+    ///
+    /// `docs/109` HF-175. #578 fixed the `w14:checkbox` SDT; this is the
+    /// mechanism Word has had since long before content controls, and the one
+    /// the 111-field contract is built from. The host is unchanged: the same
+    /// `formCheckboxAt` / `toggleFormCheckbox` answer for both, so the click
+    /// and Space gestures simply start working.
+    #[test]
+    fn a_legacy_form_checkbox_ticks_like_a_content_control() {
+        const LOAN: &[u8] = include_bytes!("../../../fixtures/generated/legacy-form.docx");
+        let mut doc = open_document(LOAN).expect("open");
+
+        // Find the paragraph holding the legacy checkbox, and ask the way the
+        // host asks: a paragraph and a caret offset.
+        let (paragraph, before) = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && let Some(form) = field.form.as_ref()
+                        && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                        && found.is_none()
+                    {
+                        found = Some((p.id, checkbox.checked.or(checkbox.default)));
+                    }
+                }
+            });
+            found.expect("the fixture has a legacy FORMCHECKBOX")
+        };
+        let node = paragraph.to_string();
+        let control = doc
+            .form_checkbox_at(&node, 0)
+            .expect("the caret is inside a legacy form checkbox");
+        assert_eq!(
+            doc.form_checkbox_checked(&control),
+            i32::from(before.unwrap_or(false)),
+            "the reported state is the document's",
+        );
+
+        doc.toggle_form_checkbox_inner(&control).expect("tick");
+        assert_eq!(doc.form_checkbox_checked(&control), 1, "ticked");
+        doc.toggle_form_checkbox_inner(&control).expect("untick");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "unticked");
+
+        doc.toggle_form_checkbox_inner(&control).expect("tick");
+        doc.undo().expect("undo");
+        assert_eq!(
+            doc.form_checkbox_checked(&control),
+            0,
+            "one undo puts it back"
+        );
+    }
+
+    /// A form checkbox ticks, unticks, and comes back on undo.
+    ///
+    /// `docs/118` §2: the Medical Incident Report Form carries eight of these
+    /// and not one of them could be ticked — click, Space and double-click were
+    /// all no-ops, so a form opened as a picture of a form. The control was
+    /// fully modelled the whole time; the operation did not exist.
+    #[test]
+    fn a_form_checkbox_ticks_and_unticks() {
+        use casual_doc_model::v1::{Definitions, InlineSdt, SdtControlKind, SdtProperties};
+        let id = |n: u64| NodeId::from_parts(n, 311).unwrap();
+        // Wingdings 2, exactly as the owner's form declares it: A3 empty box,
+        // 52 ticked box.
+        let checkbox = SdtCheckbox {
+            checked: false,
+            checked_state: Some(SdtCheckboxSymbol {
+                val: "0052".to_owned(),
+                font: Some("Wingdings 2".to_owned()),
+            }),
+            unchecked_state: Some(SdtCheckboxSymbol {
+                val: "00A3".to_owned(),
+                font: Some("Wingdings 2".to_owned()),
+            }),
+        };
+        let run = Run {
+            id: id(4),
+            properties: RunProperties::default().into(),
+            text: "\u{a3}".to_owned(),
+        };
+        let sdt = InlineNode::Sdt(Box::new(InlineSdt {
+            id: id(3),
+            properties: SdtProperties {
+                control_kind: Some(SdtControlKind::Checkbox),
+                data: Some(SdtControlData::Checkbox(checkbox)),
+                ..SdtProperties::default()
+            },
+            inlines: vec![InlineNode::Run(run)],
+        }));
+        let paragraph = BlockNode::Paragraph(Paragraph {
+            id: id(2),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![sdt],
+        });
+        let document =
+            Document::new(id(1), vec![paragraph], Definitions::default()).expect("valid");
+        let package = write_document(&document, &BTreeMap::new()).expect("write");
+        let mut doc = open_document(&package).expect("open");
+
+        // Ids are reassigned on import, so the run is found in the OPENED
+        // document — and it is the run that is asked about, because a run is
+        // what a hit test returns and a host must not have to know where
+        // content controls are.
+        let run_node = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Sdt(sdt) = inline {
+                        for inner in &sdt.inlines {
+                            if let InlineNode::Run(run) = inner {
+                                found.get_or_insert(run.id);
+                            }
+                        }
+                    }
+                }
+            });
+            found
+                .expect("the imported document has a run inside the control")
+                .to_string()
+        };
+        // Asked the way the host asks: a paragraph and a caret offset, which
+        // is what a hit test returns.
+        let paragraph_node = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                if found.is_none()
+                    && paragraph
+                        .inlines
+                        .iter()
+                        .any(|inline| matches!(inline, InlineNode::Sdt(_)))
+                {
+                    found = Some(paragraph.id);
+                }
+            });
+            found.expect("a paragraph holding the control").to_string()
+        };
+        let control = doc
+            .form_checkbox_at(&paragraph_node, 0)
+            .expect("offset 0 is inside the form checkbox");
+        let _ = &run_node;
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "starts unticked");
+
+        doc.toggle_form_checkbox_inner(&run_node).expect("tick");
+        assert_eq!(doc.form_checkbox_checked(&control), 1, "ticked");
+        let text = |d: &WasmDocument| {
+            let mut nodes = Vec::new();
+            collect_block_text_all_surfaces(&d.document, &mut nodes);
+            nodes.into_iter().map(|(_, t)| t).collect::<String>()
+        };
+        assert!(
+            text(&doc).contains('\u{52}'),
+            "the CONTENT must become the ticked glyph, not just the flag — the \
+             box a reader sees is a run, not a decoration: {:?}",
+            text(&doc),
+        );
+
+        doc.toggle_form_checkbox_inner(&run_node).expect("untick");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "unticked again");
+        assert!(text(&doc).contains('\u{a3}'));
+
+        // One undo step, as in Word and as in ONLYOFFICE's
+        // `CChangesSdtPrCheckBoxChecked`.
+        doc.toggle_form_checkbox_inner(&run_node).expect("tick");
+        doc.undo().expect("undo");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "undo restores it");
+        assert!(text(&doc).contains('\u{a3}'), "and restores the glyph");
+    }
+
+    /// The toggle refuses anything that is not a form checkbox, so a host
+    /// cannot wire it to an arbitrary click and quietly rewrite a paragraph.
+    #[test]
+    fn toggling_something_that_is_not_a_form_checkbox_is_refused() {
+        let doc = open_document(b"Just a line of text").expect("open");
+        let mut doc = doc;
+        let mut nodes = Vec::new();
+        collect_block_text_all_surfaces(&doc.document, &mut nodes);
+        let node = nodes.first().expect("a paragraph").0.to_string();
+        assert_eq!(doc.form_checkbox_checked(&node), -1);
+        assert!(doc.form_checkbox_at(&node, 0).is_none());
+        assert!(doc.toggle_form_checkbox_inner(&node).is_err());
+    }
+
     /// The window moves when the host leaves it, and **only** then. A viewer
     /// that rebuilt on every `renderPage` would re-shape the same paragraphs
     /// for every page of a scroll, which is the thrash `docs/113` §4 Q3 names.
@@ -23747,6 +24998,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -24179,6 +25431,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -24446,6 +25699,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -27608,6 +28862,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -27659,6 +28914,7 @@ mod tests {
                         text: "anchor paragraph".to_owned(),
                     }),
                     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        opacity: None,
                         id: float_id,
                         media,
                         extent: Extent {
@@ -27761,6 +29017,7 @@ mod tests {
                         geometry: ShapeGeometry::Rectangle,
                         preset: None,
                         adjustments: Vec::new(),
+                        path: None,
                         fill: None,
                         stroke,
                         flip_h: false,
@@ -28925,6 +30182,7 @@ mod tests {
         };
         let drawing = |id: NodeId, descr: Option<&str>| {
             InlineNode::Drawing(Box::new(Drawing {
+                opacity: None,
                 id,
                 media,
                 extent: Some(Extent {
@@ -29569,6 +30827,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
