@@ -94,6 +94,20 @@ export function byteOffsetToStringIndex(text, byteOffset) {
 }
 
 /**
+ * The inverse: a JavaScript string index → the engine UTF-8 BYTE offset at the
+ * same place.
+ *
+ * Kept beside its counterpart deliberately. The spell checker tokenizes on the
+ * JS string and then has to hand the engine a range, so both directions are now
+ * in use; two conversions of the same mapping written in two files is how they
+ * drift. An index past the end clamps to the end.
+ */
+export function stringIndexToByteOffset(text, index) {
+  if (index <= 0) return 0;
+  return UTF8.encode(text.slice(0, Math.min(index, text.length))).length;
+}
+
+/**
  * Whether `text[start, end)` is bounded by non-word characters on both sides —
  * the "Whole word" find option.
  *

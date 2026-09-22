@@ -24,9 +24,19 @@
 // so `tests/drafts.test.mjs` exercises the rules in node with no browser.
 
 export const DRAFT_DB_NAME = "opendoc-drafts";
-export const DRAFT_DB_VERSION = 1;
+
+/** Version 2 adds the personal spelling dictionary (`docs/114` §4).
+ *
+ *  The store lives in THIS database rather than a second one because there is
+ *  one browser-storage decision here (D-1: one store, the opencalc shape) and
+ *  a second database would be a second thing to migrate, quota, clear and
+ *  explain. The upgrade creates only what is missing, so an existing tab's
+ *  drafts survive it untouched — which is the whole point of doing it as a
+ *  version bump instead of a delete-and-recreate. */
+export const DRAFT_DB_VERSION = 2;
 export const META_STORE = "meta";
 export const BYTES_STORE = "bytes";
+export const WORDS_STORE = "words";
 
 /** How long a draft is kept before it is pruned. The docs-repo reference uses
  *  the same 24 hours; a draft older than a day is far more likely to be a
@@ -396,6 +406,94 @@ function committed(tx) {
 }
 
 /**
+ * Creates whatever stores this version needs and nothing else.
+ *
+ * Every branch is `if (!contains)`, so an upgrade from version 1 adds the words
+ * store and leaves `meta` and `bytes` — and every draft in them — exactly as
+ * they were. Shared by both openers below so the two can never disagree about
+ * the schema; whichever runs first in a session creates all three.
+ */
+function upgradeDraftDatabase(database) {
+  if (!database.objectStoreNames.contains(META_STORE)) {
+    database.createObjectStore(META_STORE, { keyPath: "slotId" });
+  }
+  if (!database.objectStoreNames.contains(BYTES_STORE)) {
+    database.createObjectStore(BYTES_STORE);
+  }
+  if (!database.objectStoreNames.contains(WORDS_STORE)) {
+    // Keyed by the word itself: adding the same word twice is idempotent
+    // without a read, and "is this word known" is one `get`.
+    database.createObjectStore(WORDS_STORE);
+  }
+}
+
+/** Opens the shared database. `indexedDB` is injected for the same reason
+ *  everywhere here: so the rules run in node with no browser. */
+function openDatabase(indexedDB, name) {
+  if (!indexedDB) throw new Error("this browser has no IndexedDB");
+  return new Promise((resolve, reject) => {
+    const rq = indexedDB.open(name, DRAFT_DB_VERSION);
+    rq.onupgradeneeded = () => upgradeDraftDatabase(rq.result);
+    rq.onsuccess = () => resolve(rq.result);
+    rq.onerror = () => reject(rq.error);
+    rq.onblocked = () => reject(new Error("the draft database is blocked by another tab"));
+  });
+}
+
+/**
+ * Opens the personal spelling dictionary (`docs/114` §4 / `109` HF-035).
+ *
+ * Deliberately a SEPARATE opener from `openDraftStore` even though it is the
+ * same database: autosave can be off — by preference, or by policy in a
+ * cross-origin embed — and a user's own words must not disappear with it.
+ *
+ * Every method rejects rather than swallowing: a word the user added that was
+ * not stored has to be reportable (`docs/112` §4.1, the same rule autosave
+ * follows).
+ */
+export async function openWordStore({
+  indexedDB = globalThis.indexedDB,
+  name = DRAFT_DB_NAME,
+} = {}) {
+  const db = await openDatabase(indexedDB, name);
+  return {
+    /** Every word the user has added, as a plain array. Hundreds of entries at
+     *  the very most; read once at boot and kept in memory after that. */
+    async list() {
+      const tx = db.transaction(WORDS_STORE, "readonly");
+      const keys = await request(tx.objectStore(WORDS_STORE).getAllKeys());
+      return keys.map(String);
+    },
+
+    /** Adds one word. Idempotent: the word IS the key. */
+    async add(word, addedAt = Date.now()) {
+      const tx = db.transaction(WORDS_STORE, "readwrite");
+      tx.objectStore(WORDS_STORE).put({ word, addedAt }, word);
+      await committed(tx);
+    },
+
+    async remove(word) {
+      const tx = db.transaction(WORDS_STORE, "readwrite");
+      tx.objectStore(WORDS_STORE).delete(word);
+      await committed(tx);
+    },
+
+    /** Empties the personal dictionary. Until a management surface exists
+     *  (`docs/114` §8) this is the only way to take a word back out, which is
+     *  why the command that adds words says so. */
+    async clear() {
+      const tx = db.transaction(WORDS_STORE, "readwrite");
+      tx.objectStore(WORDS_STORE).clear();
+      await committed(tx);
+    },
+
+    close() {
+      db.close();
+    },
+  };
+}
+
+/**
  * Opens (or creates) the draft database and returns the small API main.js uses.
  *
  * `indexedDB` is injected so tests can pass a fake, and so the caller — not
@@ -407,22 +505,7 @@ export async function openDraftStore({
   indexedDB = globalThis.indexedDB,
   name = DRAFT_DB_NAME,
 } = {}) {
-  if (!indexedDB) throw new Error("this browser has no IndexedDB");
-  const db = await new Promise((resolve, reject) => {
-    const rq = indexedDB.open(name, DRAFT_DB_VERSION);
-    rq.onupgradeneeded = () => {
-      const database = rq.result;
-      if (!database.objectStoreNames.contains(META_STORE)) {
-        database.createObjectStore(META_STORE, { keyPath: "slotId" });
-      }
-      if (!database.objectStoreNames.contains(BYTES_STORE)) {
-        database.createObjectStore(BYTES_STORE);
-      }
-    };
-    rq.onsuccess = () => resolve(rq.result);
-    rq.onerror = () => reject(rq.error);
-    rq.onblocked = () => reject(new Error("the draft database is blocked by another tab"));
-  });
+  const db = await openDatabase(indexedDB, name);
 
   return {
     /** Every meta row. Kilobytes: the snapshots live in the other store. */

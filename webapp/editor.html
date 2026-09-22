@@ -191,6 +191,19 @@
         <p class="settings-note" id="draftRetentionNote">Drafts stay in this browser, on this device, for up to 24 hours. They are never uploaded, and are deleted as soon as you save.</p>
         <button type="button" id="draftsClearBtn" class="dialog-button">Delete saved drafts</button>
       </div>
+      <!-- Spelling (docs/114). The word lists are fetched from this site on
+           first use and nothing is ever sent anywhere; the note says so,
+           because "spell check" is a phrase people reasonably assume means a
+           server. It also says where a word added to the dictionary goes,
+           since there is no surface yet that can take one back out. -->
+      <div class="settings-section">
+        <div class="settings-label">Spelling</div>
+        <label class="dialog-check">
+          <input id="spellCheckToggle" type="checkbox" checked />
+          <span><strong>Check spelling as you type</strong><small>Misspelled words are underlined in red. Right-click one for corrections.</small></span>
+        </label>
+        <p class="settings-note">Checking happens in this browser: the dictionary is downloaded once from this site and your text is never sent anywhere. Words you add are stored in this browser only, and can currently be removed only by clearing this site's data.</p>
+      </div>
       <div class="settings-foot">
         <span class="oss">Open-source · customizable</span>
         <button type="button" id="settingsReset" class="link">Reset</button>

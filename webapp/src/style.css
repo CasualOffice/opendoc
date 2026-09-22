@@ -79,6 +79,13 @@
   --paper-insert: #188038;
   --paper-delete: #d93025;
   --paper-comment: #c58b00;
+  /* The spelling squiggle. Declared HERE rather than in the three theme blocks
+     (as docs/114 §5.7 proposed) for the reason stated above: it is painted onto
+     the white sheet in both themes, so a dark-theme value would put a pale red
+     on white paper. It shares its value with --paper-delete because both are
+     "the platform's red on paper" — but it is its own token, because a squiggle
+     and a tracked deletion are not the same thing and one may move. */
+  --paper-spelling: #d93025;
 
   /* ---- Stacking ladder ------------------------------------------------------
      One ordered list for every body-level floating surface, so "what paints
@@ -5061,6 +5068,32 @@ body.is-format-painting .page-wrap * {
   position: absolute;
   background: color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: 1px;
+}
+
+/* The spelling squiggle (docs/114 §5.7). Drawn in the overlay, over the raster,
+   so it costs the layout engine nothing and moves with the text for free.
+   `pointer-events: none` for the same reason `.review-comment-marker` used to
+   need fixing (REVIEW-GAP-005): a marker that swallowed the right-click would
+   break caret placement, and the flagged word is resolved from the caret anchor
+   rather than from this element.
+   Two diagonal gradients rather than a data-URI SVG, so there is no colour
+   literal hidden in an encoded string and no extra request. */
+.overlay .spell-error {
+  position: absolute;
+  pointer-events: none;
+}
+.overlay .spell-error::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 3px;
+  background-image:
+    linear-gradient(45deg, transparent 40%, var(--paper-spelling) 40% 60%, transparent 60%),
+    linear-gradient(-45deg, transparent 40%, var(--paper-spelling) 40% 60%, transparent 60%);
+  background-size: 4px 3px;
+  background-repeat: repeat-x;
+  background-position: 0 100%, 2px 100%;
 }
 
 /* Comment range marker: interaction-only highlight over the fixed canvas.
