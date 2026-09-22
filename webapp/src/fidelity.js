@@ -66,8 +66,13 @@ const FIDELITY = [
   },
   {
     family: "Fields",
-    note: "PAGE / NUMPAGES recompute; other fields use cached results and do not soft-wrap. Not editable as fields.",
-    modeled: "full", rendered: "partial", editable: "none", roundtrips: "full",
+    note: "PAGE / NUMPAGES recompute; other fields use cached results and do not soft-wrap. A legacy form field is operable: a FORMCHECKBOX (`w:ffData/w:checkBox`) paints its box from its own state and ticks on click or Space as one undo step, and text typed at a FORMTEXT lands INSIDE the field, so it is the field's result on save rather than a run beside it. A field's result is part of the paragraph's text for the caret, hit-testing and the accessibility mirror \u2014 it used to be invisible to all three, so every caret after a filled field drifted. Dropdown form fields (`w:ddList`) still cannot be operated, and no other field kind is editable as a field.",
+    modeled: "full", rendered: "partial", editable: "partial", roundtrips: "full",
+  },
+  {
+    family: "Document protection & forms",
+    note: "`w:documentProtection w:edit=\"forms\" w:enforcement=\"1\"` is enforced: every edit outside a form field is refused, and the refusal says the document is protected rather than blaming the selection. Filling the form \u2014 typing in a FORMTEXT, ticking a FORMCHECKBOX \u2014 is what protection exists to allow, so it still works. The other `w:edit` modes (`readOnly`, `comments`, `trackedChanges`) and the `w:permStart`/`w:permEnd` editable ranges are modeled and round-trip but are NOT enforced yet, and no password or hash is verified \u2014 protection here is an authoring contract, not a security boundary.",
+    modeled: "full", rendered: "none", editable: "partial", roundtrips: "full",
   },
   {
     family: "Math (OMML)",

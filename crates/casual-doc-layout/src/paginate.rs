@@ -1829,11 +1829,19 @@ fn resolve_in_line(line: &mut Line, page_label: &str, total: u32, shaper: &dyn L
             FieldKind::Passthrough => std::mem::take(&mut field.value),
         };
         let baseline = line.runs[idx].origin.y;
+        // The recomputed value replaces the painted one, but the field still
+        // occupies the same span of MODEL text - so the caret anchor the flow
+        // pass worked out is carried over rather than reset to zero.
+        let base = line.runs[idx]
+            .glyphs
+            .first()
+            .map_or(0, |glyph| glyph.cluster);
         let shape = shape_field_run(
             shaper,
             &field.value,
             field.style,
             Point::new(field.base_x, baseline),
+            crate::flow::FieldAnchor::atomic(base),
         );
         line.runs[idx] = shape.run;
     }

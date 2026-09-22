@@ -1150,8 +1150,14 @@ fn paragraph_hash(
                     rule.size.height.0.hash(&mut hasher);
                 }
             }
-            FlowItem::Field { kind, value, style } => {
+            FlowItem::Field {
+                kind,
+                value,
+                style,
+                model_len,
+            } => {
                 4u8.hash(&mut hasher);
+                model_len.hash(&mut hasher);
                 (*kind as u8).hash(&mut hasher);
                 value.hash(&mut hasher);
                 style.font.0.hash(&mut hasher);
@@ -3145,6 +3151,24 @@ fn append_node_plain_text(inlines: &[InlineNode], projection: ReviewProjection, 
             }
             InlineNode::Revision(_) => {}
             InlineNode::Sdt(sdt) => append_node_plain_text(&sdt.inlines, projection, out),
+            // A legacy field (`w:fldChar` + `w:instrText`) contributes the
+            // text it SHOWS. Dropping it made every legacy form field
+            // invisible to everything downstream of plain text at once - the
+            // accessibility mirror, table-cell text, and the offsets the
+            // checkbox gesture resolves against - while `field_anchor_len`
+            // counted that same text, so the two disagreed about how long the
+            // paragraph was.
+            //
+            // A `FORMCHECKBOX` has no content to contribute: layout
+            // synthesises its box from the field's state, so the same
+            // character is synthesised here rather than reporting an empty
+            // field where a reader can plainly see a box.
+            InlineNode::Field(field) => match field.form.as_ref().map(|form| &form.kind) {
+                Some(FormFieldKind::CheckBox(checkbox)) => {
+                    out.push(checkbox.glyph());
+                }
+                _ => append_node_plain_text(&field.inlines, projection, out),
+            },
             _ => {}
         }
     }
@@ -3945,7 +3969,15 @@ fn field_item(field: &casual_doc_model::v1::Field, ctx: &mut FlowCtx) -> FlowIte
         cached
     };
     let style = field_style(&field.inlines, &value, ctx);
-    FlowItem::Field { kind, value, style }
+    // The MODEL contribution, which `node_plain_text` also reports - never the
+    // placeholder substituted above when there is no cached result.
+    let model_len = cached_result_text(&field.inlines).len() as u32;
+    FlowItem::Field {
+        kind,
+        value,
+        style,
+        model_len,
+    }
 }
 
 /// If `field` is a legacy checkbox form field (`w:ffData/w:checkBox`, the
@@ -3964,12 +3996,7 @@ fn form_checkbox_glyph_run(
     let FormFieldKind::CheckBox(checkbox) = &field.form.as_ref()?.kind else {
         return None;
     };
-    let checked = checkbox.checked.or(checkbox.default).unwrap_or(false);
-    // `□` (U+25A1 WHITE SQUARE) / `☑` (U+2611 BALLOT BOX WITH CHECK): the same
-    // widely-covered BMP box glyphs the symbol map resolves legacy Wingdings
-    // checkboxes to, so they paint reliably (U+2610 BALLOT BOX is often absent and
-    // renders blank).
-    let glyph = if checked { '\u{2611}' } else { '\u{25A1}' };
+    let glyph = checkbox.glyph();
     // The field's cached-result run carries the authored font/size/color; reuse it
     // so the box matches the surrounding text, defaulting when absent.
     let properties = field
@@ -5302,6 +5329,7 @@ pub(crate) fn shape_field_run(
     value: &str,
     style: FieldStyle,
     origin: Point,
+    anchor: FieldAnchor,
 ) -> FieldRunShape {
     let styled = StyledRun {
         text: value.into(),
@@ -5333,7 +5361,7 @@ pub(crate) fn shape_field_run(
                 glyphs.push(Glyph {
                     id: g.id,
                     advance: g.advance,
-                    cluster: 0,
+                    cluster: anchor.cluster_for(g.cluster),
                     is_whitespace: g.is_whitespace,
                 });
             }
@@ -5363,6 +5391,52 @@ pub(crate) fn shape_field_run(
         ascent,
         descent,
         advance,
+    }
+}
+
+/// Where a field's shaped glyphs sit in the paragraph's MODEL text.
+///
+/// Every glyph carries the model byte offset a caret at it maps to. A field's
+/// glyphs used to carry zero, which was invisible only while a field
+/// contributed no model text at all: the moment it does, a click anywhere in
+/// the field resolves to offset 0 and the caret jumps to the start of the
+/// paragraph.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FieldAnchor {
+    /// The model byte offset of the field's first character.
+    base: u32,
+    /// Whether the painted value IS the model text, character for character.
+    ///
+    /// False for a `PAGE` field, whose value is recomputed after pagination and
+    /// so has no character-level correspondence with anything in the model, and
+    /// for the placeholder painted when a field has no cached result. Such a
+    /// field is one atomic caret position rather than several.
+    literal: bool,
+}
+
+impl FieldAnchor {
+    /// A field whose painted value is its model text.
+    pub(crate) fn literal(base: u32) -> Self {
+        Self {
+            base,
+            literal: true,
+        }
+    }
+
+    /// A field painting a value that is not model text - one atomic position.
+    pub(crate) fn atomic(base: u32) -> Self {
+        Self {
+            base,
+            literal: false,
+        }
+    }
+
+    fn cluster_for(self, local: u32) -> u32 {
+        if self.literal {
+            self.base.saturating_add(local)
+        } else {
+            self.base
+        }
     }
 }
 
@@ -5688,16 +5762,34 @@ fn measure_fielded_segment(
     let mut pen = 0i32;
     let mut ascent = Twip::ZERO;
     let mut descent = Twip::ZERO;
-    // The running caret byte offset. A field's value is not model text, so a field
-    // does not advance it; only shaped run text does.
+    // The running caret byte offset. A field advances it by its MODEL
+    // contribution (`model_len`), not by the width of the value painted for it.
     let mut byte = base;
 
     let mut i = 0;
     while i < seg.len() {
         match seg[i] {
-            FlowItem::Field { kind, value, style } => {
-                let shape =
-                    shape_field_run(shaper, value, *style, Point::new(Twip(pen), Twip::ZERO));
+            FlowItem::Field {
+                kind,
+                value,
+                style,
+                model_len,
+            } => {
+                // The painted value is the model text only when the field is
+                // showing its cached result unchanged; a recomputed `PAGE`
+                // number, or the placeholder for an empty field, is not.
+                let anchor = if *model_len == value.len() as u32 {
+                    FieldAnchor::literal(byte)
+                } else {
+                    FieldAnchor::atomic(byte)
+                };
+                let shape = shape_field_run(
+                    shaper,
+                    value,
+                    *style,
+                    Point::new(Twip(pen), Twip::ZERO),
+                    anchor,
+                );
                 ascent = ascent.max(shape.ascent);
                 descent = descent.max(shape.descent);
                 let idx = runs.len();
@@ -5709,6 +5801,12 @@ fn measure_fielded_segment(
                     value: value.clone(),
                 });
                 pen += shape.advance.raw();
+                // A field's cached result IS model text - it is what
+                // `node_plain_text` reports and what an edit is applied
+                // against - so the caret cursor advances over it. Leaving it
+                // behind made every paragraph holding a filled field shorter
+                // on screen than in the model, and every caret after it drift.
+                byte = byte.saturating_add(*model_len);
                 i += 1;
             }
             FlowItem::Run(_) => {
@@ -14040,9 +14138,14 @@ mod tests {
         // A form-field row ("Name: " + a FORMTEXT field, as on the loan form) must
         // lay out with a caret range covering its real label text, not collapse to
         // `[base, base)`. Otherwise the label is unaddressable and a click on the
-        // field's blank snaps to the paragraph start (`crate::hittest`). The field's
-        // value run is recorded in `line.fields`; its glyph clusters are zeroed, so
-        // it never anchors a caret.
+        // field's blank snaps to the paragraph start (`crate::hittest`).
+        //
+        // The range covers the FIELD's result too. This test used to assert it
+        // stopped at the label, which was consistent with the rest of the
+        // engine only because `node_plain_text` also dropped the field - all of
+        // it wrong together (`docs/109` HF-175). The blank is text a person can
+        // see, click into and type into, so it is addressable, and its glyph
+        // clusters are its real model offsets rather than zero.
         use crate::text::{FieldKind, FieldStyle};
 
         let node = NodeId::from_parts(7, 1).unwrap();
@@ -14077,6 +14180,7 @@ mod tests {
                 kind: FieldKind::Passthrough,
                 value: "     ".to_owned(),
                 style: field_style,
+                model_len: 5,
             },
         ];
         let range = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
@@ -14091,10 +14195,12 @@ mod tests {
         );
         assert_eq!(layout.lines.len(), 1);
         let line = &layout.lines[0];
-        // "Name: " is 6 bytes → the line covers offsets [0, 6), not [0, 0).
+        // "Name: " is 6 bytes and the field's result is 5 more → [0, 11).
         assert_eq!(line.range.start.offset, 0);
-        assert_eq!(line.range.end.offset, 6, "line spans the real label text");
-        // The field value run is recorded as a marker (excluded from caret slots).
+        assert_eq!(
+            line.range.end.offset, 11,
+            "the line spans the label AND the blank the reader fills in"
+        );
         assert_eq!(line.fields.len(), 1);
         let field_run = line.fields[0].run as usize;
         // The label run's glyph clusters are the real byte offsets 0..=5.
@@ -14106,6 +14212,14 @@ mod tests {
             .flat_map(|(_, r)| r.glyphs.iter().map(|g| g.cluster))
             .collect();
         assert_eq!(label_clusters, vec![0, 1, 2, 3, 4, 5]);
+        // ...and the field's continue where the label stopped, so a click in
+        // the blank puts the caret in the blank.
+        let field_clusters: Vec<u32> = line.runs[field_run]
+            .glyphs
+            .iter()
+            .map(|g| g.cluster)
+            .collect();
+        assert_eq!(field_clusters, vec![6, 7, 8, 9, 10]);
     }
 
     #[test]
@@ -14114,13 +14228,15 @@ mod tests {
         // byte, so its cursor has to walk the same byte space
         // `node_plain_text` defines — the one a caret offset and an edit share.
         //
-        // Two items were counted wrongly, in opposite directions: a `w:tab` is
-        // one byte of the paragraph's text and was counted as none, and a
-        // field's cached value is none of it and was counted at its display
-        // width. On `Ref` + tab + `Body` + a 5-character field + a reference,
-        // that is 3 + 0 + 4 + 5 = 12 instead of the real 3 + 1 + 4 + 0 = 8, so
-        // the marker was charged to a line four bytes further on — a different
-        // line, on a paragraph that wraps.
+        // A `w:tab` is one byte of the paragraph's text and was counted as
+        // none, so on `Ref` + tab + `Body` + a 5-character field + a reference
+        // the marker was charged to the wrong line — a different line, on a
+        // paragraph that wraps.
+        //
+        // The field's cached result counts too: 3 + 1 + 4 + 5 = 13. This test
+        // originally read 8, on the premise that a field contributed nothing;
+        // that premise was itself the defect (`docs/109` HF-175), and it was
+        // invisible here because `node_plain_text` shared it.
         use crate::text::{FieldKind, FieldStyle, NoteMarker};
         use casual_doc_model::v1::{NoteId, NoteKind};
 
@@ -14156,6 +14272,7 @@ mod tests {
                     letter_spacing: Twip::ZERO,
                     decoration: Decoration::default(),
                 },
+                model_len: 5,
             },
             FlowItem::NoteReference(NoteMarker {
                 kind: NoteKind::Footnote,
@@ -14169,7 +14286,10 @@ mod tests {
             node_plain_text_len_of(&items),
             "the reference sits at the end of the paragraph's MODEL text"
         );
-        assert_eq!(notes[0].0, 8, "\"Ref\" + \\t + \"Body\" is 8 model bytes");
+        assert_eq!(
+            notes[0].0, 13,
+            "\"Ref\" + \\t + \"Body\" + a 5-byte field result is 13 model bytes"
+        );
     }
 
     /// The model byte length of a flattened paragraph, from the one accounting

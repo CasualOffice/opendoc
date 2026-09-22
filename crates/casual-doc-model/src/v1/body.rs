@@ -1718,6 +1718,30 @@ pub struct FormCheckBox {
     pub checked: Option<bool>,
 }
 
+impl FormCheckBox {
+    /// The box character this checkbox shows for its current state.
+    ///
+    /// U+25A1 WHITE SQUARE / U+2611 BALLOT BOX WITH CHECK: the same widely
+    /// covered BMP box glyphs the symbol map resolves legacy Wingdings
+    /// checkboxes to, so they paint reliably (U+2610 BALLOT BOX is often
+    /// absent and renders blank).
+    ///
+    /// It lives on the model because three crates need the same answer. A
+    /// `FORMCHECKBOX` has no content: the box is SYNTHESISED from this state,
+    /// so layout (which paints it), the edit crate (which measures how many
+    /// bytes it occupies) and the accessibility mirror (which reads it aloud)
+    /// each need it, and any two of them disagreeing puts the caret somewhere
+    /// the box is not.
+    #[must_use]
+    pub fn glyph(&self) -> char {
+        if self.checked.or(self.default).unwrap_or(false) {
+            '\u{2611}'
+        } else {
+            '\u{25A1}'
+        }
+    }
+}
+
 /// A drop-down form field's configuration (`w:ddList`).
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
