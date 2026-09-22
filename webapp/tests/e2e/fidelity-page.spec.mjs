@@ -1,4 +1,31 @@
+import { readFileSync } from "node:fs";
+
 import { test, expect } from "./fixtures.mjs";
+
+/** The construct families the page is built from, read from the committed data
+ *  rather than remembered here.
+ *
+ *  This count used to be the literal `26`, and #584 added a 27th family and
+ *  left the number behind — so `main` went red on a spec that was measuring
+ *  nothing but whether somebody had remembered to edit two files at once.
+ *  `SKILL.md` §9: a published number is DERIVED from a committed artifact. The
+ *  assertion worth keeping is that the page renders every family in the data
+ *  and invents none, which is what this now says.
+ *
+ *  Loaded the same way `fidelity_data.test.mjs` does it: `fidelity.js` is a
+ *  classic browser script, so it is evaluated with a fake `module` and no
+ *  `document`, which runs its data block and skips its DOM render. */
+/** `RegExp`-safe form of a family name — several carry `(`, `)` or `&`. */
+function escapeForRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function fidelityFamilies() {
+  const source = readFileSync(new URL("../../src/fidelity.js", import.meta.url), "utf8");
+  const sandbox = { exports: {} };
+  new Function("module", source)(sandbox);
+  return sandbox.exports.FIDELITY.map((row) => row.family);
+}
 
 test("the fidelity matrix page renders an accessible, data-grounded table", async ({ page }) => {
   const consoleErrors = [];
@@ -13,7 +40,11 @@ test("the fidelity matrix page renders an accessible, data-grounded table", asyn
   // Real semantic table with column headers and row headers (scope) for AT.
   await expect(table.locator('thead th[scope="col"]')).toHaveCount(5);
   const rowHeaders = table.locator('tbody th[scope="row"]');
-  await expect(rowHeaders).toHaveCount(26);
+  const families = fidelityFamilies();
+  await expect(rowHeaders).toHaveCount(families.length);
+  // …and they are the SAME families, in the data's order. A count alone would
+  // pass on a page that rendered the right number of the wrong rows.
+  await expect(rowHeaders).toHaveText(families.map((family) => new RegExp(escapeForRegExp(family))));
 
   // Honest cells are actually present in the DOM (not just in the data file).
   await expect(rowHeaders.filter({ hasText: "Images & inline drawings" })).toHaveCount(1);
