@@ -2498,6 +2498,43 @@ fn table_column_count(table: &Table) -> usize {
 /// so a document cannot choose an allocation size.
 const MAX_TABLE_COLUMNS: usize = 1024;
 
+// Separate `use` lines to minimize import-block merge conflicts.
+use casual_doc_model::v1::TextDirection;
+
+/// Whether a cell's `w:noWrap` should pin its column to the cell's unwrapped
+/// content width.
+///
+/// `w:noWrap` (`§17.4.30`) asks that the cell's content not be wrapped to fit the
+/// column: Word widens the column instead. In the solver that means the cell
+/// contributes its *preferred* (unwrapped) width as the column **minimum**, not
+/// just as its preference — a preference alone is surrendered the moment the
+/// table has to shrink, which is exactly when the cell must not wrap.
+///
+/// Two cases are exempt, matching ONLYOFFICE's `CTableCell` min/max pass
+/// (`word/Editor/Table/TableCell.js`, the `isRotated && GetNoWrap()` branch —
+/// behaviour only, nothing copied):
+///
+/// - **Rotated text.** With a vertical `w:textDirection` the content wraps
+///   against the row *height*, not the column width, so `noWrap` says nothing
+///   about the column. ONLYOFFICE skips the whole branch when the cell is
+///   rotated.
+/// - **An absolute `w:tcW`.** When the cell declares a `dxa` preferred width,
+///   that width is already folded into the cell's preference and governs the
+///   column; ONLYOFFICE raises only its internal `ContentMin` in that case and
+///   leaves `Min`/`Max` alone. Letting `noWrap` also pin the minimum to the
+///   unwrapped text would let a long word override the width the author wrote
+///   down.
+fn cell_no_wrap_applies(properties: &casual_doc_model::v1::TableCellProperties) -> bool {
+    properties.no_wrap
+        && !matches!(
+            properties.text_direction,
+            Some(TextDirection::TbRl | TextDirection::BtLr)
+        )
+        && properties
+            .width
+            .is_none_or(|width| width.dxa_twips().is_none())
+}
+
 /// content min/preferred widths with the shaper and distributing `w:gridSpan`
 /// cells across the columns they cover.
 fn solve_table_columns(
@@ -2538,6 +2575,25 @@ fn solve_table_columns(
                     .and_then(|width| width.dxa_twips())
                     .unwrap_or(0);
                 let cpref = cmax.max(cell_pref);
+                // `w:noWrap` raises the cell's *minimum* to its unwrapped width, so
+                // the solver widens the column rather than wrapping the content.
+                // The column carries the cell's content margins as well as its
+                // content, and the solver's intrinsic widths do not include them,
+                // so they are added here — without them the column lands exactly
+                // one margin pair short and the content wraps anyway, which is the
+                // one outcome `noWrap` exists to prevent. (The same omission
+                // affects every autofit column's *preference*; that is a wider
+                // change to the solver's inputs and is left alone deliberately —
+                // only the no-wrap minimum, where it is load-bearing, is fixed.)
+                let cmin = if cell_no_wrap_applies(&cell.properties) {
+                    let margins = resolve_cell_margins(
+                        &cell.properties.margins,
+                        &table.properties.cell_margins,
+                    );
+                    cmin.max(cpref.saturating_add(margins.start.raw() + margins.end.raw()))
+                } else {
+                    cmin
+                };
                 // A spanning cell's demand is shared over the columns it covers.
                 let per_min = div_ceil(cmin, span as i32);
                 let per_pref = div_ceil(cpref, span as i32);
@@ -10959,6 +11015,121 @@ mod tests {
                 .map(|cell| (cell.x, cell.width))
                 .collect::<Vec<_>>(),
             vec![(Twip(3000), Twip(3000)), (Twip(0), Twip(3000))]
+        );
+    }
+
+    // --- `w:tcPr/w:noWrap` (docs/109 row 94, FID-L-13) ---
+
+    /// Builds the two-column table the `noWrap` guards share: a long phrase in
+    /// cell 0 that does not fit its share of the table width, and a second cell
+    /// competing for the same space. `props` is cell 0's properties.
+    fn no_wrap_table(props: TableCellProperties) -> Table {
+        Table {
+            id: node(700),
+            properties: TableProperties::default(),
+            grid: Vec::new(),
+            grid_change: None,
+            rows: vec![TableRow {
+                id: node(701),
+                properties: TableRowProperties::default(),
+                cells: vec![
+                    text_cell(10, props, "Wrapping this phrase would be wrong"),
+                    text_cell(
+                        20,
+                        TableCellProperties::default(),
+                        "a second cell competing for the same width",
+                    ),
+                ],
+            }],
+        }
+    }
+
+    /// Flows the shared table into a deliberately tight 4000 twips and returns
+    /// `cells[0]`'s resolved width and its paragraph's line count.
+    fn first_cell_width_and_lines(table: Table) -> (Twip, usize) {
+        let BlockFragment::TableRow { cells, .. } = flow_single_row(table, Twip(4000)) else {
+            panic!("expected a table row");
+        };
+        let BlockFragment::Paragraph { lines, .. } = &cells[0].blocks[0] else {
+            panic!("expected a paragraph in the first cell");
+        };
+        (cells[0].width, lines.lines.len())
+    }
+
+    #[test]
+    fn a_no_wrap_cell_is_given_a_column_wide_enough_for_its_unwrapped_content() {
+        // The control: squeezed to 4000 twips, an ordinary cell's phrase does not
+        // fit its share of the table and wraps. Asserted, not assumed — if the
+        // control stopped wrapping, this guard would prove nothing.
+        let (narrow, control_lines) =
+            first_cell_width_and_lines(no_wrap_table(TableCellProperties::default()));
+        assert!(
+            control_lines > 1,
+            "the control cell must actually wrap for this guard to mean anything, \
+             got {control_lines} line(s) in {narrow:?}"
+        );
+
+        // `w:noWrap`: Word widens the column instead of wrapping the content, so
+        // the column must hold the cell's unwrapped content plus its margins.
+        let (wide, no_wrap_lines) =
+            first_cell_width_and_lines(no_wrap_table(TableCellProperties {
+                no_wrap: true,
+                ..TableCellProperties::default()
+            }));
+        // 3653 twips is this phrase's shaped single-line width (the solver's own
+        // preferred-width pass measures it), and 108+108 is the default
+        // `w:tblCellMar` inset. Measured, not chosen.
+        let required = Twip(3653 + 108 + 108);
+        assert!(
+            wide >= required,
+            "a w:noWrap column must fit the unwrapped content ({required:?}), got {wide:?}"
+        );
+        assert!(
+            wide > narrow,
+            "noWrap must widen the column: {narrow:?} -> {wide:?}"
+        );
+        assert!(
+            no_wrap_lines < control_lines,
+            "noWrap must reduce wrapping: {control_lines} -> {no_wrap_lines} line(s)"
+        );
+
+        // Deliberately NOT asserted: `no_wrap_lines == 1`. The column is now wide
+        // enough — a 3653-twip content box for a 3653-twip line — but the line
+        // breaker still splits a line that fits its own measure exactly: it
+        // charges the trailing space of the candidate break against the fit while
+        // the width measure hangs it. That is a separate defect in the breaker,
+        // filed as its own backlog row. Padding this column further to reach one
+        // line would be inflating a tolerance to green a red edge.
+    }
+
+    #[test]
+    fn no_wrap_is_ignored_for_rotated_text_and_for_an_absolute_cell_width() {
+        let (narrow, _) = first_cell_width_and_lines(no_wrap_table(TableCellProperties::default()));
+
+        // Rotated text wraps against the row height, not the column width, so
+        // `noWrap` says nothing about the column (ONLYOFFICE skips the branch).
+        for direction in [TextDirection::TbRl, TextDirection::BtLr] {
+            let (width, _) = first_cell_width_and_lines(no_wrap_table(TableCellProperties {
+                no_wrap: true,
+                text_direction: Some(direction),
+                ..TableCellProperties::default()
+            }));
+            assert_eq!(
+                width, narrow,
+                "{direction:?} is rotated, so noWrap must not widen the column"
+            );
+        }
+
+        // An absolute `w:tcW` already governs the column; noWrap must not let a
+        // long word override the width the author wrote down.
+        let (width, _) = first_cell_width_and_lines(no_wrap_table(TableCellProperties {
+            no_wrap: true,
+            width: Some(TableWidth::dxa(1200)),
+            ..TableCellProperties::default()
+        }));
+        assert_eq!(
+            width, narrow,
+            "an authored dxa width wins over noWrap, so the column is unchanged"
         );
     }
 

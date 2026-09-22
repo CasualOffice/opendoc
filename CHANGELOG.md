@@ -8,6 +8,36 @@ OpenDoc will use semantic versioning when its public package line begins.
 
 ## Unreleased
 
+### List tabs and no-wrap cells — 2026-09-23
+
+Two table/list layout gaps found in the 2026-09 corpus sweep. Both are fidelity
+fixes: documents already opened, they just laid out in the wrong place.
+
+- **A numbering level's list tab is honoured** (`FID-L-23`'s neighbour in
+  `docs/109`). `w:tab w:val="num"` — the stop a list puts between its marker and
+  its text — was dropped twice over: the `num` token was in no parser's
+  `ST_TabJc` match, and a level's `w:pPr/w:tabs` is a container the flat
+  paragraph-property parser could not read at all, so a level's tabs were empty
+  for *every* document even though the flow engine already consumed them. List
+  text therefore sat on the default 720-twip grid instead of the authored stop.
+  Measured before fixing: 46 such stops across the owner's 16-file corpus, 81
+  across `fixtures/corpus`. Every `fixtures/corpus` document's reported-loss
+  count falls to 2 as a result (from 59/59/59/5/5/5/5) — all 57 `w:tab` and
+  `w:tabs` findings are gone.
+- **The three `ST_TabJc` parsers became one.** The body, styles and numbering
+  parsers each mapped `w:tab@w:val` separately and accepted three *different*
+  subsets: the styles parser took neither `num` nor `clear`, the numbering parser
+  read no tabs at all. They now share one mapper, so all nine tokens map
+  identically wherever a tab stop is authored.
+- **`w:tcPr/w:noWrap` is consumed.** A cell declaring `noWrap` now contributes
+  its unwrapped content width — plus its resolved `w:tcMar` — as its column's
+  *minimum*, so the column widens instead of the text wrapping. Cells with
+  rotated `w:textDirection` or an absolute `w:tcW` are exempt.
+
+Known limitation: a no-wrap cell can still wrap one line short of its intrinsic
+width, because the line breaker rejects a line that fits its measure exactly.
+That is a separate defect, tracked as `FID-L-23`.
+
 ### Sub-document and drawing editing — 2026-08-09
 
 Every editable surface now accepts every editing operation, and a drawing's own

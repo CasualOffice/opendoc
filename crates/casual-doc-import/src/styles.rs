@@ -13,9 +13,9 @@ use casual_doc_model::IdGenerator;
 use casual_doc_model::v1::{
     Alignment, BorderEdge, CellMargins, CellVerticalAlignment, DefinitionMap, DocumentDefaults,
     HeightRule, LatentStyles, LsdException, ParagraphBorders, ParagraphProperties, RowHeight,
-    RunProperties, Style, StyleId, StyleKind, TabAlignment, TabLeader, TabStop, TableBorders,
-    TableCellProperties, TableLayout, TableLook, TableOverlap, TableProperties, TableRowProperties,
-    TableStyleOverride, TableStyleRegion, TextDirection, VerticalMerge,
+    RunProperties, Style, StyleId, StyleKind, TableBorders, TableCellProperties, TableLayout,
+    TableLook, TableOverlap, TableProperties, TableRowProperties, TableStyleOverride,
+    TableStyleRegion, TextDirection, VerticalMerge,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -27,6 +27,8 @@ use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, is_true, parse_rgb,
     parse_shading, parse_table_width, style_kind_from,
 };
+// Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 
 /// Resolved style definitions and their name/kind index.
@@ -1265,8 +1267,8 @@ fn read_style_tab_stops(
             Node::Close | Node::Eof => break,
         };
         if child.local_name().as_ref() == b"tab" {
-            match tab_stop(&child) {
-                Some(tab) if paragraph.tabs.len() < 128 => paragraph.tabs.push(tab),
+            match tab_stop_from(&child) {
+                Some(tab) if paragraph.tabs.len() < MAX_TAB_STOPS => paragraph.tabs.push(tab),
                 _ => ctx.report(b"tab"),
             }
         } else {
@@ -1277,37 +1279,6 @@ fn read_style_tab_stops(
         }
     }
     Ok(())
-}
-
-/// Builds a `TabStop` from a `w:tab` element. Returns `None` (caller reports) for
-/// a `clear`/unknown alignment or a missing/out-of-range `w:pos`.
-fn tab_stop(element: &BytesStart<'_>) -> Option<TabStop> {
-    let alignment = match attribute_value(element, b"val").as_deref() {
-        Some("start" | "left") => TabAlignment::Start,
-        Some("center") => TabAlignment::Center,
-        Some("end" | "right") => TabAlignment::End,
-        Some("decimal") => TabAlignment::Decimal,
-        Some("bar") => TabAlignment::Bar,
-        _ => return None,
-    };
-    let position_twips = match attribute_value(element, b"pos").and_then(|v| v.parse::<i32>().ok())
-    {
-        Some(pos) if (-31_680..=31_680).contains(&pos) => pos,
-        _ => return None,
-    };
-    let leader = match attribute_value(element, b"leader").as_deref() {
-        Some("dot") => Some(TabLeader::Dot),
-        Some("hyphen") => Some(TabLeader::Hyphen),
-        Some("underscore") => Some(TabLeader::Underscore),
-        Some("middleDot") => Some(TabLeader::MiddleDot),
-        Some("heavy") => Some(TabLeader::Heavy),
-        _ => None,
-    };
-    Some(TabStop {
-        position_twips,
-        alignment,
-        leader,
-    })
 }
 
 fn read_paragraph_borders(
