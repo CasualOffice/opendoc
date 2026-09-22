@@ -211,9 +211,11 @@ impl<'a> Transcriber<'a> {
                 out,
                 media,
                 *rect,
-                crop.as_ref(),
-                transform.as_ref(),
-                *opacity,
+                ImageLook {
+                    crop: crop.as_ref(),
+                    transform: transform.as_ref(),
+                    opacity: *opacity,
+                },
             ),
             PaintItem::Shape {
                 geometry,
@@ -577,9 +579,7 @@ impl<'a> Transcriber<'a> {
         out: &mut Content,
         media: &str,
         rect: Rect,
-        crop: Option<&CropRect>,
-        transform: Option<&ShapeTransform>,
-        opacity: Option<u32>,
+        look: ImageLook<'_>,
     ) {
         let Some(resource) = self.images.use_image(writer, self.media, media) else {
             // The raster backend paints a bordered box with a diagonal cross
@@ -588,7 +588,7 @@ impl<'a> Transcriber<'a> {
             // paints the same mark, from the same geometry, and the omission
             // is reported as a finding either way.
             self.gap("pdf.image.unresolved");
-            self.placeholder(out, rect, transform);
+            self.placeholder(out, rect, look.transform);
             return;
         };
         let (x, y, width, height) = out.rect_points(rect);
@@ -597,18 +597,19 @@ impl<'a> Transcriber<'a> {
         // exactly what an `ExtGState` `/ca` expresses — the same mechanism the
         // shape fills already use, so a watermark exports as faint rather than
         // solid. Inside the `q`/`Q` pair, so it does not leak to later paint.
-        if let Some(amount) = opacity.filter(|amount| *amount < OPACITY_FULL) {
+        if let Some(amount) = look.opacity.filter(|amount| *amount < OPACITY_FULL) {
             let scaled = (f64::from(amount) / f64::from(OPACITY_FULL) * 255.0).round();
             self.alpha(out, scaled.clamp(0.0, 255.0) as u8);
         }
-        if let Some(transform) = transform {
+        if let Some(transform) = look.transform {
             out.concat_transform(transform);
         }
         // A crop selects a sub-rectangle of the SOURCE; the whole picture is
         // placed oversized so that its visible sub-rectangle exactly fills the
         // destination box, and the box clips the rest away. That keeps the
         // stored samples untouched -- no re-encode, no resample.
-        let (place_x, place_y, place_w, place_h) = crop
+        let (place_x, place_y, place_w, place_h) = look
+            .crop
             .filter(|crop| !crop.is_identity())
             .and_then(|crop| cropped_placement(x, y, width, height, crop))
             .unwrap_or((x, y, width, height));
@@ -770,6 +771,16 @@ struct Content {
     height: f32,
     /// How many clips are currently pushed.
     clips: usize,
+}
+
+/// How a picture is painted, as opposed to where: its source crop, the object
+/// transform, and its constant alpha. Grouped because the three travel
+/// together and separately they put `image` over clippy's argument limit.
+#[derive(Clone, Copy, Debug, Default)]
+struct ImageLook<'a> {
+    crop: Option<&'a CropRect>,
+    transform: Option<&'a ShapeTransform>,
+    opacity: Option<u32>,
 }
 
 impl Content {

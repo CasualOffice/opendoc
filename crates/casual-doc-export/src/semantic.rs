@@ -4784,9 +4784,11 @@ fn write_inline(
                 &embed,
                 drawing.extent.as_ref(),
                 drawing.descr.as_deref(),
-                drawing.crop.as_ref(),
-                drawing.opacity,
-                drawing.border,
+                PictureAppearance {
+                    crop: drawing.crop.as_ref(),
+                    opacity: drawing.opacity,
+                    border: drawing.border,
+                },
                 Xfrm2D {
                     rotation: drawing.rotation,
                     flip_h: drawing.flip_h,
@@ -4943,9 +4945,7 @@ fn write_drawing(
     embed: &str,
     extent: Option<&Extent>,
     descr: Option<&str>,
-    crop: Option<&CropRect>,
-    opacity: Option<u32>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     let (cx, cy) = extent.map_or((0, 0), |extent| (extent.width_emu, extent.height_emu));
@@ -4970,7 +4970,7 @@ fn write_drawing(
         doc_pr.push_attribute(("descr", descr));
     }
     w.write_event(Event::Empty(doc_pr)).map_err(pkg)?;
-    write_pic_graphic(w, embed, cx, cy, crop, opacity, border, xfrm)?;
+    write_pic_graphic(w, embed, cx, cy, look, xfrm)?;
     w.write_event(Event::End(BytesEnd::new("wp:inline")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("w:drawing")))
@@ -5015,6 +5015,19 @@ fn write_src_rect(
 /// §20.1.8.1): `20000` is the 20% watermark Word writes. Full opacity is the
 /// absence of the element, so it is not written — round-tripping a no-op as an
 /// element would add markup the source did not have.
+/// How a picture LOOKS, as opposed to where it sits: the source crop, the
+/// alpha, and the frame outline.
+///
+/// Grouped because the three travel together through every picture writer and
+/// because passing them separately put three of those writers over clippy's
+/// argument limit — which is the lint noticing the same thing.
+#[derive(Clone, Copy, Debug, Default)]
+struct PictureAppearance<'a> {
+    crop: Option<&'a CropRect>,
+    opacity: Option<u32>,
+    border: Option<ShapeStroke>,
+}
+
 fn write_alpha_mod_fix(
     w: &mut Writer<Cursor<Vec<u8>>>,
     opacity: Option<u32>,
@@ -5033,9 +5046,7 @@ fn write_pic_graphic(
     embed: &str,
     cx: i64,
     cy: i64,
-    crop: Option<&CropRect>,
-    opacity: Option<u32>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("a:graphic")))
@@ -5058,17 +5069,17 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
-    if opacity.is_some_and(|amount| amount < OPACITY_FULL) {
+    if look.opacity.is_some_and(|amount| amount < OPACITY_FULL) {
         // The effect is a CHILD of `a:blip`, so the element can no longer be
         // self-closing.
         w.write_event(Event::Start(blip)).map_err(pkg)?;
-        write_alpha_mod_fix(w, opacity)?;
+        write_alpha_mod_fix(w, look.opacity)?;
         w.write_event(Event::End(BytesEnd::new("a:blip")))
             .map_err(pkg)?;
     } else {
         w.write_event(Event::Empty(blip)).map_err(pkg)?;
     }
-    write_src_rect(w, crop)?;
+    write_src_rect(w, look.crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))
@@ -5103,8 +5114,8 @@ fn write_pic_graphic(
         .map_err(pkg)?;
     // A framed picture keeps its `a:ln` outline (schema order: after the geometry).
     // Absent border = no `a:ln` (the default), so it is only written when present.
-    if border.is_some() {
-        write_outline(w, border)?;
+    if look.border.is_some() {
+        write_outline(w, look.border)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
@@ -5177,9 +5188,11 @@ fn write_anchored_drawing(
         embed,
         cx,
         cy,
-        drawing.crop.as_ref(),
-        drawing.opacity,
-        drawing.border,
+        PictureAppearance {
+            crop: drawing.crop.as_ref(),
+            opacity: drawing.opacity,
+            border: drawing.border,
+        },
         Xfrm2D {
             rotation: drawing.rotation,
             flip_h: drawing.flip_h,
@@ -5342,9 +5355,11 @@ fn write_wgp(
                         &embed,
                         picture.offset,
                         picture.extent,
-                        picture.crop.as_ref(),
-                        picture.opacity,
-                        picture.border,
+                        PictureAppearance {
+                            crop: picture.crop.as_ref(),
+                            opacity: picture.opacity,
+                            border: picture.border,
+                        },
                         Xfrm2D {
                             rotation: picture.rotation,
                             flip_h: picture.flip_h,
@@ -5408,9 +5423,7 @@ fn write_group_picture(
     embed: &str,
     offset: PointEmu,
     extent: Extent,
-    crop: Option<&CropRect>,
-    opacity: Option<u32>,
-    border: Option<ShapeStroke>,
+    look: PictureAppearance<'_>,
     xfrm: Xfrm2D,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("pic:pic"))).map_err(pkg)?;
@@ -5428,17 +5441,17 @@ fn write_group_picture(
         .map_err(pkg)?;
     let mut blip = start("a:blip");
     blip.push_attribute(("r:embed", embed));
-    if opacity.is_some_and(|amount| amount < OPACITY_FULL) {
+    if look.opacity.is_some_and(|amount| amount < OPACITY_FULL) {
         // The effect is a CHILD of `a:blip`, so the element can no longer be
         // self-closing.
         w.write_event(Event::Start(blip)).map_err(pkg)?;
-        write_alpha_mod_fix(w, opacity)?;
+        write_alpha_mod_fix(w, look.opacity)?;
         w.write_event(Event::End(BytesEnd::new("a:blip")))
             .map_err(pkg)?;
     } else {
         w.write_event(Event::Empty(blip)).map_err(pkg)?;
     }
-    write_src_rect(w, crop)?;
+    write_src_rect(w, look.crop)?;
     w.write_event(Event::Start(start("a:stretch")))
         .map_err(pkg)?;
     w.write_event(Event::Empty(start("a:fillRect")))
@@ -5452,8 +5465,8 @@ fn write_group_picture(
     write_shape_xfrm(w, offset, extent, xfrm.rotation, xfrm.flip_h, xfrm.flip_v)?;
     write_prst_geom(w, "rect")?;
     // A framed grouped picture keeps its `a:ln` outline (only when present).
-    if border.is_some() {
-        write_outline(w, border)?;
+    if look.border.is_some() {
+        write_outline(w, look.border)?;
     }
     w.write_event(Event::End(BytesEnd::new("pic:spPr")))
         .map_err(pkg)?;
