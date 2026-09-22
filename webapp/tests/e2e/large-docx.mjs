@@ -321,3 +321,52 @@ export function makeGoalColumnDocx(pageCount = 4, blocksPerPage = 3) {
     },
   ]);
 }
+
+// ---- Spelling fixture --------------------------------------------------------
+// One misspelled word per page, each naming its own page, so a spec can ask
+// "did page 5's word get a squiggle" and distinguish it from page 1's. The
+// checker is WINDOWED (docs/114 section 5.2), so "a misspelling on page 5 is
+// flagged" is a genuinely different question from "a misspelling on page 1 is
+// flagged" — and "page 5's word is NOT flagged before anyone scrolls there" is
+// the question that proves the window is real.
+//
+// The typos are real English misspellings with real dictionary neighbours, so
+// the suggestion rows have something to offer. Everything around them is
+// ordinary English, so any extra squiggle is a defect rather than noise.
+
+const SPELLING_TYPOS = ["sentance", "recieve", "seperate", "occurence", "definately", "acomodate"];
+
+function spellingDocumentXml(pageCount, language) {
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const lang = language ? `<w:rPr><w:lang w:val="${language}"/></w:rPr>` : "";
+  const blocks = [];
+  for (let i = 0; i < pageCount; i++) {
+    const typo = SPELLING_TYPOS[i % SPELLING_TYPOS.length];
+    blocks.push(
+      `<w:p><w:r>${lang}<w:t xml:space="preserve">Page ${i + 1} opens with a correct line of prose.</w:t></w:r></w:p>`,
+      `<w:p><w:r>${lang}<w:t xml:space="preserve">Here the word ${typo} is the only wrong one.</w:t></w:r></w:p>`,
+    );
+    if (i < pageCount - 1) blocks.push(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`);
+  }
+  const sectPr = `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W}"><w:body>${blocks.join("")}${sectPr}</w:body></w:document>`;
+}
+
+/** The misspelled word this fixture puts on page `pageNumber` (1-based). */
+export function spellingTypoForPage(pageNumber) {
+  return SPELLING_TYPOS[(pageNumber - 1) % SPELLING_TYPOS.length];
+}
+
+/** A .docx of `pageCount` pages with exactly one misspelling on each.
+ *  `language` writes a `w:lang` onto every run — pass `"fr-FR"` to exercise the
+ *  "no dictionary for this language" path. */
+export function makeSpellingDocx(pageCount = 6, language = "") {
+  const enc = new TextEncoder();
+  return storedZip([
+    { name: "[Content_Types].xml", data: enc.encode(CONTENT_TYPES) },
+    { name: "_rels/.rels", data: enc.encode(ROOT_RELS) },
+    { name: "word/_rels/document.xml.rels", data: enc.encode(DOC_RELS) },
+    { name: "word/document.xml", data: enc.encode(spellingDocumentXml(pageCount, language)) },
+  ]);
+}

@@ -209,7 +209,7 @@ Still waiting on an owner decision, not on engineering:
 | HF-033 | Dark theme fails contrast on focused menu rows, review chips and error text | css | M | Internal audit | Fixed |
 | HF-088 | The comments column has no breakpoint below 860px and swallows the page | responsive | M | Internal audit | Fixed (#556) |
 | HF-034 | The header "Open" button cannot be focused or activated by keyboard | accessibility | S | Internal audit | Fixed (#508 + verified 2026-09-20) |
-| HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Open |
+| HF-035 | No spelling or grammar checking anywhere — less feedback than a plain `<textarea>` | spellcheck | L | Sibling gap (docs (ProseMirror)) | Partly fixed — spelling shipped, grammar open |
 
 ### P2 — 52 items
 
@@ -1158,7 +1158,7 @@ Open affordance was **removed from the header** rather than re-implemented there
 
 ### HF-035 — No spelling or grammar checking anywhere — less feedback than a plain `<textarea>`
 
-**P1** · spellcheck · parity · effort L · source: Sibling gap vs docs (ProseMirror) · **Status:** Open
+**P1** · spellcheck · parity · effort L · source: Sibling gap vs docs (ProseMirror) · **Status:** Partly fixed — **spelling shipped 2026-09-23**, grammar still open. Designed and recorded in `docs/114`; the current row of record is `109` HF-035.
 
 **Symptom.** Typos are never flagged. No red underline, no suggestions, no Add to dictionary — and because the page is a canvas, the browser cannot fill the gap either. For a word processor this is the first missing thing a writer notices.
 
@@ -1166,7 +1166,9 @@ Open affordance was **removed from the header** rather than re-implemented there
 
 **In the sibling.** docs-repo/docx-editor/packages/react/src/lib/spellcheck/service.ts:5-22 — lazily streamed Hunspell (nspell + en_US, ~500 KB) singleton behind a Tools toggle, `isMisspelled()` returns false until loaded so first paint is clean; lib/grammar/{rules,service}.ts; components/SpellSuggestionsMenu.tsx (bolded suggestions, Ignore, Add to dictionary, arrow-key nav); components/GrammarSuggestionsMenu.tsx; components/dialogs/DictionaryDialog.tsx; decorations in paged-editor/DecorationLayer.tsx.
 
-**Fix.** Build it as the host-pluggable provider seam FR-9 already promises, not a hardcoded nspell import. Run the checker over the same paragraph text the find pipeline extracts (paragraphTextForFind, main.js:12563), paint squiggles into the existing review-marker overlay pass (paintReviewMarkers, main.js:3221), and hang Suggestions / Ignore / Add to dictionary off the existing context-menu builder (buildContextCommands, main.js:6081 + context_menu.mjs). Ship the dictionary lazily and no-op until loaded, as service.ts:8-13 does. Honour the `w:noProof` run flag the model already carries. Persist the custom dictionary alongside opendoc.settings.
+**What shipped, and where it differs from the Fix below.** The squiggle, the suggestions, Ignore once / Ignore all / Add to dictionary, a persisted personal dictionary, `w:lang`-driven language selection and a remembered off switch are all in, spelling only. Two deliberate departures from the sketch below. **No nspell, and no npm dependency at all**: `webapp/package.json` has zero runtime dependencies and adding the first is the owner's call, so the dictionary is SCOWL's pre-expanded word list and membership is a `Set` lookup — `docs/114` §2 works through why that costs nothing a Hunspell engine would have bought. **Not `paragraphTextForFind`'s whole-document walk**: the checker scans only the paragraphs in the page window, because a pass over the document on open is the defect that killed the tab at 65,000 paragraphs (HF-158). The overlay pass and the context-menu builder are reused exactly as suggested. `w:noProof` is **not** honoured yet — a stated gap, `docs/114` §8. Still open here: grammar.
+
+**Fix (as sketched, 2026-09).** Build it as the host-pluggable provider seam FR-9 already promises, not a hardcoded nspell import. Run the checker over the same paragraph text the find pipeline extracts (paragraphTextForFind, main.js:12563), paint squiggles into the existing review-marker overlay pass (paintReviewMarkers, main.js:3221), and hang Suggestions / Ignore / Add to dictionary off the existing context-menu builder (buildContextCommands, main.js:6081 + context_menu.mjs). Ship the dictionary lazily and no-op until loaded, as service.ts:8-13 does. Honour the `w:noProof` run flag the model already carries. Persist the custom dictionary alongside opendoc.settings.
 
 ### HF-036 — Printing a mixed-orientation document silently clips the landscape pages
 

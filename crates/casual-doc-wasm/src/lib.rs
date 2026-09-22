@@ -7107,6 +7107,35 @@ impl WasmDocument {
         .unwrap_or_else(|_| r#"{"core":{},"app":{},"custom":[]}"#.to_string())
     }
 
+    /// The effective `w:lang` (the Latin `w:val`) shared by every run the range
+    /// covers, or `""` when the range sets no language or mixes several.
+    ///
+    /// Read-only, and the only thing that exposes the language a document
+    /// declares to a host. The model has carried `Language { value, east_asia,
+    /// bidi }` since the importer started reading `w:lang`, and the style
+    /// cascade has carried it through `overlay_run`, but nothing exported it —
+    /// so a host spell checker had no way to ask what language to check in
+    /// (`docs/114` §4.1, `docs/109` HF-035).
+    ///
+    /// `""` for a mixed range is deliberate rather than "the first one wins":
+    /// a caller that gets a tag may apply it to the whole range, and a caller
+    /// that gets `""` knows it has to ask again more narrowly or fall back.
+    /// That makes the intended calling convention cheap — one call per
+    /// paragraph over its whole range, and a second pass per word only on the
+    /// rare paragraph that really does mix languages.
+    ///
+    /// Complexity: one style-cascade resolution per run the range covers, i.e.
+    /// O(runs in the range) plus the paragraph lookup. It is not O(document)
+    /// and it is never called per word on a uniform paragraph.
+    #[wasm_bindgen(js_name = languageAt)]
+    #[must_use]
+    pub fn language_at(&self, node: &str, start: u32, end: u32) -> String {
+        let Ok(nid) = NodeId::from_str(node) else {
+            return String::new();
+        };
+        shared_language_in_range(&self.document, nid, start, end)
+    }
+
     /// Review inventory for the margin UI. Anchors use the same final-with-markup
     /// byte projection as layout/editing, including collapsed deleted ranges.
     #[wasm_bindgen(js_name = reviewSummary)]
@@ -17776,6 +17805,32 @@ fn effective_run_properties_in_range(
     .collect()
 }
 
+/// The Latin `w:lang` every run in the range agrees on, or `""`.
+///
+/// Split out of `language_at` so the rule is testable without a `Document`
+/// handle, the same way `effective_run_properties_in_range` is — every branch
+/// below (unset, uniform, mixed) has a named case in `tests`.
+fn shared_language_in_range(document: &Document, node: NodeId, start: u32, end: u32) -> String {
+    let properties = effective_run_properties_in_range(document, node, start, end);
+    let mut shared: Option<&str> = None;
+    for run in &properties {
+        let value = run
+            .language
+            .as_ref()
+            .and_then(|language| language.value.as_deref())
+            .unwrap_or_default();
+        if value.is_empty() {
+            return String::new();
+        }
+        match shared {
+            None => shared = Some(value),
+            Some(existing) if existing == value => {}
+            Some(_) => return String::new(),
+        }
+    }
+    shared.unwrap_or_default().to_string()
+}
+
 /// Resolves the run a caret inherits, including document defaults and paragraph /
 /// character styles. Empty paragraphs still inherit their paragraph style.
 fn effective_caret_run_properties(
@@ -27582,6 +27637,81 @@ mod tests {
 
         d.undo().expect("undo");
         assert!(!d.format_at(&node, 0, 3).bold(), "undo cleared bold");
+    }
+
+    /// `docs/114` §4.1 / `109` HF-035: the host spell checker asks what
+    /// language a paragraph declares, once, over the paragraph's whole range.
+    /// The answer has to distinguish three cases, because the caller does
+    /// different things with each: a shared tag (check every word in it in
+    /// that language), no tag at all (fall back to the preference), and a
+    /// MIXED range (ask again, per word). Returning the first run's tag for a
+    /// mixed range would spell-check French text against an English list and
+    /// squiggle every word of it.
+    #[test]
+    fn shared_language_is_the_tag_every_run_agrees_on() {
+        use casual_doc_model::v1::{Definitions, Language, RunProperties};
+
+        let paragraph_id = NodeId::from_parts(114, 1).unwrap();
+        let tagged = |tag: &str| RunProperties {
+            language: Some(Language {
+                value: Some(tag.to_owned()),
+                ..Language::default()
+            }),
+            ..RunProperties::default()
+        };
+        // "Hello " is en-GB, "bonjour" is fr-FR, "plain" sets no language.
+        let document = Document::new(
+            NodeId::from_parts(114, 9).unwrap(),
+            vec![BlockNode::Paragraph(Paragraph {
+                id: paragraph_id,
+                properties: ParagraphProperties::default().into(),
+                inlines: vec![
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(114, 2).unwrap(),
+                        properties: tagged("en-GB").into(),
+                        text: "Hello ".to_owned(),
+                    }),
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(114, 3).unwrap(),
+                        properties: tagged("fr-FR").into(),
+                        text: "bonjour".to_owned(),
+                    }),
+                    InlineNode::Run(Run {
+                        id: NodeId::from_parts(114, 4).unwrap(),
+                        properties: RunProperties::default().into(),
+                        text: "plain".to_owned(),
+                    }),
+                ],
+            })],
+            Definitions::default(),
+        )
+        .expect("valid document");
+
+        assert_eq!(
+            shared_language_in_range(&document, paragraph_id, 0, 6),
+            "en-GB",
+            "a range inside one tagged run reports that run's language"
+        );
+        assert_eq!(
+            shared_language_in_range(&document, paragraph_id, 6, 13),
+            "fr-FR",
+            "and so does the next one, rather than the paragraph's first"
+        );
+        assert_eq!(
+            shared_language_in_range(&document, paragraph_id, 0, 13),
+            "",
+            "a range that MIXES languages reports none, so the caller asks again"
+        );
+        assert_eq!(
+            shared_language_in_range(&document, paragraph_id, 13, 18),
+            "",
+            "a run with no w:lang reports none, so the caller uses its default"
+        );
+        assert_eq!(
+            shared_language_in_range(&document, paragraph_id, 0, 18),
+            "",
+            "one untagged run makes the whole range unset, not partly tagged"
+        );
     }
 
     /// REVIEW-GAP-030: the effective-format query the toolbar drives

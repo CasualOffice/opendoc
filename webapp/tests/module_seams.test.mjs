@@ -34,8 +34,14 @@ const SRC = new URL("../src/", import.meta.url);
  *  column and its clears cost lines, so the selection-ordering and
  *  position-comparison helpers moved into `caret_navigation.mjs` (renamed from
  *  `caret_probe.mjs`) to pay for them.
- *  Was 18,373 before the first HF-085 extraction. */
-const MAIN_JS_LINE_CEILING = 17927;
+ *  Was 18,373 before the first HF-085 extraction.
+ *  Lowered again to 17,801 by the spelling row (`109` HF-035, `docs/114`):
+ *  the file was AT its ceiling with zero slack, so the 242 lines of curated
+ *  Symbol/Emoji data moved to `glyph_sets.mjs` — pure data, already covered by
+ *  the picker's own specs — to pay for the ~110 lines of spell-check wiring.
+ *  The checker itself is in `spell_check.mjs` and `spelling.mjs`, which is also
+ *  what makes its rules unit-testable without a browser. */
+const MAIN_JS_LINE_CEILING = 17801;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -45,6 +51,9 @@ const PURE_MODULES = [
   // the arrow-key rule is unit-testable as a plain state machine.
   "caret_navigation.mjs",
   "command_taxonomy.mjs",
+  // The Symbol / Emoji sets: literal data with no behaviour, so nothing in it
+  // has any business reaching a global.
+  "glyph_sets.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
   "review_labels.mjs",
@@ -52,6 +61,10 @@ const PURE_MODULES = [
   // Takes nodes as arguments and never reaches for a global one, which is what
   // lets `shortcut_labels.test.mjs` drive the sweep with plain objects.
   "shortcut_labels.mjs",
+  // Every rule that decides whether a word is misspelled and what to suggest
+  // instead. The DOM half is `spell_check.mjs`; keeping these apart is what
+  // lets `spelling.test.mjs` run the whole dictionary through them in node.
+  "spelling.mjs",
   "status_policy.mjs",
   "text_rules.mjs",
   "units.mjs",
