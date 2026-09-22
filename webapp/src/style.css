@@ -4729,6 +4729,10 @@ body.is-format-painting .page-wrap * {
   gap: 22px;
   width: max-content;
   min-width: 100%;
+  /* The desk, not the paper: a press out here resolves to no page and does
+     nothing, so the arrow is the honest shape (docs/109 HF-179). It rendered
+     this way already as `auto`; declaring it makes the intent assertable. */
+  cursor: default;
 }
 
 /* When the comment column is shown, reserve its width in the page stack's right
@@ -5045,16 +5049,20 @@ body.is-format-painting .page-wrap * {
   position: absolute;
 }
 
+/* `cursor: text` is only the STARTING point. A sheet is one canvas, so CSS
+   cannot tell a picture from a paragraph from a checkbox inside it; the hover
+   router (`pointer_cursor.mjs`, docs/109 HF-179) writes an inline cursor here
+   from what the engine says is under the pointer, and an inline style beats
+   this declaration. This stays so that a sheet with no router answer yet — the
+   frame before the first probe resolves — still reads as text rather than as
+   an arrow. The old `.page.link-hover` class is gone with the router: it was
+   the one thing on the whole surface that ever changed. */
 .page {
   display: block;
   width: 100%;
   height: 100%;
   border-radius: 3px;
   cursor: text;
-}
-
-.page.link-hover {
-  cursor: pointer;
 }
 
 /* Selection / caret layer over the (white) canvas — fixed light-surface colors. */
@@ -5118,7 +5126,12 @@ body.is-format-painting .page-wrap * {
  * comment marker uses), so caret placement inside a tracked change is unaffected
  * (REVIEW-GAP-005). Insertion = author-colored underline; deletion = author-
  * colored tint + underline, preserving the fill-vs-underline distinction. */
-.overlay .review-revision-marker { --review-author-color: var(--paper-insert); position: absolute; pointer-events: auto; }
+/* `cursor: text` is load-bearing, not decoration. The marker takes pointer
+ * events for its tooltip but is NOT a control: the pointerdown falls through to
+ * caret placement underneath. Without this it inherited `auto` from the overlay
+ * layer — which is an ARROW over a non-text element — so hovering any tracked
+ * change promised the one thing it does not do (docs/109 HF-179). */
+.overlay .review-revision-marker { --review-author-color: var(--paper-insert); position: absolute; pointer-events: auto; cursor: text; }
 .overlay .review-insertion-marker { border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 .overlay .review-deletion-marker { background: color-mix(in srgb, var(--review-author-color) 18%, transparent); border-bottom: 2px solid color-mix(in srgb, var(--review-author-color) 85%, transparent); }
 /* Paragraph-level revisions (docs/108). A mark revision is the pilcrow that ends

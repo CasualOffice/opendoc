@@ -124,6 +124,7 @@ import {
 } from "./command_taxonomy.mjs";
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
+import { createPointerHover } from "./pointer_hover.mjs";
 
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
@@ -2688,9 +2689,6 @@ let chromeRefreshOutline = false;
 let chromeRefreshA11y = false;
 /** The model-derived link currently represented by the host-owned link chip. */
 let activeLink = null;
-/** One-frame throttle for pointer feedback over canvas-painted link geometry. */
-let linkHoverFrame = 0;
-let pendingLinkHover = null;
 /** Armed run formatting for typing at a collapsed caret (e.g. click Bold with no
  *  selection → next typed characters are bold). `null` when nothing is armed; else
  *  a subset of { bold, italic, underline, strike } → boolean. Cleared whenever the
@@ -3157,7 +3155,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // what the user still has.
     const next = open(bytes);
     hideLinkChip();
-    clearLinkHover();
+    pointerHover.clear();
     // Only now that the new document has PARSED — a failed open leaves the
     // previous document on screen, and handing its draft over before knowing
     // that would orphan the draft of a document the user is still editing.
@@ -5277,11 +5275,8 @@ function updateRunningMarker(page, event) {
     hideRunningMarker();
     return;
   }
-  const bands = runningBandsOf(page);
-  if (!bands) {
-    hideRunningMarker();
-    return;
-  }
+  // `bandAt` alone answers this. Asking `runningBands` first — a second engine
+  // call and a JSON parse, per pointer move — only proved the page had margins.
   const { y } = pointToTwip(page, event);
   const band = runningBandAt(page, y);
   if (band) showRunningMarker(page, band);
@@ -6150,29 +6145,29 @@ function hideLinkChip() {
   linkChip.hidden = true;
 }
 
-/** Clears pointer feedback from every rendered page. */
-function clearLinkHover() {
-  pendingLinkHover = null;
-  if (linkHoverFrame) cancelAnimationFrame(linkHoverFrame);
-  linkHoverFrame = 0;
-  for (const page of materializedPages()) page.canvas?.classList.remove("link-hover");
-}
-
-/** Throttles the model query used to make canvas-painted links visibly hoverable. */
-function scheduleLinkHover(page, event) {
-  pendingLinkHover = { page, clientX: event.clientX, clientY: event.clientY };
-  if (linkHoverFrame) return;
-  linkHoverFrame = requestAnimationFrame(() => {
-    linkHoverFrame = 0;
-    const pending = pendingLinkHover;
-    pendingLinkHover = null;
-    if (!pending || dragging || !pages.includes(pending.page)) return;
-    const hit = linkAt(pending.page, pending);
-    for (const candidate of materializedPages()) {
-      candidate.canvas?.classList.toggle("link-hover", candidate === pending.page && !!hit);
-    }
-  });
-}
+/** The hover router (`docs/109` HF-179), so the pointer shape says what the
+ *  thing under it will do. This is only the live state it reads. */
+const pointerHover = createPointerHover({
+  doc: () => doc,
+  pages: () => pages,
+  materializedPages,
+  pointToTwip,
+  linkAt,
+  pointInsideObject,
+  objectCapabilities,
+  state: () => ({
+    formatPainting: !!formatPainter,
+    editsBlocked: reviewMode === "viewing" || !!readOnlyReason,
+    geometryBlocked: reviewMode !== "editing" || !!readOnlyReason,
+    inRunningStory: !!runningEditBand,
+    insideObjectNode: objectSelection?.mode === "editing" ? objectSelection.node : null,
+    resizeDrag: objectResizeDrag,
+    cropDrag: objectCropSession?.handleDrag ?? null,
+    moveDrag: objectMoveDrag,
+    tableDrag: tableResizeDrag,
+    textDrag: dragging,
+  }),
+});
 
 /** Shows a bounded link chip and selects the exact authored model range, making
  * the target discoverable without hijacking drag or Shift-selection behavior. */
@@ -6294,7 +6289,7 @@ function onPointerDown(page, event) {
   }
   focusEditorSurface();
   hideLinkChip();
-  clearLinkHover();
+  pointerHover.clear();
   pointerGesture = null;
   // Object selection (docs/85 §3.1) takes precedence over a text caret: a click
   // on a drawing/image/text box selects it as a unit and shows its handles.
@@ -6432,7 +6427,7 @@ function startTableColumnResize(event, page, node, col) {
   focusEditorSurface();
   hideLinkChip();
   hideContextMenu();
-  clearLinkHover();
+  pointerHover.clear();
   resetPointerGesture();
   const startWidthTwips = doc.tableColumnWidthAt(node, col);
   if (startWidthTwips <= 0) return;
@@ -6512,7 +6507,7 @@ function onPointerMove(page, event) {
     return;
   }
   if (!dragging) {
-    scheduleLinkHover(page, event);
+    pointerHover.schedule(page, event);
     return;
   }
   updateDragSelection(event);
@@ -6609,6 +6604,7 @@ function startSelectionAutoScroll() {
 }
 
 function onPointerUp(event) {
+  document.body.style.cursor = ""; // the gesture no longer owns the cursor
   if (finishObjectMove(event)) return;
   if (finishObjectResize(event)) return;
   if (finishTableColumnResize(event)) return;
@@ -6783,6 +6779,10 @@ pagesEl.addEventListener("pointermove", (e) => {
 });
 pagesEl.addEventListener("pointerleave", () => hideRunningMarker());
 window.addEventListener("pointermove", (e) => {
+  // A gesture in flight owns the cursor wherever the pointer goes, including
+  // off the sheet it started on — so the router runs here too, not only over
+  // `#pages`. It short-circuits on the drag kind and asks the engine nothing.
+  if (pointerHover.dragKind()) pointerHover.schedule(null, e);
   if (objectMoveDrag) {
     updateObjectMove(e);
     return;
@@ -6800,7 +6800,7 @@ window.addEventListener("pointermove", (e) => {
     else updateDragSelection(e);
   }
 });
-pagesEl.addEventListener("pointerleave", clearLinkHover);
+pagesEl.addEventListener("pointerleave", () => pointerHover.clear());
 pagesEl.addEventListener("dblclick", (e) => {
   const page = pageFromEvent(e);
   if (!page) return;
