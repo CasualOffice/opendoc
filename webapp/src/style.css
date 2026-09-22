@@ -5494,13 +5494,33 @@ body.ribbon-mode .compact-toolbar { display: none; }
     calc(var(--chrome-card-inset-y) + 4px);
   display: flex;
   align-items: center;
-  gap: 2px;
+  /* The gap sits BETWEEN groups; inside a group the controls are flush, which
+     is what makes a group read as one thing (Google Docs draws its toolbar the
+     same way). It used to be 2px between all 34 children — 66px of the bar
+     spent separating controls that belong together. */
+  gap: 4px;
   padding: 3px 8px;
   min-height: 40px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* NOT `auto`. A toolbar that scrolls sideways hides controls behind a
+     gesture nobody makes, and it hid them at 1280px and 1366px — every
+     ordinary laptop. What does not fit folds into the "⋯" menu instead
+     (`compact_toolbar.mjs`), so there is never anything to scroll to. */
+  overflow: hidden;
 }
-.compact-toolbar::-webkit-scrollbar { display: none; }
+
+/* A group of related controls: flush inside, separated outside. */
+.compact-toolbar .cgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+}
+/* The seven boundaries Docs draws a rule at. The rest read as a gap. */
+.compact-toolbar .cgroup[data-divider]:not(:first-child) {
+  border-left: 1px solid var(--line);
+  margin-left: 2px;
+  padding-left: 4px;
+}
 
 /* One control size for the whole bar, so the rhythm does not drift the way
  * ad-hoc per-button sizes did. 34px matches the prototype's `.tool`. */
@@ -5559,19 +5579,123 @@ body.ribbon-mode .compact-toolbar { display: none; }
    the open menu both still carry the whole name. It keeps its own border, because a
    borderless control is not readable as a dropdown. */
 .compact-toolbar .styles-trigger.cadopted {
-  width: 132px;
+  /* 140px, not the 227px an inline `min-width` in the layout table used to
+     force on top of this rule — 95px of the bar spent on a control that had
+     already been designed narrower here. 140px is the smallest width at which
+     the longest style a default document offers as a HEADING still reads in
+     full ("Heading 1" measures 61px in the label box this leaves). Longer
+     names ("Header and Footer", 115px) ellipsise, and the `title` and the open
+     menu both still carry the whole name — the same trade docs/115 records for
+     the font trigger. */
+  width: 140px;
   height: 30px;
 }
 .compact-toolbar .styles-trigger.cadopted:not(:hover):not(:focus-visible) {
   border-color: var(--line-strong);
 }
-.compact-sep {
-  width: 1px;
-  height: 24px;
-  margin: 0 4px;
-  background: var(--line);
+/* The font trigger was 14px WIDER here than in the ribbon, for no reason: the
+   ribbon's authored width is 122px (docs/64's budget note is on that rule) and
+   the ellipsis behaviour is identical at both widths. */
+.compact-toolbar .font-family-trigger.cadopted {
+  width: 122px;
+  min-width: 122px;
+}
+/* The size box loses its spinner here and keeps only the value. This bar puts
+   Docs' − and + buttons on either side of it, so the spinner is a third way to
+   do the same thing, 14px wide. 58px still shows 1638 — the largest size the
+   format allows — without clipping. */
+.compact-toolbar #fontSize.cadopted {
+  width: 58px;
+  min-width: 58px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.compact-toolbar #fontSize.cadopted::-webkit-inner-spin-button,
+.compact-toolbar #fontSize.cadopted::-webkit-outer-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* A control that opens a menu: the icon plus a small caret, as Docs draws its
+   align and list buttons. The caret is part of the one button, not a second
+   hit target — the whole control opens the menu. */
+.compact-toolbar .ctool-menu { padding: 0 2px 0 6px; }
+.compact-toolbar .ctool-menu .ctool-caret {
+  font-size: 18px;
+  margin-left: -2px;
+  color: var(--muted);
+}
+.compact-toolbar .ctool-overflow { margin-left: auto; }
+
+/* The align menu and the "⋯" menu are `.context-menu` surfaces (so they
+   inherit the product's menu skin, elevation and light-dismiss) laid out as a
+   row of icon buttons rather than a list of labels. */
+.compact-align-menu,
+.compact-overflow-menu {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  /* `.context-menu` is sized for rows of labels; these hold icon buttons and
+     must be exactly as wide as they are. */
+  min-width: 0;
+  width: max-content;
+  overflow: visible;
+}
+.compact-toolbar .ctool-overflow[hidden] { display: none; }
+.compact-overflow-menu {
+  flex-wrap: wrap;
+  max-width: min(560px, calc(100vw - 24px));
+  row-gap: 4px;
+}
+.compact-align-menu .ctool,
+.compact-overflow-menu .ctool {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2, var(--ink));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   flex: 0 0 auto;
 }
+.compact-align-menu .ctool .ms,
+.compact-overflow-menu .ctool .ms { font-size: 20px; line-height: 1; }
+.compact-align-menu .ctool:hover:not(:disabled),
+.compact-overflow-menu .ctool:hover:not(:disabled) {
+  background: var(--hover, color-mix(in srgb, var(--ink) 8%, transparent));
+}
+.compact-align-menu .ctool:disabled,
+.compact-overflow-menu .ctool:disabled { opacity: 0.38; cursor: default; }
+.compact-align-menu .ctool[aria-checked="true"],
+.compact-overflow-menu .ctool[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.compact-align-menu .ctool:focus-visible,
+.compact-overflow-menu .ctool:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+/* A folded group keeps its grouping inside the menu, so the reading order the
+   bar had is the reading order the menu has. */
+.compact-overflow-menu .cgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+}
+.compact-overflow-menu .cgroup:not(:first-child) {
+  border-left: 1px solid var(--line);
+  margin-left: 2px;
+  padding-left: 6px;
+}
+.compact-overflow-menu .cadopted { height: 30px; flex: 0 0 auto; }
 
 /* Header mode switch */
 .chrome-mode {

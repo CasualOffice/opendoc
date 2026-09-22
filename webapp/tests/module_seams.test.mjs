@@ -40,8 +40,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  Symbol/Emoji data moved to `glyph_sets.mjs` — pure data, already covered by
  *  the picker's own specs — to pay for the ~110 lines of spell-check wiring.
  *  The checker itself is in `spell_check.mjs` and `spelling.mjs`, which is also
- *  what makes its rules unit-testable without a browser. */
-const MAIN_JS_LINE_CEILING = 17801;
+ *  what makes its rules unit-testable without a browser.
+ *  Lowered again to 17,658 by the compact-toolbar width/grouping fix: the bar's
+ *  layout table, its grouping and its overflow fold moved to
+ *  `compact_toolbar.mjs`, which is also what lets a test read the declared
+ *  control set without a browser. */
+const MAIN_JS_LINE_CEILING = 17658;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
