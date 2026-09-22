@@ -55,30 +55,42 @@ export function traversalAnnouncement(kind, index, count, inGroup) {
   return `${OBJECT_LABELS[kind] ?? "Object"} ${index + 1} of ${count}${inGroup ? " in group" : ""}`;
 }
 
+/** What a click on a group should do, given what is already held.
+ *
+ * Three outcomes, not two — the missing third is what made a grouped shape
+ * selectable but not draggable (`docs/109` HF-173):
+ *
+ *   "select"  — take the group as a unit. The first click on any group, and a
+ *               click on the group's own background once inside it.
+ *   "descend" — take the shape under the pointer. Word's second click.
+ *   "keep"    — the pointer is on the shape already held: change nothing and
+ *               let the gesture continue, because this click is the start of
+ *               a DRAG of that shape.
+ *
+ * "keep" used to be folded into "select", so pressing down on a selected
+ * grouped shape re-selected its group and then dragged the group. The shape
+ * could be picked and never moved.
+ *
+ * @param {{root?: string, subject?: string}|null|undefined} held
+ * @param {{kind?: string, root?: string}|null|undefined} hit
+ * @param {boolean} pointerOnHeldChild
+ * @returns {"select"|"descend"|"keep"}
+ */
+export function groupClickAction(held, hit, pointerOnHeldChild) {
+  if (!held?.root || hit?.kind !== "group" || hit.root !== held.root)
+    return "select";
+  if (held.subject !== held.root && pointerOnHeldChild) return "keep";
+  return "descend";
+}
+
 /**
- * Whether a click should reach INTO the group it landed on, rather than select
- * that group as a unit.
+ * Whether a click should reach INTO the group it landed on.
  *
- * Word's grammar (`docs/117` §3): the first click picks a group up whole, the
- * next one reaches inside it. Getting the first click wrong would be worse
- * than the bug this fixes — a group has to be selectable, movable and
- * deletable as one thing — so this is deliberately narrow: it says yes only
- * when the group clicked is the one already in hand.
- *
- * The last condition is the subtle one. When a child is already selected and
- * the pointer is still over that same child, the answer is NO: re-resolving
- * there would fight a click that is the start of a drag.
- *
- * @param {{root?: string, subject?: string}|null|undefined} held  The current
- *   selection's reference.
- * @param {{kind?: string, root?: string}|null|undefined} hit  What the click hit.
- * @param {boolean} pointerOnHeldChild  Whether the pointer is inside the
- *   currently selected child of that group.
+ * Retained as the yes/no form of `groupClickAction` for callers that only
+ * need to know whether to resolve a descendant.
  */
 export function clickDescendsIntoGroup(held, hit, pointerOnHeldChild) {
-  if (!held?.root || hit?.kind !== "group" || hit.root !== held.root)
-    return false;
-  return !(held.subject !== held.root && pointerOnHeldChild);
+  return groupClickAction(held, hit, pointerOnHeldChild) === "descend";
 }
 
 /**

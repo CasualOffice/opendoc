@@ -8,6 +8,7 @@ import {
   OBJECT_LABELS,
   clickDescendsIntoGroup,
   escapeClimbsToGroup,
+  groupClickAction,
   nextObjectIndex,
   traversalAnnouncement,
   traversalRoot,
@@ -139,4 +140,38 @@ test("Escape climbs out of a group, and only out of a group", () => {
   // itself and trap the user.
   assert.equal(escapeClimbsToGroup({ root: "g1", subject: "g1" }), false);
   assert.equal(escapeClimbsToGroup(null), false);
+});
+
+test("a click on a group has three outcomes, not two", () => {
+  // The missing third is what made a grouped shape selectable but not
+  // draggable (`docs/109` HF-173): pressing down on the shape already held
+  // used to fall through to "select", which re-took the GROUP and then
+  // dragged the group.
+  assert.equal(
+    groupClickAction(null, groupHit, false),
+    "select",
+    "first click",
+  );
+  assert.equal(
+    groupClickAction({ root: "g1", subject: "g1" }, groupHit, false),
+    "descend",
+    "second click reaches inside",
+  );
+  assert.equal(
+    groupClickAction({ root: "g1", subject: "s2" }, groupHit, true),
+    "keep",
+    "pressing down on the held shape begins its drag",
+  );
+});
+
+test("keep protects a held shape that sits UNDER a sibling", () => {
+  // Why "keep" is not redundant with "descend". `objectDescendantAt` answers
+  // with the TOPMOST child at the point, so re-resolving where two children
+  // overlap would switch the selection to the sibling mid-gesture and drag
+  // the wrong shape. The browser fixture has no overlapping children, so this
+  // distinction is only expressible here.
+  const held = { root: "g1", subject: "underneath" };
+  assert.equal(groupClickAction(held, groupHit, true), "keep");
+  // …and once the pointer leaves it, re-resolving is right again.
+  assert.equal(groupClickAction(held, groupHit, false), "descend");
 });

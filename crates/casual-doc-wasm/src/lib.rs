@@ -74,8 +74,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{CROP_FULL, CropRect};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{
-    GroupChild, HeaderFooterId, HeaderFooterKind, SdtCheckbox, SdtCheckboxSymbol, SdtControlData,
-    Symbol,
+    GroupChild, HeaderFooterId, HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol,
+    SdtControlData, Symbol,
 };
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
@@ -1820,6 +1820,76 @@ impl WasmDocument {
             position: VerticalPosition::Offset((top_emu.round() as i64).clamp(-MAX_EMU, MAX_EMU)),
         };
         self.commit_anchor(object, anchor)
+    }
+
+    /// Moves a shape INSIDE a group by a page-space delta, as one undoable
+    /// action.
+    ///
+    /// The gesture is the same drag a top-level object gets, and until now it
+    /// silently moved the whole group: both the drag and the arrow-nudge call
+    /// `setObjectAnchorPosition(root, …)`, which is the only move that existed
+    /// (`docs/109` HF-173). `ObjectCapabilities::group_child` advertised
+    /// `can_move: true` the whole time, so the capability was a promise the
+    /// engine could not keep.
+    ///
+    /// The delta arrives in PAGE space, because that is what a pointer
+    /// produces, and is converted into the group's child space here — a group
+    /// scales its children by `extent / child_extent`, so a 40-twip drag on a
+    /// half-scale group is an 80-twip change to the child's own offset. Doing
+    /// that arithmetic in the host would put the group's coordinate system in
+    /// two places.
+    ///
+    /// Expressed through `SetInlines`, so the closed operation set is
+    /// unchanged and this composes with undo and OT like any other edit.
+    ///
+    /// # Errors
+    ///
+    /// When `node` is not a shape inside a group, so a host cannot wire the
+    /// gesture to an arbitrary object and quietly move something else.
+    #[wasm_bindgen(js_name = moveGroupChildBy)]
+    pub fn move_group_child_by(
+        &mut self,
+        node: &str,
+        dx_emu: f64,
+        dy_emu: f64,
+    ) -> Result<EditResult, JsValue> {
+        self.move_group_child_by_inner(node, dx_emu, dy_emu)
+            .map_err(to_js)
+    }
+
+    /// [`move_group_child_by`](Self::move_group_child_by) with a plain error,
+    /// so the behaviour is reachable from a native test.
+    fn move_group_child_by_inner(
+        &mut self,
+        node: &str,
+        dx_emu: f64,
+        dy_emu: f64,
+    ) -> Result<EditResult, String> {
+        let child = NodeId::from_str(node).map_err(|_| "invalid node id".to_owned())?;
+        let paragraph = self
+            .paragraph_containing_inline_deep(child)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let source = find_paragraph_any(&self.document, paragraph)
+            .ok_or_else(|| "not a shape inside a group".to_owned())?;
+        let mut inlines = source.inlines.clone();
+        if !move_group_child_in_inlines(&mut inlines, child, dx_emu, dy_emu) {
+            return Err("not a shape inside a group".to_owned());
+        }
+        let caret = Pos {
+            node: paragraph,
+            offset: 0,
+        };
+        // `ObjectMove`, not `Formatting`: the undo entry is what the reader
+        // sees on the Undo button, and "Undo Formatting" for a shape they just
+        // dragged describes a different action from the one they took.
+        self.apply_action_caret_as(
+            vec![Operation::SetInlines {
+                node: paragraph,
+                inlines,
+            }],
+            caret,
+            HistoryKind::ObjectMove,
+        )
     }
 
     /// Changes a **floating** object's text-wrap mode (docs/85 §5.3), committing
@@ -4689,6 +4759,17 @@ impl WasmDocument {
         visit_paragraphs_in(&self.document, &mut |paragraph| {
             if found.is_none() {
                 found = find_checkbox_containing(&paragraph.inlines, node);
+            }
+        });
+        found
+    }
+
+    /// The paragraph holding the group child `node`, across every surface.
+    fn paragraph_containing_inline_deep(&self, node: NodeId) -> Option<NodeId> {
+        let mut found = None;
+        visit_paragraphs_in(&self.document, &mut |paragraph| {
+            if found.is_none() && paragraph_holds_group_child(paragraph, node) {
+                found = Some(paragraph.id);
             }
         });
         found
@@ -12523,6 +12604,135 @@ fn collect_text_box_text(inlines: &[InlineNode], out: &mut Vec<(NodeId, String)>
 /// `collect_block_text` over EVERY block surface, not just the body. Word count,
 /// endpoint ordering and text extraction all stopped at the body edge, so header,
 /// footer and note text was invisible to them.
+/// Moves the group child `child` by a PAGE-space delta, converting into the
+/// group's child space. Reports whether it found one.
+///
+/// A group maps its child space onto its parent box by
+/// `extent / child_extent` (`a:xfrm`'s `a:ext` over `a:chExt`), so a drag
+/// measured on the page scales by the INVERSE on the way in. A degenerate or
+/// absent child extent means no scaling rather than a division by zero.
+fn move_group_child_in_inlines(
+    inlines: &mut [InlineNode],
+    child: NodeId,
+    dx_emu: f64,
+    dy_emu: f64,
+) -> bool {
+    for inline in inlines {
+        match inline {
+            InlineNode::Sdt(sdt) => {
+                if move_group_child_in_inlines(&mut sdt.inlines, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                if move_group_child_in_inlines(&mut link.inlines, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            InlineNode::Group(group) => {
+                if move_child_in_group(group, child, dx_emu, dy_emu) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// [`move_group_child_in_inlines`] within one group, descending into nested
+/// groups — whose own scale compounds with their parent's, which is why the
+/// factor is carried down rather than recomputed from the top.
+fn move_child_in_group(
+    group: &mut WordprocessingGroup,
+    child: NodeId,
+    dx_emu: f64,
+    dy_emu: f64,
+) -> bool {
+    let (sx, sy) = child_space_scale(&group.transform);
+    let (dx, dy) = (dx_emu * sx, dy_emu * sy);
+    for entry in &mut group.children {
+        match entry {
+            GroupChild::Picture(picture) if picture.id == child => {
+                picture.offset = shifted(picture.offset, dx, dy);
+                return true;
+            }
+            GroupChild::TextBox(text_box) if text_box.id == child => {
+                text_box.offset = shifted(text_box.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Shape(shape) if shape.id == child => {
+                shape.offset = shifted(shape.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Group(nested) if nested.id == child => {
+                nested.transform.offset = shifted(nested.transform.offset, dx, dy);
+                return true;
+            }
+            GroupChild::Group(nested) => {
+                // The delta handed down is already in THIS group's child
+                // space, which is the nested group's parent space.
+                if move_child_in_group(nested, child, dx, dy) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Page-space to child-space scale for a group transform. `1.0` when the group
+/// declares no usable child extent, which is the identity mapping the layout
+/// already assumes in that case.
+fn child_space_scale(transform: &GroupTransform) -> (f64, f64) {
+    let axis = |child: i64, parent: i64| {
+        if child > 0 && parent > 0 {
+            child as f64 / parent as f64
+        } else {
+            1.0
+        }
+    };
+    (
+        axis(transform.child_extent.width_emu, transform.extent.width_emu),
+        axis(
+            transform.child_extent.height_emu,
+            transform.extent.height_emu,
+        ),
+    )
+}
+
+/// `point` shifted by a child-space delta, clamped to the EMU domain the model
+/// validates against.
+fn shifted(point: PointEmu, dx: f64, dy: f64) -> PointEmu {
+    PointEmu {
+        x_emu: ((point.x_emu as f64 + dx).round() as i64).clamp(-MAX_EMU, MAX_EMU),
+        y_emu: ((point.y_emu as f64 + dy).round() as i64).clamp(-MAX_EMU, MAX_EMU),
+    }
+}
+
+/// The paragraph whose inlines hold `node` at ANY depth — including inside a
+/// drawing group, which `paragraph_containing_inline` does not descend into.
+fn paragraph_holds_group_child(paragraph: &Paragraph, node: NodeId) -> bool {
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> bool {
+        inlines.iter().any(|inline| match inline {
+            InlineNode::Group(group) => group_holds(group, node),
+            InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
+            InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+            _ => false,
+        })
+    }
+    fn group_holds(group: &WordprocessingGroup, node: NodeId) -> bool {
+        group.children.iter().any(|child| match child {
+            GroupChild::Picture(picture) => picture.id == node,
+            GroupChild::TextBox(text_box) => text_box.id == node,
+            GroupChild::Shape(shape) => shape.id == node,
+            GroupChild::Group(nested) => nested.id == node || group_holds(nested, node),
+        })
+    }
+    in_inlines(&paragraph.inlines, node)
+}
+
 /// Walks `inlines` (and the SDTs nested in them) for the form checkbox whose
 /// id is `sdt`, sets its checked flag to `want`, and rewrites its content to
 /// the glyph the document declared for that state. Reports whether it found one.
@@ -21951,6 +22161,132 @@ mod tests {
         assert!(
             !error.to_lowercase().contains("unreachable"),
             "leaks a trap name: {error}"
+        );
+    }
+
+    /// Dragging a shape inside a group moves THAT SHAPE, and leaves the group
+    /// where it is.
+    ///
+    /// `docs/109` HF-173, reported after #577 as "individual dragging is not
+    /// possible in grouped things". Selection descended correctly, but the
+    /// only move that existed was `setObjectAnchorPosition(root, …)`, so the
+    /// gesture moved the whole group — measured at the time as a 40px drag on
+    /// a child moving the group 40px.
+    #[test]
+    fn a_shape_inside_a_group_moves_without_moving_the_group() {
+        const NESTED: &[u8] = include_bytes!("../../../fixtures/generated/nested-group.docx");
+        let mut doc = open_document(NESTED).expect("open");
+
+        // The group, its anchor, and its first child's offset — before.
+        let snapshot = |doc: &WasmDocument| {
+            let mut out = None;
+            visit_paragraphs_in(&doc.document, &mut |paragraph| {
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Group(group) = inline
+                        && out.is_none()
+                    {
+                        let child = group.children.iter().find_map(|c| match c {
+                            GroupChild::TextBox(b) => Some((b.id, b.offset)),
+                            GroupChild::Shape(sh) => Some((sh.id, sh.offset)),
+                            GroupChild::Picture(p) => Some((p.id, p.offset)),
+                            GroupChild::Group(_) => None,
+                        });
+                        out = child.map(|(id, offset)| (group.transform.offset, id, offset));
+                    }
+                }
+            });
+            out.expect("the fixture has a group with a leaf child")
+        };
+
+        let (group_before, child, child_before) = snapshot(&doc);
+        doc.move_group_child_by_inner(&child.to_string(), 100_000.0, 50_000.0)
+            .expect("move the child");
+
+        let (group_after, _, child_after) = snapshot(&doc);
+        assert_eq!(
+            group_after, group_before,
+            "the GROUP must not move — that is the whole defect",
+        );
+        assert_ne!(
+            child_after, child_before,
+            "the CHILD must move — selection descended but the drag did not",
+        );
+
+        // Undo restores it exactly, as one step.
+        doc.undo().expect("undo");
+        let (_, _, child_undone) = snapshot(&doc);
+        assert_eq!(child_undone, child_before, "one undo puts the shape back");
+    }
+
+    /// The page-space delta is converted into the group's child space: a group
+    /// drawn at half its child space moves its child twice as far in child
+    /// units for the same drag on screen. Getting this wrong is a shape that
+    /// lags or races the pointer.
+    #[test]
+    fn a_group_child_move_is_scaled_into_child_space() {
+        use casual_doc_model::v1::{
+            Extent, GroupShape, GroupTransform, PointEmu, ShapeGeometry, WordprocessingGroup,
+        };
+        let id = |n: u64| NodeId::from_parts(n, 907).unwrap();
+        // Child space is TWICE the parent box, so a page delta halves.
+        let group = WordprocessingGroup {
+            id: id(3),
+            anchor: None,
+            relative_height: None,
+            extent: Extent {
+                width_emu: 1_000_000,
+                height_emu: 1_000_000,
+            },
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 1_000_000,
+                    height_emu: 1_000_000,
+                },
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: Extent {
+                    width_emu: 2_000_000,
+                    height_emu: 2_000_000,
+                },
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            children: vec![GroupChild::Shape(GroupShape {
+                id: id(4),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent: Extent {
+                    width_emu: 100_000,
+                    height_emu: 100_000,
+                },
+                geometry: ShapeGeometry::Rectangle,
+                preset: None,
+                adjustments: Vec::new(),
+                path: None,
+                fill: None,
+                stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })],
+        };
+        let mut inlines = vec![InlineNode::Group(Box::new(group))];
+        assert!(move_group_child_in_inlines(
+            &mut inlines,
+            id(4),
+            100_000.0,
+            0.0
+        ));
+        let InlineNode::Group(group) = &inlines[0] else {
+            panic!("group");
+        };
+        let GroupChild::Shape(shape) = &group.children[0] else {
+            panic!("shape");
+        };
+        assert_eq!(
+            shape.offset.x_emu, 200_000,
+            "a page delta of 100,000 in a group whose child space is 2x must \
+             move the child 200,000 child units",
         );
     }
 
