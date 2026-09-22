@@ -39,6 +39,43 @@ use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
+std::thread_local! {
+    /// Per-thread, so a parallel test run never reads another test's scans and
+    /// the single-threaded wasm engine sees exactly its own.
+    static DOCUMENT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+fn note_document_scan() {
+    DOCUMENT_SCANS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+/// How many whole-document scans this thread has performed since
+/// [`reset_document_scans`] — the **complexity meter** for the id-lookup family.
+///
+/// Resolving a `NodeId` to its paragraph, cell, table or surface means walking
+/// every block surface, because the model has no id index. That is fine once per
+/// user action and catastrophic once per node: `documentOutline` collected every
+/// paragraph id and then asked for each one's properties, which measured 1,443 ms
+/// at 20,000 blocks and 5,565 ms at 40,000 — 3.86× for twice the document — and
+/// would not have finished at all on a 1.3M-paragraph file. The defect is not a
+/// slow lookup, it is one scan per node, and a timing test cannot tell the two
+/// apart. This counter can: a document-wide read must perform a number of scans
+/// that does **not grow with the document**.
+///
+/// Counted by [`surface_block_lists`] and [`surface_of`], the two entry points
+/// every by-id read goes through. One relaxed per-call increment, no allocation;
+/// it is a diagnostic, not a feature flag, so the guard measures the same code
+/// the product ships. `docs/116`.
+#[must_use]
+pub fn document_scans() -> usize {
+    DOCUMENT_SCANS.with(core::cell::Cell::get)
+}
+
+/// Zeroes [`document_scans`] for this thread.
+pub fn reset_document_scans() {
+    DOCUMENT_SCANS.with(|count| count.set(0));
+}
+
 /// A run-property change to apply over a range: each `Some(_)` field sets that
 /// property, `None` leaves it untouched. Character formatting (`w:b`/`w:i`/`w:u`/
 /// `w:strike`/`w:color`/`w:highlight`/`w:sz`/`w:vertAlign`/`w:rFonts`).
@@ -3807,7 +3844,12 @@ pub enum Surface {
 /// as left-aligned. They are listed once here rather than each growing its own
 /// copy of the traversal, because the same omission was made independently four
 /// times.
+///
+/// **This is a whole-document scan** — it walks the body to find every inline
+/// text box — so it counts one on `document_scans`. Calling it once per node of
+/// a document is quadratic; see that counter's documentation.
 pub fn surface_block_lists(document: &Document) -> Vec<&[BlockNode]> {
+    note_document_scan();
     let definitions = document.definitions();
     let mut out: Vec<&[BlockNode]> = vec![document.body()];
     // Text-box content is block content too, but it hangs off an inline inside a
@@ -3913,6 +3955,7 @@ fn blocks_contain(blocks: &[BlockNode], id: NodeId) -> bool {
 /// overwhelmingly common case. `None` means no surface owns the id.
 #[must_use]
 pub fn surface_of(doc: &Document, id: NodeId) -> Option<Surface> {
+    note_document_scan();
     if blocks_contain(doc.body(), id) {
         return Some(Surface::Body);
     }

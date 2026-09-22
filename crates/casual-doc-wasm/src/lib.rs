@@ -43,7 +43,7 @@ use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
     document_page_config, paginate_document, paginate_document_cached, paginate_document_view,
 };
-use casual_doc_layout::flow::{ReviewView, node_plain_text};
+use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
 use casual_doc_layout::hittest::{Direction, HitZone, LayoutSnapshot, RunningBand};
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
@@ -176,6 +176,25 @@ fn viewer_limits() -> PackageLimits {
 /// The value is the largest size actually measured to open, not an
 /// extrapolation. Past it a document is refused with its real size and the
 /// limit.
+///
+/// ## Every row above is time to COMPLETE, and that is the wrong question
+///
+/// `docs/116`. The probe now also reports the longest single main-thread task,
+/// because "it completed in 47 s" and "the tab was dead for 47 s" are the same
+/// number describing different things, and only the second one is what the
+/// reader experiences. Measured on the owner's file: **17,077 ms blocked, then
+/// 16,981 ms again** when the web fonts land and the document is re-measured.
+/// Nothing paints in either stretch, no click lands, and no progress bar could
+/// move if there were one.
+///
+/// That cost is ~13 µs/block of uninterrupted main thread, so **no value of
+/// this constant is both interactive and useful**: a 300 ms budget is ~23,000
+/// blocks, two orders of magnitude below documents that open perfectly well
+/// today. The constant is therefore not the lever — the open path is
+/// (`docs/116` §7: measure a prefix, extend in the background, report
+/// `Page X of ~Y` until it is exact). It is left at 1,800,000 with that said
+/// out loud, and it moves next on a time-to-interactive measurement rather than
+/// a time-to-complete one.
 ///
 /// This does NOT bound file SIZE. A 200 MiB DOCX is large because of its
 /// images, and its block count is ordinary; `viewer_limits` admits it.
@@ -789,12 +808,20 @@ impl WasmDocument {
 
     /// The number of laid-out pages.
     ///
-    /// The document's real count in every mode. A windowed body takes it from
-    /// the measure tier, which `docs/113` §6.4 measured as identical to
-    /// `paginate_document`'s (29,621 pages on the owner's file) — reporting the
-    /// resident window's length here would tell a host with 29,621 pages that
-    /// it had five, and every page past the fifth would simply not exist as far
-    /// as the viewer, the scrollbar, printing and `NUMPAGES` were concerned.
+    /// A windowed body takes it from the measure tier, which `docs/113` §6.4
+    /// measured as identical to `paginate_document`'s (29,621 pages on the
+    /// owner's file) — reporting the resident window's length here would tell
+    /// a host with 29,621 pages that it had five, and every page past the
+    /// fifth would simply not exist as far as the viewer, the scrollbar,
+    /// printing and `NUMPAGES` were concerned.
+    ///
+    /// These pages are always real pages, never estimates. While a long
+    /// document is still being measured in the background (`docs/116` §7) this
+    /// is the count of the part measured so far, and
+    /// [`page_count_is_exact`](Self::page_count_is_exact) is `false`; a host
+    /// that shows a total to the reader must ask that too, and
+    /// [`estimated_page_count`](Self::estimated_page_count) for the number to
+    /// show beside a `~`.
     #[wasm_bindgen(getter, js_name = pageCount)]
     #[must_use]
     pub fn page_count(&self) -> u32 {
@@ -805,6 +832,53 @@ impl WasmDocument {
         // A paginated document never exceeds u32 pages within the admission
         // limits; the cast is saturating for defensiveness.
         u32::try_from(pages).unwrap_or(u32::MAX)
+    }
+
+    /// Whether [`page_count`](Self::page_count) is the whole document's, or
+    /// only of the prefix measured so far.
+    ///
+    /// The one flag every surface that shows or uses a total reads: the page
+    /// indicator, `NUMPAGES`, printing and the scrollbar. `AGENTS.md` — a
+    /// number that is not exact is never presented as though it were.
+    #[wasm_bindgen(getter, js_name = pageCountIsExact)]
+    #[must_use]
+    pub fn page_count_is_exact(&self) -> bool {
+        // The markup (show-changes) view is always laid out whole; it is
+        // refused for a windowed body.
+        self.markup_layout.is_some() || self.layout.page_count_is_exact()
+    }
+
+    /// The document's page count, or — while it is being measured — an
+    /// ESTIMATE scaled from the prefix measured so far.
+    ///
+    /// Equal to [`page_count`](Self::page_count) once
+    /// [`page_count_is_exact`](Self::page_count_is_exact) is true. Show it
+    /// only with a marker that says it is approximate.
+    #[wasm_bindgen(getter, js_name = estimatedPageCount)]
+    #[must_use]
+    pub fn estimated_page_count(&self) -> u32 {
+        let pages = match self.markup_layout.as_ref() {
+            Some(markup) => markup.page_count(),
+            None => self.layout.estimated_page_count(),
+        };
+        u32::try_from(pages).unwrap_or(u32::MAX)
+    }
+
+    /// Measures the next `blocks` top-level blocks of a document opened on a
+    /// prefix, and returns whether it is now measured whole.
+    ///
+    /// The host drives this from idle time between frames, sizing `blocks` to
+    /// the slice of main thread it is willing to spend (`docs/116` §7). Cheap
+    /// and `true` for a document that was never partial, so a host can call it
+    /// unconditionally rather than branch on how the document opened.
+    ///
+    /// Pages already reported do not move: pagination is a forward fill and a
+    /// windowable document has nothing that can reach back past a page
+    /// boundary, which `extending_a_prefix_never_moves_a_page_it_already_reported`
+    /// asserts in the layout crate.
+    #[wasm_bindgen(js_name = extendMeasures)]
+    pub fn extend_measures(&mut self, blocks: usize) -> bool {
+        self.layout.extend(&self.document, &self.shaper, blocks)
     }
 
     /// Toggles the read-only "show changes" markup view (docs/93). When on, a
@@ -9465,40 +9539,50 @@ impl WasmDocument {
     #[wasm_bindgen(js_name = documentOutline)]
     #[must_use]
     pub fn document_outline(&self) -> Vec<String> {
-        let mut nodes = Vec::new();
-        collect_block_text_all_surfaces(&self.document, &mut nodes);
         // Build the style cascade once; heading level comes from the *effective*
         // paragraph properties (a Heading/Title style's outlineLvl is inherited,
         // not written on the paragraph), so headings in real documents are found.
         let cascade = StyleCascade::new(self.document.definitions());
-        // One index over every paragraph, built by a single walk. Resolving each
-        // id with `paragraph_properties` instead walked the whole document per
-        // node: on a 1.3M-paragraph file that is ~1.7e12 block visits for a panel
-        // that returns an empty list, and it never finishes.
-        let index = ParagraphIndex::build(&self.document);
-        nodes
-            .into_iter()
-            .filter_map(|(id, text)| {
-                let direct = index.properties(id)?;
-                let level = self.heading_level_of(&direct, &cascade)?;
-                let t = text.trim();
-                (!t.is_empty()).then(|| format!("{level}\t{id}\t{}", t.replace('\t', " ")))
-            })
-            .collect()
+        // ONE walk, carrying each paragraph. The shape this replaced collected
+        // every (id, text) pair and then asked the document for each id's
+        // properties, and that by-id lookup is itself a walk of every surface:
+        // 1,443 ms at 20,000 blocks, 5,565 ms at 40,000 — 3.86× for twice the
+        // document — and ~1.6 hours of arithmetic on the owner's 1,303,306
+        // paragraphs, which is why the Outline panel hung the tab rather than
+        // being merely slow (`docs/116`). Heading level is decided BEFORE the
+        // text is extracted, so a document with no headings no longer allocates
+        // one `String` per paragraph to throw it away.
+        let mut rows = Vec::new();
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            let Some(level) = self.heading_level_of(paragraph.properties.get(), &cascade) else {
+                return;
+            };
+            let text = node_plain_text(&paragraph.inlines);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                rows.push(format!(
+                    "{level}\t{}\t{}",
+                    paragraph.id,
+                    trimmed.replace('\t', " ")
+                ));
+            }
+        });
+        rows
     }
 
-    /// The heading level of a paragraph with these own (direct) properties
-    /// (1-based; 1 = top), or `None` if it is not a heading.
-    ///
-    /// It takes the properties rather than a `NodeId` because resolving an id
-    /// meant `paragraph_properties`, a linear walk of every surface — and both
-    /// callers are already looking straight at the paragraph, so the lookup made
-    /// walking the document to read the outline quadratic in its length. Robust
-    /// across how producers mark headings:
+    /// The heading level of a paragraph with these **direct** properties
+    /// (1-based; 1 = top), or `None` if it is not a heading. Robust across how
+    /// producers mark headings:
     /// 1. the **effective** `outlineLvl` (resolved through the whole style chain);
     /// 2. otherwise, walk the paragraph's style + its `basedOn` ancestors for a
     ///    style that carries its own `outlineLvl` or a `Title`/`Heading N` name
     ///    (so a custom style *based on* Heading 2 is still found).
+    ///
+    /// Takes the properties rather than a `NodeId` on purpose: every caller
+    /// already holds the paragraph, and resolving a `NodeId` back to its
+    /// paragraph is a walk of every block surface — inside the per-paragraph
+    /// loops of the outline and the accessibility mirror that made both
+    /// quadratic in document size (`docs/116`).
     fn heading_level_of(&self, direct: &ParagraphProperties, cascade: &StyleCascade) -> Option<u8> {
         if let Some(level) = cascade
             .resolve_paragraph(direct)
@@ -10916,37 +11000,40 @@ impl WasmDocument {
     /// Every text-bearing paragraph in document order, with its byte length —
     /// the ordering caret navigation and cross-paragraph edits traverse.
     fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
-        let mut nodes: Vec<(NodeId, String)> = Vec::new();
-        collect_block_text_all_surfaces(&self.document, &mut nodes);
         // Running content and notes are ordinary block content in the same id
-        // space, and a caret can now be placed in them, so their paragraphs have
-        // to be orderable too — `order_endpoints` resolves an endpoint by finding
+        // space, and a caret can be placed in them, so their paragraphs have to
+        // be orderable too — `order_endpoints` resolves an endpoint by finding
         // it in this list, and a position it cannot find is rejected before any
         // op is built. Each surface is appended whole and after the body, so
         // ordering WITHIN a surface (all a selection can span) is correct; the
         // relative order of two different surfaces is arbitrary and meaningless,
         // which is fine because no gesture produces a range across two.
-        let definitions = self.document.definitions();
-        for (_, header) in definitions.headers.iter() {
-            collect_block_text(&header.blocks, &mut nodes);
-        }
-        for (_, footer) in definitions.footers.iter() {
-            collect_block_text(&footer.blocks, &mut nodes);
-        }
-        for (_, note) in definitions.footnotes.iter() {
-            collect_block_text(&note.blocks, &mut nodes);
-        }
-        for (_, note) in definitions.endnotes.iter() {
-            collect_block_text(&note.blocks, &mut nodes);
-        }
-        // Only the LENGTH of each paragraph is wanted, but the walk built an owned
-        // `String` for every paragraph on every surface first — an allocation per
-        // paragraph, per call, thrown away immediately. On a long document that is
-        // the bulk of the cost of ordering two endpoints.
-        nodes
-            .into_iter()
-            .map(|(id, text)| (id, text.len() as u32))
-            .collect()
+        //
+        // The four surfaces used to be appended a SECOND time here, by hand,
+        // after `collect_block_text_all_surfaces` — which already includes every
+        // header, footer, footnote and endnote through `surface_block_lists`. So
+        // every running-content and note paragraph appeared twice in the
+        // ordering the caret, `order_endpoints` and `selection_subranges` rely
+        // on, and every consumer that walks this list walked those paragraphs
+        // twice. The duplicates are gone; the first copy of each is untouched,
+        // in the same relative order.
+        //
+        // Only the LENGTH of each paragraph is wanted, and the walk used to
+        // build an owned `String` per paragraph to measure and drop it. One
+        // reused buffer instead: on a 1.3M-paragraph document that allocation
+        // was the bulk of the cost of ordering two endpoints.
+        let mut out = Vec::new();
+        let mut text = String::new();
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            text.clear();
+            append_node_plain_text(
+                &paragraph.inlines,
+                ReviewProjection::FinalWithMarkup,
+                &mut text,
+            );
+            out.push((paragraph.id, text.len() as u32));
+        });
+        out
     }
 
     /// Maps every paragraph to an opaque id identifying which top-level
@@ -11539,6 +11626,17 @@ impl WasmDocument {
 
     fn resolve_object_boxes(&self, include_group_children: bool) -> Vec<ObjectBox> {
         let mut out = Vec::new();
+        // The model objects of every paragraph that has any, in ONE walk.
+        //
+        // This used to be `paragraph_object_nodes(id)` inside the per-fragment
+        // loop below, and that call resolves a `NodeId` by walking every block
+        // surface — so a click paid one whole-document walk per placed paragraph
+        // on every page. Measured through the browser: `objectAt`, which one
+        // pointerdown calls once, took **1,437 ms of a 1,399 ms click** at
+        // 20,000 blocks on a document with no objects in it at all, and the term
+        // is quadratic, so it is the reason a click on a large document does not
+        // come back (`docs/116`).
+        let object_nodes = self.object_nodes_by_paragraph();
         let mut grouped: HashMap<NodeId, usize> = HashMap::new();
         // Per-paragraph claimed flags, so a paragraph split across pages still maps
         // each placed box to a distinct model node (media match first, order next).
@@ -11562,9 +11660,13 @@ impl WasmDocument {
                 else {
                     continue;
                 };
+                // A fragment whose painted lines carry no object has nothing to
+                // correlate, and the `claimed` bookkeeping for it was never read.
+                let Some((img_nodes, tb_nodes)) = object_nodes.get(id) else {
+                    continue;
+                };
                 let content_x = placed.rect.origin.x.raw() + box_metrics.indent_start.raw();
                 let content_y = placed.rect.origin.y.raw() + box_metrics.space_before.raw();
-                let (img_nodes, tb_nodes) = self.paragraph_object_nodes(*id);
                 let entry = claimed
                     .entry(*id)
                     .or_insert_with(|| (vec![false; img_nodes.len()], vec![false; tb_nodes.len()]));
@@ -11722,23 +11824,29 @@ impl WasmDocument {
     }
 
     /// The model drawing nodes (with their resolved media part name) and inline
-    /// text-box nodes of a body paragraph, in document order — the correlation
-    /// targets for [`object_boxes`](Self::object_boxes).
-    fn paragraph_object_nodes(
-        &self,
-        paragraph: NodeId,
-    ) -> (Vec<(NodeId, Option<String>)>, Vec<NodeId>) {
-        let mut images = Vec::new();
-        let mut text_boxes = Vec::new();
-        if let Some(paragraph) = find_paragraph_any(&self.document, paragraph) {
+    /// text-box nodes of every paragraph that has any, by id, in ONE walk — the
+    /// correlation targets for [`object_boxes`](Self::object_boxes).
+    ///
+    /// A paragraph with no objects is absent rather than mapped to two empty
+    /// vectors, so a plain-text document of 1.3M paragraphs builds an empty map
+    /// and allocates nothing per paragraph.
+    fn object_nodes_by_paragraph(&self) -> ObjectNodesByParagraph {
+        let definitions = self.document.definitions();
+        let mut out = HashMap::new();
+        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
+            let mut images = Vec::new();
+            let mut text_boxes = Vec::new();
             collect_para_objects(
                 &paragraph.inlines,
-                self.document.definitions(),
+                definitions,
                 &mut images,
                 &mut text_boxes,
             );
-        }
-        (images, text_boxes)
+            if !images.is_empty() || !text_boxes.is_empty() {
+                out.insert(paragraph.id, (images, text_boxes));
+            }
+        });
+        out
     }
 
     fn ensure_list(&mut self, numbered: bool) -> Result<NumberingInstanceId, String> {
@@ -13303,29 +13411,82 @@ fn collect_block_text_all_surfaces(document: &Document, out: &mut Vec<(NodeId, S
     }
 }
 
-fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
+/// Every paragraph that carries an inline drawing or inline text box, by id:
+/// the drawings (with their resolved media part name) and the text boxes, both
+/// in document order. Built by
+/// [`object_nodes_by_paragraph`](WasmDocument::object_nodes_by_paragraph).
+type ObjectNodesByParagraph = HashMap<NodeId, (Vec<(NodeId, Option<String>)>, Vec<NodeId>)>;
+
+/// Every paragraph in `blocks`, in document order, with the paragraph itself in
+/// hand — the traversal [`collect_block_text`] is written on top of.
+///
+/// This exists because the alternative shape is quadratic. A caller that
+/// collects node **ids** and then asks the document about each one pays a linear
+/// by-id walk (`find_paragraph_any`, `paragraph_properties`,
+/// `surface_block_lists`) **per id**, which on a 1.3M-paragraph document is
+/// ~1.7 × 10¹² block visits — the Outline panel measured 1,443 ms at 20,000
+/// blocks and 5,565 ms at 40,000 (3.86× for 2× the document: quadratic), and it
+/// would not have finished at all on the owner's file. One walk that carries the
+/// node is the fix, and it is the only fix: a faster by-id lookup would still be
+/// the wrong shape. `docs/116`.
+fn visit_paragraphs(blocks: &[BlockNode], visit: &mut impl FnMut(&Paragraph)) {
     for block in blocks {
         match block {
-            BlockNode::Paragraph(p) => {
-                out.push((p.id, node_plain_text(&p.inlines)));
-                // A paragraph can hold an inline TEXT BOX whose own paragraphs
-                // are ordinary content in the same id space. Without them here,
-                // `order_endpoints` cannot find a position inside a box and
-                // every edit there is rejected before an op is built — the
-                // caret lands in the box and typing does nothing.
-                collect_text_box_text(&p.inlines, out);
+            BlockNode::Paragraph(paragraph) => {
+                visit(paragraph);
+                visit_text_box_paragraphs(&paragraph.inlines, visit);
             }
-            BlockNode::Table(t) => {
-                for row in &t.rows {
+            BlockNode::Table(table) => {
+                for row in &table.rows {
                     for cell in &row.cells {
-                        collect_block_text(&cell.blocks, out);
+                        visit_paragraphs(&cell.blocks, visit);
                     }
                 }
             }
-            BlockNode::Sdt(sdt) => collect_block_text(&sdt.blocks, out),
+            BlockNode::Sdt(sdt) => visit_paragraphs(&sdt.blocks, visit),
             BlockNode::AltChunk(_) => {}
         }
     }
+}
+
+fn visit_text_box_paragraphs(inlines: &[InlineNode], visit: &mut impl FnMut(&Paragraph)) {
+    for inline in inlines {
+        match inline {
+            InlineNode::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
+            InlineNode::Hyperlink(link) => visit_text_box_paragraphs(&link.inlines, visit),
+            InlineNode::Field(field) => visit_text_box_paragraphs(&field.inlines, visit),
+            InlineNode::Group(group) => visit_group_paragraphs(&group.children, visit),
+            _ => {}
+        }
+    }
+}
+
+fn visit_group_paragraphs(children: &[GroupChild], visit: &mut impl FnMut(&Paragraph)) {
+    for child in children {
+        match child {
+            GroupChild::TextBox(text_box) => visit_paragraphs(&text_box.blocks, visit),
+            GroupChild::Group(nested) => visit_group_paragraphs(&nested.children, visit),
+            GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+        }
+    }
+}
+
+/// [`visit_paragraphs`] over every block surface, in the order
+/// [`collect_block_text_all_surfaces`] produces.
+fn visit_paragraphs_all_surfaces(document: &Document, visit: &mut impl FnMut(&Paragraph)) {
+    for blocks in surface_block_lists(document) {
+        visit_paragraphs(blocks, visit);
+    }
+}
+
+/// Written on [`visit_paragraphs`] so the traversal — including the descent into
+/// an inline TEXT BOX, whose own paragraphs are ordinary content in the same id
+/// space (without them `order_endpoints` cannot find a position inside a box and
+/// every edit there is rejected before an op is built) — exists once.
+fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
+    visit_paragraphs(blocks, &mut |paragraph| {
+        out.push((paragraph.id, node_plain_text(&paragraph.inlines)));
+    });
 }
 
 /// The innermost table cell whose ordinary block flow owns `node`.
@@ -22805,6 +22966,72 @@ mod tests {
         );
     }
 
+    /// A document longer than the open budget opens on a PREFIX, says its page
+    /// count is not exact, and converges on the real one as the host extends
+    /// it.
+    ///
+    /// This is `docs/116` §7's trade made observable at the seam a host uses.
+    /// The failure it exists to catch is not "the count is wrong" — it is a
+    /// prefix count presented as the document's, which is what every surface
+    /// would do if `pageCountIsExact` did not exist or always answered true.
+    #[test]
+    fn a_document_past_the_open_budget_opens_on_a_prefix_and_converges() {
+        // Above `OPEN_BLOCK_BUDGET` (20,000), so the open path has to stop
+        // short. Below it there is nothing to observe.
+        let mut doc = open_windowed(24_000);
+        assert!(
+            !doc.page_count_is_exact(),
+            "a 24,000-block document cannot have been measured whole in a 20,000-block budget",
+        );
+        let prefix_pages = doc.page_count();
+        assert!(prefix_pages > 0, "the prefix must be a real, usable prefix");
+        assert!(
+            doc.estimated_page_count() > prefix_pages,
+            "an estimate equal to the measured count reads as exact and is not: {} vs {}",
+            doc.estimated_page_count(),
+            prefix_pages,
+        );
+
+        let mut rounds = 0;
+        while !doc.extend_measures(4_000) {
+            rounds += 1;
+            assert!(rounds < 100, "extension did not converge");
+        }
+        assert!(doc.page_count_is_exact());
+        assert_eq!(
+            doc.estimated_page_count(),
+            doc.page_count(),
+            "once exact, the estimate IS the count",
+        );
+        assert!(
+            doc.page_count() > prefix_pages,
+            "measuring the rest of the document must find more pages: {} then {}",
+            prefix_pages,
+            doc.page_count(),
+        );
+
+        // And the converged count is the one a document laid out whole has.
+        let whole = open_whole(24_000);
+        assert_eq!(
+            doc.page_count(),
+            whole.page_count(),
+            "a document measured in the background must end up the same document",
+        );
+    }
+
+    /// `extendMeasures` is safe and cheap on a body that was never partial, so
+    /// a host can drive it unconditionally instead of asking how the document
+    /// opened — the branch it would otherwise write is the one that gets it
+    /// wrong.
+    #[test]
+    fn extending_a_whole_body_is_a_no_op_that_reports_completion() {
+        let mut doc = open_whole(600);
+        let before = doc.page_count();
+        assert!(doc.extend_measures(1_000));
+        assert!(doc.page_count_is_exact());
+        assert_eq!(doc.page_count(), before);
+    }
+
     /// Dragging a shape inside a group moves THAT SHAPE, and leaves the group
     /// where it is.
     ///
@@ -23589,6 +23816,119 @@ mod tests {
             (1..=101).contains(&tail),
             "tail window projected {tail} blocks"
         );
+    }
+
+    /// **The class guard for `docs/116`.** A read that answers a question about
+    /// the whole document must cost a number of whole-document scans that does
+    /// not grow with the document.
+    ///
+    /// Complexity, not timing: the defect this catches is one id lookup per
+    /// node, and a wall-clock budget cannot tell a quadratic shape from a slow
+    /// machine. `casual_doc_edit::document_scans` counts the two entry points
+    /// every by-id read goes through (`surface_block_lists`, `surface_of`), so
+    /// "scans grew when the document did" *is* the defect, stated directly.
+    ///
+    /// Every row here is an operation the host can reach from a panel, a click
+    /// or the status bar. A new one that enumerates the document belongs in
+    /// this list — that is what stops the next panel from shipping the same
+    /// hang.
+    #[test]
+    fn document_wide_reads_do_not_scan_the_document_once_per_node() {
+        // Small on purpose: the shape shows at any size, and the mutation this
+        // guard exists to catch must fail FAST rather than hang the suite.
+        const SMALL: usize = 400;
+        // Every by-id family already goes through at most a handful of scans.
+        // Well above what any row below needs, well below `SMALL`.
+        const CEILING: usize = 16;
+
+        type Read = fn(&WasmDocument);
+        let reads: [(&str, Read); 5] = [
+            ("documentOutline", |d| {
+                let _ = d.document_outline();
+            }),
+            ("accessibilityTreeWindow", |d| {
+                let _ = d.accessibility_tree_window(0, 600);
+            }),
+            ("objectAt — every pointerdown", |d| {
+                let _ = d.object_at(1, 1_000, 1_000);
+            }),
+            ("documentStats", |d| {
+                let _ = d.document_stats();
+            }),
+            ("pageCount", |d| {
+                let _ = d.page_count();
+            }),
+        ];
+
+        let small = open_document(&text_of_lines(SMALL)).expect("open small");
+        let large = open_document(&text_of_lines(SMALL * 2)).expect("open 2x");
+        let scans = |document: &WasmDocument, read: Read| {
+            casual_doc_edit::reset_document_scans();
+            read(document);
+            casual_doc_edit::document_scans()
+        };
+
+        for (name, read) in reads {
+            let one = scans(&small, read);
+            let two = scans(&large, read);
+            assert!(
+                one <= CEILING,
+                "{name} scanned the whole document {one} times on a {SMALL}-block document; \
+                 a document-wide read resolves ids once, not once per node",
+            );
+            assert_eq!(
+                one,
+                two,
+                "{name} scanned the document {one} times at {SMALL} blocks and {two} times at \
+                 {} — the cost grows with the document, which is the quadratic shape that hung \
+                 the Outline panel (`docs/116`)",
+                SMALL * 2,
+            );
+        }
+    }
+
+    /// The ordering the caret, `order_endpoints` and `selection_subranges`
+    /// resolve positions against lists every paragraph ONCE.
+    ///
+    /// It used to append headers, footers, footnotes and endnotes a second time
+    /// by hand, after the walk that already includes them, so every
+    /// running-content and note paragraph was in the list twice and every
+    /// consumer walked it twice. Non-vacuous by construction: the assertion
+    /// below fails if the fixture has no header paragraph to be duplicated.
+    #[test]
+    fn the_paragraph_ordering_lists_every_paragraph_once() {
+        const HEADER_FOOTER_DOCX: &[u8] =
+            include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx");
+        let document = open_document(HEADER_FOOTER_DOCX).expect("open corpus docx");
+        let ordered = document.ordered_paragraphs();
+
+        let header_ids: Vec<NodeId> = document
+            .document
+            .definitions()
+            .headers
+            .iter()
+            .flat_map(|(_, header)| {
+                let mut ids = Vec::new();
+                visit_paragraphs(&header.blocks, &mut |paragraph| ids.push(paragraph.id));
+                ids
+            })
+            .collect();
+        assert!(
+            !header_ids.is_empty(),
+            "the fixture must carry header paragraphs, or this guard proves nothing",
+        );
+        for id in &header_ids {
+            let count = ordered.iter().filter(|(node, _)| node == id).count();
+            assert_eq!(count, 1, "header paragraph {id} appears {count} times");
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for (node, _) in &ordered {
+            assert!(
+                seen.insert(*node),
+                "paragraph {node} appears more than once"
+            );
+        }
     }
 
     /// The window follows the caret only if the host can locate it.
@@ -32826,8 +33166,12 @@ mod tests {
         let large = lookup_visits(&large_doc, |d| {
             assert!(d.document_outline().is_empty());
         });
+        // Zero at both sizes is the strongest outcome, not a hole: the walk now
+        // carries each paragraph, so it resolves no id at all and there is no
+        // ratio to take. Reintroducing a per-node `paragraph_properties` makes
+        // the count nonzero AND quadratic, which fails the ratio arm.
         assert!(
-            large < small * 3,
+            large < small * 3 || (small == 0 && large == 0),
             "outline work must roughly double, not quadruple: {small} block visits \
              at {small_n} paragraphs and {large} at {}",
             small_n * 2

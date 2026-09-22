@@ -23,6 +23,14 @@
 //   reporting the document open. This is the "patience ceiling" half: it is
 //   linear in blocks and it is `docs/104` HF-077, not something windowing
 //   fixes (`docs/113` §6.4 measured the shaping pass as unchanged).
+// - **blocked** — the LONGEST single main-thread task during the open, and the
+//   list of every task over 50 ms. This is the number the ceiling should be
+//   decided on, and the reason `MAX_VIEWER_BLOCKS` was moved on the wrong
+//   evidence once already: "it completed in 110 s" was read as a document this
+//   size being openable, when what it means is a tab that is dead for 110 s.
+//   Time to COMPLETE is patience; time the main thread is unavailable is
+//   whether the page is a page at all — nothing paints, no click lands, no
+//   progress bar can move and no cancel button can be pressed (`docs/116`).
 // - **wasm memory** — `WebAssembly.Memory.buffer.byteLength` after the open.
 //   Linear memory never shrinks, so this reading IS the high-water mark, and
 //   it is the number that decides whether a document opens at all: past a
@@ -78,6 +86,27 @@ async function wasmBytes(page) {
 
 const mib = (bytes) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 
+/** Starts collecting main-thread long tasks in the page. */
+async function watchLongTasks(page) {
+  await page.evaluate(() => {
+    window.__ceilingTasks = [];
+    window.__ceilingObserver?.disconnect();
+    window.__ceilingObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) window.__ceilingTasks.push(Math.round(entry.duration));
+    });
+    window.__ceilingObserver.observe({ entryTypes: ["longtask"] });
+  });
+}
+
+/** The tasks seen since `watchLongTasks`, longest first. Entries are delivered
+ *  on a later turn of the event loop, so this gives the observer one. */
+async function longTasksSeen(page) {
+  const tasks = await page.evaluate(
+    () => new Promise((resolve) => setTimeout(() => resolve(window.__ceilingTasks ?? []), 300)),
+  );
+  return [...tasks].sort((a, b) => b - a);
+}
+
 test.describe("viewer ceiling measurement", () => {
   test.skip(
     !process.env.MEASURE_VIEWER_CEILING,
@@ -109,6 +138,7 @@ test.describe("viewer ceiling measurement", () => {
       });
       await gotoEditor(page);
       const baseline = await wasmBytes(page);
+      await watchLongTasks(page);
 
       const started = Date.now();
       // Playwright refuses to marshal more than 50 MB inline, which is 1.56
@@ -145,6 +175,9 @@ test.describe("viewer ceiling measurement", () => {
         )
         .then((handle) => handle.jsonValue());
       const elapsed = (Date.now() - started) / 1000;
+      // Read BEFORE anything else is measured, so the tasks belong to the open
+      // and not to this probe's own questions.
+      const tasks = await longTasksSeen(page);
 
       const after = await wasmBytes(page);
       const scrollHeight = await page.evaluate(
@@ -249,6 +282,10 @@ test.describe("viewer ceiling measurement", () => {
           `| ${paragraphs.toLocaleString("en-US")}`,
           settled,
           `${elapsed.toFixed(1)} s`,
+          // Time to interactive, not time to complete: the longest stretch the
+          // main thread was unavailable, then every task over 50 ms.
+          `blocked ${tasks[0] ?? 0} ms`,
+          `tasks [${tasks.slice(0, 6).join(", ")}${tasks.length > 6 ? ", …" : ""}]`,
           mib(after),
           `(+${mib(after - baseline)})`,
           `heap ${mib(heap)}`,

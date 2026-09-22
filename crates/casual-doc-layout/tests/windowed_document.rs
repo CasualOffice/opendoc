@@ -40,17 +40,21 @@ use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_layout::windowed::ScrollCoalescer;
 use casual_doc_layout::windowed::ScrollDecision;
 use casual_doc_layout::windowed::WindowPolicy;
+use casual_doc_layout::windowed::extend_measures;
 use casual_doc_layout::windowed::measure_document;
+use casual_doc_layout::windowed::measure_document_prefix;
 use casual_doc_layout::windowed::page_paint_bytes;
 use casual_doc_layout::windowed::window_of;
 use casual_doc_model::NodeId;
 use casual_doc_model::v1::{
-    AnchorHorizontal, AnchorVertical, AnchoredDrawing, BlockNode, Definitions, Document,
-    DrawingAnchor, Extent, Field, FieldKind, HeaderFooter, HeaderFooterId, HeaderFooterKind,
-    HeaderFooterRef, HorizontalAnchor, HorizontalPosition, InlineNode, LineNumberRestart,
-    LineNumbering, MediaId, MediaReference, NumberFormat, PageMargins, PageNumbering, PageSize,
-    Paragraph, ParagraphProperties, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
-    Spacing, VerticalAnchor, VerticalPosition, WrapDistances, WrapMode,
+    AbstractNumbering, AbstractNumberingId, AnchorHorizontal, AnchorVertical, AnchoredDrawing,
+    BlockNode, Definitions, Document, DrawingAnchor, Extent, Field, FieldKind, HeaderFooter,
+    HeaderFooterId, HeaderFooterKind, HeaderFooterRef, HorizontalAnchor, HorizontalPosition,
+    InlineNode, LevelSuffix, LineNumberRestart, LineNumbering, MediaId, MediaReference,
+    NumberFormat, NumberingInstance, NumberingInstanceId, NumberingLevel, NumberingRef,
+    PageMargins, PageNumbering, PageSize, Paragraph, ParagraphProperties, Run, RunProperties,
+    SectionBoundary, SectionColumns, SectionId, Spacing, VerticalAnchor, VerticalPosition,
+    WrapDistances, WrapMode,
 };
 
 fn node(id: u64) -> NodeId {
@@ -914,4 +918,193 @@ fn no_anchored_object_means_no_floats() {
              floats, so the refusal is not the superset it claims to be"
         );
     }
+}
+
+/// A long numbered list: the shape whose measures depend on state that crosses
+/// a block boundary.
+///
+/// A list marker's width is the whole point. Restart the counters part-way and
+/// `10.` becomes `1.`, which is narrower, which can move where the paragraph's
+/// first line breaks and therefore how tall it is — a difference that shows up
+/// as a page boundary in the wrong place rather than as a wrong-looking number.
+/// Without this in the corpus a chunked measure that forgot its counters looks
+/// correct.
+fn numbered(count: u64) -> Document {
+    let abs_id = AbstractNumberingId::new(node(600));
+    let inst_id = NumberingInstanceId::new(node(601));
+    let mut definitions = Definitions::default();
+    definitions.abstract_numbering.insert(
+        abs_id,
+        AbstractNumbering {
+            levels: vec![NumberingLevel {
+                level: 0,
+                start: 1,
+                num_fmt: Some(NumberFormat::Decimal),
+                lvl_text: Some("%1.".to_owned()),
+                lvl_jc: None,
+                suff: Some(LevelSuffix::Space),
+                is_lgl: false,
+                paragraph_properties: None,
+                run_properties: None,
+                style_ref: None,
+                lvl_restart: None,
+                pstyle: None,
+            }],
+            multi_level_type: None,
+            num_style_link: None,
+            style_link: None,
+        },
+    );
+    definitions.numbering.insert(
+        inst_id,
+        NumberingInstance {
+            abstract_ref: abs_id,
+            overrides: Vec::new(),
+        },
+    );
+    definitions.sections = vec![section(9)];
+    document_with(
+        (0..count)
+            .map(|i| {
+                // Item text of VARYING length. With the same text on every
+                // item, every marker widens at the same time and the line
+                // breaking either flips for all of them or for none — so a
+                // chunked pass that restarted the counters could produce an
+                // identical page list by luck. Varying the length puts some
+                // items against the wrap boundary at any marker width, which
+                // is what makes losing the counters observable.
+                paragraph(
+                    60_000 + i * 2,
+                    ParagraphProperties {
+                        numbering: Some(NumberingRef {
+                            instance: inst_id,
+                            level: 0,
+                        }),
+                        ..ParagraphProperties::default()
+                    },
+                    &format!(
+                        "The quick brown fox jumps over the lazy dog while the \
+                         editor reflows this paragraph{}",
+                        // Two characters at a time, sweeping a 60-character
+                        // window: the marker only widens by a digit or two, so
+                        // the fixture has to put items within a character of
+                        // the wrap point for that to be observable at all.
+                        " x".repeat((i % 30) as usize),
+                    ),
+                )
+            })
+            .collect(),
+        definitions,
+    )
+}
+
+/// **The property the prefix measure rests on:** a document measured in chunks
+/// is the same document as one measured whole.
+///
+/// `docs/116` §7 trades an exact page count at open for a first frame that
+/// arrives in bounded time. That trade is only sound if the pages the prefix
+/// reports are the real ones — not approximations refined later — because they
+/// are what the reader scrolls, clicks and prints against from the first frame.
+///
+/// So this asserts equality field for field, at several chunk sizes, over the
+/// three shapes that can break at a seam: plain prose (nothing crosses),
+/// `w:contextualSpacing` (the gap between two adjacent paragraphs, which
+/// reaches one block in each direction), and a numbered list (counters, which
+/// reach the whole way).
+#[test]
+fn measuring_in_chunks_equals_measuring_whole() {
+    let shaper = ParleyShaper::new();
+    for (name, document) in [
+        ("prose", plain(240)),
+        ("contextual spacing", contextual(240)),
+        ("numbered list", numbered(240)),
+    ] {
+        let whole = measure_document(&document, &shaper).expect("windowable");
+        assert!(whole.is_complete(), "{name}: a whole measure is complete");
+
+        for budget in [1, 2, 7, 64, 238] {
+            let mut chunked =
+                measure_document_prefix(&document, &shaper, budget).expect("windowable");
+            assert!(
+                !chunked.is_complete(),
+                "{name}/{budget}: a prefix of a 240-block document is not the whole of it",
+            );
+            let mut rounds = 0;
+            while !extend_measures(&mut chunked, &document, &shaper, budget) {
+                rounds += 1;
+                assert!(
+                    rounds < 1_000,
+                    "{name}/{budget}: extension did not terminate"
+                );
+            }
+            assert_eq!(
+                chunked.progress(),
+                whole.progress(),
+                "{name}/{budget}: every block measured",
+            );
+            assert_eq!(
+                chunked.pages, whole.pages,
+                "{name}/{budget}: a chunked measure must produce the SAME pages, \
+                 not similar ones",
+            );
+            assert_eq!(
+                chunked.checkpoints, whole.checkpoints,
+                "{name}/{budget}: and the same checkpoints, or a window resumed \
+                 from one lands somewhere the whole pass never put a page",
+            );
+        }
+    }
+}
+
+/// A prefix's pages are final, not provisional: extending only ever appends.
+///
+/// This is the half that makes the trade honest. If measuring more of the
+/// document could move a page the reader is already looking at, the prefix
+/// would be an estimate presented as a page, and every click on it would be
+/// against geometry about to change.
+#[test]
+fn extending_a_prefix_never_moves_a_page_it_already_reported() {
+    let shaper = ParleyShaper::new();
+    let document = contextual(200);
+    let mut measures = measure_document_prefix(&document, &shaper, 16).expect("windowable");
+    let mut settled: Vec<PageOutline> = Vec::new();
+    loop {
+        // Every page but the last is settled: the last can still grow, because
+        // the block after the prefix may continue onto it.
+        let reported = &measures.pages[..measures.pages.len().saturating_sub(1)];
+        assert!(
+            reported.starts_with(&settled),
+            "a page already reported was rewritten by a later extension",
+        );
+        settled = reported.to_vec();
+        if extend_measures(&mut measures, &document, &shaper, 16) {
+            break;
+        }
+    }
+    assert_eq!(
+        measures.pages,
+        measure_document(&document, &shaper)
+            .expect("windowable")
+            .pages,
+    );
+}
+
+/// The estimate is an estimate, and it says so.
+#[test]
+fn the_page_count_is_marked_inexact_until_the_document_is_measured() {
+    let shaper = ParleyShaper::new();
+    let document = plain(400);
+    let mut measures = measure_document_prefix(&document, &shaper, 40).expect("windowable");
+    assert!(!measures.is_complete());
+    assert!(
+        measures.estimated_page_count() > measures.page_count(),
+        "an estimate that equals the measured count reads as exact and is not",
+    );
+    while !extend_measures(&mut measures, &document, &shaper, 40) {}
+    assert!(measures.is_complete());
+    assert_eq!(
+        measures.estimated_page_count(),
+        measures.page_count(),
+        "once complete the estimate IS the count",
+    );
 }

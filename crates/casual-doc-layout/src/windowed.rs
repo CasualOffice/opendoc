@@ -63,14 +63,16 @@ use crate::document_layout::blocks_with_endnotes;
 use crate::document_layout::build_section_plans;
 use crate::document_layout::mirrored_page_config;
 use crate::document_layout::referenced_endnotes;
+use crate::flow::MeasureResume;
 use crate::flow::NoteFlow;
 use crate::flow::ReviewView;
-use crate::flow::build_measures_for_blocks_inner;
+use crate::flow::build_measures_for_blocks_resumed;
 use crate::flow::flow_body_range;
 use crate::flow::single_section_line_grid;
 use crate::incremental::PageRange;
 use crate::incremental::ViewportLayout;
 use crate::incremental::VisiblePage;
+use crate::measure::FragmentMeasure;
 use crate::measure::PageOutline;
 use crate::note_numbering::NoteLabels;
 use crate::note_numbering::resolve_note_labels;
@@ -83,6 +85,7 @@ use crate::paginate::PageConfig;
 use crate::paginate::page_number_label_at;
 use crate::paginate::paginate_from_based;
 use crate::paginate::paginate_measures;
+use crate::paginate::paginate_measures_from;
 use crate::paginate::resolve_fields_labeled_with_total;
 use crate::running::place_running_content_on_page;
 use crate::text::LineShaper;
@@ -193,13 +196,72 @@ pub struct DocumentMeasures {
     /// of the document on every scroll — which, on the file this work exists
     /// for, is a 1.3M-block walk to answer "no, there are no endnotes".
     endnotes: Vec<NoteId>,
+    /// Top-level blocks in the flowed sequence, measured or not.
+    total_blocks: usize,
+    /// How many of them have **final** measures. Equal to `total_blocks` once
+    /// the document is measured whole; below it while a prefix is still being
+    /// extended (`docs/116` §7).
+    committed_blocks: usize,
+    /// The block the next chunk re-flows for context. One before
+    /// `committed_blocks`, because the paragraph before a chunk's first is what
+    /// `w:contextualSpacing` compares it against.
+    resume_block: usize,
+    /// The list counters as of entering `resume_block`.
+    numbering: MeasureResume,
+    /// The committed measures from `tail_base` onward — everything a resumed
+    /// pagination can read.
+    ///
+    /// Not the whole measure list: an extension re-paginates from the last
+    /// checkpoint, so nothing before it is ever read again, and retaining it
+    /// would put the measure tier's fragments (not just its page outlines)
+    /// resident for the whole document. The tail is bounded by one checkpoint
+    /// interval of pages.
+    tail: Vec<FragmentMeasure>,
+    /// The galley index `tail[0]` sits at.
+    tail_base: u32,
 }
 
 impl DocumentMeasures {
-    /// The document's exact page count.
+    /// The pages measured so far. Exact for the part of the document that has
+    /// been measured, which is all of it once [`is_complete`](Self::is_complete)
+    /// is true.
     #[must_use]
     pub fn page_count(&self) -> usize {
         self.pages.len()
+    }
+
+    /// Whether every block has final measures, so [`page_count`](Self::page_count)
+    /// is the document's page count and not a prefix's.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.committed_blocks >= self.total_blocks
+    }
+
+    /// How much of the document has final measures, as measured and total
+    /// top-level blocks. What a host turns into a progress indicator.
+    #[must_use]
+    pub const fn progress(&self) -> (usize, usize) {
+        (self.committed_blocks, self.total_blocks)
+    }
+
+    /// The document's page count when it is known, and an **estimate** scaled
+    /// from the measured prefix while it is not.
+    ///
+    /// Never rounds down to the measured count while blocks remain: a reader
+    /// told "42 pages" about a document still being measured would be told a
+    /// number that is wrong in one direction only. A caller must present this
+    /// as approximate whenever [`is_complete`](Self::is_complete) is false —
+    /// `NUMPAGES`, the page indicator and print all read the same flag.
+    #[must_use]
+    pub fn estimated_page_count(&self) -> usize {
+        if self.is_complete() || self.committed_blocks == 0 {
+            return self.pages.len();
+        }
+        let scaled =
+            (self.pages.len() as u128 * self.total_blocks as u128) / self.committed_blocks as u128;
+        usize::try_from(scaled)
+            .unwrap_or(usize::MAX)
+            .max(self.pages.len() + 1)
     }
 
     /// The page geometry every page in this document uses.
@@ -246,6 +308,30 @@ pub fn measure_document(
     document: &Document,
     shaper: &dyn LineShaper,
 ) -> Result<DocumentMeasures, NotWindowable> {
+    measure_document_prefix(document, shaper, usize::MAX)
+}
+
+/// [`measure_document`] over the first `block_budget` top-level blocks only,
+/// leaving the rest for [`extend_measures`].
+///
+/// `docs/116` §7. The measure pass is 88% of what opening a large document
+/// costs and all of it runs before the first frame; a prefix is what makes the
+/// first frame arrive in a bounded time regardless of how long the document is.
+/// The pages it produces are not approximations of the real ones — pagination
+/// is a forward fill and a windowable document has nothing that can move an
+/// earlier boundary from later in the document — so the prefix's page
+/// boundaries are final. Only the page *count* is unknown, and
+/// [`DocumentMeasures::is_complete`] says so rather than letting a caller
+/// present an estimate as exact.
+///
+/// # Errors
+///
+/// [`NotWindowable`], exactly as [`measure_document`].
+pub fn measure_document_prefix(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    block_budget: usize,
+) -> Result<DocumentMeasures, NotWindowable> {
     let sections = &document.definitions().sections;
     if sections.len() > 1 {
         return Err(NotWindowable::MultipleSections);
@@ -279,31 +365,223 @@ pub fn measure_document(
 
     let endnotes = referenced_endnotes(document.body());
     let blocks = blocks_with_endnotes(document, document.body(), &endnotes);
-    let (measures, block_starts) = build_measures_for_blocks_inner(
-        document,
-        shaper,
-        &blocks,
-        content_width,
-        None,
-        ReviewView::Editing,
-        NoteFlow::with_labels(&labels),
-        single_section_line_grid(document),
-    );
-    let fragment_count = measures.len();
-    let layout = paginate_measures(&measures, &config, DEFAULT_CHECKPOINT_INTERVAL);
-
-    Ok(DocumentMeasures {
-        pages: layout.pages,
-        checkpoints: layout.checkpoints,
-        block_starts,
-        fragment_count,
+    let mut measures = DocumentMeasures {
+        pages: Vec::new(),
+        checkpoints: Vec::new(),
+        block_starts: Vec::new(),
+        fragment_count: 0,
         config,
         plan: plans.into_iter().next().expect("one section, one plan"),
         content_width,
         resume: classify_resume(&blocks),
         labels,
         endnotes,
-    })
+        total_blocks: blocks.len(),
+        committed_blocks: 0,
+        resume_block: 0,
+        numbering: MeasureResume::default(),
+        tail: Vec::new(),
+        tail_base: 0,
+    };
+    measure_chunk(&mut measures, document, shaper, &blocks, block_budget);
+    Ok(measures)
+}
+
+/// The smallest chunk that can commit anything. `block_budget` counts blocks
+/// **committed**, not blocks flowed, so the floor is one.
+const MIN_CHUNK_BLOCKS: usize = 1;
+
+/// Measures the next `block_budget` blocks of a document whose measures are a
+/// prefix, and re-paginates from the last checkpoint.
+///
+/// Returns whether the document is now measured whole. Cheap to call on one
+/// that already is: it does nothing and answers `true`.
+///
+/// # Panics
+///
+/// If `document` is not the document `measures` was produced from. The blocks
+/// are re-derived from it, and measuring a prefix of one document into the
+/// measures of another would produce a page list belonging to neither.
+pub fn extend_measures(
+    measures: &mut DocumentMeasures,
+    document: &Document,
+    shaper: &dyn LineShaper,
+    block_budget: usize,
+) -> bool {
+    if measures.is_complete() {
+        return true;
+    }
+    let blocks = blocks_with_endnotes(document, document.body(), &measures.endnotes);
+    assert_eq!(
+        blocks.len(),
+        measures.total_blocks,
+        "extend_measures was given a different document from the one measured",
+    );
+    measure_chunk(measures, document, shaper, &blocks, block_budget);
+    measures.is_complete()
+}
+
+/// Flows one chunk and commits the blocks whose measures it settles.
+///
+/// The chunk is `blocks[resume_block ..= end]`, and it commits
+/// `blocks[resume_block + 1 .. end]` — one block of overlap at each end,
+/// discarded:
+///
+/// - **the first**, because `w:contextualSpacing` suppresses the gap between
+///   two adjacent paragraphs of the same style, so the chunk's first committed
+///   block needs the one before it present to compare against. It is already
+///   committed; this pass only re-establishes the context;
+/// - **the last**, because two things reach one block *forward* — the
+///   space-after half of that same collapse, and the drop-cap pair, which only
+///   exists when a paragraph follows the head. Its measures here would be
+///   provisional, so the next chunk commits it instead.
+///
+/// The counters cross the seam through [`MeasureResume`]; nothing else the flow
+/// carries survives a top-level block boundary.
+fn measure_chunk(
+    measures: &mut DocumentMeasures,
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    block_budget: usize,
+) {
+    let from = measures.resume_block;
+    let budget = block_budget.max(MIN_CHUNK_BLOCKS);
+    // `block_budget` is how many blocks to COMMIT; the flowed slice is that
+    // plus the trailing context block, and it starts at `resume_block` rather
+    // than at the commit boundary so the leading context block is in it too.
+    let to = measures
+        .committed_blocks
+        .saturating_add(budget)
+        .saturating_add(1)
+        .min(blocks.len());
+    if to <= from {
+        return;
+    }
+    let (chunk, starts, next_resume) = build_measures_for_blocks_resumed(
+        document,
+        shaper,
+        &blocks[from..to],
+        measures.content_width,
+        None,
+        ReviewView::Editing,
+        NoteFlow::with_labels(&measures.labels),
+        single_section_line_grid(document),
+        measures.numbering.clone(),
+    );
+
+    // Local block indices this chunk commits. The leading block is context
+    // rather than content exactly when it has already been committed — which
+    // is every chunk but the first, including the second, whose `resume_block`
+    // is 0 and whose leading block is therefore block 0.
+    let leading = usize::from(from < measures.committed_blocks);
+    let reaches_end = to == blocks.len();
+    let local_end = (to - from) - usize::from(!reaches_end);
+    if local_end <= leading {
+        // Nothing to commit: the chunk is one block of context and no body.
+        // Only reachable at the very end of a document, where `reaches_end`
+        // makes it impossible, so this is a guard against a future budget of 1.
+        return;
+    }
+
+    let first_fragment = starts.get(leading).copied().unwrap_or(0) as usize;
+    let last_fragment = starts
+        .get(local_end)
+        .map_or(chunk.len(), |index| *index as usize);
+    let base = measures.fragment_count as u32;
+    for local in leading..local_end {
+        let start = starts.get(local).copied().unwrap_or(0) as usize;
+        measures
+            .block_starts
+            .push(base + (start - first_fragment) as u32);
+    }
+    let committed = &chunk[first_fragment..last_fragment];
+    measures.tail.extend_from_slice(committed);
+    measures.fragment_count += committed.len();
+    measures.committed_blocks = from + local_end;
+    measures.resume_block = measures.committed_blocks.saturating_sub(1);
+    measures.numbering = next_resume;
+
+    repaginate_tail(measures);
+}
+
+/// Re-paginates from the last checkpoint over the retained tail, and trims the
+/// tail back to what the new last checkpoint needs.
+///
+/// Resuming rather than re-running is what keeps extending a long document
+/// linear in its length: a whole `paginate_measures` per chunk would be
+/// quadratic, which is the shape `docs/116` exists to stop introducing.
+fn repaginate_tail(measures: &mut DocumentMeasures) {
+    let resume_from = measures
+        .checkpoints
+        .iter()
+        .rev()
+        .find(|checkpoint| {
+            checkpoint.at.fragment >= measures.tail_base
+                && checkpoint
+                    .table_headers
+                    .iter()
+                    .all(|index| *index >= measures.tail_base)
+        })
+        .cloned();
+
+    let layout = match &resume_from {
+        Some(checkpoint) => {
+            measures.pages.truncate(checkpoint.page_index as usize);
+            measures
+                .checkpoints
+                .retain(|recorded| recorded.page_index <= checkpoint.page_index);
+            paginate_measures_from(
+                &measures.tail,
+                measures.tail_base,
+                &measures.config,
+                DEFAULT_CHECKPOINT_INTERVAL,
+                checkpoint,
+            )
+        }
+        None => {
+            // No checkpoint the tail covers, so the tail is the whole galley —
+            // a document below one checkpoint interval, or one whose boundaries
+            // are never resumable. Both re-paginate whole, over a tail that is
+            // correspondingly short.
+            debug_assert_eq!(
+                measures.tail_base, 0,
+                "a tail with no checkpoint is the galley"
+            );
+            measures.pages.clear();
+            measures.checkpoints.clear();
+            paginate_measures(
+                &measures.tail,
+                &measures.config,
+                DEFAULT_CHECKPOINT_INTERVAL,
+            )
+        }
+    };
+    measures.pages.extend(layout.pages);
+    measures.checkpoints.extend(layout.checkpoints);
+
+    // Everything before the last checkpoint is unreachable from here on.
+    if measures.is_complete() {
+        measures.tail = Vec::new();
+        measures.tail_base = measures.fragment_count as u32;
+        return;
+    }
+    let Some(last) = measures.checkpoints.last() else {
+        return;
+    };
+    let keep_from = last
+        .table_headers
+        .iter()
+        .copied()
+        .chain(core::iter::once(last.at.fragment))
+        .min()
+        .unwrap_or(last.at.fragment);
+    if keep_from > measures.tail_base {
+        measures
+            .tail
+            .drain(..(keep_from - measures.tail_base) as usize);
+        measures.tail_base = keep_from;
+    }
 }
 
 /// Whether any block references a **footnote**. Endnotes are fine — their

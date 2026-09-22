@@ -68,7 +68,8 @@ use casual_doc_layout::units::Size;
 use casual_doc_layout::windowed::DocumentMeasures;
 use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_layout::windowed::WindowPolicy;
-use casual_doc_layout::windowed::measure_document;
+use casual_doc_layout::windowed::extend_measures;
+use casual_doc_layout::windowed::measure_document_prefix;
 use casual_doc_layout::windowed::window_of;
 use casual_doc_model::v1::Document;
 
@@ -95,6 +96,46 @@ impl BodyLayout {
         match self {
             Self::Whole(layout) => layout.page_count(),
             Self::Windowed(body) => body.measures.page_count(),
+        }
+    }
+
+    /// Whether [`page_count`](Self::page_count) is the document's page count
+    /// rather than a measured prefix's.
+    ///
+    /// A whole body is always exact: every page exists. A windowed one is
+    /// exact once its background measure has reached the end.
+    pub(crate) fn page_count_is_exact(&self) -> bool {
+        match self {
+            Self::Whole(_) => true,
+            Self::Windowed(body) => body.measures.is_complete(),
+        }
+    }
+
+    /// The page count when it is known, and an estimate scaled from the
+    /// measured prefix while it is not. Paired with
+    /// [`page_count_is_exact`](Self::page_count_is_exact), never presented
+    /// alone.
+    pub(crate) fn estimated_page_count(&self) -> usize {
+        match self {
+            Self::Whole(layout) => layout.page_count(),
+            Self::Windowed(body) => body.measures.estimated_page_count(),
+        }
+    }
+
+    /// Measures the next `block_budget` blocks of a windowed body. Returns
+    /// whether the document is now measured whole; a whole body was never
+    /// partial and answers `true`.
+    pub(crate) fn extend(
+        &mut self,
+        document: &Document,
+        shaper: &ParleyShaper,
+        block_budget: usize,
+    ) -> bool {
+        match self {
+            Self::Whole(_) => true,
+            Self::Windowed(body) => {
+                extend_measures(&mut body.measures, document, shaper, block_budget)
+            }
         }
     }
 
@@ -186,7 +227,7 @@ impl BodyLayout {
         let Self::Windowed(body) = self else {
             return;
         };
-        let Ok(measures) = measure_document(document, shaper) else {
+        let Ok(measures) = measure_document_prefix(document, shaper, OPEN_BLOCK_BUDGET) else {
             // Unreachable in practice: every `NotWindowable` reason is a property
             // of the document (sections, columns, footnotes, anchored objects,
             // line numbering, per-page note restart), none of which registering a
@@ -201,6 +242,20 @@ impl BodyLayout {
         body.build(document, shaper, at);
     }
 }
+
+/// How many top-level blocks are measured before the first frame.
+///
+/// `docs/116` §3 measured the measure pass at ~6 µs/block natively and ~13 µs
+/// in the browser, so this is the open path's time budget written as the only
+/// unit the engine can enforce it in: ~260 ms of main thread in a browser,
+/// whatever the document's length. The rest is measured by
+/// [`BodyLayout::extend`] between frames.
+///
+/// Deliberately far above a screenful. A budget sized to the first window
+/// would make the second window wait for a measure, and the point is that
+/// scrolling stays ahead of the reader; this one covers a document of ordinary
+/// length outright, so nothing but a very long one ever opens partial.
+const OPEN_BLOCK_BUDGET: usize = 20_000;
 
 /// A document whose pages are derived one window at a time.
 #[derive(Debug)]
@@ -228,7 +283,7 @@ impl WindowedBody {
     /// numbering, per-page note restart. Such a document is not refused by this
     /// returning `Err`; it is laid out whole instead (see `open_document_as`).
     pub(crate) fn open(document: &Document, shaper: &ParleyShaper) -> Result<Self, NotWindowable> {
-        let measures = measure_document(document, shaper)?;
+        let measures = measure_document_prefix(document, shaper, OPEN_BLOCK_BUDGET)?;
         let mut body = Self {
             measures,
             policy: WindowPolicy::default(),

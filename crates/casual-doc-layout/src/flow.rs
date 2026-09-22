@@ -201,6 +201,19 @@ struct FlowCtx<'a> {
     /// measurement (intrinsic-width) context threads a throwaway state so it never
     /// perturbs the real counters.
     numbering: NumberingState,
+    /// The counter state as of entering the **second-to-last** top-level block
+    /// of the body being flowed, captured only on an outermost
+    /// ([`BlockMarks::Record`]) pass.
+    ///
+    /// This one point is what makes a chunked measure pass equal a whole one
+    /// (`docs/116` §7). A chunk is flowed with one block of overlap at each
+    /// end — the first for the previous paragraph's style, which
+    /// `w:contextualSpacing` compares against, and the last for the two things
+    /// that reach one block forward (the space-after collapse and the drop-cap
+    /// pair). So the next chunk restarts at the second-to-last block of this
+    /// one, and it must restart with the counters this pass held *before*
+    /// flowing it — not after, which is all the pass's return value could say.
+    resume_snapshot: Option<NumberingState>,
     /// Cumulative `a:normAutofit@fontScale` applied to runs in the current text
     /// body (`100000` = 100%).
     text_scale: u32,
@@ -354,6 +367,7 @@ pub fn build_galley_with_report_view(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
         line_grid: single_section_line_grid(document),
@@ -467,6 +481,7 @@ pub(crate) fn build_galley_for_blocks_inner(
         review_view,
         notes,
         line_grid,
+        None,
         &mut galley,
         BlockMarks::Skip,
     );
@@ -551,6 +566,7 @@ pub(crate) fn flow_body_range(
         ReviewView::Editing,
         notes,
         line_grid,
+        None,
         &mut sink,
         BlockMarks::Skip,
     );
@@ -579,6 +595,7 @@ pub fn flow_body_into_sink<S: GalleySink + ?Sized>(
         ReviewView::Editing,
         NoteFlow::default(),
         single_section_line_grid(document),
+        None,
         sink,
         BlockMarks::Record,
     );
@@ -599,8 +616,7 @@ pub(crate) fn build_measures_for_blocks_inner(
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
 ) -> (Vec<FragmentMeasure>, Vec<u32>) {
-    let mut sink = MeasureSink::new();
-    flow_body_into(
+    let (measures, block_starts, _) = build_measures_for_blocks_resumed(
         document,
         shaper,
         blocks,
@@ -609,10 +625,65 @@ pub(crate) fn build_measures_for_blocks_inner(
         review_view,
         notes,
         line_grid,
+        MeasureResume::default(),
+    );
+    (measures, block_starts)
+}
+
+/// The list-counter state the next chunk of a measure pass must start from.
+///
+/// Not the state the pass *ended* in: chunks overlap by one block at each end
+/// (see `FlowCtx::resume_snapshot`, private to this module), so the next one restarts at the
+/// second-to-last block of this one and needs the counters as they were on
+/// entering it.
+///
+/// Measuring a document in chunks is only equal to measuring it whole if the
+/// second chunk knows the counters the first left behind: a `<w:numPr>`
+/// paragraph's marker is `10.` rather than `1.`, which is wider, which can
+/// change where its first line breaks and therefore how tall it is. Nothing
+/// else the flow carries survives a top-level block boundary — style, table and
+/// scale context are re-entered per block — so this one value is the whole of
+/// the resume state, and it is a `NumberingState`, not a summary of one.
+#[derive(Clone, Debug, Default)]
+pub struct MeasureResume {
+    numbering: NumberingState,
+}
+
+/// [`build_measures_for_blocks_inner`] resumed from a previous chunk's
+/// [`MeasureResume`], returning the state the next chunk must resume from.
+///
+/// `docs/116` §7: the open path measures a prefix and extends it in the
+/// background, and an extension that restarted the counters would produce a
+/// different document from the one a whole measure produces.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub(crate) fn build_measures_for_blocks_resumed(
+    document: &Document,
+    shaper: &dyn LineShaper,
+    blocks: &[BlockNode],
+    content_width: Twip,
+    exclusions: Option<&ParagraphFloatExclusions>,
+    review_view: ReviewView,
+    notes: NoteFlow<'_>,
+    line_grid: Option<LineGrid>,
+    resume: MeasureResume,
+) -> (Vec<FragmentMeasure>, Vec<u32>, MeasureResume) {
+    let mut sink = MeasureSink::new();
+    let numbering = flow_body_into(
+        document,
+        shaper,
+        blocks,
+        content_width,
+        exclusions,
+        review_view,
+        notes,
+        line_grid,
+        Some(resume.numbering),
         &mut sink,
         BlockMarks::Record,
     );
-    sink.finish_with_block_marks()
+    let (measures, block_starts) = sink.finish_with_block_marks();
+    (measures, block_starts, MeasureResume { numbering })
 }
 
 /// The shared body-flow constructor both tiers go through: one
@@ -631,9 +702,10 @@ fn flow_body_into<S: GalleySink + ?Sized>(
     review_view: ReviewView,
     notes: NoteFlow<'_>,
     line_grid: Option<LineGrid>,
+    resume: Option<NumberingState>,
     sink: &mut S,
     marks: BlockMarks,
-) {
+) -> NumberingState {
     let resolver = FontResolver::new();
     let mut report = FontResolutionReport::new();
     let palette = document
@@ -654,7 +726,8 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         table_style: None,
         sections: &document.definitions().sections,
         definitions: document.definitions(),
-        numbering: NumberingState::new(),
+        numbering: resume.unwrap_or_default(),
+        resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
         line_grid,
@@ -664,6 +737,10 @@ fn flow_body_into<S: GalleySink + ?Sized>(
         note_labels: notes.labels,
     };
     flow_blocks_into(blocks, shaper, content_width, &mut ctx, sink, marks);
+    // The snapshot when the pass took one (an outermost pass over two or more
+    // blocks); otherwise the state it ended in, which for a one-block or
+    // final chunk is the same thing.
+    ctx.resume_snapshot.take().unwrap_or(ctx.numbering)
 }
 
 /// Flows a header's or footer's block content into a galley of fragments at
@@ -757,6 +834,7 @@ fn flow_running_blocks(
         sections: &[],
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        resume_snapshot: None,
         text_scale,
         line_spacing_reduction,
         line_grid: None,
@@ -858,6 +936,7 @@ pub(crate) fn build_galley_cached_labeled(
         sections: &document.definitions().sections,
         definitions: document.definitions(),
         numbering: NumberingState::new(),
+        resume_snapshot: None,
         text_scale: 100_000,
         line_spacing_reduction: 0,
         line_grid: single_section_line_grid(document),
@@ -1368,6 +1447,12 @@ fn flow_blocks_into<S: GalleySink + ?Sized>(
     while index < blocks.len() {
         if marks == BlockMarks::Record {
             galley.mark_block();
+            // See `FlowCtx::resume_snapshot`. `len - 2` and not `len - 1`
+            // because the caller re-flows the last block for forward context
+            // and commits nothing from it.
+            if index + 2 == blocks.len() {
+                ctx.resume_snapshot = Some(ctx.numbering.clone());
+            }
         }
         if let (BlockNode::Paragraph(drop_cap), Some(BlockNode::Paragraph(body))) =
             (&blocks[index], blocks.get(index + 1))
@@ -2637,6 +2722,7 @@ fn block_intrinsic(
         // A throwaway counter state: measuring intrinsic widths must not advance the
         // document's real list counters.
         numbering: NumberingState::default(),
+        resume_snapshot: None,
         text_scale: ctx.text_scale,
         line_spacing_reduction: ctx.line_spacing_reduction,
         line_grid: ctx.line_grid,
@@ -3133,7 +3219,18 @@ pub fn node_plain_text_with_projection(
     out
 }
 
-fn append_node_plain_text(inlines: &[InlineNode], projection: ReviewProjection, out: &mut String) {
+/// [`node_plain_text_with_projection`] into a caller-owned buffer.
+///
+/// Public so a caller that asks the same question about every paragraph of a
+/// document can reuse one `String` instead of allocating one per paragraph and
+/// dropping it immediately — on a 1.3M-paragraph document that allocation was
+/// the bulk of the cost of ordering two endpoints (`docs/116` §4.3). It appends;
+/// clear the buffer between paragraphs.
+pub fn append_node_plain_text(
+    inlines: &[InlineNode],
+    projection: ReviewProjection,
+    out: &mut String,
+) {
     for inline in inlines {
         match inline {
             InlineNode::Run(run) => out.push_str(&run.text),
@@ -7427,6 +7524,7 @@ mod tests {
             sections: &[],
             definitions,
             numbering: NumberingState::new(),
+            resume_snapshot: None,
             text_scale: 100_000,
             line_spacing_reduction: 0,
             line_grid: None,
@@ -7484,6 +7582,7 @@ mod tests {
             sections: &[],
             definitions: &definitions,
             numbering: NumberingState::new(),
+            resume_snapshot: None,
             text_scale: 100_000,
             line_spacing_reduction: 0,
             line_grid: None,
@@ -11025,6 +11124,7 @@ mod tests {
                 sections: &definitions.sections,
                 definitions,
                 numbering: NumberingState::new(),
+                resume_snapshot: None,
                 text_scale: 100_000,
                 line_spacing_reduction: 0,
                 line_grid: None,
