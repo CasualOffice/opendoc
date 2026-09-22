@@ -235,6 +235,11 @@ pub enum PaintItem {
         /// The rotation/flip applied about the image's center (`a:xfrm`), if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transform: Option<ShapeTransform>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent.
+        /// `None` is fully opaque — which is what an absent `a:alphaModFix`
+        /// means, and how Word writes every picture that is not a watermark.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
     },
     /// A straight line / connector between two points (a floating DrawingML line
     /// shape or `wps:cxnSp` straight connector).

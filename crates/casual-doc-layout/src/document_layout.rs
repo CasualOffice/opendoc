@@ -1543,6 +1543,7 @@ mod cross_paragraph_float_tests {
             },
         );
         let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: node(901),
             media,
             extent: Extent {
@@ -1598,6 +1599,7 @@ mod cross_paragraph_float_tests {
             },
         );
         let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: node(921),
             media,
             extent: Extent {
@@ -1753,6 +1755,7 @@ mod cross_paragraph_float_tests {
             },
         );
         let drawing = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            opacity: None,
             id: node(941),
             media,
             extent: Extent {

@@ -2165,6 +2165,7 @@ mod tests {
             }],
         });
         second.images.push(InlineImage {
+            opacity: None,
             media: "word/media/image1.png".into(),
             origin: Point::new(Twip(20), Twip(260)),
             size: Size::new(Twip(40), Twip(50)),
@@ -3105,6 +3106,7 @@ mod tests {
         let mut tall_paragraph = multiline(22, 120, Twip(240), BreakControl::default());
         if let BlockFragment::Paragraph { lines, .. } = &mut tall_paragraph {
             lines.lines[70].images.push(InlineImage {
+                opacity: None,
                 media: "word/media/continuation.png".into(),
                 origin: Point::new(Twip(20), Twip(70 * 240 + 20)),
                 size: Size::new(Twip(80), Twip(80)),

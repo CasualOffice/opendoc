@@ -21,9 +21,9 @@ use casual_doc_model::v1::{
     MAX_SHAPE_PRESET_BYTES, MAX_TEXTBOX_DEPTH, MarkRevision, MarkRevisionKind, Math,
     MathExpression, MediaId, MoveKind, MoveRangeEnd, MoveRangeStart, NoBreakHyphen, NoteId,
     NoteKind, NoteNumberMark, NoteNumberRestart, NotePosition, NoteProperties, NoteReference,
-    PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering, PageOrientation,
-    PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties, PointEmu,
-    PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
+    OPACITY_FULL, PageBorderDisplay, PageBorderOffset, PageBorders, PageMargins, PageNumbering,
+    PageOrientation, PageSize, PageVerticalAlignment, PaperSource, Paragraph, ParagraphProperties,
+    PointEmu, PositionalTab, PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo,
     PropChange, Revision, RevisionKind, RgbColor, Rgba, Run, RunProperties, SchemeColor,
     SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
@@ -75,6 +75,7 @@ enum Segment {
         extent: Option<Extent>,
         descr: Option<String>,
         crop: Option<CropRect>,
+        opacity: Option<u32>,
         border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
@@ -199,6 +200,7 @@ enum Segment {
         descr: Option<String>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
+        opacity: Option<u32>,
         border: Option<ShapeStroke>,
         flip_h: bool,
         flip_v: bool,
@@ -317,6 +319,9 @@ struct ShapeBuilder {
     descr: Option<String>,
     /// The picture's `a:srcRect` crop, for a picture child, if declared.
     srcrect: Option<CropRect>,
+    /// The picture's `a:alphaModFix` opacity, for a picture child, if declared
+    /// and not fully opaque.
+    opacity: Option<u32>,
     /// The flowed block content of a `w:txbxContent` inside this shape, if any.
     textbox_blocks: Option<Vec<BlockNode>>,
     /// The shape's text-body box model and overflow/autofit policy.
@@ -680,6 +685,7 @@ struct ContentFrame {
     pending_embed: Option<String>,
     pending_extent: Option<Extent>,
     pending_srcrect: Option<CropRect>,
+    pending_opacity: Option<u32>,
     pending_inline_descr: Option<String>,
     /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
     /// picture (no open shape builder), consumed by `commit_drawing`.
@@ -870,6 +876,7 @@ struct BodyParser<'a> {
     /// The `a:srcRect` crop of the open lone/inline (non-group) picture; consumed
     /// by `commit_drawing` for the inline or anchored drawing.
     pending_srcrect: Option<CropRect>,
+    pending_opacity: Option<u32>,
     /// The `wp:docPr@descr` alt text of the open lone/inline drawing (no anchor);
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
@@ -1190,6 +1197,7 @@ impl<'a> BodyParser<'a> {
             pending_embed: None,
             pending_extent: None,
             pending_srcrect: None,
+            pending_opacity: None,
             pending_inline_descr: None,
             pending_flip_h: false,
             pending_flip_v: false,
@@ -2457,6 +2465,7 @@ impl BodyParser<'_> {
                     self.pending_embed = None;
                     self.pending_extent = None;
                     self.pending_srcrect = None;
+                    self.pending_opacity = None;
                     self.pending_inline_descr = None;
                     self.pending_flip_h = false;
                     self.pending_flip_v = false;
@@ -2532,6 +2541,29 @@ impl BodyParser<'_> {
                         shape.srcrect = Some(crop);
                     } else {
                         self.pending_srcrect = Some(crop);
+                    }
+                }
+            }
+            // The picture's opacity (`a:blip/a:alphaModFix@amt`, ST_PositivePercentage
+            // — thousandths of a percent). This is how Word writes a watermark: the
+            // same picture drawn at 20%. Routed exactly as the crop above is.
+            //
+            // `100000` is fully opaque and is dropped rather than modeled, so a
+            // producer that writes the no-op explicitly does not become a document
+            // carrying a field that changes nothing — the same rule the identity
+            // `a:srcRect` follows.
+            b"alphaModFix" if self.blipfill_depth > 0 => {
+                let amount = attribute_value(element, b"amt")
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .unwrap_or(OPACITY_FULL)
+                    .min(OPACITY_FULL);
+                if amount < OPACITY_FULL {
+                    if let Some(shape) =
+                        self.pending_shape.as_mut().filter(|shape| shape.is_picture)
+                    {
+                        shape.opacity = Some(amount);
+                    } else {
+                        self.pending_opacity = Some(amount);
                     }
                 }
             }
@@ -2729,6 +2761,7 @@ impl BodyParser<'_> {
                     embed: None,
                     descr: None,
                     srcrect: None,
+                    opacity: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                     flip_h: false,
@@ -2755,6 +2788,7 @@ impl BodyParser<'_> {
                     embed: None,
                     descr: None,
                     srcrect: None,
+                    opacity: None,
                     textbox_blocks: None,
                     body_properties: TextBoxBodyProperties::default(),
                     flip_h: false,
@@ -4840,6 +4874,7 @@ impl BodyParser<'_> {
                 extent: shape.extent,
                 descr: shape.descr,
                 crop: shape.srcrect,
+                opacity: shape.opacity,
                 // A grouped picture's `pic:spPr/a:ln` frame is captured as the
                 // shape's stroke (via the shared outline path).
                 border: shape.stroke,
@@ -4978,6 +5013,7 @@ impl BodyParser<'_> {
         // inline picture stays a `Drawing`.
         let anchor = self.pending_anchor.take();
         let crop = self.pending_srcrect.take();
+        let opacity = self.pending_opacity.take();
         let border = self.pending_picture_border.take();
         let inline_descr = self.pending_inline_descr.take();
         let flip_h = std::mem::take(&mut self.pending_flip_h);
@@ -4994,6 +5030,7 @@ impl BodyParser<'_> {
                             descr: anchor.descr,
                             relative_height: anchor.relative_height,
                             crop,
+                            opacity,
                             border,
                             flip_h,
                             flip_v,
@@ -5015,6 +5052,7 @@ impl BodyParser<'_> {
                         extent,
                         descr: inline_descr,
                         crop,
+                        opacity,
                         border,
                         flip_h,
                         flip_v,
@@ -5134,6 +5172,7 @@ impl BodyParser<'_> {
                         extent: None,
                         descr: None,
                         crop: None,
+                        opacity: None,
                         border: None,
                         flip_h: false,
                         flip_v: false,
@@ -5178,6 +5217,7 @@ impl BodyParser<'_> {
                     descr: None,
                     relative_height,
                     crop: None,
+                    opacity: None,
                     border: None,
                     flip_h: false,
                     flip_v: false,
@@ -5200,6 +5240,7 @@ impl BodyParser<'_> {
                 extent,
                 descr: None,
                 crop: None,
+                opacity: None,
                 border: None,
                 flip_h: false,
                 flip_v: false,
@@ -5726,6 +5767,7 @@ impl BodyParser<'_> {
             pending_embed: self.pending_embed.take(),
             pending_extent: self.pending_extent.take(),
             pending_srcrect: self.pending_srcrect.take(),
+            pending_opacity: self.pending_opacity.take(),
             pending_inline_descr: self.pending_inline_descr.take(),
             pending_flip_h: std::mem::take(&mut self.pending_flip_h),
             pending_flip_v: std::mem::take(&mut self.pending_flip_v),
@@ -5800,6 +5842,7 @@ impl BodyParser<'_> {
         self.pending_embed = frame.pending_embed;
         self.pending_extent = frame.pending_extent;
         self.pending_srcrect = frame.pending_srcrect;
+        self.pending_opacity = frame.pending_opacity;
         self.pending_inline_descr = frame.pending_inline_descr;
         self.pending_flip_h = frame.pending_flip_h;
         self.pending_flip_v = frame.pending_flip_v;
@@ -6630,6 +6673,7 @@ impl BodyParser<'_> {
                 extent,
                 descr,
                 crop,
+                opacity,
                 border,
                 flip_h,
                 flip_v,
@@ -6637,6 +6681,7 @@ impl BodyParser<'_> {
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Box::new(Drawing {
+                    opacity,
                     id,
                     media,
                     extent,
@@ -6655,6 +6700,7 @@ impl BodyParser<'_> {
                 descr,
                 relative_height,
                 crop,
+                opacity,
                 border,
                 flip_h,
                 flip_v,
@@ -6662,6 +6708,7 @@ impl BodyParser<'_> {
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                    opacity,
                     id,
                     media,
                     extent,

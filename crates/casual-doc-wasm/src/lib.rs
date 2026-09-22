@@ -2013,6 +2013,7 @@ impl WasmDocument {
             },
         );
         let drawing = Drawing {
+            opacity: None,
             id: drawing_id,
             media: media_id,
             extent: Some(Extent {
@@ -27799,6 +27800,7 @@ mod tests {
                         text: "anchor paragraph".to_owned(),
                     }),
                     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        opacity: None,
                         id: float_id,
                         media,
                         extent: Extent {
@@ -29065,6 +29067,7 @@ mod tests {
         };
         let drawing = |id: NodeId, descr: Option<&str>| {
             InlineNode::Drawing(Box::new(Drawing {
+                opacity: None,
                 id,
                 media,
                 extent: Some(Extent {

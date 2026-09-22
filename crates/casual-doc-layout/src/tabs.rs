@@ -76,6 +76,9 @@ pub enum FlowItem<'a> {
         /// The source-rectangle crop (`a:srcRect`), if the picture is cropped
         /// (`P1G-OBJ-MODEL`).
         crop: Option<casual_doc_model::v1::CropRect>,
+        /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
+        /// `None` is fully opaque.
+        opacity: Option<u32>,
     },
     /// A typed equation pre-laid out into an atomic glyph/rule box.
     Math {

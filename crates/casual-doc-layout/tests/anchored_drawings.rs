@@ -86,6 +86,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 
 fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: bool) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        opacity: None,
         id: node(id),
         media,
         extent: Extent {
@@ -286,6 +287,7 @@ fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
 
 fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: i64) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        opacity: None,
         id: node(id),
         media,
         extent: Extent {
@@ -305,6 +307,7 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
 
 fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        opacity: None,
         id: node(id),
         media,
         extent: Extent {
@@ -324,6 +327,7 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
 
 fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        opacity: None,
         id: node(id),
         media,
         extent: Extent {
@@ -356,6 +360,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
 
 fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        opacity: None,
         id: node(id),
         media,
         extent: Extent {
@@ -1530,6 +1535,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
         children: vec![
             rect(31, 0),
             GroupChild::Picture(GroupPicture {
+                opacity: None,
                 id: node(32),
                 media: media_id,
                 offset: PointEmu {

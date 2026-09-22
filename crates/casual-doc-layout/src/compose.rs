@@ -137,6 +137,7 @@ pub fn compose_paragraph(layout: &LineLayout, origin: Point) -> DisplayList {
                 crop: image.crop,
                 // Inline images are not rotated (a:xfrm applies to floats).
                 transform: None,
+                opacity: image.opacity,
             });
         }
         // Inline text boxes: the fill and border paint first, then the box's flowed
@@ -570,12 +571,14 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             media,
             crop,
             border,
+            opacity,
         } => {
             list.push(PaintItem::Image {
                 media: media.clone(),
                 rect: anchor.rect,
                 crop: *crop,
                 transform: anchor.transform,
+                opacity: *opacity,
             });
             // A framed picture's `pic:spPr/a:ln` paints as a stroked rectangle over
             // the picture box (pictures are rectangular). It rides the same
@@ -2033,6 +2036,7 @@ mod tests {
         );
         let anchor = anchor_at(
             AnchorContent::Image {
+                opacity: None,
                 media: "word/media/image1.png".to_owned(),
                 crop: None,
                 border: Some(AnchorStroke {
@@ -2078,6 +2082,7 @@ mod tests {
         let frame = |dash| {
             let anchor = anchor_at(
                 AnchorContent::Image {
+                    opacity: None,
                     media: "word/media/image1.png".to_owned(),
                     crop: None,
                     border: Some(AnchorStroke {
@@ -2127,6 +2132,7 @@ mod tests {
         // An image float carries its rotation/flip onto the emitted blit.
         let mut anchor = anchor_at(
             AnchorContent::Image {
+                opacity: None,
                 media: "m".to_owned(),
                 crop: None,
                 border: None,

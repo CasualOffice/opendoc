@@ -206,6 +206,11 @@ pub struct Extent {
 /// percent).
 pub const CROP_FULL: i32 = 100_000;
 
+/// Fully opaque, in the units DrawingML's `a:alphaModFix@amt` uses (1000ths of
+/// a percent). A picture at this opacity is indistinguishable from one with no
+/// `a:alphaModFix` at all, so the importer models neither.
+pub const OPACITY_FULL: u32 = 100_000;
+
 /// The bound applied to each [`CropRect`] edge at import. Word authors
 /// `0..=CROP_FULL`, but DrawingML `a:srcRect` also permits a small negative value
 /// (an *outset* / padding), so the range is bounded rather than assumed
@@ -278,6 +283,15 @@ pub struct Drawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -522,6 +536,15 @@ pub struct AnchoredDrawing {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -840,6 +863,15 @@ pub struct GroupPicture {
     /// The source-rectangle crop (`a:srcRect`), if the picture is cropped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<CropRect>,
+    /// The picture's opacity (`a:blip/a:alphaModFix@amt`), in 1000ths of a
+    /// percent, when the picture is drawn less than fully opaque.
+    ///
+    /// `None` is fully opaque, which is what an absent `a:alphaModFix` means —
+    /// and so is `amt="100000"`, so a producer writing the no-op explicitly
+    /// does not become a document that carries a redundant field. This is how
+    /// Word writes a watermark: the same picture, at 20%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,

@@ -744,6 +744,42 @@ mod semantic_tests {
         assert_eq!(m1, m2, "inline crop + alt text survive write -> reopen");
     }
 
+    /// A picture's alpha survives a save. Without the writer half, opening a
+    /// watermarked document and saving it turns every watermark solid — a
+    /// silent, permanent change to the user's file, which is worse than not
+    /// rendering it in the first place.
+    #[test]
+    fn picture_transparency_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{BlockNode, InlineNode};
+
+        let document_xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic 1"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="20000"/></a:blip><a:stretch><a:fillRect/></a:stretch></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let document_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+        let m1 = reopen(&pack(document_xml, document_rels));
+        let BlockNode::Paragraph(p1) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Drawing(d1) = &p1.inlines[0] else {
+            panic!("expected an inline drawing");
+        };
+        assert_eq!(d1.opacity, Some(20_000), "the import carries the alpha");
+
+        let written = write_document(&m1, &media_bytes(&["word/media/image1.png"])).expect("write");
+        let mut written_package =
+            DocxPackage::open(&written, PackageLimits::default()).expect("written package");
+        let written_xml = written_package
+            .read_part("word/document.xml")
+            .expect("written main document");
+        let written_xml = std::str::from_utf8(&written_xml).expect("utf-8 document XML");
+        assert!(
+            written_xml.contains(r#"<a:alphaModFix amt="20000"/>"#),
+            "the writer must emit the alpha: {written_xml}"
+        );
+
+        let m2 = reopen(&written);
+        assert_eq!(m1, m2, "picture transparency survives write -> reopen");
+    }
+
     #[test]
     fn wpg_group_survives_the_semantic_round_trip() {
         use casual_doc_model::v1::{
