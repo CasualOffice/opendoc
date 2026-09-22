@@ -4,7 +4,16 @@
 // footnote and a header — but not a text box and not a shape. It could SELECT,
 // move, resize, edit and delete both; it just had no way to create one. A
 // document that did not already contain a drawing could never gain one.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  mirrorBlocks,
+  expectTypedIntoOneBlock,
+  MOD,
+} from "./fixtures.mjs";
 
 async function open(page) {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -23,7 +32,7 @@ test("Insert ▸ Text box creates a box and puts the caret inside it", async ({
   consoleErrors,
 }) => {
   await open(page);
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const blocksBefore = await mirrorBlocks(page);
 
   await openInsertTab(page);
   await page.locator("#insertTextBoxBtn").click();
@@ -34,8 +43,14 @@ test("Insert ▸ Text box creates a box and puts the caret inside it", async ({
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
   await page.keyboard.type("IN THE BOX");
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
-  // The typing went into the box, not the page body.
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  // The typing went into the box, not the page body — and, since HF-169, the
+  // box's own text is in the mirror, so that is asserted by naming the one
+  // block it landed in rather than by the mirror never changing.
+  expectTypedIntoOneBlock(
+    blocksBefore,
+    await mirrorBlocks(page),
+    "IN THE BOX",
+  );
 
   expect(consoleErrors).toEqual([]);
 });

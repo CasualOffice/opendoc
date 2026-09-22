@@ -24,22 +24,27 @@ import {
 
 const FORM = "../fixtures/generated/form-checkbox.docx";
 
-/** How many of each box the document's text currently holds.
+/** How many of each box the document currently holds, read from what
+ *  assistive technology is told.
  *
- *  Counted at the PRIVATE-USE code points, `F0A3`/`F052`, because that is how
- *  Word writes a symbol-font glyph in content and therefore what the document
- *  actually carries — measured on the owner's own form before any of this was
- *  built. Reading the glyph rather than an internal flag is the point: the
- *  defect being guarded is a flag that moves while the box a person sees does
- *  not. */
+ *  This used to count the PRIVATE-USE code points `F0A3`/`F052` in the
+ *  mirror's text, because that is how Word writes a symbol-font glyph in
+ *  content. Those code points are no longer there, and their absence is the
+ *  point: a screen reader announces nothing for a private-use code point, so
+ *  the projection now exposes the control as `role="checkbox"` with an
+ *  `aria-checked` state and a name (`docs/120`).
+ *
+ *  Reading the exposed state is not a retreat to "a flag moved": the flag and
+ *  the CONTENT glyph are pinned to each other natively, in
+ *  `a_form_checkbox_ticks_and_unticks`, which asserts the run inside the
+ *  control becomes the declared symbol. This asserts the other half — that
+ *  what a person is told matches it. */
 async function boxes(page) {
-  return page.locator("#a11yDocument").evaluate((el) => {
-    const text = el.innerText;
-    return {
-      unchecked: [...text].filter((c) => c.codePointAt(0) === 0xf0a3).length,
-      checked: [...text].filter((c) => c.codePointAt(0) === 0xf052).length,
-    };
-  });
+  const all = page.locator("#a11yDocument [role=checkbox]");
+  return {
+    unchecked: await all.and(page.locator("[aria-checked=false]")).count(),
+    checked: await all.and(page.locator("[aria-checked=true]")).count(),
+  };
 }
 
 async function openForm(page) {
@@ -134,6 +139,78 @@ test("a form checkbox is read-only in Viewing mode", async ({
 
   await expect(page.locator("#status")).toContainText("read-only");
   expect(await boxes(page)).toEqual(before);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a form checkbox is announced as a checkbox, named by the text beside it", async ({
+  page,
+  consoleErrors,
+}) => {
+  // `docs/118` §3 row 2, `docs/120`. Measured on the owner's Medical Incident
+  // Report form before this: the mirror carried the raw `U+F0A3` / `U+F052`
+  // Wingdings 2 code points, which a screen reader reads as NOTHING, and no
+  // `role` attribute appeared anywhere in `#a11yDocument`. Since #578 the
+  // control can be ticked, so an operable unnamed control was the worse
+  // failure — WCAG 4.1.2 Name, Role, Value.
+  await openForm(page);
+  const mirror = page.locator("#a11yDocument");
+  const controls = mirror.locator("[role=checkbox]");
+  await expect(controls).toHaveCount(7);
+
+  // Not one private-use code point survives into what is read aloud.
+  const stray = await mirror.evaluate((el) =>
+    [...el.innerText].filter((c) => {
+      const code = c.codePointAt(0);
+      return (
+        (code >= 0xe000 && code <= 0xf8ff) ||
+        (code >= 0xf0000 && code <= 0xffffd) ||
+        (code >= 0x100000 && code <= 0x10fffd)
+      );
+    }).length,
+  );
+  expect(stray, "a private-use code point is silence dressed up as text").toBe(0);
+
+  const named = (name) =>
+    mirror.locator(`[role=checkbox][aria-label="${name}"]`);
+  // The owner's shape: the box alone in a narrow cell, the label in the NEXT
+  // cell of the same row. Its `w:alias` is `chk_fall` and must lose — WCAG 2.2
+  // SC 2.5.3 wants the name a sighted user can see.
+  await expect(named("Fall or Injury")).toHaveCount(1);
+  await expect(named("chk_fall")).toHaveCount(0);
+  // The label in the paragraph the control sits in.
+  await expect(named("Medication error")).toHaveCount(1);
+  // Nothing visible in the row: the author's `w:alias` is all there is.
+  await expect(named("Consent given")).toHaveCount(1);
+  // A label to the LEFT, which is how a right-aligned form is written.
+  await expect(named("Witnessed by a colleague")).toHaveCount(1);
+  // Nothing anywhere, and two controls sharing one label: named generically
+  // rather than wrongly. A wrong name is worse than a generic one.
+  await expect(named("Check box")).toHaveCount(3);
+  await expect(named("Either one")).toHaveCount(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the announced state follows the document when the box is ticked", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The state must be read from the model on every rebuild, not written once
+  // at open. A projection that announced a stale state would be worse than
+  // none: the reader would be told the form says something it does not.
+  await openForm(page);
+  const first = page
+    .locator("#a11yDocument [role=checkbox][aria-label='Medication error']")
+    .first();
+  await expect(first).toHaveAttribute("aria-checked", "false");
+
+  await focusCheckbox(page);
+  await page.keyboard.press("Space");
+  await expect(first).toHaveAttribute("aria-checked", "true");
+
+  await page.locator("#undoBtn").click();
+  await expect(first).toHaveAttribute("aria-checked", "false");
 
   expect(consoleErrors).toEqual([]);
 });

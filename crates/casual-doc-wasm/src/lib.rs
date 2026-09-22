@@ -9543,7 +9543,11 @@ impl WasmDocument {
     ///
     /// A paragraph also contributes one `image` node per drawing it holds, so a
     /// figure paragraph — which has no plain text at all, and which the
-    /// empty-text skip above used to drop whole — reaches the reader.
+    /// empty-text skip above used to drop whole — reaches the reader; the block
+    /// content of every text box it holds, a text box inside a DrawingML group
+    /// included (`109` HF-169); and one `checkbox` node per `w14:checkbox` form
+    /// control, with the role, the checked state and the name that control's
+    /// private-use glyph cannot carry (`docs/120`).
     #[wasm_bindgen(js_name = accessibilityTree)]
     #[must_use]
     pub fn accessibility_tree(&self) -> String {
@@ -9648,6 +9652,28 @@ impl WasmDocument {
         cascade: &StyleCascade,
         out: &mut Vec<A11yBlockJson>,
     ) {
+        self.collect_a11y_blocks_at(blocks, cascade, 0, out);
+    }
+
+    /// [`collect_a11y_blocks`](Self::collect_a11y_blocks) with the nesting
+    /// depth it has reached.
+    ///
+    /// The depth exists because the projection now descends into text boxes,
+    /// and a text box holds ordinary block content — which may hold another
+    /// drawing, which may hold another text box. The model is a tree, so this
+    /// terminates on its own; the bound is a cheap, explicit statement that a
+    /// hostile or absurd document cannot drive the projection into the stack.
+    /// Linear in the blocks it visits.
+    fn collect_a11y_blocks_at(
+        &self,
+        blocks: &[BlockNode],
+        cascade: &StyleCascade,
+        depth: u32,
+        out: &mut Vec<A11yBlockJson>,
+    ) {
+        if depth > MAX_A11Y_NESTING {
+            return;
+        }
         for block in blocks {
             match block {
                 BlockNode::Paragraph(paragraph) => {
@@ -9655,7 +9681,7 @@ impl WasmDocument {
                     // questions about the same paragraph, so an empty-text
                     // figure paragraph no longer short-circuits the whole
                     // block: only its (absent) text is skipped.
-                    let text = node_plain_text(&paragraph.inlines);
+                    let text = a11y_plain_text(&paragraph.inlines);
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         let text = trimmed.to_owned();
@@ -9673,32 +9699,20 @@ impl WasmDocument {
                             out.push(A11yBlockJson::Paragraph { text });
                         }
                     }
-                    // Images follow their paragraph's text rather than being
-                    // spliced into it: a heading or list item is one semantic
-                    // block, and splitting it around a mid-paragraph figure
-                    // would hand the reader half a heading.
-                    collect_a11y_images(&paragraph.inlines, out);
+                    // Figures, text-box content and form controls follow their
+                    // paragraph's text rather than being spliced into it: a
+                    // heading or list item is one semantic block, and splitting
+                    // it around a mid-paragraph figure would hand the reader
+                    // half a heading.
+                    // The paragraph's own text is the visible label of a form
+                    // checkbox sitting in it — but only when it is the one
+                    // control that text could be labelling. Counted once, for
+                    // the whole paragraph.
+                    let label = (count_a11y_checkboxes(&paragraph.inlines) == 1).then_some(trimmed);
+                    self.collect_a11y_inlines(&paragraph.inlines, cascade, depth, label, out);
                 }
                 BlockNode::Table(table) => {
-                    let rows = table
-                        .rows
-                        .iter()
-                        .map(|row| {
-                            row.cells
-                                .iter()
-                                .map(|cell| {
-                                    let mut pairs = Vec::new();
-                                    collect_block_text(&cell.blocks, &mut pairs);
-                                    pairs
-                                        .into_iter()
-                                        .map(|(_, text)| text)
-                                        .filter(|text| !text.trim().is_empty())
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
+                    let rows = table.rows.iter().map(a11y_row_cells).collect::<Vec<_>>();
                     out.push(A11yBlockJson::Table {
                         rows,
                         header_rows: a11y_header_rows(table),
@@ -9710,8 +9724,129 @@ impl WasmDocument {
                         description: table.properties.description.clone(),
                     });
                 }
-                BlockNode::Sdt(sdt) => self.collect_a11y_blocks(&sdt.blocks, cascade, out),
+                BlockNode::Sdt(sdt) => {
+                    self.collect_a11y_blocks_at(&sdt.blocks, cascade, depth, out);
+                }
                 BlockNode::AltChunk(_) => {}
+            }
+        }
+    }
+
+    /// Appends the non-text accessibility nodes a paragraph's inlines carry, in
+    /// document order: one [`A11yBlockJson::Image`] per drawing, the block
+    /// content of every text box, and one [`A11yBlockJson::Checkbox`] per form
+    /// checkbox.
+    ///
+    /// This is the single place the projection decides what a paragraph
+    /// contributes beyond its own text, and it deliberately mirrors
+    /// `casual_doc_edit::object_descr` — the lookup behind the object
+    /// inspector's Alt text field — so the text a user types into that field is
+    /// the text a screen reader reads back.
+    ///
+    /// `label` is the paragraph's announced text when that text can only be
+    /// naming one control, and `None` otherwise (`docs/120` §5). It is decided
+    /// ONCE for the whole paragraph by the caller: deciding it per inline
+    /// would both count the wrong list once the walk recurses into a wrapper
+    /// and make the walk quadratic in a paragraph holding many controls.
+    ///
+    /// Linear in the inlines it visits, bounded in depth by
+    /// [`collect_a11y_blocks_at`](Self::collect_a11y_blocks_at).
+    fn collect_a11y_inlines(
+        &self,
+        inlines: &[InlineNode],
+        cascade: &StyleCascade,
+        depth: u32,
+        label: Option<&str>,
+        out: &mut Vec<A11yBlockJson>,
+    ) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Drawing(drawing) => out.push(A11yBlockJson::Image {
+                    alt: drawing.descr.clone(),
+                }),
+                InlineNode::AnchoredDrawing(drawing) => out.push(A11yBlockJson::Image {
+                    alt: drawing.descr.clone(),
+                }),
+                // A text box's content is ordinary block content flowed through
+                // the same pipeline as the body, so it is projected the same
+                // way. Its text reaches the MIRROR only: it is not part of
+                // `node_plain_text`, which is the shaper's byte layout that
+                // caret offsets index, so no offset in the host paragraph
+                // moves (`docs/120` §3).
+                InlineNode::TextBox(text_box) => {
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                }
+                InlineNode::Group(group) => {
+                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                }
+                InlineNode::Sdt(sdt) => {
+                    if let Some(checkbox) = sdt_form_checkbox(sdt) {
+                        let mut node = a11y_checkbox(sdt, checkbox);
+                        if let Some(label) = label {
+                            apply_visible_label(&mut node, label);
+                        }
+                        out.push(A11yBlockJson::Checkbox(node));
+                    } else {
+                        self.collect_a11y_inlines(&sdt.inlines, cascade, depth, label, out);
+                    }
+                }
+                // Wrappers carry ordinary flow: a figure inside a link, a
+                // tracked insertion, or an inline content control is still a
+                // figure.
+                InlineNode::Hyperlink(hyperlink) => {
+                    self.collect_a11y_inlines(&hyperlink.inlines, cascade, depth, label, out);
+                }
+                InlineNode::Field(field) => {
+                    self.collect_a11y_inlines(&field.inlines, cascade, depth, label, out);
+                }
+                // A deletion is not on the page under the default projection, so
+                // it is not read; `node_plain_text` drops its text for the same
+                // reason.
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
+                    self.collect_a11y_inlines(&revision.inlines, cascade, depth, label, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// [`collect_a11y_inlines`](Self::collect_a11y_inlines) over a DrawingML
+    /// group's children, in paint order.
+    ///
+    /// A group's text box was dropped here for as long as this walk existed
+    /// (`109` HF-169): every label on every drawing in the owner's Medical
+    /// Incident Report form was unreadable by a screen reader while being
+    /// visible on screen and — since #577/#582 — editable, so a user could
+    /// change text assistive technology could not read back.
+    fn collect_a11y_group(
+        &self,
+        children: &[GroupChild],
+        cascade: &StyleCascade,
+        depth: u32,
+        out: &mut Vec<A11yBlockJson>,
+    ) {
+        if depth > MAX_A11Y_NESTING {
+            return;
+        }
+        for child in children {
+            match child {
+                GroupChild::Picture(picture) => out.push(A11yBlockJson::Image {
+                    alt: picture.descr.clone(),
+                }),
+                GroupChild::TextBox(text_box) => {
+                    self.collect_a11y_blocks_at(&text_box.blocks, cascade, depth + 1, out);
+                }
+                GroupChild::Group(group) => {
+                    self.collect_a11y_group(&group.children, cascade, depth + 1, out);
+                }
+                // A shape child of a group carries no text by construction
+                // (`GroupShape` is the no-text variant) and no alt text, so
+                // there is nothing to announce about it.
+                GroupChild::Shape(_) => {}
             }
         }
     }
@@ -13336,62 +13471,300 @@ fn collect_checklist_paragraphs(
     }
 }
 
-/// Appends one [`A11yBlockJson::Image`] per drawing in `inlines`, in document
-/// order, recursing through the wrappers that can hide one.
+/// How deep the accessibility projection follows nested block content (a text
+/// box inside a group inside a text box …) before it stops.
 ///
-/// This is the single place the projection decides what counts as a figure, and
-/// it deliberately mirrors `casual_doc_edit::object_descr` — the lookup behind
-/// the object inspector's Alt text field — so the text a user types into that
-/// field is the text a screen reader reads back. The addition is group
-/// pictures: a logo inside a `wpg:wgp` is as much an image on the page as a
-/// lone one, and it carries its own `pic:cNvPr@descr`.
+/// The model is a tree and DrawingML group nesting is already bounded by
+/// `casual_doc_model::v1::MAX_GROUP_DEPTH`, so this is not what makes the walk
+/// terminate; it is an explicit ceiling so an absurd document cannot turn a
+/// read-only projection into a stack overflow.
+const MAX_A11Y_NESTING: u32 = 16;
+
+/// Whether `c` is a Unicode Private Use Area code point.
 ///
-/// Text boxes are NOT descended into here. Their block content is a separate
-/// story that the projection does not visit at all yet (see the body-only walk
-/// in [`WasmDocument::accessibility_tree`]); pulling only the pictures out of a
-/// box would put a figure in the reading order while its surrounding sentences
-/// stayed missing, which reads worse than the gap.
-fn collect_a11y_images(inlines: &[InlineNode], out: &mut Vec<A11yBlockJson>) {
+/// A PUA code point has, by definition, no meaning outside the font that draws
+/// it: a screen reader announces nothing for it. Word writes symbol-font glyphs
+/// there — `w:sym w:font="Wingdings 2" w:char="F0A3"` is `U+F0A3` — so a form
+/// built out of Wingdings boxes reaches assistive technology as silence dressed
+/// up as text (`docs/120` §2).
+fn is_private_use(c: char) -> bool {
+    matches!(u32::from(c), 0xE000..=0xF8FF | 0xF_0000..=0xF_FFFD | 0x10_0000..=0x10_FFFD)
+}
+
+/// The text the accessibility projection ANNOUNCES for `inlines`.
+///
+/// Deliberately not [`node_plain_text`], and it must never become it:
+/// `node_plain_text` is the shaper's byte layout, which caret offsets index, so
+/// changing what it returns moves every caret in the paragraph (the same trap
+/// the [`A11yBlockJson::Image`] doc comment records for alt text). This is a
+/// projection for a reader, and it differs in exactly two ways:
+///
+/// * a **form checkbox** contributes no text. Its content is the declared
+///   `w14:checkedState`/`w14:uncheckedState` glyph — state rendered as content,
+///   the way Word and ONLYOFFICE both write it — and it is announced as an
+///   [`A11yBlockJson::Checkbox`] with a role and a state instead; and
+/// * **private-use code points are dropped**, because a screen reader reads
+///   nothing for them (see [`is_private_use`]).
+///
+/// Every other inline delegates to `node_plain_text` for one node, so the two
+/// stay in step by construction rather than by a second copy of the match.
+/// Linear in the inlines it visits.
+fn a11y_plain_text(inlines: &[InlineNode]) -> String {
+    let mut out = String::new();
+    append_a11y_text(inlines, &mut out);
+    out
+}
+
+fn append_a11y_text(inlines: &[InlineNode], out: &mut String) {
     for inline in inlines {
         match inline {
-            InlineNode::Drawing(drawing) => out.push(A11yBlockJson::Image {
-                alt: drawing.descr.clone(),
-            }),
-            InlineNode::AnchoredDrawing(drawing) => out.push(A11yBlockJson::Image {
-                alt: drawing.descr.clone(),
-            }),
-            InlineNode::Group(group) => collect_a11y_group_images(&group.children, out),
-            // Wrappers carry ordinary flow: a figure inside a link, a tracked
-            // insertion, or an inline content control is still a figure.
-            InlineNode::Hyperlink(hyperlink) => collect_a11y_images(&hyperlink.inlines, out),
-            InlineNode::Field(field) => collect_a11y_images(&field.inlines, out),
-            InlineNode::Sdt(sdt) => collect_a11y_images(&sdt.inlines, out),
-            // A deletion is not on the page under the default projection, so it
-            // is not read; `node_plain_text` drops its text for the same reason.
+            InlineNode::Sdt(sdt) if sdt_form_checkbox(sdt).is_some() => {}
+            InlineNode::Sdt(sdt) => append_a11y_text(&sdt.inlines, out),
+            InlineNode::Hyperlink(hyperlink) => append_a11y_text(&hyperlink.inlines, out),
             InlineNode::Revision(revision)
                 if revision
                     .kind
                     .contributes_to(ReviewProjection::FinalWithMarkup) =>
             {
-                collect_a11y_images(&revision.inlines, out);
+                append_a11y_text(&revision.inlines, out);
             }
+            InlineNode::Revision(_) => {}
+            leaf => out.extend(
+                node_plain_text(core::slice::from_ref(leaf))
+                    .chars()
+                    .filter(|c| !is_private_use(*c)),
+            ),
+        }
+    }
+}
+
+/// The `w14:checkbox` detail of an inline content control, if it is one.
+fn sdt_form_checkbox(sdt: &casual_doc_model::v1::InlineSdt) -> Option<&SdtCheckbox> {
+    match sdt.properties.data.as_ref() {
+        Some(SdtControlData::Checkbox(checkbox)) => Some(checkbox),
+        _ => None,
+    }
+}
+
+/// One projected form checkbox, named from the document only: `w:alias` (the
+/// control's Title, the one place a Word author can name it), else `w:tag`.
+/// A visible label, when there is one, overrides this — see
+/// [`apply_visible_label`].
+fn a11y_checkbox(
+    sdt: &casual_doc_model::v1::InlineSdt,
+    checkbox: &SdtCheckbox,
+) -> A11yCheckboxJson {
+    let declared = sdt
+        .properties
+        .alias
+        .as_ref()
+        .or(sdt.properties.tag.as_ref())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
+    A11yCheckboxJson {
+        node: sdt.id.to_string(),
+        checked: checkbox.checked,
+        name: declared,
+    }
+}
+
+/// Names `checkbox` after the visible text beside it, when there is any.
+///
+/// Visible text OUTRANKS `w:alias`: WCAG 2.2 SC 2.5.3 (Label in Name) requires
+/// the accessible name to contain the text a sighted user sees, and an alias is
+/// never displayed. See `docs/120` §5 for the full precedence and why a
+/// positional rule is bounded to one control.
+fn apply_visible_label(checkbox: &mut A11yCheckboxJson, label: &str) {
+    let label = label.trim();
+    if !label.is_empty() {
+        checkbox.name = Some(label.to_owned());
+    }
+}
+
+/// Every form checkbox directly reachable from `inlines`, counted through the
+/// transparent wrappers that can hide one. Used to decide whether a piece of
+/// visible text is unambiguously labelling ONE control.
+fn count_a11y_checkboxes(inlines: &[InlineNode]) -> usize {
+    inlines
+        .iter()
+        .map(|inline| match inline {
+            InlineNode::Sdt(sdt) if sdt_form_checkbox(sdt).is_some() => 1,
+            InlineNode::Sdt(sdt) => count_a11y_checkboxes(&sdt.inlines),
+            InlineNode::Hyperlink(hyperlink) => count_a11y_checkboxes(&hyperlink.inlines),
+            InlineNode::Field(field) => count_a11y_checkboxes(&field.inlines),
+            InlineNode::Revision(revision)
+                if revision
+                    .kind
+                    .contributes_to(ReviewProjection::FinalWithMarkup) =>
+            {
+                count_a11y_checkboxes(&revision.inlines)
+            }
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Appends every form checkbox in `blocks` to `out`, across paragraphs and
+/// nested tables — the projection of one table cell's controls.
+fn collect_cell_checkboxes(blocks: &[BlockNode], out: &mut Vec<A11yCheckboxJson>) {
+    fn from_inlines(inlines: &[InlineNode], out: &mut Vec<A11yCheckboxJson>) {
+        for inline in inlines {
+            match inline {
+                InlineNode::Sdt(sdt) => {
+                    if let Some(checkbox) = sdt_form_checkbox(sdt) {
+                        out.push(a11y_checkbox(sdt, checkbox));
+                    } else {
+                        from_inlines(&sdt.inlines, out);
+                    }
+                }
+                InlineNode::Hyperlink(hyperlink) => from_inlines(&hyperlink.inlines, out),
+                InlineNode::Field(field) => from_inlines(&field.inlines, out),
+                InlineNode::Revision(revision)
+                    if revision
+                        .kind
+                        .contributes_to(ReviewProjection::FinalWithMarkup) =>
+                {
+                    from_inlines(&revision.inlines, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => from_inlines(&paragraph.inlines, out),
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        collect_cell_checkboxes(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => collect_cell_checkboxes(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// The announced text of one table cell: every paragraph it owns, nested tables
+/// and text boxes included, joined with a space.
+fn a11y_cell_text(blocks: &[BlockNode], out: &mut Vec<String>) {
+    for block in blocks {
+        match block {
+            BlockNode::Paragraph(paragraph) => {
+                let text = a11y_plain_text(&paragraph.inlines);
+                if !text.trim().is_empty() {
+                    out.push(text);
+                }
+                collect_text_box_a11y_text(&paragraph.inlines, out);
+            }
+            BlockNode::Table(table) => {
+                for row in &table.rows {
+                    for cell in &row.cells {
+                        a11y_cell_text(&cell.blocks, out);
+                    }
+                }
+            }
+            BlockNode::Sdt(sdt) => a11y_cell_text(&sdt.blocks, out),
+            BlockNode::AltChunk(_) => {}
+        }
+    }
+}
+
+/// The announced text of any text box hanging off a cell paragraph's inlines,
+/// group children included.
+fn collect_text_box_a11y_text(inlines: &[InlineNode], out: &mut Vec<String>) {
+    fn from_group(children: &[GroupChild], out: &mut Vec<String>) {
+        for child in children {
+            match child {
+                GroupChild::TextBox(text_box) => a11y_cell_text(&text_box.blocks, out),
+                GroupChild::Group(group) => from_group(&group.children, out),
+                GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+            }
+        }
+    }
+    for inline in inlines {
+        match inline {
+            InlineNode::TextBox(text_box) => a11y_cell_text(&text_box.blocks, out),
+            InlineNode::Group(group) => from_group(&group.children, out),
+            InlineNode::Hyperlink(hyperlink) => collect_text_box_a11y_text(&hyperlink.inlines, out),
+            InlineNode::Field(field) => collect_text_box_a11y_text(&field.inlines, out),
+            InlineNode::Sdt(sdt) => collect_text_box_a11y_text(&sdt.inlines, out),
             _ => {}
         }
     }
 }
 
-/// [`collect_a11y_images`] over a DrawingML group's children, in paint order.
-fn collect_a11y_group_images(children: &[GroupChild], out: &mut Vec<A11yBlockJson>) {
-    for child in children {
-        match child {
-            GroupChild::Picture(picture) => out.push(A11yBlockJson::Image {
-                alt: picture.descr.clone(),
-            }),
-            GroupChild::Group(group) => collect_a11y_group_images(&group.children, out),
-            // A group's text box is skipped for the same reason an inline one is.
-            GroupChild::TextBox(_) | GroupChild::Shape(_) => {}
+/// One table row's cells, with each form checkbox named from the visible text
+/// beside it.
+///
+/// The naming pass is what makes a form row readable. In the owner's Medical
+/// Incident Report form the control sits alone in a 421-twip cell and its label
+/// — "Medication Error", "Fall or Injury" — is in the NEXT cell of the same
+/// row, with no `w:alias` and no `w:tag` anywhere in the document. So the
+/// visible label has to be found positionally or not at all; the rule is
+/// stated, bounded and guarded in `docs/120` §5:
+///
+/// 1. the control's OWN cell text, if it has any beyond the control;
+/// 2. else the nearest non-empty cell in the same row — to the right first,
+///    then to the left, because a form writes the box before its label;
+/// 3. else `w:alias`, else `w:tag` (already carried by [`a11y_checkbox`]);
+/// 4. else nothing, and the host announces a generic name.
+///
+/// A positional guess only fires when the cell holds exactly ONE control, so
+/// text can never be spread across several boxes as though it named each of
+/// them.
+///
+/// Complexity: linear in the row's content, plus a right/left scan per cell
+/// that holds exactly one control and no text of its own — O(cells²) in a row
+/// made entirely of unlabelled controls. It never leaves the row, and OOXML
+/// caps a row at 63 grid columns, so the quadratic term is bounded by a
+/// constant rather than by the document.
+fn a11y_row_cells(row: &casual_doc_model::v1::TableRow) -> Vec<A11yCellJson> {
+    let mut cells: Vec<A11yCellJson> = row
+        .cells
+        .iter()
+        .map(|cell| {
+            let mut parts = Vec::new();
+            a11y_cell_text(&cell.blocks, &mut parts);
+            let mut checkboxes = Vec::new();
+            collect_cell_checkboxes(&cell.blocks, &mut checkboxes);
+            let text = parts
+                .iter()
+                .map(|text| text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if checkboxes.len() == 1 {
+                apply_visible_label(&mut checkboxes[0], &text);
+            }
+            A11yCellJson { text, checkboxes }
+        })
+        .collect();
+    let texts = cells
+        .iter()
+        .map(|cell| cell.text.clone())
+        .collect::<Vec<_>>();
+    for index in 0..cells.len() {
+        // Only when the cell holds exactly one control, and only when the cell
+        // itself said nothing — an own-cell label is nearer than a sibling and
+        // was already applied above.
+        if cells[index].checkboxes.len() != 1 || !cells[index].text.trim().is_empty() {
+            continue;
+        }
+        let right = texts[index + 1..]
+            .iter()
+            .find(|text| !text.trim().is_empty());
+        let left = texts[..index]
+            .iter()
+            .rev()
+            .find(|text| !text.trim().is_empty());
+        if let Some(label) = right.or(left) {
+            let label = label.clone();
+            apply_visible_label(&mut cells[index].checkboxes[0], &label);
         }
     }
+    cells
 }
 
 /// The 0-based indices of `table`'s column-header rows.
@@ -13473,7 +13846,18 @@ enum A11yBlockJson {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         alt: Option<String>,
     },
-    /// `rows` is the cell grid, unchanged. The rest is the header geometry: a
+    /// A `w14:checkbox` form control that sits in an ordinary paragraph.
+    ///
+    /// It is a node of its own rather than text because its content is a
+    /// PRIVATE-USE code point — `U+F0A3` / `U+F052` in Wingdings 2 on the
+    /// owner's form — which a screen reader reads as nothing at all. A control
+    /// that can be operated (#578) and cannot be named or read is the WCAG
+    /// 4.1.2 failure in its plainest form (`docs/120`).
+    ///
+    /// A control inside a table cell reaches the host on its
+    /// [`A11yCellJson`] instead, so it keeps the cell it is in.
+    Checkbox(A11yCheckboxJson),
+    /// `rows` is the cell grid. The rest is the header geometry: a
     /// table read with no `<th>` announces bare values, so a user arrowing
     /// through a wide grid has no idea which column they are in.
     ///
@@ -13484,7 +13868,7 @@ enum A11yBlockJson {
     /// the projection has never handed on.
     #[serde(rename_all = "camelCase")]
     Table {
-        rows: Vec<Vec<String>>,
+        rows: Vec<Vec<A11yCellJson>>,
         #[serde(default)]
         header_rows: Vec<u32>,
         #[serde(default)]
@@ -13494,6 +13878,47 @@ enum A11yBlockJson {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
     },
+}
+
+/// One table cell in the accessibility projection.
+///
+/// A cell used to be a bare string. It is a struct because a form's controls
+/// live in cells — the owner's Medical Incident Report form puts each
+/// `w14:checkbox` alone in a narrow cell with its label in the next one — and a
+/// string can carry the control's glyph but not its role, its state or its
+/// name.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct A11yCellJson {
+    /// The cell's announced text, with any form checkbox's glyph removed.
+    #[serde(default)]
+    text: String,
+    /// The form checkboxes the cell holds, in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    checkboxes: Vec<A11yCheckboxJson>,
+}
+
+/// One `w14:checkbox` form control, as assistive technology needs it.
+///
+/// `node` is the content control's id — the same id
+/// [`toggle_form_checkbox`](WasmDocument::toggle_form_checkbox) takes — so a
+/// host can tie the announced control to the one it operates.
+///
+/// `checked` is read from the model's `w14:checked` flag, which #578 keeps in
+/// step with the glyph in the control's content (guarded natively by
+/// `a_form_checkbox_ticks_and_unticks`), so the announced state tracks the
+/// document rather than a second copy of it.
+///
+/// `name` is the control's accessible name as the DOCUMENT gives it, and is
+/// absent when the document gives none — the host then announces a generic
+/// name rather than an unnamed control. The precedence is in `docs/120` §5.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct A11yCheckboxJson {
+    node: String,
+    checked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 /// One entry of [`object_order`]: a selectable object and the little the caller
@@ -22851,6 +23276,180 @@ mod tests {
         assert!(doc.toggle_form_checkbox_inner(&node).is_err());
     }
 
+    /// Text inside a grouped shape reaches assistive technology — and does not
+    /// reach the caret.
+    ///
+    /// `109` HF-169. `collect_a11y_group_images` walked a group for PICTURES
+    /// and dropped `GroupChild::TextBox` on the floor, so on the owner's
+    /// Medical Incident Report form every label on every drawing was invisible
+    /// to a screen reader while being visible on screen and — since #577/#582 —
+    /// editable: a user could change text assistive technology could not read
+    /// back. `group-child-traversal.spec.mjs` had to assert an edit through the
+    /// Undo button for exactly this reason.
+    ///
+    /// The second half is the trap the [`A11yBlockJson::Image`] doc comment
+    /// records: `node_plain_text` is the shaper's byte layout that caret
+    /// offsets index, so a "fix" that spliced the box's text into the host
+    /// paragraph would move every caret past the drawing. The projection is a
+    /// separate walk, and this pins it.
+    #[test]
+    fn text_inside_a_grouped_shape_reaches_the_accessibility_projection() {
+        const NESTED: &[u8] = include_bytes!("../../../fixtures/generated/nested-group.docx");
+        let doc = open_document(NESTED).expect("open");
+        let nodes: Vec<A11yBlockJson> =
+            serde_json::from_str(&doc.accessibility_tree()).expect("typed a11y tree");
+        let announced = |wanted: &str| {
+            nodes
+                .iter()
+                .any(|node| matches!(node, A11yBlockJson::Paragraph { text } if text == wanted))
+        };
+        // A direct child of the group, and one two levels down inside the
+        // nested `wpg:grpSp` — the shape the owner's form actually has.
+        for wanted in ["Group child one", "Group child two", "Group grandchild"] {
+            assert!(
+                announced(wanted),
+                "{wanted:?} must reach the mirror: {nodes:?}"
+            );
+        }
+        // Reading order: the group's text sits with the paragraph that anchors
+        // it, between the body text before and after.
+        let at = |wanted: &str| {
+            nodes
+                .iter()
+                .position(
+                    |node| matches!(node, A11yBlockJson::Paragraph { text } if text == wanted),
+                )
+                .unwrap_or_else(|| panic!("missing {wanted:?} in {nodes:?}"))
+        };
+        assert!(
+            at("Body before the group.") < at("Group child one")
+                && at("Group child one") < at("Body after the nested group."),
+            "the group reads where it is anchored: {nodes:?}",
+        );
+
+        // And not one byte of it is in the paragraph the caret indexes.
+        let mut anchor = None;
+        visit_paragraphs_in(&doc.document, &mut |paragraph| {
+            if anchor.is_none()
+                && paragraph
+                    .inlines
+                    .iter()
+                    .any(|inline| matches!(inline, InlineNode::Group(_)))
+            {
+                anchor = Some(node_plain_text(&paragraph.inlines));
+            }
+        });
+        assert_eq!(
+            anchor.as_deref(),
+            Some(""),
+            "the anchor paragraph's shaped text must stay empty — grouped text \
+             belongs to the projection, not to the caret's byte layout",
+        );
+    }
+
+    /// A form checkbox reaches assistive technology as a checkbox: a role, a
+    /// state that tracks the model, and a name taken from the text a sighted
+    /// user can see.
+    ///
+    /// `docs/118` §3 row 2, `docs/120`. Before this the eight controls on the
+    /// owner's form arrived as `U+F0A3` / `U+F052` — Wingdings 2 private-use
+    /// code points, which a screen reader reads as nothing — and no `role`
+    /// appeared anywhere in the mirror. Since #578 the control can be ticked,
+    /// so an operable unnamed control was the worse failure (WCAG 4.1.2).
+    #[test]
+    fn a_form_checkbox_is_announced_with_a_role_a_state_and_a_visible_name() {
+        const FORM: &[u8] = include_bytes!("../../../fixtures/generated/form-checkbox.docx");
+        let mut doc = open_document(FORM).expect("open");
+        let boxes = |doc: &WasmDocument| {
+            let nodes: Vec<A11yBlockJson> =
+                serde_json::from_str(&doc.accessibility_tree()).expect("typed a11y tree");
+            let mut out: Vec<A11yCheckboxJson> = Vec::new();
+            for node in &nodes {
+                match node {
+                    A11yBlockJson::Checkbox(checkbox) => out.push(checkbox.clone()),
+                    A11yBlockJson::Table { rows, .. } => {
+                        for row in rows {
+                            for cell in row {
+                                out.extend(cell.checkboxes.iter().cloned());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            (nodes, out)
+        };
+        let (nodes, found) = boxes(&doc);
+        let named = |name: &str| {
+            found
+                .iter()
+                .find(|c| c.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("no control named {name:?} in {found:?}"))
+        };
+
+        assert_eq!(found.len(), 7, "every control is projected: {found:?}");
+
+        // 1. The paragraph case: the label is the rest of the paragraph.
+        named("Medication error");
+        // 2. The owner's shape: the control alone in a narrow cell, the label
+        //    in the NEXT cell of the same row. The fixture's `w:alias` here is
+        //    `chk_fall`, and it must LOSE — WCAG 2.2 SC 2.5.3 requires the
+        //    accessible name to contain the text a sighted user sees.
+        let fall = named("Fall or Injury");
+        assert!(
+            !found.iter().any(|c| c.name.as_deref() == Some("chk_fall")),
+            "a visible label outranks `w:alias`: {found:?}",
+        );
+        // 3. Nothing visible in the row: the author's own name is all there is.
+        named("Consent given");
+        // 4. Nothing anywhere: no name is invented, and the host announces a
+        //    generic one rather than a wrong one.
+        assert_eq!(
+            found.iter().filter(|c| c.name.is_none()).count(),
+            3,
+            "the unlabelled control and the two ambiguous ones stay unnamed: {found:?}",
+        );
+        // 5. The label to the LEFT is found too.
+        named("Witnessed by a colleague");
+        // 6. Two controls in one cell and one label beside them: it names
+        //    neither, because it cannot say which. A wrong name is worse than
+        //    a generic one.
+        assert!(
+            !found
+                .iter()
+                .any(|c| c.name.as_deref() == Some("Either one")),
+            "one label must not be spread across two controls: {found:?}",
+        );
+
+        // The private-use glyph is gone from everything announced.
+        let announced = format!("{nodes:?}");
+        assert!(
+            !announced.contains('\u{f0a3}') && !announced.contains('\u{f052}'),
+            "no private-use code point may reach the reader: {announced}",
+        );
+
+        // The state TRACKS the model: tick it and the announced state moves.
+        let target = fall.node.clone();
+        assert!(!fall.checked);
+        doc.toggle_form_checkbox_inner(&target).expect("tick");
+        let (_, after) = boxes(&doc);
+        assert_eq!(
+            after
+                .iter()
+                .find(|c| c.node == target)
+                .map(|c| (c.checked, c.name.clone())),
+            Some((true, Some("Fall or Injury".to_owned()))),
+            "the announced state follows the document: {after:?}",
+        );
+        doc.undo().expect("undo");
+        let (_, undone) = boxes(&doc);
+        assert_eq!(
+            undone.iter().find(|c| c.node == target).map(|c| c.checked),
+            Some(false),
+            "and follows it back: {undone:?}",
+        );
+    }
+
     /// The window moves when the host leaves it, and **only** then. A viewer
     /// that rebuilt on every `renderPage` would re-shape the same paragraphs
     /// for every page of a scroll, which is the thrash `docs/113` §4 Q3 names.
@@ -29766,7 +30365,9 @@ mod tests {
                 A11yBlockJson::Paragraph { text } | A11yBlockJson::ListItem { text, .. } => {
                     assert!(!text.trim().is_empty(), "block text non-empty: {node:?}");
                 }
-                A11yBlockJson::Table { .. } | A11yBlockJson::Image { .. } => {}
+                A11yBlockJson::Table { .. }
+                | A11yBlockJson::Image { .. }
+                | A11yBlockJson::Checkbox(_) => {}
             }
         }
 
@@ -29977,8 +30578,12 @@ mod tests {
             })
             .expect("the table is exposed");
         assert_eq!(
-            table.0,
-            &vec![
+            table
+                .0
+                .iter()
+                .map(|row| row.iter().map(|cell| cell.text.clone()).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            vec![
                 vec!["Region".to_owned(), "Revenue".to_owned()],
                 vec!["North".to_owned(), "120".to_owned()],
             ]

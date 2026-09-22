@@ -122,18 +122,30 @@ test("a nested child can be edited, and Escape climbs back out", async ({
   await page.keyboard.press("Tab"); // into the nested group
   expect((await state(page)).path).toBe("1.0");
 
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const mirror = page.locator("#a11yDocument");
+  // The grouped shape's own text is in the mirror BEFORE the edit — HF-169,
+  // fixed: the projection used to walk a group for pictures only, so a screen
+  // reader could not read a word of any drawing on the owner's form while the
+  // same text was visible and editable.
+  await expect(mirror).toContainText("Group child two");
   await page.keyboard.press("Enter");
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
   await page.keyboard.type("EDITED");
-  // The edit is a real, undoable one. Read from the undo button rather than the
-  // accessibility mirror, because the mirror does not carry grouped text-box
-  // content at all — a separate, real defect, filed rather than papered over by
-  // asserting something weaker here.
+  // The edit is a real, undoable one...
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
-  // And it went into the shape, not the document body.
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  // ...and assistive technology can now read back what was just typed, which
+  // is the half this spec could only assert through the Undo label before.
+  await expect(mirror).toContainText("EDITED");
+  // And it went into the SHAPE, not the document body: the two body
+  // paragraphs are still exactly themselves.
+  const paragraphs = await mirror.locator("p").allTextContents();
+  expect(paragraphs).toContain("Body before the group.");
+  expect(paragraphs).toContain("Body after the nested group.");
+  expect(
+    paragraphs.filter((text) => text.includes("EDITED")).length,
+    `one grouped paragraph took the text: ${paragraphs.join(" | ")}`,
+  ).toBe(1);
 
   await page.keyboard.press("Escape");
   await expect(page.locator("#pages")).toHaveAttribute(
