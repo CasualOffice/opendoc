@@ -312,13 +312,15 @@
       "license": "Apache-2.0",
       "generator": "handwritten minimal package (webapp/tests/e2e/form-checkbox.spec.mjs)",
       "generatorVersion": "0.0.1",
-      "sha256": "cb82e3d96aaf5b6e7776fc4d6a777f72ac4f57a637d737c4483f4da13c9baa53",
+      "sha256": "b3901b2d75d73d668c9e968f72c55596406cedee1260761e689559b032e9ff35",
       "featureTags": [
         "docx",
         "sdt",
         "content-control",
         "checkbox",
-        "form"
+        "form",
+        "table",
+        "accessibility"
       ],
       "compatibilityProfile": "phase0-package",
       "expectedError": null,
@@ -328,7 +330,7 @@
       "visualBaseline": null,
       "performanceClass": "small",
       "reviewer": "project maintainers",
-      "lastReviewed": "2026-09-22"
+      "lastReviewed": "2026-09-23"
     },
     {
       "id": "docx-package-high-expansion",

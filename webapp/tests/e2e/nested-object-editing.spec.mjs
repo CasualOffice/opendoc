@@ -8,7 +8,14 @@
 //
 // No fixture had a group or a floating text box, which is why this went
 // unverified. Both are built for these tests.
-import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  stableBox,
+  mirrorBlocks,
+  expectTypedIntoOneBlock,
+} from "./fixtures.mjs";
 
 const GROUPED = "../fixtures/generated/grouped-text-boxes.docx";
 const FLOATING = "../fixtures/generated/floating-text-box.docx";
@@ -74,7 +81,7 @@ test("a grouped text box can be entered and edited, leaving the body alone", asy
   const box = await open(page, GROUPED);
   const found = await findObject(page, box);
   expect(found).not.toBeNull();
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const blocksBefore = await mirrorBlocks(page);
 
   await page.mouse.dblclick(found.x, found.y);
   await expect(page.locator("#pages")).toHaveAttribute(
@@ -90,7 +97,11 @@ test("a grouped text box can be entered and edited, leaving the body alone", asy
     "Undo Typing",
   );
   // It went into the grouped box, not the document body.
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  expectTypedIntoOneBlock(
+    blocksBefore,
+    await mirrorBlocks(page),
+    "NESTED",
+  );
 
   expect(consoleErrors).toEqual([]);
 });
@@ -102,7 +113,7 @@ test("a grouped text box keeps inside clicks and Escape climbs out one level at 
   const box = await open(page, GROUPED);
   const found = await findObject(page, box);
   expect(found).not.toBeNull();
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const blocksBefore = await mirrorBlocks(page);
 
   await page.mouse.dblclick(found.x, found.y);
   await expect(page.locator("#pages")).toHaveAttribute(
@@ -148,7 +159,11 @@ test("a grouped text box keeps inside clicks and Escape climbs out one level at 
     "aria-label",
     "Undo Typing",
   );
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  expectTypedIntoOneBlock(
+    blocksBefore,
+    await mirrorBlocks(page),
+    "INSIDE",
+  );
 
   // Escape climbs one level per press, which for a shape INSIDE a group is
   // three: editing → that shape → its group → the document (`docs/117` §5
@@ -227,7 +242,7 @@ test("a floating text box can be entered and edited", async ({
   const found = await findObject(page, box);
   expect(found).not.toBeNull();
   expect(found.kind).toBe("textbox");
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const blocksBefore = await mirrorBlocks(page);
 
   await page.mouse.dblclick(found.x, found.y);
   await expect(page.locator("#pages")).toHaveAttribute(
@@ -240,7 +255,11 @@ test("a floating text box can be entered and edited", async ({
     "aria-label",
     "Undo Typing",
   );
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  expectTypedIntoOneBlock(
+    blocksBefore,
+    await mirrorBlocks(page),
+    "FLOAT",
+  );
 
   expect(consoleErrors).toEqual([]);
 });

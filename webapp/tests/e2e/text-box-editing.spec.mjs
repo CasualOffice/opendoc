@@ -10,7 +10,14 @@
 // No fixture in the repo contained a text box, which is why this went unverified
 // for so long. `fixtures/generated/inline-text-box.docx` is a minimal document
 // with one VML text box, built for exactly this.
-import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  stableBox,
+  mirrorBlocks,
+  expectTypedIntoOneBlock,
+} from "./fixtures.mjs";
 
 const FIXTURE = "../fixtures/generated/inline-text-box.docx";
 
@@ -56,16 +63,21 @@ test("a single click selects the box, a double-click puts the caret inside it", 
 
 test("typing edits the box's own text, not the body", async ({ page, consoleErrors }) => {
   const box = await openFixture(page);
-  const bodyBefore = await page.locator("#a11yDocument").textContent();
+  const blocksBefore = await mirrorBlocks(page);
 
   await page.mouse.dblclick(...at(box, BOX));
   await expect(page.locator("#pages")).toHaveAttribute("data-object-mode", "editing");
   await page.keyboard.type("EDITED");
 
-  // A real, undoable edit — and the body projection is untouched, so it went
-  // into the box.
+  // A real, undoable edit that landed in ONE block of the projection — the
+  // box's, not the body's. (The mirror carries the box's text since HF-169, so
+  // "the mirror did not change at all" is no longer the right assertion.)
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", "Undo Typing");
-  expect(await page.locator("#a11yDocument").textContent()).toBe(bodyBefore);
+  expectTypedIntoOneBlock(
+    blocksBefore,
+    await mirrorBlocks(page),
+    "EDITED",
+  );
 
   expect(consoleErrors).toEqual([]);
 });

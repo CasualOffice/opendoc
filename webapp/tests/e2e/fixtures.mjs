@@ -378,3 +378,49 @@ const TEST_PLATFORM =
 export function shortcutHint(appleNotation) {
   return formatShortcut(appleNotation, TEST_PLATFORM);
 }
+
+/** The accessibility mirror's blocks, in reading order — one string per
+ *  top-level node of `#a11yDocument` (a paragraph, a heading, a list, a
+ *  table). */
+export async function mirrorBlocks(page) {
+  return page.locator("#a11yDocument > *").allTextContents();
+}
+
+/**
+ * Asserts that `typed` reached exactly ONE block of the accessibility mirror,
+ * and that every other block is unchanged.
+ *
+ * This replaces an idiom six specs shared:
+ * `expect(await mirror.textContent()).toBe(bodyBefore)` after typing into a
+ * text box — "the body is untouched, so the text went into the box". That was
+ * only ever true because the mirror carried no text-box content AT ALL, which
+ * is the defect `109` HF-169 names: a screen reader could not read a word of
+ * any drawing on the page. Now that it can, an assertion that the mirror never
+ * changes would forbid the fix.
+ *
+ * The guarantee those specs meant is unchanged, and is what this states: the
+ * typing landed in one block, and the document body is not that block.
+ */
+export function expectTypedIntoOneBlock(before, after, typed) {
+  const took = after.filter((text) => text.includes(typed));
+  expect(
+    took.length,
+    `exactly one block must carry ${typed}: ${after.join(" | ")}`,
+  ).toBe(1);
+  // Every block that did NOT take the text must still be one of the blocks
+  // that were there, matched one for one so a duplicate cannot cover for a
+  // lost sibling.
+  const remaining = [...before];
+  for (const text of after.filter((t) => !t.includes(typed))) {
+    const at = remaining.indexOf(text);
+    expect(at, `the mirror lost a block: ${text}`).toBeGreaterThanOrEqual(0);
+    remaining.splice(at, 1);
+  }
+  // At most one block of `before` is unaccounted for: the one the typing went
+  // into. Zero means the text landed in a block that did not exist before —
+  // an inserted text box, say — which is equally "not the body".
+  expect(
+    remaining.length,
+    `more than one block changed: ${remaining.join(" | ")}`,
+  ).toBeLessThanOrEqual(1);
+}

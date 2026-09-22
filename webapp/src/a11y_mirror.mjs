@@ -12,9 +12,11 @@
  * engine's `accessibilityTree()` projection so a screen reader can read the
  * canvas (which paints pixels only, exposing no structure). Headings become
  * `h1`–`h6` (levels 7–9 clamp to `h6`), list items group into `ul`/`ol`,
- * tables become real `table`/`tr`/`td`, and everything else is a `p`. This is
- * never an editing surface — the model stays the source of truth (docs/67 Open
- * Risks). Rebuilt on the same coalesced content-change frame as the outline.
+ * tables become real `table`/`tr`/`td`, form checkboxes become
+ * `role="checkbox"` with an `aria-checked` state and a name (`docs/120`), and
+ * everything else is a `p`. This is never an editing surface — the model stays
+ * the source of truth (docs/67 Open Risks). Rebuilt on the same coalesced
+ * content-change frame as the outline.
  */
 /** How many top-level blocks the accessibility mirror projects at once.
  *
@@ -26,6 +28,41 @@ const A11Y_WINDOW_BLOCKS = 600;
 /** Where the current mirror window starts, so it stays put when there is no
  *  caret to anchor it to (a freshly opened document). */
 let a11yWindowStart = 0;
+
+/** What a form checkbox is announced as when the DOCUMENT gives it no name.
+ *
+ *  An operable control with no accessible name is a WCAG 4.1.2 failure, so the
+ *  projection can never leave one unnamed — but it must not invent a specific
+ *  name either, because a wrong name is worse than a generic one (`docs/120`
+ *  §5). The engine reports the name the document supports and omits it when
+ *  there is none; this is the floor. */
+const UNNAMED_CHECKBOX = "Check box";
+
+/**
+ * Appends one form checkbox to `parent`.
+ *
+ * `role="checkbox"` plus `aria-checked` is the ARIA 1.2 checkbox contract, and
+ * both are required: the control's document content is a PRIVATE-USE code
+ * point (`U+F0A3` / `U+F052` in Wingdings 2 on the owner's form), which a
+ * screen reader reads as nothing at all, so without this the eight controls on
+ * that form were silence. `aria-checked` is written as the string `"true"` /
+ * `"false"` the specification requires, and it is re-derived from the model on
+ * every rebuild, so ticking the box on the canvas moves what is announced.
+ *
+ * It is deliberately NOT focusable and carries no click handler: this mirror
+ * is a read-only projection (the container says so in its own label) and the
+ * control is operated in the document, by click or Space, since #578. Making
+ * the mirror operable is a separate piece of work — `109` HF-178 — because it
+ * needs focus to survive the rebuild that the edit itself triggers.
+ */
+function appendCheckbox(parent, node) {
+  const box = document.createElement("span");
+  box.setAttribute("role", "checkbox");
+  box.setAttribute("aria-checked", node.checked === true ? "true" : "false");
+  const name = typeof node.name === "string" ? node.name.trim() : "";
+  box.setAttribute("aria-label", name || UNNAMED_CHECKBOX);
+  parent.appendChild(box);
+}
 
 export function renderAccessibilityMirror(doc, focusNode) {
   const a11yDocument = document.getElementById("a11yDocument");
@@ -120,6 +157,13 @@ export function renderAccessibilityMirror(doc, focusNode) {
       image.setAttribute("src", "data:,");
       image.setAttribute("alt", alt || "Image without a description");
       frag.appendChild(image);
+    } else if (node.kind === "checkbox") {
+      // A form control in an ordinary paragraph. It follows that paragraph, the
+      // way a figure does, because the paragraph is usually its visible label
+      // and the engine has already used that text to name it.
+      const wrap = document.createElement("p");
+      appendCheckbox(wrap, node);
+      frag.appendChild(wrap);
     } else if (node.kind === "table") {
       const table = document.createElement("table");
       // A table's header geometry is what lets a reader say "Revenue, Q3" while
@@ -149,7 +193,13 @@ export function renderAccessibilityMirror(doc, focusNode) {
           const heads = isHeaderRow || (rowHeaderColumn && column === 0);
           const el = document.createElement(heads ? "th" : "td");
           if (heads) el.setAttribute("scope", isHeaderRow ? "col" : "row");
-          el.textContent = String(cell ?? "");
+          // A cell is `{ text, checkboxes }`: a form puts its controls in
+          // cells, and a string can carry a control's glyph but not its role,
+          // its state or its name. Older payloads sent a bare string.
+          el.textContent = String((typeof cell === "string" ? cell : cell?.text) ?? "");
+          for (const box of Array.isArray(cell?.checkboxes) ? cell.checkboxes : []) {
+            appendCheckbox(el, box);
+          }
           tr.appendChild(el);
         }
         (isHeaderRow ? thead : tbody).appendChild(tr);
