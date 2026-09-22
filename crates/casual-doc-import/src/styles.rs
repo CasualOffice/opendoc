@@ -1186,6 +1186,17 @@ fn read_borders(
                 Some(edge) => *slot = Some(edge),
                 None => ctx.report(container),
             },
+            // `w:tl2br`/`w:tr2bl` — the diagonal cell borders — have no slot in
+            // the model and are the only other legal children here. A `nil`/
+            // `none` diagonal is Word saying there is no diagonal, which it
+            // writes as part of a complete border set; it loses nothing. A
+            // diagonal with a real style does, and still reports its container
+            // (HF-174).
+            None if crate::noop::carries_no_meaning_when(
+                child.local_name().as_ref(),
+                &child,
+                !open,
+            ) => {}
             None => ctx.report(container),
         }
         if open {

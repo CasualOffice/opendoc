@@ -996,6 +996,16 @@ struct BodyParser<'a> {
     /// `a:fontRef` in `wps:style`). A `schemeClr` inside one selects a theme style
     /// index, NOT the shape's actual fill/stroke, so color capture is suppressed.
     style_ref_depth: u32,
+    /// The text of an open `wp14:pctWidth`/`wp14:pctHeight` — a drawing's size as
+    /// a percentage of its `wp14:sizeRelH`/`sizeRelV` reference edge, in
+    /// thousandths of a percent.
+    ///
+    /// Captured (bounded, like `wp:posOffset`) because the VALUE decides whether
+    /// anything was lost: `0` means relative sizing is off, which is every one of
+    /// the 63 in the owner's corpus, and Word writes the element anyway. A
+    /// non-zero percentage is a size this model does not carry, and it is
+    /// reported at the element's close.
+    relative_size_pct: Option<String>,
     /// The `a:ln@w` outline width (EMU) of the open outline.
     ln_width_emu: i64,
     /// The `a:prstDash@val` dash pattern captured inside the open `a:ln`, applied
@@ -1156,6 +1166,11 @@ struct BodyParser<'a> {
     current_note: Option<(String, NodeId, CommentMeta)>,
     /// Whether the open note is a skipped separator/continuation note.
     skip_note: bool,
+    /// Whether the open skipped note holds content Word's stock separator never
+    /// does — text, a drawing, an embedded object or a table. Word lets a user
+    /// EDIT the footnote separator, so a customised one is a real loss; a stock
+    /// one is not. See `close_note`.
+    skip_note_customised: bool,
     /// Collected notes/comments: (source `w:id`, allocated id, metadata, blocks).
     notes: Vec<(String, NodeId, CommentMeta, Vec<BlockNode>)>,
     /// When set (`b"hdr"`/`b"ftr"`), the parser reads a header/footer part whose
@@ -1284,6 +1299,7 @@ impl<'a> BodyParser<'a> {
             pending_picture_border: None,
             picture_border_color: None,
             style_ref_depth: 0,
+            relative_size_pct: None,
             pending_color: None,
             palette,
             pending_alt_chunk: None,
@@ -1333,6 +1349,7 @@ impl<'a> BodyParser<'a> {
             note_container,
             current_note: None,
             skip_note: false,
+            skip_note_customised: false,
             notes: Vec::new(),
             hf_root: None,
             header_ids: inputs.header_ids,
@@ -1595,7 +1612,7 @@ impl BodyParser<'_> {
                     if is_math_root(element.local_name().as_ref()) && self.math_allowed() {
                         self.begin_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element)?;
+                        self.on_start(element.local_name().as_ref(), &element, false)?;
                     }
                 }
                 Event::Empty(element) => {
@@ -1603,7 +1620,7 @@ impl BodyParser<'_> {
                         // A degenerate self-closing math root: retain the lone tag.
                         self.emit_empty_math(&element)?;
                     } else {
-                        self.on_start(element.local_name().as_ref(), &element)?;
+                        self.on_start(element.local_name().as_ref(), &element, true)?;
                         self.on_end(element.local_name().as_ref())?;
                     }
                 }
@@ -1630,6 +1647,18 @@ impl BodyParser<'_> {
                         && anchor.capture_buffer.len() + decoded.len() <= 64
                     {
                         anchor.capture_buffer.push_str(&decoded);
+                    }
+                }
+                // A `wp14:pctWidth`/`pctHeight` value: bounded, and kept out of
+                // the paragraph flow exactly like the anchor axes above.
+                Event::Text(text) if self.relative_size_pct.is_some() => {
+                    let raw = text.into_inner();
+                    let raw =
+                        std::str::from_utf8(raw.as_ref()).map_err(|_| ImportError::MalformedXml)?;
+                    if let Some(buffer) = self.relative_size_pct.as_mut()
+                        && buffer.len() + raw.len() <= 32
+                    {
+                        buffer.push_str(raw);
                     }
                 }
                 Event::Text(text) if self.in_text || self.in_instr => {
@@ -1957,7 +1986,16 @@ impl BodyParser<'_> {
         }
     }
 
-    fn on_start(&mut self, local: &[u8], element: &BytesStart<'_>) -> Result<(), ImportError> {
+    /// Handles one element start. `self_closing` is whether the source wrote
+    /// `<x/>` rather than `<x>`; it is carried because emptiness is the whole
+    /// question for part of the no-op class (`noop::carries_no_meaning_when`),
+    /// and a start tag alone cannot answer it.
+    fn on_start(
+        &mut self,
+        local: &[u8],
+        element: &BytesStart<'_>,
+        self_closing: bool,
+    ) -> Result<(), ImportError> {
         // While skipping a non-selected AlternateContent branch, ignore every
         // element (counting depth so the matching close ends the skip).
         if self.mc_skip_depth > 0 {
@@ -2081,6 +2119,32 @@ impl BodyParser<'_> {
             _ if self.note_container == Some(local) && self.in_document => {
                 self.open_note(element)?;
             }
+            // Inside a skipped separator / continuation-separator note. Nothing
+            // here is reported — the note itself is the finding, and only if it
+            // turns out to be customised (`close_note`). Placed AFTER the arm
+            // above so the NEXT `w:footnote` still opens; before every other
+            // arm so the separator's `w:p`, `w:r`, `w:separator` and paragraph
+            // properties cannot reach a catch-all with no container open.
+            _ if self.skip_note => {
+                // What a stock separator never holds. Any of it means the user
+                // replaced Word's rule with content of their own, and that
+                // content IS dropped here.
+                if matches!(
+                    local,
+                    b"t" | b"delText"
+                        | b"sym"
+                        | b"drawing"
+                        | b"pict"
+                        | b"object"
+                        | b"tbl"
+                        | b"altChunk"
+                        | b"fldChar"
+                        | b"fldSimple"
+                        | b"instrText"
+                ) {
+                    self.skip_note_customised = true;
+                }
+            }
             // A header/footer part's root (`w:hdr`/`w:ftr`) is its single block
             // container: enable document reporting and block parsing.
             _ if self.hf_root == Some(local) => {
@@ -2116,7 +2180,16 @@ impl BodyParser<'_> {
                     frame.selected = true;
                 } else {
                     self.mc_skip_depth = 1;
-                    self.reporter.report(local);
+                    // An `mc:Fallback` reached with a branch already selected is
+                    // the alternative to something this importer read IN FULL —
+                    // that is what a fallback IS, and ECMA-376 Part 3 requires
+                    // the branches to describe the same content. Nothing was
+                    // lost by not reading it twice. A skipped `mc:Choice` is the
+                    // opposite case and still reports: the branch that was taken
+                    // instead is by construction the poorer one.
+                    if local != b"Fallback" {
+                        self.reporter.report(local);
+                    }
                 }
             }
             // A text box carries block content: parse it in a fresh, suspended
@@ -2543,6 +2616,7 @@ impl BodyParser<'_> {
                     self.xfrm_target = XfrmTarget::None;
                     self.ln_depth = 0;
                     self.style_ref_depth = 0;
+                    self.relative_size_pct = None;
                     self.pending_color = None;
                 }
             }
@@ -2574,6 +2648,12 @@ impl BodyParser<'_> {
                         height_emu: cy,
                     });
                 }
+            }
+            // A relative size's percentage. Opening the capture is what makes the
+            // text arm in the event loop collect it; the decision — report or not
+            // — is taken at the close, when the value is known.
+            b"pctWidth" | b"pctHeight" if self.drawing_depth > 0 => {
+                self.relative_size_pct = Some(String::new());
             }
             b"blipFill" if self.drawing_depth > 0 => self.blipfill_depth += 1,
             b"blip" if self.blipfill_depth > 0 && self.pending_embed.is_none() => {
@@ -4152,17 +4232,19 @@ impl BodyParser<'_> {
             // dataBinding, list entries, date/checkbox detail, end-mark `w:rPr`) is
             // the reported long tail. Placed BEFORE the generic rPr/pPr/flow arms
             // so a `w:sdtPr` `w:rPr` can never leak into run/paragraph flow.
-            _ if self.sdt_prop_depth > 0 => self.reporter.report(local),
+            _ if self.sdt_prop_depth > 0 => {
+                self.reporter.report_element(local, element, self_closing);
+            }
             _ if self.rpr_depth > 0 => {
                 if !apply_run_property(&mut self.run_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // Paragraph-mark `w:rPr` children: the pilcrow's own run formatting,
             // accumulated separately from both the run rPr and the paragraph props.
             _ if self.mark_rpr_depth > 0 => {
                 if !apply_run_property(&mut self.mark_run_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // A `w:pPr` child, but NOT one inside the paragraph mark's `w:rPr`
@@ -4172,7 +4254,7 @@ impl BodyParser<'_> {
             // mark run is modeled.
             _ if self.ppr_depth > 0 && self.mark_rpr_depth == 0 => {
                 if !apply_paragraph_property(&mut self.paragraph_properties, local, element) {
-                    self.reporter.report(local);
+                    self.reporter.report_element(local, element, self_closing);
                 }
             }
             // Known DrawingML scaffolding for an embedded picture is consumed
@@ -4183,7 +4265,7 @@ impl BodyParser<'_> {
             // (the object round-trips as a first-class reference to its preserved
             // parts, so the presentation shape is not separately modeled).
             _ if self.object_depth > 0 && is_object_scaffolding(local) => {}
-            _ if self.in_document => self.reporter.report(local),
+            _ if self.in_document => self.reporter.report_element(local, element, self_closing),
             _ => {}
         }
         Ok(())
@@ -4212,6 +4294,18 @@ impl BodyParser<'_> {
                 self.finish_custom_geometry();
             }
             _ if self.cust_geom.is_some() => {}
+            // A relative size closes. `0` (and an absent or unreadable value) is
+            // relative sizing switched OFF — the model's own state, so nothing
+            // was lost and nothing is reported. A real percentage IS lost: the
+            // model sizes a drawing in EMU, so the object will not track its
+            // margin or column when the page changes.
+            b"pctWidth" | b"pctHeight" => {
+                if let Some(buffer) = self.relative_size_pct.take()
+                    && buffer.trim().parse::<i64>().is_ok_and(|pct| pct != 0)
+                {
+                    self.reporter.report(local);
+                }
+            }
             // Close of a modeled property-change capture: the prior snapshot has
             // accumulated into the live accumulator, so restore the saved current
             // properties with the built change attached. Placed BEFORE the skip
@@ -6130,7 +6224,8 @@ impl BodyParser<'_> {
 
     /// Opens a note (`w:footnote`/`w:endnote`) as a block container. Separator and
     /// continuation-separator notes (a non-`normal` `w:type`) are presentation and
-    /// are skipped (reported). A content note allocates its id in document order.
+    /// are skipped; whether skipping them loses anything is decided at the close
+    /// (`close_note`). A content note allocates its id in document order.
     fn open_note(&mut self, element: &BytesStart<'_>) -> Result<(), ImportError> {
         self.close_note()?;
         let is_content = attribute_value(element, b"type")
@@ -6138,7 +6233,7 @@ impl BodyParser<'_> {
             .unwrap_or(true);
         if !is_content {
             self.skip_note = true;
-            self.reporter.report(self.note_container.unwrap_or(b"note"));
+            self.skip_note_customised = false;
             return Ok(());
         }
         self.skip_note = false;
@@ -6193,7 +6288,24 @@ impl BodyParser<'_> {
             let blocks = std::mem::take(&mut self.blocks);
             self.notes.push((source_id, node_id, meta, blocks));
         }
+        // A separator / continuation-separator note. Word writes four of these
+        // into every document that has a notes part, whether or not it has a
+        // single note, and they hold one paragraph with one `<w:separator/>`
+        // run: they are a request to draw the rule above the notes, which this
+        // engine's layout draws for itself. Reporting them — and every `w:p`,
+        // `w:r`, `w:pPr` and `w:separator` inside them, which is what happened
+        // while the subtree was walked with no container open — described a loss
+        // that did not happen, 140 times over the owner's corpus (HF-174).
+        //
+        // The loss that WOULD be real is a customised separator: Word lets a
+        // user replace the rule with their own content, and that content is
+        // dropped here. So the note is reported when it holds something the
+        // stock one never does.
+        if self.skip_note && self.skip_note_customised {
+            self.reporter.report(self.note_container.unwrap_or(b"note"));
+        }
         self.skip_note = false;
+        self.skip_note_customised = false;
         Ok(())
     }
 
@@ -7612,6 +7724,21 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"nvPicPr"
             | b"cNvPr"
             | b"cNvPicPr"
+            // The non-visual property wrappers for the other DrawingML shape
+            // kinds, beside `pic:cNvPicPr` which was already here: a shape
+            // (`wps:cNvSpPr`), a connector (`wps:cNvCnPr`) and a group
+            // (`wpg:cNvGrpSpPr`). They hold an id, a name and lock hints — the
+            // locks report on their own terms through `a:spLocks`, and the
+            // identity is not document meaning. Reporting the wrapper while
+            // consuming what is inside it described a loss that did not happen
+            // (HF-174).
+            | b"cNvSpPr"
+            | b"cNvCnPr"
+            | b"cNvGrpSpPr"
+            // `wps:txbx` is the wrapper around a shape's `w:txbxContent`, which
+            // the text-box arm imports in full. The wrapper itself carries
+            // nothing.
+            | b"txbx"
             | b"picLocks"
             | b"hlinkClick"
             | b"spPr"
