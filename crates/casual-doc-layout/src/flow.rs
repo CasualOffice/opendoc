@@ -633,7 +633,7 @@ pub(crate) fn build_measures_for_blocks_inner(
 /// The list-counter state the next chunk of a measure pass must start from.
 ///
 /// Not the state the pass *ended* in: chunks overlap by one block at each end
-/// (see [`FlowCtx::resume_snapshot`]), so the next one restarts at the
+/// (see `FlowCtx::resume_snapshot`, private to this module), so the next one restarts at the
 /// second-to-last block of this one and needs the counters as they were on
 /// entering it.
 ///
