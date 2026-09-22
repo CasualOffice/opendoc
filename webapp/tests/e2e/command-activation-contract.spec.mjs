@@ -135,6 +135,39 @@ async function loadEditor(page) {
   await clickIntoFirstPage(page);
 }
 
+/** The same editor with a RANGE selected.
+ *
+ *  The sweep above loads with a caret and skips every greyed row, which is
+ *  right — but it means the commands that need a selection are never activated
+ *  at all, and a throw inside one of them is invisible to the whole contract.
+ *  That is not hypothetical: extracting the bookmark manager into its own
+ *  module left `populateLinkPlaces` calling a function that had moved, so
+ *  Insert ▸ Link threw `bookmarkEntries is not defined` and the dialog never
+ *  opened — and this file, which exists to catch exactly "a control that does
+ *  nothing", swept straight past it because the row is greyed without a
+ *  selection. */
+async function loadEditorWithSelection(page) {
+  await loadEditor(page);
+  for (let i = 0; i < 12; i += 1) await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator(".overlay .highlight").first()).toBeVisible();
+}
+
+/** Every enabled menu row, by id, for the editor state `prepare` leaves. */
+async function enabledMenuIds(page, prepare) {
+  await prepare(page);
+  const ids = new Set();
+  for (const menu of MENUS) {
+    await openAppMenu(page, menu);
+    for (const row of await page.$$eval("#appMenuPopover .app-menu-item", (items) =>
+      items.filter((item) => !item.disabled).map((item) => item.dataset.command),
+    )) {
+      ids.add(row);
+    }
+    await page.keyboard.press("Escape");
+  }
+  return ids;
+}
+
 test.describe("every menu-bar command acts or explains itself", () => {
   for (const menu of MENUS) {
     test(`the ${menu} menu has no dead or inert row`, async ({ page }) => {
@@ -179,6 +212,49 @@ test.describe("every menu-bar command acts or explains itself", () => {
       }
     });
   }
+
+  // The other half of the contract: the rows the caret-only sweep is right to
+  // skip. Only the DIFFERENCE is activated, so this costs a handful of
+  // activations rather than a second full sweep.
+  test("a command that only a selection enables is swept too", async ({ page }) => {
+    test.setTimeout(240_000);
+    const thrown = [];
+    page.on("pageerror", (error) => thrown.push(String(error)));
+
+    const withCaret = await enabledMenuIds(page, loadEditor);
+    await page.reload();
+    const withSelection = await enabledMenuIds(page, loadEditorWithSelection);
+    const onlyWithSelection = [...withSelection].filter(
+      (id) => !withCaret.has(id) && !POINTER_UNSAFE.has(id),
+    );
+    expect(
+      onlyWithSelection.length,
+      "some commands must need a selection, or this test is checking nothing",
+    ).toBeGreaterThan(0);
+
+    for (const id of onlyWithSelection) {
+      await page.reload();
+      await loadEditorWithSelection(page);
+      // Find the row again: which menu it lives in is the taxonomy's business,
+      // not this test's.
+      let opened = false;
+      for (const candidate of MENUS) {
+        await openAppMenu(page, candidate);
+        if (await page.locator(`#appMenuPopover .app-menu-item[data-command="${id}"]`).count()) {
+          opened = true;
+          break;
+        }
+        await page.keyboard.press("Escape");
+      }
+      expect(opened, `${id} should still be in the bar`).toBe(true);
+      thrown.length = 0;
+      const { dead } = await activate(page, `selection ▸ ${id}`, () =>
+        page.locator(`#appMenuPopover .app-menu-item[data-command="${id}"]`).click(),
+      );
+      expect(dead, `${id} is a dead control when a selection enables it`).toEqual([]);
+      expect(thrown, `${id} threw when activated with a selection`).toEqual([]);
+    }
+  });
 
   test("every skipped command still exists in the bar", async ({ page }) => {
     await loadEditor(page);

@@ -345,6 +345,7 @@ function spellingDocumentXml(pageCount, language) {
     blocks.push(
       `<w:p><w:r>${lang}<w:t xml:space="preserve">Page ${i + 1} opens with a correct line of prose.</w:t></w:r></w:p>`,
       `<w:p><w:r>${lang}<w:t xml:space="preserve">Here the word ${typo} is the only wrong one.</w:t></w:r></w:p>`,
+      `<w:p><w:r>${lang}<w:t xml:space="preserve">${GRAMMAR_LINE}</w:t></w:r></w:p>`,
     );
     if (i < pageCount - 1) blocks.push(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`);
   }
@@ -352,6 +353,13 @@ function spellingDocumentXml(pageCount, language) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="${W}"><w:body>${blocks.join("")}${sectPr}</w:body></w:document>`;
 }
+
+/** A paragraph with exactly one grammar error of each kind, added to every
+ *  page of the spelling fixture so a spec can right-click a grammar mark. */
+const GRAMMAR_LINE = "This line has has a doubled word.";
+
+/** The doubled word the grammar line carries. */
+export const GRAMMAR_DOUBLED = "has has";
 
 /** The misspelled word this fixture puts on page `pageNumber` (1-based). */
 export function spellingTypoForPage(pageNumber) {

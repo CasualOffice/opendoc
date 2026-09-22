@@ -20,6 +20,7 @@ import { editRefusalMessage, mutationBlockedMessage } from "./edit_errors.mjs";
 import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
+import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
 import { createSpellChecker, spellingContextCommands } from "./spell_check.mjs";
@@ -4126,6 +4127,7 @@ const spellChecker = createSpellChecker({
   place,
   caret: () => (selection ? selection.focus : null),
   enabled: () => settings.spellCheck !== false,
+  grammarEnabled: () => settings.grammarCheck !== false,
   defaultLanguage: () => settings.spellLanguage || "en-US",
   status: (text, kind) => setStatus(text, kind),
   repaint: () => paintOverlayLayer(),
@@ -7406,6 +7408,7 @@ function buildContextCommands(context) {
           replace: replaceMisspelling,
           ignoreOnce: (flagged) => spellChecker.ignoreOnce(flagged),
           ignoreAll: (word) => spellChecker.ignoreAll(word),
+          ignoreRule: (rule) => spellChecker.ignoreRule(rule),
           addToDictionary: (word) => void addWordToDictionary(word),
         },
         reviewMode === "viewing"
@@ -12865,7 +12868,8 @@ function editorCommands(context = { surface: "palette" }) {
     // row and the palette row both say which state it is in rather than being an
     // action with an unknown effect. Never disabled: off has to be reversible
     // from the same place it was set (SKILL.md §10).
-    { id: "tools.spellCheck", label: `Spell check: ${settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline", noDoc: true, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
+    { id: "tools.spellCheck", label: `Spell check: ${settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
+    { id: "tools.grammarCheck", label: `Grammar check: ${settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
     { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
     { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
     { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
@@ -13308,42 +13312,9 @@ shortcutsClose?.addEventListener("click", () => toggleShortcutsReference(false))
 const toggleAbout = createAboutDialog(engineVersion, () => pagesEl);
 
 // ---- Bookmark manager ------------------------------------------------------
-// A Word/Docs-style bookmark surface over the engine's create/rename/delete ops
-// (bookmarkEntries/createBookmark/renameBookmark/deleteBookmark) plus the
-// existing bookmarkPosition navigation. Each mutation is one undoable action
-// grouped by the engine as a "Bookmark change".
-const bookmarkDialog = document.getElementById("bookmarkDialog");
-const bookmarkNameInput = document.getElementById("bookmarkNameInput");
-const bookmarkAddForm = document.getElementById("bookmarkAddForm");
-const bookmarkAddBtn = document.getElementById("bookmarkAddBtn");
-const bookmarkAddNote = document.getElementById("bookmarkAddNote");
-const bookmarkList = document.getElementById("bookmarkList");
-const bookmarkEmpty = document.getElementById("bookmarkEmpty");
-const bookmarkSortBtn = document.getElementById("bookmarkSortBtn");
-const bookmarkSortLabel = document.getElementById("bookmarkSortLabel");
-const bookmarkClose = document.getElementById("bookmarkClose");
-const bookmarkDone = document.getElementById("bookmarkDone");
-const BOOKMARK_ADD_HINT = "Select text in the document, then add a bookmark for it.";
-let bookmarkSortAsc = true;
-
-/** The bookmark name's byte length under the engine's UTF-8 255-byte bound. */
-function bookmarkNameByteLength(name) {
-  return new TextEncoder().encode(name).length;
-}
-
-/** A clean, user-facing validation message for `name`, or "" when valid. The
- *  engine enforces the same non-empty + 255-byte bound (its raw error name is
- *  internal vocabulary, so it is never shown directly). */
-function validateBookmarkName(name) {
-  if (!name) return "Enter a name for the bookmark.";
-  if (bookmarkNameByteLength(name) > 255) return "That name is too long (max 255 characters).";
-  return "";
-}
-
-function setBookmarkAddNote(message, isError) {
-  bookmarkAddNote.textContent = message || BOOKMARK_ADD_HINT;
-  bookmarkAddNote.classList.toggle("error", !!isError && !!message);
-}
+// The dialog is `bookmark_manager.mjs`; what is left here is the two things
+// that are not about bookmarks — the review-mode gate, which is about review
+// mode, and the repaint, which is about pages.
 
 /** True (after surfacing the standard read-only/untracked message) if a bookmark
  *  mutation must not apply in the current review mode. Bookmark markers are a
@@ -13372,242 +13343,20 @@ async function applyBookmarkEdit(res) {
   scheduleChromeRefresh({ stats: true, outline: true });
 }
 
-/** The current bookmarks as `[{ id, name }]`, parsed from the engine's
- *  `"{id}\t{name}"` entries and ordered by the active sort direction. */
-function bookmarkEntries() {
-  if (!doc) return [];
-  const entries = (doc.bookmarkEntries?.() || []).map((row) => {
-    const tab = row.indexOf("\t");
-    return { id: row.slice(0, tab), name: row.slice(tab + 1) };
-  });
-  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  if (!bookmarkSortAsc) entries.reverse();
-  return entries;
-}
-
-function refreshBookmarkList() {
-  const entries = bookmarkEntries();
-  bookmarkList.replaceChildren();
-  bookmarkEmpty.hidden = entries.length > 0;
-  bookmarkList.hidden = entries.length === 0;
-  for (const { id, name } of entries) bookmarkList.append(bookmarkRow(id, name));
-}
-
-/** One bookmark row: a Go-to button (name) plus Rename and Delete actions. */
-function bookmarkRow(id, name) {
-  const li = document.createElement("li");
-  li.className = "bookmark-row";
-  li.dataset.id = id;
-
-  const goto = document.createElement("button");
-  goto.type = "button";
-  goto.className = "bookmark-goto";
-  goto.title = `Go to “${name}”`;
-  goto.innerHTML = `<span class="ms" aria-hidden="true">arrow_forward</span><span class="bookmark-name"></span>`;
-  goto.querySelector(".bookmark-name").textContent = name;
-  goto.addEventListener("click", () => gotoBookmark(name));
-
-  const actions = document.createElement("div");
-  actions.className = "bookmark-row-actions";
-
-  const rename = document.createElement("button");
-  rename.type = "button";
-  rename.className = "bookmark-action";
-  rename.title = "Rename";
-  rename.setAttribute("aria-label", `Rename “${name}”`);
-  rename.innerHTML = `<span class="ms" aria-hidden="true">edit</span>`;
-  rename.addEventListener("click", () => beginBookmarkRename(li, id, name));
-
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "bookmark-action danger";
-  del.title = "Delete";
-  del.setAttribute("aria-label", `Delete “${name}”`);
-  del.innerHTML = `<span class="ms" aria-hidden="true">delete</span>`;
-  del.addEventListener("click", () => deleteBookmark(id, name));
-
-  actions.append(rename, del);
-  li.append(goto, actions);
-  return li;
-}
-
-/** Navigates to `name` (reusing the existing bookmarkPosition resolver) and
- *  places the caret there, closing the dialog so focus returns to the canvas. */
-function gotoBookmark(name) {
-  if (!doc) return;
-  const encoded = doc.bookmarkPosition(name);
-  const [node, offset] = encoded.split("\t");
-  if (!node || !offset) {
-    setStatus(`Bookmark “${name}” was not found`, "error");
-    return;
-  }
-  closeBookmarkDialog();
-  navToPosition({ node, offset: Number(offset) }, false);
-}
-
-/** Swaps a row's name for an inline editor. Enter confirms via renameBookmark;
- *  Esc (or blur) cancels and restores the row. */
-function beginBookmarkRename(li, id, currentName) {
-  if (li.classList.contains("editing")) return;
-  li.classList.add("editing");
-  const goto = li.querySelector(".bookmark-goto");
-  const input = document.createElement("input");
-  input.type = "text";
-  input.className = "bookmark-rename-input";
-  input.maxLength = 255;
-  input.value = currentName;
-  input.setAttribute("aria-label", "New bookmark name");
-  li.replaceChild(input, goto);
-  input.focus();
-  input.select();
-
-  let settled = false;
-  const cancel = () => {
-    if (settled) return;
-    settled = true;
-    refreshBookmarkList();
-  };
-  const commit = () => {
-    if (settled) return;
-    const next = input.value.trim();
-    if (next === currentName) return cancel();
-    const problem = validateBookmarkName(next);
-    if (problem) {
-      setStatus(problem, "error");
-      input.focus();
-      input.select();
-      return;
-    }
-    if (bookmarkMutationBlocked()) {
-      settled = true;
-      closeBookmarkDialog();
-      return;
-    }
-    settled = true;
-    renameBookmark(id, next);
-  };
-
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      commit();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      cancel();
-    }
-  });
-  input.addEventListener("blur", cancel);
-}
-
-function createBookmarkFromSelection() {
-  if (!doc) return;
-  const name = bookmarkNameInput.value.trim();
-  const problem = validateBookmarkName(name);
-  if (problem) {
-    setBookmarkAddNote(problem, true);
-    bookmarkNameInput.focus();
-    return;
-  }
-  if (!hasRange()) {
-    setBookmarkAddNote("Select some text in the document first.", true);
-    return;
-  }
-  const ends = selEndpoints();
-  if (!ends) return;
-  if (bookmarkMutationBlocked()) {
-    closeBookmarkDialog();
-    return;
-  }
-  let res;
-  try {
-    res = doc.createBookmark(ends[0], ends[1], ends[2], ends[3], name);
-  } catch (err) {
-    console.warn("createBookmark ignored:", err?.message ?? err);
-    setBookmarkAddNote("That bookmark couldn't be created for this selection.", true);
-    return;
-  }
-  applyBookmarkEdit(res).then(() => {
-    bookmarkNameInput.value = "";
-    setBookmarkAddNote("", false);
-    refreshBookmarkList();
-    setStatus(`Bookmark “${name}” added`);
-    bookmarkNameInput.focus();
-  });
-}
-
-function renameBookmark(id, name) {
-  if (!doc) return;
-  let res;
-  try {
-    res = doc.renameBookmark(id, name);
-  } catch (err) {
-    console.warn("renameBookmark ignored:", err?.message ?? err);
-    setStatus("That bookmark couldn't be renamed", "error");
-    refreshBookmarkList();
-    return;
-  }
-  applyBookmarkEdit(res).then(() => {
-    refreshBookmarkList();
-    setStatus(`Bookmark renamed to “${name}”`);
-  });
-}
-
-function deleteBookmark(id, name) {
-  if (!doc) return;
-  if (bookmarkMutationBlocked()) {
-    closeBookmarkDialog();
-    return;
-  }
-  let res;
-  try {
-    res = doc.deleteBookmark(id);
-  } catch (err) {
-    console.warn("deleteBookmark ignored:", err?.message ?? err);
-    setStatus("That bookmark couldn't be deleted", "error");
-    refreshBookmarkList();
-    return;
-  }
-  applyBookmarkEdit(res).then(() => {
-    refreshBookmarkList();
-    setStatus(`Bookmark “${name}” deleted`);
-  });
-}
-
-const bookmarkModal = bookmarkDialog
-  ? registerModal(bookmarkDialog, {
-      initialFocus: () => bookmarkNameInput,
-      fallbackFocus: () => pagesEl,
-    })
-  : null;
+const bookmarkManager = createBookmarkManager({
+  getDoc: () => doc,
+  applyEdit: applyBookmarkEdit,
+  mutationBlocked: bookmarkMutationBlocked,
+  hasRange,
+  selectionEndpoints: selEndpoints,
+  navigateTo: (position) => navToPosition(position, false),
+  status: (text, kind) => setStatus(text, kind),
+  registerModal,
+  fallbackFocus: () => pagesEl,
+});
 
 function openBookmarkManager() {
-  if (!doc || !bookmarkModal) return;
-  bookmarkNameInput.value = "";
-  setBookmarkAddNote("", false);
-  refreshBookmarkList();
-  bookmarkModal.open();
-}
-
-function closeBookmarkDialog() {
-  bookmarkModal?.close();
-}
-
-if (bookmarkDialog) {
-  bookmarkAddForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    createBookmarkFromSelection();
-  });
-  bookmarkNameInput.addEventListener("input", () => {
-    if (bookmarkAddNote.classList.contains("error")) setBookmarkAddNote("", false);
-  });
-  bookmarkSortBtn.addEventListener("click", () => {
-    bookmarkSortAsc = !bookmarkSortAsc;
-    bookmarkSortLabel.textContent = bookmarkSortAsc ? "A–Z" : "Z–A";
-    refreshBookmarkList();
-  });
-  bookmarkClose.addEventListener("click", () => closeBookmarkDialog());
-  bookmarkDone.addEventListener("click", () => closeBookmarkDialog());
+  bookmarkManager.open();
 }
 
 // ---- Insert field ----------------------------------------------------------
@@ -14009,7 +13758,7 @@ function setLinkDialogMode(mode) {
  *  auto-bookmarking a heading would be a second, separate undoable op). Returns
  *  the bookmark count; `selectedAnchor` pre-selects an existing internal link. */
 function populateLinkPlaces(selectedAnchor) {
-  const entries = bookmarkEntries();
+  const entries = bookmarkManager.entries();
   linkPlaceSelect.replaceChildren();
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -15582,6 +15331,16 @@ function setSpellCheckEnabled(enabled) {
   setStatus(enabled ? "Spell check on" : "Spell check off");
 }
 
+/** Grammar on or off, remembered beside spelling and independent of it. */
+function setGrammarCheckEnabled(enabled) {
+  settings.grammarCheck = enabled;
+  saveSettings();
+  if (grammarCheckToggle) grammarCheckToggle.checked = enabled;
+  spellChecker.refresh();
+  drawSelection();
+  setStatus(enabled ? "Grammar check on" : "Grammar check off");
+}
+
 /** Adds a word and SAYS whether it was stored. A personal dictionary that
  *  silently failed to persist is indistinguishable from one that worked until
  *  the next reload, and there is no management surface yet to notice with. */
@@ -16407,6 +16166,7 @@ const draftRecoveryDismissBtn = document.getElementById("draftRecoveryDismiss");
 const draftStatusEl = document.getElementById("draftStatus");
 const autosaveToggle = document.getElementById("autosaveToggle");
 const spellCheckToggle = document.getElementById("spellCheckToggle");
+const grammarCheckToggle = document.getElementById("grammarCheckToggle");
 const draftsClearBtn = document.getElementById("draftsClearBtn");
 
 /** This tab's slot. `let`, because opening another document hands the current
@@ -17026,6 +16786,11 @@ const DEFAULT_SETTINGS = {
   // editor that does not is visibly behind one; remembered, because a user who
   // turned it off did not mean "until the next reload" (docs/114 §5.6).
   spellCheck: true,
+  // Grammar. A SEPARATE switch from spelling, as in Word: the two checks are
+  // independent, they mark differently, and the owner rates grammar the more
+  // important of the two — so it must not be reachable only by leaving
+  // spelling on.
+  grammarCheck: true,
   // The language used where the document's own w:lang does not say. NOT
   // navigator.language: that would make every test non-deterministic and the
   // user could not see why the answer changed.
@@ -17103,6 +16868,7 @@ function applySettings() {
   }
   if (draftsClearBtn) draftsClearBtn.disabled = !AUTOSAVE_ALLOWED_HERE;
   if (spellCheckToggle) spellCheckToggle.checked = settings.spellCheck !== false;
+  if (grammarCheckToggle) grammarCheckToggle.checked = settings.grammarCheck !== false;
   applyActiveAuthorToDocument();
 }
 
@@ -17121,6 +16887,7 @@ autosaveToggle?.addEventListener("change", () => {
 });
 draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
 spellCheckToggle?.addEventListener("change", () => setSpellCheckEnabled(spellCheckToggle.checked));
+grammarCheckToggle?.addEventListener("change", () => setGrammarCheckEnabled(grammarCheckToggle.checked));
 
 themeSeg.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-theme]");
