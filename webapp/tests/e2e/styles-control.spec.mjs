@@ -44,10 +44,28 @@ async function openStyles(page) {
   await expect(page.locator("#stylesMenu")).toBeVisible();
 }
 
-/** The styles the band currently offers, in menu order. Leaves the menu closed. */
+/** The SUGGESTED group — the short list promoted above the rest. */
 async function offered(page) {
   await openStyles(page);
-  const names = await page.$$eval("#stylesMenu .style-option", (rows) =>
+  const names = await page.$$eval("#stylesMenuList", (lists) => {
+    const rows = [...lists[0].children];
+    const second = rows.findIndex(
+      (el, i) => i > 0 && el.classList.contains("menu-heading"),
+    );
+    const upTo = second === -1 ? rows.length : second;
+    return rows
+      .slice(0, upTo)
+      .filter((el) => el.classList.contains("style-option"))
+      .map((el) => el.dataset.style);
+  });
+  await page.keyboard.press("Escape");
+  return names;
+}
+
+/** EVERY style the menu lists, both groups. */
+async function allOffered(page) {
+  await openStyles(page);
+  const names = await page.$$eval("#stylesMenuList .style-option", (rows) =>
     rows.map((row) => row.dataset.style),
   );
   await page.keyboard.press("Escape");
@@ -200,31 +218,72 @@ test("exactly one control in the Home band applies a paragraph style", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("the band offers a SHORT list, not every style in the document", async ({
+test("the band PROMOTES a short list and still reaches every style", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  const cards = await offered(page);
+  const suggested = await offered(page);
+  const everything = await allOffered(page);
   const defined = await allDefinedStyles(page);
 
-  // Six is the cap: exactly what Docs offers, and the bottom of Word's visible
-  // gallery range (docs/115 §§2–4). `OFFERED_STYLE_COUNT`.
-  expect(cards.length, `offered: ${cards.join(", ")}`).toBeLessThanOrEqual(6);
-  // And it really is a SHORTENING — the document defines more than the band offers.
-  // This is the assertion the three-control era could never have passed: both the
-  // select and the ▾ popover listed all of `defined`.
-  expect(defined.length).toBeGreaterThan(cards.length);
-  // Every offered style is one the engine can actually apply.
-  for (const name of cards) expect(defined).toContain(name);
-  // The offered ones are recommended names, not "whatever came first alphabetically".
-  // `Envelope Return` and `Table Heading` are defined by the fixture and must not be
-  // on the band: they are not styles a user applies while writing.
-  expect(cards).not.toContain("Envelope Return");
-  expect(cards).not.toContain("Table Heading");
-  expect(cards).toContain("Normal");
+  // Six is the cap on what is PROMOTED: Docs' number, and the bottom of
+  // Word's visible gallery range (`docs/115` §§2–4).
+  expect(
+    suggested.length,
+    `suggested: ${suggested.join(", ")}`,
+  ).toBeLessThanOrEqual(6);
+  expect(suggested).toContain("Normal");
+
+  // …but not on what is REACHABLE. Capping reachability at six hid styles the
+  // document really had: on the owner's Medical form, which defines five
+  // paragraph styles of which only `Normal` is one of Word's, the control
+  // offered exactly ONE. Every defined style is now in the menu.
+  expect(everything.length).toBeGreaterThan(suggested.length);
+  const missing = defined.filter((name) => !everything.includes(name));
+  expect(
+    missing,
+    "every defined style must be reachable from the menu",
+  ).toEqual([]);
+
+  // Promotion still discriminates. `Table Heading` is machinery — table
+  // scaffolding, not something you apply while writing — so it ranks after
+  // ordinary styles and does not reach the promoted group while ordinary ones
+  // are still unplaced. `Envelope Return` IS an ordinary style, so topping the
+  // group up with it is the fill working, not a leak: the alternative is the
+  // near-empty control this change exists to fix.
+  expect(suggested).not.toContain("Table Heading");
+  expect(everything.indexOf("Table Heading")).toBeGreaterThan(
+    everything.indexOf("Envelope Return"),
+  );
+
+  expect(consoleErrors).toEqual([]);
+});
+
+test("typing in the menu narrows it", async ({ page, consoleErrors }) => {
+  // The full list is long by design now, so it has to be reachable by typing
+  // rather than only by scrolling — the same affordance the Font menu has.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await openStyles(page);
+
+  const all = await page.locator("#stylesMenuList .style-option").count();
+  await page.locator("#stylesMenuInput").fill("head");
+  const filtered = await page.$$eval("#stylesMenuList .style-option", (rows) =>
+    rows.map((row) => row.dataset.style),
+  );
+  expect(filtered.length).toBeGreaterThan(0);
+  expect(filtered.length).toBeLessThan(all);
+  for (const name of filtered) {
+    expect(name.toLowerCase()).toContain("head");
+  }
+
+  // A query matching nothing says so rather than showing an unexplained blank.
+  await page.locator("#stylesMenuInput").fill("zzzznope");
+  await expect(page.locator("#stylesMenuEmpty")).toBeVisible();
+  await expect(page.locator("#stylesMenuList .style-option")).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -239,12 +298,12 @@ test("a style the document is using stays offered, and applies from the band", a
 
   const before = await offered(page);
   const defined = await allDefinedStyles(page);
-  // A style the SHORT list does not offer — so it can only become offered by being
-  // put to use in the document.
+  // A style the SUGGESTED group does not promote — reachable in the full list
+  // below, but not one of the six at the top until the document uses it.
   const outside = defined.find((name) => !before.includes(name));
   expect(
     outside,
-    "the fixture should define a style beyond the offered set",
+    "the fixture should define a style beyond the suggested six",
   ).toBeTruthy();
 
   await applyStyleFromPalette(page, outside);

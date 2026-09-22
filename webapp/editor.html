@@ -775,7 +775,19 @@
       </section>
     </div>
 
-    <div id="stylesMenu" class="context-menu styles-menu" hidden role="listbox" aria-label="Paragraph styles"></div>
+    <!-- The Styles menu mirrors the Font menu (docs/63 §3 popover pattern, and
+         Word's Styles pane): a suggested group narrowed to this document and
+         this selection, then EVERY paragraph style the document defines, with
+         a filter field so a long list is reachable by typing instead of by
+         scrolling. Capping the list at six hid styles the document really had. -->
+    <div id="stylesMenu" class="context-menu styles-menu" hidden role="dialog" aria-label="Paragraph styles">
+      <div class="font-menu-search">
+        <span class="ms" aria-hidden="true">search</span>
+        <input id="stylesMenuInput" type="text" placeholder="Search styles" autocomplete="off" spellcheck="false" aria-label="Search paragraph styles" aria-controls="stylesMenuList" />
+      </div>
+      <div id="stylesMenuList" class="styles-menu-list" role="listbox" aria-label="Paragraph styles"></div>
+      <div id="stylesMenuEmpty" class="font-menu-empty" hidden>No matching styles</div>
+    </div>
 
     <div id="spacingMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line and paragraph spacing">
       <div class="menu-heading">Line spacing</div>

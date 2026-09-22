@@ -228,10 +228,14 @@ test("the Styles gallery applies a real style and stays inside the band's width 
   // A SHORT list, capped at six — what Docs offers and the bottom of Word's visible
   // gallery range (docs/115). `styles-control.spec.mjs` owns the list's composition;
   // here the concern is only that this band still holds it.
+  // The menu lists every paragraph style the document defines; the SHORT part
+  // is the suggested group promoted above them (`docs/115`, revised). Which
+  // styles land in that group is `styles-control.spec.mjs`'s subject — here
+  // the concern is only that this band still holds the control.
   const rows = await menu.locator(".style-option").count();
-  expect(rows).toBeGreaterThan(1);
-  expect(rows).toBeLessThanOrEqual(6);
-  expect((await definedParagraphStyles(page)).length).toBeGreaterThan(4);
+  const defined = (await definedParagraphStyles(page)).length;
+  expect(defined).toBeGreaterThan(4);
+  expect(rows).toBe(defined);
   await page.keyboard.press("Escape");
 
   // The width budget, stated as a number rather than as "the same width as the
@@ -285,9 +289,9 @@ test("each Styles menu row is drawn IN its own style (model-driven preview)", as
 
   await page.locator("#stylesTrigger").click();
   const looks = await galleryCardLooks(page);
-  // Bounded by OFFERED_STYLE_COUNT — see the count assertion above for why it is 6.
+  // Every row in the menu, not just the promoted six: each one has to be drawn
+  // in its own style, because that is the reason the list is worth opening.
   expect(looks.length).toBeGreaterThan(1);
-  expect(looks.length).toBeLessThanOrEqual(6);
   // Every row's label carries an inline preview weight (the engine-resolved
   // style drove it), never the bare default only.
   for (const look of looks) {
