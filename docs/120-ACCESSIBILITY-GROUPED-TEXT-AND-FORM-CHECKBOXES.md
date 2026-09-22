@@ -123,15 +123,17 @@ checker. Two things are still worth taking from them:
 
 ### Microsoft Word
 
-Word's own naming of a content control is its **Title** — `w:alias` — which is
-what Developer ▸ Properties shows and the only author-supplied name the format
-carries. `w:tag` is the machine-facing key. Word's Accessibility Checker has
-no rule for content controls, so it will not complain about an unnamed one.
+What the FORMAT says is checkable and is all this section claims: the only
+author-supplied name a content control carries is its **Title**, `w:alias`
+(`w:tag` is the machine-facing key), and the owner's form sets neither — 0
+occurrences of each in `word/document.xml`. That is the whole of the
+author-supplied naming surface, and on this document it is empty.
 
-**What was not verified:** what Narrator/JAWS actually announce for a
-`w14:checkbox` in Word. There is no Word here to measure and no source to
-read, so this document does not claim it. The decision below therefore rests
-on the ARIA and WCAG specifications, which are normative, rather than on an
+**What was NOT verified, and is therefore not claimed anywhere below:** what
+Narrator or JAWS actually announce for a `w14:checkbox` in Word, and whether
+Word's Accessibility Checker has a rule for content controls. There is no Word
+here to measure and no source to read. The decision therefore rests on the
+ARIA and WCAG specifications, which are normative, rather than on an
 unmeasured claim about a competitor.
 
 ### The ARIA and WCAG specifications
