@@ -101,3 +101,32 @@ test("a blocked mutation says how to unblock it, unless it cannot be unblocked",
   // switch to.
   assert.doesNotMatch(shown, /switch to Editing/i);
 });
+
+// A refusal the ENGINE already wrote for the reader reaches them intact.
+//
+// `docs/109` HF-175. A `w:documentProtection w:edit="forms" w:enforcement="1"`
+// document — the owner's loan agreement — refuses every edit outside its form
+// fields. Routed through the generic branch that reads "that edit isn't
+// supported for this selection yet", which is wrong twice over: the selection
+// is fine, and it implies the edit might work somewhere else in the document
+// when the whole document is locked. The reader hunts for a selection that
+// does not exist.
+test("an engine refusal written for the reader is not replaced by the generic one", () => {
+  const PROTECTED = "This document is protected: only its form fields can be edited";
+  const shown = editRefusalMessage(new Error(`refused: ${PROTECTED}`));
+  assert.equal(shown, PROTECTED, "the engine's sentence must survive the mapper");
+  assert.doesNotMatch(shown, /^refused: /, "the marker is machinery, not prose");
+  assert.doesNotMatch(shown, /selection/, "nothing is wrong with the selection");
+
+  // The marker is the only thing that grants passthrough: an unmarked engine
+  // error is still internal vocabulary and still gets translated.
+  assert.match(editRefusalMessage(new Error(PROTECTED)), /selection/);
+  // …and a document-level reason the HOST knows still outranks it, so the two
+  // paths cannot disagree about a document nobody can edit at all.
+  assert.equal(
+    editRefusalMessage(new Error(`refused: ${PROTECTED}`), {
+      editingUnavailableReason: WINDOWED,
+    }),
+    WINDOWED,
+  );
+});
