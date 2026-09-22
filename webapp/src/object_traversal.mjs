@@ -54,3 +54,42 @@ export function nextObjectIndex(count, current, step) {
 export function traversalAnnouncement(kind, index, count, inGroup) {
   return `${OBJECT_LABELS[kind] ?? "Object"} ${index + 1} of ${count}${inGroup ? " in group" : ""}`;
 }
+
+/**
+ * Whether a click should reach INTO the group it landed on, rather than select
+ * that group as a unit.
+ *
+ * Word's grammar (`docs/117` §3): the first click picks a group up whole, the
+ * next one reaches inside it. Getting the first click wrong would be worse
+ * than the bug this fixes — a group has to be selectable, movable and
+ * deletable as one thing — so this is deliberately narrow: it says yes only
+ * when the group clicked is the one already in hand.
+ *
+ * The last condition is the subtle one. When a child is already selected and
+ * the pointer is still over that same child, the answer is NO: re-resolving
+ * there would fight a click that is the start of a drag.
+ *
+ * @param {{root?: string, subject?: string}|null|undefined} held  The current
+ *   selection's reference.
+ * @param {{kind?: string, root?: string}|null|undefined} hit  What the click hit.
+ * @param {boolean} pointerOnHeldChild  Whether the pointer is inside the
+ *   currently selected child of that group.
+ */
+export function clickDescendsIntoGroup(held, hit, pointerOnHeldChild) {
+  if (!held?.root || hit?.kind !== "group" || hit.root !== held.root)
+    return false;
+  return !(held.subject !== held.root && pointerOnHeldChild);
+}
+
+/**
+ * Whether Escape should climb to the parent group rather than drop to the text
+ * caret — true exactly when the selection is something inside a group.
+ *
+ * The way out is the way in, one level at a time (`docs/117` §5 rule 4).
+ * Without it, descending was a one-way door: Escape from a child went all the
+ * way back to the document, so the group just picked up was gone and reaching
+ * it again meant clicking again.
+ */
+export function escapeClimbsToGroup(ref) {
+  return traversalRoot(ref) !== null;
+}
