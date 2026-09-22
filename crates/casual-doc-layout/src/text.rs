@@ -179,6 +179,10 @@ pub struct InlineImage {
     /// (`P1G-OBJ-MODEL`); carried through to the display list's `PaintItem::Image`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<casual_doc_model::v1::CropRect>,
+    /// The picture's opacity (`a:alphaModFix`), in 1000ths of a percent;
+    /// `None` is fully opaque. Carried through to `PaintItem::Image`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u32>,
 }
 
 /// An inline image handed to the line shaper as an in-flow box. `index` is the
@@ -195,6 +199,9 @@ pub struct InlineImageSpec {
     /// The source-rectangle crop (`a:srcRect`), copied into the positioned
     /// [`InlineImage`] (`P1G-OBJ-MODEL`).
     pub crop: Option<casual_doc_model::v1::CropRect>,
+    /// The picture's opacity (`a:alphaModFix`), copied into the positioned
+    /// [`InlineImage`].
+    pub opacity: Option<u32>,
 }
 
 /// A pre-laid-out equation handed to the paragraph shaper as one atomic in-flow
@@ -653,6 +660,7 @@ pub trait LineShaper {
                     origin: Point::new(Twip::ZERO, y),
                     size: image.size,
                     crop: image.crop,
+                    opacity: image.opacity,
                 }],
                 fields: Vec::new(),
                 notes: Vec::new(),

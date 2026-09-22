@@ -2036,6 +2036,7 @@ mod tests {
         );
         let anchor = anchor_at(
             AnchorContent::Image {
+                opacity: None,
                 media: "word/media/image1.png".to_owned(),
                 crop: None,
                 border: Some(AnchorStroke {
@@ -2081,6 +2082,7 @@ mod tests {
         let frame = |dash| {
             let anchor = anchor_at(
                 AnchorContent::Image {
+                    opacity: None,
                     media: "word/media/image1.png".to_owned(),
                     crop: None,
                     border: Some(AnchorStroke {
@@ -2130,6 +2132,7 @@ mod tests {
         // An image float carries its rotation/flip onto the emitted blit.
         let mut anchor = anchor_at(
             AnchorContent::Image {
+                opacity: None,
                 media: "m".to_owned(),
                 crop: None,
                 border: None,

@@ -1701,6 +1701,7 @@ mod tests {
         let n = node(id);
         let mut line = blank_line(n);
         line.images = vec![crate::text::InlineImage {
+            opacity: None,
             media: "word/media/image1.png".to_owned(),
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size: Size::new(Twip(1_000), Twip(height)),

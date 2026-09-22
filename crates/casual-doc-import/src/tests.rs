@@ -2370,6 +2370,44 @@ fn an_over_long_alt_text_is_still_reported_as_lost() {
     );
 }
 
+/// A picture's `a:alphaModFix` is the alpha to scale TO, in 1000ths of a
+/// percent — this is how Word writes a watermark, and the owner's loan
+/// agreement has five pictures at 20% that were painting solid.
+#[test]
+fn a_picture_alpha_is_imported_as_an_opacity() {
+    let inline = r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="20000"/></a:blip></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let document = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+    );
+    let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+    let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+    let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+        panic!("expected an inline drawing");
+    };
+    assert_eq!(drawing.opacity, Some(20_000));
+}
+
+/// Full opacity is the absence of the effect, so writing the no-op explicitly
+/// must not become a modelled field — the same rule the identity `a:srcRect`
+/// follows.
+#[test]
+fn a_fully_opaque_alpha_is_not_modelled() {
+    for amt in ["100000", "120000"] {
+        let inline = format!(
+            r#"<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="{amt}"/></a:blip></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+        );
+        let document = format!(
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic"><w:body><w:p><w:r>{inline}</w:r></w:p></w:body></w:document>"#
+        );
+        let media = [("word/media/image1.png", b"PNGDATA".as_slice())];
+        let import = import_bytes(&build_package(document.as_bytes(), IMAGE_REL, &media));
+        let InlineNode::Drawing(drawing) = &paragraph(&import, 0).inlines[0] else {
+            panic!("expected an inline drawing");
+        };
+        assert_eq!(drawing.opacity, None, "amt={amt} is fully opaque");
+    }
+}
+
 #[test]
 fn inline_drawing_identity_srcrect_is_dropped_as_no_crop() {
     // An all-zero `a:srcRect` is the identity crop; it must model as `crop: None`,

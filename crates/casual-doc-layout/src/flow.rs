@@ -1115,13 +1115,19 @@ fn paragraph_hash(
                 2u8.hash(&mut hasher);
                 break_kind_key(*kind).hash(&mut hasher);
             }
-            FlowItem::Image { media, size, crop } => {
+            FlowItem::Image {
+                media,
+                size,
+                crop,
+                opacity,
+            } => {
                 3u8.hash(&mut hasher);
                 media.hash(&mut hasher);
                 size.width.0.hash(&mut hasher);
                 size.height.0.hash(&mut hasher);
                 crop.map(|c| (c.left, c.top, c.right, c.bottom))
                     .hash(&mut hasher);
+                opacity.hash(&mut hasher);
             }
             FlowItem::Math { size, runs, rules } => {
                 11u8.hash(&mut hasher);
@@ -3381,6 +3387,9 @@ fn embedded_object_items<'a>(
                 media: media.part_name.clone(),
                 size,
                 crop: None,
+                // An embedded object's preview is its own picture, with no
+                // `a:blip` of its own to carry an alpha.
+                opacity: None,
             });
             return;
         }
@@ -4042,6 +4051,7 @@ fn image_item(drawing: &Drawing, ctx: &FlowCtx) -> Option<FlowItem<'static>> {
         media: part,
         size,
         crop: drawing.crop,
+        opacity: drawing.opacity,
     })
 }
 
@@ -4267,11 +4277,17 @@ fn shape_text_with_objects(
                 byte = byte.saturating_add(run.text.len() as u32);
                 runs.push(run.clone());
             }
-            FlowItem::Image { media, size, crop } => images.push(InlineImageSpec {
+            FlowItem::Image {
+                media,
+                size,
+                crop,
+                opacity,
+            } => images.push(InlineImageSpec {
                 media: media.clone(),
                 index: byte,
                 size: *size,
                 crop: *crop,
+                opacity: *opacity,
             }),
             FlowItem::Math { size, runs, rules } => maths.push(InlineMathSpec {
                 index: byte,
@@ -4349,7 +4365,12 @@ fn shape_complex_inline_with_objects(
             stack_lines(&mut out, chunk.lines, &mut cursor_y);
         }
         let object_line = match item {
-            FlowItem::Image { media, size, crop } => image_line(media.clone(), *size, *crop, range),
+            FlowItem::Image {
+                media,
+                size,
+                crop,
+                opacity,
+            } => image_line(media.clone(), *size, *crop, *opacity, range),
             FlowItem::Math { size, runs, rules } => {
                 math_line(*size, runs.clone(), rules.clone(), range)
             }
@@ -4412,6 +4433,7 @@ fn image_line(
     media: String,
     size: Size,
     crop: Option<casual_doc_model::v1::CropRect>,
+    opacity: Option<u32>,
     range: ModelRange,
 ) -> Line {
     Line {
@@ -4429,6 +4451,7 @@ fn image_line(
             origin: Point::new(Twip::ZERO, Twip::ZERO),
             size,
             crop,
+            opacity,
         }],
         fields: Vec::new(),
         notes: Vec::new(),

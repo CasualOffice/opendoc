@@ -37,6 +37,7 @@ use casual_doc_model::v1::DashStyle;
 use casual_doc_model::v1::LineEnd;
 use casual_doc_model::v1::LineEndKind;
 use casual_doc_model::v1::LineEndSize;
+use casual_doc_model::v1::OPACITY_FULL;
 use casual_doc_model::v1::UnderlineStyle;
 use skrifa::FontRef;
 use skrifa::MetadataProvider;
@@ -204,7 +205,16 @@ impl<'a> Transcriber<'a> {
                 rect,
                 crop,
                 transform,
-            } => self.image(writer, out, media, *rect, crop.as_ref(), transform.as_ref()),
+                opacity,
+            } => self.image(
+                writer,
+                out,
+                media,
+                *rect,
+                crop.as_ref(),
+                transform.as_ref(),
+                *opacity,
+            ),
             PaintItem::Shape {
                 geometry,
                 fill,
@@ -569,6 +579,7 @@ impl<'a> Transcriber<'a> {
         rect: Rect,
         crop: Option<&CropRect>,
         transform: Option<&ShapeTransform>,
+        opacity: Option<u32>,
     ) {
         let Some(resource) = self.images.use_image(writer, self.media, media) else {
             // The raster backend paints a bordered box with a diagonal cross
@@ -582,6 +593,14 @@ impl<'a> Transcriber<'a> {
         };
         let (x, y, width, height) = out.rect_points(rect);
         out.op("q");
+        // `a:alphaModFix` is constant alpha over the whole picture, which is
+        // exactly what an `ExtGState` `/ca` expresses — the same mechanism the
+        // shape fills already use, so a watermark exports as faint rather than
+        // solid. Inside the `q`/`Q` pair, so it does not leak to later paint.
+        if let Some(amount) = opacity.filter(|amount| *amount < OPACITY_FULL) {
+            let scaled = (f64::from(amount) / f64::from(OPACITY_FULL) * 255.0).round();
+            self.alpha(out, scaled.clamp(0.0, 255.0) as u8);
+        }
         if let Some(transform) = transform {
             out.concat_transform(transform);
         }

@@ -29,7 +29,7 @@ use casual_doc_layout::display::ShapeTransform;
 use casual_doc_layout::font_registry::{DynFace, FontRegistry};
 use casual_doc_layout::text::{FontId, GlyphRun};
 use casual_doc_layout::units::{Point, Rect};
-use casual_doc_model::v1::{CROP_FULL, CropRect};
+use casual_doc_model::v1::{CROP_FULL, CropRect, OPACITY_FULL};
 // Kept on a separate `use` line (anti-conflict): the dash/line-end model types the
 // shape paint path consumes.
 use casual_doc_model::v1::{DashStyle, LineEnd, LineEndKind, LineEndSize};
@@ -239,6 +239,7 @@ pub fn render(
                 rect,
                 crop,
                 transform,
+                opacity,
             } => {
                 render_image(
                     id,
@@ -249,6 +250,7 @@ pub fn render(
                     media,
                     clip_stack.last(),
                     object_transform(transform.as_ref(), dpi),
+                    *opacity,
                 );
             }
             PaintItem::Line { from, to, stroke } => {
@@ -307,6 +309,7 @@ fn render_image(
     media: &dyn MediaSource,
     clip: Option<&Mask>,
     transform: Transform,
+    opacity: Option<u32>,
 ) {
     let Some(bytes) = media.media_bytes(media_id) else {
         return;
@@ -354,8 +357,19 @@ fn render_image(
     // object transform (rotation/flip about the box center) is applied AFTER the
     // placement, so the picture rotates in page space.
     let placement = Transform::from_row(dw / src_w, 0.0, 0.0, dh / src_h, dx, dy);
+    // `a:alphaModFix@amt` scales the picture's alpha: 20000 is 20% opaque,
+    // which is how Word writes a watermark (ECMA-376 §20.1.8.1 — the amount is
+    // the alpha to scale TO, not the transparency). Absent is fully opaque.
+    //
+    // ONLYOFFICE models the same thing as a `CAlphaModFix` effect on the
+    // blipFill with an `amt` in the same 0..100000 range; their transparency
+    // SLIDER inverts it on the way in, which is a property of that control and
+    // not of the format, so it is not copied here.
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
+        opacity: opacity.map_or(1.0, |amount| {
+            (amount as f32 / OPACITY_FULL as f32).clamp(0.0, 1.0)
+        }),
         ..PixmapPaint::default()
     };
     surface.pixmap.draw_pixmap(
@@ -2570,6 +2584,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect,
             crop: None,
@@ -2592,6 +2607,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect,
             crop,
@@ -2600,6 +2616,77 @@ mod tests {
         let mut surface = Surface::new(50, 50).unwrap();
         render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
         surface
+    }
+
+    /// Renders one `Image` paint item at `opacity` (per-100000, `None` opaque)
+    /// into the same box as [`render_one_image`], onto a WHITE page — a
+    /// watermark is only visible as a lightening of what is behind it, so a
+    /// transparent surface would measure nothing.
+    fn render_one_image_at_opacity(media_bytes: Vec<u8>, opacity: Option<u32>) -> Surface {
+        use casual_doc_layout::units::Size;
+        let mut media = MapMediaSource::new();
+        media.insert("pic", media_bytes);
+        let rect = Rect::new(
+            Point::new(Twip(10), Twip(10)),
+            Size::new(Twip(20), Twip(20)),
+        );
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Rect {
+            rect: Rect::new(Point::new(Twip(0), Twip(0)), Size::new(Twip(50), Twip(50))),
+            fill: Some(DisplayColor::WHITE),
+            stroke: None,
+        });
+        list.push(PaintItem::Image {
+            media: "pic".to_owned(),
+            rect,
+            crop: None,
+            transform: None,
+            opacity,
+        });
+        let mut surface = Surface::new(50, 50).unwrap();
+        render(&list, &mut surface, 1440.0, &BundledFontSource, &media);
+        surface
+    }
+
+    /// A picture at `a:alphaModFix amt="20000"` paints at 20% — the watermark
+    /// in the owner's loan agreement, which was painting solid.
+    ///
+    /// The model, the import, the flow, the display list and the renderer all
+    /// had to carry it; a break anywhere in that chain shows up here as a
+    /// picture that is still opaque.
+    #[test]
+    fn a_picture_with_an_alpha_paints_lighter_than_an_opaque_one() {
+        let black = solid_image(4, 4, [0, 0, 0, 255], image::ImageFormat::Png);
+        let opaque = render_one_image_at_opacity(black.clone(), None);
+        let faint = render_one_image_at_opacity(black, Some(20_000));
+
+        // Centre of the picture box, well inside it at this scale.
+        let opaque_px = pixel_at(&opaque, 50, 25, 25);
+        let faint_px = pixel_at(&faint, 50, 25, 25);
+        assert!(
+            opaque_px[0] < 32,
+            "the control must be a solid black picture: {opaque_px:?}",
+        );
+        assert!(
+            faint_px[0] > opaque_px[0] + 64,
+            "a 20% picture must paint far lighter over white than an opaque one \
+             (opaque {opaque_px:?}, 20% {faint_px:?})",
+        );
+        // …and still be visible: 20% is faint, not absent.
+        assert!(
+            faint_px[0] < 250,
+            "a 20% picture must still be drawn, not skipped: {faint_px:?}",
+        );
+    }
+
+    /// Full opacity is indistinguishable from no alpha at all, so a document
+    /// that writes the no-op explicitly renders identically.
+    #[test]
+    fn a_fully_opaque_alpha_renders_as_no_alpha() {
+        let black = solid_image(4, 4, [0, 0, 0, 255], image::ImageFormat::Png);
+        let absent = render_one_image_at_opacity(black.clone(), None);
+        let explicit = render_one_image_at_opacity(black, Some(100_000));
+        assert_eq!(absent.data(), explicit.data());
     }
 
     /// An `w×h` PNG whose left half is `left` and right half is `right`.
@@ -2811,6 +2898,7 @@ mod tests {
         );
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "missing".to_owned(),
             rect,
             crop: None,
@@ -2845,6 +2933,7 @@ mod tests {
         media.insert("junk", vec![1, 2, 3, 4, 5, 6, 7, 8]);
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "junk".to_owned(),
             rect,
             crop: None,
@@ -3062,6 +3151,7 @@ mod tests {
         media.insert("pic", bytes);
         let mut list = DisplayList::new();
         list.push(PaintItem::Image {
+            opacity: None,
             media: "pic".to_owned(),
             rect: Rect::new(
                 Point::new(Twip(10), Twip(10)),
