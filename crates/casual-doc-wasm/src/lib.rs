@@ -23247,7 +23247,11 @@ mod tests {
     /// by applying its bold to a HEADER started failing honestly.
     #[test]
     fn the_caret_does_not_walk_out_of_one_surface_into_another() {
-        const SAMPLE: &[u8] = include_bytes!("../../../webapp/sample.docx");
+        // The COMMITTED copy at the repository root, not `webapp/sample.docx`:
+        // that one is staged there by `webapp/build.sh` and is not in the
+        // repository, so a test reading it passes on a machine that has built
+        // the webapp and fails everywhere else. It did exactly that.
+        const SAMPLE: &[u8] = include_bytes!("../../../sample.docx");
         let mut doc = open_document(SAMPLE).expect("open");
 
         // A brand-new footer body: empty, and last in the ordering, which is
