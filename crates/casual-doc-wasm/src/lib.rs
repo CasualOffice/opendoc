@@ -9676,7 +9676,12 @@ impl WasmDocument {
                     // heading or list item is one semantic block, and splitting
                     // it around a mid-paragraph figure would hand the reader
                     // half a heading.
-                    self.collect_a11y_inlines(&paragraph.inlines, cascade, depth, trimmed, out);
+                    // The paragraph's own text is the visible label of a form
+                    // checkbox sitting in it — but only when it is the one
+                    // control that text could be labelling. Counted once, for
+                    // the whole paragraph.
+                    let label = (count_a11y_checkboxes(&paragraph.inlines) == 1).then_some(trimmed);
+                    self.collect_a11y_inlines(&paragraph.inlines, cascade, depth, label, out);
                 }
                 BlockNode::Table(table) => {
                     let rows = table.rows.iter().map(a11y_row_cells).collect::<Vec<_>>();
@@ -9710,8 +9715,11 @@ impl WasmDocument {
     /// inspector's Alt text field — so the text a user types into that field is
     /// the text a screen reader reads back.
     ///
-    /// `own_text` is the paragraph's announced text, which is the visible label
-    /// for a form checkbox that sits in it (`docs/120` §5).
+    /// `label` is the paragraph's announced text when that text can only be
+    /// naming one control, and `None` otherwise (`docs/120` §5). It is decided
+    /// ONCE for the whole paragraph by the caller: deciding it per inline
+    /// would both count the wrong list once the walk recurses into a wrapper
+    /// and make the walk quadratic in a paragraph holding many controls.
     ///
     /// Linear in the inlines it visits, bounded in depth by
     /// [`collect_a11y_blocks_at`](Self::collect_a11y_blocks_at).
@@ -9720,7 +9728,7 @@ impl WasmDocument {
         inlines: &[InlineNode],
         cascade: &StyleCascade,
         depth: u32,
-        own_text: &str,
+        label: Option<&str>,
         out: &mut Vec<A11yBlockJson>,
     ) {
         for inline in inlines {
@@ -9746,25 +9754,22 @@ impl WasmDocument {
                 InlineNode::Sdt(sdt) => {
                     if let Some(checkbox) = sdt_form_checkbox(sdt) {
                         let mut node = a11y_checkbox(sdt, checkbox);
-                        // The paragraph's own text is the control's visible
-                        // label — but only when it is the one control that text
-                        // could be labelling.
-                        if count_a11y_checkboxes(inlines) == 1 {
-                            apply_visible_label(&mut node, own_text);
+                        if let Some(label) = label {
+                            apply_visible_label(&mut node, label);
                         }
                         out.push(A11yBlockJson::Checkbox(node));
                     } else {
-                        self.collect_a11y_inlines(&sdt.inlines, cascade, depth, own_text, out);
+                        self.collect_a11y_inlines(&sdt.inlines, cascade, depth, label, out);
                     }
                 }
                 // Wrappers carry ordinary flow: a figure inside a link, a
                 // tracked insertion, or an inline content control is still a
                 // figure.
                 InlineNode::Hyperlink(hyperlink) => {
-                    self.collect_a11y_inlines(&hyperlink.inlines, cascade, depth, own_text, out);
+                    self.collect_a11y_inlines(&hyperlink.inlines, cascade, depth, label, out);
                 }
                 InlineNode::Field(field) => {
-                    self.collect_a11y_inlines(&field.inlines, cascade, depth, own_text, out);
+                    self.collect_a11y_inlines(&field.inlines, cascade, depth, label, out);
                 }
                 // A deletion is not on the page under the default projection, so
                 // it is not read; `node_plain_text` drops its text for the same
@@ -9774,7 +9779,7 @@ impl WasmDocument {
                         .kind
                         .contributes_to(ReviewProjection::FinalWithMarkup) =>
                 {
-                    self.collect_a11y_inlines(&revision.inlines, cascade, depth, own_text, out);
+                    self.collect_a11y_inlines(&revision.inlines, cascade, depth, label, out);
                 }
                 _ => {}
             }
