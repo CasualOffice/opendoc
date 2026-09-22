@@ -117,10 +117,25 @@ const ENTER = {
   },
 };
 
-/** Selects a few characters from the caret, without a mouse drag that can leave
- *  the surface. */
+/** Types a word and selects it, without a mouse drag that can leave the surface.
+ *
+ *  It TYPES first rather than selecting whatever happens to be to the right,
+ *  because two of these surfaces are entered empty — double-clicking a footer
+ *  band on a page that has no footer of that kind creates one, and inserting a
+ *  footnote creates an empty note body — and there is nothing there to select.
+ *
+ *  Pressing Shift+Right five times in an empty paragraph used to appear to work:
+ *  caret navigation took "the next paragraph" from a flat list that appends every
+ *  surface after the body, so the selection silently continued into a HEADER and
+ *  the bold applied there. The list carried every surface twice, which always
+ *  supplied a plausible neighbour, so nothing ever looked wrong. Removing those
+ *  duplicates (#586) left the caret with nowhere to go and the assertion failed —
+ *  correctly, and for the first time honestly.
+ *
+ *  So the selection is now made from text this surface certainly owns. */
 async function selectSome(page) {
-  for (let i = 0; i < 5; i += 1) await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.type("Sample");
+  for (let i = 0; i < 6; i += 1) await page.keyboard.press("Shift+ArrowLeft");
 }
 
 const SURFACES = [

@@ -11029,39 +11029,39 @@ impl WasmDocument {
     /// Every text-bearing paragraph in document order, with its byte length —
     /// the ordering caret navigation and cross-paragraph edits traverse.
     fn ordered_paragraphs(&self) -> Vec<(NodeId, u32)> {
-        // Running content and notes are ordinary block content in the same id
-        // space, and a caret can be placed in them, so their paragraphs have to
-        // be orderable too — `order_endpoints` resolves an endpoint by finding
-        // it in this list, and a position it cannot find is rejected before any
-        // op is built. Each surface is appended whole and after the body, so
-        // ordering WITHIN a surface (all a selection can span) is correct; the
-        // relative order of two different surfaces is arbitrary and meaningless,
-        // which is fine because no gesture produces a range across two.
-        //
-        // The four surfaces used to be appended a SECOND time here, by hand,
-        // after `collect_block_text_all_surfaces` — which already includes every
-        // header, footer, footnote and endnote through `surface_block_lists`. So
-        // every running-content and note paragraph appeared twice in the
-        // ordering the caret, `order_endpoints` and `selection_subranges` rely
-        // on, and every consumer that walks this list walked those paragraphs
-        // twice. The duplicates are gone; the first copy of each is untouched,
-        // in the same relative order.
-        //
-        // Only the LENGTH of each paragraph is wanted, and the walk used to
-        // build an owned `String` per paragraph to measure and drop it. One
-        // reused buffer instead: on a 1.3M-paragraph document that allocation
-        // was the bulk of the cost of ordering two endpoints.
+        self.ordered_paragraphs_by_surface()
+            .into_iter()
+            .map(|(id, len, _)| (id, len))
+            .collect()
+    }
+
+    /// [`ordered_paragraphs`](Self::ordered_paragraphs), plus the index of the
+    /// SURFACE each paragraph belongs to — the body, or one header, footer or
+    /// note body.
+    ///
+    /// Caret navigation needs it. The flat ordering appends each surface after
+    /// the body, and its own doc comment says the relative order of two
+    /// surfaces is "arbitrary and meaningless"; taking "the next paragraph"
+    /// from it therefore walks a caret out of a footer and into whichever
+    /// surface happens to be next in the list. That was live for as long as
+    /// the list carried every surface TWICE, because the duplicate copy always
+    /// supplied a plausible-looking neighbour and hid it — and the first thing
+    /// that removed the duplicates turned it into a caret that could not move
+    /// at all, in the one surface that had nothing after it.
+    fn ordered_paragraphs_by_surface(&self) -> Vec<(NodeId, u32, usize)> {
         let mut out = Vec::new();
         let mut text = String::new();
-        visit_paragraphs_all_surfaces(&self.document, &mut |paragraph| {
-            text.clear();
-            append_node_plain_text(
-                &paragraph.inlines,
-                ReviewProjection::FinalWithMarkup,
-                &mut text,
-            );
-            out.push((paragraph.id, text.len() as u32));
-        });
+        for (surface, blocks) in surface_block_lists(&self.document).into_iter().enumerate() {
+            visit_paragraphs(blocks, &mut |paragraph| {
+                text.clear();
+                append_node_plain_text(
+                    &paragraph.inlines,
+                    ReviewProjection::FinalWithMarkup,
+                    &mut text,
+                );
+                out.push((paragraph.id, text.len() as u32, surface));
+            });
+        }
         out
     }
 
@@ -12207,9 +12207,13 @@ impl WasmDocument {
                     let text = self.paragraph_text(nid);
                     (nid, prev_char_boundary(&text, offset as usize) as u32)
                 } else {
-                    let paras = self.ordered_paragraphs();
-                    match paras.iter().position(|(id, _)| *id == nid) {
-                        Some(i) if i > 0 => (paras[i - 1].0, paras[i - 1].1),
+                    // Same rule as `right`: a caret at the start of a footer
+                    // does not back out into whatever surface precedes it.
+                    let paras = self.ordered_paragraphs_by_surface();
+                    match paras.iter().position(|(id, _, _)| *id == nid) {
+                        Some(i) if i > 0 && paras[i - 1].2 == paras[i].2 => {
+                            (paras[i - 1].0, paras[i - 1].1)
+                        }
                         _ => (nid, offset),
                     }
                 }
@@ -12219,9 +12223,16 @@ impl WasmDocument {
                 if (offset as usize) < text.len() {
                     (nid, next_char_boundary(&text, offset as usize) as u32)
                 } else {
-                    let paras = self.ordered_paragraphs();
-                    match paras.iter().position(|(id, _)| *id == nid) {
-                        Some(i) if i + 1 < paras.len() => (paras[i + 1].0, 0),
+                    // Only within the SAME surface. A caret at the end of a
+                    // footer stays there, as it does in Word - it does not
+                    // step into a header, a note body or the body text
+                    // because that paragraph happens to be next in a list
+                    // whose cross-surface order is arbitrary.
+                    let paras = self.ordered_paragraphs_by_surface();
+                    match paras.iter().position(|(id, _, _)| *id == nid) {
+                        Some(i) if i + 1 < paras.len() && paras[i + 1].2 == paras[i].2 => {
+                            (paras[i + 1].0, 0)
+                        }
                         _ => (nid, offset),
                     }
                 }
@@ -23217,6 +23228,85 @@ mod tests {
             shape.offset.x_emu, 200_000,
             "a page delta of 100,000 in a group whose child space is 2x must \
              move the child 200,000 child units",
+        );
+    }
+
+    /// The caret does not step from one SURFACE into another.
+    ///
+    /// `ordered_paragraphs` appends each header, footer and note body after the
+    /// body, and its own doc comment says the order between two surfaces is
+    /// "arbitrary and meaningless". Caret navigation took "the next paragraph"
+    /// straight from that list, so a right-arrow at the end of a footer walked
+    /// into whichever surface happened to follow it.
+    ///
+    /// It was invisible for as long as the list carried every surface TWICE:
+    /// the duplicate copy always supplied a neighbour that looked plausible.
+    /// Removing the duplicates (#586) turned it into the opposite symptom — a
+    /// caret in a newly created footer that could not move at all, because that
+    /// surface was now last — and a footer/footnote e2e that had been passing
+    /// by applying its bold to a HEADER started failing honestly.
+    #[test]
+    fn the_caret_does_not_walk_out_of_one_surface_into_another() {
+        const SAMPLE: &[u8] = include_bytes!("../../../webapp/sample.docx");
+        let mut doc = open_document(SAMPLE).expect("open");
+
+        // A brand-new footer body: empty, and last in the ordering, which is
+        // exactly the position that made the defect visible in both directions.
+        let created = doc
+            .create_running_content_inner("footer", 1)
+            .expect("create a footer");
+        let node = NodeId::from_str(&created.node).expect("node id");
+        let paragraphs = doc.ordered_paragraphs_by_surface();
+        let at = paragraphs
+            .iter()
+            .position(|(id, _, _)| *id == node)
+            .expect("the new footer paragraph is in the ordering");
+        assert_eq!(
+            paragraphs[at].1, 0,
+            "a new footer body starts empty, which is what leaves the caret at \
+             both ends of it at once",
+        );
+
+        assert_eq!(
+            doc.moved_caret(node, 0, "right", None),
+            (node, 0),
+            "right at the end of an empty footer stays in the footer",
+        );
+        assert_eq!(
+            doc.moved_caret(node, 0, "left", None),
+            (node, 0),
+            "and left at its start does not back out into the previous surface",
+        );
+
+        // The empty footer above is the LAST surface, so it also proves the
+        // `left` half and nothing else. The `right` half needs a surface with
+        // another one after it — otherwise the bounds check alone would pass
+        // this test and the surface check could be deleted unnoticed.
+        let last_of_surface = paragraphs
+            .windows(2)
+            .find(|pair| pair[0].2 != pair[1].2 && pair[0].2 != 0)
+            .map(|pair| (pair[0].0, pair[0].1, pair[1].0))
+            .expect("some surface is followed by another");
+        let (tail, tail_len, next_surface_first) = last_of_surface;
+        assert_ne!(
+            tail, next_surface_first,
+            "the fixture must really have two adjacent surfaces",
+        );
+        assert_eq!(
+            doc.moved_caret(tail, tail_len, "right", None),
+            (tail, tail_len),
+            "right at the end of a surface does not enter the next one",
+        );
+
+        // …while movement WITHIN a surface is untouched: the body still walks
+        // from one paragraph to the next.
+        let body: Vec<_> = paragraphs.iter().filter(|(_, _, s)| *s == 0).collect();
+        let (first, first_len, _) = body.first().expect("the body has paragraphs");
+        let (second, _, _) = body.get(1).expect("the body has a second paragraph");
+        assert_eq!(
+            doc.moved_caret(*first, *first_len, "right", None),
+            (*second, 0),
+            "inside one surface the caret still crosses paragraphs",
         );
     }
 
