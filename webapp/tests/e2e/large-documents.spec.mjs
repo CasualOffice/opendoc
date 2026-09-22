@@ -129,6 +129,20 @@ test("a document too large to lay out whole opens windowed, and its far pages st
   await expect.poll(() => paragraphCount(page), { timeout: 5 * 60_000 }).toBe(paragraphs);
   expect(crashes, "the module must not abort").toEqual([]);
 
+  // A document this size opens on a measured PREFIX, so the total starts as an
+  // estimate and is marked one (`~`). It must CONVERGE: the rest is measured
+  // from idle time between frames (`docs/116` §7), and until it has, "the last
+  // page" names a page that does not exist yet. Waiting for the marker to go
+  // is therefore both the precondition for the rest of this test and the
+  // assertion that the background measure actually runs and actually finishes
+  // — without it the count stays approximate forever and the end of the
+  // document is unreachable.
+  await expect
+    .poll(async () => (await page.locator("#statPages").textContent()) ?? "", {
+      timeout: 4 * 60_000,
+    })
+    .not.toContain("~");
+
   // The page count is the DOCUMENT's, not the resident window's and not the
   // number of sheets on screen. A windowed body that reported its window here
   // would say five; a host that counted its own sheets would say two.
@@ -188,4 +202,47 @@ test("a document too large to lay out whole opens windowed, and its far pages st
   await expect(status).not.toContainText("selection");
   // No silent half-edit: the document is exactly what it was.
   expect(await page.locator("#a11yDocument").textContent()).toBe(before);
+});
+
+test("replacing a document that is still being measured does not reach into freed memory", async ({
+  page,
+  consoleErrors,
+}) => {
+  // `docs/116` §7. A document opened on a prefix keeps measuring the rest from
+  // idle time, and those ticks call the engine. Open another document and the
+  // wrapper they call is freed — `openBytes` frees it the moment the new one
+  // has parsed. A tick that survives that crosses into freed memory, which is
+  // the "null pointer passed to rust" the open path already guards against for
+  // every other late caller.
+  //
+  // This is a REGRESSION SMOKE TEST, not a proof. The window it aims at is a
+  // race — an idle tick landing between `free()` and the new document arming
+  // its own ticker — and removing the guards does not reliably reproduce it
+  // from out here (measured: the mutation passed). What makes the crash
+  // impossible is the stop at the free itself, which is deterministic; this
+  // asserts the observable half, that replacing a still-measuring document is
+  // clean and the new count is its own. The ticker's stop semantics are
+  // covered directly in `background_measure.test.mjs`.
+  // Past MAX_WHOLE_LAYOUT_BLOCKS (262,144), because that is the only path that
+  // opens on a prefix: a document laid out whole is measured whole and its
+  // count is exact from the first frame, so a smaller file would leave nothing
+  // still measuring and this would pass without testing anything.
+  test.setTimeout(6 * 60_000);
+  const crashes = [];
+  page.on("pageerror", (error) => crashes.push(String(error)));
+  await gotoEditor(page);
+
+  await page.locator("#file").setInputFiles(textFile(262_145, "measuring.docx"));
+  await expect(page.locator("#statPages")).toContainText("~", { timeout: 5 * 60_000 });
+
+  await page.locator("#file").setInputFiles(textFile(40, "small.docx"));
+  await expect.poll(() => paragraphCount(page), { timeout: 60_000 }).toBe(41);
+
+  // Give the abandoned ticker every chance to fire into the freed wrapper.
+  await page.waitForTimeout(2_000);
+  expect(crashes, "a late measure tick must not touch the freed document").toEqual([]);
+  expect(consoleErrors).toEqual([]);
+
+  // ...and the small document's own count is its own — exact, no marker.
+  await expect(page.locator("#statPages")).not.toContainText("~");
 });

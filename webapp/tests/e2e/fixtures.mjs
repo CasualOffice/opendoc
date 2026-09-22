@@ -67,10 +67,16 @@ export async function gotoEditor(page) {
  * near the viewport (`docs/113` §8.6), so counting sheets answers "how many
  * pages are on screen", which for a 25,556-page document is about five. A spec
  * that wants the document's own page count has to ask the document.
+ *
+ * A leading `~` means the total is an ESTIMATE: a document past the engine's
+ * open budget opens on a measured prefix and converges as the rest is measured
+ * between frames (`docs/116` §7). The marker is read and dropped here so a
+ * caller gets a number either way; a caller that cares about exactness should
+ * read `#statPages` itself rather than have this quietly decide for it.
  */
 export async function documentPageCount(page) {
   const text = (await page.locator("#statPages").textContent()) ?? "";
-  const match = text.match(/of\s+([\d,]+)/);
+  const match = text.match(/of\s+~?([\d,]+)/);
   if (!match)
     throw new Error(`the page indicator did not report a total: "${text}"`);
   return Number(match[1].replace(/,/g, ""));
