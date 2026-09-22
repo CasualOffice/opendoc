@@ -28,6 +28,7 @@ import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleM
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
 import { printDocument } from "./print.mjs";
+import { createCompactToolbar } from "./compact_toolbar.mjs";
 import {
   MAX_SCROLL_PX,
   PAGE_GAP_PX,
@@ -3251,7 +3252,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // that registry holds only the `noDoc` commands — so a reload straight into
     // compact mode rendered an EMPTY bar (every lookup missed, leaving just the
     // four adopted controls). Rebuild it now the document exists.
-    if (document.body.classList.contains("compact-mode")) renderCompactToolbar();
+    if (document.body.classList.contains("compact-mode")) compactToolbarUi.render();
     // Redline visible by default (Q1): a document that arrives already carrying
     // tracked changes shows markup on open, so struck deletions are never
     // invisible behind a buried toggle. A clean document opens with markup off.
@@ -9422,6 +9423,11 @@ function hexToRgb(hex) {
  *  added to a list here. Cached because `updateToolbar` runs on every repaint
  *  and the set is fixed markup. */
 const formatToggleCache = new Map();
+/** The compact bar, assigned once its dependencies exist (bottom of the file).
+ *  Declared here because `updateToolbar` runs before that point and reflecting
+ *  alignment into an uninitialised `const` would be a temporal-dead-zone throw
+ *  rather than a no-op. */
+let compactToolbarUi = null;
 function formatToggleButtons(key) {
   let buttons = formatToggleCache.get(key);
   if (!buttons) {
@@ -9472,6 +9478,9 @@ function updateToolbar() {
   for (const [key, btn] of Object.entries(alignBtns)) {
     btn.setAttribute("aria-pressed", String(key === align));
   }
+  // The compact bar carries ONE align control, Docs-style, so it reports the
+  // caret's alignment through its icon rather than through four pressed states.
+  compactToolbarUi?.reflectAlign(align);
 
   // Reflect the current run styling (size / font / color / super-sub) — over a
   // selection, or what a collapsed caret inherits (so it's "picked up" on click,
@@ -17584,173 +17593,21 @@ boot();
 // ---- Chrome modes: compact vs ribbon (owner prototype) ---------------------
 //
 // Two mutually exclusive toolbars. The ribbon is the Word-shaped tabbed chrome;
-// compact is the Docs-shaped single dense bar.
-//
-// The compact bar is DECLARED, not hand-bound. Each row names a command id that
-// already exists in `editorCommands()`, so enablement, activation and pressed
-// state all come from the one registry entry the ribbon and palette use. The
-// alternative — a second set of listeners — is exactly the drift docs/105
-// UX-004/UX-005 records, where only ~23 of ~90 ribbon controls carry a command
-// id and the two declarative tabs are the only ones with real parity tests.
-// `compact-parity.spec.mjs` fails the build if any id here is not in the
-// registry.
-//
-// `icon` is a Material Symbols ligature from the SELF-HOSTED face (docs: never
-// add a CDN link, `chrome_fonts.test.mjs` forbids it). `null` renders a divider.
-// Contents and order follow **Google Docs**, which is the shape this chrome is
-// imitating and the order users already have in their hands. Docs reads, left
-// to right: undo · redo · print · spellcheck · paint format ‖ zoom ‖ style ‖
-// font ‖ size −/+ ‖ B I U · text colour · highlight ‖ link · comment · image ‖
-// align · line spacing · checklist · lists · indent ∓ · clear formatting.
-//
-// Where Docs has something this engine does not, the row is simply absent
-// rather than present-and-dead (docs/63 forbids dead controls): spellcheck is
-// OO-003 and unbuilt, and paint format exists here as `format.painter`.
-//
-// `kind` picks the control: "button" (default), "select" for a combo, and
-// "stepper" for the −/+ pair Docs puts around font size.
-const COMPACT_TOOLBAR = [
-  { id: "edit.undo", icon: "undo" },
-  { id: "edit.redo", icon: "redo" },
-  { id: "file.print", icon: "print" },
-  { id: "format.painter", icon: "format_paint", toggle: true },
-  null,
-  { kind: "select", control: "zoom", label: "Zoom", width: 76 },
-  null,
-  // The same `#stylesTrigger` element the ribbon owns, adopted rather than cloned
-  // (see ADOPTED_CONTROL_IDS). Compact CSS lays its short list out as one row.
-  { kind: "gallery", control: "style", label: "Paragraph style", width: 227 },
-  null,
-  { kind: "select", control: "font", label: "Font", width: 136 },
-  null,
-  { id: "format.shrink", icon: "remove" },
-  { kind: "stepper", control: "size", label: "Font size" },
-  { id: "format.grow", icon: "add" },
-  null,
-  { id: "format.bold", icon: "format_bold", toggle: true, fmt: "bold", needs: "run" },
-  { id: "format.italic", icon: "format_italic", toggle: true, fmt: "italic", needs: "run" },
-  { id: "format.underline", icon: "format_underlined", toggle: true, fmt: "underline", needs: "run" },
-  { id: "format.color", icon: "format_color_text", needs: "run" },
-  { id: "format.highlight", icon: "ink_highlighter", needs: "run" },
-  null,
-  { id: "insert.link", icon: "link" },
-  { id: "comment.add", icon: "add_comment" },
-  { id: "insert.image", icon: "image" },
-  null,
-  { id: "paragraph.align.start", icon: "format_align_left", toggle: true, needs: "para" },
-  { id: "paragraph.align.center", icon: "format_align_center", toggle: true, needs: "para" },
-  { id: "paragraph.align.end", icon: "format_align_right", toggle: true, needs: "para" },
-  { id: "paragraph.align.justify", icon: "format_align_justify", toggle: true, needs: "para" },
-  { id: "layout.paragraph", icon: "format_line_spacing" },
-  { id: "paragraph.list.checklist", icon: "checklist" },
-  { id: "paragraph.bullets", icon: "format_list_bulleted" },
-  { id: "paragraph.numbering", icon: "format_list_numbered" },
-  { id: "paragraph.indent.decrease", icon: "format_indent_decrease" },
-  { id: "paragraph.indent.increase", icon: "format_indent_increase" },
-  null,
-  { id: "format.clear", icon: "format_clear" },
-];
-
+// compact is the Docs-shaped single dense bar. The bar's layout table, its
+// grouping and its fold live in `compact_toolbar.mjs` (HF-085: new logic goes
+// in a module); what stays here is the mode switch and the dependency bag.
 const CHROME_MODE_PREF = "opendoc.chromeMode";
 let chromeMode = readPref(CHROME_MODE_PREF, "ribbon") === "compact" ? "compact" : "ribbon";
 
-/** Builds the compact bar's controls from `COMPACT_TOOLBAR`, resolving each id
- *  against the live registry. Rebuilt on mode entry rather than kept in sync,
- *  so it cannot hold a stale reference to a command that changed. */
-/** The ribbon-owned controls the compact bar borrows, by row `control` key. */
-const ADOPTED_CONTROL_IDS = {
-  zoom: "zoom",
-  style: "stylesTrigger",
-  font: "fontFamily",
-  size: "fontSize",
-};
-/** Where each adopted control came from, so leaving compact mode restores the
- *  ribbon exactly rather than leaving a hole in it. */
-const adoptedHome = new Map();
-
-/** Returns every adopted control to its original parent and position. */
-function releaseAdoptedControls() {
-  for (const [el, home] of adoptedHome) {
-    el.classList.remove("cadopted");
-    el.style.minWidth = "";
-    if (home.parent) home.parent.insertBefore(el, home.next);
-  }
-  adoptedHome.clear();
-}
-
-function renderCompactToolbar() {
-  const host = document.getElementById("compactToolbar");
-  if (!host) return;
-  const registry = new Map(
-    editorCommands({ surface: "compact" }).map((command) => [command.id, command]),
-  );
-  // Put any previously adopted control back in the ribbon FIRST. Clearing the
-  // host detaches them, and a detached node is not findable by id — so a second
-  // render (the reload path rebuilds once the document loads) would silently
-  // drop zoom, style, font and size.
-  releaseAdoptedControls();
-  host.replaceChildren();
-  // The toggle-button cache holds the previous render's nodes; keeping it would
-  // leave the new buttons unsynced and write state into detached ones.
-  formatToggleCache.clear();
-  for (const entry of COMPACT_TOOLBAR) {
-    if (entry === null) {
-      const sep = document.createElement("span");
-      sep.className = "compact-sep";
-      sep.setAttribute("aria-hidden", "true");
-      host.appendChild(sep);
-      continue;
-    }
-    // A "select"/"stepper"/"gallery" row ADOPTS the live element the ribbon already
-    // owns — `#zoom`, `#stylesTrigger`, `#fontFamily`, `#fontSize` — rather than
-    // cloning it. One element means one set of listeners, one reflected value
-    // and one disabled state, so the two chromes cannot drift apart; a clone
-    // would be a second answer to "what font is this?". `releaseAdoptedControls`
-    // puts each one back exactly where it came from.
-    if (entry.kind === "select" || entry.kind === "stepper" || entry.kind === "gallery") {
-      const el = document.getElementById(ADOPTED_CONTROL_IDS[entry.control]);
-      if (!el) continue;
-      if (!adoptedHome.has(el)) {
-        adoptedHome.set(el, { parent: el.parentNode, next: el.nextSibling });
-      }
-      if (entry.width) el.style.minWidth = `${entry.width}px`;
-      el.classList.add("cadopted");
-      host.appendChild(el);
-      continue;
-    }
-    const command = registry.get(entry.id);
-    if (!command) continue; // parity spec fails the build on this
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ctool";
-    button.dataset.commandId = command.id;
-    button.title = command.shortcut ? `${command.label} (${command.shortcut})` : command.label;
-    button.setAttribute("aria-label", command.label);
-    if (entry.toggle) button.setAttribute("aria-pressed", "false");
-    // `updateToolbar` reflects pressed state across EVERY surface by querying
-    // `[data-fmt]`, and enablement via the `runControls`/`paraControls` lists.
-    // Without joining those, the compact bar rendered but never lit up for bold
-    // or greyed out with no selection — every button looked identical whatever
-    // the document said. Stamping the same attribute is what makes one sync
-    // serve both chromes, rather than a second copy of the logic.
-    if (entry.fmt) button.dataset.fmt = entry.fmt;
-    const icon = document.createElement("span");
-    icon.className = "ms";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = entry.icon;
-    button.appendChild(icon);
-    if (entry.needs === "run") runControls.push(button);
-    if (entry.needs === "para") paraControls.push(button);
-    onButton(button, () => {
-      // `enabled` is a BOOLEAN on this registry, not a predicate — every other
-      // surface gates on `enabled === false` (see the palette and context menu).
-      // Calling it threw `live.enabled is not a function` on every click.
-      const live = editorCommands({ surface: "compact" }).find((c) => c.id === command.id);
-      if (live && live.enabled !== false) live.run();
-    });
-    host.appendChild(button);
-  }
-}
+compactToolbarUi = createCompactToolbar({
+  host: document.getElementById("compactToolbar"),
+  editorCommands,
+  onButton,
+  registerPopover,
+  runControls,
+  paraControls,
+  formatToggleCache,
+});
 
 /** Switches chrome. Mutually exclusive by construction — `body` carries exactly
  *  one mode class — and the caret is never disturbed, because neither chrome
@@ -17776,8 +17633,8 @@ function setChromeMode(mode, { persist = true } = {}) {
   // With no document open the registry holds only `noDoc` commands, so the bar
   // would render nearly empty; it is rebuilt on `doc-loaded`. Rendering here
   // anyway keeps the adopted controls in place so the bar is never a bare strip.
-  if (compact) renderCompactToolbar();
-  else releaseAdoptedControls();
+  if (compact) compactToolbarUi.render();
+  else compactToolbarUi.release();
   if (persist) writePref(CHROME_MODE_PREF, chromeMode);
   setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
 }
