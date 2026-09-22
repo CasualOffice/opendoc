@@ -175,6 +175,75 @@ test("a nested shape is reached by the same click, not a special gesture", async
   expect(consoleErrors).toEqual([]);
 });
 
+test("dragging a shape inside a group moves the SHAPE, not the group", async ({
+  page,
+  consoleErrors,
+}) => {
+  // `docs/109` HF-173, reported after #577: "individual dragging is not
+  // possible in grouped things". Selection descended correctly and the drag
+  // did not follow — both the drag and the arrow-nudge committed through
+  // `setObjectAnchorPosition(root, …)`, the only move that existed, so the
+  // whole group moved instead. Measured at the time: a 40px drag on a child
+  // moved the group 40px.
+  const box = await openNested(page);
+  const seed = await findGroup(page, box);
+  expect(seed, "the group should be selectable").not.toBeNull();
+
+  const groupBefore = await stableBox(
+    page.locator(".overlay .object-outline").first(),
+  );
+  await page.mouse.click(seed.x, seed.y); // descend to the shape
+  const child = await state(page);
+  expect(child.path, "the second click reaches a child").not.toBe("");
+  const childBefore = await stableBox(
+    page.locator(".overlay .object-outline").first(),
+  );
+  expect(
+    childBefore.width,
+    "the child's outline must be smaller than the group's, or this proves nothing",
+  ).toBeLessThan(groupBefore.width);
+
+  await page.mouse.move(seed.x, seed.y);
+  await page.mouse.down();
+  await page.mouse.move(seed.x + 40, seed.y, { steps: 8 });
+  await page.mouse.up();
+
+  // The selection stays on the shape — pressing down on it is the start of a
+  // drag, not a fresh click that re-takes the group.
+  await expect.poll(async () => (await state(page)).path).toBe(child.path);
+  const childAfter = await stableBox(
+    page.locator(".overlay .object-outline").first(),
+  );
+  expect(childAfter.width, "still the child's outline").toBeCloseTo(
+    childBefore.width,
+    0,
+  );
+  expect(
+    Math.round(childAfter.x - childBefore.x),
+    "the shape must follow the pointer",
+  ).toBeGreaterThan(30);
+
+  // And it is a move, not a reformat — the Undo button is what the reader
+  // reads to find out what they just did.
+  await expect(page.locator("#undoBtn")).toHaveAttribute(
+    "aria-label",
+    "Undo Object move",
+  );
+
+  // The GROUP has not moved: Escape climbs to it and its box is where it was.
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (await state(page)).kind).toBe("group");
+  const groupAfter = await stableBox(
+    page.locator(".overlay .object-outline").first(),
+  );
+  expect(
+    Math.round(groupAfter.x - groupBefore.x),
+    "the group must NOT have moved — that is the whole defect",
+  ).toBe(0);
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("Escape climbs to the group, then out", async ({
   page,
   consoleErrors,

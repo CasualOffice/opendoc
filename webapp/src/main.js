@@ -21,7 +21,7 @@ import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
-import { OBJECT_LABELS, clickDescendsIntoGroup, escapeClimbsToGroup, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
+import { OBJECT_LABELS, escapeClimbsToGroup, groupClickAction, nextObjectIndex, traversalAnnouncement, traversalRoot } from "./object_traversal.mjs";
 import { RECOMMENDED_STYLES, caretContexts, offeredStyleNames, previewPx, styleMenuGroups, styleSlug } from "./style_picker.mjs";
 import { applyPreviewInk, applyStylePreview, refreshStylePreviews } from "./style_preview.mjs";
 import { renderShortcutsReference, shortcutGroups } from "./shortcuts_reference.mjs";
@@ -5168,11 +5168,19 @@ function climbOutOfGroup() {
 
 /** Selects the shape under the pointer when the click lands in a group that is
  *  already held. `clickDescendsIntoGroup` is the rule; this is the DOM half. */
-function descendIntoSelectedGroup(object, page, x, y) {
+function descendIntoSelectedGroup(object, page, x, y, event) {
   const held = objectSelection?.ref;
   const onHeldChild =
     !!held && held.subject !== held.root && pointInsideObject(objectSelection.node, page, x, y);
-  if (!clickDescendsIntoGroup(held, object, onHeldChild)) return false;
+  const action = groupClickAction(held, object, onHeldChild);
+  // Pressing down on the shape already held begins its DRAG. Falling through
+  // to the ordinary path re-selected the group and dragged that instead, so a
+  // grouped shape could be picked up and never moved (`docs/109` HF-173).
+  if (action === "keep") {
+    if (objectSelection.canMove) startObjectMove(event, page, objectSelection.node);
+    return true;
+  }
+  if (action !== "descend") return false;
   const child = doc.objectDescendantAt(object.root, page.pageNumber, x, y);
   if (!child) return false;
   const node = child.node;
@@ -5181,6 +5189,9 @@ function descendIntoSelectedGroup(object, page, x, y) {
   const descriptor = { ...objectCapabilities(child), ...objectReference(child, node) };
   child.free?.();
   selectObject(node, kind, selection?.focus || null, anchored, descriptor);
+  // The SAME pointerdown that reached the shape also begins its drag, exactly
+  // as a click on a top-level object does.
+  if (descriptor.canMove) startObjectMove(event, page, node);
   setStatus(`${OBJECT_LABELS[kind] ?? "Object"} inside group selected`);
   return true;
 }
@@ -5857,6 +5868,9 @@ function startObjectMove(event, page, node) {
   objectMoveDrag = {
     node,
     root: objectSelection.ref.root,
+    // Set only for a shape INSIDE a group, which moves within its group
+    // instead of moving the group. `commitObjectMove` branches on it.
+    child: insideGroupSelection() ? node : null,
     page,
     startClientX: event.clientX,
     startClientY: event.clientY,
@@ -5894,10 +5908,7 @@ function finishObjectMove(event) {
   drag.preview.remove();
   event.preventDefault();
   if (drag.moved) {
-    runEdit(
-      () => doc.setObjectAnchorPosition(drag.root, drag.lastX * EMU_PER_TWIP, drag.lastY * EMU_PER_TWIP),
-      { gate: true },
-    );
+    runEdit(() => commitObjectMove(drag), { gate: true });
   } else {
     drawSelection();
   }
@@ -5918,11 +5929,46 @@ function nudgeSelectedObject(dx, dy, large) {
   const rect = doc.objectRect(subject); // [page, x, y, w, h] twips
   if (rect.length < 5) return;
   const step = large ? NUDGE_TWIP_LARGE : NUDGE_TWIP;
+  if (insideGroupSelection()) {
+    runEdit(
+      () => doc.moveGroupChildBy(subject, dx * step * EMU_PER_TWIP, dy * step * EMU_PER_TWIP),
+      { gate: true },
+    );
+    return;
+  }
   const nx = Math.max(0, rect[1] + dx * step);
   const ny = Math.max(0, rect[2] + dy * step);
   runEdit(() => doc.setObjectAnchorPosition(root, nx * EMU_PER_TWIP, ny * EMU_PER_TWIP), {
     gate: true,
   });
+}
+
+/** Whether the selection is a shape INSIDE a group, which moves within the
+ *  group rather than moving the group. */
+function insideGroupSelection() {
+  return traversalRoot(objectSelection?.ref) !== null;
+}
+
+/** Commits a finished drag.
+ *
+ *  A shape inside a group moves by a DELTA in its own parent's space;
+ *  everything else sets an absolute page position. Using the absolute call for
+ *  both is what made dragging a grouped shape move the whole group
+ *  (`docs/109` HF-173) — the object being dragged was the child and the object
+ *  being moved was its root. */
+function commitObjectMove(drag) {
+  if (drag.child) {
+    return doc.moveGroupChildBy(
+      drag.child,
+      (drag.lastX - drag.startX) * EMU_PER_TWIP,
+      (drag.lastY - drag.startY) * EMU_PER_TWIP,
+    );
+  }
+  return doc.setObjectAnchorPosition(
+    drag.root,
+    drag.lastX * EMU_PER_TWIP,
+    drag.lastY * EMU_PER_TWIP,
+  );
 }
 
 /** Aborts an in-progress float move, discarding the preview (Escape / cancel). */
@@ -6327,7 +6373,7 @@ function onPointerDown(page, event) {
   // drops straight into typing. On the owner's Medical form, whose drawings are
   // one group of four, that is the whole of "they're all grouped and I can't
   // edit them".
-  const descended = object ? descendIntoSelectedGroup(object, page, x, y) : null;
+  const descended = object ? descendIntoSelectedGroup(object, page, x, y, event) : null;
   if (descended) {
     object.free?.();
     event.preventDefault();
