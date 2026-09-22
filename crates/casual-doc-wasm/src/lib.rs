@@ -13509,7 +13509,13 @@ fn collect_text_box_a11y_text(inlines: &[InlineNode], out: &mut Vec<String>) {
 ///
 /// A positional guess only fires when the cell holds exactly ONE control, so
 /// text can never be spread across several boxes as though it named each of
-/// them. O(cells in the row); the right/left scan is over the same row only.
+/// them.
+///
+/// Complexity: linear in the row's content, plus a right/left scan per cell
+/// that holds exactly one control and no text of its own — O(cells²) in a row
+/// made entirely of unlabelled controls. It never leaves the row, and OOXML
+/// caps a row at 63 grid columns, so the quadratic term is bounded by a
+/// constant rather than by the document.
 fn a11y_row_cells(row: &casual_doc_model::v1::TableRow) -> Vec<A11yCellJson> {
     let mut cells: Vec<A11yCellJson> = row
         .cells
