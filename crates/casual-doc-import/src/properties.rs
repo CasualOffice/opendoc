@@ -13,6 +13,74 @@ use casual_doc_model::v1::{
     VerticalAlignment, VerticalTextAlignment, WidthType,
 };
 use quick_xml::events::BytesStart;
+// Separate `use` lines to minimize import-block merge conflicts.
+use casual_doc_model::v1::{TabAlignment, TabLeader, TabStop};
+
+/// The number of tab stops a single `w:tabs` list may contribute. Word itself
+/// stops far below this; the bound exists so a hostile file cannot choose an
+/// allocation size.
+pub(crate) const MAX_TAB_STOPS: usize = 128;
+
+/// The widest `w:pos` a tab stop may sit at, in twips (22 inches each way — past
+/// the largest page Word will produce).
+const MAX_TAB_POS_TWIPS: i32 = 31_680;
+
+/// Maps `ST_TabJc` (`w:tab/@w:val`) onto the model's tab alignment.
+///
+/// This is the **single** mapping for the type. It previously existed three
+/// times — once in the body parser, once in the styles parser, and not at all in
+/// the numbering parser — and the two that existed accepted different value sets,
+/// which is the defect class this function closes. Every caller now accepts the
+/// same nine `ST_TabJc` tokens.
+///
+/// `num` is the list tab (`§17.3.1.37`): the stop a numbering level places
+/// between its marker and the paragraph text. It is **left-aligned**, so it maps
+/// to [`TabAlignment::Start`] alongside `start`/`left`. ONLYOFFICE resolves it the
+/// same way — their OOXML-to-ODF path sends `tabjcNum` to `style_type::Left`,
+/// next to `tabjcStart` and `tabjcLeft` (behaviour only; nothing copied).
+///
+/// `clear` is not an alignment but a suppression of an inherited or default stop
+/// at the same position, which the model carries as [`TabAlignment::Clear`].
+pub(crate) fn tab_alignment_from(value: Option<&str>) -> Option<TabAlignment> {
+    Some(match value? {
+        "start" | "left" => TabAlignment::Start,
+        "center" => TabAlignment::Center,
+        "end" | "right" => TabAlignment::End,
+        "decimal" => TabAlignment::Decimal,
+        "bar" => TabAlignment::Bar,
+        "clear" => TabAlignment::Clear,
+        // The numbering-level tab. Left-aligned, per ST_TabJc.
+        "num" => TabAlignment::Start,
+        _ => return None,
+    })
+}
+
+/// Builds a [`TabStop`] from a `w:tabs > w:tab` element, shared by the body,
+/// styles and numbering parsers so all three accept the same `ST_TabJc` values
+/// and enforce the same `w:pos` bound.
+///
+/// Returns `None` (the caller reports the loss) for an unknown alignment or a
+/// missing/out-of-range `w:pos`. An unknown `w:leader` is dropped rather than
+/// rejected: the stop itself is still faithful without its leader glyph.
+pub(crate) fn tab_stop_from(element: &BytesStart<'_>) -> Option<TabStop> {
+    let alignment = tab_alignment_from(attribute_value(element, b"val").as_deref())?;
+    let position_twips = attribute_value(element, b"pos")
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|pos| (-MAX_TAB_POS_TWIPS..=MAX_TAB_POS_TWIPS).contains(pos))?;
+    let leader = match attribute_value(element, b"leader").as_deref() {
+        Some("dot") => Some(TabLeader::Dot),
+        Some("hyphen") => Some(TabLeader::Hyphen),
+        Some("underscore") => Some(TabLeader::Underscore),
+        Some("middleDot") => Some(TabLeader::MiddleDot),
+        Some("heavy") => Some(TabLeader::Heavy),
+        _ => None,
+    };
+    Some(TabStop {
+        position_twips,
+        alignment,
+        leader,
+    })
+}
 
 /// Applies a run-property element, returning whether it was fully mapped.
 pub(crate) fn apply_run_property(

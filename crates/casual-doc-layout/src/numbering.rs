@@ -878,6 +878,69 @@ mod tests {
         );
     }
 
+    /// The other half of the list-tab chain. `body_indent` above proves the
+    /// resolver *uses* a tab stop it is handed; this proves the level's own
+    /// authored stop is what gets handed to it, and that the body lands on it
+    /// rather than on the default grid.
+    ///
+    /// The level below is the shape every real producer writes:
+    /// `<w:pPr><w:tabs><w:tab w:val="num" w:pos="2160"/></w:tabs></w:pPr>`.
+    /// Its stop was unreachable until the importer learned to read a level's
+    /// `w:tabs`, so `level_tabs` was empty for every document in the corpus.
+    #[test]
+    fn a_levels_authored_list_tab_reaches_the_resolved_marker_and_moves_the_body() {
+        use casual_doc_model::v1::TabAlignment;
+        let mut level = lvl(0, NumberFormat::Bullet, "-");
+        level.paragraph_properties = Some(ParagraphProperties {
+            tabs: vec![TabStop {
+                position_twips: 2160,
+                alignment: TabAlignment::Start,
+                leader: None,
+            }],
+            ..ParagraphProperties::default()
+        });
+        let (defs, ids) = defs_with(vec![level], 1);
+        let mut state = NumberingState::new();
+        let resolved = state
+            .resolve(&defs, &num_ref(ids[0], 0))
+            .expect("the level resolves");
+        assert_eq!(
+            resolved
+                .level_tabs
+                .iter()
+                .map(|t| t.position_twips)
+                .collect::<Vec<_>>(),
+            vec![2160],
+            "the level's authored list tab reaches the resolved marker"
+        );
+
+        // A marker that overflows its hanging space: without the level's stop the
+        // body falls to the next default-grid multiple (720); with it, the body
+        // goes to the authored 2160.
+        let with_level_tab = body_indent(
+            LevelSuffix::Tab,
+            Twip(-100),
+            Twip(500),
+            Twip::ZERO,
+            &resolved.level_tabs,
+            Twip(720),
+        );
+        let without = body_indent(
+            LevelSuffix::Tab,
+            Twip(-100),
+            Twip(500),
+            Twip::ZERO,
+            &[],
+            Twip(720),
+        );
+        assert_eq!(without, Twip(720), "the default grid, for contrast");
+        assert_eq!(
+            with_level_tab,
+            Twip(2160),
+            "the body text starts at the level's authored list tab"
+        );
+    }
+
     // Counter behavior is exercised through a synthetic definition set: decimal
     // multi-level with resets, and a separate instance restarting.
     use casual_doc_model::NodeId;

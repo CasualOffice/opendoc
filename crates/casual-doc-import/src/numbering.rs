@@ -15,6 +15,8 @@ use quick_xml::events::{BytesStart, Event};
 use crate::config::ImportConfig;
 use crate::error::ImportError;
 use crate::properties::{apply_paragraph_property, apply_run_property, attribute_value};
+// Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
 
@@ -269,6 +271,14 @@ struct NumberingState {
     /// to the shared paragraph/run property parsers, mirroring the styles parser).
     ppr_depth: u32,
     rpr_depth: u32,
+    /// Depth inside the current level's `w:pPr/w:tabs` (0 when outside one).
+    /// `w:tabs` is a container of `w:tab` leaves, so the flat
+    /// `apply_paragraph_property` cannot read it — mirroring the styles parser,
+    /// the children are routed to the shared tab-stop mapper from here instead.
+    /// Without this a numbering level's list tab was dropped entirely, and with
+    /// it the level's `w:tab w:val="num"` reaches the flow engine's marker-tab
+    /// union (`casual-doc-layout/src/flow.rs`, `prepare_list_marker`).
+    tabs_depth: u32,
     /// Nesting level inside a `w:numPicBullet` (0 when outside one). Picture
     /// bullets are not modeled and the numbering part is regenerated, so the
     /// whole subtree is one reported loss rather than one finding per child.
@@ -363,6 +373,29 @@ fn on_start(
         return;
     }
     if state.ppr_depth > 0 {
+        // `w:tabs` is a container, not a leaf property: open it and route its
+        // `w:tab` children through the shared mapper. A list level's tab stop
+        // (`<w:tabs><w:tab w:val="num" w:pos="709"/></w:tabs>`, which LibreOffice
+        // and Word both emit) is where the marker's suffix tab lands the body
+        // text, so dropping it put every list's text at the default grid instead.
+        if local == b"tabs" {
+            state.tabs_depth += 1;
+            return;
+        }
+        if state.tabs_depth > 0 {
+            if local != b"tab" {
+                reporter.report(local);
+                return;
+            }
+            match (state.current_level.as_mut(), tab_stop_from(element)) {
+                // `has_paragraph` is already set by the enclosing `w:pPr`.
+                (Some(level), Some(stop)) if level.paragraph.tabs.len() < MAX_TAB_STOPS => {
+                    level.paragraph.tabs.push(stop);
+                }
+                _ => reporter.report(b"tab"),
+            }
+            return;
+        }
         if let Some(level) = state.current_level.as_mut()
             && !apply_paragraph_property(&mut level.paragraph, local, element)
         {
@@ -562,6 +595,7 @@ fn on_end(
         return;
     }
     match local {
+        b"tabs" if state.tabs_depth > 0 => state.tabs_depth -= 1,
         b"pPr" => state.ppr_depth = state.ppr_depth.saturating_sub(1),
         b"rPr" => state.rpr_depth = state.rpr_depth.saturating_sub(1),
         b"lvl" => {

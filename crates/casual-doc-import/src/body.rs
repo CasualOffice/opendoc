@@ -28,11 +28,11 @@ use casual_doc_model::v1::{
     SdtCheckbox, SdtCheckboxSymbol, SdtControlData, SdtControlKind, SdtDataBinding, SdtDate,
     SdtListItem, SdtLock, SdtProperties, SectionBoundary, SectionColumns, SectionId, SectionType,
     Shading, ShapeAdjustment, ShapeGeometry, ShapeStroke, SoftHyphen, StyleKind, Symbol, Tab,
-    TabAlignment, TabLeader, TabStop, TableAnchor, TableCellProperties, TableFloatPosition,
-    TableLayout, TableOverlap, TableProperties, TableRowProperties, TableXAlign, TableYAlign,
-    TextBox, TextBoxAutoFit, TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets,
-    TextBoxVerticalAnchor, TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor,
-    VerticalMerge, VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
+    TableAnchor, TableCellProperties, TableFloatPosition, TableLayout, TableOverlap,
+    TableProperties, TableRowProperties, TableXAlign, TableYAlign, TextBox, TextBoxAutoFit,
+    TextBoxBodyProperties, TextBoxHorizontalOverflow, TextBoxInsets, TextBoxVerticalAnchor,
+    TextBoxVerticalOverflow, TextDirection, VerticalAlign, VerticalAnchor, VerticalMerge,
+    VerticalPosition, WordprocessingGroup, WrapDistances, WrapMode,
 };
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared file.
@@ -49,6 +49,8 @@ use crate::properties::{
     apply_paragraph_property, apply_run_property, attribute_value, break_kind, is_true, parse_rgb,
     parse_shading, parse_table_width, symbol_glyph,
 };
+// Separate `use` lines to minimize import-block merge conflicts.
+use crate::properties::{MAX_TAB_STOPS, tab_stop_from};
 use crate::report::Reporter;
 use crate::styles::Styles;
 use crate::tables::TableStack;
@@ -5795,44 +5797,16 @@ impl BodyParser<'_> {
         })
     }
 
-    /// Maps a `w:tabs > w:tab` custom tab stop. A `clear` or unknown alignment, a
-    /// missing/out-of-range `w:pos`, or an overflow past the bound is reported.
+    /// Maps a `w:tabs > w:tab` custom tab stop through the shared
+    /// [`tab_stop_from`] mapper. An unknown alignment, a missing/out-of-range
+    /// `w:pos`, or an overflow past the bound is reported.
     fn apply_tab_stop(&mut self, element: &BytesStart<'_>) {
-        let alignment = match attribute_value(element, b"val").as_deref() {
-            Some("start" | "left") => TabAlignment::Start,
-            Some("center") => TabAlignment::Center,
-            Some("end" | "right") => TabAlignment::End,
-            Some("decimal") => TabAlignment::Decimal,
-            Some("bar") => TabAlignment::Bar,
-            // A cleared tab (`w:val="clear"`) suppresses an inherited/default stop
-            // at `w:pos`; captured (not dropped) so the suppression survives.
-            Some("clear") => TabAlignment::Clear,
-            _ => {
-                self.reporter.report(b"tab");
-                return;
-            }
+        let Some(stop) = tab_stop_from(element) else {
+            self.reporter.report(b"tab");
+            return;
         };
-        let position_twips = match attr_i32(element, b"pos") {
-            Some(pos) if (-31_680..=31_680).contains(&pos) => pos,
-            _ => {
-                self.reporter.report(b"tab");
-                return;
-            }
-        };
-        let leader = match attribute_value(element, b"leader").as_deref() {
-            Some("dot") => Some(TabLeader::Dot),
-            Some("hyphen") => Some(TabLeader::Hyphen),
-            Some("underscore") => Some(TabLeader::Underscore),
-            Some("middleDot") => Some(TabLeader::MiddleDot),
-            Some("heavy") => Some(TabLeader::Heavy),
-            _ => None,
-        };
-        if self.paragraph_properties.tabs.len() < 128 {
-            self.paragraph_properties.tabs.push(TabStop {
-                position_twips,
-                alignment,
-                leader,
-            });
+        if self.paragraph_properties.tabs.len() < MAX_TAB_STOPS {
+            self.paragraph_properties.tabs.push(stop);
         } else {
             self.reporter.report(b"tab");
         }

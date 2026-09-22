@@ -7951,44 +7951,47 @@ fn a_customised_note_separator_is_still_reported() {
 #[test]
 fn the_corpus_reports_exactly_these_findings() {
     let corpus: [(&str, &[u8], u32); 8] = [
-        // 75 before HF-174: the stock footnote and endnote separators, and
-        // every `w:p`, `w:r`, `w:pPr`, `w:rPr` and `w:separator` inside them,
-        // were 16 of those findings and described no loss. What is left is
-        // `w:tab`, `w:tabs`, `w:formProt` and `w:themeFontLang`.
+        // 75 before HF-174, then 59: the stock footnote and endnote separators,
+        // and every `w:p`, `w:r`, `w:pPr`, `w:rPr` and `w:separator` inside
+        // them, were 16 of those findings and described no loss. The remaining
+        // 57 were `w:tab` and `w:tabs` — a numbering level's list tab, which the
+        // numbering parser could not read at all, and every `w:tab w:val="num"`,
+        // which no parser accepted. Both are now imported, so all 57 are gone
+        // and what is left is `w:formProt` and `w:themeFontLang`.
         (
             "real-producer-footnotes",
             include_bytes!("../../../fixtures/corpus/real-producer-footnotes.docx"),
-            59,
+            2,
         ),
         (
             "real-producer-header-footer",
             include_bytes!("../../../fixtures/corpus/real-producer-header-footer.docx"),
-            59,
+            2,
         ),
         (
             "real-producer-hyperlinks",
             include_bytes!("../../../fixtures/corpus/real-producer-hyperlinks.docx"),
-            5,
+            2,
         ),
         (
             "real-producer-libreoffice",
             include_bytes!("../../../fixtures/corpus/real-producer-libreoffice.docx"),
-            5,
+            2,
         ),
         (
             "real-producer-rich",
             include_bytes!("../../../fixtures/corpus/real-producer-rich.docx"),
-            5,
+            2,
         ),
         (
             "real-producer-table-list",
             include_bytes!("../../../fixtures/corpus/real-producer-table-list.docx"),
-            59,
+            2,
         ),
         (
             "real-producer-table-merges",
             include_bytes!("../../../fixtures/corpus/real-producer-table-merges.docx"),
-            5,
+            2,
         ),
         // A document that loses nothing, and says so.
         (
@@ -8013,4 +8016,165 @@ fn the_corpus_reports_exactly_these_findings() {
             features(&import),
         );
     }
+}
+
+// --- `w:tab w:val="num"`, the numbering tab (docs/109 row 95a, FID-L-24) ---
+
+/// Every `ST_TabJc` token, mapped through the one shared mapper. `num` is the
+/// list tab and is left-aligned; `clear` is a suppression, not an alignment.
+/// This is the class guard: the three parsers below must all accept this set,
+/// and previously accepted three different subsets of it.
+#[test]
+fn every_st_tabjc_value_maps_including_the_numbering_tab() {
+    use casual_doc_model::v1::TabAlignment;
+    let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:tabs>
+            <w:tab w:val="start" w:pos="100"/>
+            <w:tab w:val="left" w:pos="200"/>
+            <w:tab w:val="center" w:pos="300"/>
+            <w:tab w:val="end" w:pos="400"/>
+            <w:tab w:val="right" w:pos="500"/>
+            <w:tab w:val="decimal" w:pos="600"/>
+            <w:tab w:val="bar" w:pos="700"/>
+            <w:tab w:val="clear" w:pos="800"/>
+            <w:tab w:val="num" w:pos="900"/>
+        </w:tabs></w:pPr><w:r><w:t>x</w:t></w:r></w:p>
+    </w:body></w:document>"#;
+    let import = import(xml);
+    let p = &paragraph(&import, 0).properties;
+    assert_eq!(
+        p.tabs
+            .iter()
+            .map(|t| (t.position_twips, t.alignment))
+            .collect::<Vec<_>>(),
+        vec![
+            (100, TabAlignment::Start),
+            (200, TabAlignment::Start),
+            (300, TabAlignment::Center),
+            (400, TabAlignment::End),
+            (500, TabAlignment::End),
+            (600, TabAlignment::Decimal),
+            (700, TabAlignment::Bar),
+            (800, TabAlignment::Clear),
+            // The numbering tab: left-aligned, as ONLYOFFICE also resolves it.
+            (900, TabAlignment::Start),
+        ],
+        "all nine ST_TabJc tokens map; `num` is the one that used to be dropped"
+    );
+    assert!(
+        !features(&import).contains(&"tab"),
+        "no tab stop is reported as lost: {:?}",
+        features(&import)
+    );
+    // And a genuinely unknown token is still reported, so the mapper did not
+    // simply stop rejecting things.
+    let bogus = crate::tests::import(
+        br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:tabs>
+            <w:tab w:val="sideways" w:pos="100"/>
+        </w:tabs></w:pPr></w:p></w:body></w:document>"#,
+    );
+    assert!(
+        features(&bogus).contains(&"tab"),
+        "an unknown ST_TabJc token must still be reported"
+    );
+}
+
+/// A numbering level's `w:pPr/w:tabs` — where every real producer puts the list
+/// tab — must reach the level's tab stops. `w:tabs` is a container, so the flat
+/// property parser could not read it and the whole list was dropped: both the
+/// container and its children were reported as losses and `level_tabs` was
+/// always empty, for every document.
+#[test]
+fn a_numbering_levels_list_tab_is_imported() {
+    use casual_doc_model::v1::TabAlignment;
+    // Byte-for-byte the shape LibreOffice writes into numbering.xml, taken from
+    // fixtures/corpus/real-producer-table-list.docx.
+    let numbering = br#"<w:numbering xmlns:w="urn:w">
+        <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0">
+            <w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="-"/>
+            <w:lvlJc w:val="left"/>
+            <w:pPr><w:tabs><w:tab w:val="num" w:pos="709"/></w:tabs>
+                <w:ind w:left="709" w:hanging="283"/></w:pPr>
+        </w:lvl></w:abstractNum>
+        <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>
+        <w:r><w:t>item</w:t></w:r></w:p></w:body></w:document>"#;
+    let import = import_with_numbering(document, numbering);
+    let (_, abstract_num) = import
+        .document
+        .definitions()
+        .abstract_numbering
+        .iter()
+        .next()
+        .expect("an abstract numbering definition");
+    let level_props = abstract_num.levels[0]
+        .paragraph_properties
+        .as_ref()
+        .expect("the level's w:pPr");
+    assert_eq!(
+        level_props
+            .tabs
+            .iter()
+            .map(|t| (t.position_twips, t.alignment))
+            .collect::<Vec<_>>(),
+        vec![(709, TabAlignment::Start)],
+        "the level's list tab is imported, left-aligned"
+    );
+    // The level's indent must survive alongside it — the tabs branch must not
+    // swallow its sibling properties.
+    assert_eq!(
+        level_props.indentation.and_then(|i| i.start_twips),
+        Some(709)
+    );
+    let lost = features(&import);
+    assert!(
+        !lost.contains(&"tab") && !lost.contains(&"tabs"),
+        "neither the container nor its child is reported as lost: {lost:?}"
+    );
+}
+
+/// The styles parser is the third copy of the same mapping, and it accepted the
+/// narrowest set of all — neither `num` nor `clear`. A TOC or list style's stops
+/// must map exactly as the body's do.
+#[test]
+fn a_styles_tab_list_accepts_the_numbering_and_clear_tabs() {
+    use casual_doc_model::v1::TabAlignment;
+    let styles = br#"<w:styles xmlns:w="urn:w">
+        <w:style w:type="paragraph" w:styleId="ListParagraph">
+            <w:name w:val="List Paragraph"/>
+            <w:pPr><w:tabs>
+                <w:tab w:val="num" w:pos="720"/>
+                <w:tab w:val="clear" w:pos="360"/>
+                <w:tab w:val="decimal" w:pos="1440"/>
+            </w:tabs></w:pPr>
+        </w:style></w:styles>"#;
+    let document = br#"<w:document xmlns:w="urn:w"><w:body>
+        <w:p><w:pPr><w:pStyle w:val="ListParagraph"/></w:pPr>
+        <w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#;
+    let import = import_with_styles(document, styles);
+    let (_, style) = import
+        .document
+        .definitions()
+        .styles
+        .iter()
+        .next()
+        .expect("the style");
+    let tabs = &style.paragraph.as_ref().expect("style w:pPr").tabs;
+    assert_eq!(
+        tabs.iter()
+            .map(|t| (t.position_twips, t.alignment))
+            .collect::<Vec<_>>(),
+        vec![
+            (720, TabAlignment::Start),
+            (360, TabAlignment::Clear),
+            (1440, TabAlignment::Decimal),
+        ],
+        "a style's tab list maps the same nine tokens the body parser maps"
+    );
+    assert!(
+        !features(&import).contains(&"tab"),
+        "no style tab stop is reported as lost: {:?}",
+        features(&import)
+    );
 }
