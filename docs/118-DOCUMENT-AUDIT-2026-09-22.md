@@ -70,8 +70,8 @@ declared symbols, and under Suggesting it is a tracked change.**
 | # | gap | where | verified how |
 | --- | --- | --- | --- |
 | 1 | **A form checkbox cannot be ticked** | Medical form, 8 controls | browser: click / Space / double-click all no-ops |
-| 2 | ~~The checkbox is invisible to assistive technology~~ | Medical form | **Fixed (HF-177)**: the mirror carried raw `U+F0A3` / `U+F052` — Wingdings 2 private-use code points, which a screen reader reads as nothing — and no `role` attribute appeared anywhere in `#a11yDocument`. Now `role="checkbox"` + `aria-checked` + a name taken from the visible label beside it. Design and naming rule in `docs/120` |
-| 3 | ~~Text inside a grouped shape never reaches assistive technology~~ | Medical form, loan | **Fixed (HF-169)**: `collect_a11y_group_images` walked a group for pictures and dropped `GroupChild::TextBox`. A text box now flows through the same projection as the body, at any nesting depth, without moving a caret offset. `docs/120` |
+| 2 | ~~The checkbox is invisible to assistive technology~~ | Medical form | **Fixed (#585, HF-177)**: the mirror carried raw `U+F0A3` / `U+F052` — Wingdings 2 private-use code points, which a screen reader reads as nothing — and no `role` attribute appeared anywhere in `#a11yDocument`. Now `role="checkbox"` + `aria-checked` + a name taken from the visible label beside it. Design and naming rule in `docs/120` |
+| 3 | ~~Text inside a grouped shape never reaches assistive technology~~ | Medical form, loan | **Fixed (#585, HF-169)**: `collect_a11y_group_images` walked a group for pictures and dropped `GroupChild::TextBox`. A text box now flows through the same projection as the body, at any nesting depth, without moving a caret offset. `docs/120` |
 | 4 | **Custom-path shapes fall back to their bounding rectangle** | loan, 5 shapes | `ShapeGeometry` has 7 presets plus `Other`, "drawn as its bounding rectangle"; `a:custGeom` has no representation. **Re-measured 2026-09-23 and this row was overstated** — see §6 |
 | 5 | ~~Picture transparency is ignored~~ | loan, 5 pictures | **Fixed (#579)**: `a:alphaModFix` now renders, exports and round-trips, in the raster backend and in PDF |
 | 6 | ~~Warped text is drawn flat~~ | loan, 20 | **NOT A GAP** — see §6 |
@@ -106,11 +106,11 @@ it too. The tab freeze on it was never a DOCX problem; it is the
    between this file being a form and being a picture of one, the model
    already carries every field it needs, and both competitors agree on the
    interaction.
-2. ~~**Checkbox accessibility** (§3 row 2)~~ — **done (HF-177)**, and it did
+2. ~~**Checkbox accessibility** (§3 row 2)~~ — **done (#585, HF-177)**, and it did
    NOT fall out of the same change: the control reaches the mirror as a
    checkbox with a role, a checked state and a name, which needed a projection
    change of its own. `docs/120`.
-3. ~~**HF-169**, grouped text in the a11y mirror~~ — **done**, same PR.
+3. ~~**HF-169**, grouped text in the a11y mirror~~ — **done (#585)**.
 4. **The empty-element false-loss class** (§4), so the compatibility report
    stops burying real findings.
 5. **Picture transparency** (§3 row 5) — already part-built.

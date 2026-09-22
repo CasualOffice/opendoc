@@ -1,6 +1,6 @@
 # 120 — Grouped text and form checkboxes in the accessibility mirror
 
-**Status:** accepted, implemented in `fix/a11y-grouped-text-and-form-checkbox`.
+**Status:** accepted, implemented in `fix/a11y-grouped-text-and-form-checkbox` (#585).
 **Opened:** 2026-09-23. **Rows:** `109` HF-169, HF-177, HF-178. **Source:** `118` §3
 rows 2 and 3. **Related:** `117` (grouped-object selection), `67` row 9 (the
 mirror itself).
