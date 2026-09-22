@@ -168,6 +168,8 @@ pub(crate) fn place_line_numbers(
                     &number.to_string(),
                     style,
                     Point::new(Twip::ZERO, Twip::ZERO),
+                    // A margin line number is not part of any paragraph's text.
+                    crate::flow::FieldAnchor::atomic(0),
                 );
                 let mut run = shaped.run;
                 run.origin = Point::new(

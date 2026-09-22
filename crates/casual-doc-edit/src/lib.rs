@@ -30,6 +30,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
+use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
@@ -4518,6 +4519,19 @@ fn inline_text_len(inline: &InlineNode) -> u32 {
         }
         InlineNode::Revision(_) => 0,
         InlineNode::Sdt(sdt) => nested_len(&sdt.inlines),
+        // A legacy field (`w:fldChar` + `w:instrText`) occupies the width of
+        // the text it SHOWS. Counting it as zero put this function into
+        // disagreement with `node_plain_text` and with the wasm anchor
+        // accounting, so in any paragraph holding a filled `FORMTEXT` the three
+        // answers to "how long is this paragraph" differed and the caret landed
+        // in the wrong place.
+        //
+        // A `FORMCHECKBOX` holds no content: layout synthesises one box
+        // character from the field's state, so it is one position wide.
+        InlineNode::Field(field) => match field.form.as_ref().map(|form| &form.kind) {
+            Some(FormFieldKind::CheckBox(checkbox)) => checkbox.glyph().len_utf8() as u32,
+            _ => nested_len(&field.inlines),
+        },
         _ => 0,
     }
 }
@@ -4636,8 +4650,48 @@ fn transparent_children(inline: &InlineNode) -> Option<&[InlineNode]> {
             Some(&revision.inlines)
         }
         InlineNode::Sdt(sdt) => Some(&sdt.inlines),
+        // A `FORMTEXT` field's result is the blank a person fills in - the
+        // whole point of the control - so text lands INSIDE it rather than
+        // beside it, and the filled value stays part of the field when the
+        // document is written back.
+        //
+        // Deliberately only `FORMTEXT`. A `PAGE` or `NUMPAGES` result is
+        // recomputed from the layout and typing into it would be overwritten;
+        // a `FORMCHECKBOX` has no content at all. Word refuses both.
+        InlineNode::Field(field) if is_text_form_field(field) => Some(&field.inlines),
         _ => None,
     }
+}
+
+/// Whether this field is a legacy `FORMTEXT` - the only field whose result a
+/// person is allowed to type into.
+fn is_text_form_field(field: &Field) -> bool {
+    field
+        .form
+        .as_ref()
+        .is_some_and(|form| matches!(form.kind, FormFieldKind::TextInput(_)))
+}
+
+/// The top-level index of the `FORMTEXT` field covering `offset`, with the
+/// offset rebased into the field's own result.
+///
+/// Inclusive at both ends, because both ends of a blank are in the blank.
+fn text_form_field_at(inlines: &[InlineNode], offset: u32) -> Option<(usize, u32)> {
+    let mut cum = 0u32;
+    for (idx, inline) in inlines.iter().enumerate() {
+        let len = inline_text_len(inline);
+        let start = cum;
+        let end = start.saturating_add(len);
+        cum = end;
+        if let InlineNode::Field(field) = inline
+            && is_text_form_field(field)
+            && offset >= start
+            && offset <= end
+        {
+            return Some((idx, offset - start));
+        }
+    }
+    None
 }
 
 fn transparent_children_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNode>> {
@@ -4651,6 +4705,7 @@ fn transparent_children_mut(inline: &mut InlineNode) -> Option<&mut Vec<InlineNo
             Some(&mut revision.inlines)
         }
         InlineNode::Sdt(sdt) => Some(&mut sdt.inlines),
+        InlineNode::Field(field) if is_text_form_field(field) => Some(&mut field.inlines),
         _ => None,
     }
 }
@@ -4834,6 +4889,23 @@ fn insert_text(
         }
         run.text.insert_str(local, text);
         return Ok(());
+    }
+
+    // A legacy `FORMTEXT` is a blank a person fills in, so its boundaries
+    // belong to the field. Without this, typing at the end of the blank - which
+    // is where the caret sits after tabbing into an empty one, and where it
+    // sits after every character typed into it - appends a run AFTER the field:
+    // the answer ends up beside the question, the field's result is still
+    // empty, and Word reads the form as unfilled.
+    //
+    // Checked after the strict-interior pass above (which already handles an
+    // offset in the middle of the field's result) and before the boundary
+    // rules below, which otherwise resolve the same offset to the run outside.
+    if let Some((idx, local)) = text_form_field_at(inlines, offset) {
+        let InlineNode::Field(field) = &mut inlines[idx] else {
+            return Err(EditError::Unsupported);
+        };
+        return insert_text(&mut field.inlines, local, text, ids);
     }
 
     let segs = run_segments(inlines);

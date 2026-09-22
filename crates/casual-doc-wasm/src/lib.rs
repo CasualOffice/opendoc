@@ -72,11 +72,11 @@ use casual_doc_model::v1::{
     VerticalPosition, WordprocessingGroup, WrapMode,
 };
 use casual_doc_model::v1::{CROP_FULL, CropRect};
-use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{
-    GroupChild, HeaderFooterId, HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol,
-    SdtControlData, Symbol,
+    DocumentProtectionEdit, FormCheckBox, FormFieldKind, GroupChild, HeaderFooterId,
+    HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
 };
+use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -416,6 +416,15 @@ pub struct WasmDocument {
     /// keystroke. The host owns gesture boundaries through `session`; the engine
     /// additionally requires exact caret continuity before coalescing history.
     typing_history: Option<TypingHistory>,
+    /// Set only while a FORM-AWARE action is running, so it may edit a document
+    /// protected with `w:documentProtection w:edit="forms"`.
+    ///
+    /// The shape is ONLYOFFICE's and deliberately so: deny by default in the
+    /// one choke point, and let the handful of call sites that are allowed to
+    /// write into a locked document opt in explicitly. An allow-list of
+    /// operations would be the wrong axis — the same `SetInlines` is legitimate
+    /// inside a field and forbidden outside one.
+    editing_a_form_field: bool,
     /// Numeric `w:id` allocator for editor-authored revisions. Imported opaque
     /// ids remain untouched; allocated values are never reused within a session,
     /// including after Undo.
@@ -4874,7 +4883,7 @@ impl WasmDocument {
             node: paragraph,
             offset: 0,
         };
-        self.apply_action_caret_as(
+        self.apply_form_action(
             vec![Operation::SetInlines {
                 node: paragraph,
                 inlines,
@@ -4882,6 +4891,25 @@ impl WasmDocument {
             caret,
             HistoryKind::Formatting,
         )
+    }
+
+    /// Applies an action that is ALLOWED to write into a forms-protected
+    /// document, because it IS the operation of a form field.
+    ///
+    /// The explicit opt-in `refuse_if_protected` looks for. Ticking a checkbox
+    /// is a `SetInlines` on its paragraph, indistinguishable by shape from
+    /// typing over the contract around it — the difference is the intent of
+    /// the call site, so the call site declares it.
+    fn apply_form_action(
+        &mut self,
+        ops: Vec<Operation>,
+        caret: Pos,
+        kind: HistoryKind,
+    ) -> Result<EditResult, String> {
+        self.editing_a_form_field = true;
+        let applied = self.apply_action_caret_as(ops, caret, kind);
+        self.editing_a_form_field = false;
+        applied
     }
 
     /// The checked state of the checklist item at `node`: `1` checked, `0`
@@ -10592,7 +10620,67 @@ impl WasmDocument {
     /// `a_refused_operation_leaves_the_document_unchanged` asserts — that a
     /// refused op leaves `doc` unchanged. That keeps the per-keystroke path
     /// clone-free and `O(edit)`, per `docs/107` §4.
+    /// Refuses an edit that `w:documentProtection w:edit="forms"` forbids.
+    ///
+    /// Word locks the body of a forms-protected document and lets only its form
+    /// fields accept input; the owner's loan agreement declares exactly that
+    /// (`w:edit="forms" w:enforcement="1"`) and we let the user type over the
+    /// whole contract (`docs/109` HF-175).
+    ///
+    /// Enforced HERE, in the engine's one choke point, and not in the host:
+    /// ONLYOFFICE keeps the rule in its controller but leaves the actual
+    /// restriction to its UI layer, so an embedder driving their engine
+    /// directly gets no protection at all. A host that forgets is not a
+    /// document that unlocks.
+    ///
+    /// `w:enforcement="0"` means the setting is remembered but not applied,
+    /// which is a real state Word round-trips — so the flag is checked, not
+    /// just the mode.
+    fn refuse_if_protected(&self, ops: &[Operation]) -> Result<(), String> {
+        if self.editing_a_form_field {
+            return Ok(());
+        }
+        let Some(protection) = self
+            .document
+            .definitions()
+            .settings
+            .document_protection
+            .as_ref()
+        else {
+            return Ok(());
+        };
+        if protection.edit != DocumentProtectionEdit::Forms || !protection.enforcement {
+            return Ok(());
+        }
+        for op in ops {
+            if !self.op_is_inside_a_form_field(op) {
+                return Err("refused: This document is protected: only its form \
+                     fields can be edited"
+                    .to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether an operation writes inside an ENABLED text form field's result.
+    ///
+    /// A disabled field (`<w:enabled w:val="0"/>`) is locked like the body —
+    /// it is a field the author closed, not one they left open.
+    fn op_is_inside_a_form_field(&self, op: &Operation) -> bool {
+        let Some((node, offset)) = operation_write_position(op) else {
+            // An operation this check cannot place is refused rather than
+            // waved through: an unplaceable write into a locked document is
+            // exactly the case where guessing is wrong.
+            return false;
+        };
+        let Some(paragraph) = find_paragraph_any(&self.document, node) else {
+            return false;
+        };
+        text_form_field_at_offset(&paragraph.inlines, offset, &mut 0)
+    }
+
     fn apply_group(&mut self, ops: &[Operation]) -> Result<(Pos, Vec<Operation>), String> {
+        self.refuse_if_protected(ops)?;
         // A windowed body cannot re-paginate after a mutation: `finish_edit`
         // re-runs `paginate_document_cached` over the whole document, which is
         // the 4.14 GiB peak windowing exists to avoid, and a re-measure is a
@@ -12770,6 +12858,21 @@ fn visit_paragraphs_in(document: &Document, visit: &mut impl FnMut(&Paragraph)) 
 fn toggle_checkbox_in_inlines(inlines: &mut [InlineNode], sdt: NodeId, want: bool) -> bool {
     for inline in inlines {
         match inline {
+            // A legacy FORMCHECKBOX needs no content rewrite: layout
+            // synthesises the box glyph from `checked` on every pass
+            // (`form_checkbox_glyph_run`), so the flag IS the rendering. The
+            // SDT below is the opposite — there the glyph is a real run and
+            // has to move with the flag.
+            InlineNode::Field(field) if field.id == sdt => {
+                let Some(form) = field.form.as_mut() else {
+                    return false;
+                };
+                let FormFieldKind::CheckBox(checkbox) = &mut form.kind else {
+                    return false;
+                };
+                checkbox.checked = Some(want);
+                return true;
+            }
             InlineNode::Sdt(node) if node.id == sdt => {
                 let Some(SdtControlData::Checkbox(checkbox)) = node.properties.data.as_mut() else {
                     return false;
@@ -12825,6 +12928,22 @@ fn checkbox_at_offset(
         let length = node_plain_text(core::slice::from_ref(inline)).len() as u32;
         let end = start.saturating_add(length);
         match inline {
+            // A LEGACY form checkbox (`w:fldChar`+`w:ffData`, FORMCHECKBOX) is
+            // the other mechanism Word has for the same control, and the one
+            // the owner's loan agreement uses 19 times. Its state lives on the
+            // field rather than in a content control, and layout synthesises
+            // the box glyph from that state — so the caller gets the same
+            // answer for both and the gesture does not have to know which
+            // kind it is holding.
+            InlineNode::Field(field) => {
+                if let Some(form) = field.form.as_ref()
+                    && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                    && offset >= start
+                    && offset <= end
+                {
+                    return Some((field.id, legacy_as_sdt_checkbox(checkbox)));
+                }
+            }
             InlineNode::Sdt(sdt) => {
                 if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
                     && offset >= start
@@ -12858,6 +12977,16 @@ fn checkbox_at_offset(
 fn find_checkbox_containing(inlines: &[InlineNode], node: NodeId) -> Option<(NodeId, SdtCheckbox)> {
     for inline in inlines {
         match inline {
+            // The legacy mechanism, addressed by the field's own id or by any
+            // run of its cached result.
+            InlineNode::Field(field) => {
+                if let Some(form) = field.form.as_ref()
+                    && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                    && (field.id == node || inlines_contain_node(&field.inlines, node))
+                {
+                    return Some((field.id, legacy_as_sdt_checkbox(checkbox)));
+                }
+            }
             InlineNode::Sdt(sdt) => {
                 if let Some(SdtControlData::Checkbox(checkbox)) = sdt.properties.data.as_ref()
                     && (sdt.id == node || inlines_contain_node(&sdt.inlines, node))
@@ -12890,9 +13019,84 @@ fn inlines_contain_node(inlines: &[InlineNode], node: NodeId) -> bool {
         InlineNode::Run(run) => run.id == node,
         InlineNode::Symbol(symbol) => symbol.id == node,
         InlineNode::Sdt(sdt) => sdt.id == node || inlines_contain_node(&sdt.inlines, node),
+        InlineNode::Field(field) => field.id == node || inlines_contain_node(&field.inlines, node),
         InlineNode::Hyperlink(link) => inlines_contain_node(&link.inlines, node),
         _ => false,
     })
+}
+
+/// Where an operation writes, as a paragraph and a byte offset, when it has a
+/// single definite position. `None` for a structural operation whose target is
+/// not one point in one paragraph.
+fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
+    match op {
+        Operation::InsertText { at, .. } => Some((at.node, at.offset)),
+        Operation::DeleteText { range }
+        | Operation::FormatText { range, .. }
+        | Operation::ClearFormatting { range }
+        | Operation::SetHyperlink { range, .. } => Some((range.start.node, range.start.offset)),
+        Operation::SetInlines { node, .. } | Operation::SetParagraphProperties { node, .. } => {
+            Some((*node, 0))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `offset` falls inside the RESULT of an enabled text form field.
+///
+/// The result is the cached content between `w:fldChar separate` and `end` —
+/// the part a person fills in. The instruction and the field characters
+/// themselves are not editable even in a forms-protected document.
+fn text_form_field_at_offset(inlines: &[InlineNode], offset: u32, seen: &mut u32) -> bool {
+    for inline in inlines {
+        let start = *seen;
+        let length = node_plain_text(core::slice::from_ref(inline)).len() as u32;
+        let end = start.saturating_add(length);
+        match inline {
+            InlineNode::Field(field) => {
+                let fillable = field.form.as_ref().is_some_and(|form| {
+                    matches!(form.kind, FormFieldKind::TextInput(_)) && form.enabled.unwrap_or(true)
+                });
+                if fillable && offset >= start && offset <= end {
+                    return true;
+                }
+                let mut inner = start;
+                if text_form_field_at_offset(&field.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            InlineNode::Sdt(sdt) => {
+                let mut inner = start;
+                if text_form_field_at_offset(&sdt.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            InlineNode::Hyperlink(link) => {
+                let mut inner = start;
+                if text_form_field_at_offset(&link.inlines, offset, &mut inner) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        *seen = end;
+    }
+    false
+}
+
+/// A legacy `w:ffData` checkbox seen through the SDT checkbox shape, so one
+/// lookup answers for both mechanisms.
+///
+/// `checked` falls back to `w:default` and then to off, which is Word's own
+/// precedence and the one `form_checkbox_glyph_run` already paints with. The
+/// state glyphs are `None`: a legacy checkbox declares no symbols, and layout
+/// draws reliably-covered BMP boxes rather than a producer's symbol font.
+fn legacy_as_sdt_checkbox(checkbox: &FormCheckBox) -> SdtCheckbox {
+    SdtCheckbox {
+        checked: checkbox.checked.or(checkbox.default).unwrap_or(false),
+        checked_state: None,
+        unchecked_state: None,
+    }
 }
 
 /// The character a `w14:checkedState` / `w14:uncheckedState` names. `@w14:val`
@@ -17452,6 +17656,17 @@ fn inlines_anchor_len(document: &Document, inlines: &[InlineNode]) -> u32 {
 }
 
 fn field_anchor_len(field: &casual_doc_model::v1::Field) -> u32 {
+    // A legacy `FORMCHECKBOX` is one position wide, because that is what the
+    // reader sees: layout synthesises a single box character from the field's
+    // state, and `node_plain_text` now reports that same character. All three
+    // have to agree or the caret lands somewhere the box is not - the offsets
+    // the checkbox gesture is resolved against come from the plain text, and
+    // the positions an edit is applied at come from here.
+    if let Some(form) = field.form.as_ref()
+        && let FormFieldKind::CheckBox(checkbox) = &form.kind
+    {
+        return checkbox.glyph().len_utf8() as u32;
+    }
     let cached = field.inlines.iter().fold(0u32, |total, inline| {
         let len = match inline {
             InlineNode::Run(run) => run.text.len() as u32,
@@ -18973,6 +19188,7 @@ fn open_document_bounded(
         undo: Vec::new(),
         redo: Vec::new(),
         typing_history: None,
+        editing_a_form_field: false,
         revision_ids,
         revision: 0,
         // Populated lazily on the first edit's incremental re-pagination; the open
@@ -22290,6 +22506,221 @@ mod tests {
         );
     }
 
+    /// Filling a legacy `FORMTEXT` puts the text INSIDE the field.
+    ///
+    /// `docs/109` HF-175. Three functions answered "how long is this
+    /// paragraph" and a legacy field made them disagree: `node_plain_text`
+    /// contributed nothing for it, `inline_text_len` in the edit crate
+    /// contributed nothing either, and `field_anchor_len` in this crate counted
+    /// its cached result. So in any paragraph holding a filled `FORMTEXT` — 111
+    /// of them across the owner's corpus — the caret and the edit disagreed
+    /// about where the text was.
+    ///
+    /// Landing inside is not cosmetic. A value typed BESIDE the field is not
+    /// part of the field, so it is not the field's result on save, Word does
+    /// not see the form as filled, and the next person to tab through the form
+    /// finds the blank still blank with the answer sitting next to it.
+    #[test]
+    fn filling_a_legacy_text_form_field_writes_into_the_field() {
+        const LEGACY: &[u8] = include_bytes!("../../../fixtures/generated/legacy-form.docx");
+        let mut doc = open_document(LEGACY).expect("open");
+
+        let (paragraph, field_id, before_len) = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::TextInput(_)))
+                        && found.is_none()
+                    {
+                        found =
+                            Some((p.id, field.id, node_plain_text(&field.inlines).len() as u32));
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMTEXT field")
+        };
+
+        // The whole paragraph's length must already agree with its plain text,
+        // or the offset below means nothing.
+        let text = node_plain_text(
+            &find_paragraph_any(&doc.document, paragraph)
+                .unwrap()
+                .inlines,
+        );
+        let at = text.len() as u32;
+        doc.apply(Operation::InsertText {
+            at: Pos::new(paragraph, at),
+            text: "Ada".to_owned(),
+        })
+        .expect("a FORMTEXT must accept input");
+
+        let field = {
+            let p = find_paragraph_any(&doc.document, paragraph).unwrap();
+            p.inlines
+                .iter()
+                .find_map(|inline| match inline {
+                    InlineNode::Field(field) if field.id == field_id => Some(field),
+                    _ => None,
+                })
+                .expect("the field must still be there")
+        };
+        assert!(
+            node_plain_text(&field.inlines).contains("Ada"),
+            "the value must be the FIELD's result, not a run beside it: {:?}",
+            node_plain_text(&field.inlines),
+        );
+        assert_eq!(
+            node_plain_text(&field.inlines).len() as u32,
+            before_len + 3,
+            "the field grew by exactly what was typed",
+        );
+    }
+
+    /// A forms-protected document refuses edits outside its form fields, and
+    /// accepts them inside.
+    ///
+    /// `docs/109` HF-175. The owner's loan agreement declares
+    /// `w:documentProtection w:edit="forms" w:enforcement="1"` and we let the
+    /// user type over the whole contract — measured in the browser before this
+    /// change: typing in ordinary body text landed and produced an undo entry.
+    #[test]
+    fn a_forms_protected_document_locks_everything_but_its_fields() {
+        const PROTECTED: &[u8] = include_bytes!("../../../fixtures/generated/forms-protected.docx");
+        let mut doc = open_document(PROTECTED).expect("open");
+
+        // Ordinary body text is locked.
+        let body = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                if found.is_none() && node_plain_text(&p.inlines).contains("End of form") {
+                    found = Some(p.id);
+                }
+            });
+            found.expect("the fixture has ordinary body text")
+        };
+        let refusal = doc
+            .apply(Operation::InsertText {
+                at: Pos::new(body, 0),
+                text: "QZX".to_owned(),
+            })
+            .expect_err("typing over a protected contract must be refused");
+        assert!(
+            refusal.contains("protected"),
+            "the refusal must say why, not fail silently: {refusal}",
+        );
+
+        // …and the form field is not.
+        let field_paragraph = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::TextInput(_)))
+                        && found.is_none()
+                    {
+                        found = Some(p.id);
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMTEXT field")
+        };
+        // The field's result begins after the "Name: " literal, so aim inside it.
+        let text = {
+            let p = find_paragraph_any(&doc.document, field_paragraph).unwrap();
+            node_plain_text(&p.inlines)
+        };
+        let inside = text.len() as u32;
+        doc.apply(Operation::InsertText {
+            at: Pos::new(field_paragraph, inside),
+            text: "Ada".to_owned(),
+        })
+        .expect("a form field must still accept input");
+
+        // And ticking a checkbox is a form action, so it is allowed too.
+        let control = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && field
+                            .form
+                            .as_ref()
+                            .is_some_and(|f| matches!(f.kind, FormFieldKind::CheckBox(_)))
+                        && found.is_none()
+                    {
+                        found = Some(field.id);
+                    }
+                }
+            });
+            found.expect("the fixture has a FORMCHECKBOX")
+        };
+        doc.toggle_form_checkbox_inner(&control.to_string())
+            .expect("ticking a checkbox is a form action");
+        assert_eq!(doc.form_checkbox_checked(&control.to_string()), 1);
+    }
+
+    /// The owner's loan agreement uses the OTHER form mechanism — legacy
+    /// `w:fldChar`+`w:ffData` FORMCHECKBOX, 19 of them — and the same gesture
+    /// has to tick those too.
+    ///
+    /// `docs/109` HF-175. #578 fixed the `w14:checkbox` SDT; this is the
+    /// mechanism Word has had since long before content controls, and the one
+    /// the 111-field contract is built from. The host is unchanged: the same
+    /// `formCheckboxAt` / `toggleFormCheckbox` answer for both, so the click
+    /// and Space gestures simply start working.
+    #[test]
+    fn a_legacy_form_checkbox_ticks_like_a_content_control() {
+        const LOAN: &[u8] = include_bytes!("../../../fixtures/generated/legacy-form.docx");
+        let mut doc = open_document(LOAN).expect("open");
+
+        // Find the paragraph holding the legacy checkbox, and ask the way the
+        // host asks: a paragraph and a caret offset.
+        let (paragraph, before) = {
+            let mut found = None;
+            visit_paragraphs_in(&doc.document, &mut |p| {
+                for inline in &p.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && let Some(form) = field.form.as_ref()
+                        && let FormFieldKind::CheckBox(checkbox) = &form.kind
+                        && found.is_none()
+                    {
+                        found = Some((p.id, checkbox.checked.or(checkbox.default)));
+                    }
+                }
+            });
+            found.expect("the fixture has a legacy FORMCHECKBOX")
+        };
+        let node = paragraph.to_string();
+        let control = doc
+            .form_checkbox_at(&node, 0)
+            .expect("the caret is inside a legacy form checkbox");
+        assert_eq!(
+            doc.form_checkbox_checked(&control),
+            i32::from(before.unwrap_or(false)),
+            "the reported state is the document's",
+        );
+
+        doc.toggle_form_checkbox_inner(&control).expect("tick");
+        assert_eq!(doc.form_checkbox_checked(&control), 1, "ticked");
+        doc.toggle_form_checkbox_inner(&control).expect("untick");
+        assert_eq!(doc.form_checkbox_checked(&control), 0, "unticked");
+
+        doc.toggle_form_checkbox_inner(&control).expect("tick");
+        doc.undo().expect("undo");
+        assert_eq!(
+            doc.form_checkbox_checked(&control),
+            0,
+            "one undo puts it back"
+        );
+    }
+
     /// A form checkbox ticks, unticks, and comes back on undo.
     ///
     /// `docs/118` §2: the Medical Incident Report Form carries eight of these
@@ -24227,6 +24658,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -24659,6 +25091,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -24926,6 +25359,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let mut d = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -28088,6 +28522,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),
@@ -30052,6 +30487,7 @@ mod tests {
         let default_config = document_page_config(&document);
         let revision_ids = RevisionIdAllocator::from_document(&document);
         let handle = WasmDocument {
+            editing_a_form_field: false,
             edit_context: EditContext::Body,
             document,
             layout: BodyLayout::Whole(layout),

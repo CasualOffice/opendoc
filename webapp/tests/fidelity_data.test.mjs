@@ -74,6 +74,7 @@ test("every construct family in the expected set is present exactly once", () =>
     "Footnotes & endnotes",
     "Sections, columns & page setup",
     "Fields",
+    "Document protection & forms",
     "Math (OMML)",
     "Charts",
     "SmartArt",
@@ -142,7 +143,17 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // footnote/endnote conversion and number-format options are not there, so
   // partial rather than full.
   assert.equal(by["Footnotes & endnotes"].editable, "partial");
-  assert.equal(by["Fields"].editable, "none");
+  // Legacy form fields are operable (`docs/109` HF-175): a FORMCHECKBOX ticks
+  // and a FORMTEXT accepts typing into its result. No other field kind is
+  // editable as a field, so partial rather than full - and never "full" while
+  // dropdown form fields cannot be operated at all.
+  assert.equal(by["Fields"].editable, "partial");
+  assert.notEqual(by["Fields"].editable, "full");
+  // Only the `forms` protection mode is enforced. Claiming "full" editable
+  // here would say `readOnly`, `comments` and `trackedChanges` are enforced
+  // too, and they are not - nor is any password checked.
+  assert.equal(by["Document protection & forms"].editable, "partial");
+  assert.equal(by["Document protection & forms"].rendered, "none");
   // Math is fully typed as of Layer 1 (all 20 OMML math elements mapped or
   // raw-retained), but rendering is a bounded subset and it stays read-only.
   assert.equal(by["Math (OMML)"].modeled, "full");
