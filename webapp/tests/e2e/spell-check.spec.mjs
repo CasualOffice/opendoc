@@ -30,7 +30,7 @@ import {
   setReviewMode,
   stableBox,
 } from "./fixtures.mjs";
-import { makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
+import { GRAMMAR_DOUBLED, makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
 
 const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -55,6 +55,7 @@ async function openSpellingDocument(page, { pages: pageCount = 6, language = "" 
 }
 
 const marker = (word) => `.overlay .spell-error[data-spell-word="${word}"]`;
+const grammarMark = (rule) => `.overlay .grammar-error[data-grammar-rule="${rule}"]`;
 
 /**
  * Right-clicks a squiggle at its own coordinates.
@@ -302,5 +303,133 @@ test("in Viewing mode the corrections refuse with a reason instead of silently f
   // Ignoring is a host-side decision, not a document mutation, so it stays
   // available: a reader looking at a false positive can still dismiss it.
   await expect(menu.locator('[data-command-id="spell.ignoreAll"]')).toBeEnabled();
+  expect(consoleErrors).toEqual([]);
+});
+
+// ---- Grammar (the owner rated this above spelling, 2026-09-23) ----------------
+
+test("a grammar error gets its own blue mark, distinct from a spelling one", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSpellingDocument(page);
+  const doubled = page.locator(grammarMark("doubled-word"));
+  await expect(doubled.first()).toBeVisible({ timeout: 20_000 });
+
+  // The two marks are different elements with different colours, because the
+  // reader has to tell "this word is misspelled" from "this sentence is wrong"
+  // without opening anything.
+  await expect(page.locator(marker(spellingTypoForPage(1)))).toHaveCount(1);
+  const [spellColour, grammarColour] = await page.evaluate(() => {
+    const read = (selector) => {
+      const el = document.querySelector(selector);
+      return el ? getComputedStyle(el, "::after").backgroundImage : "";
+    };
+    return [read(".overlay .spell-error"), read(".overlay .grammar-error")];
+  });
+  expect(spellColour).not.toBe("");
+  expect(grammarColour).not.toBe("");
+  expect(grammarColour).not.toBe(spellColour);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("right-clicking a grammar mark explains the rule, fixes it, and can silence it", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSpellingDocument(page);
+  const doubled = page.locator(grammarMark("doubled-word"));
+  await expect(doubled.first()).toBeVisible({ timeout: 20_000 });
+
+  // The fixture repeats the grammar line on every page, and the window covers
+  // more than one — so the assertion is that THIS one is fixed, not that none
+  // is left. Counting is how a multi-page window is read honestly.
+  const before = await doubled.count();
+  expect(before).toBeGreaterThan(0);
+
+  const menu = await rightClickSquiggle(page, doubled.first());
+  const explain = menu.locator('[data-command-id="grammar.explain"]');
+  await expect(explain).toBeVisible();
+  await expect(explain).toBeDisabled();
+  await expect(explain).toContainText("repeated");
+
+  await menu.locator('[data-command-id="grammar.suggestion.0"]').click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator(grammarMark("doubled-word"))).toHaveCount(before - 1, {
+    timeout: 20_000,
+  });
+
+  // One undo, through the same replaceRanges path spelling uses.
+  await page.keyboard.press(`${MOD}+z`);
+  await page.keyboard.press(`${MOD}+Home`);
+  await expect(page.locator(grammarMark("doubled-word"))).toHaveCount(before, {
+    timeout: 20_000,
+  });
+
+  const again = await rightClickSquiggle(page, page.locator(grammarMark("doubled-word")).first());
+  await again.locator('[data-command-id="grammar.ignoreRule"]').click();
+  await expect(page.locator(grammarMark("doubled-word"))).toHaveCount(0, { timeout: 20_000 });
+  // ...and only that rule: the spelling mark beside it is untouched.
+  await expect(page.locator(marker(spellingTypoForPage(1)))).toHaveCount(1);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("grammar and spelling are independent switches, both remembered", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSpellingDocument(page);
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
+    timeout: 20_000,
+  });
+
+  // Spelling off, grammar still on — the owner rated grammar the more
+  // important of the two, so it must not be reachable only via spelling.
+  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible();
+
+  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
+  await expect(page.locator("#status")).toHaveText("Grammar check off");
+
+  // Both remembered across a reload, independently.
+  await openSpellingDocument(page);
+  await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
+  await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
+
+  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.locator(".overlay .spell-error")).toHaveCount(0, {
+    timeout: 5_000,
+  });
+  // Put spelling back so the stored preference does not leak into other specs.
+  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  expect(consoleErrors).toEqual([]);
+});
+
+// ---- The shipped glossary -------------------------------------------------------
+
+test("our own product names are never flagged, and are not the user's words", async ({
+  page,
+  consoleErrors,
+}) => {
+  await openSpellingDocument(page);
+  await page.locator("#pages").click({ position: { x: 60, y: 60 } });
+  await page.keyboard.press(`${MOD}+End`);
+  // Typed, not in the fixture, so this really goes through the checker.
+  await page.keyboard.insertText(" opendoc and opencalc and CasualOffice and OOXML.");
+  await page.keyboard.press(`${MOD}+Home`);
+  await pageSheet(page, 6);
+  // The page's own deliberate typo is still flagged, which is what proves the
+  // checker ran at all on this page.
+  await expect(page.locator(marker(spellingTypoForPage(6)))).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  for (const name of ["opendoc", "opencalc", "CasualOffice", "OOXML"]) {
+    await expect(page.locator(marker(name))).toHaveCount(0, `${name} must not be flagged`);
+  }
   expect(consoleErrors).toEqual([]);
 });

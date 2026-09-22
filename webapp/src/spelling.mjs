@@ -32,6 +32,28 @@ export const DEFAULT_SPELL_LANGUAGE = "en-US";
 /** The dictionary files that exist, as shipped in `webapp/dict/`. */
 export const SPELL_LANGUAGES = Object.freeze(["en-US", "en-GB"]);
 
+/** The product and industry glossary, which is language-independent and so is
+ *  its own file rather than a section of each dictionary. */
+export const GLOSSARY_FILE = "glossary";
+
+/**
+ * Parses `dict/glossary.txt` — one term per line, sorted, no sections.
+ *
+ * A THIRD tier, distinct from both the dictionary and the personal dictionary
+ * (`docs/114` §12). It ships with the product and is the same for everyone; the
+ * personal dictionary is the user's and lives only in their browser. Keeping
+ * them apart is not tidiness: a glossary term must never appear as something
+ * the user added, and clearing one must not unflag the other's words.
+ */
+export function parseGlossary(text) {
+  return new Set(
+    String(text ?? "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .filter((line) => line.length > 0),
+  );
+}
+
 /** BCP-47 tag → the dictionary that checks it, or `null` for "not checkable".
  *
  *  The Commonwealth dialects share the en-GB list, which is what LibreOffice
@@ -230,18 +252,28 @@ function possessiveStem(word) {
  *
  * O(1) in the document and O(1) in the dictionary — a handful of `Set` lookups.
  */
-export function isKnownWord(word, dictionary, { personal, ignored } = {}) {
+export function isKnownWord(word, dictionary, { personal, ignored, glossary } = {}) {
   if (!word) return true;
   if (personal && (personal.has(word) || personal.has(word.toLowerCase()))) return true;
   if (ignored && (ignored.has(word) || ignored.has(word.toLowerCase()))) return true;
+  // The glossary is matched with the SAME capitalization rule the dictionary
+  // gets, so `OpenDoc` accepts `OPENDOC` and `opendoc` accepts `Opendoc`, and
+  // a term recorded in Title case still carries that information.
+  if (glossary && matchesWithCase(word, glossary)) return true;
   if (matchesWithCase(word, dictionary)) return true;
   const stem = possessiveStem(word);
   if (stem && matchesWithCase(stem, dictionary)) return true;
+  if (stem && glossary && matchesWithCase(stem, glossary)) return true;
   if (stem && personal && personal.has(stem)) return true;
-  // A hyphenated compound is correct when every part is (`e-mail`, `well-known`).
+  // A hyphenated compound is correct when every part is (`e-mail`, `well-known`,
+  // and `casual-doc-layout`, which is how the glossary covers a crate name
+  // without carrying one entry per crate).
   if (word.includes("-")) {
     const parts = word.split("-").filter((part) => part.length > 0);
-    if (parts.length > 1 && parts.every((part) => isKnownWord(part, dictionary, { personal, ignored })))
+    if (
+      parts.length > 1 &&
+      parts.every((part) => isKnownWord(part, dictionary, { personal, ignored, glossary }))
+    )
       return true;
   }
   return false;
@@ -259,7 +291,7 @@ export function isKnownWord(word, dictionary, { personal, ignored } = {}) {
  * page window (`docs/114` §5.2).
  */
 export function findMisspellings(text, dictionary, options = {}) {
-  const { caretOffset = null, personal, ignored, ...skipOptions } = options;
+  const { caretOffset = null, personal, ignored, glossary, ...skipOptions } = options;
   const spans = addressSpans(text);
   const inAddress = (token) =>
     spans.some(([from, to]) => token.start < to && token.end > from);
@@ -268,7 +300,7 @@ export function findMisspellings(text, dictionary, options = {}) {
     if (caretOffset !== null && caretOffset >= token.start && caretOffset <= token.end) continue;
     if (skipReason(token.word, skipOptions)) continue;
     if (inAddress(token)) continue;
-    if (isKnownWord(token.word, dictionary, { personal, ignored })) continue;
+    if (isKnownWord(token.word, dictionary, { personal, ignored, glossary })) continue;
     found.push(token);
   }
   return found;
@@ -430,13 +462,19 @@ export function boundedEditDistance(a, b, max) {
  * letter wrong), then edit kind, then the common tier, then length difference,
  * then alphabetical — a total order, so the tests can name cases.
  */
-export function suggestionsFor(word, { common, all }, { limit = 5, personal } = {}) {
+export function suggestionsFor(word, { common, all }, { limit = 5, personal, glossary } = {}) {
   const lower = String(word ?? "").toLowerCase();
   if (!lower) return [];
+  /** The form to SHOW for a lower-case candidate, or null if nothing knows it.
+   *  The glossary is consulted so a mistyped product name suggests the product
+   *  name — `opendco` should offer `opendoc`, which is the first thing anyone
+   *  will try after the owner asked for the glossary at all. */
   const canonical = (candidate) => {
     if (all.has(candidate)) return candidate;
     const title = candidate[0].toUpperCase() + candidate.slice(1);
     if (all.has(title)) return title;
+    if (glossary?.has(candidate)) return candidate;
+    if (glossary?.has(title)) return title;
     if (personal?.has(candidate)) return candidate;
     return null;
   };
@@ -476,8 +514,9 @@ export function suggestionsFor(word, { common, all }, { limit = 5, personal } = 
       const distance = boundedEditDistance(lower, candidate, 2);
       if (distance <= 2) consider(candidate, distance);
     }
-    if (personal) {
-      for (const entry of personal) {
+    for (const extra of [personal, glossary]) {
+      if (!extra) continue;
+      for (const entry of extra) {
         const candidate = entry.toLowerCase();
         const distance = boundedEditDistance(lower, candidate, 2);
         if (distance <= 2) consider(candidate, distance);

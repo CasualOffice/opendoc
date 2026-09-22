@@ -87,7 +87,7 @@ export const APP_MENU_SECTIONS = {
     ["review.acceptNext", "review.rejectNext"],
     ["review.acceptAll", "review.rejectAll"],
   ],
-  tools: [["tools.spellCheck", "tools.smartQuotes"], ["view.settings"]],
+  tools: [["tools.spellCheck", "tools.grammarCheck", "tools.smartQuotes"], ["view.settings"]],
   help: [["help.commands", "help.shortcuts"], ["help.about"]],
 };
 

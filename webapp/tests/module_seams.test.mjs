@@ -40,8 +40,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  Symbol/Emoji data moved to `glyph_sets.mjs` — pure data, already covered by
  *  the picker's own specs — to pay for the ~110 lines of spell-check wiring.
  *  The checker itself is in `spell_check.mjs` and `spelling.mjs`, which is also
- *  what makes its rules unit-testable without a browser. */
-const MAIN_JS_LINE_CEILING = 17801;
+ *  what makes its rules unit-testable without a browser.
+ *  Lowered again to 17,568 when grammar joined it (the owner raised grammar
+ *  above spelling on 2026-09-23): the bookmark manager moved to
+ *  `bookmark_manager.mjs`, keeping only the review-mode gate and the repaint,
+ *  which are about review mode and about pages rather than about bookmarks. */
+const MAIN_JS_LINE_CEILING = 17568;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

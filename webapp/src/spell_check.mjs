@@ -1,12 +1,18 @@
-// Spell checking: the half that touches the engine, the overlay and the network.
+// Proofing — spelling and grammar — the half that touches the engine, the
+// overlay and the network.
 //
 // Designed in `docs/114`; the row is `docs/109` HF-035 / `docs/105` OO-003. The
-// rules that decide whether a word is wrong — tokenizing, the skip list, the
-// capitalization rule, suggestion generation and ranking — are in
-// `spelling.mjs`, which is pure and unit-tested in node. What is here is the
-// wiring those rules need and cannot be written without a browser: the lazy
-// dictionary fetch, the WINDOWED scan, the per-paragraph cache, the overlay
-// markers, and the behaviour behind the context-menu rows.
+// rules live in two pure modules and are unit-tested in node with no browser
+// and no wasm: `spelling.mjs` (tokenizing, the skip list, the capitalization
+// rule, suggestions and their ranking) and `grammar.mjs` (the rule set). What
+// is here is the wiring they need and cannot be written without a browser: the
+// lazy dictionary and glossary fetches, the WINDOWED scan, the per-paragraph
+// cache, the overlay markers, and the behaviour behind the context-menu rows.
+//
+// Spelling and grammar share ONE scan, one cache and one debounce. They are two
+// passes over text this module already had to read, so grammar costs no extra
+// document walk and nothing extra on the keystroke path — which is the whole
+// reason it is here rather than in a parallel controller of its own.
 //
 // Three things about this module are load-bearing and are easy to undo by
 // accident:
@@ -30,15 +36,18 @@
 
 import {
   DEFAULT_SPELL_LANGUAGE,
+  GLOSSARY_FILE,
   ParagraphCache,
   SpellScheduler,
   dictionaryForLanguage,
   emptyDictionary,
   findMisspellings,
   parseDictionary,
+  parseGlossary,
   suggestionsFor,
   unsupportedLanguageMessage,
 } from "./spelling.mjs";
+import { findGrammarIssues, grammarSupports } from "./grammar.mjs";
 import { stringIndexToByteOffset } from "./text_rules.mjs";
 
 /** The class the squiggle is painted with. `pointer-events: none` in the
@@ -46,6 +55,23 @@ import { stringIndexToByteOffset } from "./text_rules.mjs";
  *  the event would break caret placement, and that defect has already been
  *  fixed once in this overlay (REVIEW-GAP-005). */
 export const SPELL_MARKER_CLASS = "spell-error";
+
+/** The grammar mark. A different class, and a different colour, because Word
+ *  and Docs both distinguish them and a reader needs to know whether they are
+ *  being told about a word or about a sentence. */
+export const GRAMMAR_MARKER_CLASS = "grammar-error";
+
+/** Joins the parts of a composite cache key.
+ *
+ *  U+0000, written as an ESCAPE and never as a raw byte: a literal NUL in a
+ *  source file makes git classify it as binary and silently stop showing its
+ *  diffs, which `tracker_counts.test.mjs` already records as a trap this
+ *  repository fell into once. `tests/source_bytes.test.mjs` now fails the build
+ *  if one reappears anywhere under `webapp/src`.
+ *
+ *  It is the separator because a key part can be a paragraph's whole TEXT, and
+ *  NUL is the one character that text cannot contain. */
+const KEY_SEP = "\u0000";
 
 /** How long after the last edit the window is re-checked. */
 export const SPELL_QUIESCE_MS = 400;
@@ -90,6 +116,13 @@ export function createSpellChecker(io) {
   const dictionaries = new Map();
   /** language tag → the in-flight fetch, so a scroll cannot start a second. */
   const pending = new Map();
+  /** The product/industry glossary: shipped with the app, the same for every
+   *  user, and a DIFFERENT tier from the personal dictionary below. A term
+   *  being in here must never look like something the user added, and clearing
+   *  the personal dictionary must not unflag it (`docs/114` §12). */
+  let glossary = null;
+  /** Grammar rules the user has switched off for this session, by rule id. */
+  let ignoredRules = new Set();
   /** Words the user asked to ignore for this session only. Word's behaviour:
    *  not persisted, and cleared when the document is replaced. */
   let ignored = new Set();
@@ -133,6 +166,31 @@ export function createSpellChecker(io) {
     const stamp = new URL(import.meta.url).search;
     const url = new URL(`../dict/${language}.txt`, import.meta.url);
     return `${url}${stamp}`;
+  }
+
+  /** Loads the glossary once, the first time a check runs. A second lazy
+   *  fetch beside the dictionary's — `docs/114` §2.4 budgeted one, and this is
+   *  the stated change: it is 3.5 KB, it is language-independent so it cannot
+   *  be a section of either word list, and it is requested in parallel with the
+   *  dictionary rather than after it. A glossary that fails to arrive degrades
+   *  to "no glossary", which flags our own product names — visible, and better
+   *  than pretending. */
+  function loadGlossary() {
+    if (glossary || pending.has(GLOSSARY_FILE)) return;
+    const load = fetchText(dictionaryUrl(GLOSSARY_FILE))
+      .then((text) => {
+        glossary = parseGlossary(text);
+        pending.delete(GLOSSARY_FILE);
+        cache.clear();
+        scheduler.flush();
+        io.repaint?.();
+      })
+      .catch((error) => {
+        pending.delete(GLOSSARY_FILE);
+        glossary = new Set();
+        console.warn("spelling glossary", error?.message ?? error);
+      });
+    pending.set(GLOSSARY_FILE, load);
   }
 
   /** The dictionary for `language`, fetching it if this is the first ask.
@@ -254,10 +312,13 @@ export function createSpellChecker(io) {
   /** Re-checks the paragraphs in the page window. O(window), never O(document). */
   function runScan() {
     const doc = io.getDoc?.();
-    if (!doc || !io.enabled?.()) {
+    const spelling = io.enabled?.() ?? false;
+    const grammar = io.grammarEnabled?.() ?? false;
+    if (!doc || (!spelling && !grammar)) {
       scanned = [];
       return;
     }
+    loadGlossary();
     const pages = io.windowPages?.() ?? [];
     if (!pages.length) {
       scanned = [];
@@ -281,16 +342,36 @@ export function createSpellChecker(io) {
         missing = tag;
         continue;
       }
-      const words = dictionary(language);
+      const words = spelling ? dictionary(language) : emptyDictionary();
       if (!words) continue; // the fetch is in flight; this paragraph waits
-      const key = `${node} ${language}`;
+      if (spelling && !glossary) continue; // …and so is the glossary
+      // The cache key carries everything that changes the ANSWER for the same
+      // text: the language, and which of the two passes are on. Without that, a
+      // paragraph checked with grammar off would be served from the cache after
+      // the user turned grammar on.
+      const key = `${node}${KEY_SEP}${language}${KEY_SEP}${spelling ? "s" : ""}${grammar ? "g" : ""}`;
       let found = cache.get(key, text);
       if (!found) {
-        found = findMisspellings(text, words.all, { personal, ignored }).map((token) => ({
-          ...token,
-          byteStart: stringIndexToByteOffset(text, token.start),
-          byteEnd: stringIndexToByteOffset(text, token.end),
-        }));
+        const byte = (index) => stringIndexToByteOffset(text, index);
+        const misspellings = spelling
+          ? findMisspellings(text, words.all, { personal, ignored, glossary }).map((token) => ({
+              kind: "spelling",
+              ...token,
+              byteStart: byte(token.start),
+              byteEnd: byte(token.end),
+            }))
+          : [];
+        const issues =
+          grammar && grammarSupports(language)
+            ? findGrammarIssues(text, { ignored: ignoredRules }).map((issue) => ({
+                kind: "grammar",
+                ...issue,
+                word: text.slice(issue.start, issue.end),
+                byteStart: byte(issue.start),
+                byteEnd: byte(issue.end),
+              }))
+            : [];
+        found = [...misspellings, ...issues].sort((a, b) => a.byteStart - b.byteStart);
         cache.set(key, text, found);
       }
       // The word the caret is inside is suppressed at PAINT time rather than at
@@ -328,14 +409,14 @@ export function createSpellChecker(io) {
 
   /** Whether this occurrence has been dismissed with "Ignore once". */
   function dismissed(entry, paragraph) {
-    return ignoredOnce.has(`${entry.word} ${paragraph.text} ${entry.start}`);
+    return ignoredOnce.has(`${entry.word}${KEY_SEP}${paragraph.text}${KEY_SEP}${entry.start}`);
   }
 
   /** Paints the squiggles for what the last scan found. Called from the overlay
    *  repaint, so it must be cheap and must never scan. */
   function paint() {
     const doc = io.getDoc?.();
-    if (!doc || !io.enabled?.()) return;
+    if (!doc) return;
     for (const paragraph of scanned) {
       for (const entry of paragraph.misspellings) {
         if (
@@ -351,17 +432,29 @@ export function createSpellChecker(io) {
         } catch {
           continue;
         }
+        const grammar = entry.kind === "grammar";
         for (let i = 0; i + 4 < rects.length; i += 5) {
-          const el = io.place(rects.slice(i, i + 5), SPELL_MARKER_CLASS);
-          if (el) el.dataset.spellWord = entry.word;
+          const el = io.place(
+            rects.slice(i, i + 5),
+            grammar ? GRAMMAR_MARKER_CLASS : SPELL_MARKER_CLASS,
+          );
+          if (!el) continue;
+          if (grammar) {
+            el.dataset.grammarRule = entry.ruleId;
+            el.title = entry.message;
+          } else {
+            el.dataset.spellWord = entry.word;
+          }
         }
       }
     }
   }
 
-  /** The misspelling at a model position, or null. Drives the context menu. */
+  /** The spelling or grammar finding at a model position, or null. Drives the
+   *  context menu; the name is kept because `main.js` and the specs use it, and
+   *  the `kind` field says which of the two it is. */
   function misspellingAt(anchor) {
-    if (!anchor?.node || !io.enabled?.()) return null;
+    if (!anchor?.node) return null;
     const paragraph = scanned.find((candidate) => candidate.node === anchor.node);
     if (!paragraph) return null;
     const offset = Number(anchor.offset) || 0;
@@ -369,6 +462,10 @@ export function createSpellChecker(io) {
       if (offset < entry.byteStart || offset > entry.byteEnd) continue;
       if (dismissed(entry, paragraph)) continue;
       return {
+        kind: entry.kind,
+        ruleId: entry.ruleId,
+        message: entry.message,
+        replacements: entry.replacements ?? [],
         node: paragraph.node,
         word: entry.word,
         start: entry.byteStart,
@@ -384,9 +481,12 @@ export function createSpellChecker(io) {
   /** Suggestions for one flagged word, computed HERE and only here — when the
    *  menu opens, for one word, never during a scan (`docs/114` §5.4). */
   function suggestions(flagged) {
+    // A grammar rule already knows its own correction; there is nothing to
+    // search for and no dictionary involved.
+    if (flagged.kind === "grammar") return flagged.replacements ?? [];
     const words = dictionaries.get(flagged.language);
     if (!words) return [];
-    return suggestionsFor(flagged.word, words, { limit: MAX_SUGGESTIONS, personal });
+    return suggestionsFor(flagged.word, words, { limit: MAX_SUGGESTIONS, personal, glossary });
   }
 
   return {
@@ -413,7 +513,17 @@ export function createSpellChecker(io) {
     /** Dismisses this occurrence. It comes back if the paragraph changes,
      *  which is Word's "Ignore Once". */
     ignoreOnce(flagged) {
-      ignoredOnce.add(`${flagged.word} ${flagged.paragraphText} ${flagged.index}`);
+      ignoredOnce.add(`${flagged.word}${KEY_SEP}${flagged.paragraphText}${KEY_SEP}${flagged.index}`);
+      io.repaint?.();
+    },
+
+    /** Switches one grammar RULE off for this session. The right-click row that
+     *  calls it names the rule, because "ignore this kind of mark" is what the
+     *  user actually wants when a rule is wrong about their prose. */
+    ignoreRule(ruleId) {
+      ignoredRules.add(ruleId);
+      cache.clear();
+      scheduler.flush();
       io.repaint?.();
     },
 
@@ -468,6 +578,7 @@ export function createSpellChecker(io) {
       cache.clear();
       ignored = new Set();
       ignoredOnce = new Set();
+      ignoredRules = new Set();
       scanned = [];
       reportedUnsupported = new Set();
       unsupportedTag = "";
@@ -478,10 +589,10 @@ export function createSpellChecker(io) {
      *  enabled so it can be turned back on (SKILL.md §10, never a dead
      *  control). */
     setEnabled(on) {
-      if (on) {
+      cache.clear();
+      if (on || io.grammarEnabled?.()) {
         scheduler.flush();
       } else {
-        cache.clear();
         scanned = [];
         scheduler.cancel();
       }
@@ -509,6 +620,13 @@ export function createSpellChecker(io) {
     statusNote() {
       if (!io.enabled?.()) return "";
       return unsupportedTag ? unsupportedLanguageMessage(unsupportedTag) : "";
+    },
+
+    /** The glossary, for inspection. Deliberately NOT merged into
+     *  `personalWords()`: the two tiers stay visibly distinct, so nothing can
+     *  report a shipped product name as a word the user added. */
+    glossaryTerms() {
+      return glossary ? [...glossary] : [];
     },
 
     /** Test/inspection seam: how many paragraphs the last scan covered. */
@@ -541,6 +659,7 @@ export function createSpellChecker(io) {
  * false positive.
  */
 export function spellingContextCommands(flagged, suggestions, actions, blockedReason = "") {
+  if (flagged.kind === "grammar") return grammarContextCommands(flagged, suggestions, actions, blockedReason);
   const rows = [];
   if (suggestions.length === 0) {
     rows.push({
@@ -583,5 +702,48 @@ export function spellingContextCommands(flagged, suggestions, actions, blockedRe
       run: () => actions.addToDictionary(flagged.word),
     },
   );
+  return rows;
+}
+
+/**
+ * The right-click rows for a grammar finding.
+ *
+ * Shaped like Word's and Docs' grammar menu rather than their spelling one,
+ * because the questions are different: a misspelling asks "which word did you
+ * mean", a grammar mark asks "what is wrong here" — so the RULE'S MESSAGE leads
+ * as a disabled explanation, the correction follows, and the dismissal is
+ * per-rule ("stop telling me about repeated punctuation") rather than per-word.
+ *
+ * `Ignore once` is deliberately absent: a grammar mark is about a phrase that
+ * is still being written, and "ignore this one occurrence forever" is not a
+ * thing anyone wants from a rule — turning the rule off is.
+ */
+export function grammarContextCommands(flagged, replacements, actions, blockedReason = "") {
+  const rows = [
+    {
+      id: "grammar.explain",
+      label: flagged.message,
+      group: "spelling",
+      enabled: false,
+      disabledReason: flagged.message,
+      run: () => {},
+    },
+  ];
+  replacements.forEach((text, index) => {
+    rows.push({
+      id: `grammar.suggestion.${index}`,
+      label: text,
+      group: "spelling",
+      enabled: !blockedReason,
+      disabledReason: blockedReason,
+      run: () => actions.replace(flagged, text),
+    });
+  });
+  rows.push({
+    id: "grammar.ignoreRule",
+    label: "Ignore this rule",
+    group: "spellingDismiss",
+    run: () => actions.ignoreRule(flagged.ruleId),
+  });
   return rows;
 }

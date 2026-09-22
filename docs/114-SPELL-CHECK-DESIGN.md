@@ -1,11 +1,24 @@
-# 114 — Spelling: client-side check, red squiggle, personal dictionary
+# 114 — Proofing: client-side spelling and grammar, a product glossary, a personal dictionary
 
 **Status:** **Implemented.** Designed 2026-09-21, built 2026-09-23. The design below is
 kept as written except where the implementation found it wrong, and every such place is
 marked **CORRECTION** with what was done instead and why — three of them are substantive
 (§2.3, §5.3, §5.4) and one changed a number rather than a decision. **Owner:** unassigned.
-**Row:** `109` **HF-035** (P1, L) / `105` **OO-003**. **Scope:** spelling only — grammar is
-a separate row and is not designed here.
+**Row:** `109` **HF-035** (P1, L) / `105` **OO-003**.
+
+> **SCOPE CHANGED, 2026-09-23.** This document was written "spelling only — grammar is a
+> separate row and is not designed here". The owner reversed that mid-build, in their own
+> words: *"also in dictonaries /spelling try to add industry glossary dictionary and
+> industry names.. and more imp atlearn our product names .. fo it wont flag that as
+> incorrect spelling.. more imp is grammer rules than spelling.. as just spelling will
+> loose alot of this is not that imp"*.
+>
+> So the scope is now **spelling + a product/industry glossary + grammar**, with grammar
+> rated the most important of the three. §11 and §12 are the two new sections; everything
+> above them is the original spelling design with its corrections marked. Grammar ships as
+> **the seam plus a first rule set** — §11 says exactly which classes of error are covered
+> and which are not, and the largest uncovered one (subject–verb agreement with a NOUN
+> subject) is named rather than implied.
 
 ### What shipped
 
@@ -15,11 +28,14 @@ a separate row and is not designed here.
 | The wiring: lazy fetch, windowed scan, overlay markers, context-menu rows | `webapp/src/spell_check.mjs` |
 | The word lists and their generator | `webapp/dict/{en-US,en-GB}.txt`, `webapp/dict/LICENSE.SCOWL.txt`, `webapp/tools/build-dictionary.mjs` |
 | The personal dictionary | `openWordStore` in `webapp/src/drafts.mjs`, a `words` store at database version 2 |
+| The product/industry glossary and its generator | `webapp/dict/glossary.txt`, `webapp/tools/build-glossary.mjs` (§12) |
+| The grammar rules | `webapp/src/grammar.mjs` (pure), painted and gated by `spell_check.mjs` (§11) |
 | `w:lang` exposed to the host | `languageAt` in `crates/casual-doc-wasm/src/lib.rs` |
-| Guards | `webapp/tests/spelling.test.mjs`, `tests/word_store.test.mjs`, `tests/dictionary_artifact.test.mjs`, `tests/e2e/spell-check.spec.mjs`, and a Rust unit test for `shared_language_in_range` |
+| Guards | `tests/spelling.test.mjs`, `tests/grammar.test.mjs`, `tests/spell_check.test.mjs`, `tests/word_store.test.mjs`, `tests/dictionary_artifact.test.mjs`, `tests/glossary_artifact.test.mjs`, `tests/source_bytes.test.mjs`, `tests/e2e/spell-check.spec.mjs`, and a Rust unit test for `shared_language_in_range` |
 
-Deliberately **not** shipped, and why, in §8 — unchanged from the design, with one
-addition: **header, footer, note and text-box stories are still body-only.**
+Deliberately **not** shipped, and why, in §8 (spelling) and §11.3 (grammar). Two
+additions to §8: **header, footer, note and text-box stories are still body-only**, and
+**`w:noProof` is not honoured yet**.
 
 ## 1. What has to be true
 
@@ -543,6 +559,163 @@ Recorded here rather than only in the PR, per SKILL.md §8 ("document as you go"
    cross-origin embed — and "turning autosave off deletes what is stored" must not take the
    user's own words with it. They are separate openers over one schema, and a test asserts
    `drafts.clear()` leaves the words alone.
-4. **Ignoring is not a mutation.** In Viewing mode the suggestion rows are disabled with a
+4. **An extraction can leave a dangling reference, and only the browser sees it.**
+   Moving the bookmark manager out of `main.js` (to pay for the grammar wiring
+   under the ratchet) took `bookmarkEntries` with it — and the LINK dialog called
+   it, to offer the document's bookmarks as internal targets. Insert ▸ Link threw
+   `ReferenceError: bookmarkEntries is not defined` and never opened. `main.js`
+   has no static analysis and there is no JS linter here, so nothing but a
+   browser run could have said so.
+   `command-activation-contract.spec.mjs` is the file whose entire purpose is
+   "a control a user can see must do something" — and it swept straight past
+   this, because Insert ▸ Link is greyed out without a selection and the sweep
+   correctly skips greyed rows. So the contract had a hole exactly the shape of
+   "every command that needs a selection". It now loads with a selection too and
+   activates the DIFFERENCE, which is a handful of commands rather than a second
+   full sweep. Mutation-proved: restoring the dangling call fails it with
+   `selection ▸ insert.link changed nothing a user could perceive`.
+   A general dangling-identifier check was attempted and **abandoned**: a regex
+   lexer over an 17,500-line file reported 22 false positives (string and
+   template-literal stripping runs away across lines), and a guard nobody trusts
+   is worse than the gap. A real one needs a parser, which needs a dependency.
+
+5. **Ignoring is not a mutation.** In Viewing mode the suggestion rows are disabled with a
    reason, and Ignore once / Ignore all / Add to dictionary stay enabled: they are host-side
    decisions, and a reader looking at a false positive should still be able to dismiss it.
+
+## 11. Grammar — the seam, the first rule set, and what is not covered
+
+Added 2026-09-23 when the owner raised grammar above spelling.
+
+### 11.1 Why hand-authored rules, and not an existing rule set
+
+This is a licensing conclusion, and it is the reason there is no import:
+
+| Candidate | Licence | Verdict |
+| --- | --- | --- |
+| **LanguageTool** | LGPL-2.1, **including the rule data** (`grammar.xml`, the n-gram sets) | Not usable. The rules are not a separate permissively-licensed asset; taking them into an Apache-2.0 project is exactly the kind of licence contamination the product's whole wedge depends on avoiding. |
+| **After the Deadline** | GPL | Not usable. |
+| **retext / write-good / nlprule** | MIT / Apache-2.0 | Licence is fine, but all are **npm packages**, and `webapp/package.json` has zero runtime dependencies — adding the first is the owner's call, not this row's. Vendoring their word lists would also be importing somebody's curation rather than writing a rule. |
+| **Hand-authored rules here** | Apache-2.0, ours | **Chosen.** |
+
+So `grammar.mjs` cites the convention each rule encodes and copies nothing.
+
+### 11.2 The rules that shipped
+
+Every one is decidable from the literal text — no part-of-speech tagger, no
+statistics — which is what keeps the precision high enough to be worth having.
+
+| Rule | Catches | Deliberately does not catch |
+| --- | --- | --- |
+| `doubled-word` | `is is`, `the the` | `had had`, `that that` — ordinary English |
+| `article-agreement` | `a apple`, `an dog` | `an hour`, `a university`, `a one-off`, `an FBI` — the four the letter test gets wrong |
+| `subject-verb-agreement` | `he have`, `they was`, `you is` — a closed pronoun/verb table | **Any subject that is not a pronoun.** `the reports was filed` is missed. See §11.3. |
+| `modal-of` | `could of`, `would of` | `thought of` |
+| `space-before-punctuation` | `Wait , what ?` | Anything non-English — French puts a space there |
+| `missing-space` | `one,two` | `3.5`, `4,50`, `fig. 2` |
+| `repeated-punctuation` | `!!`, `??` | `...`, `--` |
+| `sentence-capitalisation` | `This ends. next one` | `Dr. smith`, `e.g. this`, `J. Smith`, and anything after an ellipsis |
+
+Marked in **blue** (`--paper-grammar`), not red, because Word and Docs both
+distinguish them and the reader has to know which question is being asked. The
+right-click menu differs too: a grammar mark leads with the RULE'S MESSAGE as a
+disabled row, then its correction, then **Ignore this rule** — per-rule rather
+than per-word, because "stop telling me about repeated punctuation" is what a
+user wants from a rule that is wrong about their prose.
+
+### 11.3 What is NOT covered, and why
+
+- **Subject–verb agreement with a noun subject** — the big one. `the reports was
+  filed` needs to know that `reports` is a plural noun and `was` is its verb,
+  which needs a part-of-speech tagger. There is no Apache-2.0 tagger we can ship
+  without a dependency, and a heuristic ("ends in s") mis-fires on `grass`,
+  `analysis`, `news` and every mass noun — a rule that marks correct prose is
+  worse than no rule.
+- **Tense consistency, passive voice, run-on sentences, comma splices** — all
+  need parse structure.
+- **`its` / `it's`, `their` / `there` / `they're`, `affect` / `effect`** — these
+  need the surrounding part of speech to be decided, and the naive versions are
+  notorious false-positive generators. They are the obvious next rules once a
+  tagger exists, and they are not guesses worth shipping without one.
+- **Any language but English.** The rules encode English convention, and
+  `grammarSupports()` gates them; running `space-before-punctuation` on French
+  would mark every correct sentence.
+- **Style advice** (wordiness, hedging, readability). A different product
+  decision, not a grammar rule.
+
+### 11.4 Cost
+
+Grammar is a second pass over text the spelling scan **already read**: same
+windowed paragraph set, same per-paragraph cache, same debounce, same repaint.
+It adds no engine call and nothing to the keystroke path. The cache key carries
+which passes are on, so turning grammar on does not serve stale spelling-only
+results.
+
+## 12. The product and industry glossary
+
+`webapp/dict/glossary.txt`, generated by `webapp/tools/build-glossary.mjs`.
+
+**Three tiers, and they stay apart.** This is the part that is easy to get
+wrong by merging sets:
+
+| Tier | Where it lives | Whose it is |
+| --- | --- | --- |
+| Dictionary | `dict/en-US.txt`, `dict/en-GB.txt` | SCOWL's; the language |
+| **Glossary** | `dict/glossary.txt` | **the product's** — ships with the app, identical for everyone |
+| Personal dictionary | the `words` store in IndexedDB | the user's, in their browser only |
+
+A glossary term must never be reported as something the user added, and clearing
+one tier must not unflag the other's words. `isKnownWord` takes them as three
+separate sets and `spell_check.test.mjs` asserts the separation both ways.
+
+**Derived, not curated.** The owner's instruction was explicit that a
+hand-maintained list rots, so every term is earned from a file already in the
+repository:
+
+1. **Our own names** — crate names from every `Cargo.toml`, the webapp package
+   name, and the site's own `<title>`s and domain. A rename changes those files,
+   and the glossary follows.
+2. **The fixture corpus's vocabulary** — the ids, profiles and feature tags in
+   `fixtures/manifest.json`.
+3. **The vocabulary of our documentation** — a term appearing at least 4 times
+   across at least 2 files under `docs/`, plus `README.md` and `AGENTS.md`.
+
+**Code is stripped first.** Fenced blocks, code spans, link targets and bare
+URLs are removed before tokenizing. Without that the glossary would accept
+`effective_run_properties_in_range` and every misspelling ever quoted inside an
+error message — it would become a mechanism for accepting typos rather than
+terms.
+
+**Hyphens are excluded**, because `isKnownWord` already accepts a hyphenated
+compound whose every part is known: `casual-doc-layout` needs no entry once
+`casual`, `doc` and `layout` are covered. Admitting them produced fragments
+(`byte-for`, `all-target`) that are words in no language.
+
+467 terms, 3.5 KB, fetched once in parallel with the language dictionary — a
+second lazy request, where §2.4 budgeted one. It is language-independent, so it
+cannot be a section of either word list. A glossary that fails to load degrades
+to "no glossary", which flags our own product names: visible, and better than
+pretending.
+
+The glossary is also searched for **suggestions**, so a mistyped product name
+suggests the product name (`opendco` → `opendoc`). Without that the feature
+stops at "not flagged" and never helps anyone fix a typo in it.
+
+### 12.1 Consequence: a docs change can fail the glossary test
+
+`tests/glossary_artifact.test.mjs` re-runs the generator and compares byte for
+byte, because that is the only thing that makes "derived" true rather than
+aspirational (SKILL.md §9: a published artifact is generated or it is not
+published). Since `docs/` is a source, a documentation change that introduces a
+term often enough will fail it until `node tools/build-glossary.mjs` is re-run.
+That is a real cost and it is accepted deliberately: the alternative — asserting
+only the artifact's shape — lets the list rot, which is the exact thing the owner
+asked to avoid.
+
+### 12.2 Known trade-off
+
+The `≥4 occurrences in ≥2 files` rule admits a handful of short abbreviations
+our own documentation uses often (`col`, `del`, `min`, `pre`, `src`). They are
+in the diff and reviewable, which is the point of committing the artifact; a
+stricter length floor would also have dropped `pdf`, `rtf`, `sdk` and `xml`,
+which are worth more than the abbreviations cost.

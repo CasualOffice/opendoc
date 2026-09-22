@@ -30,6 +30,30 @@ node tools/build-dictionary.mjs --scowl scowl-2020.12.07 --check    # verify onl
 Note that a **git checkout of `en-wl/wordlist` does not contain `final/`** — those files
 are produced by SCOWL's Makefile. The release tarball is the artifact.
 
+## `glossary.txt` — the product and industry glossary
+
+A THIRD tier, separate from the dictionaries and from the user's personal
+dictionary (`docs/114` §12). It ships with the product and is the same for
+everyone. Also generated, from this repository's own committed sources:
+
+```sh
+node tools/build-glossary.mjs            # write
+node tools/build-glossary.mjs --check    # verify only
+```
+
+Sources: crate names from every `Cargo.toml`, the webapp package name, the site's
+own titles and domain, the ids and feature tags in `fixtures/manifest.json`, and
+any term appearing at least 4 times across at least 2 files under `docs/` (plus
+`README.md` and `AGENTS.md`). Code spans, fenced blocks, link targets and bare
+URLs are stripped first, so identifiers and quoted error messages cannot get in.
+One term per line, sorted, no sections.
+
+**Consequence worth knowing:** because `docs/` is one of the sources,
+`tests/glossary_artifact.test.mjs` re-runs the generator and compares byte for
+byte — so a documentation change that introduces a new term often enough will
+fail it until `node tools/build-glossary.mjs` is re-run. That is the price of the
+list being derived rather than curated, and the failure message says the command.
+
 ## Licence
 
 SCOWL is attribution-only and permissive; the full notice is in

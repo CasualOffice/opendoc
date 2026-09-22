@@ -17,9 +17,13 @@ import test from "node:test";
 
 import { createSpellChecker, spellingContextCommands } from "../src/spell_check.mjs";
 
-const DICTIONARY = ["and", "correct", "is", "line", "of", "one", "page", "prose", "sentence", "the", "this", "word", "wrong"]
+const DICTIONARY = ["and", "are", "badly", "both", "correct", "fine", "is", "line", "of", "one",
+  "ours", "page", "prose", "repeated", "sentence", "the", "this", "too", "word", "wrong"]
   .join("\n")
   .concat("\n---\n");
+
+/** The shipped glossary tier: not in any dictionary, not the user's. */
+const GLOSSARY = ["OpenDoc", "opendoc", "qzxbrand"].join("\n").concat("\n");
 
 /** `1 -> "aa"`, `2 -> "bb"`, … — a per-page invented word with no digits. */
 const letter = (page) => String.fromCharCode(96 + page).repeat(2);
@@ -107,7 +111,7 @@ function harness(engine, overrides = {}) {
     dictionaryUrl: (language) => `fake://${language}`,
     fetchText: async (url) => {
       fetched.push(url);
-      return DICTIONARY;
+      return url === "fake://glossary" ? GLOSSARY : DICTIONARY;
     },
     ...overrides,
   });
@@ -117,10 +121,27 @@ function harness(engine, overrides = {}) {
     placed,
     statuses,
     fetched,
+    /** The word lists actually requested, without the glossary — which every
+     *  check loads once regardless of language and would otherwise mask what a
+     *  test is really asking about. */
+    dictionariesFetched: () => fetched.filter((url) => url !== "fake://glossary"),
     flags: () => {
       placed.length = 0;
       checker.paint();
-      return placed.map((el) => el.dataset.spellWord);
+      return placed
+        .filter((el) => el.className === "spell-error")
+        .map((el) => el.dataset.spellWord);
+    },
+    /** Every mark the paint pass placed, with its class and (for grammar) its
+     *  rule — so a test can tell a spelling squiggle from a grammar one. */
+    placedMarks: () => {
+      placed.length = 0;
+      checker.paint();
+      return placed.map((el) => ({
+        className: el.className,
+        word: el.dataset.spellWord,
+        rule: el.dataset.grammarRule,
+      }));
     },
     setWindow(first, last) {
       windowFirst = first;
@@ -184,7 +205,12 @@ test("a re-scan of an unchanged window asks the engine for no text at all", asyn
   // being fetched exactly once however many times the window is rescanned.
   h.checker.refresh();
   h.checker.refresh();
-  assert.deepEqual(h.fetched, ["fake://en-US"], "one fetch per language, ever");
+  assert.deepEqual(h.dictionariesFetched(), ["fake://en-US"], "one fetch per language, ever");
+  assert.equal(
+    h.fetched.filter((url) => url === "fake://glossary").length,
+    1,
+    "and exactly one for the glossary, however many times the window is rescanned",
+  );
 });
 
 test("the word under the caret is not flagged, and reappears when the caret leaves", async () => {
@@ -232,14 +258,18 @@ test("a paragraph in a language with no dictionary is reported by name, not skip
     "No spelling dictionary for fr-FR",
     "and the note survives a status line that gets cleared by something else",
   );
-  assert.deepEqual(h.fetched, [], "and no word list is fetched for a language we do not have");
+  assert.deepEqual(
+    h.dictionariesFetched(),
+    [],
+    "and no word list is fetched for a language we do not have",
+  );
 });
 
 test("the document's own w:lang wins over the host default", async () => {
   const engine = fakeEngine(2, { language: "en-GB" });
   const h = harness(engine);
   await settle(h);
-  assert.deepEqual(h.fetched, ["fake://en-GB"], "not the en-US default");
+  assert.deepEqual(h.dictionariesFetched(), ["fake://en-GB"], "not the en-US default");
   assert.ok(engine.asked.languageAt.length > 0, "asked once per paragraph, not per word");
 });
 
@@ -315,4 +345,178 @@ test("a suggestion row replaces through the caller's own path, with the flagged 
   });
   rows[0].run();
   assert.deepEqual(calls, [[flagged, "receive"]], "no mutation path of its own");
+});
+
+// ---- The glossary tier ----------------------------------------------------------
+
+test("a product name from the shipped glossary is not flagged, and is not a personal word", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word opendoc is ours and qzxbrand is too";
+  const h = harness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.deepEqual(h.flags(), [], "our own names are not misspellings");
+  assert.deepEqual(
+    h.checker.personalWords(),
+    [],
+    "and they are NOT reported as words the user added — the glossary ships " +
+      "with the product and the personal dictionary belongs to the user, and " +
+      "confusing the two would make one look like the other's doing",
+  );
+  assert.ok(h.checker.glossaryTerms().includes("opendoc"));
+});
+
+test("the glossary and the personal dictionary are independent tiers", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word opendoc and qzxmine are both fine";
+  const h = harness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.deepEqual(h.flags(), ["qzxmine"], "one is glossary, the other is not yet known");
+
+  await h.checker.addToDictionary("qzxmine");
+  await settle(h);
+  assert.deepEqual(h.flags(), []);
+  assert.deepEqual(h.checker.personalWords(), ["qzxmine"], "only the user's own word");
+  assert.ok(
+    !h.checker.personalWords().includes("opendoc"),
+    "adding a personal word must not absorb the glossary into it",
+  );
+});
+
+test("a mistyped product name suggests the product name", async () => {
+  const engine = fakeEngine(1);
+  const h = harness(engine);
+  h.setWindow(1, 1);
+  await settle(h);
+  const flagged = {
+    kind: "spelling",
+    word: "opendco",
+    language: "en-US",
+  };
+  assert.ok(
+    h.checker.suggestions(flagged).includes("opendoc"),
+    "the glossary is searched for near matches, or the feature the owner asked " +
+      "for stops at 'not flagged' and never helps anyone fix a typo in it",
+  );
+});
+
+// ---- Grammar --------------------------------------------------------------------
+
+test("grammar findings are painted with their own marker and carry the rule", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated wrong";
+  const h = harness(engine, { grammarEnabled: () => true });
+  h.setWindow(1, 1);
+  await settle(h);
+  const marks = h.placedMarks();
+  assert.ok(
+    marks.some((mark) => mark.className === "grammar-error" && mark.rule === "doubled-word"),
+    `expected a grammar mark, got ${JSON.stringify(marks)}`,
+  );
+});
+
+test("grammar runs with spelling OFF — they are two independent switches", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated and qzxtypo too";
+  let spelling = true;
+  const h = harness(engine, {
+    enabled: () => spelling,
+    grammarEnabled: () => true,
+  });
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.ok(h.placedMarks().some((m) => m.className === "spell-error"));
+  assert.ok(h.placedMarks().some((m) => m.className === "grammar-error"));
+
+  spelling = false;
+  h.checker.setEnabled(false);
+  await settle(h);
+  const marks = h.placedMarks();
+  assert.deepEqual(
+    marks.filter((m) => m.className === "spell-error"),
+    [],
+    "spelling off means no spelling marks",
+  );
+  assert.ok(
+    marks.some((m) => m.className === "grammar-error"),
+    "...and grammar keeps running, because the owner made it the more " +
+      "important of the two and it does not depend on the dictionary",
+  );
+});
+
+test("turning grammar on re-checks paragraphs the cache already holds", async () => {
+  // The cache is keyed by node + language + WHICH PASSES ARE ON. Without the
+  // last part, a paragraph already checked with grammar off is served straight
+  // back from the cache when grammar is switched on, and the marks never appear
+  // — and `setGrammarCheckEnabled` deliberately does NOT clear the cache
+  // (nothing about the text changed), so this is the real path, not a contrived
+  // one.
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated wrong";
+  let grammar = false;
+  const h = harness(engine, { grammarEnabled: () => grammar });
+  h.setWindow(1, 1);
+  await settle(h);
+  assert.deepEqual(h.placedMarks().filter((m) => m.rule), [], "grammar is off");
+
+  grammar = true;
+  h.checker.refresh(); // exactly what the command does: no cache clear
+  assert.ok(
+    h.placedMarks().some((m) => m.rule === "doubled-word"),
+    "the paragraph must be re-checked, not served from the grammar-off entry",
+  );
+});
+
+test("ignoring a grammar rule silences that rule and nothing else", async () => {
+  const engine = fakeEngine(1);
+  engine.paragraphs[1].text = "This word is is repeated , badly";
+  const h = harness(engine, { grammarEnabled: () => true });
+  h.setWindow(1, 1);
+  await settle(h);
+  const rules = () => [...new Set(h.placedMarks().filter((m) => m.rule).map((m) => m.rule))].sort();
+  assert.deepEqual(rules(), ["doubled-word", "space-before-punctuation"]);
+
+  h.checker.ignoreRule("doubled-word");
+  await settle(h);
+  assert.deepEqual(rules(), ["space-before-punctuation"], "only the named rule goes");
+});
+
+test("a grammar menu explains the rule, offers its correction, and can turn it off", () => {
+  const calls = [];
+  const flagged = {
+    kind: "grammar",
+    ruleId: "doubled-word",
+    message: "\u201cis\u201d is repeated",
+    replacements: ["is"],
+  };
+  const rows = spellingContextCommands(flagged, ["is"], {
+    replace: (which, text) => calls.push(["replace", text]),
+    ignoreRule: (rule) => calls.push(["ignoreRule", rule]),
+  });
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["grammar.explain", "grammar.suggestion.0", "grammar.ignoreRule"],
+  );
+  assert.equal(rows[0].enabled, false, "the explanation is a label, not an action");
+  assert.equal(rows[0].label, flagged.message);
+  rows[1].run();
+  rows[2].run();
+  assert.deepEqual(calls, [["replace", "is"], ["ignoreRule", "doubled-word"]]);
+});
+
+test("a grammar correction is gated by the review mode, like a spelling one", () => {
+  const rows = spellingContextCommands(
+    { kind: "grammar", ruleId: "doubled-word", message: "m", replacements: ["is"] },
+    ["is"],
+    {},
+    "Switch to Editing mode to correct the spelling",
+  );
+  const suggestion = rows.find((r) => r.id === "grammar.suggestion.0");
+  assert.equal(suggestion.enabled, false);
+  assert.notEqual(
+    rows.find((r) => r.id === "grammar.ignoreRule").enabled,
+    false,
+    "turning a rule off is a host decision, not a document mutation",
+  );
 });
