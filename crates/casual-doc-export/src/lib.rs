@@ -800,6 +800,88 @@ mod semantic_tests {
         assert_eq!(m1, m2, "the group survives write -> reopen");
     }
 
+    /// A recovered `a:custGeom` is re-emitted as `a:custGeom`, not rewritten to
+    /// `prst="rect"` (docs/119 §2, `109` FID-G-01).
+    ///
+    /// This is the half of the row that DESTROYS data rather than mis-drawing
+    /// it: before this, a document opened and saved came back with every
+    /// freeform flattened to a rectangle preset.
+    #[test]
+    fn a_custom_geometry_path_survives_the_semantic_round_trip() {
+        use casual_doc_model::v1::{
+            BlockNode, GroupChild, InlineNode, PointEmu, ShapeGeometry, ShapePathCommand,
+        };
+        use std::io::Read;
+
+        // Child 1 is the owner's loan-agreement rule: `@w` only, open. Child 2 is
+        // a closed triangle with both axes.
+        let xml = br#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:wp="urn:wp" xmlns:a="urn:a" xmlns:pic="urn:pic" xmlns:wps="urn:wps" xmlns:wpg="urn:wpg"><w:body><w:p><w:r><w:drawing><wp:anchor behindDoc="0" relativeHeight="251659264" simplePos="0"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="6660515" cy="1270"/><wp:wrapNone/><wp:docPr id="1" name="Group 1"/><a:graphic><a:graphicData uri="urn:wpg"><wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="6660515" cy="1270"/><a:chOff x="0" y="0"/><a:chExt cx="6660515" cy="1270"/></a:xfrm></wpg:grpSpPr><wps:wsp><wps:cNvPr id="2" name="Freeform"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="6660515" cy="1270"/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="l" t="t" r="r" b="b"/><a:pathLst><a:path w="6660515"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="6660057" y="0"/></a:lnTo></a:path></a:pathLst></a:custGeom><a:ln w="19050"><a:solidFill><a:srgbClr val="29D19E"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp><wps:wsp><wps:cNvPr id="3" name="Triangle"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:custGeom><a:avLst/><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="50" y="0"/></a:moveTo><a:lnTo><a:pt x="100" y="100"/></a:lnTo><a:lnTo><a:pt x="0" y="100"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+
+        let BlockNode::Paragraph(paragraph) = &m1.body()[0] else {
+            panic!("expected a paragraph");
+        };
+        let InlineNode::Group(group) = &paragraph.inlines[0] else {
+            panic!("expected a group, got {:?}", paragraph.inlines[0]);
+        };
+        let GroupChild::Shape(rule) = &group.children[0] else {
+            panic!("expected a shape");
+        };
+        assert_eq!(rule.geometry, ShapeGeometry::Other);
+        let path = rule.path.as_ref().expect("the rule's path");
+        assert_eq!((path.width_emu, path.height_emu), (6_660_515, 0));
+        assert_eq!(
+            path.commands,
+            vec![
+                ShapePathCommand::MoveTo {
+                    point: PointEmu { x_emu: 0, y_emu: 0 },
+                },
+                ShapePathCommand::LineTo {
+                    point: PointEmu {
+                        x_emu: 6_660_057,
+                        y_emu: 0,
+                    },
+                },
+            ]
+        );
+
+        // The written package carries `a:custGeom` and no rewritten preset. A
+        // model-equality assertion alone could not see this: an exporter that
+        // wrote `prst="rect"` and an importer that happened to re-derive the
+        // same path would still compare equal.
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml_out = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml_out)
+            .unwrap();
+        assert_eq!(
+            xml_out.matches("<a:custGeom>").count(),
+            2,
+            "both freeforms are written back as custom geometry"
+        );
+        assert!(
+            xml_out.contains(r#"<a:path w="6660515">"#),
+            "a:path@w is written and @h, being absent in the source, is not"
+        );
+        assert!(
+            xml_out.contains(r#"<a:pt x="6660057" y="0"/>"#),
+            "the authored vertex is written verbatim"
+        );
+        assert!(
+            xml_out.contains("<a:close/>"),
+            "the triangle's a:close is written"
+        );
+        assert!(
+            !xml_out.contains(r#"prst="rect""#),
+            "no freeform is rewritten to a rectangle preset"
+        );
+
+        assert_eq!(m1, m2, "the custom geometry survives write -> reopen");
+    }
+
     #[test]
     fn shape_stroke_dash_and_arrowheads_survive_the_semantic_round_trip() {
         use casual_doc_model::v1::{

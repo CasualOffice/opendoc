@@ -79,6 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package(&entries_with_document(&tab_hit_offsets_document()))?,
     )?;
 
+    fs::write(
+        output.join("custom-geometry.docx"),
+        package(&entries_with_document(&custom_geometry_document()))?,
+    )?;
+
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
         "customXml/item1.xml".to_owned(),
@@ -640,6 +645,126 @@ fn tab_hit_offsets_document() -> Vec<u8> {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    )
+    .into_bytes()
+}
+
+/// `custom-geometry.docx` — four anchored `wps:wsp` shapes whose geometry is
+/// `a:custGeom`, covering both sides of the modeled subset (docs/119).
+///
+/// 1. **open rule** — a byte-for-byte reproduction of the five identical shapes
+///    in the owner's loan agreement: `@w` set, `@h` omitted, one `a:moveTo` and
+///    one `a:lnTo`, no `a:close`, no fill, a 1.5 pt teal stroke, in a box
+///    524.45 pt × 0.1 pt. This is the shape `118` row 4 was filed against.
+/// 2. **closed triangle** — three vertices plus `a:close`, with BOTH `@w` and
+///    `@h`, and a fill. Discriminates `closed` and the two-axis scale.
+/// 3. **curve** — an `a:cubicBezTo`, outside the subset.
+/// 4. **guide coordinate** — `<a:pt x="wd2" y="t"/>`, a coordinate that is a
+///    guide name rather than an integer, also outside the subset.
+///
+/// 3 and 4 must keep painting their bounding rectangle and keep reporting the
+/// loss; a fixture with only the supported cases could not tell a correct
+/// importer from one that flattens curves into straight lines.
+fn custom_geometry_document() -> Vec<u8> {
+    // One anchored shape carrying `geometry` as its `wps:spPr` geometry child.
+    let shape = |name: &str, cx: i64, cy: i64, geometry: &str, paint: &str| {
+        format!(
+            "<w:p><w:r><w:drawing>\
+             <wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+             relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+             allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/>\
+             <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"{cx}\" cy=\"{cy}\"/>\
+             <wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>\
+             <wp:wrapNone/><wp:docPr id=\"1\" name=\"{name}\"/>\
+             <a:graphic><a:graphicData \
+             uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp><wps:cNvSpPr/><wps:spPr>\
+             <a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+             {geometry}{paint}\
+             </wps:spPr><wps:bodyPr/></wps:wsp>\
+             </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"
+        )
+    };
+    // The empty containers Word writes on every `a:custGeom`. They state that
+    // adjust handles, guides and connection sites are ABSENT, so an importer
+    // that treated them as losses would be wrong (`118` §4).
+    let empties = "<a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/>";
+    let teal_stroke = "<a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"29D19E\"/></a:solidFill>\
+                       <a:prstDash val=\"solid\"/></a:ln>";
+    let filled = "<a:solidFill><a:srgbClr val=\"c9d7f0\"/></a:solidFill>\
+                  <a:ln w=\"12700\"><a:solidFill><a:srgbClr val=\"2a4b8d\"/></a:solidFill></a:ln>";
+
+    let mut body = String::new();
+    body.push_str("<w:p><w:r><w:t>Custom geometry fixture.</w:t></w:r></w:p>");
+    body.push_str(&shape(
+        "Freeform: open rule",
+        6_660_515,
+        1270,
+        &format!(
+            "<a:custGeom>{empties}<a:rect l=\"l\" t=\"t\" r=\"r\" b=\"b\"/><a:pathLst>\
+             <a:path w=\"6660515\">\
+             <a:moveTo><a:pt x=\"0\" y=\"0\"/></a:moveTo>\
+             <a:lnTo><a:pt x=\"6660057\" y=\"0\"/></a:lnTo>\
+             </a:path></a:pathLst></a:custGeom>"
+        ),
+        teal_stroke,
+    ));
+    body.push_str(&shape(
+        "Freeform: closed triangle",
+        914_400,
+        914_400,
+        &format!(
+            "<a:custGeom>{empties}<a:pathLst>\
+             <a:path w=\"100\" h=\"100\">\
+             <a:moveTo><a:pt x=\"50\" y=\"0\"/></a:moveTo>\
+             <a:lnTo><a:pt x=\"100\" y=\"100\"/></a:lnTo>\
+             <a:lnTo><a:pt x=\"0\" y=\"100\"/></a:lnTo>\
+             <a:close/></a:path></a:pathLst></a:custGeom>"
+        ),
+        filled,
+    ));
+    body.push_str(&shape(
+        "Freeform: curve",
+        914_400,
+        914_400,
+        &format!(
+            "<a:custGeom>{empties}<a:pathLst>\
+             <a:path w=\"100\" h=\"100\">\
+             <a:moveTo><a:pt x=\"0\" y=\"0\"/></a:moveTo>\
+             <a:cubicBezTo><a:pt x=\"30\" y=\"80\"/><a:pt x=\"70\" y=\"80\"/>\
+             <a:pt x=\"100\" y=\"0\"/></a:cubicBezTo>\
+             </a:path></a:pathLst></a:custGeom>"
+        ),
+        filled,
+    ));
+    body.push_str(&shape(
+        "Freeform: guide coordinate",
+        914_400,
+        914_400,
+        &format!(
+            "<a:custGeom>{empties}<a:pathLst><a:path>\
+             <a:moveTo><a:pt x=\"wd2\" y=\"t\"/></a:moveTo>\
+             <a:lnTo><a:pt x=\"r\" y=\"b\"/></a:lnTo>\
+             </a:path></a:pathLst></a:custGeom>"
+        ),
+        filled,
+    ));
+    body.push_str(
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\" \
+         w:header=\"360\" w:footer=\"360\"/></w:sectPr>",
+    );
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+         xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
          <w:body>{body}</w:body></w:document>"
     )
     .into_bytes()

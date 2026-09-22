@@ -632,12 +632,14 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
         }
         AnchorContent::Polygon {
             points,
+            closed,
             fill,
             stroke,
         } => {
             list.push(PaintItem::Shape {
                 geometry: ShapeGeometry::Polygon {
                     points: points.clone(),
+                    closed: *closed,
                 },
                 fill: fill.as_ref().map(fill_to_display),
                 stroke: stroke.as_ref().map(shape_outline),

@@ -1524,6 +1524,42 @@ impl Document {
                             "group.shape.adjustment.formula",
                         )?;
                     }
+                    if let Some(path) = &shape.path {
+                        // A path only ever accompanies `Other`: a preset carries
+                        // its own geometry and a file that supplies both is
+                        // contradictory, so it is refused rather than silently
+                        // resolved one way (docs/119 §6).
+                        check_domain(
+                            shape.geometry == ShapeGeometry::Other,
+                            "group.shape.path.geometry",
+                        )?;
+                        check_domain(
+                            !path.commands.is_empty()
+                                && path.commands.len() <= MAX_SHAPE_PATH_COMMANDS,
+                            "group.shape.path.commands",
+                        )?;
+                        check_domain(
+                            matches!(path.commands[0], ShapePathCommand::MoveTo { .. }),
+                            "group.shape.path.commands.first",
+                        )?;
+                        check_domain(
+                            (0..=MAX_EMU).contains(&path.width_emu)
+                                && (0..=MAX_EMU).contains(&path.height_emu),
+                            "group.shape.path.extent",
+                        )?;
+                        for command in &path.commands {
+                            let point = match command {
+                                ShapePathCommand::MoveTo { point }
+                                | ShapePathCommand::LineTo { point } => *point,
+                                ShapePathCommand::Close => continue,
+                            };
+                            check_domain(
+                                (-MAX_EMU..=MAX_EMU).contains(&point.x_emu)
+                                    && (-MAX_EMU..=MAX_EMU).contains(&point.y_emu),
+                                "group.shape.path.point",
+                            )?;
+                        }
+                    }
                     if let Some(stroke) = &shape.stroke {
                         check_domain(
                             (0..=MAX_EMU).contains(&stroke.width_emu),

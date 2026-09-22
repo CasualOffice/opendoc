@@ -5441,11 +5441,19 @@ fn write_group_shape(
         shape.flip_h,
         shape.flip_v,
     )?;
-    let preset = shape
-        .preset
-        .as_deref()
-        .unwrap_or_else(|| geometry_prst(shape.geometry));
-    write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
+    // A recovered custom geometry is re-emitted as the `a:custGeom` it was.
+    // Without this the shape is rewritten to `prst="rect"` on every save, which
+    // is the one place this row actually DESTROYS data rather than mis-drawing
+    // it (docs/119 §2).
+    if let Some(path) = &shape.path {
+        write_cust_geom(w, path)?;
+    } else {
+        let preset = shape
+            .preset
+            .as_deref()
+            .unwrap_or_else(|| geometry_prst(shape.geometry));
+        write_prst_geom_with_adjustments(w, preset, &shape.adjustments)?;
+    }
     if let Some(fill) = &shape.fill {
         write_fill(w, fill)?;
     }
@@ -5580,6 +5588,60 @@ fn write_prst_geom_with_adjustments(
             .map_err(pkg)?;
     }
     w.write_event(Event::End(BytesEnd::new("a:prstGeom")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits an `a:custGeom` for a recovered custom path (docs/119).
+///
+/// The empty `a:avLst`/`a:gdLst`/`a:ahLst`/`a:cxnLst` are written because Word
+/// writes them and an empty DrawingML container states that the feature is
+/// absent, so emitting them asserts nothing that was not in the source. `@w` /
+/// `@h` are written only when non-zero, which is exactly the "no path
+/// coordinate space" default of ECMA-376 §20.1.9.15.
+fn write_cust_geom(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    path: &casual_doc_model::v1::ShapePath,
+) -> Result<(), ExportError> {
+    use casual_doc_model::v1::ShapePathCommand;
+
+    w.write_event(Event::Start(start("a:custGeom")))
+        .map_err(pkg)?;
+    for empty in ["a:avLst", "a:gdLst", "a:ahLst", "a:cxnLst"] {
+        w.write_event(Event::Empty(start(empty))).map_err(pkg)?;
+    }
+    w.write_event(Event::Start(start("a:pathLst")))
+        .map_err(pkg)?;
+    let mut path_element = start("a:path");
+    if path.width_emu > 0 {
+        path_element.push_attribute(("w", path.width_emu.to_string().as_str()));
+    }
+    if path.height_emu > 0 {
+        path_element.push_attribute(("h", path.height_emu.to_string().as_str()));
+    }
+    w.write_event(Event::Start(path_element)).map_err(pkg)?;
+    for command in &path.commands {
+        let (name, point) = match command {
+            ShapePathCommand::MoveTo { point } => ("a:moveTo", *point),
+            ShapePathCommand::LineTo { point } => ("a:lnTo", *point),
+            ShapePathCommand::Close => {
+                w.write_event(Event::Empty(start("a:close"))).map_err(pkg)?;
+                continue;
+            }
+        };
+        w.write_event(Event::Start(start(name))).map_err(pkg)?;
+        let mut pt = start("a:pt");
+        pt.push_attribute(("x", point.x_emu.to_string().as_str()));
+        pt.push_attribute(("y", point.y_emu.to_string().as_str()));
+        w.write_event(Event::Empty(pt)).map_err(pkg)?;
+        w.write_event(Event::End(BytesEnd::new(name)))
+            .map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("a:path")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:pathLst")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("a:custGeom")))
         .map_err(pkg)?;
     Ok(())
 }

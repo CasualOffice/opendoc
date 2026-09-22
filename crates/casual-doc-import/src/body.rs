@@ -37,6 +37,7 @@ use casual_doc_model::v1::{
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::NumberFormat;
+use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
@@ -308,6 +309,9 @@ struct ShapeBuilder {
     geometry: ShapeGeometry,
     preset: Option<String>,
     adjustments: Vec<ShapeAdjustment>,
+    /// The recovered `a:custGeom` path, if the geometry is inside the modeled
+    /// straight-line subset (docs/119).
+    path: Option<ShapePath>,
     in_adjustment_list: bool,
     fill: Option<Fill>,
     stroke: Option<ShapeStroke>,
@@ -326,6 +330,52 @@ struct ShapeBuilder {
     flip_h: bool,
     flip_v: bool,
     rotation: Option<i32>,
+}
+
+/// Accumulator for an open `a:custGeom` on the current shape (docs/119).
+///
+/// Collects the straight-line subset of `a:pathLst/a:path` — `a:moveTo`,
+/// `a:lnTo`, `a:close` — and latches [`unsupported`](Self::unsupported) the
+/// moment anything outside that subset appears (a curve, a guide formula, a
+/// guide-named coordinate, an adjust handle, a second subpath). A latched
+/// accumulator produces NO path, so the shape keeps painting its bounding
+/// rectangle and the `custGeom` loss keeps being reported: the modeled subset is
+/// never allowed to half-describe a geometry it cannot draw.
+#[derive(Default)]
+struct CustomGeometry {
+    /// `a:path@w` of the single supported subpath (`0` = absolute EMU).
+    width_emu: i64,
+    /// `a:path@h` of the single supported subpath (`0` = absolute EMU).
+    height_emu: i64,
+    /// Commands collected so far, in path order.
+    commands: Vec<ShapePathCommand>,
+    /// How many `a:path` children have been opened; more than one is out of
+    /// scope for this slice.
+    paths: usize,
+    /// The command an `a:pt` child will complete (`a:moveTo`/`a:lnTo`).
+    pending: Option<PathVertexKind>,
+    /// Something outside the modeled subset was seen.
+    unsupported: bool,
+}
+
+impl CustomGeometry {
+    /// Appends a command, latching `unsupported` rather than growing past
+    /// [`MAX_SHAPE_PATH_COMMANDS`] — a truncated path is a WRONG path, so an
+    /// over-long geometry falls back to its bounding rectangle and is reported.
+    fn push(&mut self, command: ShapePathCommand) {
+        if self.commands.len() >= MAX_SHAPE_PATH_COMMANDS {
+            self.unsupported = true;
+            return;
+        }
+        self.commands.push(command);
+    }
+}
+
+/// Which path command an `a:pt` inside an open `a:custGeom` completes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathVertexKind {
+    Move,
+    Line,
 }
 
 /// Which `a:xfrm` an `a:off`/`a:ext`/`a:chOff`/`a:chExt` currently routes to.
@@ -926,6 +976,10 @@ struct BodyParser<'a> {
     /// `w:drawing` closes and `commit_drawing` emits it. Saved/restored across a
     /// text-box frame.
     pending_group: Option<WordprocessingGroup>,
+    /// The open `a:custGeom` on `pending_shape`, if any. Not saved across a
+    /// text-box frame: a `w:txbxContent` can only appear after the shape's
+    /// `wps:spPr` has closed, so a custom geometry is never open across one.
+    cust_geom: Option<CustomGeometry>,
     /// Which `a:xfrm` the next `a:off`/`a:ext`/`a:chOff`/`a:chExt` routes to.
     xfrm_target: XfrmTarget,
     /// Depth of an open `a:ln` (outline), so a `solidFill` inside it colors the
@@ -1207,6 +1261,7 @@ impl<'a> BodyParser<'a> {
             group_stack: Vec::new(),
             pending_shape: None,
             pending_group: None,
+            cust_geom: None,
             xfrm_target: XfrmTarget::None,
             ln_depth: 0,
             ln_width_emu: 0,
@@ -1909,6 +1964,14 @@ impl BodyParser<'_> {
         }
         self.report_identity_attributes(local, element);
         match local {
+            // Inside an open `a:custGeom`, the whole subtree routes to the
+            // geometry accumulator. This arm is FIRST because `a:moveTo` and the
+            // tracked-move revision `w:moveTo` share a local name — the importer
+            // matches on the local name only, so a path vertex reaching the
+            // revision arm below would open a spurious tracked move (docs/119).
+            _ if self.cust_geom.is_some() => {
+                self.custom_geometry_start(local, element);
+            }
             // Property-change tracked revisions carry a nested copy of the PREVIOUS
             // property container (e.g. `w:rPrChange > w:rPr`). We snapshot the
             // just-completed CURRENT properties aside and reset the live
@@ -2723,6 +2786,7 @@ impl BodyParser<'_> {
                     geometry: ShapeGeometry::Rectangle,
                     preset: None,
                     adjustments: Vec::new(),
+                    path: None,
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
@@ -2749,6 +2813,7 @@ impl BodyParser<'_> {
                     geometry: ShapeGeometry::Rectangle,
                     preset: None,
                     adjustments: Vec::new(),
+                    path: None,
                     in_adjustment_list: false,
                     fill: None,
                     stroke: None,
@@ -2911,13 +2976,20 @@ impl BodyParser<'_> {
                     self.reporter.report(b"gd");
                 }
             }
+            // A custom geometry (`a:custGeom`) replaces any preset: the shape is
+            // `Other` with no retained preset token and no preset adjustments.
+            // Opening the accumulator routes the whole subtree to
+            // `custom_geometry_start`; `finish_custom_geometry` decides on the
+            // close whether a path was recovered or the loss is reported
+            // (docs/119 §6).
             b"custGeom" if self.pending_shape.is_some() => {
                 if let Some(shape) = self.pending_shape.as_mut() {
                     shape.geometry = ShapeGeometry::Other;
                     shape.preset = None;
                     shape.adjustments.clear();
+                    shape.path = None;
                 }
-                self.reporter.report(b"custGeom");
+                self.cust_geom = Some(CustomGeometry::default());
             }
             // An outline (`a:ln`): its `@w` is the stroke width; a `solidFill` inside
             // it colors the stroke rather than the fill.
@@ -4098,6 +4170,14 @@ impl BodyParser<'_> {
             return Ok(());
         }
         match local {
+            // The mirror of the `on_start` arm: an open `a:custGeom` owns every
+            // close in its subtree. FIRST for the same reason — `</a:moveTo>`
+            // would otherwise reach the tracked-revision close arms below and
+            // commit a revision the document never opened (docs/119).
+            b"custGeom" if self.cust_geom.is_some() => {
+                self.finish_custom_geometry();
+            }
+            _ if self.cust_geom.is_some() => {}
             // Close of a modeled property-change capture: the prior snapshot has
             // accumulated into the live accumulator, so restore the saved current
             // properties with the built change attached. Placed BEFORE the skip
@@ -4737,6 +4817,110 @@ impl BodyParser<'_> {
     /// anchor is open, else inline). A bare anchored shape is normalized to the
     /// existing group-of-one float model; a bare inline shape remains reported
     /// until the in-flow composite-box slice is implemented.
+    /// Routes one element inside an open `a:custGeom` into the geometry
+    /// accumulator (docs/119 §6).
+    ///
+    /// `O(1)` per element. The modeled subset is `a:pathLst`, a single `a:path`,
+    /// and `a:moveTo`/`a:lnTo`/`a:close` with integer `a:pt` coordinates. The
+    /// empty containers Word always writes (`a:avLst`, `a:gdLst`, `a:ahLst`,
+    /// `a:cxnLst`) and the text rectangle `a:rect` are ignored rather than
+    /// treated as losses, because an empty DrawingML container states that the
+    /// feature is ABSENT (`docs/118` §4). Anything else latches `unsupported`,
+    /// which is what keeps a curve or a guide formula from being silently
+    /// flattened into straight lines.
+    fn custom_geometry_start(&mut self, local: &[u8], element: &BytesStart<'_>) {
+        // Read the attributes before borrowing the accumulator mutably.
+        let path_w = attr_i64(element, b"w");
+        let path_h = attr_i64(element, b"h");
+        let pt = (attr_i64(element, b"x"), attr_i64(element, b"y"));
+        let Some(geometry) = self.cust_geom.as_mut() else {
+            return;
+        };
+        match local {
+            // Empty-by-default containers, and the text rectangle, which does not
+            // participate in the outline.
+            b"pathLst" | b"avLst" | b"gdLst" | b"ahLst" | b"cxnLst" | b"rect" => {}
+            b"path" => {
+                geometry.paths += 1;
+                if geometry.paths > 1 {
+                    // A second subpath needs its own coordinate space and its own
+                    // `@fill`/`@stroke`; out of scope for this slice.
+                    geometry.unsupported = true;
+                    return;
+                }
+                // An absent or negative `@w`/`@h` means "no path coordinate
+                // space": the coordinates are absolute EMU (docs/119 §3).
+                geometry.width_emu = path_w.filter(|w| *w > 0).unwrap_or(0);
+                geometry.height_emu = path_h.filter(|h| *h > 0).unwrap_or(0);
+            }
+            b"moveTo" => geometry.pending = Some(PathVertexKind::Move),
+            b"lnTo" => geometry.pending = Some(PathVertexKind::Line),
+            b"close" => geometry.push(ShapePathCommand::Close),
+            b"pt" => {
+                let Some(kind) = geometry.pending.take() else {
+                    // An `a:pt` outside a `a:moveTo`/`a:lnTo` belongs to a command
+                    // this slice does not model (an `a:arcTo` control point, say).
+                    geometry.unsupported = true;
+                    return;
+                };
+                // A coordinate may be a GUIDE NAME rather than an integer
+                // (`x="wd2"`). Evaluating those is the guide-formula language,
+                // which is `109` FID-G-02, so a named coordinate is unsupported
+                // rather than approximated.
+                let (Some(x_emu), Some(y_emu)) = pt else {
+                    geometry.unsupported = true;
+                    return;
+                };
+                let point = PointEmu { x_emu, y_emu };
+                geometry.push(match kind {
+                    PathVertexKind::Move => ShapePathCommand::MoveTo { point },
+                    PathVertexKind::Line => ShapePathCommand::LineTo { point },
+                });
+            }
+            // Curves, arcs, guides, adjust handles, connection sites, extensions.
+            _ => geometry.unsupported = true,
+        }
+    }
+
+    /// Closes an open `a:custGeom`: attaches the recovered path to the shape, or
+    /// reports the geometry as an omission and leaves the shape painting its
+    /// bounding rectangle (docs/119 §6).
+    ///
+    /// A path is accepted only when it is a single subpath that STARTS with a
+    /// `moveTo`, has exactly one `moveTo` (a second one is a disjoint subpath),
+    /// draws at least one segment, and stayed inside the modeled subset.
+    fn finish_custom_geometry(&mut self) {
+        let Some(geometry) = self.cust_geom.take() else {
+            return;
+        };
+        let moves = geometry
+            .commands
+            .iter()
+            .filter(|command| matches!(command, ShapePathCommand::MoveTo { .. }))
+            .count();
+        let usable = !geometry.unsupported
+            && geometry.paths == 1
+            && moves == 1
+            && matches!(
+                geometry.commands.first(),
+                Some(ShapePathCommand::MoveTo { .. })
+            )
+            && geometry
+                .commands
+                .iter()
+                .any(|command| matches!(command, ShapePathCommand::LineTo { .. }));
+        match (usable, self.pending_shape.as_mut()) {
+            (true, Some(shape)) => {
+                shape.path = Some(ShapePath {
+                    width_emu: geometry.width_emu,
+                    height_emu: geometry.height_emu,
+                    commands: geometry.commands,
+                });
+            }
+            _ => self.reporter.report(b"custGeom"),
+        }
+    }
+
     fn commit_shape(&mut self) -> Result<(), ImportError> {
         let Some(mut shape) = self.pending_shape.take() else {
             return Ok(());
@@ -4873,6 +5057,7 @@ impl BodyParser<'_> {
             geometry: shape.geometry,
             preset: shape.preset,
             adjustments: shape.adjustments,
+            path: shape.path,
             fill: shape.fill,
             stroke: shape.stroke,
             flip_h: shape.flip_h,
@@ -5298,6 +5483,7 @@ impl BodyParser<'_> {
             geometry,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill,
             stroke,
             flip_h: false,
@@ -5337,6 +5523,7 @@ impl BodyParser<'_> {
             geometry: ShapeGeometry::Line,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill: vml_fill(&drawing.fill),
             stroke: vml_stroke(&drawing.stroke),
             flip_h: false,
@@ -7386,7 +7573,6 @@ fn is_drawing_scaffolding(local: &[u8]) -> bool {
             | b"ext"
             | b"prstGeom"
             | b"avLst"
-            | b"custGeom"
             | b"ln"
             | b"noFill"
             | b"solidFill"
