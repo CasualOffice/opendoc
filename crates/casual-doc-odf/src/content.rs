@@ -10904,6 +10904,9 @@ fn build_group_children(
                     geometry: shape.geometry,
                     preset: None,
                     adjustments: Vec::new(),
+                    // ODF has no `a:custGeom` counterpart resolved yet
+                    // (`draw:polyline`/`draw:polygon` is `109` FID-G-02).
+                    path: None,
                     fill: shape.fill.clone(),
                     stroke: shape.stroke.map(|stroke| ShapeStroke {
                         color: rgb_to_rgba(stroke.color),
@@ -11199,6 +11202,7 @@ fn build_inlines(
                         geometry: draft.geometry,
                         preset: None,
                         adjustments: Vec::new(),
+                        path: None,
                         fill: draft.fill.clone(),
                         stroke: draft.stroke.map(|stroke| ShapeStroke {
                             color: rgb_to_rgba(stroke.color),

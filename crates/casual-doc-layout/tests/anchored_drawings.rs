@@ -558,6 +558,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             geometry: ShapeGeometry::Rectangle,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill: None,
             stroke: None,
             flip_h: false,
@@ -1511,6 +1512,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
             geometry: ShapeGeometry::Rectangle,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill: Some(Fill::Solid(Rgba {
                 r: 200,
                 g: 200,
@@ -1637,6 +1639,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
             geometry,
             preset: None,
             adjustments,
+            path: None,
             fill: Some(Fill::Solid(Rgba {
                 r: 20,
                 g: 80,
@@ -1738,6 +1741,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             geometry,
             preset: None,
             adjustments: Vec::new(),
+            path: None,
             fill: Some(Fill::Solid(Rgba {
                 r: 60,
                 g: 120,
@@ -1832,6 +1836,163 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
             .count(),
         3
     );
+}
+
+// --- Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01 --------
+
+/// A custom path resolves to a polyline inside the shape's box, and the two
+/// `a:path` coordinate-space rules are applied per axis: a POSITIVE `@w`/`@h`
+/// scales the coordinate to the box, and a ZERO one (an absent attribute) is an
+/// absolute EMU offset that does not scale (docs/119 §3).
+///
+/// Both shapes sit in a 1" × 1" child box at a known page position, so the
+/// expected twips are arithmetic, not a snapshot.
+#[test]
+fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
+    use casual_doc_model::v1::{ShapePath, ShapePathCommand};
+
+    let child_extent = Extent {
+        width_emu: 914_400,
+        height_emu: 914_400,
+    };
+    let group_extent = Extent {
+        width_emu: 2 * 914_400,
+        height_emu: 914_400,
+    };
+    let move_to = |x_emu, y_emu| ShapePathCommand::MoveTo {
+        point: PointEmu { x_emu, y_emu },
+    };
+    let line_to = |x_emu, y_emu| ShapePathCommand::LineTo {
+        point: PointEmu { x_emu, y_emu },
+    };
+    let shape = |id, x_emu, path| {
+        GroupChild::Shape(GroupShape {
+            id: node(id),
+            offset: PointEmu { x_emu, y_emu: 0 },
+            extent: child_extent,
+            geometry: ShapeGeometry::Other,
+            preset: None,
+            adjustments: Vec::new(),
+            path: Some(path),
+            fill: None,
+            stroke: None,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        })
+    };
+
+    let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        id: node(90),
+        anchor: Some(page_anchor(914_400, 914_400)),
+        relative_height: Some(11),
+        extent: group_extent,
+        transform: GroupTransform {
+            offset: PointEmu { x_emu: 0, y_emu: 0 },
+            extent: group_extent,
+            child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+            child_extent: group_extent,
+            flip_h: false,
+            flip_v: false,
+            rotation: None,
+        },
+        children: vec![
+            // The loan-agreement rule: `@w` scales x across the box, `@h` is
+            // absent so y stays an absolute EMU offset (0 = the box top).
+            shape(
+                91,
+                0,
+                ShapePath {
+                    width_emu: 1000,
+                    height_emu: 0,
+                    commands: vec![move_to(0, 0), line_to(1000, 0)],
+                },
+            ),
+            // A closed triangle with both axes scaled.
+            shape(
+                92,
+                914_400,
+                ShapePath {
+                    width_emu: 100,
+                    height_emu: 100,
+                    commands: vec![
+                        move_to(50, 0),
+                        line_to(100, 100),
+                        line_to(0, 100),
+                        ShapePathCommand::Close,
+                    ],
+                },
+            ),
+        ],
+    }));
+    let paragraph = BlockNode::Paragraph(Paragraph {
+        id: node(10),
+        properties: ParagraphProperties::default().into(),
+        inlines: vec![run(11, "Body"), group],
+    });
+    let document = Document::new(node(1), vec![paragraph], Definitions::default()).unwrap();
+
+    let shaper = ParleyShaper::new();
+    let cfg = config();
+    let galley = build_galley(&document, &shaper, cfg.content_area().size.width);
+    let mut layout = paginate(&galley, &cfg);
+    place_floats(&mut layout, &document, &shaper, &cfg);
+
+    let polygons: Vec<(&Vec<Point>, bool)> = layout.pages[0]
+        .anchored
+        .iter()
+        .filter_map(|anchor| match &anchor.content {
+            AnchorContent::Polygon { points, closed, .. } => Some((points, *closed)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        polygons.len(),
+        2,
+        "both freeforms are polylines; a rectangle fallback yields none"
+    );
+
+    // The group is anchored 1" from the page's top-left, so the first child box
+    // is (1440, 1440) to (2880, 2880) twips. The rule spans its full width at
+    // its top edge, and stays OPEN.
+    assert_eq!(
+        polygons[0],
+        (
+            &vec![
+                Point::new(Twip(1_440), Twip(1_440)),
+                Point::new(Twip(2_880), Twip(1_440)),
+            ],
+            false
+        )
+    );
+    // The triangle's second child box starts at x = 2880 twips.
+    assert_eq!(
+        polygons[1],
+        (
+            &vec![
+                Point::new(Twip(3_600), Twip(1_440)),
+                Point::new(Twip(4_320), Twip(2_880)),
+                Point::new(Twip(2_880), Twip(2_880)),
+            ],
+            true
+        )
+    );
+
+    // …and the `closed` flag survives into the display list, which is the half
+    // the backends actually read.
+    let list = compose_page(&layout.pages[0]);
+    let closed: Vec<bool> = list
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            PaintItem::Shape {
+                geometry: DisplayShapeGeometry::Polygon { closed, .. },
+                ..
+            } => Some(*closed),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed, vec![false, true]);
 }
 
 // --- Footer page-number fields inside text boxes (SDS regression) ----------

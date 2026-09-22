@@ -7455,3 +7455,124 @@ fn corpus() -> [(&'static str, &'static [u8]); 6] {
         ),
     ]
 }
+
+// ---------------------------------------------------------------------------
+// Custom shape geometry (`a:custGeom`) — docs/119, `109` FID-G-01.
+// ---------------------------------------------------------------------------
+
+/// The four `a:custGeom` shapes of `fixtures/generated/custom-geometry.docx`, in
+/// document order. Every one of them is a lone anchored `wps:wsp`, which the
+/// importer normalises into a group of one.
+fn custom_geometry_shapes(import: &Import) -> Vec<&casual_doc_model::v1::GroupShape> {
+    use casual_doc_model::v1::GroupChild;
+
+    let mut shapes = Vec::new();
+    for block in import.document.body() {
+        let BlockNode::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for inline in &paragraph.inlines {
+            let InlineNode::Group(group) = inline else {
+                continue;
+            };
+            for child in &group.children {
+                if let GroupChild::Shape(shape) = child {
+                    shapes.push(shape);
+                }
+            }
+        }
+    }
+    shapes
+}
+
+fn custom_geometry_import() -> Import {
+    let bytes = include_bytes!("../../../fixtures/generated/custom-geometry.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    import_package(&mut package, ImportConfig::default()).unwrap()
+}
+
+#[test]
+fn a_custom_geometry_path_of_straight_segments_is_imported_as_a_path() {
+    use casual_doc_model::v1::{PointEmu, ShapeGeometry, ShapePathCommand};
+
+    let import = custom_geometry_import();
+    let shapes = custom_geometry_shapes(&import);
+    assert_eq!(shapes.len(), 4, "four freeforms");
+
+    // 1. The owner's loan-agreement rule: `@w` set, `@h` omitted (so the y axis
+    //    is absolute EMU), one segment, NOT closed.
+    let rule = shapes[0];
+    assert_eq!(
+        rule.geometry,
+        ShapeGeometry::Other,
+        "a freeform is never mistaken for a preset"
+    );
+    assert_eq!(
+        rule.preset, None,
+        "no preset token is retained beside a path"
+    );
+    let path = rule.path.as_ref().expect("the open rule carries its path");
+    assert_eq!(path.width_emu, 6_660_515, "a:path@w");
+    assert_eq!(path.height_emu, 0, "a:path@h is absent: absolute EMU");
+    assert_eq!(
+        path.commands,
+        vec![
+            ShapePathCommand::MoveTo {
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::LineTo {
+                point: PointEmu {
+                    x_emu: 6_660_057,
+                    y_emu: 0,
+                },
+            },
+        ],
+    );
+
+    // 2. A closed triangle with both axes scaled.
+    let triangle = shapes[1]
+        .path
+        .as_ref()
+        .expect("the triangle carries a path");
+    assert_eq!((triangle.width_emu, triangle.height_emu), (100, 100));
+    assert_eq!(
+        triangle.commands.last(),
+        Some(&ShapePathCommand::Close),
+        "an authored a:close survives as a Close command"
+    );
+    assert_eq!(triangle.commands.len(), 4);
+}
+
+#[test]
+fn an_unsupported_custom_geometry_keeps_its_rectangle_and_stays_reported() {
+    use casual_doc_model::v1::ShapeGeometry;
+
+    let import = custom_geometry_import();
+    let shapes = custom_geometry_shapes(&import);
+
+    // 3. A cubic Bezier and 4. a guide-named coordinate are both outside the
+    //    modeled subset. Neither may be flattened into the straight segments it
+    //    is NOT: no path, so the bounding rectangle still paints.
+    for (index, what) in [(2, "a cubic Bezier"), (3, "a guide-named coordinate")] {
+        assert!(
+            shapes[index].path.is_none(),
+            "{what} must not produce a path"
+        );
+        assert_eq!(shapes[index].geometry, ShapeGeometry::Other);
+    }
+
+    // And the loss is still named, exactly twice: once per unsupported shape,
+    // and NOT for the two we now draw. A guard that only checked the supported
+    // side would pass while the unsupported side fell silent.
+    let custgeom: u32 = import
+        .report
+        .entries
+        .iter()
+        .filter(|entry| entry.feature == "custGeom")
+        .map(|entry| entry.occurrences)
+        .sum();
+    assert_eq!(
+        custgeom, 2,
+        "custGeom is reported for the two geometries we cannot draw, and only those"
+    );
+}

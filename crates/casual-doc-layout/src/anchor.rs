@@ -877,79 +877,100 @@ fn place_group_children(
                     relative_height,
                     order: ctx.next_order(),
                 };
-                let content = match shape.geometry {
-                    ShapeGeometry::Line => AnchorContent::Line {
-                        from: rect.origin,
-                        to: Point::new(rect.right(), rect.bottom()),
-                        // A line without an explicit stroke still draws a hairline
-                        // in its fill color (Word's connector default).
-                        stroke: shape_stroke(shape.stroke).unwrap_or(AnchorStroke {
-                            color: shape
-                                .fill
-                                .as_ref()
-                                .map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
-                            width: Twip::ZERO,
-                            dash: DashStyle::Solid,
-                        }),
-                        head_end: shape.stroke.and_then(|s| s.head_end),
-                        tail_end: shape.stroke.and_then(|s| s.tail_end),
-                    },
-                    ShapeGeometry::Ellipse => AnchorContent::Ellipse {
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
-                    ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
-                        radius: rounded_rectangle_radius(shape, rect),
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
-                    ShapeGeometry::Triangle => AnchorContent::Polygon {
-                        points: vec![
-                            Point::new(
-                                rect.origin.x + Twip(rect.size.width.raw() / 2),
-                                rect.origin.y,
-                            ),
-                            Point::new(rect.right(), rect.bottom()),
-                            Point::new(rect.origin.x, rect.bottom()),
-                        ],
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
-                    ShapeGeometry::RightTriangle => AnchorContent::Polygon {
-                        points: vec![
-                            rect.origin,
-                            Point::new(rect.right(), rect.bottom()),
-                            Point::new(rect.origin.x, rect.bottom()),
-                        ],
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
-                    ShapeGeometry::Diamond => AnchorContent::Polygon {
-                        points: vec![
-                            Point::new(
-                                rect.origin.x + Twip(rect.size.width.raw() / 2),
-                                rect.origin.y,
-                            ),
-                            Point::new(
-                                rect.right(),
-                                rect.origin.y + Twip(rect.size.height.raw() / 2),
-                            ),
-                            Point::new(
-                                rect.origin.x + Twip(rect.size.width.raw() / 2),
-                                rect.bottom(),
-                            ),
-                            Point::new(
-                                rect.origin.x,
-                                rect.origin.y + Twip(rect.size.height.raw() / 2),
-                            ),
-                        ],
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
-                    ShapeGeometry::Rectangle | ShapeGeometry::Other => AnchorContent::Rectangle {
-                        fill: shape.fill.clone(),
-                        stroke: shape_stroke(shape.stroke),
-                    },
+                // A custom geometry outranks the preset enum: the importer only
+                // attaches a path when the authored `a:custGeom` is inside the
+                // drawable subset, and `geometry` stays `Other` beside it
+                // (docs/119 §6).
+                let content = if let Some(path) = shape.path.as_ref() {
+                    custom_path_content(path, rect, shape)
+                } else {
+                    match shape.geometry {
+                        ShapeGeometry::Line => AnchorContent::Line {
+                            from: rect.origin,
+                            to: Point::new(rect.right(), rect.bottom()),
+                            // A line without an explicit stroke still draws a hairline
+                            // in its fill color (Word's connector default).
+                            stroke: shape_stroke(shape.stroke).unwrap_or(AnchorStroke {
+                                color: shape
+                                    .fill
+                                    .as_ref()
+                                    .map_or([0, 0, 0, 255], |fill| rgba(fill.flat_color())),
+                                width: Twip::ZERO,
+                                dash: DashStyle::Solid,
+                            }),
+                            head_end: shape.stroke.and_then(|s| s.head_end),
+                            tail_end: shape.stroke.and_then(|s| s.tail_end),
+                        },
+                        ShapeGeometry::Ellipse => AnchorContent::Ellipse {
+                            fill: shape.fill.clone(),
+                            stroke: shape_stroke(shape.stroke),
+                        },
+                        ShapeGeometry::RoundRectangle => AnchorContent::RoundedRectangle {
+                            radius: rounded_rectangle_radius(shape, rect),
+                            fill: shape.fill.clone(),
+                            stroke: shape_stroke(shape.stroke),
+                        },
+                        ShapeGeometry::Triangle => AnchorContent::Polygon {
+                            points: vec![
+                                Point::new(
+                                    rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                    rect.origin.y,
+                                ),
+                                Point::new(rect.right(), rect.bottom()),
+                                Point::new(rect.origin.x, rect.bottom()),
+                            ],
+                            closed: true,
+                            fill: shape.fill.clone(),
+                            stroke: shape_stroke(shape.stroke),
+                        },
+                        ShapeGeometry::RightTriangle => AnchorContent::Polygon {
+                            points: vec![
+                                rect.origin,
+                                Point::new(rect.right(), rect.bottom()),
+                                Point::new(rect.origin.x, rect.bottom()),
+                            ],
+                            closed: true,
+                            fill: shape.fill.clone(),
+                            stroke: shape_stroke(shape.stroke),
+                        },
+                        ShapeGeometry::Diamond => AnchorContent::Polygon {
+                            points: vec![
+                                Point::new(
+                                    rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                    rect.origin.y,
+                                ),
+                                Point::new(
+                                    rect.right(),
+                                    rect.origin.y + Twip(rect.size.height.raw() / 2),
+                                ),
+                                Point::new(
+                                    rect.origin.x + Twip(rect.size.width.raw() / 2),
+                                    rect.bottom(),
+                                ),
+                                Point::new(
+                                    rect.origin.x,
+                                    rect.origin.y + Twip(rect.size.height.raw() / 2),
+                                ),
+                            ],
+                            closed: true,
+                            fill: shape.fill.clone(),
+                            stroke: shape_stroke(shape.stroke),
+                        },
+                        // A preset this build has no primitive for, and a custom
+                        // geometry outside the drawable subset, both paint their
+                        // bounding rectangle. ONLYOFFICE paints NOTHING here
+                        // (`Geometry.draw` early-returns on an invalid geometry);
+                        // we deliberately differ, because silently erasing every
+                        // unsupported freeform is a larger change than showing a box
+                        // where an object is, and Word does not erase them either.
+                        // Weighed and recorded in docs/119 §6 "Rejected".
+                        ShapeGeometry::Rectangle | ShapeGeometry::Other => {
+                            AnchorContent::Rectangle {
+                                fill: shape.fill.clone(),
+                                stroke: shape_stroke(shape.stroke),
+                            }
+                        }
+                    }
                 };
                 push(
                     layout,
@@ -1166,6 +1187,72 @@ impl GroupMapper {
             Point::new(origin.x + emu_to_twip_f(x), origin.y + emu_to_twip_f(y)),
             Size::new(emu_to_twip_f(w), emu_to_twip_f(h)),
         )
+    }
+}
+
+/// Resolves a custom shape geometry (`a:custGeom`) into a page-local polyline
+/// inside the shape's already-placed `rect` (docs/119 §6).
+///
+/// `O(commands)`, bounded by `MAX_SHAPE_PATH_COMMANDS`, and run once per placed
+/// shape rather than per repaint.
+///
+/// Each axis resolves independently, because `a:path@w` and `@h` are
+/// independent and a real document sets one and omits the other:
+///
+/// - a **positive** `@w`/`@h` is the extent of the path's own coordinate space,
+///   so the coordinate is a fraction of the box (`x / width_emu`) and the path
+///   rescales with the shape;
+/// - **zero** (absent, per ECMA-376 §20.1.9.15) means the coordinate is an
+///   absolute EMU offset from the box's top-left and does NOT rescale. This is
+///   the same rule ONLYOFFICE applies in `Path.recalculate` (docs/119 §3).
+///
+/// The path is closed only if it authored an `a:close`; an open path stays open,
+/// which is what Word's own VML fallback writes for these shapes (docs/119 §4).
+fn custom_path_content(
+    path: &casual_doc_model::v1::ShapePath,
+    rect: Rect,
+    shape: &casual_doc_model::v1::GroupShape,
+) -> AnchorContent {
+    use casual_doc_model::v1::ShapePathCommand;
+
+    let resolve = |value: i64, space: i64, origin: Twip, size: Twip| -> Twip {
+        if space > 0 {
+            Twip(
+                (f64::from(size.raw()) * (value as f64 / space as f64))
+                    .round()
+                    .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+            ) + origin
+        } else {
+            emu_to_twip_signed(value) + origin
+        }
+    };
+
+    let mut points = Vec::with_capacity(path.commands.len());
+    let mut closed = false;
+    for command in &path.commands {
+        let point = match command {
+            ShapePathCommand::MoveTo { point } | ShapePathCommand::LineTo { point } => *point,
+            ShapePathCommand::Close => {
+                closed = true;
+                continue;
+            }
+        };
+        points.push(Point::new(
+            resolve(point.x_emu, path.width_emu, rect.origin.x, rect.size.width),
+            resolve(
+                point.y_emu,
+                path.height_emu,
+                rect.origin.y,
+                rect.size.height,
+            ),
+        ));
+    }
+
+    AnchorContent::Polygon {
+        points,
+        closed,
+        fill: shape.fill.clone(),
+        stroke: shape_stroke(shape.stroke),
     }
 }
 

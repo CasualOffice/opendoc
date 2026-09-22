@@ -185,7 +185,9 @@ pub fn render(
                 fill,
                 stroke,
             } => {
-                if let Some(path) = polygon_path(points, dpi) {
+                // The flat `PaintItem::Polygon` (table furniture, callout tails) is
+                // always a closed figure; only a DrawingML shape can be open.
+                if let Some(path) = polygon_path(points, true, dpi) {
                     paint_path(
                         surface,
                         &path,
@@ -1378,9 +1380,14 @@ fn ellipse_path(rect: Rect, dpi: f32) -> Option<tiny_skia::Path> {
     PathBuilder::from_oval(SkRect::from_xywh(x, y, width, height)?)
 }
 
-fn polygon_path(points: &[Point], dpi: f32) -> Option<tiny_skia::Path> {
+/// Builds the device path for a polyline. A CLOSED path needs three vertices to
+/// enclose anything; an OPEN one needs only two, which is exactly the shape a
+/// custom-geometry horizontal rule has (docs/119), so the minimum depends on
+/// `closed` — a fixed three-vertex floor silently dropped every two-point
+/// freeform.
+fn polygon_path(points: &[Point], closed: bool, dpi: f32) -> Option<tiny_skia::Path> {
     let (first, rest) = points.split_first()?;
-    if rest.len() < 2 {
+    if rest.len() < if closed { 2 } else { 1 } {
         return None;
     }
     let mut builder = PathBuilder::new();
@@ -1388,7 +1395,9 @@ fn polygon_path(points: &[Point], dpi: f32) -> Option<tiny_skia::Path> {
     for point in rest {
         builder.line_to(point.x.to_device_px(dpi), point.y.to_device_px(dpi));
     }
-    builder.close();
+    if closed {
+        builder.close();
+    }
     builder.finish()
 }
 
@@ -1506,9 +1515,10 @@ fn render_shape(
             rounded_rect_path(*rect, *radius, dpi),
             device_bounds(*rect, dpi),
         ),
-        ShapeGeometry::Polygon { points } => {
-            (polygon_path(points, dpi), polygon_bounds(points, dpi))
-        }
+        ShapeGeometry::Polygon { points, closed } => (
+            polygon_path(points, *closed, dpi),
+            polygon_bounds(points, dpi),
+        ),
         ShapeGeometry::Line { from, to } => {
             let mut builder = PathBuilder::new();
             builder.move_to(from.x.to_device_px(dpi), from.y.to_device_px(dpi));
@@ -3295,6 +3305,114 @@ mod tests {
         assert!(
             pixel_at(&solid, 100, 11, 10)[0] < 100,
             "a solid stroke paints the same span with no gap"
+        );
+    }
+
+    /// An OPEN custom-geometry path is stroked along the path, not around the
+    /// box it lives in (docs/119, `109` FID-G-01).
+    ///
+    /// The test is written as pixels rather than as a type assertion on purpose:
+    /// the defect this closes is "a freeform paints as its bounding rectangle",
+    /// and the only assertion that can tell those apart is whether the edges the
+    /// path does NOT visit are painted. The path runs along the TOP of a tall
+    /// box, so a rectangle fallback paints the bottom edge and the open polyline
+    /// does not.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn an_open_path_strokes_its_segments_and_leaves_the_rest_of_the_box_blank() {
+        let polyline = |closed| {
+            let mut list = DisplayList::new();
+            list.push(PaintItem::Shape {
+                geometry: ShapeGeometry::Polygon {
+                    points: vec![
+                        Point::new(Twip(10), Twip(10)),
+                        Point::new(Twip(90), Twip(10)),
+                        Point::new(Twip(90), Twip(50)),
+                    ],
+                    closed,
+                },
+                fill: None,
+                stroke: Some(ShapeOutline {
+                    color: ShapeColor::BLACK,
+                    width: 2.0,
+                    dash: DashStyle::Solid,
+                }),
+                head_end: None,
+                tail_end: None,
+                transform: None,
+            });
+            shape_surface(&list, 100, 60)
+        };
+        let open = polyline(false);
+
+        // The two authored segments are stroked: the top edge and the right edge.
+        assert!(
+            pixel_at(&open, 100, 50, 10)[0] < 100,
+            "the moveTo -> lnTo segment is stroked (got {:?})",
+            pixel_at(&open, 100, 50, 10)
+        );
+        assert!(
+            pixel_at(&open, 100, 90, 30)[0] < 100,
+            "the second segment is stroked"
+        );
+        // The path's bounding box is (10,10)-(90,50). Its LEFT and BOTTOM edges
+        // are never visited, so they must stay blank — these are exactly the two
+        // pixels a bounding-rectangle fallback would paint, and they are why
+        // this guard is written in pixels rather than as a type assertion.
+        for (x, y, edge) in [(10, 30, "left"), (50, 50, "bottom")] {
+            assert!(
+                pixel_at(&open, 100, x, y)[0] > 200,
+                "the unvisited {edge} edge of the box stays blank (got {:?})",
+                pixel_at(&open, 100, x, y)
+            );
+        }
+
+        // And the same vertices WITH `a:close` do join back up along the
+        // diagonal (10,10)-(90,50), which passes through (50,30). The flag is
+        // load-bearing in both directions, not just "open is the new default".
+        let closed = polyline(true);
+        assert!(
+            pixel_at(&closed, 100, 50, 30)[0] < 100,
+            "a closed path strokes the closing edge (got {:?})",
+            pixel_at(&closed, 100, 50, 30)
+        );
+        assert!(
+            pixel_at(&open, 100, 50, 30)[0] > 200,
+            "and the open one does not (got {:?})",
+            pixel_at(&open, 100, 50, 30)
+        );
+    }
+
+    /// A two-vertex open path — the shape of every rule in the owner's loan
+    /// agreement — paints. A closed polygon needs three vertices to enclose
+    /// anything, and a single minimum for both silently dropped these.
+    #[test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    fn a_two_point_open_path_is_not_dropped_as_a_degenerate_polygon() {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::Shape {
+            geometry: ShapeGeometry::Polygon {
+                points: vec![
+                    Point::new(Twip(5), Twip(10)),
+                    Point::new(Twip(95), Twip(10)),
+                ],
+                closed: false,
+            },
+            fill: None,
+            stroke: Some(ShapeOutline {
+                color: ShapeColor::BLACK,
+                width: 2.0,
+                dash: DashStyle::Solid,
+            }),
+            head_end: None,
+            tail_end: None,
+            transform: None,
+        });
+        let surface = shape_surface(&list, 100, 20);
+        assert!(
+            pixel_at(&surface, 100, 50, 10)[0] < 100,
+            "the two-point rule is painted (got {:?})",
+            pixel_at(&surface, 100, 50, 10)
         );
     }
 

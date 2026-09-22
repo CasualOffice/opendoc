@@ -192,7 +192,8 @@ impl<'a> Transcriber<'a> {
                 fill,
                 stroke,
             } => {
-                out.path_polygon(points);
+                // The flat `PaintItem::Polygon` is always a closed figure.
+                out.path_polygon(points, true);
                 self.paint(out, fill.as_ref(), stroke.as_ref());
             }
             PaintItem::Line { from, to, stroke } => {
@@ -858,7 +859,10 @@ impl Content {
         );
     }
 
-    fn path_polygon(&mut self, points: &[Point]) {
+    /// Emits a polyline subpath. `closed` appends `h`, which is what makes a
+    /// stroked path join back to its origin; an open custom geometry
+    /// (docs/119) must NOT, or a two-point rule strokes back over itself.
+    fn path_polygon(&mut self, points: &[Point], closed: bool) {
         let Some(first) = points.first() else {
             self.op("n");
             return;
@@ -881,7 +885,9 @@ impl Content {
                 .as_bytes(),
             );
         }
-        self.op("h");
+        if closed {
+            self.op("h");
+        }
     }
 
     fn line(&mut self, from: Point, to: Point) {
@@ -902,7 +908,7 @@ impl Content {
             ShapeGeometry::Rect { rect } => self.path_rect(*rect),
             ShapeGeometry::Ellipse { rect } => self.path_ellipse(*rect),
             ShapeGeometry::RoundedRect { rect, radius } => self.path_rounded_rect(*rect, *radius),
-            ShapeGeometry::Polygon { points } => self.path_polygon(points),
+            ShapeGeometry::Polygon { points, closed } => self.path_polygon(points, *closed),
             ShapeGeometry::Line { from, to } => self.line(*from, *to),
         }
     }
@@ -1168,7 +1174,7 @@ fn geometry_bounds(geometry: &ShapeGeometry) -> Option<Rect> {
         ShapeGeometry::Rect { rect }
         | ShapeGeometry::Ellipse { rect }
         | ShapeGeometry::RoundedRect { rect, .. } => Some(*rect),
-        ShapeGeometry::Polygon { points } => {
+        ShapeGeometry::Polygon { points, .. } => {
             let first = points.first()?;
             let (mut min_x, mut min_y, mut max_x, mut max_y) =
                 (first.x.raw(), first.y.raw(), first.x.raw(), first.y.raw());

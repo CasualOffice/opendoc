@@ -2144,6 +2144,9 @@ impl WasmDocument {
             geometry,
             preset: None,
             adjustments: Vec::new(),
+            // Insert-shape authors a preset, never a freeform: there is no
+            // Edit-Points gesture yet (docs/119 §6 "out of scope").
+            path: None,
             // A line is a stroke, not a filled region; filling one would paint a
             // rectangle behind a hairline.
             fill: (geometry != ShapeGeometry::Line).then_some(Fill::Solid(Rgba {
@@ -27903,6 +27906,7 @@ mod tests {
                         geometry: ShapeGeometry::Rectangle,
                         preset: None,
                         adjustments: Vec::new(),
+                        path: None,
                         fill: None,
                         stroke,
                         flip_h: false,

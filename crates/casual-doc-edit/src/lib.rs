@@ -7983,6 +7983,7 @@ mod tests {
                     geometry: ShapeGeometry::Rectangle,
                     preset: None,
                     adjustments: Vec::new(),
+                    path: None,
                     fill: None,
                     stroke: None,
                     flip_h: false,

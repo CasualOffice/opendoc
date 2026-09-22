@@ -2225,6 +2225,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                     name: "adj".to_owned(),
                     formula: "val 25000".to_owned(),
                 }],
+                path: None,
                 fill: Some(Fill::Solid(Rgba {
                     r: 255,
                     g: 255,
@@ -2360,6 +2361,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                     name: "adj".to_owned(),
                     formula: "val 25000".to_owned(),
                 }],
+                path: None,
                 fill: None,
                 stroke: None,
                 flip_h: false,
@@ -2401,6 +2403,140 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
             property: "group.shape.adjustment.name"
         })
     ));
+}
+
+/// A custom geometry path is package-supplied, so every axis of it is bounded
+/// and the bound is enforced in the model rather than only at the one importer
+/// that happens to build it today (docs/119 §6).
+#[test]
+fn custom_shape_path_bounds_are_validated() {
+    let document = shape_path_document(ShapePath {
+        width_emu: 100,
+        height_emu: 100,
+        commands: vec![
+            ShapePathCommand::MoveTo {
+                point: PointEmu { x_emu: 0, y_emu: 0 },
+            },
+            ShapePathCommand::LineTo {
+                point: PointEmu {
+                    x_emu: 100,
+                    y_emu: 100,
+                },
+            },
+            ShapePathCommand::Close,
+        ],
+    });
+    document.validate().unwrap();
+
+    // A path always accompanies `Other`: a preset carries its own geometry, and
+    // a shape claiming both is contradictory.
+    let mut preset_and_path = document.clone();
+    first_group_shape_mut(&mut preset_and_path).geometry = ShapeGeometry::Ellipse;
+    assert!(matches!(
+        preset_and_path.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.geometry"
+        })
+    ));
+
+    let mut too_many_commands = document.clone();
+    first_group_shape_mut(&mut too_many_commands)
+        .path
+        .as_mut()
+        .unwrap()
+        .commands = (0..=MAX_SHAPE_PATH_COMMANDS)
+        .map(|index| ShapePathCommand::MoveTo {
+            point: PointEmu {
+                x_emu: index as i64,
+                y_emu: 0,
+            },
+        })
+        .collect();
+    assert!(matches!(
+        too_many_commands.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.commands"
+        })
+    ));
+
+    // A path that does not start with a `moveTo` has no start point, so every
+    // consumer would have to invent one.
+    let mut headless = document.clone();
+    first_group_shape_mut(&mut headless)
+        .path
+        .as_mut()
+        .unwrap()
+        .commands
+        .remove(0);
+    assert!(matches!(
+        headless.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.commands.first"
+        })
+    ));
+
+    let mut runaway_point = document;
+    first_group_shape_mut(&mut runaway_point)
+        .path
+        .as_mut()
+        .unwrap()
+        .commands[1] = ShapePathCommand::LineTo {
+        point: PointEmu {
+            x_emu: MAX_EMU + 1,
+            y_emu: 0,
+        },
+    };
+    assert!(matches!(
+        runaway_point.validate(),
+        Err(ModelError::PropertyValueOutOfDomain {
+            property: "group.shape.path.point"
+        })
+    ));
+}
+
+/// A one-paragraph document whose only inline is a group of one freeform shape
+/// carrying `path`.
+fn shape_path_document(path: ShapePath) -> Document {
+    let mut document = table_document(vec![paragraph_block(tid(1))]).unwrap();
+    let BlockNode::Paragraph(paragraph) = document.body_mut().first_mut().unwrap() else {
+        panic!("expected a paragraph");
+    };
+    let extent = Extent {
+        width_emu: 1_000_000,
+        height_emu: 500_000,
+    };
+    paragraph
+        .inlines
+        .push(InlineNode::Group(Box::new(WordprocessingGroup {
+            id: tid(30),
+            anchor: None,
+            relative_height: None,
+            extent,
+            transform: GroupTransform {
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                child_extent: extent,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            },
+            children: vec![GroupChild::Shape(GroupShape {
+                id: tid(31),
+                offset: PointEmu { x_emu: 0, y_emu: 0 },
+                extent,
+                geometry: ShapeGeometry::Other,
+                preset: None,
+                adjustments: Vec::new(),
+                path: Some(path),
+                fill: None,
+                stroke: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })],
+        })));
+    document
 }
 
 #[test]
