@@ -836,16 +836,27 @@ impl<'a> LayoutSnapshot<'a> {
         // rendered but had no caret geometry and no way to resolve a click.
         for page in self.layout.pages.iter().filter(|p| p.number == page_number) {
             for anchor in &page.anchored {
-                let AnchorContent::TextBox {
-                    blocks,
-                    content_layout,
-                    ..
-                } = &anchor.content
-                else {
-                    continue;
+                // A POSITIONED TABLE (`w:tblpPr`) is placed on the same float
+                // layer, and its rows are ordinary block fragments stacked from
+                // the anchor origin with no content inset. Without this arm a
+                // click inside a floating table would resolve to whatever body
+                // text sits behind it, and the caret inside one would have no
+                // geometry — the same defect grouped text boxes had.
+                let (blocks, left, mut top) = match &anchor.content {
+                    AnchorContent::TextBox {
+                        blocks,
+                        content_layout,
+                        ..
+                    } => (
+                        blocks,
+                        anchor.rect.origin.x + content_layout.origin.x,
+                        anchor.rect.origin.y + content_layout.origin.y,
+                    ),
+                    AnchorContent::Table { rows } => {
+                        (rows, anchor.rect.origin.x, anchor.rect.origin.y)
+                    }
+                    _ => continue,
                 };
-                let left = anchor.rect.origin.x + content_layout.origin.x;
-                let mut top = anchor.rect.origin.y + content_layout.origin.y;
                 for block in blocks {
                     collect_fragment(block, left, top, page.number, None, &mut out);
                     top = top + block.height();

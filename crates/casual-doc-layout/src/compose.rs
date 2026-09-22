@@ -707,6 +707,14 @@ fn compose_anchor(list: &mut DisplayList, anchor: &PlacedAnchor) {
             compose_blocks(list, blocks, content_origin);
             list.push(PaintItem::PopClip);
         }
+        AnchorContent::Table { rows } => {
+            // A positioned table's rows are ordinary block fragments stacked
+            // from the anchor rectangle's origin, so they paint through the
+            // identical path an in-flow table takes — borders, shading, cell
+            // content and all. No clip: a table is sized to its own rows, and
+            // Word does not clip a positioned table to a box.
+            compose_blocks(list, rows, anchor.rect.origin);
+        }
     }
 }
 

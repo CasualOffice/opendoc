@@ -11755,6 +11755,13 @@ impl WasmDocument {
                     | AnchorContent::RoundedRectangle { .. }
                     | AnchorContent::Polygon { .. }
                     | AnchorContent::Line { .. } => "shape",
+                    // A positioned table (`w:tblpPr`) rides the same float layer
+                    // but is NOT a floating drawing object: it is selected and
+                    // edited through the ordinary table surfaces and its cells
+                    // keep their own model identity, so it never becomes an
+                    // object box. Named explicitly rather than swept up by a
+                    // wildcard, which would silently absorb a future variant.
+                    AnchorContent::Table { .. } => continue,
                 };
                 if let Some(reference) = group_ref {
                     let resize_handles =

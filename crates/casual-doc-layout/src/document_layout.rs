@@ -622,7 +622,7 @@ fn build_body_galley(
     line_grid: Option<crate::flow::LineGrid>,
     labels: &NoteLabels,
 ) -> Vec<BlockFragment> {
-    build_galley_for_blocks_inner(
+    let mut galley = build_galley_for_blocks_inner(
         document,
         shaper,
         blocks,
@@ -634,7 +634,16 @@ fn build_body_galley(
             labels: Some(labels),
         },
         line_grid,
-    )
+    );
+    // A positioned table (`w:tblPr/w:tblpPr`) is not a block in the flow: drop
+    // its rows here so the paginator never reserves a band for them and the
+    // text that follows flows into the space they would have taken. The table
+    // itself is flowed and placed by the float layer
+    // (`crate::table_float::place_floating_tables`), and the exclusions that
+    // push surrounding text aside come from its resolved rectangle. `O(galley)`,
+    // and a no-op for a document that positions no table.
+    crate::table_float::lift_floating_rows(&mut galley, document);
+    galley
 }
 
 /// Lays a whole [`Document`] out into a finished, ready-to-render
@@ -880,6 +889,9 @@ fn finish_pagination_pass(
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
     place_floats(&mut layout, document, shaper, &fallback_config);
+    // Positioned tables (`w:tblPr/w:tblpPr`) join the same float layer, straight
+    // after the drawings, so one z-space covers both (`docs/109` row 64).
+    crate::table_float::place_floating_tables(&mut layout, document, shaper, &fallback_config);
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
@@ -1029,7 +1041,10 @@ fn paragraph_float_exclusions(
 
     let mut exclusions = ParagraphFloatExclusions::new();
     for wrap in wraps {
-        if !body_order.contains_key(&wrap.source) {
+        // A wrap's source is the top-level body PARAGRAPH that anchors it — or,
+        // for a positioned table (`w:tblpPr`), the table's own id, because a
+        // positioned table anchors itself rather than hanging off a run.
+        if !body_order.contains_key(&wrap.source) && !body_table_ids.contains(&wrap.source) {
             continue;
         }
         let left = wrap.rect.origin.x - emu_to_twip(wrap.distances.start_emu);
@@ -1042,8 +1057,19 @@ fn paragraph_float_exclusions(
             // every overlapping top-level paragraph on the resolved page must be
             // considered. The bounded fixed point below makes that backward
             // dependency deterministic.
+            //
+            // The test is a true band intersection: a float whose top falls
+            // *inside* a paragraph (a positioned table nudged `w:tblpY="1"`
+            // below the flow position is the canonical case, and a `posOffset`
+            // drawing does the same) used to be skipped outright, so text ran
+            // straight through it. APPROXIMATION, recorded rather than hidden:
+            // `ParagraphFloatExclusion` is a *leading* exclusion measured from
+            // the paragraph's own top, so such a float also narrows the lines
+            // above its top edge. That over-excludes; running text through a
+            // float does not, and the conservative envelope below already
+            // treats over-exclusion as the safe direction.
             if *page_index != wrap.page_index
-                || top > rect.origin.y
+                || top >= rect.bottom()
                 || bottom <= rect.origin.y
                 || right <= rect.origin.x
                 || left >= rect.right()
@@ -1200,7 +1226,7 @@ fn build_section_runs_cached(
         plan_for_section(plans, last.id).config
     });
     let layout = ColumnLayout::single(config.content_area());
-    let galley = build_galley_cached_labeled(
+    let mut galley = build_galley_cached_labeled(
         document,
         shaper,
         layout.flow_width(),
@@ -1211,6 +1237,10 @@ fn build_section_runs_cached(
             labels: Some(labels),
         },
     );
+    // Same lift as the uncached builder: a positioned table is not a block in
+    // the flow. The incremental path must agree with the fresh one fragment for
+    // fragment or the two would paginate the same document differently.
+    crate::table_float::lift_floating_rows(&mut galley, document);
     vec![SectionRun {
         config,
         layout,

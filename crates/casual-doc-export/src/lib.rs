@@ -3043,6 +3043,51 @@ mod semantic_tests {
     }
 
     #[test]
+    fn a_partially_specified_tblppr_round_trips_without_materializing_defaults() {
+        use casual_doc_model::v1::{BlockNode, TableAnchor, TableOverlap};
+        // The `w:tblpPr` the owner's corpus actually carries (`demo.docx`): a
+        // vertical anchor and offset, two of the four from-text distances, and
+        // `w:tblOverlap="never"` — no `w:horzAnchor`, no `w:tblpX`, no spec.
+        //
+        // The layout resolver DEFAULTS the absent attributes (an absent anchor
+        // is `text`, an absent offset is 0, ECMA-376 §17.4.58). Export must not:
+        // writing those defaults back would turn an inherited value into an
+        // authored one and change the file for a document nobody edited.
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body>
+            <w:tbl>
+                <w:tblPr>
+                    <w:tblpPr w:rightFromText="187" w:bottomFromText="72"
+                              w:vertAnchor="text" w:tblpY="1"/>
+                    <w:tblOverlap w:val="never"/>
+                </w:tblPr>
+                <w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr>
+            </w:tbl>
+        </w:body></w:document>"#;
+        let (m1, m2) = round_trip_main_document(xml);
+        assert_eq!(m1, m2, "the positioned table survives write -> reopen");
+
+        let BlockNode::Table(table) = &m1.body()[0] else {
+            panic!("expected a table block");
+        };
+        assert_eq!(table.properties.overlap, Some(TableOverlap::Never));
+        let float = table
+            .properties
+            .float_position
+            .as_ref()
+            .expect("float position modeled");
+        assert_eq!(float.vert_anchor, Some(TableAnchor::Text));
+        assert_eq!(float.tbl_py_twips, Some(1));
+        assert_eq!(float.right_from_text_twips, Some(187));
+        assert_eq!(float.bottom_from_text_twips, Some(72));
+        assert_eq!(float.horz_anchor, None, "an absent anchor stays absent");
+        assert_eq!(float.tbl_px_twips, None, "an absent offset stays absent");
+        assert_eq!(float.x_spec, None);
+        assert_eq!(float.y_spec, None);
+        assert_eq!(float.left_from_text_twips, None);
+        assert_eq!(float.top_from_text_twips, None);
+    }
+
+    #[test]
     fn table_style_ref_and_conditional_formatting_survive_the_semantic_round_trip() {
         // A table associated with a table style (`w:tblStyle`) and drawn
         // right-to-left (`w:bidiVisual`); its header row and a cell each carry a

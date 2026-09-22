@@ -84,6 +84,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         package(&entries_with_document(&custom_geometry_document()))?,
     )?;
 
+    fs::write(
+        output.join("floating-table.docx"),
+        package(&entries_with_document(&floating_table_document()))?,
+    )?;
+
     let mut unknown_safe = minimal_entries();
     unknown_safe.push((
         "customXml/item1.xml".to_owned(),
@@ -666,6 +671,56 @@ fn tab_hit_offsets_document() -> Vec<u8> {
 /// 3 and 4 must keep painting their bounding rectangle and keep reporting the
 /// loss; a fixture with only the supported cases could not tell a correct
 /// importer from one that flattens curves into straight lines.
+/// `floating-table.docx` — a **positioned** table (`w:tblPr/w:tblpPr`) followed
+/// by prose that must wrap beside it (`docs/109` row 64 / `105` FID-L-07).
+///
+/// The `w:tblpPr` is the one the owner's own corpus carries verbatim
+/// (`demo.docx`, the only `w:tblpPr` in any document available to this
+/// repository): anchored to the text, nudged `w:tblpY="1"` below the flow
+/// position, with a 187-twip right and 72-twip bottom wrap gap and
+/// `w:tblOverlap="never"`. The grid is Word's own 1818 + 1620 twips, so the
+/// placed table is exactly 3 438 twips wide.
+///
+/// The page is US Letter with 1-inch margins (`w:pgSz`/`w:pgMar` written
+/// explicitly, so the fixture's geometry does not depend on a default), and the
+/// body is one short paragraph, the table, then enough prose to produce lines
+/// both beside and below it.
+fn floating_table_document() -> Vec<u8> {
+    let cell = |width: i32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let row = |a: &str, b: &str| format!("<w:tr>{}{}</w:tr>", cell(1_818, a), cell(1_620, b));
+    let prose = "the body text beside a positioned table must wrap around it ".repeat(24);
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>\
+         <w:p><w:r><w:t>Tables</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr>\
+         <w:tblpPr w:rightFromText=\"187\" w:bottomFromText=\"72\" \
+         w:vertAnchor=\"text\" w:tblpY=\"1\"/>\
+         <w:tblOverlap w:val=\"never\"/>\
+         <w:tblW w:w=\"0\" w:type=\"auto\"/>\
+         </w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"1818\"/><w:gridCol w:w=\"1620\"/></w:tblGrid>\
+         {}{}\
+         </w:tbl>\
+         <w:p><w:r><w:t xml:space=\"preserve\">{prose}</w:t></w:r></w:p>\
+         <w:sectPr>\
+         <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+         w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>\
+         </w:sectPr>\
+         </w:body></w:document>",
+        row("ITEM", "COST"),
+        row("Widget", "12"),
+    )
+    .into_bytes()
+}
+
 fn custom_geometry_document() -> Vec<u8> {
     // One anchored shape carrying `geometry` as its `wps:spPr` geometry child.
     let shape = |name: &str, cx: i64, cy: i64, geometry: &str, paint: &str| {

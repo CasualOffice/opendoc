@@ -131,6 +131,12 @@ pub(crate) fn body_wrap_rects(
             &mut out,
         );
     }
+    // A positioned table (`w:tblpPr`) wraps text exactly as a square-wrapped
+    // drawing does, so it contributes to the same exclusion set rather than to a
+    // parallel one (`docs/109` row 64 / `105` FID-L-07).
+    out.extend(crate::table_float::wrap_rects(
+        layout, document, shaper, config,
+    ));
     out
 }
 
@@ -243,7 +249,12 @@ fn collect_body_wrap_inlines(
 #[must_use]
 pub(crate) fn document_has_anchored_object(document: &Document) -> bool {
     let definitions = document.definitions();
-    document.body().iter().any(block_has_anchor)
+    // A positioned table (`w:tblpPr`) is a float too: it is lifted out of the
+    // galley and placed against the page, so a window cannot be paginated
+    // independently of it either. Missing it here would let a windowed open
+    // paginate a document differently from a full one.
+    crate::table_float::has_floating_table(document)
+        || document.body().iter().any(block_has_anchor)
         || definitions
             .headers
             .iter()
@@ -519,16 +530,51 @@ impl FloatCtx<'_> {
     /// document; header/footer band reservation is deliberately irrelevant to
     /// OOXML page/margin reference frames.
     fn geometry(&self, section: SectionId) -> AnchorGeometry {
-        self.document
-            .definitions()
-            .sections
-            .iter()
-            .find(|boundary| boundary.id == section)
-            .map_or_else(
-                || AnchorGeometry::from_config(self.config),
-                AnchorGeometry::from_section,
-            )
+        anchor_geometry(self.document, self.config, section)
     }
+}
+
+/// The free form of [`FloatCtx::geometry`], so a caller that has no float walk
+/// of its own (positioned tables, [`crate::table_float`]) resolves the very same
+/// page/margin reference frames.
+fn anchor_geometry(document: &Document, config: &PageConfig, section: SectionId) -> AnchorGeometry {
+    document
+        .definitions()
+        .sections
+        .iter()
+        .find(|boundary| boundary.id == section)
+        .map_or_else(
+            || AnchorGeometry::from_config(config),
+            AnchorGeometry::from_section,
+        )
+}
+
+/// Resolves a body float's page-local rectangle when the caller has already
+/// located its page, its text-flow anchor box, and its text column.
+///
+/// This is the seam positioned (floating) tables place through
+/// ([`crate::table_float`]). It exists so a `w:tblpPr` table resolves against
+/// **exactly** the reference frames, named alignments and signed offsets a
+/// `wp:anchor` drawing does — one placement rule, not two. `anchor_box` is what
+/// a `paragraph`/`line`-relative anchor resolves against (for a table, the
+/// zero-height line at the flow position its rows were lifted from), and
+/// `column` is the text column a `column`-relative anchor resolves against.
+#[must_use]
+pub(crate) fn resolve_body_float_rect(
+    document: &Document,
+    config: &PageConfig,
+    section: SectionId,
+    anchor_box: Rect,
+    column: Rect,
+    anchor: &DrawingAnchor,
+    extent: Extent,
+) -> Rect {
+    let refs = AnchorRefs::new(
+        anchor_geometry(document, config, section),
+        anchor_box,
+        column,
+    );
+    resolve_anchor_rect(anchor, extent, &refs)
 }
 
 /// Which page region a float's anchoring paragraph lives in.
@@ -544,7 +590,7 @@ enum PageScope {
 /// blocks belong to the final body-level section. Pre-filling with the final
 /// section also gives malformed multi-section input the same deterministic
 /// behavior as the paginator when a break is absent.
-fn body_section_ids(document: &Document, fallback: SectionId) -> Vec<SectionId> {
+pub(crate) fn body_section_ids(document: &Document, fallback: SectionId) -> Vec<SectionId> {
     let body = document.body();
     let sections = &document.definitions().sections;
     let Some(final_section) = sections.last() else {
