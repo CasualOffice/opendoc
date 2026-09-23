@@ -33,13 +33,15 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   // overflow control, and — crucially — no horizontal scrollbar.
   await expect(page.locator("#ribbonOverflowBtn")).toBeHidden();
   expect(await ribbonHasNoHScroll(page)).toBe(true);
-  // Editing mode follows the Vellum reference into the footer and remains
-  // visible independently of Home-band overflow; the requested Home control is
-  // mirrored from the same mode state.
+  // ONE editing-mode control, in the status bar. The Home band carried a second
+  // copy of the same three-state control — `109` UX-016, closed in docs/123 §4.5
+  // — and neither ONLYOFFICE, Google Docs nor Word ships two. Asserted from the
+  // whole document rather than from the footer, so a third copy anywhere would
+  // fail this as loudly as the second did.
   await expect(
     page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
   ).toBeVisible();
-  await expect(page.locator("#ribbonReviewModeControl")).toBeVisible();
+  expect(await page.locator(".review-mode-segmented").count()).toBe(1);
 
   // Undo/Redo occupy distinct rows; Clipboard and Editing expose their authored
   // icons rather than appearing as text-only/empty commands.
@@ -50,8 +52,17 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   await expect(page.locator("#copyBtn .ms")).toHaveText("content_copy");
   await expect(page.locator("#findBtn .ms")).toHaveText("search");
   await expect(page.locator("#replaceBtn .ms")).toHaveText("find_replace");
+  // Paste is the ONE captioned control on this band — docs/123 §4.3: every
+  // `x-huge icon-top` button in ONLYOFFICE's toolbar is an Insert, Layout or
+  // Draw command and their Home tab has none, while Word captions exactly one
+  // here. Cut, Copy, Find and Replace lost captions no reference gives them, so
+  // the tile-fit check is Paste's now, and the other four are asserted to carry
+  // no label at all rather than quietly keeping one.
+  for (const id of ["cutBtn", "copyBtn", "findBtn", "replaceBtn"]) {
+    await expect(page.locator(`#${id} .fmt-big-label`)).toHaveCount(0);
+  }
   const tileContentFits = await page.evaluate(() =>
-    ["cutBtn", "copyBtn", "findBtn", "replaceBtn"].every((id) => {
+    ["pasteBtn"].every((id) => {
       const button = document.getElementById(id).getBoundingClientRect();
       const icon = document.querySelector(`#${id} .ms`).getBoundingClientRect();
       const label = document
@@ -79,16 +90,13 @@ test("the Home ribbon never horizontally scrolls; narrow widths collapse groups 
   });
   expect(highlightDividerClearance).toBeGreaterThanOrEqual(12);
 
-  await page
-    .locator('#ribbonReviewModeControl [data-review-mode="suggesting"]')
-    .click();
-  await expect(
-    page.locator('#reviewModeControl [data-review-mode="suggesting"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+  // The survivor still drives the engine, which is the guarantee the two-control
+  // mirror was standing in for: Suggesting mode IS track-changes, so the Review
+  // band's toggle is the independent read-back.
+  await page.locator('#reviewModeControl [data-review-mode="suggesting"]').click();
+  await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "true");
   await page.locator('#reviewModeControl [data-review-mode="editing"]').click();
-  await expect(
-    page.locator('#ribbonReviewModeControl [data-review-mode="editing"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#reviewTrackBtn")).toHaveAttribute("aria-pressed", "false");
 
   // Narrow: groups that don't fit move into the "⋯" menu — still no scrollbar.
   await page.setViewportSize({ width: 760, height: 720 });
@@ -145,7 +153,12 @@ test("overflowed icon controls keep tooltips and the command surface restores fo
   const menu = page.locator("#ribbonOverflowMenu");
   await trigger.click();
   await expect(menu).toBeVisible();
-  await expect(page.locator("#fontFamily")).toBeFocused();
+  // The menu takes focus, on its own first enabled control. Read out of the menu
+  // rather than named: WHICH group overflows at 760px is a function of the
+  // band's width budget, and naming `#fontFamily` pinned an arrangement rather
+  // than the contract. (It changed when docs/123 took 250px out of the band.)
+  const firstInMenu = menu.locator("button:not(:disabled)").first();
+  await expect(firstInMenu).toBeFocused();
 
   await page.locator("#alignCenter").hover();
   await expect(page.locator(".ribbon-tooltip")).toContainText("Center");

@@ -23,12 +23,9 @@ export function createAboutDialog(engineVersion, fallbackFocus) {
     ? registerModal(dialog, { initialFocus: () => close, fallbackFocus })
     : null;
 
-  const toggle = (open) => {
-    if (!modal) return;
-    if (!open) {
-      modal.close();
-      return;
-    }
+  /** Stamps the engine version into the panel. Shared with the File page's
+   *  About PANE, which shows the same element without opening the dialog. */
+  const stampVersion = () => {
     const slot = document.getElementById("aboutVersion");
     if (slot) {
       // The engine may not have booted yet — About is a `noDoc` command, so it
@@ -42,9 +39,22 @@ export function createAboutDialog(engineVersion, fallbackFocus) {
       }
       slot.textContent = version || "not loaded yet";
     }
+  };
+
+  const toggle = (open) => {
+    if (!modal) return;
+    if (!open) {
+      modal.close();
+      return;
+    }
+    stampVersion();
     modal.open();
   };
 
   close?.addEventListener("click", () => toggle(false));
+  // The stamp comes back too: the File page's About PANE shows this same
+  // element without opening the dialog, and an About that says "not loaded
+  // yet" forever would be worse than no pane.
+  toggle.stampVersion = stampVersion;
   return toggle;
 }

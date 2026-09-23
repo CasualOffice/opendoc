@@ -52,6 +52,7 @@ export const FILE_SURFACE = [
       "file.export.pdf",
       "file.export.docx",
       "file.export.odt",
+      "file.export.rtf",
       "file.export.text",
       "file.export.json",
     ],

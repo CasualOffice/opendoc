@@ -328,9 +328,18 @@ export async function runFilePageCommand(page, commandId) {
   }
   await openFilePage(page);
   const row = page.locator(`#filePageBody .file-page-item[data-command="${commandId}"]`);
-  await expect(row, `${commandId} should be reachable from the File page`).toBeVisible();
-  await expect(row, `${commandId} should be enabled on the File page`).toBeEnabled();
-  await row.click();
+  if (await row.count()) {
+    await expect(row, `${commandId} should be enabled on the File page`).toBeEnabled();
+    await row.click();
+    return;
+  }
+  // The page can render a command as a PANE rather than as a row that runs —
+  // Settings, the Help rows, Document properties, New, and the six export
+  // formats behind one `Export`. The category row records what it stands in
+  // for, so "File ▸ X is reachable" is still one question with one answer.
+  const category = page.locator(`#filePageBody .file-page-item[data-covers~="${commandId}"]`);
+  await expect(category, `${commandId} should be reachable from the File page`).toBeVisible();
+  await category.click();
 }
 
 /** Saves the open document through File ▸ Save. */

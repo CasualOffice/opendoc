@@ -102,11 +102,11 @@ HF-094. FID-L-16 and FID-L-18 are partly closed with the remainder stated in the
 | Class | Rows | Open | Closed this session |
 | --- | ---: | ---: | --- |
 | EV — evidence and public claims | 7 | 1 | 6 (#528, this PR) |
-| UX — editor UI/UX | 24 | 19 | 5 (#537, #542, one-axis navigation) |
+| UX — editor UI/UX | 24 | 18 | 6 (#537, #542, one-axis navigation, the ribbon visual contract) |
 | CQ — engineering quality | 10 | 10 | 0 |
 | FID — fidelity and round-trip | 34 | 26 | 6 (#534, #536, #541, #543) |
 | OO — ONLYOFFICE fit-gap | 21 | 21 | 0 — analysis only, no implementation yet |
-| **Total** | **96** | **77** | **17** |
+| **Total** | **96** | **76** | **18** |
 
 **These counts are derived from the rows, not maintained by hand** — re-derive them rather
 than editing them, per CQ-007. (The first draft of this table said 55 rows and understated
@@ -189,7 +189,7 @@ repeated; see §2.4 for the `104` corrections that came out of it.
 | UX-013 | **Print has no visible chrome** — File menu, ⌘P and the palette only. Because the menu bar is hidden until a document loads, a new user has no discoverable print affordance at all. | P2 | S | `webapp/src/main.js:11537`; `webapp/editor.html:32` | Open |
 | UX-014 | **Menu taxonomy matches neither Word nor Docs:** Format painter under **Edit**; Page setup and Paragraph properties under **Tools**; Settings under **Tools**; header/footer under **Insert**; review mode duplicated in **View** and **Review**. | P2 | S | `webapp/src/main.js:11884, 11888, 11893, 11903, 11914` | Fixed — the taxonomy fault was a symptom of a deeper one: TWO navigation systems on screen at once, so a command's home was a guess between a menu bar and a ribbon tab strip. Each chrome now has exactly one axis, File first, per the owner's instruction and ONLYOFFICE's structure. Designed and evidenced in `122-ONE-AXIS-NAVIGATION-DESIGN.md`; Format painter is a Format row, Page setup and Settings are File-surface rows, review mode is View only, and the Tools and Help menus are gone. |
 | UX-015 | **Single-surface capabilities:** Pages panel (rail only), compact-ribbon toggle (chevron only — `HF-094`), table style gallery, line/paragraph spacing (in no menu), format painter (no context menu), Settings (not on the View ribbon, contra `64`:128). | P2 | M | `webapp/editor.html:1045-1049`; `webapp/src/main.js:822-862` | **Partly fixed** (#542) — the compact-ribbon toggle is no longer chevron-only: `view.compactRibbon` is a View-menu and palette command whose label reads back its state (`main.js:12187`, `:12421`), guarded by `file-new-and-ribbon-mode.spec.mjs:130,164`. That is HF-094. **Still open:** Pages panel (rail only), table style gallery, line/paragraph spacing, format painter, and Settings absent from the View ribbon |
-| UX-016 | **Two mode controls with different labels for one state** — the ribbon says "Edit / Suggest / Read only", the footer says "Editing / Suggesting / Read only". | P3 | S | `webapp/editor.html:346-348` vs `:1334-1336` | Open |
+| UX-016 | **Two mode controls with different labels for one state** — the ribbon said "Edit / Suggest / Read only", the footer says "Editing / Suggesting / Read only". | P3 | S | `webapp/editor.html` — the `data-group="mode"` group, now deleted | Fixed — the Home band's copy is gone and the status bar's is the only one left. Where the survivor belongs is a separate, open question: all three references put the mode selector in the top chrome and none in a status bar (`109` UX-025, `123` §4.5) |
 
 ### 2.3 Interaction, feedback, accessibility, responsive
 
