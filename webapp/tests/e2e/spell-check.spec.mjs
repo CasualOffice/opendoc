@@ -386,11 +386,11 @@ test("grammar and spelling are independent switches, both remembered", async ({
 
   // Spelling off, grammar still on — the owner rated grammar the more
   // important of the two, so it must not be reachable only via spelling.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible();
 
-  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await runAppMenuCommand(page, "review", "tools.grammarCheck");
   await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Grammar check off");
 
@@ -399,7 +399,7 @@ test("grammar and spelling are independent switches, both remembered", async ({
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
 
-  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await runAppMenuCommand(page, "review", "tools.grammarCheck");
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
     timeout: 20_000,
   });
@@ -407,7 +407,7 @@ test("grammar and spelling are independent switches, both remembered", async ({
     timeout: 5_000,
   });
   // Put spelling back so the stored preference does not leak into other specs.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   expect(consoleErrors).toEqual([]);
 });
 

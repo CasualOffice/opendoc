@@ -403,7 +403,7 @@ export async function applyParagraphStyle(page, name) {
     await option.click();
   } else {
     await page.keyboard.press("Escape");
-    await runAppMenuCommand(page, "help", "help.commands");
+    await runFilePageCommand(page, "help.commands");
     await page.locator("#cmdInput").fill(`Style: ${name}`);
     const row = page.locator(
       `#cmdList .cmd-item[data-command-id="style.${name}"]`,
