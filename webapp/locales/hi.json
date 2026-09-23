@@ -1,0 +1,16 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "hi",
+  "@@reviewed": false,
+  "settings.language.label": "भाषा",
+  "settings.language.note": "अंग्रेज़ी के अलावा अन्य अनुवाद मशीन द्वारा तैयार किए गए हैं और किसी मातृभाषी ने उनकी समीक्षा नहीं की है।",
+  "settings.language.systemDefault": "सिस्टम डिफ़ॉल्ट ({name})",
+  "status.characters.noSpaces": "{count} वर्ण (रिक्त स्थान रहित)",
+  "status.characters.one": "{count} वर्ण",
+  "status.characters.other": "{count} वर्ण",
+  "status.characters.withSpaces": "{count} वर्ण (रिक्त स्थान सहित)",
+  "status.paragraphs.one": "{count} अनुच्छेद",
+  "status.paragraphs.other": "{count} अनुच्छेद",
+  "status.words.one": "{count} शब्द",
+  "status.words.other": "{count} शब्द"
+}

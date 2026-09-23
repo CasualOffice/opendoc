@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "vi",
+  "@@reviewed": false,
+  "settings.language.label": "Ngôn ngữ",
+  "settings.language.note": "Các bản dịch không phải tiếng Anh do máy tạo và chưa được người bản ngữ rà soát.",
+  "settings.language.systemDefault": "Mặc định của hệ thống ({name})",
+  "status.characters.noSpaces": "{count} ký tự (không có khoảng trắng)",
+  "status.characters.other": "{count} ký tự",
+  "status.characters.withSpaces": "{count} ký tự (có khoảng trắng)",
+  "status.paragraphs.other": "{count} đoạn văn",
+  "status.words.other": "{count} từ"
+}

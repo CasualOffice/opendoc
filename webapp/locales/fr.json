@@ -1,0 +1,19 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "fr",
+  "@@reviewed": false,
+  "settings.language.label": "Langue",
+  "settings.language.note": "Les traductions autres que l’anglais sont générées automatiquement et n’ont pas été relues par un locuteur natif.",
+  "settings.language.systemDefault": "Valeur par défaut du système ({name})",
+  "status.characters.many": "{count} caractères",
+  "status.characters.noSpaces": "{count} caractères (espaces non compris)",
+  "status.characters.one": "{count} caractère",
+  "status.characters.other": "{count} caractères",
+  "status.characters.withSpaces": "{count} caractères (espaces compris)",
+  "status.paragraphs.many": "{count} paragraphes",
+  "status.paragraphs.one": "{count} paragraphe",
+  "status.paragraphs.other": "{count} paragraphes",
+  "status.words.many": "{count} mots",
+  "status.words.one": "{count} mot",
+  "status.words.other": "{count} mots"
+}

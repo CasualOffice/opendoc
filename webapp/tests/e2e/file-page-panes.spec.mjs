@@ -149,13 +149,30 @@ test("a borrowed panel survives being shown, left, and shown again", async ({
   // Exactly one settings form in the document — it is moved, never copied.
   expect(await page.locator("#settingsPanel").count()).toBe(1);
 
-  // And it fits: the dialog was taller than the window, which is what put it in
-  // the page in the first place.
-  const fits = await page.evaluate(() => {
-    const el = document.querySelector("#filePageDetail #settingsPanel");
-    return el.getBoundingClientRect().bottom <= innerHeight + 1;
+  // And all of it is REACHABLE. The dialog was taller than the window, and
+  // scrolling it scrolled the document behind — that is what put Settings in
+  // the page. A form taller than the viewport is fine here; a form whose
+  // bottom cannot be reached, or one whose scrolling moves the document, is
+  // the defect coming back. (The form grew past one screen when the language
+  // picker joined it, which is precisely when an "it fits" assertion would
+  // have started lying about the guarantee it was standing for.)
+  const scrolling = await page.evaluate(() => {
+    const pane = document.querySelector("#filePageDetail");
+    const panel = document.querySelector("#filePageDetail #settingsPanel");
+    const behind = document.querySelector(".page-wrap")?.getBoundingClientRect().top ?? 0;
+    pane.scrollTop = pane.scrollHeight;
+    return {
+      scrollable: pane.scrollHeight > pane.clientHeight,
+      bottomReached: panel.getBoundingClientRect().bottom <= pane.getBoundingClientRect().bottom + 1,
+      documentMoved:
+        Math.abs((document.querySelector(".page-wrap")?.getBoundingClientRect().top ?? 0) - behind) >
+        1,
+      windowScrolled: window.scrollY !== 0,
+    };
   });
-  expect(fits, "the settings pane may not run off the bottom of the window").toBe(true);
+  expect(scrolling.bottomReached, "the bottom of the settings form cannot be reached").toBe(true);
+  expect(scrolling.documentMoved, "scrolling the pane moved the document behind it").toBe(false);
+  expect(scrolling.windowScrolled, "scrolling the pane scrolled the window").toBe(false);
 
   expect(consoleErrors).toEqual([]);
 });

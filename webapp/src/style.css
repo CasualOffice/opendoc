@@ -19,22 +19,50 @@
    reaching the document (docs/104 HF-074). #pages is already tabindex=0, so it
    is a real tab target for the link to hand over to. Off-screen until focused,
    then placed over the chrome so it is visibly the first stop. */
+/* Hidden by CLIPPING, not by being parked 9,999px to the left. The old trick
+   made the page 11,279px wide the moment the interface went right-to-left —
+   `left: -9999px` measures from the RTL origin, so the document grew leftwards
+   and opened scrolled away from itself: an Arabic editor that painted a blank
+   window. Clipping takes no space in either direction (docs/124 §3.5). */
 .skip-link {
   position: absolute;
-  left: -9999px;
   top: 0;
+  inset-inline-start: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
   z-index: 100;
 }
 
 .skip-link:focus {
-  left: 8px;
+  inset-inline-start: 8px;
   top: 8px;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
   padding: 8px 12px;
   border-radius: 6px;
   background: var(--surface);
   color: var(--ink);
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* The DOCUMENT is not the interface (docs/124 §3.5).
+   When the chrome goes right-to-left for an Arabic or Hebrew reader, these
+   surfaces do not follow: a left-to-right `.docx` is left-to-right whoever
+   opens it, and inheriting `rtl` here would reverse its punctuation, its list
+   markers, its table column order and the caret's idea of "next". Direction
+   inside a document belongs to that document's own `w:bidi`, applied per
+   paragraph by the renderer — never to the reader's locale. */
+.page-wrap,
+.page,
+.ruler,
+.pages-panel {
+  direction: ltr;
 }
 
 /* ---- Color contract (docs/104 theme T-08) ------------------------------------

@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "zh-Hant",
+  "@@reviewed": false,
+  "settings.language.label": "語言",
+  "settings.language.note": "英文以外的譯文由機器產生，未經母語者審校。",
+  "settings.language.systemDefault": "系統預設 ({name})",
+  "status.characters.noSpaces": "{count} 個字元（不含空格）",
+  "status.characters.other": "{count} 個字元",
+  "status.characters.withSpaces": "{count} 個字元（含空格）",
+  "status.paragraphs.other": "{count} 個段落",
+  "status.words.other": "{count} 個字詞"
+}

@@ -1,0 +1,16 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "en",
+  "@@reviewed": true,
+  "settings.language.label": "Language",
+  "settings.language.note": "Translations other than English are machine-produced and have not been reviewed by a native speaker.",
+  "settings.language.systemDefault": "System default ({name})",
+  "status.characters.noSpaces": "{count} characters (no spaces)",
+  "status.characters.one": "{count} character",
+  "status.characters.other": "{count} characters",
+  "status.characters.withSpaces": "{count} characters (with spaces)",
+  "status.paragraphs.one": "{count} paragraph",
+  "status.paragraphs.other": "{count} paragraphs",
+  "status.words.one": "{count} word",
+  "status.words.other": "{count} words"
+}

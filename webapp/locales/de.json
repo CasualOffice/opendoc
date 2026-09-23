@@ -1,0 +1,16 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "de",
+  "@@reviewed": false,
+  "settings.language.label": "Sprache",
+  "settings.language.note": "Übersetzungen außer Englisch sind maschinell erstellt und wurden nicht von Muttersprachlern geprüft.",
+  "settings.language.systemDefault": "Systemstandard ({name})",
+  "status.characters.noSpaces": "{count} Zeichen (ohne Leerzeichen)",
+  "status.characters.one": "{count} Zeichen",
+  "status.characters.other": "{count} Zeichen",
+  "status.characters.withSpaces": "{count} Zeichen (mit Leerzeichen)",
+  "status.paragraphs.one": "{count} Absatz",
+  "status.paragraphs.other": "{count} Absätze",
+  "status.words.one": "{count} Wort",
+  "status.words.other": "{count} Wörter"
+}

@@ -64,6 +64,8 @@ import {
   renderMenuLevel as renderMenuLevelRows,
 } from "./menu_render.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
+import { countLabels } from "./status_counts.mjs";
+import { startLocalisation } from "./locale_boot.mjs";
 import { isShortcutLike, localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import {
   DRAFT_EXPORT_MODES,
@@ -2937,21 +2939,18 @@ function updateStats() {
     return;
   }
   const s = doc.documentStats();
-  const words = s.words;
-  const chars = s.charactersWithSpaces;
-  const charsNoSpaces = s.characters;
-  const paras = s.paragraphs;
+  const labels = countLabels({
+    words: s.words,
+    characters: s.charactersWithSpaces,
+    charactersNoSpaces: s.characters,
+    paragraphs: s.paragraphs,
+  });
   s.free();
-  statWords.textContent = `${words.toLocaleString()} word${words === 1 ? "" : "s"}`;
-  statChars.textContent = `${chars.toLocaleString()} character${chars === 1 ? "" : "s"}`;
-  // Word distinguishes with- vs without-spaces; surface both on hover.
-  statChars.title = `${chars.toLocaleString()} characters (with spaces)\n${charsNoSpaces.toLocaleString()} characters (no spaces)`;
-  statParas.textContent = `${paras.toLocaleString()} paragraph${paras === 1 ? "" : "s"}`;
-  // Narrow windows shed the lower-priority counts from the bar (see the
-  // status-bar disclosure ladder in style.css). Word keeps the full set one
-  // gesture away in its Word Count dialog; until we have that dialog, the
-  // whole region carries every figure so nothing shed becomes unobtainable.
-  statsEl.title = `${words.toLocaleString()} words\n${chars.toLocaleString()} characters (with spaces)\n${charsNoSpaces.toLocaleString()} characters (no spaces)\n${paras.toLocaleString()} paragraphs`;
+  statWords.textContent = labels.words;
+  statChars.textContent = labels.characters;
+  statChars.title = labels.charactersTitle;
+  statParas.textContent = labels.paragraphs;
+  statsEl.title = labels.allTitle;
   statsEl.hidden = false;
   statPages.hidden = false;
   updatePageNumber();
@@ -16666,11 +16665,16 @@ const accentSwatches = document.getElementById("accentSwatches");
 const accentCustom = document.getElementById("accentCustom");
 const settingsReset = document.getElementById("settingsReset");
 const settingsClose = document.getElementById("settingsClose");
+const languageSelect = document.getElementById("languageSelect");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
 const DEFAULT_SETTINGS = {
   theme: "system",
+  // "" means follow the browser. A person who has never touched this gets
+  // their own language if we ship it, and a person who chose one keeps it even
+  // on a machine whose browser disagrees (docs/124 §5).
+  language: "",
   accent: "#3355c4",
   authorName: "",
   authorInitials: "",
@@ -16870,6 +16874,22 @@ settingsBtn.addEventListener("click", (e) => {
 });
 settingsClose.addEventListener("click", () => toggleSettings(false));
 applySettings();
+// After `applySettings`, so the picker is built against the settings that were
+// actually loaded, and awaited nowhere: the editor draws in English and the
+// chosen language relabels it when its catalogue lands.
+// Locale (docs/124). After `applySettings`, so the picker is built against
+// the settings that were actually loaded, and awaited nowhere: the editor
+// draws in English and the chosen language relabels it when its catalogue
+// lands. The counts are the one surface markup cannot carry — they are
+// rendered from the engine — so re-rendering them is what this hands over.
+void startLocalisation({
+  select: languageSelect,
+  settings,
+  saveSettings,
+  onLocalised: () => {
+    if (doc) updateStats();
+  },
+});
 
 // ---- Document properties (docProps/core.xml — title, author, subject, …) ----
 const propertiesBtn = document.getElementById("propertiesBtn");

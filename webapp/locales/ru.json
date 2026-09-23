@@ -1,0 +1,22 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "ru",
+  "@@reviewed": false,
+  "settings.language.label": "Язык",
+  "settings.language.note": "Переводы, кроме английского, созданы машинно и не проверены носителем языка.",
+  "settings.language.systemDefault": "Системный по умолчанию ({name})",
+  "status.characters.few": "{count} символа",
+  "status.characters.many": "{count} символов",
+  "status.characters.noSpaces": "{count} символов (без пробелов)",
+  "status.characters.one": "{count} символ",
+  "status.characters.other": "{count} символа",
+  "status.characters.withSpaces": "{count} символов (с пробелами)",
+  "status.paragraphs.few": "{count} абзаца",
+  "status.paragraphs.many": "{count} абзацев",
+  "status.paragraphs.one": "{count} абзац",
+  "status.paragraphs.other": "{count} абзаца",
+  "status.words.few": "{count} слова",
+  "status.words.many": "{count} слов",
+  "status.words.one": "{count} слово",
+  "status.words.other": "{count} слова"
+}

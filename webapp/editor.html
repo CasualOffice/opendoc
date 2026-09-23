@@ -240,6 +240,16 @@
           <button type="button" data-theme="dark">Dark</button>
         </div>
       </div>
+      <!-- Language. First in the section because it is the setting that
+           decides what every other label in this dialog says: a user who
+           cannot read the dialog needs to reach this control without reading
+           the dialog, so it is at the top and its options name themselves
+           (docs/124 §5). -->
+      <div class="settings-section">
+        <div class="settings-label" data-i18n="settings.language.label">Language</div>
+        <select id="languageSelect" class="dialog-select" data-i18n-label="settings.language.label" aria-label="Language"></select>
+        <p class="settings-note" id="languageNote" data-i18n="settings.language.note">Translations other than English are machine-produced and have not been reviewed by a native speaker.</p>
+      </div>
       <div class="settings-section">
         <div class="settings-label">Accent</div>
         <div class="swatches" id="accentSwatches">

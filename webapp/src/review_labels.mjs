@@ -87,14 +87,12 @@ export function reviewCardAriaLabel(item) {
   return `Suggested ${kind} by ${author}${suffix}`;
 }
 
-
-
-/** One side of a tracked formatting change, and the whole sentence that
- *  describes one, in Word's words.
+/** One side of a tracked formatting change, in Word's words.
  *
- *  Moved out of the shell: between them they hold twenty-five property NAMES
- *  and every value's rendering, all of it pure string work over plain objects,
- *  and none of it anything the editor has to be running to be tested. */
+ *  Moved out of the shell with `reviewFormattingDescription` below it: between
+ *  them they hold twenty-five property NAMES and every value's rendering, all
+ *  of it pure string work over plain objects, and none of it anything the
+ *  editor shell has to be running to be tested. */
 export function reviewFormattingValue(property, value) {
   if (value == null) return "inherited";
   // The model's logical alignment names, in Word's words ("Formatted: Centered").
