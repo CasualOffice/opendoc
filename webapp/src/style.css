@@ -151,16 +151,23 @@
   --h-control: 30px;
   --h-search: 34px;
   --h-field: 36px;
-  --h-tab: 34px;
+  /* The ribbon tab strip, now that it shares the header with the document
+     title. 28px is ONLYOFFICE's `@toolbar-height-tabs-top-title`
+     (`apps/common/main/resources/less/variables.less:104`) — the height they
+     use for exactly this arrangement, against 32px for a tab strip on a row of
+     its own. Ours was 34px on a row of its own; see docs/123 §3. */
+  --h-tab: 28px;
   --h-rail-control: 44px;
   --h-footer: 30px;
   --h-header: 58px;
-  /* The captioned ribbon band under the tab strip. Content-sized in reality —
-     the tallest tab (Home, with the styles gallery) measures 90.5px — so this
-     is the one number here that has to be kept honest by a test rather than by
-     arithmetic; responsive-shell.spec.mjs asserts the panels below actually
-     clear the ribbon's measured bottom edge. */
-  --h-ribbon-band: 92px;
+  /* The ribbon band. Content-sized in reality, so this number has to be kept
+     honest by a test rather than by arithmetic; responsive-shell.spec.mjs
+     asserts the panels below actually clear the ribbon's measured bottom edge.
+     It was 92px while every group carried an uppercase caption under it;
+     deleting that row (docs/123 §4 — ONLYOFFICE's groups have no captions at
+     all) took the tallest band, Home, down to ~72px, which is within a couple
+     of pixels of their own 66px `@toolbar-height-controls`. */
+  --h-ribbon-band: 74px;
   /* The compact toolbar's height — the prototype's --toolbar-h. Declared here
      so `--chrome-bottom` and the bar itself read the same number. */
   --h-compact-bar: clamp(38px, 3.4vh, 46px);
@@ -192,12 +199,12 @@
   --dlg-pad-x: clamp(14px, 2.2vw, 22px);
   --dlg-pad-y: clamp(10px, 1.4vh, 16px);
   --dlg-gap: clamp(8px, 0.9vh, 14px);
-  /* Bottom edge of the fixed shell chrome: header bar + ribbon tab strip +
-     ribbon band. Anything that floats over the workarea from a viewport-fixed
+  /* Bottom edge of the fixed shell chrome: header bar (which now carries the
+     tab strip) + ribbon band. Anything that floats over the workarea from a viewport-fixed
      position anchors to THIS, never to a literal, so the ribbon's right-hand
      group and its "⋯" overflow button can never end up underneath a panel
      (HF-084). Redefined below for the collapsed ribbon, where the band is gone. */
-  --chrome-bottom: calc(var(--h-header) + var(--h-tab) + var(--h-ribbon-band));
+  --chrome-bottom: calc(var(--h-header) + var(--h-ribbon-band));
   --icon-compact: 16px;
   --icon-control: 18px;
   --icon-rail: 20px;
@@ -846,6 +853,16 @@ input {
 }
 
 /* ---- Settings popover ------------------------------------------------------ */
+/* Opened from the header's gear. It grew past the height of the window as
+ * settings were added — spelling and grammar were the last two — so the
+ * bottom of it (Reset, the autosave controls) was simply unreachable, and
+ * scrolling it scrolled the document behind instead. The owner's report:
+ * "its height exceed .. so that panel doesnt makes any sense now".
+ *
+ * Bounded to the viewport with its own scroll, which is what every product's
+ * settings surface does once it outgrows a popover. The File page's Settings
+ * PANE is the roomy route and is unaffected — it overrides these in
+ * `.panel-in-page`. */
 .settings-panel {
   position: absolute;
   top: var(--h-header);
@@ -857,6 +874,10 @@ input {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-popover);
   box-shadow: var(--shadow-popover);
+  /* The gap below the header, less a margin so it never touches the edge. */
+  max-height: calc(100vh - var(--h-header) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .settings-panel[hidden] {
@@ -3132,13 +3153,46 @@ body.modal-open {
   z-index: 2;
 }
 
+/* The tab strip is NOT a row of its own any more — it sits in the header, in
+   the slot the compact chrome gives its menu bar (docs/123 §3). So it carries
+   no horizontal padding of its own (the header's 14px is the page gutter, and
+   the strip aligns with the title above it) and no bottom rule (there is no
+   band edge to draw here; the selected tab's own underline is the indicator).
+
+   It scrolls under a trailing fade exactly as `.app-menu-bar` does, and for the
+   same reason: the 58px header is fully committed, a visible scrollbar would
+   have to come out of the strip's own height, and a name cut off with no cue is
+   `109` HF-097. The chevron is a sibling, so it never scrolls away. */
+.ribbon-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The strip takes the whole row so the chevron lands at the far right, where
+   both references put the ribbon's fold control (Word's caret at the ribbon's
+   right edge; Google Docs' `^` at the right end of its toolbar, measured).
+   Left to shrink-wrap it sat flush against the last tab and read as a 9th one. */
+.ribbon-nav .ribbon-tabs {
+  flex: 1 1 auto;
+}
+
 .ribbon-tabs {
   display: flex;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 2px;
   height: var(--h-tab);
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 22px), transparent);
+}
+
+.ribbon-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 /* Compact ↔ ribbon view toggle: collapses the whole band to just the tab strip
@@ -3171,10 +3225,6 @@ body.modal-open {
   border-bottom-right-radius: 0;
 }
 
-.ribbon.is-collapsed .ribbon-tabs {
-  border-bottom: none;
-}
-
 .ribbon.is-collapsed .ribbon-body {
   display: none;
 }
@@ -3184,8 +3234,9 @@ body.modal-open {
    ribbon's own state rather than requiring a second class on <body>, so the
    token can never disagree with what is actually on screen. */
 body:has(.ribbon.is-collapsed) {
-  /* Tab strip plus the ribbon's own bottom hairline; the band itself is gone. */
-  --chrome-bottom: calc(var(--h-header) + var(--h-tab) + 1px);
+  /* The tab strip lives in the header now, so a collapsed ribbon contributes
+     nothing at all and the chrome ends where the header ends. */
+  --chrome-bottom: var(--h-header);
 }
 
 /* Compact chrome replaces the whole ribbon — tab strip AND band — with one
@@ -3202,9 +3253,13 @@ body.compact-mode {
   --chrome-bottom: calc(var(--h-header) + var(--h-compact-bar) + 14px);
 }
 
+/* 12px of side padding, which is ONLYOFFICE's own tab metric
+   (`.toolbar .tabs li > a { padding: 0 12px }` — `toolbar.less`, and the same
+   value in their shipped 9.4.1 stylesheet). It was 14px, chosen by nobody;
+   across 8 tabs that is 32px the header does not have to spare. */
 .ribbon-tab {
   height: var(--h-tab);
-  padding: 0 14px;
+  padding: 0 12px;
   border: none;
   background: none;
   color: var(--muted);
@@ -3258,14 +3313,22 @@ body.compact-mode {
   display: none;
 }
 
+/* With the captions gone (docs/123 §4) the vertical rule and the spacing are
+   the ONLY thing that says where one group ends and the next begins, so both
+   are ONLYOFFICE's: `.group { padding-left: 6px }` plus a `.separator` with
+   `margin-left: 6px` — 12px of air around a one-pixel rule
+   (`apps/common/main/resources/less/toolbar.less:498,545`). It was 2px a side
+   around a `--line` hairline, which under a caption row was enough and without
+   one is not: at 4px the Font group's last control sat against the Paragraph
+   group's first. `--line-strong` rather than `--line` for the same reason. */
 .rgroup {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 3px;
-  padding: 0 2px;
-  border-right: 1px solid var(--line);
+  padding: 0 6px;
+  border-right: 1px solid var(--line-strong);
   flex: 0 0 auto;
 }
 
@@ -3323,17 +3386,44 @@ body.compact-mode {
   text-align: left;
 }
 
-/* Captioned ribbon-group bands (redesign): a small, letter-spaced, uppercase
-   caption sits under each divider-separated group — FONT / PARAGRAPH / STYLES /
-   EDITING. text-transform is presentation only, so the DOM text (e.g. "Font")
-   is unchanged for a11y and tests. */
+/* Ribbon-group captions are NOT drawn (docs/123 §4). ONLYOFFICE's band has no
+   caption element at all — `apps/common/main/resources/less/toolbar.less:498`
+   makes `.group` a bare `display: table-cell` with 6px (10px when `.small`) of
+   left padding, and `Toolbar.template` renders `<div class="group small">` with
+   nothing but control slots inside. Grouping is carried by the `.separator`
+   rules and the spacing, which is what `.rgroup`'s `border-right` already does
+   here. Word does caption its groups; the owner asked for ONLYOFFICE, and the
+   caption row cost a full 16.5px of a band that is 74px tall.
+
+   The text STAYS in the DOM, visually hidden: it is the group's accessible name
+   (docs/105 P3 "name the 24 groups"), it is what the "⋯" overflow menu prints
+   as its section headings — where there IS room for it, and where Word shows
+   the same words — and `ribbon-home.spec.mjs` reads it there. */
 .rgroup-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* …except in the overflow menu, which is a menu, not a band: there the caption
+   is the only thing that says which group a stack of icons came from. */
+#ribbonOverflowMenu .rgroup-label {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  clip-path: none;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--faint);
-  white-space: nowrap;
 }
 
 .rgroup-note {
@@ -3394,6 +3484,19 @@ body.compact-mode {
 
 .undo-ctl {
   align-items: center;
+}
+
+/* Two stacked rows of small buttons inside one group. This is ONLYOFFICE's
+   `.elset` (`apps/common/main/resources/less/toolbar.less:530`): one row the
+   height of a small button, the next one below it, and the pair filling the
+   group. It was declared in the markup and styled nowhere — only `.undo-stack`
+   carried the rules — so a second user of it (Clipboard, Editing) got a
+   horizontal row. */
+.stackrows {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
 }
 
 .undo-stack {
@@ -5507,7 +5610,38 @@ body.is-format-painting .page-wrap * {
  * Two mutually exclusive toolbars. `body` carries exactly one of
  * `.compact-mode` / `.ribbon-mode`, so neither can be half-shown. */
 body.compact-mode .ribbon { display: none; }
+/* The tab strip is no longer inside `.ribbon` — it sits in the header, where
+ * the compact chrome puts its menu bar (docs/123 §3) — so hiding the ribbon no
+ * longer hides it. It is named here explicitly, next to the rule it used to
+ * inherit from, so the pair cannot drift apart. */
+body.compact-mode .ribbon-nav { display: none; }
 body.ribbon-mode .compact-toolbar { display: none; }
+
+/* The header's centre column is a fixed 500px in compact chrome, which is all
+ * a 7-name menu bar needs. The tab strip is wider than that — 8 tabs plus the
+ * chevron — so in ribbon chrome the column takes the room the controls leave. */
+body.ribbon-mode .document-chrome { max-width: none; }
+
+/* Ribbon chrome stacks a 28px tab strip under the title inside the SAME 58px
+ * header the compact chrome fills with a 21px menu bar, so the title row takes
+ * Google Docs' own 24px (measured in their editor at 1408px: title input top
+ * 10, height 24) and the header's vertical padding tightens to 3px.
+ * 3 + 24 + 28 + 3 = 58 exactly, so the header height stays one number for both
+ * chromes instead of becoming two that drift. Scoped to ribbon mode, because
+ * the compact header was measured against Docs in #591 and is not in scope. */
+body.ribbon-mode .bar {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+body.ribbon-mode .document-title-row {
+  height: 24px;
+}
+
+body.ribbon-mode .doc-title {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
 
 /* ONE navigation axis per chrome (`109` UX-014, docs/122). The editor used to
  * show a menu bar AND a ribbon tab strip at the same time, so finding a command
@@ -5554,20 +5688,44 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   margin-left: 6px;
 }
 
-/* The File page fills the work area. `--chrome-bottom` already tracks where the
- * chrome ends in every density, so the page anchors to it rather than repeating
- * the header/tab arithmetic — the same token the object, paragraph and table
- * panels use. */
+/* The File page COVERS the work area — it is a route, not an overlay.
+ *
+ * It used to anchor to `--chrome-bottom`, which is where the chrome ends when
+ * a BAND is showing. On the File tab there is no band: the page replaces it.
+ * So the page began 74px below the chrome's real bottom edge and the ruler,
+ * the nav rail and the top of the sheet stayed on screen above it — a
+ * full-window route that read as a half-open drawer. It anchors to the
+ * navigation row's bottom edge instead, which is the header's, and that is
+ * also what ONLYOFFICE does: `Viewport.js:182` sets their page's `top` to the
+ * tab strip's height and `.toolbar-fullview-panel` (`toolbar.less:940`) is
+ * `position: absolute; bottom: 0; width: 100%` — full width, down to and
+ * including the status bar. `file-page-coverage.spec.mjs` asserts it from
+ * geometry, so it cannot half-open again.
+ *
+ * `z-index: 6` clears the rail (4), the ruler (4) and the footer (2) and stays
+ * under the `--z-*` ladder, which is for surfaces that float over a document
+ * rather than replace it. */
 .ribbon-panel.file-page {
   position: fixed;
-  inset: var(--chrome-bottom) 0 0 0;
+  inset: var(--h-header) 0 0 0;
   z-index: 6;
   margin: 0;
   border-radius: 0;
   padding: 0;
-  overflow: auto;
-  background: var(--bg);
-  display: block;
+  /* Each column scrolls itself, which is what keeps the rail still while the
+     pane moves — ONLYOFFICE's `.content-box` is `height: 100%; overflow:
+     hidden` inside a full-height `.panel-context` for the same reason. */
+  overflow: hidden;
+  /* The CONTENT side of the page, and it is the light surface — ONLYOFFICE's
+     `.panel-context` is `@background-normal` while the rail beside it is
+     `@background-pane`. Two shades, so the column reads as one side of a page
+     rather than as a list floating in a void. */
+  background: var(--surface);
+  /* Two columns, as theirs is: the rail, then the pane. `flex` rather than the
+     `padding-left: 260px` they use, because our rail's width is content-derived
+     (320px, see below) rather than a constant they can hard-code twice. */
+  display: flex;
+  align-items: stretch;
 }
 
 /* `display: block` above is as specific as `.ribbon-panel[hidden]`, and it comes
@@ -5578,35 +5736,97 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   display: none;
 }
 
+/* One LEFT column, at the window's own gutter — not a 720px block centred in
+ * the window, which left a 344px dead margin before the first word.
+ *
+ * ONLYOFFICE's page is two columns: a 260px navigation rail
+ * (`#file-menu-panel .panel-menu`) and a content pane that shows the selected
+ * category (`filemenu.less:2-12`, `width:100%` + `padding-left: 260px`). We
+ * This is that rail, at their density, beside that pane. What the pane shows
+ * is their fallback rather than a selected category: `FileMenu.js:390` opens
+ * on Save-As when the document can be downloaded and on **Info** otherwise,
+ * and Info is the one pane whose content we already have. Turning Print,
+ * Settings and Save-As into panes of their own is `109` UX-026.
+ *
+ * 320px because the rows are menu rows carrying a chord on the right, and
+ * Google Docs' File menu — the SAME roster, rendered as the compact chrome's
+ * dropdown — measures 322px wide with the same content. 260px ellipsises
+ * "Recover unsaved work ⌘⇧D". */
 .file-page-inner {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 22px 20px 40px;
-}
-
-.file-page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.file-page-title {
+  flex: 0 0 min(320px, 100%);
   margin: 0;
-  font-size: var(--fs-title);
-  font-weight: 650;
-  color: var(--ink);
+  padding: 12px 14px 24px;
+  overflow-y: auto;
+  /* ONLYOFFICE's rail: `@background-pane` with a one-pixel right border
+     (`#file-menu-panel .panel-menu`). */
+  background: var(--bg);
+  border-right: 1px solid var(--line);
 }
 
 .file-page-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+}
+
+/* The content pane. ONLYOFFICE's is `.content-box { height: 100%; padding: 0
+ * 20px; overflow: hidden }` inside a `width: 100%` context; the 20px gutter is
+ * theirs, the rest follows our own type scale. */
+.file-page-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.file-page-detail h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.file-page-detail .file-detail-sub {
+  margin: 0 0 20px;
+  color: var(--muted);
+}
+
+/* A definition list, because that is what it is: a label and its value. Two
+ * columns so the values line up, which is how their Info panel reads. */
+.file-page-detail dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 24px;
+  margin: 0;
+  max-width: 520px;
+}
+
+.file-page-detail dt {
+  color: var(--muted);
+}
+
+.file-page-detail dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+/* The rule under Back, and ONLYOFFICE's `li.devider-small` margins (7px above,
+ * 11px below) — the gap that separates "leave" from "do something". */
+.file-page-rule {
+  height: 1px;
+  margin: 7px 0 11px;
+  border: 0;
+  background: var(--line);
+}
+
+.file-page-back .ms {
+  margin-right: 8px;
+  font-size: var(--icon-control);
+  vertical-align: -4px;
 }
 
 .file-page-item-heading {
-  margin: 14px 0 4px;
+  margin: 10px 0 2px;
+  padding: 0 8px;
   font-size: var(--fs-caption);
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -5618,18 +5838,24 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   margin-top: 0;
 }
 
-/* The rows are the menu rows, one size up: same shape, same disabled treatment,
- * so a person who learned the compact File dropdown recognises the page. */
+/* Row metrics are ONLYOFFICE's File rail, measured in their shipped 9.4.1
+ * stylesheet and confirmed in their live editor: `li.fm-btn` is 28px tall with
+ * 4px below it — a 32px pitch — at 12px type. Ours were 34px tall on a 36px
+ * pitch, which is 12% fewer rows on a screen for no gain in legibility; Google
+ * Docs' File menu is likewise 32px. Type stays at our own `--fs-body` (13px)
+ * rather than their 12px: this stylesheet has one body size and a second one
+ * here would be a fork, not a decision. */
 .file-page-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: 28px;
+  margin-bottom: 4px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   font: inherit;
@@ -5645,6 +5871,12 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
 .file-page-item:disabled {
   color: var(--muted);
   cursor: default;
+}
+
+.file-page-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-page-item-hint {
@@ -5941,6 +6173,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
  * the drop card becomes the whole page. `openBytes` adds `.doc-loaded` to
  * `<body>` once a document is open, which reveals the chrome again. */
 body:not(.doc-loaded) .ribbon,
+body:not(.doc-loaded) .ribbon-nav,
 body:not(.doc-loaded) .rail,
 body:not(.doc-loaded) .footer,
 body:not(.doc-loaded) .search-trigger,
@@ -7417,4 +7650,298 @@ body:not(.doc-loaded) .drop-title {
 /* `.menu-select` was `padding: 0 6px`, which would put its text under the caret. */
 .menu-select {
   padding: 0 24px 0 8px;
+}
+
+/* ---- File page: the content pane's own furniture ---------------------------
+ * ONLYOFFICE's Save As pane is a grid of format tiles (`filemenu.less`
+ * `.format-items`). This is that grid, at our type scale. */
+.file-format-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+  max-width: 720px;
+}
+
+.file-format-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-format-tile:hover:not(:disabled),
+.file-format-tile:focus-visible {
+  border-color: var(--accent, var(--line));
+  background: var(--surface);
+}
+
+.file-format-tile:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 28px is ONLYOFFICE's own `@x-huge-btn-icon-size` — the size they give the
+   icon on a tall tile, which is what these are. */
+.file-format-icon {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--ink-soft, var(--ink));
+  opacity: 0.85;
+}
+
+.file-format-tile:hover:not(:disabled) .file-format-icon {
+  opacity: 1;
+}
+
+.file-format-ext {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--surface-2, var(--surface));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft, var(--ink));
+}
+
+/* A category row points INTO the page; the chevron says so, as theirs does. */
+.file-page-item-chevron {
+  margin-left: auto;
+  opacity: 0.55;
+  font-size: 18px;
+}
+
+.file-page-item-category[aria-pressed="true"] {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* Settings, moved into the pane: it is a section of the page now, not a
+   floating dialog, so it drops the dialog's frame and scrolls with the pane
+   instead of scrolling the window behind it. */
+.settings-panel.settings-in-page {
+  position: static;
+  display: block;
+  width: auto;
+  max-width: 680px;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* ---- The File page's right side, as ONE surface --------------------------
+ * Every pane — Export, New, and each borrowed panel — shares this: the same
+ * title, the same one-line blurb, the same 720px measure, the same rhythm.
+ *
+ * Without it each borrowed panel arrived wearing its dialog's own clothes —
+ * the palette as a centred popup card, Settings at its 268px popover width —
+ * and the right side read as four unrelated dialogs parked in one place
+ * rather than one page. The owner's words: "you just added popup there on
+ * right side .. nothing coherant". */
+.file-pane-body {
+  max-width: 720px;
+}
+
+/* A borrowed panel is normalised INTO the pane, not merely unframed: it gives
+   up its own width, padding, card and shadow and inherits the pane's. */
+.panel-in-page {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+/* The popup CARD inside an overlay-style dialog — the palette's box, a
+   dialog's inner panel — flattens for the same reason. */
+.panel-in-page > .cmd-box,
+.panel-in-page > .cmd-panel,
+.panel-in-page > .dialog,
+.panel-in-page > .dialog-card,
+.panel-in-page > .dialog-panel,
+.panel-in-page > .settings-inner {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* A pane's own heading is the page's; a panel that carries its own title
+   would print it twice. */
+/* The pane supplies the heading and the measure beneath it, so the panel's own
+   dialog header is a SECOND title saying the same thing — and its close button
+   would close a dialog that is not open. `>` was wrong here: the header sits
+   inside the dialog's card, not at the panel's root, so the duplicate title
+   showed on every borrowed panel. */
+.panel-in-page .dialog-head,
+.panel-in-page .dialog-title,
+.panel-in-page > h2:first-child {
+  display: none;
+}
+
+/* A popup's list is capped so the popup fits the screen. In a pane there is no
+   popup to fit — the pane itself scrolls — so the cap only cut the list off
+   mid-row, which is what made this read as a popup someone had parked here. */
+.panel-in-page .cmd-list,
+.panel-in-page .shortcuts-body,
+.panel-in-page [class$="-list"] {
+  max-height: none;
+  overflow: visible;
+}
+
+/* The search field fills the measure rather than sitting in a popup. */
+.panel-in-page input[type="text"],
+.panel-in-page input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* A dialog shown as a File-page PANE: it is a section of the page now, so it
+   drops the overlay's frame and scrolls with the pane rather than scrolling
+   the window behind it (`docs/123`; the owner's report was the Settings form
+   being taller than the window). */
+.panel-in-page,
+.settings-panel.panel-in-page,
+.dialog-overlay.panel-in-page {
+  position: static;
+  display: block;
+  inset: auto;
+  width: auto;
+  max-width: 760px;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+  overflow: visible;
+}
+
+/* The inner card a dialog-overlay wraps loses its own frame too. */
+.panel-in-page > .dialog,
+.panel-in-page > .dialog-card,
+.panel-in-page > .dialog-panel {
+  position: static;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* The dialog's own close button is meaningless in a pane — the rail is how you
+   leave, and `Back to document` is how you leave the page. */
+.panel-in-page .dialog-close { display: none; }
+
+/* A dialog card shrink-wraps its content and centres itself in the overlay —
+   right for a dialog, wrong for a pane: About's facts sat adrift in the middle
+   of the page while every other pane started at the heading's left edge, and
+   the card's own body padding indented the rest by a further 22px. In the pane
+   the card IS the measure, so it takes the pane's width and its left edge.
+   Scoped to `#filePageDetail` so it outranks each dialog's own sizing without
+   having to name them one at a time. */
+#filePageDetail .panel-in-page > .dialog-card,
+#filePageDetail .panel-in-page > .cmd-box {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+#filePageDetail .panel-in-page .dialog-body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Template cards are taller than export tiles because a page miniature sits on
+   top of the name, the way Google Docs presents its template gallery. */
+.file-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 16px;
+  max-width: 720px;
+}
+
+.file-template-tile {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px 12px;
+}
+
+.file-template-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  align-items: center;
+  text-align: center;
+}
+
+.file-template-description {
+  font-size: 12px;
+  color: var(--ink-soft, var(--ink));
+  opacity: 0.7;
+}
+
+/* The preview is a real Letter sheet drawn at its real point sizes and scaled
+   down as one block, so `.file-template-page` fixes the visible box and the
+   sheet inside it overflows into that scale. */
+.file-template-page {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  /* Paper, in both themes: this is a picture of a page, and a page is white
+     even when the chrome around it is dark — the same reason `--paper` is a
+     fixed light value rather than a themed surface. */
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+  flex: none;
+}
+
+.file-template-sheet {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  box-sizing: border-box;
+  background: var(--paper);
+  color: var(--paper-ink);
+  font-family: var(--doc-font, "Times New Roman", Times, serif);
+  text-align: left;
+}
+
+.file-template-line {
+  display: block;
+  line-height: 1.08;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.file-template-tile:hover:not(:disabled) .file-template-page,
+.file-template-tile:focus-visible .file-template-page {
+  border-color: var(--accent, var(--line));
 }

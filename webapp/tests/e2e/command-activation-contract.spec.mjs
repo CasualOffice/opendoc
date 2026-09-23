@@ -29,6 +29,7 @@
 // Every row and every button is discovered from the live DOM, so a command
 // added to a menu or the ribbon tomorrow is covered without touching this file.
 import {
+  MOD,
   test,
   expect,
   gotoEditor,
@@ -333,17 +334,34 @@ test.describe("Settings is reachable from every surface that offers it", () => {
   test("from the File page, where ONLYOFFICE keeps Advanced Settings", async ({ page, consoleErrors }) => {
     await loadEditor(page);
     await openFilePage(page);
-    await page.locator('#filePageBody .file-page-item[data-command="view.settings"]').click();
+    // Settings is a PANE on the File page now, not a dialog over it — the
+    // owner's "replace dialogs with this space", and ONLYOFFICE's own shape
+    // (`FileMenu.js:412`, Advanced Settings is a panel). The rail row that
+    // selects it records the command it stands in for.
+    const row = page.locator('#filePageBody .file-page-item[data-covers~="view.settings"]');
+    await row.click();
     await expect(page.locator(panel)).toBeVisible();
-    // Open means usable, not merely present: the panel takes the keyboard.
-    await expect(page.locator(`${panel} :focus`)).toHaveCount(1);
+    // Open means usable, not merely present. A pane is a region of the page, so
+    // it does not seize the keyboard the way a modal does — what must hold is
+    // that the keyboard REACHES it, by tabbing forward past the rest of the
+    // rail. A pane nothing can tab into is a picture of a settings form.
+    await row.focus();
+    let reached = false;
+    for (let press = 0; press < 20 && !reached; press += 1) {
+      await page.keyboard.press("Tab");
+      reached = (await page.locator(`${panel} :focus`).count()) === 1;
+    }
+    expect(reached, "the keyboard cannot reach the settings pane").toBe(true);
     expect(consoleErrors).toEqual([]);
   });
 
   test("from the command palette", async ({ page, consoleErrors }) => {
     await loadEditor(page);
-    await openFilePage(page);
-    await page.locator('#filePageBody .file-page-item[data-command="help.commands"]').click();
+    // The palette as a palette — its own chord over the document. Its File-page
+    // face is a pane, which is a different surface with a different contract
+    // (`file-page-panes.spec.mjs`), and this row is about the palette.
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await expect(page.locator("#cmdPalette")).toBeVisible();
     await page.locator("#cmdInput").fill("settings");
     await page.locator("#cmdList .cmd-item").first().click();
     await expect(page.locator(panel)).toBeVisible();
@@ -367,8 +385,10 @@ test.describe("Settings is reachable from every surface that offers it", () => {
     // The fix moved light dismiss from `click` to `pointerdown`; the behaviour
     // it protects must survive that, or this would trade one defect for another.
     await loadEditor(page);
-    await openFilePage(page);
-    await page.locator('#filePageBody .file-page-item[data-command="view.settings"]').click();
+    // The gear's popup is the surface light dismiss belongs to: the File page's
+    // Settings is a pane, and a pane is not dismissed by clicking the document
+    // behind it — there is no document behind it.
+    await page.locator("#settingsBtn").click();
     await expect(page.locator(panel)).toBeVisible();
     await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
     await expect(page.locator(panel)).toBeHidden();

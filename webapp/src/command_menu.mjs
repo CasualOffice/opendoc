@@ -45,13 +45,29 @@
  *   surface from a full one without re-reading the DOM.
  */
 export function renderCommandRows(host, sections, byId, options) {
-  const { itemClass, separatorClass, headingFor, formatShortcut, onRun } = options;
+  const { itemClass, separatorClass, headingFor, formatShortcut, onRun, rowFor } = options;
   host.replaceChildren();
   let rendered = 0;
   let groups = 0;
   sections.forEach((ids, index) => {
-    const commands = ids.map((id) => byId.get(id)).filter(Boolean);
-    if (!commands.length) return;
+    // A section can carry rows that are not commands — the File page's category
+    // rows, which select a pane instead of running one. A category row takes
+    // the PLACE of the command it stands in for rather than being appended
+    // after the section, so the two File surfaces list the same things in the
+    // same order; `SKIP_ROW` is how one category row speaks for several
+    // commands (Export, for the six formats behind it).
+    const rows = [];
+    for (const id of ids) {
+      const replacement = rowFor?.(id, ids, index);
+      if (replacement === SKIP_ROW) continue;
+      if (replacement) {
+        rows.push(replacement);
+        continue;
+      }
+      const command = byId.get(id);
+      if (command) rows.push(commandRow(command, { itemClass, formatShortcut, onRun }));
+    }
+    if (!rows.length) return;
     if (separatorClass && groups > 0) {
       const separator = document.createElement("div");
       separator.className = separatorClass;
@@ -66,8 +82,8 @@ export function renderCommandRows(host, sections, byId, options) {
       host.appendChild(h);
     }
     groups += 1;
-    for (const command of commands) {
-      host.appendChild(commandRow(command, { itemClass, formatShortcut, onRun }));
+    for (const row of rows) {
+      host.appendChild(row);
       rendered += 1;
     }
   });
@@ -225,4 +241,199 @@ export function createMenuBar({ bar, popover, sectionsFor, registry, formatShort
   window.addEventListener("resize", () => close());
 
   return { open, close, isOpen: () => !popover.hidden, activeMenu: () => activeMenu };
+}
+
+/**
+ * Fills the File page's content pane with the document's own information.
+ *
+ * ONLYOFFICE's File page is never empty: `FileMenu.js:390` opens it on the
+ * Save-As pane when the document can be downloaded and on the Info pane
+ * otherwise, and `FileMenu.js:414` builds that Info pane from the document.
+ * We have no Save-As pane yet, so this is their fallback — and it is here
+ * rather than left blank because three quarters of an empty window reads as a
+ * broken page however good the reason for it.
+ *
+ * It takes the figures rather than computing them: the status bar already owns
+ * that arithmetic, and a second count is a second answer to "how long is this
+ * document". `info.format` is likewise the format CATALOGUE's label ("DOCX"),
+ * not the internal uniform type identifier the document carries — the caller
+ * resolves it through the same `formatInfo()` the save-format picker reads, so
+ * the page and the picker cannot name one format two different ways.
+ */
+export function renderFilePageInfo(host, info) {
+  if (!host) return;
+  host.replaceChildren();
+  if (!info) return;
+  const title = document.createElement("h2");
+  title.textContent = info.name || "Untitled document";
+  const sub = document.createElement("p");
+  sub.className = "file-detail-sub";
+  sub.textContent = info.format || "";
+  const list = document.createElement("dl");
+  for (const [label, value] of info.rows ?? []) {
+    if (value === undefined || value === null || value === "") continue;
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = String(value);
+    list.append(dt, dd);
+  }
+  host.append(title, sub, list);
+}
+
+/**
+ * A category row on the File page's rail — one that SELECTS a pane instead of
+ * running a command.
+ *
+ * ONLYOFFICE's File page is a rail plus a pane, and the rail carries both
+ * kinds: `Save`/`Print` act, while `Save as`, `Info` and `Advanced Settings`
+ * select what the pane shows (`FileMenu.js:390` even picks which one it opens
+ * on). Ours had no pane, so six export formats sat in the rail as six rows
+ * where theirs has one.
+ */
+/** Returned by `rowFor` for a command another row already speaks for: the
+ *  export formats behind the one `Export` row. It is a sentinel rather than a
+ *  boolean so "no replacement" and "already covered" cannot be confused. */
+export const SKIP_ROW = Symbol("skip row");
+
+export function categoryRow({ id, label, itemClass, selected, onSelect, covers }) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = `${itemClass} ${itemClass}-category`;
+  item.dataset.filePane = id;
+  // The commands this row stands in for. The two File surfaces render the same
+  // roster differently — a dropdown runs each command, the page opens a pane —
+  // and this is what lets a parity test prove they still offer the same things.
+  if (covers?.length) item.dataset.covers = covers.join(" ");
+  item.setAttribute("aria-pressed", String(!!selected));
+  const text = document.createElement("span");
+  text.className = `${itemClass}-label`;
+  text.textContent = label;
+  const chevron = document.createElement("span");
+  chevron.className = "ms file-page-item-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "chevron_right";
+  item.append(text, chevron);
+  item.addEventListener("click", () => onSelect(id));
+  return item;
+}
+
+/**
+ * The Export pane: one tile per format the engine can write.
+ *
+ * ONLYOFFICE's Save As pane is a grid of format tiles (`filemenu.less`
+ * `.format-items`), and it is the pane their File page opens on whenever the
+ * document can be downloaded. This is that, with our formats.
+ */
+export function renderExportPane(host, formats, onExport) {
+  host.replaceChildren();
+  const title = document.createElement("h2");
+  title.textContent = "Export";
+  const sub = document.createElement("p");
+  sub.className = "file-detail-sub";
+  sub.textContent = "Choose a format to save a copy as.";
+  const grid = document.createElement("div");
+  grid.className = "file-format-grid";
+  for (const format of formats) {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "file-format-tile";
+    tile.disabled = format.enabled === false;
+    if (format.reason) tile.title = format.reason;
+    // Icon plus name, which is what ONLYOFFICE's Save As tiles are. The
+    // extension used to be a second text chip beside the name, so a PDF tile
+    // read "PDF PDF" and every tile carried two labels for one format.
+    const glyph = document.createElement("span");
+    glyph.className = "ms file-format-icon";
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = format.icon || "draft";
+    const name = document.createElement("span");
+    name.className = "file-format-name";
+    name.textContent = format.label;
+    tile.append(glyph, name);
+    tile.addEventListener("click", () => onExport(format));
+    grid.appendChild(tile);
+  }
+  host.append(title, sub, grid);
+}
+
+/**
+ * The New pane: one tile per starter document.
+ *
+ * ONLYOFFICE's Create New pane is a grid of document tiles with `Blank` first
+ * (`FileMenuPanels.js:1318-1350`), so this is that grid — the same tiles the
+ * Export pane uses, because they are the same thing: pick one, something
+ * happens.
+ */
+/** Tile thumbnail width in CSS pixels. 132px against a 612pt page is a 0.216
+ *  scale — close to the miniature Google Docs shows in its template gallery,
+ *  and wide enough that a title reads as a title next to body text. */
+const TEMPLATE_PREVIEW_WIDTH = 132;
+
+/**
+ * A miniature of the template's own first page: its real paragraphs at their
+ * real point sizes on a real Letter sheet, scaled down as one block. Nothing
+ * here is drawn by hand, so a template whose body changes previews differently
+ * without anybody redrawing an icon.
+ */
+export function templatePreview(thumbnail, width = TEMPLATE_PREVIEW_WIDTH) {
+  const scale = width / thumbnail.widthPt;
+  const frame = document.createElement("span");
+  frame.className = "file-template-page";
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.width = `${width}px`;
+  frame.style.height = `${Math.round(thumbnail.heightPt * scale)}px`;
+  const sheet = document.createElement("span");
+  sheet.className = "file-template-sheet";
+  sheet.style.width = `${thumbnail.widthPt}px`;
+  sheet.style.height = `${thumbnail.heightPt}px`;
+  sheet.style.padding = `${thumbnail.marginPt}px`;
+  sheet.style.transform = `scale(${scale})`;
+  for (const block of thumbnail.blocks) {
+    const line = document.createElement("span");
+    line.className = "file-template-line";
+    line.style.fontSize = `${block.sizePt}px`;
+    line.style.marginTop = `${block.beforePt}px`;
+    line.style.marginBottom = `${block.afterPt}px`;
+    if (block.bold) line.style.fontWeight = "700";
+    if (block.italic) line.style.fontStyle = "italic";
+    // An empty paragraph still occupies a line on the page, and the preview is
+    // wrong if the blank lines of a letter collapse away.
+    line.textContent = block.text || "\u00a0";
+    sheet.appendChild(line);
+  }
+  frame.appendChild(sheet);
+  return frame;
+}
+
+export function renderTemplatePane(host, templates, onPick, thumbnailFor) {
+  host.replaceChildren();
+  const title = document.createElement("h2");
+  title.textContent = "New document";
+  const sub = document.createElement("p");
+  sub.className = "file-detail-sub";
+  sub.textContent = "Start from a blank page or a shape that is already laid out.";
+  const grid = document.createElement("div");
+  grid.className = "file-template-grid";
+  for (const template of templates ?? []) {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "file-format-tile file-template-tile";
+    tile.dataset.templateId = template.id;
+    const thumbnail = thumbnailFor?.(template.id);
+    if (thumbnail) tile.appendChild(templatePreview(thumbnail));
+    const text = document.createElement("span");
+    text.className = "file-template-text";
+    const name = document.createElement("span");
+    name.className = "file-format-name";
+    name.textContent = template.label;
+    const description = document.createElement("span");
+    description.className = "file-template-description";
+    description.textContent = template.description ?? "";
+    text.append(name, description);
+    tile.appendChild(text);
+    tile.addEventListener("click", () => onPick(template.id));
+    grid.appendChild(tile);
+  }
+  host.append(title, sub, grid);
 }

@@ -154,9 +154,16 @@ test("both File surfaces offer the same rows — one roster, two renderings", as
   await clickIntoFirstPage(page);
 
   await page.locator("#tabFile").click();
+  // The page renders some of the roster as CATEGORY rows that open a pane
+  // instead of running — one `Export` for the six formats, a pane for each row
+  // that used to open a dialog over the page. A category row records the ids it
+  // stands in for, so this still compares rosters rather than renderings: same
+  // commands, same order, two chromes.
   const onPage = await page
     .locator("#filePageBody .file-page-item")
-    .evaluateAll((rows) => rows.map((r) => r.dataset.command));
+    .evaluateAll((rows) =>
+      rows.flatMap((r) => (r.dataset.command ? [r.dataset.command] : r.dataset.covers.split(" "))),
+    );
   await page.keyboard.press("Escape");
 
   await openAppMenu(page, "file");

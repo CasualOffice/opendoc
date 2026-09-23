@@ -63,6 +63,56 @@
                this bar behind a hidden scrollbar (`109` HF-097). -->
           <button type="button" class="app-menu-button" data-menu="review" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Review</button>
         </nav>
+        <!-- The ribbon TAB STRIP lives in the header, in the same slot the
+             compact chrome gives its menu bar: one navigation axis, in one
+             place, whichever chrome is on. ONLYOFFICE renders the tab strip
+             and the header content in a single row — `Toolbar.template`'s
+             `.box-tabs` holds `.extra left`, the tabs and `.extra right`, and
+             only `config.twoLevelHeader` splits the title onto a row of its
+             own (`Viewport.js:197-212`). Google Docs does the same with its
+             menu bar, measured under the title in the header block. Doc 123. -->
+        <div class="ribbon-nav">
+        <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
+          <!-- File is the first tab, and the only one whose panel is a PAGE rather
+               than a band. Straight from ONLYOFFICE: `app/view/Toolbar.js:182`
+               declares `{caption: textTabFile, action: 'file', haspanel: false}`
+               ahead of Home/Insert/Layout/References, and `haspanel: false` is
+               precisely "this tab shows a panel, not a ribbon band". It carries
+               the rows that used to need a File menu, a Tools menu and a Help
+               menu in a second navigation system. -->
+          <button id="tabFile" type="button" class="ribbon-tab ribbon-tab-file" data-tab="file" role="tab" aria-controls="panelFile" aria-selected="false" tabindex="-1">File</button>
+          <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-controls="panelHome" aria-selected="true" tabindex="0">Home</button>
+          <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
+          <!-- Layout and References sit where Word puts them (after Insert, before
+               the contextual tabs). Every command on them already shipped; they
+               were scattered across the View ribbon, the Tools menu and the Insert
+               menu, and the palette already declared a `group: "Layout"` with no
+               tab to live on (docs/105 UX-010, OO-001/OO-005).
+
+               Review precedes View, which is the order ONLYOFFICE ships (their
+               tab captions run File, Home, Insert, Layout, References, Review,
+               View — `locale/en.json` `DE.Views.Toolbar.textTab*`) and the order
+               Word ships. `End` on the tab strip therefore lands on View. -->
+          <button id="tabLayout" type="button" class="ribbon-tab" data-tab="layout" role="tab" aria-controls="panelLayout" aria-selected="false" tabindex="-1">Layout</button>
+          <button id="tabReferences" type="button" class="ribbon-tab" data-tab="references" role="tab" aria-controls="panelReferences" aria-selected="false" tabindex="-1">References</button>
+          <button id="tabReview" type="button" class="ribbon-tab" data-tab="review" role="tab" aria-controls="panelReview" aria-selected="false" tabindex="-1">Review</button>
+          <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
+          <!-- Table is CONTEXTUAL, so it goes last. Both references put contextual
+               tabs at the right-hand end: ONLYOFFICE's Header & Footer and Chart
+               design sit after View (their chart tab is declared `aux: true`,
+               commented in `Mixtbar.js` as "show tab at the end of toolbar"), and
+               Word appends Table Design / Layout the same way. It used to sit
+               between References and View, where it read as a permanent tab that
+               happened to be greyed out. -->
+          <button id="tabTable" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
+        </div>
+          <!-- The collapse chevron is a sibling of the tab list, not a child of
+               it: `role="tablist"` may only contain tabs, and the strip now
+               scrolls under a fade the way `.app-menu-bar` does when the header
+               runs out of room — a control inside it would scroll away with the
+               tabs. -->
+          <button id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
+        </div>
       </div>
       <div class="controls">
         <!-- Document state reads as status, not as part of the title, so it
@@ -237,67 +287,7 @@
          aria-label="Formatting toolbar" aria-controls="pages" hidden></div>
 
     <div class="ribbon">
-      <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
-        <!-- File is the first tab, and the only one whose panel is a PAGE rather
-             than a band. Straight from ONLYOFFICE: `app/view/Toolbar.js:182`
-             declares `{caption: textTabFile, action: 'file', haspanel: false}`
-             ahead of Home/Insert/Layout/References, and `haspanel: false` is
-             precisely "this tab shows a panel, not a ribbon band". It carries
-             the rows that used to need a File menu, a Tools menu and a Help
-             menu in a second navigation system. -->
-        <button id="tabFile" type="button" class="ribbon-tab ribbon-tab-file" data-tab="file" role="tab" aria-controls="panelFile" aria-selected="false" tabindex="-1">File</button>
-        <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-controls="panelHome" aria-selected="true" tabindex="0">Home</button>
-        <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
-        <!-- Layout and References sit where Word puts them (after Insert, before
-             the contextual tabs). Every command on them already shipped; they
-             were scattered across the View ribbon, the Tools menu and the Insert
-             menu, and the palette already declared a `group: "Layout"` with no
-             tab to live on (docs/105 UX-010, OO-001/OO-005).
-
-             Review precedes View, which is the order ONLYOFFICE ships (their
-             tab captions run File, Home, Insert, Layout, References, Review,
-             View — `locale/en.json` `DE.Views.Toolbar.textTab*`) and the order
-             Word ships. `End` on the tab strip therefore lands on View. -->
-        <button id="tabLayout" type="button" class="ribbon-tab" data-tab="layout" role="tab" aria-controls="panelLayout" aria-selected="false" tabindex="-1">Layout</button>
-        <button id="tabReferences" type="button" class="ribbon-tab" data-tab="references" role="tab" aria-controls="panelReferences" aria-selected="false" tabindex="-1">References</button>
-        <button id="tabReview" type="button" class="ribbon-tab" data-tab="review" role="tab" aria-controls="panelReview" aria-selected="false" tabindex="-1">Review</button>
-        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
-        <!-- Table is CONTEXTUAL, so it goes last. Both references put contextual
-             tabs at the right-hand end: ONLYOFFICE's Header & Footer and Chart
-             design sit after View (their chart tab is declared `aux: true`,
-             commented in `Mixtbar.js` as "show tab at the end of toolbar"), and
-             Word appends Table Design / Layout the same way. It used to sit
-             between References and View, where it read as a permanent tab that
-             happened to be greyed out. -->
-        <button id="tabTable" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
-        <button id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
-      </div>
       <div class="ribbon-body">
-        <!-- The File PAGE, not a band. ONLYOFFICE's File tab carries
-             `haspanel: false` and opens a full-window route; doc 105 §1 already
-             specified "File backstage as a full-window route" for this chrome.
-             Its rows are rendered from `FILE_SURFACE` in `command_taxonomy.mjs`,
-             the same declaration the compact chrome's File dropdown reads — one
-             roster, two renderings, so they cannot drift.
-
-             `aria-label` rather than `aria-labelledby` on the inner region: the
-             page is a document-level route, and a screen reader landing in it
-             should hear what it is, not the tab that opened it. -->
-        <div id="panelFile" class="ribbon-panel file-page" data-panel="file" role="tabpanel" aria-labelledby="tabFile" hidden>
-          <div class="file-page-inner">
-            <div class="file-page-head">
-              <h2 class="file-page-title">File</h2>
-              <button id="filePageBack" type="button" class="btn file-page-back">
-                <span class="ms" aria-hidden="true">arrow_back</span> Back to document
-              </button>
-            </div>
-            <!-- Filled by `renderFilePage()`; empty in markup for the same reason
-                 the compact toolbar is — every row must resolve against the live
-                 command registry, and a hand-bound row here would be a second
-                 answer to "is Save available?". -->
-            <div id="filePageBody" class="file-page-body"></div>
-          </div>
-        </div>
         <!-- Home band rebuilt to mirror template.png (docs/64): a single no-wrap
              row of divider-separated groups with centered labels underneath.
              Only functional opendoc controls are present — Format Painter,
@@ -325,8 +315,17 @@
                 <span class="ms" aria-hidden="true">content_paste</span>
                 <span class="fmt-big-label">Paste</span>
               </button>
-              <button id="cutBtn" type="button" class="fmt fmt-big" title="Cut (⌘X)" aria-label="Cut" disabled><span class="ms" aria-hidden="true">content_cut</span><span class="fmt-big-label">Cut</span></button>
-              <button id="copyBtn" type="button" class="fmt fmt-big" title="Copy (⌘C)" aria-label="Copy" disabled><span class="ms" aria-hidden="true">content_copy</span><span class="fmt-big-label">Copy</span></button>
+              <!-- Cut and Copy are SMALL and icon-only, stacked beside the big
+                   Paste. That is Word's Clipboard group exactly, and
+                   structurally ONLYOFFICE's too — their clipboard group is two
+                   `.elset` rows of 20px buttons (`Toolbar.template:22-28`).
+                   They carried captions here, which no reference gives them,
+                   and which is why the band's labelling read as arbitrary.
+                   Docs/123 §4.3 states the rule they now follow. -->
+              <div class="stackrows">
+                <button id="cutBtn" type="button" class="fmt" title="Cut (⌘X)" aria-label="Cut" disabled><span class="ms" aria-hidden="true">content_cut</span></button>
+                <button id="copyBtn" type="button" class="fmt" title="Copy (⌘C)" aria-label="Copy" disabled><span class="ms" aria-hidden="true">content_copy</span></button>
+              </div>
             </div>
             <span class="rgroup-label">Clipboard</span>
           </div>
@@ -436,21 +435,18 @@
             <span class="rgroup-label">Styles</span>
           </div>
           <div class="rgroup" data-group="editing" data-ribbon-pinned>
+            <!-- Small and stacked, for the same reason as Cut/Copy above:
+                 neither reference captions an Editing control. ONLYOFFICE's
+                 Home tab has no captioned button at ALL — every `x-huge
+                 icon-top` in their `Toolbar.js` is an Insert, Layout or Draw
+                 command — and Word's Find/Replace are small rows. -->
             <div class="rgroup-ctl editing-ctl">
-              <button id="findBtn" type="button" class="fmt fmt-big" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span><span class="fmt-big-label">Find</span></button>
-              <button id="replaceBtn" type="button" class="fmt fmt-big" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span><span class="fmt-big-label">Replace</span></button>
-            </div>
-            <span class="rgroup-label">Editing</span>
-          </div>
-          <div class="rgroup rgroup-mode" data-group="mode" data-ribbon-pinned>
-            <div class="rgroup-ctl">
-              <div id="ribbonReviewModeControl" class="review-mode-segmented" role="group" aria-label="Editing mode">
-                <button type="button" class="review-mode-seg" data-review-mode="editing" aria-pressed="true" disabled><span class="ms" aria-hidden="true">edit</span>Edit</button>
-                <button type="button" class="review-mode-seg" data-review-mode="suggesting" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span>Suggest</button>
-                <button type="button" class="review-mode-seg" data-review-mode="viewing" aria-pressed="false" disabled><span class="ms" aria-hidden="true">visibility</span>Read only</button>
+              <div class="stackrows">
+                <button id="findBtn" type="button" class="fmt" title="Find and replace (⌘F)" aria-label="Find and replace" disabled><span class="ms" aria-hidden="true">search</span></button>
+                <button id="replaceBtn" type="button" class="fmt" title="Replace (⌘F)" aria-label="Replace" disabled><span class="ms" aria-hidden="true">find_replace</span></button>
               </div>
             </div>
-            <span class="rgroup-label">Mode</span>
+            <span class="rgroup-label">Editing</span>
           </div>
         </div>
 
@@ -734,6 +730,54 @@
         <button id="ribbonOverflowBtn" type="button" class="fmt ribbon-overflow-btn" title="More commands" aria-label="More commands" aria-haspopup="dialog" aria-controls="ribbonOverflowMenu" aria-expanded="false" hidden><span class="ms" aria-hidden="true">more_horiz</span></button>
         <div id="ribbonOverflowMenu" class="ribbon-overflow-menu" role="dialog" aria-label="More ribbon commands" hidden></div>
       </div>
+    </div>
+
+    <!-- The File page is a SIBLING of the ribbon, not a panel inside it.
+         `body` is a flex column, so `.ribbon`'s `z-index: 2` makes it a
+         stacking context and anything inside it — however high its own
+         z-index — paints under the ruler (z 4). That is what left the ruler
+         drawn across a full-window route. ONLYOFFICE keeps theirs outside the
+         toolbar for the same structural reason: `Viewport.template` declares
+         `#file-menu-panel.toolbar-fullview-panel` in its own `<section>`
+         ahead of `#app-title` and `#toolbar`. It is still the `#tabFile`
+         tab's panel — `aria-controls` is a reference, not a containment. -->
+    <!-- The File PAGE, not a band. ONLYOFFICE's File tab carries
+         `haspanel: false` and opens a full-window route; doc 105 §1 already
+         specified "File backstage as a full-window route" for this chrome.
+         Its rows are rendered from `FILE_SURFACE` in `command_taxonomy.mjs`,
+         the same declaration the compact chrome's File dropdown reads — one
+         roster, two renderings, so they cannot drift. Its visual contract is
+         docs/123 §5. -->
+    <div id="panelFile" class="ribbon-panel file-page" data-panel="file" role="tabpanel" aria-labelledby="tabFile" hidden>
+      <div class="file-page-inner">
+        <!-- Back is the FIRST row of the column, at the top LEFT, and it is
+             shaped like the rows beneath it. That is ONLYOFFICE's own page:
+             `FileMenu.template` opens with `<li id="fm-btn-return" class="fm-btn">`
+             followed by a small divider, and their live 9.4.1 editor renders
+             it as "← Back" at the top of the 260px column. Word's backstage
+             puts its back arrow in the same corner. It used to be a button
+             at the top RIGHT, which is the one corner neither reference
+             uses. No page title: the tab that opened the page already names
+             it, and `aria-labelledby="tabFile"` carries that to a reader. -->
+        <button id="filePageBack" type="button" class="file-page-item file-page-back">
+          <span class="file-page-item-label"><span class="ms" aria-hidden="true">arrow_back</span>Back to document</span>
+        </button>
+        <hr class="file-page-rule" />
+        <!-- Filled by `renderFilePage()`; empty in markup for the same reason
+             the compact toolbar is — every row must resolve against the live
+             command registry, and a hand-bound row here would be a second
+             answer to "is Save available?". -->
+        <div id="filePageBody" class="file-page-body"></div>
+      </div>
+      <!-- The CONTENT pane. ONLYOFFICE's File page is two columns and is never
+           empty: `FileMenu.js:390` picks `saveas` when the document can be
+           downloaded and `info` otherwise, so a pane is always showing
+           something. Ours has no Save-As pane yet, so it opens on their
+           fallback — the document's own information — rather than leaving
+           three quarters of the window blank, which reads as a broken page
+           whatever the reasoning behind it. `109` UX-026 tracks turning Print,
+           Settings and Save-As into panes of their own here too. -->
+      <div id="filePageDetail" class="file-page-detail" aria-live="polite"></div>
     </div>
 
     <!-- HF-151 — the product had no keyboard-shortcut reference at all; Help ▸

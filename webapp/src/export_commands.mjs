@@ -18,6 +18,7 @@
 export const EXPORT_COMMANDS = Object.freeze([
   Object.freeze({
     id: "file.export.pdf",
+    icon: "picture_as_pdf",
     label: "Export as PDF…",
     kw: "export save as pdf acrobat",
     // Real-text PDF, not the 150-DPI raster `file.print` builds for physical
@@ -27,24 +28,40 @@ export const EXPORT_COMMANDS = Object.freeze([
   }),
   Object.freeze({
     id: "file.export.docx",
+    icon: "description",
     label: "Export as DOCX…",
     kw: "export save as word",
     format: "org.openxmlformats.wordprocessingml.document",
   }),
   Object.freeze({
     id: "file.export.odt",
+    icon: "description",
     label: "Export as ODT…",
     kw: "export save as opendocument",
     format: "org.oasis.opendocument.text",
   }),
   Object.freeze({
+    id: "file.export.rtf",
+    icon: "article",
+    label: "Export as RTF…",
+    kw: "export save as rich text format rtf",
+    // The engine has written RTF since `casual-doc-rtf` landed and the format
+    // catalogue has carried it all along (`format_io.mjs`) — it simply never
+    // got a row here, so the one writer nobody could reach was the one nobody
+    // noticed. Placed after ODT with the other document formats, before the
+    // two plain-data ones.
+    format: "application.rtf",
+  }),
+  Object.freeze({
     id: "file.export.text",
+    icon: "subject",
     label: "Export as Plain text…",
     kw: "export save as txt",
     format: "text.plain",
   }),
   Object.freeze({
     id: "file.export.json",
+    icon: "data_object",
     label: "Export as Normalized JSON…",
     kw: "export save as json",
     format: "org.casualoffice.normalized-json",

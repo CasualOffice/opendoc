@@ -27,6 +27,16 @@ owns its token spine — which matches the owner's standing rejection of that pa
 Superseded prototypes (`docs/prototypes/word-2026.html`, `docs/prototypes/docs-2026.html`)
 were deleted with the direction.
 
+**This note specifies structure, never appearance, and that gap had consequences.** §0
+settles the fidelity question as "familiar composition, own skin" and then says nothing
+about band height, control height, icon size, group padding, whether a group carries a
+caption, or how the File page is laid out — so those were assembled rather than designed,
+and shipped verified by assertion rather than by looking. The visual contract that was
+missing is [doc 123](123-RIBBON-AND-FILE-PAGE-VISUAL-DESIGN.md), measured from ONLYOFFICE
+9.4.1 and Google Docs. Read 123 before changing how the ribbon chrome or the File page
+LOOKS; read this note and [doc 122](122-ONE-AXIS-NAVIGATION-DESIGN.md) before changing
+what they CONTAIN.
+
 Supersedes the open decision in [doc 64](64-EDITOR-TOOLBAR-RIBBON-DESIGN.md) §5, which
 weighed *A. tabbed ribbon* against *B. rich single toolbar (Google-Docs model)* and
 recommended A. The owner has since asked for **both**, selectable by configuration.

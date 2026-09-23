@@ -61,8 +61,12 @@ const SRC = new URL("../src/", import.meta.url);
  *  MERGE NOTE: both of the above came off the same 17,801 base and each
  *  lowered the ceiling to its own half's measurement, so NEITHER number is
  *  right here — exactly the trap SKILL.md §5 records. This one is re-measured
- *  from the merged file. */
-const MAIN_JS_LINE_CEILING = 17408;
+ *  from the merged file.
+ *  Lowered again to 17,362 when the File page grew its panes and the template
+ *  gallery: the context menu's icon table, level helpers and row renderer are
+ *  now `menu_render.mjs`, which reaches the open level stack through hooks and
+ *  so owns no menu state. */
+const MAIN_JS_LINE_CEILING = 17362;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

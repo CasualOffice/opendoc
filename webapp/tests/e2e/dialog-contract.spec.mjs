@@ -21,7 +21,6 @@ import {
   MOD,
   expectEditorFocused,
   openAppMenu,
-  runFilePageCommand,
 } from "./fixtures.mjs";
 
 async function openPalette(page) {
@@ -92,7 +91,12 @@ const MODALS = [
     focus: "#aboutClose",
     async open(page) {
       await gotoEditor(page);
-      await runFilePageCommand(page, "help.about");
+      // Through the palette, not the File page: on the File page About is a
+      // PANE now, not a dialog over it (the owner's "replace dialogs with this
+      // space"), and a pane answers to `file-page-panes.spec.mjs` rather than
+      // to the dialog contract. The dialog is still what every other surface
+      // opens, and this row is about the dialog.
+      await runFromPalette(page, "about", "About OpenDoc");
     },
   },
   {

@@ -29,15 +29,41 @@ export const UNTITLED_DOCUMENT_NAME = "Untitled document.docx";
 
 const BLANK_DOCX_XMLNS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 
+/** Page geometry of every document this module writes: US Letter at 1in
+ *  margins, Word's en-US default. In points, the unit the OOXML below wants in
+ *  twentieths, so the thumbnail and the package cannot describe two pages. */
+export const BLANK_PAGE = Object.freeze({ widthPt: 612, heightPt: 792, marginPt: 72 });
+
+/** Every paragraph style the package defines, in points. `styles.xml` is
+ *  generated from this table and so is the template thumbnail, so a change to a
+ *  heading size moves both together instead of leaving the preview lying. */
+export const BLANK_STYLE_METRICS = Object.freeze({
+  Normal: Object.freeze({ sizePt: 11, beforePt: 0, afterPt: 8, bold: false, italic: false }),
+  Title: Object.freeze({ sizePt: 28, beforePt: 0, afterPt: 4, bold: false, italic: false }),
+  Subtitle: Object.freeze({ sizePt: 14, beforePt: 0, afterPt: 8, bold: false, italic: true }),
+  Heading1: Object.freeze({ sizePt: 16, beforePt: 18, afterPt: 4, bold: true, italic: false }),
+  Heading2: Object.freeze({ sizePt: 13, beforePt: 16, afterPt: 4, bold: true, italic: false }),
+  Heading3: Object.freeze({ sizePt: 12, beforePt: 14, afterPt: 4, bold: true, italic: false }),
+});
+
+/** Points to half-points, the unit `w:sz` carries. */
+const halfPoints = (pt) => Math.round(pt * 2);
+/** Points to twentieths of a point, the unit `w:spacing` and `w:pgSz` carry. */
+const twips = (pt) => Math.round(pt * 20);
+/** `w:sz` and `w:szCs`, the pair Word wants for one run size. */
+const runSize = (pt) => `<w:sz w:val="${halfPoints(pt)}"/><w:szCs w:val="${halfPoints(pt)}"/>`;
+
 /** One heading style, neutral: size and weight only. A blank document should
  *  not arrive carrying somebody's brand colours. */
-function blankHeadingStyle(id, name, level, halfPoints, beforeTwips) {
+function blankHeadingStyle(id, name, level) {
+  const metrics = BLANK_STYLE_METRICS[id];
   return (
     `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/>` +
     `<w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
-    `<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="${beforeTwips}" w:after="80"/>` +
+    `<w:pPr><w:keepNext/><w:keepLines/>` +
+    `<w:spacing w:before="${twips(metrics.beforePt)}" w:after="${twips(metrics.afterPt)}"/>` +
     `<w:outlineLvl w:val="${level}"/></w:pPr>` +
-    `<w:rPr><w:b/><w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/></w:rPr></w:style>`
+    `<w:rPr><w:b/>${runSize(metrics.sizePt)}</w:rPr></w:style>`
   );
 }
 
@@ -73,26 +99,30 @@ export const BLANK_DOCX_PARTS = [
     "word/document.xml",
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       `<w:document ${BLANK_DOCX_XMLNS}><w:body><w:p/>` +
-      '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
-      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>' +
+      `<w:sectPr><w:pgSz w:w="${twips(BLANK_PAGE.widthPt)}" w:h="${twips(BLANK_PAGE.heightPt)}"/>` +
+      `<w:pgMar w:top="${twips(BLANK_PAGE.marginPt)}" w:right="${twips(BLANK_PAGE.marginPt)}" ` +
+      `w:bottom="${twips(BLANK_PAGE.marginPt)}" w:left="${twips(BLANK_PAGE.marginPt)}" ` +
+      'w:header="720" w:footer="720" w:gutter="0"/>' +
       '<w:cols w:space="720"/></w:sectPr></w:body></w:document>',
   ],
   [
     "word/styles.xml",
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       `<w:styles ${BLANK_DOCX_XMLNS}>` +
-      "<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/><w:szCs w:val=\"22\"/></w:rPr></w:rPrDefault>" +
-      '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
+      `<w:docDefaults><w:rPrDefault><w:rPr>${runSize(BLANK_STYLE_METRICS.Normal.sizePt)}` +
+      "</w:rPr></w:rPrDefault>" +
+      `<w:pPrDefault><w:pPr><w:spacing w:after="${twips(BLANK_STYLE_METRICS.Normal.afterPt)}" ` +
+      'w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
       '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
       '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:spacing w:after="80"/><w:contextualSpacing/></w:pPr>' +
-      '<w:rPr><w:sz w:val="56"/><w:szCs w:val="56"/></w:rPr></w:style>' +
+      `<w:pPr><w:spacing w:after="${twips(BLANK_STYLE_METRICS.Title.afterPt)}"/><w:contextualSpacing/></w:pPr>` +
+      `<w:rPr>${runSize(BLANK_STYLE_METRICS.Title.sizePt)}</w:rPr></w:style>` +
       '<w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:spacing w:after="160"/></w:pPr>' +
-      '<w:rPr><w:i/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>' +
-      blankHeadingStyle("Heading1", "heading 1", 0, 32, 360) +
-      blankHeadingStyle("Heading2", "heading 2", 1, 26, 320) +
-      blankHeadingStyle("Heading3", "heading 3", 2, 24, 280) +
+      `<w:pPr><w:spacing w:after="${twips(BLANK_STYLE_METRICS.Subtitle.afterPt)}"/></w:pPr>` +
+      `<w:rPr><w:i/>${runSize(BLANK_STYLE_METRICS.Subtitle.sizePt)}</w:rPr></w:style>` +
+      blankHeadingStyle("Heading1", "heading 1", 0) +
+      blankHeadingStyle("Heading2", "heading 2", 1) +
+      blankHeadingStyle("Heading3", "heading 3", 2) +
       "</w:styles>",
   ],
 ];
@@ -173,4 +203,148 @@ export function zipStore(parts) {
     at += chunk.length;
   }
   return out;
+}
+
+
+/** XML-escapes text going into a `w:t`. Template text is authored here, not
+ *  typed by a user, but a stray `&` in a placeholder would still produce a
+ *  package Word refuses to open. */
+function xmlText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** One paragraph: `[styleId, text]`, or `[styleId]` for an empty one. */
+function templateParagraph([style, text]) {
+  const properties = style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : "";
+  const run = text ? `<w:r><w:t xml:space="preserve">${xmlText(text)}</w:t></w:r>` : "";
+  return `<w:p>${properties}${run}</w:p>`;
+}
+
+/**
+ * The starter documents offered by File ▸ New.
+ *
+ * ONLYOFFICE's Create New pane ships exactly one entry — `Blank document` —
+ * and takes any others from the host (`FileMenuPanels.js:1350`: `blank`
+ * concatenated with a host-supplied `docs`). So the PANE is theirs and this
+ * set is ours, and it is deliberately small: four shapes that this editor can
+ * actually render well today — headings, a title, body text and lists — rather
+ * than a gallery that would need images, tables and theming to look like
+ * anything.
+ *
+ * Each one is the same minimal package the blank document uses, with content.
+ * They are built here rather than shipped as binaries for the same reason the
+ * blank one is: readable, reviewable, no fetch, and they cannot drift away
+ * from what the importer expects without this file changing.
+ */
+export const DOCUMENT_TEMPLATES = Object.freeze([
+  Object.freeze({
+    id: "blank",
+    label: "Blank document",
+    icon: "draft",
+    description: "An empty page.",
+    body: [[null, ""]],
+  }),
+  Object.freeze({
+    id: "letter",
+    label: "Letter",
+    icon: "mail",
+    description: "Sender, date, salutation and sign-off.",
+    body: [
+      [null, "Your name"],
+      [null, "Street address"],
+      [null, "City, postcode"],
+      [null, ""],
+      [null, "1 January 2026"],
+      [null, ""],
+      [null, "Dear …,"],
+      [null, ""],
+      [null, "Write your letter here."],
+      [null, ""],
+      [null, "Yours sincerely,"],
+      [null, ""],
+      [null, "Your name"],
+    ],
+  }),
+  Object.freeze({
+    id: "report",
+    label: "Report",
+    icon: "lab_profile",
+    description: "Title, summary and numbered sections.",
+    body: [
+      ["Title", "Report title"],
+      ["Subtitle", "Subtitle or author"],
+      ["Heading1", "Summary"],
+      [null, "One paragraph on what this report concludes."],
+      ["Heading1", "Background"],
+      [null, "What prompted it."],
+      ["Heading1", "Findings"],
+      ["Heading2", "First finding"],
+      [null, "Evidence."],
+      ["Heading1", "Recommendation"],
+      [null, "What should happen next."],
+    ],
+  }),
+  Object.freeze({
+    id: "notes",
+    label: "Meeting notes",
+    icon: "event_note",
+    description: "Attendees, discussion and actions.",
+    body: [
+      ["Title", "Meeting notes"],
+      ["Subtitle", "Date · attendees"],
+      ["Heading1", "Agenda"],
+      [null, "What the meeting is for."],
+      ["Heading1", "Discussion"],
+      [null, "What was said."],
+      ["Heading1", "Actions"],
+      [null, "Who does what, by when."],
+    ],
+  }),
+]);
+
+/**
+ * The template's first page as something the UI can draw at any scale: the same
+ * `[styleId, text]` body {@link templateBytes} writes, resolved against
+ * {@link BLANK_STYLE_METRICS}. Every measurement is in points, so a caller
+ * scales the page once instead of re-deriving a size per paragraph — and a
+ * preview built from this cannot show a document the `.docx` would not open as.
+ *
+ * @param {string} id one of `DOCUMENT_TEMPLATES`; anything else is the blank.
+ * @returns {{widthPt: number, heightPt: number, marginPt: number, blocks: object[]}}
+ */
+export function templateThumbnail(id) {
+  const template =
+    DOCUMENT_TEMPLATES.find((candidate) => candidate.id === id) ?? DOCUMENT_TEMPLATES[0];
+  const blocks = template.body.map(([style, text]) => {
+    const metrics = BLANK_STYLE_METRICS[style] ?? BLANK_STYLE_METRICS.Normal;
+    return Object.freeze({ style: style ?? "Normal", text: text ?? "", ...metrics });
+  });
+  return Object.freeze({ ...BLANK_PAGE, blocks: Object.freeze(blocks) });
+}
+
+/**
+ * The package bytes for one template.
+ *
+ * @param {string} id one of `DOCUMENT_TEMPLATES`; anything else is the blank.
+ * @returns {Uint8Array} a `.docx` the engine can open.
+ */
+export function templateBytes(id) {
+  const template =
+    DOCUMENT_TEMPLATES.find((candidate) => candidate.id === id) ?? DOCUMENT_TEMPLATES[0];
+  const body = template.body.map(templateParagraph).join("");
+  const parts = BLANK_DOCX_PARTS.map(([name, text]) =>
+    name === "word/document.xml" ? [name, text.replace("<w:body><w:p/>", `<w:body>${body}`)] : [name, text],
+  );
+  return zipStore(parts);
+}
+
+/** The file name a new document from `id` opens under. */
+export function templateName(id) {
+  const template = DOCUMENT_TEMPLATES.find((candidate) => candidate.id === id);
+  return template && template.id !== "blank"
+    ? `${template.label}.docx`
+    : UNTITLED_DOCUMENT_NAME;
 }
