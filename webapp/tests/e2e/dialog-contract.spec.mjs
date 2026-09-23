@@ -65,6 +65,23 @@ const MODALS = [
     },
   },
   {
+    id: "settingsPanel",
+    name: "Settings",
+    // It was an anchored popover with its own Escape handler and its own
+    // pointerdown light dismiss — hand-rolled dismissal is what this contract
+    // exists to end — and it outgrew the window, so scrolling it scrolled the
+    // document behind. The owner's report: "that panel doesn't make any sense
+    // now .. see dialog instead". Google Docs' Preferences and Word's Options
+    // are both modal dialogs; this is now one, and answers to the same rules
+    // as every other one here.
+    opener: "#settingsBtn",
+    focus: '#themeSeg button[aria-checked="true"]',
+    async open(page) {
+      await gotoEditor(page);
+      await page.locator("#settingsBtn").click();
+    },
+  },
+  {
     id: "pageSetupMenu",
     name: "Page setup",
     opener: "#pageSetupBtn",

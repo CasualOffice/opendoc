@@ -206,7 +206,32 @@
       </section>
     </div>
 
-    <div id="settingsPanel" class="settings-panel" hidden role="dialog" aria-label="Settings">
+    <!-- Settings. It was an anchored popover hanging off the gear, and the
+         owner's report ended it: "setting from header is broken .. i meant its
+         height exceeds .. so that panel doesn't make any sense now .. even for
+         compact view .. see dialog instead". It was taller than the window, so
+         scrolling it scrolled the document behind; it hand-rolled its own
+         Escape and light dismiss, which is exactly the divergence `modal.mjs`
+         exists to end; and with Settings now a File-page pane it was a second,
+         smaller copy of the same form. Google Docs' Preferences and Word's
+         Options are both modal dialogs. So is this, in the same shell every
+         other dialog here uses — which is also the shell the File page already
+         knows how to borrow. -->
+    <div id="settingsPanel" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsDescription">
+      <section class="dialog-card settings-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">settings</span>
+            <div>
+              <h2 id="settingsTitle">Settings</h2>
+              <p id="settingsDescription">Appearance, your reviewer identity, autosave and proofing. Everything here is stored in this browser.</p>
+            </div>
+          </div>
+          <button id="settingsClose" type="button" class="dialog-close" title="Close" aria-label="Close settings">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body settings-body">
       <div class="settings-section">
         <div class="settings-label">Theme</div>
         <div class="segmented" id="themeSeg" role="radiogroup" aria-label="Theme">
@@ -266,10 +291,14 @@
         </label>
         <p class="settings-note">Checking happens in this browser: the dictionary is downloaded once from this site and your text is never sent anywhere. Words you add are stored in this browser only, and can currently be removed only by clearing this site's data.</p>
       </div>
-      <div class="settings-foot">
-        <span class="oss">Open-source · customizable</span>
-        <button type="button" id="settingsReset" class="link">Reset</button>
-      </div>
+        </div>
+        <footer class="dialog-foot">
+          <span class="dialog-note">Open-source · customizable</span>
+          <div class="dialog-actions">
+            <button type="button" id="settingsReset" class="dialog-button">Reset to defaults</button>
+          </div>
+        </footer>
+      </section>
     </div>
 
     <!-- COMPACT CHROME — the Google-Docs-shaped alternative to the ribbon, from

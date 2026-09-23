@@ -372,25 +372,33 @@ test.describe("Settings is reachable from every surface that offers it", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  test("from the gear button, which still toggles", async ({ page, consoleErrors }) => {
+  test("from the gear button, which opens the dialog and gets the keyboard back", async ({
+    page,
+    consoleErrors,
+  }) => {
     await loadEditor(page);
     await page.locator("#settingsBtn").click();
     await expect(page.locator(panel)).toBeVisible();
-    await page.locator("#settingsBtn").click();
+    // The gear used to TOGGLE a popover. Settings is a modal now — the scrim is
+    // over the gear, so a second click on it is not a thing a user can do — and
+    // closing is the one path every dialog here shares: the close button,
+    // Escape, or the backdrop, each returning focus to the opener.
+    await page.locator("#settingsClose").click();
     await expect(page.locator(panel)).toBeHidden();
+    await expect(page.locator("#settingsBtn")).toBeFocused();
     expect(consoleErrors).toEqual([]);
   });
 
-  test("and a click on the document still dismisses it", async ({ page, consoleErrors }) => {
-    // The fix moved light dismiss from `click` to `pointerdown`; the behaviour
-    // it protects must survive that, or this would trade one defect for another.
+  test("and a click outside it still dismisses it", async ({ page, consoleErrors }) => {
+    // Light dismiss was hand-rolled on `pointerdown` here, which is the whole
+    // class of divergence `modal.mjs` exists to end. It is the shared backdrop
+    // now — `dialog-contract.spec.mjs` holds the rule for every dialog at once
+    // — and this row only asks that the behaviour the popover had survived the
+    // move, because trading one defect for another is the failure mode.
     await loadEditor(page);
-    // The gear's popup is the surface light dismiss belongs to: the File page's
-    // Settings is a pane, and a pane is not dismissed by clicking the document
-    // behind it — there is no document behind it.
     await page.locator("#settingsBtn").click();
     await expect(page.locator(panel)).toBeVisible();
-    await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
+    await page.mouse.click(30, 400);
     await expect(page.locator(panel)).toBeHidden();
     expect(consoleErrors).toEqual([]);
   });
