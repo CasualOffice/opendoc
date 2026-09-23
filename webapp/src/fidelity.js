@@ -106,7 +106,7 @@ const FIDELITY = [
   },
   {
     family: "Bookmarks & hyperlinks",
-    note: "Links render, activate, and drive TOC navigation; insert/edit/remove a link. Bookmarks have a manager surface — create, rename, delete, and go to.",
+    note: "Links render, activate, and drive TOC navigation; insert/edit/remove a link. Bookmarks have a manager surface — create, rename, delete, and go to. A hyperlink on a PICTURE or shape (`a:hlinkClick`) is modeled on every object kind that can carry one, round-trips with one relationship per distinct URL, and is offered through the same chip a linked word is — including on a linked child inside a group, which is how Word writes a linked group. Adding or editing a link on a picture is not built yet: an imported one is honoured, a new one cannot be authored. The pointer does not change over a linked picture, matching ONLYOFFICE and Word.",
     modeled: "full", rendered: "full", editable: "partial", roundtrips: "full",
   },
   {

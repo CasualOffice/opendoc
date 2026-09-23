@@ -1789,6 +1789,7 @@ mod tests {
         // (1_270_000 x 635_000) placed at group origin (1000, 2000) twips lands at
         // origin + offset/635 and is sized extent/635 — NOT the group extent.
         let group = WordprocessingGroup {
+            hyperlink: None,
             id: NodeId::from_parts(1, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -1820,6 +1821,7 @@ mod tests {
         // Parent identity; nested group offset (28050, 112196) EMU. A child at
         // nested offset (0,0) lands at the nested group's offset in the parent.
         let parent = WordprocessingGroup {
+            hyperlink: None,
             id: NodeId::from_parts(1, 1).unwrap(),
             anchor: None,
             relative_height: None,

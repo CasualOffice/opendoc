@@ -1111,6 +1111,8 @@ impl Importer<'_> {
         ));
         self.resources.insert(part_name, picture.into_bytes());
         let drawing = InlineNode::Drawing(Box::new(Drawing {
+            // RTF has no drawing hyperlink; its links are field instructions.
+            hyperlink: None,
             opacity: None,
             id: next_id(&mut self.ids)?,
             media: media_id,

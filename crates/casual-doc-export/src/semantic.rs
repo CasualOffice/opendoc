@@ -32,6 +32,7 @@ use std::io::{Cursor, Write};
 use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
 use casual_doc_model::v1::BookmarkId;
+use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -4779,6 +4780,7 @@ fn write_inline(
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
+            let hlink = drawing_hlink(&mut ctx.rels, drawing.hyperlink.as_ref());
             write_drawing(
                 w,
                 &embed,
@@ -4788,6 +4790,9 @@ fn write_inline(
                     crop: drawing.crop.as_ref(),
                     opacity: drawing.opacity,
                     border: drawing.border,
+                    hlink: hlink
+                        .as_ref()
+                        .map(|(id, tip)| (id.as_str(), tip.as_deref())),
                 },
                 Xfrm2D {
                     rotation: drawing.rotation,
@@ -4803,7 +4808,15 @@ fn write_inline(
                 return Ok(());
             };
             let embed = reference.relationship_id.clone();
-            write_anchored_drawing(w, &embed, drawing)?;
+            let hlink = drawing_hlink(&mut ctx.rels, drawing.hyperlink.as_ref());
+            write_anchored_drawing(
+                w,
+                &embed,
+                drawing,
+                hlink
+                    .as_ref()
+                    .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+            )?;
         }
         // An embedded object (chart / SmartArt diagram / OLE): the drawing wrapper
         // (chart/diagram) or `w:object` (OLE) referencing the preserved part(s) by
@@ -5026,6 +5039,55 @@ struct PictureAppearance<'a> {
     crop: Option<&'a CropRect>,
     opacity: Option<u32>,
     border: Option<ShapeStroke>,
+    /// The `a:hlinkClick` to write on this object's `cNvPr`: the relationship
+    /// id, already minted, and the screen-tip.
+    ///
+    /// The id rather than the link, because minting one needs the
+    /// `RelBuilder` and these writers are handed a `Writer` and nothing else.
+    /// Resolving it at the call site also means the URL dedupe happens once,
+    /// which is what makes the owner's form round-trip as three relationships
+    /// for its four links rather than four.
+    ///
+    /// Borrowed so this stays `Copy`: the caller holds the minted id in a
+    /// local for as long as the write takes.
+    hlink: Option<(&'a str, Option<&'a str>)>,
+}
+
+/// Writes `a:hlinkClick` as a child of the `cNvPr` element the caller has just
+/// opened. Nothing when the object is not linked.
+fn write_hlink_click(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    hlink: Option<(&str, Option<&str>)>,
+) -> Result<(), ExportError> {
+    let Some((id, tooltip)) = hlink else {
+        return Ok(());
+    };
+    let mut el = start("a:hlinkClick");
+    el.push_attribute(("r:id", id));
+    if let Some(tooltip) = tooltip {
+        el.push_attribute(("tooltip", tooltip));
+    }
+    w.write_event(Event::Empty(el)).map_err(pkg)?;
+    Ok(())
+}
+
+/// The relationship id and tooltip for a drawing's `a:hlinkClick`, minting the
+/// relationship the first time each URL is seen.
+///
+/// An INTERNAL target becomes a relationship to the fragment `#name`:
+/// `a:hlinkClick` has no `@anchor`, unlike `w:hyperlink`, so a link to a
+/// bookmark in the same document has nowhere else to go. That is also what
+/// ONLYOFFICE writes, and what the importer reads back.
+fn drawing_hlink(
+    rels: &mut RelBuilder,
+    link: Option<&DrawingHyperlink>,
+) -> Option<(String, Option<String>)> {
+    let link = link?;
+    let target = match &link.target {
+        HyperlinkTarget::External(external) => external.url.clone(),
+        HyperlinkTarget::Internal(internal) => format!("#{}", internal.anchor),
+    };
+    Some((rels.hyperlink(&target), link.tooltip.clone()))
 }
 
 fn write_alpha_mod_fix(
@@ -5060,7 +5122,17 @@ fn write_pic_graphic(
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
     c_nv_pr.push_attribute(("name", "Picture 1"));
-    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    match look.hlink {
+        // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
+        // self-closing.
+        Some(_) => {
+            w.write_event(Event::Start(c_nv_pr)).map_err(pkg)?;
+            write_hlink_click(w, look.hlink)?;
+            w.write_event(Event::End(BytesEnd::new("pic:cNvPr")))
+                .map_err(pkg)?;
+        }
+        None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
+    }
     w.write_event(Event::Empty(start("pic:cNvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
@@ -5136,6 +5208,7 @@ fn write_anchored_drawing(
     w: &mut Writer<Cursor<Vec<u8>>>,
     embed: &str,
     drawing: &AnchoredDrawing,
+    hlink: Option<(&str, Option<&str>)>,
 ) -> Result<(), ExportError> {
     let anchor = &drawing.anchor;
     let (cx, cy) = (drawing.extent.width_emu, drawing.extent.height_emu);
@@ -5192,6 +5265,7 @@ fn write_anchored_drawing(
             crop: drawing.crop.as_ref(),
             opacity: drawing.opacity,
             border: drawing.border,
+            hlink,
         },
         Xfrm2D {
             rotation: drawing.rotation,
@@ -5350,6 +5424,7 @@ fn write_wgp(
                     .get(&picture.media)
                     .map(|reference| reference.relationship_id.clone());
                 if let Some(embed) = embed {
+                    let hlink = drawing_hlink(&mut ctx.rels, picture.hyperlink.as_ref());
                     write_group_picture(
                         w,
                         &embed,
@@ -5359,6 +5434,9 @@ fn write_wgp(
                             crop: picture.crop.as_ref(),
                             opacity: picture.opacity,
                             border: picture.border,
+                            hlink: hlink
+                                .as_ref()
+                                .map(|(id, tip)| (id.as_str(), tip.as_deref())),
                         },
                         Xfrm2D {
                             rotation: picture.rotation,
@@ -5369,7 +5447,16 @@ fn write_wgp(
                 }
             }
             GroupChild::TextBox(text_box) => write_group_text_box(w, text_box, ctx)?,
-            GroupChild::Shape(shape) => write_group_shape(w, shape)?,
+            GroupChild::Shape(shape) => {
+                let hlink = drawing_hlink(&mut ctx.rels, shape.hyperlink.as_ref());
+                write_group_shape(
+                    w,
+                    shape,
+                    hlink
+                        .as_ref()
+                        .map(|(id, tip)| (id.as_str(), tip.as_deref())),
+                )?;
+            }
             GroupChild::Group(nested) => write_wgp(w, nested, "wpg:grpSp", ctx)?,
         }
     }
@@ -5432,7 +5519,17 @@ fn write_group_picture(
     let mut c_nv_pr = start("pic:cNvPr");
     c_nv_pr.push_attribute(("id", "1"));
     c_nv_pr.push_attribute(("name", "Picture 1"));
-    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    match look.hlink {
+        // A link is a CHILD, so a linked picture's `cNvPr` can no longer be
+        // self-closing.
+        Some(_) => {
+            w.write_event(Event::Start(c_nv_pr)).map_err(pkg)?;
+            write_hlink_click(w, look.hlink)?;
+            w.write_event(Event::End(BytesEnd::new("pic:cNvPr")))
+                .map_err(pkg)?;
+        }
+        None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
+    }
     w.write_event(Event::Empty(start("pic:cNvPicPr")))
         .map_err(pkg)?;
     w.write_event(Event::End(BytesEnd::new("pic:nvPicPr")))
@@ -5479,12 +5576,23 @@ fn write_group_picture(
 fn write_group_shape(
     w: &mut Writer<Cursor<Vec<u8>>>,
     shape: &GroupShape,
+    hlink: Option<(&str, Option<&str>)>,
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
     c_nv_pr.push_attribute(("name", "Shape"));
-    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    match hlink {
+        // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
+        // self-closing.
+        Some(_) => {
+            w.write_event(Event::Start(c_nv_pr)).map_err(pkg)?;
+            write_hlink_click(w, hlink)?;
+            w.write_event(Event::End(BytesEnd::new("wps:cNvPr")))
+                .map_err(pkg)?;
+        }
+        None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
+    }
     w.write_event(Event::Empty(start("wps:cNvSpPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))
@@ -5529,11 +5637,25 @@ fn write_group_text_box(
     text_box: &GroupTextBox,
     ctx: &mut Ctx,
 ) -> Result<(), ExportError> {
+    let owned = drawing_hlink(&mut ctx.rels, text_box.hyperlink.as_ref());
+    let hlink = owned
+        .as_ref()
+        .map(|(id, tip)| (id.as_str(), tip.as_deref()));
     w.write_event(Event::Start(start("wps:wsp"))).map_err(pkg)?;
     let mut c_nv_pr = start("wps:cNvPr");
     c_nv_pr.push_attribute(("id", "0"));
     c_nv_pr.push_attribute(("name", "Text Box"));
-    w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?;
+    match hlink {
+        // A link is a CHILD, so a linked shape's `cNvPr` can no longer be
+        // self-closing.
+        Some(_) => {
+            w.write_event(Event::Start(c_nv_pr)).map_err(pkg)?;
+            write_hlink_click(w, hlink)?;
+            w.write_event(Event::End(BytesEnd::new("wps:cNvPr")))
+                .map_err(pkg)?;
+        }
+        None => w.write_event(Event::Empty(c_nv_pr)).map_err(pkg)?,
+    }
     w.write_event(Event::Empty(start("wps:cNvSpPr")))
         .map_err(pkg)?;
     w.write_event(Event::Start(start("wps:spPr")))

@@ -84,6 +84,7 @@ fn aligned_float(
     descr: &str,
 ) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -123,6 +124,7 @@ fn offset_float(
     descr: &str,
 ) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -895,6 +897,7 @@ fn a_header_image_renders_through_the_full_pipeline() {
                 id: node(310),
                 properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
                     opacity: None,
                     id: node(311),
                     media: media_id,
@@ -1139,6 +1142,7 @@ fn a_positioned_header_float_reserves_band_so_the_body_clears_it() {
     // bottom is 2880 twips from the page top — well past the 720-twip top margin.
     let header_float = || {
         InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            hyperlink: None,
             opacity: None,
             id: node(320),
             media: MediaId::new(node(321)),

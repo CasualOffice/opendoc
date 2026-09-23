@@ -4697,10 +4697,6 @@ fn transparent_children(inline: &InlineNode) -> Option<&[InlineNode]> {
         // whole point of the control - so text lands INSIDE it rather than
         // beside it, and the filled value stays part of the field when the
         // document is written back.
-        //
-        // Deliberately only `FORMTEXT`. A `PAGE` or `NUMPAGES` result is
-        // recomputed from the layout and typing into it would be overwritten;
-        // a `FORMCHECKBOX` has no content at all. Word refuses both.
         InlineNode::Field(field) if is_text_form_field(field) => Some(&field.inlines),
         _ => None,
     }
@@ -4708,6 +4704,10 @@ fn transparent_children(inline: &InlineNode) -> Option<&[InlineNode]> {
 
 /// Whether this field is a legacy `FORMTEXT` - the only field whose result a
 /// person is allowed to type into.
+///
+/// A `PAGE` or `NUMPAGES` result is recomputed from the layout and typing into
+/// it would be overwritten; a `FORMCHECKBOX` has no content at all. Word
+/// refuses both.
 fn is_text_form_field(field: &Field) -> bool {
     field
         .form
@@ -5938,6 +5938,7 @@ mod tests {
                 inlines: vec![
                     run(3, "before"),
                     InlineNode::Drawing(Box::new(Drawing {
+                        hyperlink: None,
                         opacity: None,
                         id: drawing_id,
                         media,
@@ -6099,6 +6100,7 @@ mod tests {
                 inlines: vec![
                     run(3, "anchor"),
                     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        hyperlink: None,
                         opacity: None,
                         id: float_id,
                         media,
@@ -6202,6 +6204,7 @@ mod tests {
     ) -> InlineNode {
         use casual_doc_model::v1::{Drawing, Extent};
         InlineNode::Drawing(Box::new(Drawing {
+            hyperlink: None,
             opacity: None,
             id: n(id),
             media,
@@ -6630,6 +6633,7 @@ mod tests {
         let media = MediaId::new(NodeId::from_parts(7, 903).unwrap());
         let float_id = n(60);
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            hyperlink: None,
             opacity: None,
             id: float_id,
             media,
@@ -7985,6 +7989,7 @@ mod tests {
             inlines: vec![
                 run(3, "before"),
                 InlineNode::TextBox(Box::new(casual_doc_model::v1::TextBox {
+                    hyperlink: None,
                     id: box_id,
                     anchor: None,
                     relative_height: None,
@@ -8078,6 +8083,7 @@ mod tests {
             id: n(paragraph),
             properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Group(Box::new(WordprocessingGroup {
+                hyperlink: None,
                 id: n(group),
                 anchor: None,
                 relative_height: None,
@@ -8092,6 +8098,7 @@ mod tests {
                     rotation: None,
                 },
                 children: vec![GroupChild::Shape(GroupShape {
+                    hyperlink: None,
                     id: n(shape),
                     offset: PointEmu { x_emu: 0, y_emu: 0 },
                     extent,
@@ -10574,6 +10581,7 @@ mod tests {
             height_emu: 914_400,
         };
         let text_box = |id: u64, inner: u64, text_id: u64| TextBox {
+            hyperlink: None,
             id: n(id),
             anchor: None,
             relative_height: None,
@@ -10622,6 +10630,7 @@ mod tests {
                     run(3, "body"),
                     InlineNode::TextBox(Box::new(text_box(31, 30, 32))),
                     InlineNode::Group(Box::new(WordprocessingGroup {
+                        hyperlink: None,
                         id: n(41),
                         anchor: None,
                         relative_height: None,
@@ -10636,6 +10645,7 @@ mod tests {
                             rotation: None,
                         },
                         children: vec![GroupChild::TextBox(GroupTextBox {
+                            hyperlink: None,
                             id: n(42),
                             offset: PointEmu { x_emu: 0, y_emu: 0 },
                             extent,

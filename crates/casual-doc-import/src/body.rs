@@ -36,6 +36,7 @@ use casual_doc_model::v1::{
 };
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared file.
+use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -77,6 +78,7 @@ enum Segment {
         media: MediaId,
         extent: Option<Extent>,
         descr: Option<String>,
+        hyperlink: Option<DrawingHyperlink>,
         crop: Option<CropRect>,
         opacity: Option<u32>,
         border: Option<ShapeStroke>,
@@ -201,6 +203,7 @@ enum Segment {
         extent: Extent,
         anchor: DrawingAnchor,
         descr: Option<String>,
+        hyperlink: Option<DrawingHyperlink>,
         relative_height: Option<u32>,
         crop: Option<CropRect>,
         opacity: Option<u32>,
@@ -256,6 +259,8 @@ struct PendingAnchor {
     in_wrap_polygon: bool,
     /// The `wp:docPr@descr` alt text (bounded).
     descr: Option<String>,
+    /// The `a:hlinkClick` on this drawing's non-visual properties, resolved.
+    hyperlink: Option<DrawingHyperlink>,
     /// The axis whose `wp:posOffset`/`wp:align` text is currently being captured.
     capture_axis: Option<AnchorAxis>,
     /// Whether the value being captured is a `wp:posOffset` (`true`) or a
@@ -323,6 +328,8 @@ struct ShapeBuilder {
     embed: Option<String>,
     /// The alt text (`pic:cNvPr@descr` / `wps:cNvPr@descr`), if declared.
     descr: Option<String>,
+    /// The `a:hlinkClick` on this child's `cNvPr`, resolved.
+    hyperlink: Option<DrawingHyperlink>,
     /// The picture's `a:srcRect` crop, for a picture child, if declared.
     srcrect: Option<CropRect>,
     /// The picture's `a:alphaModFix` opacity, for a picture child, if declared
@@ -933,6 +940,15 @@ struct BodyParser<'a> {
     /// consumed by `commit_drawing` for the inline `Drawing` (the anchored path
     /// captures its own `descr` on the `PendingAnchor`).
     pending_inline_descr: Option<String>,
+    /// The resolved `a:hlinkClick` of the open lone/inline drawing (no anchor).
+    pending_inline_hyperlink: Option<DrawingHyperlink>,
+    /// How many non-visual-property elements (`*:cNvPr`, `wp:docPr`) are open.
+    ///
+    /// `a:hlinkClick` is a CHILD of those, and it is also a child of `a:rPr`
+    /// inside a shape's own text — where it links a run, not the shape. Without
+    /// this depth every link typed inside a text box would silently become a
+    /// link on the box.
+    nvpr_depth: u32,
     /// The `a:xfrm@flipH`/`@flipV`/`@rot` of the open lone/inline or anchored
     /// picture (no open shape builder), consumed by `commit_drawing`.
     pending_flip_h: bool,
@@ -1270,6 +1286,8 @@ impl<'a> BodyParser<'a> {
             pending_srcrect: None,
             pending_opacity: None,
             pending_inline_descr: None,
+            pending_inline_hyperlink: None,
+            nvpr_depth: 0,
             pending_flip_h: false,
             pending_flip_v: false,
             pending_rotation: None,
@@ -2605,6 +2623,7 @@ impl BodyParser<'_> {
                     self.pending_srcrect = None;
                     self.pending_opacity = None;
                     self.pending_inline_descr = None;
+                    self.pending_inline_hyperlink = None;
                     self.pending_flip_h = false;
                     self.pending_flip_v = false;
                     self.pending_rotation = None;
@@ -2833,23 +2852,37 @@ impl BodyParser<'_> {
             // `wp:docPr@descr` is the drawing's alt text (accessibility): modeled on
             // an anchor's `descr`, and — since P1G-OBJ-MODEL — on an inline drawing's
             // `pending_inline_descr` too. An over-long value is reported, not stored.
-            b"docPr" if self.drawing_depth > 0 => match attribute_value(element, b"descr") {
-                Some(descr) if descr.is_empty() => {}
-                Some(descr) if descr.len() <= MAX_DESCR_BYTES => {
-                    if let Some(anchor) = self.pending_anchor.as_mut() {
-                        anchor.descr = Some(descr);
-                    } else {
-                        self.pending_inline_descr = Some(descr);
+            b"docPr" if self.drawing_depth > 0 => {
+                self.nvpr_depth = self.nvpr_depth.saturating_add(1);
+                self.drawing_doc_pr(element);
+            }
+            // `a:hlinkClick` - the element that makes a picture or shape
+            // clickable. Only inside non-visual properties: the same element
+            // inside a shape's `a:txBody/a:rPr` links a RUN of the box's own
+            // text, and attaching that to the box would follow the wrong link
+            // from the wrong place.
+            b"hlinkClick" if self.nvpr_depth > 0 => {
+                match self.resolve_hyperlink_target(element) {
+                    Some((target, tooltip)) => {
+                        let link = DrawingHyperlink { target, tooltip };
+                        // Innermost first: a linked child inside a group owns
+                        // its own link, and Word writes one onto each child
+                        // rather than onto the group.
+                        if let Some(shape) = self.pending_shape.as_mut() {
+                            shape.hyperlink = Some(link);
+                        } else if let Some(anchor) = self.pending_anchor.as_mut() {
+                            anchor.hyperlink = Some(link);
+                        } else {
+                            self.pending_inline_hyperlink = Some(link);
+                        }
                     }
+                    // An `r:id` that resolves to nothing, or none at all, is
+                    // not a link - and IS a loss, because the document said
+                    // there was one. Same answer ONLYOFFICE reaches, by way of
+                    // an empty target string.
+                    None => self.drawing_extra = true,
                 }
-                // Only an alt text too long to store is a loss. `descr=""` is
-                // not: it carries nothing, Word writes it on drawings that have
-                // no alt text at all, and calling it unmodeled detail put three
-                // of this corpus's five `drawing` findings on documents that
-                // lost nothing — the same false-loss shape as `w:shd`.
-                Some(_) => self.drawing_extra = true,
-                None => {}
-            },
+            }
             b"hlinkClick" | b"svgBlip" if self.drawing_depth > 0 => self.drawing_extra = true,
             // A DrawingML group (`wpg:wgp` = the anchored object, `wpg:grpSp` =
             // nested): open a group builder. The top-level group inherits the open
@@ -2893,6 +2926,7 @@ impl BodyParser<'_> {
             b"wsp" | b"cxnSp" if self.drawing_depth > 0 => {
                 let id = self.next_id()?;
                 self.pending_shape = Some(ShapeBuilder {
+                    hyperlink: None,
                     id,
                     is_picture: false,
                     offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -2921,6 +2955,7 @@ impl BodyParser<'_> {
             b"pic" if self.drawing_depth > 0 && !self.group_stack.is_empty() => {
                 let id = self.next_id()?;
                 self.pending_shape = Some(ShapeBuilder {
+                    hyperlink: None,
                     id,
                     is_picture: true,
                     offset: PointEmu { x_emu: 0, y_emu: 0 },
@@ -3241,6 +3276,7 @@ impl BodyParser<'_> {
             // A shape's non-visual props (`pic:cNvPr`/`wps:cNvPr`): capture its
             // alt text (`@descr`) for the open shape.
             b"cNvPr" if self.pending_shape.is_some() => {
+                self.nvpr_depth = self.nvpr_depth.saturating_add(1);
                 if let Some(shape) = self.pending_shape.as_mut()
                     && let Some(descr) = attribute_value(element, b"descr")
                     && !descr.is_empty()
@@ -3248,6 +3284,12 @@ impl BodyParser<'_> {
                 {
                     shape.descr = Some(descr);
                 }
+            }
+            // The same element on a drawing with no open group child - a
+            // top-level picture's `pic:cNvPr`. Only the scope is needed here;
+            // its `@descr` is taken from `wp:docPr` above it.
+            b"cNvPr" if self.drawing_depth > 0 => {
+                self.nvpr_depth = self.nvpr_depth.saturating_add(1);
             }
             // A legacy VML picture (`w:pict`) carries its image as
             // `v:imagedata@r:id`; resolve it through the same media table.
@@ -4287,6 +4329,14 @@ impl BodyParser<'_> {
             self.mc_skip_depth -= 1;
             return Ok(());
         }
+        // The non-visual-properties scope closes. Kept OUTSIDE the match and
+        // before it, because `cNvPr`/`docPr` are scaffolding that several arms
+        // below already ignore by name — an arm that only some paths reach
+        // would leave the depth stuck open, and a stuck depth turns every
+        // later `a:hlinkClick` in the document's text into a link on a shape.
+        if matches!(local, b"cNvPr" | b"docPr") {
+            self.nvpr_depth = self.nvpr_depth.saturating_sub(1);
+        }
         match local {
             // The mirror of the `on_start` arm: an open `a:custGeom` owns every
             // close in its subtree. FIRST for the same reason — `</a:moveTo>`
@@ -5108,6 +5158,7 @@ impl BodyParser<'_> {
                     .or((shape.extent != ZERO_EXTENT).then_some(shape.extent))
                     .unwrap_or(ZERO_EXTENT);
                 self.push_segment(Segment::TextBox(TextBox {
+                    hyperlink: None,
                     id: shape.id,
                     anchor: Some(pending.resolve()),
                     relative_height: pending.relative_height,
@@ -5126,6 +5177,7 @@ impl BodyParser<'_> {
                     .pending_extent
                     .or((shape.extent != ZERO_EXTENT).then_some(shape.extent));
                 self.push_segment(Segment::TextBox(TextBox {
+                    hyperlink: None,
                     id: shape.id,
                     anchor: None,
                     relative_height: None,
@@ -5155,6 +5207,7 @@ impl BodyParser<'_> {
                 descr: shape.descr,
                 crop: shape.srcrect,
                 opacity: shape.opacity,
+                hyperlink: shape.hyperlink.take(),
                 // A grouped picture's `pic:spPr/a:ln` frame is captured as the
                 // shape's stroke (via the shared outline path).
                 border: shape.stroke,
@@ -5169,6 +5222,7 @@ impl BodyParser<'_> {
                 return None;
             }
             return Some(GroupChild::TextBox(GroupTextBox {
+                hyperlink: shape.hyperlink.take(),
                 id: shape.id,
                 offset: shape.offset,
                 extent: shape.extent,
@@ -5182,6 +5236,7 @@ impl BodyParser<'_> {
             }));
         }
         Some(GroupChild::Shape(GroupShape {
+            hyperlink: shape.hyperlink.take(),
             id: shape.id,
             offset: shape.offset,
             extent: shape.extent,
@@ -5212,6 +5267,7 @@ impl BodyParser<'_> {
         match builder.anchor {
             Some((anchor, extent, relative_height)) => {
                 self.pending_group = Some(WordprocessingGroup {
+                    hyperlink: None,
                     id: builder.id,
                     anchor: Some(anchor),
                     relative_height,
@@ -5222,6 +5278,7 @@ impl BodyParser<'_> {
             }
             None => {
                 let nested = WordprocessingGroup {
+                    hyperlink: None,
                     id: builder.id,
                     anchor: None,
                     relative_height: None,
@@ -5297,6 +5354,7 @@ impl BodyParser<'_> {
         let opacity = self.pending_opacity.take();
         let border = self.pending_picture_border.take();
         let inline_descr = self.pending_inline_descr.take();
+        let inline_hyperlink = self.pending_inline_hyperlink.take();
         let flip_h = std::mem::take(&mut self.pending_flip_h);
         let flip_v = std::mem::take(&mut self.pending_flip_v);
         let rotation = self.pending_rotation.take();
@@ -5309,6 +5367,7 @@ impl BodyParser<'_> {
                             extent: extent.unwrap_or(ZERO_EXTENT),
                             anchor: anchor.resolve(),
                             descr: anchor.descr,
+                            hyperlink: anchor.hyperlink,
                             relative_height: anchor.relative_height,
                             crop,
                             opacity,
@@ -5317,9 +5376,11 @@ impl BodyParser<'_> {
                             flip_v,
                             rotation,
                         });
-                        // Any remaining unmodeled detail (e.g. a click-link) is
-                        // still surfaced so the anchored drawing is never silently
-                        // under-modeled.
+                        // Any remaining unmodeled detail is still surfaced so
+                        // the anchored drawing is never silently under-modeled.
+                        // A click-link used to be counted here; it is modeled
+                        // now, and only one that resolves to nothing still
+                        // sets `extra`.
                         if extra {
                             self.reporter.report(b"drawing");
                         }
@@ -5332,6 +5393,7 @@ impl BodyParser<'_> {
                         media: *media,
                         extent,
                         descr: inline_descr,
+                        hyperlink: inline_hyperlink,
                         crop,
                         opacity,
                         border,
@@ -5428,6 +5490,7 @@ impl BodyParser<'_> {
         // its content is never lost.
         for (id, blocks) in std::mem::take(&mut self.pending_vml_textboxes) {
             self.push_segment(Segment::TextBox(TextBox {
+                hyperlink: None,
                 id,
                 anchor: None,
                 relative_height: None,
@@ -5452,6 +5515,9 @@ impl BodyParser<'_> {
                         media: *media,
                         extent: None,
                         descr: None,
+                        // VML has no `a:hlinkClick`; its link would be
+                        // `v:shape@href`, which is a separate row.
+                        hyperlink: None,
                         crop: None,
                         opacity: None,
                         border: None,
@@ -5492,6 +5558,8 @@ impl BodyParser<'_> {
             if vml_is_floating(&drawing.position) {
                 let (anchor, relative_height) = vml_anchor(drawing);
                 return Ok(Some(Segment::AnchoredDrawing {
+                    // VML has no `a:hlinkClick`; see above.
+                    hyperlink: None,
                     media,
                     extent: vml_extent(&drawing.position),
                     anchor,
@@ -5517,6 +5585,8 @@ impl BodyParser<'_> {
                 && drawing.position.height.is_some_and(|h| h > 0))
             .then(|| vml_extent(&drawing.position));
             return Ok(Some(Segment::Drawing {
+                // VML has no `a:hlinkClick`; see above.
+                hyperlink: None,
                 media,
                 extent,
                 descr: None,
@@ -5554,6 +5624,7 @@ impl BodyParser<'_> {
         if positioned {
             let (anchor, relative_height) = vml_anchor(drawing);
             Some(Segment::TextBox(TextBox {
+                hyperlink: None,
                 id,
                 anchor: Some(anchor),
                 relative_height,
@@ -5565,6 +5636,7 @@ impl BodyParser<'_> {
             }))
         } else {
             Some(Segment::TextBox(TextBox {
+                hyperlink: None,
                 id,
                 anchor: None,
                 relative_height: None,
@@ -5614,6 +5686,9 @@ impl BodyParser<'_> {
         let extent = vml_extent(&drawing.position);
         let (anchor, relative_height) = vml_anchor(drawing);
         let child = GroupChild::Shape(GroupShape {
+            // VML (`v:shape`) has no `a:hlinkClick`; its link would be
+            // `v:shape@href`, which is a separate row.
+            hyperlink: None,
             id: self.next_id()?,
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent,
@@ -5654,6 +5729,9 @@ impl BodyParser<'_> {
         };
         let (anchor, relative_height) = vml_anchor_at(drawing, left, top);
         let child = GroupChild::Shape(GroupShape {
+            // VML (`v:shape`) has no `a:hlinkClick`; its link would be
+            // `v:shape@href`, which is a separate row.
+            hyperlink: None,
             id: self.next_id()?,
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent,
@@ -5686,6 +5764,7 @@ impl BodyParser<'_> {
         child: GroupChild,
     ) -> Result<WordprocessingGroup, ImportError> {
         Ok(WordprocessingGroup {
+            hyperlink: None,
             id: self.next_id()?,
             anchor: Some(anchor),
             relative_height,
@@ -6163,6 +6242,7 @@ impl BodyParser<'_> {
                     // enclosing VML pict still keeps its content through the safe
                     // legacy inline fallback.
                     self.push_segment(Segment::TextBox(TextBox {
+                        hyperlink: None,
                         id: frame.node_id,
                         anchor: None,
                         relative_height: None,
@@ -6807,6 +6887,33 @@ impl BodyParser<'_> {
         }
     }
 
+    /// `wp:docPr@descr` is the drawing's alt text (accessibility): modeled on
+    /// an anchor's `descr`, and — since P1G-OBJ-MODEL — on an inline drawing's
+    /// `pending_inline_descr` too. An over-long value is reported, not stored.
+    ///
+    /// A method rather than an inline arm because `wp:docPr` now also opens a
+    /// non-visual-property scope for `a:hlinkClick`, and one arm doing both
+    /// reads as though the two were related.
+    fn drawing_doc_pr(&mut self, element: &BytesStart<'_>) {
+        match attribute_value(element, b"descr") {
+            Some(descr) if descr.is_empty() => {}
+            Some(descr) if descr.len() <= MAX_DESCR_BYTES => {
+                if let Some(anchor) = self.pending_anchor.as_mut() {
+                    anchor.descr = Some(descr);
+                } else {
+                    self.pending_inline_descr = Some(descr);
+                }
+            }
+            // Only an alt text too long to store is a loss. `descr=""` is
+            // not: it carries nothing, Word writes it on drawings that have
+            // no alt text at all, and calling it unmodeled detail put three
+            // of this corpus's five `drawing` findings on documents that
+            // lost nothing — the same false-loss shape as `w:shd`.
+            Some(_) => self.drawing_extra = true,
+            None => {}
+        }
+    }
+
     /// Resolves a `w:hyperlink`'s target: an external URL through the
     /// relationship graph (`r:id`) or an internal bookmark (`w:anchor`).
     /// Returns `None` (report + flatten) when neither resolves in domain.
@@ -6951,9 +7058,11 @@ impl BodyParser<'_> {
                 flip_h,
                 flip_v,
                 rotation,
+                hyperlink,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink,
                     opacity,
                     id,
                     media,
@@ -6978,9 +7087,11 @@ impl BodyParser<'_> {
                 flip_h,
                 flip_v,
                 rotation,
+                hyperlink,
             } => {
                 let id = self.next_id()?;
                 Ok(InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                    hyperlink,
                     opacity,
                     id,
                     media,

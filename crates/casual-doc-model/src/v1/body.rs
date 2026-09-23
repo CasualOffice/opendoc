@@ -292,6 +292,10 @@ pub struct Drawing {
     /// Word writes a watermark: the same picture, at 20%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<u32>,
+    /// The hyperlink this drawing follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -545,6 +549,10 @@ pub struct AnchoredDrawing {
     /// Word writes a watermark: the same picture, at 20%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<u32>,
+    /// The hyperlink this drawing follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -926,6 +934,10 @@ pub struct GroupPicture {
     /// Word writes a watermark: the same picture, at 20%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<u32>,
+    /// The hyperlink this drawing follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// The picture frame outline (`pic:spPr/a:ln`), if the picture is bordered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<ShapeStroke>,
@@ -1129,6 +1141,10 @@ pub struct GroupTextBox {
     /// Internal margins, vertical anchoring, overflow, and autofit (`wps:bodyPr`).
     #[serde(default, skip_serializing_if = "TextBoxBodyProperties::is_default")]
     pub body_properties: TextBoxBodyProperties,
+    /// The hyperlink this object follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// Horizontal flip (`a:xfrm@flipH`): mirror the box across its vertical axis.
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub flip_h: bool,
@@ -1189,6 +1205,15 @@ pub struct GroupShape {
     /// degree), if authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<i32>,
+    /// The hyperlink this shape follows when it is clicked
+    /// (`wps:cNvPr/a:hlinkClick`), if it is linked.
+    ///
+    /// On the CHILD, not only on the group: Word writes the link onto each
+    /// linked shape, and a corpus file measured for this carries four of them
+    /// — two on `wps:cNvPr`, two on `pic:cNvPr`, none on the `wp:docPr` above
+    /// them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
 }
 
 /// A child of a [`WordprocessingGroup`], in the group's child coordinate space.
@@ -1241,6 +1266,10 @@ pub struct WordprocessingGroup {
     pub extent: Extent,
     /// The group transform (`a:xfrm`): parent-space box + child coordinate space.
     pub transform: GroupTransform,
+    /// The hyperlink this object follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// The children, in document (paint) order.
     pub children: Vec<GroupChild>,
 }
@@ -1391,6 +1420,30 @@ pub struct Hyperlink {
     pub tooltip: Option<String>,
     /// The hyperlinked inline content (non-empty; never a nested wrapper).
     pub inlines: Vec<InlineNode>,
+}
+
+/// A hyperlink on a DRAWING — `a:hlinkClick`, the element that makes a picture
+/// or shape clickable.
+///
+/// Separate from [`Hyperlink`] because that one WRAPS inline content and this
+/// one is a property of an object: a drawing has no inlines to wrap, and a
+/// wrapper would make every drawing's position depend on whether it happened
+/// to be linked. The TARGET is shared, so the two cannot disagree about what a
+/// link can point at.
+///
+/// `a:hlinkClick` carries an `r:id` and no `anchor`, unlike `w:hyperlink` —
+/// so a link to a bookmark in the same document is a relationship whose target
+/// is the fragment `#name`. The importer resolves both shapes into the same
+/// [`HyperlinkTarget`], which is what keeps that asymmetry out of everything
+/// downstream.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingHyperlink {
+    /// Where it points.
+    pub target: HyperlinkTarget,
+    /// A screen-tip (`@tooltip`), if declared (non-empty, at most 255 bytes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tooltip: Option<String>,
 }
 
 /// Maximum field-instruction length, in UTF-8 bytes.
@@ -1765,6 +1818,10 @@ pub const MAX_TEXTBOX_DEPTH: u32 = 8;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextBox {
+    /// The hyperlink this object follows when it is clicked
+    /// (`…/cNvPr/a:hlinkClick`), if it is linked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hyperlink: Option<DrawingHyperlink>,
     /// Stable identity.
     pub id: NodeId,
     /// The floating anchor (`wp:anchor`), when this text box is positioned rather

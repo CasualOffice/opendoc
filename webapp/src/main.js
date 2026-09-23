@@ -125,6 +125,7 @@ import {
 } from "./command_taxonomy.mjs";
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
+import { followExternalTarget } from "./link_targets.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 
 
@@ -6143,6 +6144,7 @@ function linkAt(page, event) {
 
 /** Clears the visible chip without changing the document selection. */
 function hideLinkChip() {
+  linkChipShownBy = null;
   activeLink = null;
   linkChip.hidden = true;
 }
@@ -6179,13 +6181,32 @@ function showLinkChipAt(page, event) {
     hideLinkChip();
     return false;
   }
-  activeLink = link;
-  pendingFormat = null;
+  // Selecting the link's own text is what a click on TEXT does. A click on a
+  // linked OBJECT has already selected the object, and replacing that with a
+  // text range would drop the handles the same gesture just put up.
   selection = {
     anchor: { node: link.startNode, offset: link.startOffset },
     focus: { node: link.endNode, offset: link.endOffset },
   };
   drawSelection();
+  return showLinkChip(link, event);
+}
+
+/** The pointer event that opened the chip, so the light-dismiss listener below
+ *  does not close it on the very event that asked for it.
+ *
+ *  A link on TEXT is offered on pointer-UP, after the dismiss listener has run
+ *  on the matching pointer-down, so it never collided. A link on an OBJECT is
+ *  resolved during pointer-DOWN (selecting it is a pointer-down gesture), so the
+ *  chip opened and the same event closed it — which looked exactly like the
+ *  engine not reporting the link. */
+let linkChipShownBy = null;
+
+/** Renders the chip for a link already resolved, leaving the selection alone. */
+function showLinkChip(link, event) {
+  activeLink = link;
+  linkChipShownBy = event;
+  pendingFormat = null;
 
   const internal = link.kind === "internal";
   const resolved = !internal || (!!link.targetNode && !!link.targetPage);
@@ -6210,53 +6231,7 @@ linkChipRemove.hidden = internal;
   return true;
 }
 
-/** The schemes this host is willing to hand to the browser. Anything else in a
- * link target — `javascript:`, `data:`, `file:`, a custom app scheme — is a
- * capability an imported document must not be able to reach. */
-const EXTERNAL_LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
-/** Resolves a document-supplied URL to something safe to navigate to, or null.
- *
- * Link targets arrive from imported files, pasted HTML and the link dialog, and
- * are followed from three surfaces (the chip's Open, a click on the text, the
- * context menu). The allowlist used to live inside `activateLink` only, so the
- * context menu opened `javascript:` unchecked — the same capability, guarded on
- * one surface. Every follow path resolves here now, so there is one predicate
- * to change when the policy does. */
-function resolveExternalTarget(url) {
-  if (typeof url !== "string" || !url.trim()) return null;
-  let target;
-  try {
-    target = new URL(url, window.location.href);
-  } catch {
-    return null;
-  }
-  return EXTERNAL_LINK_SCHEMES.has(target.protocol) ? target : null;
-}
-
-/** Follows an allowlisted target and reports the refusal when there is not one.
- * A blocked link says so — a link that silently does nothing is indistinguishable
- * from a broken editor. `noreferrer` accompanies `noopener` everywhere: the
- * context-menu path used to leak the referrer that the click path withheld. */
-function followExternalTarget(url) {
-  const target = resolveExternalTarget(url);
-  if (!target) {
-    let scheme = "";
-    try {
-      scheme = new URL(url, window.location.href).protocol;
-    } catch {
-      scheme = "";
-    }
-    setStatus(
-      scheme ? `Blocked ${scheme} link scheme` : "Blocked an invalid link target",
-      "error",
-    );
-    return false;
-  }
-  if (target.protocol === "mailto:") window.location.assign(target.href);
-  else window.open(target.href, "_blank", "noopener,noreferrer");
-  return true;
-}
 
 /** Activates a previously queried authored link. The runtime resolves
  * geometry/bookmarks; this host owns the external-scheme allowlist and browser
@@ -6275,7 +6250,7 @@ function activateLink(link) {
     return true;
   }
 
-  followExternalTarget(link.url);
+  followExternalTarget(link.url, setStatus);
   return true;
 }
 
@@ -6319,6 +6294,11 @@ function onPointerDown(page, event) {
   const descended = object ? descendIntoSelectedGroup(object, page, x, y, event) : null;
   if (descended) {
     object.free?.();
+    // On the owner's Medical form the link is on the CHILD — four of them, none
+    // on the group — so without this the document that motivated the feature is
+    // the one where it never appears.
+    const childLink = linkAt(page, event);
+    if (childLink) showLinkChip(childLink, event);
     event.preventDefault();
     return;
   }
@@ -6335,6 +6315,12 @@ function onPointerDown(page, event) {
     // (for the two-step Escape); fall back to the current caret.
     const anchor = anchorAt(page, event) || selection?.focus || null;
     selectObject(node, kind, anchor, anchored, descriptor);
+    // A linked picture offers its target as linked text does (`linkAt` answers
+    // for both), but AFTER selection, so the handles stay and the chip is an
+    // addition. The pointer stays `move`: `pointer_cursor.mjs` `object-movable`
+    // records why, and ONLYOFFICE and Word agree.
+    const objectLink = linkAt(page, event);
+    if (objectLink) showLinkChip(objectLink, event);
     // A floating object is movable: the same gesture that selects it can drag it
     // (a bare click commits nothing). Inline objects flow with the text.
     if (descriptor.canMove) startObjectMove(event, page, node);
@@ -6942,6 +6928,7 @@ linkChipRemove.addEventListener("click", () => {
   hideLinkChip();
 });
 document.addEventListener("pointerdown", (event) => {
+  if (event === linkChipShownBy) return; // this event is what opened it
   if (!linkChip.hidden && !linkChip.contains(event.target)) hideLinkChip();
 });
 document.addEventListener("keydown", (event) => {
@@ -7181,7 +7168,7 @@ function removeContextLink(link) {
 function openContextLink(link) {
   if (!link) return;
   if (link.url) {
-    followExternalTarget(link.url);
+    followExternalTarget(link.url, setStatus);
     return;
   }
   if (link.targetNode != null) {
