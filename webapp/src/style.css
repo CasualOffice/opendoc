@@ -852,36 +852,20 @@ input {
   background: var(--line);
 }
 
-/* ---- Settings popover ------------------------------------------------------ */
-/* Opened from the header's gear. It grew past the height of the window as
- * settings were added — spelling and grammar were the last two — so the
- * bottom of it (Reset, the autosave controls) was simply unreachable, and
- * scrolling it scrolled the document behind instead. The owner's report:
- * "its height exceed .. so that panel doesnt makes any sense now".
- *
- * Bounded to the viewport with its own scroll, which is what every product's
- * settings surface does once it outgrows a popover. The File page's Settings
- * PANE is the roomy route and is unaffected — it overrides these in
- * `.panel-in-page`. */
-.settings-panel {
-  position: absolute;
-  top: var(--h-header);
-  right: 12px;
-  z-index: var(--z-menu);
-  width: 268px;
-  padding: 14px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-popover);
-  box-shadow: var(--shadow-popover);
-  /* The gap below the header, less a margin so it never touches the edge. */
-  max-height: calc(100vh - var(--h-header) - 24px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.settings-panel[hidden] {
-  display: none;
+/* ---- Settings dialog ------------------------------------------------------ */
+/* It was a popover anchored to the header's gear, and it grew past the height
+ * of the window as settings were added — spelling and grammar were the last
+ * two — so Reset and the autosave controls were unreachable and scrolling it
+ * scrolled the document behind. The owner's report: "its height exceed .. so
+ * that panel doesnt makes any sense now .. even for compact view .. see dialog
+ * instead". Google Docs' Preferences and Word's Options are both modal
+ * dialogs. It is one now, in the shared `.dialog-overlay` shell, so it inherits
+ * the scrim, the scroll containment and the one modal contract — and the shape
+ * the File page already knows how to borrow. */
+.settings-dialog {
+  /* Wide enough for the reviewer-identity pair on one row, no wider. The
+     shared dialog body already caps its own height and scrolls. */
+  max-inline-size: min(100%, 520px);
 }
 
 .settings-section {
@@ -954,9 +938,14 @@ input {
   overflow: hidden;
 }
 
+/* The input FILLS its swatch rather than overhanging it by 14px in each
+   direction. It was 40px inside a 26px circle — invisible, because the swatch
+   clips, but it is still content painted outside the box that holds it, which
+   is what `dialog-contract`'s clipping guard caught the moment Settings became
+   a dialog and came under that contract. The hit target is the swatch. */
 .acc-custom input[type="color"] {
-  width: 40px;
-  height: 40px;
+  width: 100%;
+  height: 100%;
   border: none;
   background: none;
   cursor: pointer;
@@ -968,15 +957,6 @@ input {
   color: var(--muted);
   font-size: var(--fs-small);
   line-height: 1.4;
-}
-
-.settings-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
 }
 
 /* ---- Modal dialogs --------------------------------------------------------- */
@@ -7726,37 +7706,6 @@ body:not(.doc-loaded) .drop-title {
   font-weight: 600;
 }
 
-/* Settings, moved into the pane: it is a section of the page now, not a
-   floating dialog, so it drops the dialog's frame and scrolls with the pane
-   instead of scrolling the window behind it. */
-.settings-panel.settings-in-page {
-  position: static;
-  display: block;
-  width: auto;
-  max-width: 680px;
-  max-height: none;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-}
-
-/* ---- The File page's right side, as ONE surface --------------------------
- * Every pane — Export, New, and each borrowed panel — shares this: the same
- * title, the same one-line blurb, the same 720px measure, the same rhythm.
- *
- * Without it each borrowed panel arrived wearing its dialog's own clothes —
- * the palette as a centred popup card, Settings at its 268px popover width —
- * and the right side read as four unrelated dialogs parked in one place
- * rather than one page. The owner's words: "you just added popup there on
- * right side .. nothing coherant". */
-.file-pane-body {
-  max-width: 720px;
-}
-
-/* A borrowed panel is normalised INTO the pane, not merely unframed: it gives
-   up its own width, padding, card and shadow and inherits the pane's. */
 .panel-in-page {
   width: 100%;
   max-width: none;
@@ -7817,7 +7766,6 @@ body:not(.doc-loaded) .drop-title {
    the window behind it (`docs/123`; the owner's report was the Settings form
    being taller than the window). */
 .panel-in-page,
-.settings-panel.panel-in-page,
 .dialog-overlay.panel-in-page {
   position: static;
   display: block;

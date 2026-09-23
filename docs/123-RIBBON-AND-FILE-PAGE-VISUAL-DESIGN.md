@@ -338,6 +338,41 @@ covers in `data-covers`. Both halves matter:
   a command and the other opens a pane. One `Export` row covers all six export ids;
   `one-axis-navigation.spec.mjs` expands it and compares the full rosters.
 
+### 5.7 Settings is a dialog, and the gear has one destination
+
+The owner: "setting from header is broken .. i meant its height exceeds .. so that panel
+doesn't make any sense now .. even for compact view .. see dialog instead."
+
+It was an anchored popover, 268px wide, hanging off the gear. Three things were wrong with
+it and only one was the height:
+
+1. It outgrew the window as settings were added — spelling and grammar were the last two —
+   so Reset and the autosave controls were unreachable and scrolling it scrolled the
+   document behind. Bounding it was a patch, not a fix.
+2. It hand-rolled its own Escape handler and its own `pointerdown` light dismiss. That is
+   precisely the divergence `modal.mjs` exists to end: nine dialogs used to do this and
+   they disagreed with each other in six different ways.
+3. With Settings a File-page pane it was a second, smaller copy of the same form.
+
+It is a modal dialog now, in the shared `.dialog-overlay` shell, registered like every
+other one — so Escape, the backdrop, the close button and focus restoration are one path,
+Tab cannot walk out into the chrome behind the scrim, and application shortcuts stop
+firing behind it. Google Docs' Preferences and Word's Options are both modal dialogs;
+ONLYOFFICE has no Settings dialog at all, because theirs is the File-page pane we also
+have. The shell is also the one the File page already knows how to borrow, so the pane
+got simpler rather than more complicated.
+
+`dialog-contract.spec.mjs` has a guard that enumerates every `aria-modal` surface and
+fails if one is not in its table. Adding Settings to that table immediately found a
+defect the popover had been hiding: the custom-accent swatch is a 26px circle holding a
+40px `<input type="color">`, painting 14px outside the box on every side.
+
+**The gear has one destination, whichever that is.** The dialog and the pane are the SAME
+element, and while the File page is open that element is parented inside the page — so
+opening the dialog would have raised a half-dialog out of a pane. The gear now selects the
+Settings pane while the page is open and opens the dialog otherwise. One Settings, one
+place, wherever you press it from.
+
 ### 5.6 Density and Back
 
 Rows are 28px tall with 4px beneath — a **32px pitch**, which is both ONLYOFFICE's
@@ -389,6 +424,9 @@ ONLYOFFICE's own ribbon while keeping 30px controls that ONLYOFFICE does not.
 | the same spec | each template previews page-shaped, scaled down, showing its own text | dropping the thumbnail; making the frame square; `scale(1)` |
 | `webapp/tests/blank_document.test.mjs` | `styles.xml` and the section carry exactly the sizes, spacing and page `BLANK_STYLE_METRICS`/`BLANK_PAGE` declare | offsetting any one of them by a point |
 | the same file | a preview block per paragraph, carrying the style's real metrics | previewing everything as body text; dropping empty paragraphs |
+| `webapp/tests/e2e/dialog-contract.spec.mjs` | Settings answers to the one modal contract, and every `aria-modal` surface is in that table | un-registering it; dropping its `aria-modal` |
+| the same spec | nothing in Settings paints outside the box that holds it | restoring the 40px colour input inside its 26px swatch |
+| `webapp/tests/e2e/file-page-panes.spec.mjs` | the gear opens the dialog outside the page and selects the pane inside it | removing the `file-page-open` branch |
 | `webapp/tests/e2e/one-axis-navigation.spec.mjs` | the two File surfaces offer the same roster in the same order | letting `Export` cover one format; appending category rows instead of placing them |
 
 ## 8. Open rows this raises
@@ -396,8 +434,6 @@ ONLYOFFICE's own ribbon while keeping 30px controls that ONLYOFFICE does not.
 - **`109` UX-025** — one mode control, but on the surface no reference uses. All three
   put it in the top chrome; ours is in the status bar.
 - **`109` UX-026 — closed** by §5.3: seven categories render into the pane.
-- **The header gear's Settings popup.** Its height is bounded now, but the owner's point
-  stands — with Settings in the File page the popup is a second, smaller copy of the same
-  form, and they asked for a dialog instead. Open, not addressed here.
+- **The header gear's Settings popup — closed.** See §5.7.
 - **Doc 122 §6's two deferrals** (`edit.selectAll`, `edit.pasteText` on Home ▸ Editing)
   were deferred for want of 18px. There are now 269px.

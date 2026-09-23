@@ -16703,6 +16703,7 @@ const themeSeg = document.getElementById("themeSeg");
 const accentSwatches = document.getElementById("accentSwatches");
 const accentCustom = document.getElementById("accentCustom");
 const settingsReset = document.getElementById("settingsReset");
+const settingsClose = document.getElementById("settingsClose");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
@@ -16870,43 +16871,42 @@ settingsReset.addEventListener("click", () => {
   applySettings();
 });
 
+// Settings is a MODAL now, registered like every other dialog here. It was an
+// anchored popover with its own Escape handler and its own pointerdown light
+// dismiss — the hand-rolled dismissal `modal.mjs` exists to end — and it was
+// taller than the window, so scrolling it scrolled the document behind it. The
+// owner's report: "that panel doesn't make any sense now .. see dialog
+// instead". Registering it means Escape, the backdrop, the close button and
+// focus restoration are one path, Tab cannot walk out into the chrome behind
+// the scrim, and application shortcuts stop firing behind it.
+const settingsModal = registerModal(settingsPanel, {
+  initialFocus: () => settingsPanel.querySelector("#themeSeg button[aria-checked='true']"),
+  fallbackFocus: () => settingsBtn,
+});
+
 function toggleSettings(open) {
-  const show = open ?? settingsPanel.hidden;
-  const holdsFocus = !show && settingsPanel.contains(document.activeElement);
-  settingsPanel.hidden = !show;
+  const show = open ?? !settingsModal.isOpen;
+  if (show === settingsModal.isOpen) return;
   settingsBtn.setAttribute("aria-expanded", String(show));
-  // Settings is a form, not a menu: opening it hands over the keyboard, and
-  // closing it gives the user their place back instead of collapsing focus to
-  // the top of the page (docs/104 HF-070).
-  if (show) queueMicrotask(() => focusFirstIn(settingsPanel));
-  else if (holdsFocus) settingsBtn.focus({ preventScroll: true });
+  if (show) settingsModal.open();
+  else settingsModal.close();
 }
-settingsBtn.addEventListener("click", () => toggleSettings());
-// Light dismiss on POINTERDOWN — the phase every other dismissable surface in
-// this chrome already uses (the menu bar, the editor context menu, the ribbon
-// overflow, the link chip, the paste-options bubble).
-//
-// This listener used to run on `click`, and that alone is what made
-// Tools ▸ Settings a dead control. The menu row's click ran the command, the
-// command opened the panel, and the SAME click carried on bubbling to here —
-// where the target (a menu row) is neither the panel nor the gear, so the panel
-// was closed again inside one event. Nothing was thrown and nothing was logged;
-// the panel was simply never on screen long enough to paint. `stopPropagation`
-// on the gear's own click could not help: it stops the gear's event, and the
-// event that closed the panel was the menu row's.
-//
-// Pointerdown cannot do that to any surface: it has already fired and been
-// handled before the activating click exists, and keyboard activation produces
-// no pointerdown at all. `closest` rather than `===` because the gear's visible
-// child is an icon span, which is what a real pointer lands on.
-document.addEventListener("pointerdown", (e) => {
-  if (settingsPanel.hidden) return;
-  if (settingsPanel.contains(e.target) || e.target?.closest?.("#settingsBtn")) return;
-  toggleSettings(false);
+settingsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  // The Settings DIALOG and the Settings PANE are the same element. While the
+  // File page is open that element is parented INSIDE the page, so opening the
+  // dialog would have raised a half-dialog out of a pane. There is one
+  // Settings, so the gear goes to wherever it currently lives: the page's own
+  // pane while the page is open, the dialog otherwise.
+  if (document.body.classList.contains("file-page-open")) {
+    setFilePane("settings");
+    renderFilePage();
+    document.querySelector('#filePageBody [data-file-pane="settings"]')?.focus();
+    return;
+  }
+  toggleSettings();
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !settingsPanel.hidden) toggleSettings(false);
-});
+settingsClose.addEventListener("click", () => toggleSettings(false));
 applySettings();
 
 // ---- Document properties (docProps/core.xml — title, author, subject, …) ----

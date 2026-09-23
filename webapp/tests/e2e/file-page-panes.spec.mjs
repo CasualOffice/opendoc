@@ -187,6 +187,38 @@ test("the panes that fill on dialog-open are filled as panes too", async ({
   expect(consoleErrors).toEqual([]);
 });
 
+test("the gear goes to the pane while the File page is open — there is one Settings", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await gotoEditor(page);
+
+  // Outside the page the gear opens the dialog.
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#settingsPanel")).toBeVisible();
+  await expect(page.locator("#settingsPanel")).toHaveClass(/dialog-overlay/);
+  await expect(page.locator("#settingsPanel")).not.toHaveClass(/panel-in-page/);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#settingsPanel")).toBeHidden();
+
+  // Inside it, the same element is already parented in the pane. Opening the
+  // dialog would have raised a half-dialog out of the page, so the gear
+  // selects the pane instead.
+  await openFilePage(page);
+  await page.locator("#settingsBtn").click();
+  await expect(page.locator("#filePageDetail #settingsPanel")).toBeVisible();
+  await expect(page.locator("#settingsPanel")).toHaveClass(/panel-in-page/);
+  await expect(
+    page.locator('#filePageBody [data-file-pane="settings"]'),
+  ).toHaveAttribute("aria-pressed", "true");
+  // Still exactly one settings form, and no scrim over the page.
+  expect(await page.locator("#settingsPanel").count()).toBe(1);
+  await expect(page.locator("body")).not.toHaveClass(/modal-open/);
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("each template previews as a miniature of its own first page", async ({
   page,
   consoleErrors,
