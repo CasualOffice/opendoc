@@ -10892,6 +10892,9 @@ fn build_group_children(
             GroupChildDraft::Shape(shape) => {
                 let child_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
                 children.push(GroupChild::Shape(GroupShape {
+                    // ODF links a frame with `draw:a`, not `a:hlinkClick`;
+                    // that is a separate row.
+                    hyperlink: None,
                     id: child_id,
                     offset: PointEmu {
                         x_emu: shape.abs_x_emu - base_x,
@@ -10928,6 +10931,9 @@ fn build_group_children(
                 let media_id = *media.get(*media_cursor).ok_or(OdfError::InvalidModel)?;
                 *media_cursor += 1;
                 children.push(GroupChild::Picture(GroupPicture {
+                    // ODF links a frame with `draw:a`, not `a:hlinkClick`;
+                    // that is a separate row.
+                    hyperlink: None,
                     opacity: None,
                     id: child_id,
                     media: media_id,
@@ -10959,6 +10965,7 @@ fn build_group_children(
                 let nested_children =
                     build_group_children(nested, nmin_x, nmin_y, ids, media, media_cursor)?;
                 children.push(GroupChild::Group(Box::new(WordprocessingGroup {
+                    hyperlink: None,
                     id: group_id,
                     anchor: None,
                     relative_height: None,
@@ -11085,6 +11092,8 @@ fn build_inlines(
                     _ => None,
                 };
                 InlineNode::Drawing(Box::new(Drawing {
+                    // ODF links a frame with `draw:a`; see above.
+                    hyperlink: None,
                     opacity: None,
                     id,
                     media,
@@ -11105,6 +11114,8 @@ fn build_inlines(
                     .get(*index)
                     .ok_or(OdfError::InvalidModel)?;
                 InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                    // ODF links a frame with `draw:a`; see above.
+                    hyperlink: None,
                     opacity: None,
                     id,
                     media,
@@ -11169,6 +11180,7 @@ fn build_inlines(
                 // at origin. `id` is the group's; the shape gets its own id.
                 let shape_id = ids.next_id().map_err(|_| OdfError::InvalidModel)?;
                 InlineNode::Group(Box::new(WordprocessingGroup {
+                    hyperlink: None,
                     id,
                     anchor: Some(DrawingAnchor {
                         horizontal: AnchorHorizontal {
@@ -11196,6 +11208,8 @@ fn build_inlines(
                         rotation: None,
                     },
                     children: vec![GroupChild::Shape(GroupShape {
+                        // ODF links a frame with `draw:a`; see above.
+                        hyperlink: None,
                         id: shape_id,
                         offset: PointEmu { x_emu: 0, y_emu: 0 },
                         extent,
@@ -11245,6 +11259,7 @@ fn build_inlines(
                     &mut media_cursor,
                 )?;
                 InlineNode::Group(Box::new(WordprocessingGroup {
+                    hyperlink: None,
                     id,
                     anchor: Some(DrawingAnchor {
                         horizontal: AnchorHorizontal {
@@ -11302,6 +11317,7 @@ fn build_inlines(
                     })]
                 };
                 InlineNode::TextBox(Box::new(TextBox {
+                    hyperlink: None,
                     id,
                     anchor: None,
                     relative_height: None,

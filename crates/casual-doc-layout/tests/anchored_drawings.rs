@@ -86,6 +86,7 @@ fn run(id: u64, text: &str) -> InlineNode {
 
 fn anchored(id: u64, media: MediaId, h_offset: i64, v_offset: i64, behind_doc: bool) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -287,6 +288,7 @@ fn top_bottom_anchor(bottom_twips: i64) -> DrawingAnchor {
 
 fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: i64) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -307,6 +309,7 @@ fn top_bottom_drawing(id: u64, media: MediaId, height_twips: i64, bottom_twips: 
 
 fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -327,6 +330,7 @@ fn anchored_at_paragraph(id: u64, media: MediaId) -> InlineNode {
 
 fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -360,6 +364,7 @@ fn anchored_at_column_right(id: u64, media: MediaId) -> InlineNode {
 
 fn anchored_at_page_right(id: u64, media: MediaId) -> InlineNode {
     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+        hyperlink: None,
         opacity: None,
         id: node(id),
         media,
@@ -517,6 +522,7 @@ fn assert_top_bottom_barrier(fragment: &BlockFragment, expected: Twip) {
 fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
     let (media_id, definitions) = media_defs();
     let text_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(20),
         anchor: Some(top_bottom_anchor(0)),
         relative_height: None,
@@ -538,6 +544,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
         height_emu: 300 * 635,
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(30),
         anchor: Some(top_bottom_anchor(50)),
         relative_height: None,
@@ -552,6 +559,7 @@ fn top_and_bottom_reflow_coalesces_pictures_text_boxes_and_groups() {
             rotation: None,
         },
         children: vec![GroupChild::Shape(GroupShape {
+            hyperlink: None,
             id: node(31),
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent: group_extent,
@@ -1029,6 +1037,7 @@ fn a_float_in_a_header_table_cell_is_discovered_and_repeated_per_page() {
 fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
     let (_media_id, mut definitions) = media_defs();
     let header_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(410),
         anchor: Some(paragraph_anchor()),
         relative_height: Some(10),
@@ -1057,6 +1066,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
         })],
     }));
     let footer_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(420),
         anchor: Some(paragraph_anchor()),
         relative_height: Some(20),
@@ -1199,6 +1209,7 @@ fn floating_text_box_body_properties_apply_in_both_headers_and_footers() {
 fn grouped_text_box_uses_body_properties_and_shape_autofit() {
     let (_media_id, definitions) = media_defs();
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(500),
         anchor: Some(page_anchor(0, 0)),
         relative_height: Some(1),
@@ -1222,6 +1233,7 @@ fn grouped_text_box_uses_body_properties_and_shape_autofit() {
             rotation: None,
         },
         children: vec![GroupChild::TextBox(GroupTextBox {
+            hyperlink: None,
             id: node(501),
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent: Extent {
@@ -1378,6 +1390,7 @@ fn a_floating_text_box_places_at_its_anchor_not_inline() {
     // A paragraph carrying body text plus a FLOATING text box (anchor set) at page
     // offset (1440, 2880) twips, 2x1 inch, white fill, and a 30-twip outline.
     let float = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(20),
         anchor: Some(page_anchor(914_400, 1_828_800)),
         relative_height: Some(100),
@@ -1500,6 +1513,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
     };
     let rect = |id: u64, off: i64| {
         GroupChild::Shape(GroupShape {
+            hyperlink: None,
             id: node(id),
             offset: PointEmu {
                 x_emu: off,
@@ -1526,6 +1540,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(30),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(5),
@@ -1537,6 +1552,7 @@ fn a_group_paints_children_in_document_order_with_the_picture_at_its_own_extent(
         children: vec![
             rect(31, 0),
             GroupChild::Picture(GroupPicture {
+                hyperlink: None,
                 opacity: None,
                 id: node(32),
                 media: media_id,
@@ -1633,6 +1649,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
     };
     let shape = |id, x_emu, geometry, adjustments| {
         GroupChild::Shape(GroupShape {
+            hyperlink: None,
             id: node(id),
             offset: PointEmu { x_emu, y_emu: 0 },
             extent: child_extent,
@@ -1653,6 +1670,7 @@ fn ellipse_and_rounded_rectangle_reach_distinct_display_primitives() {
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(50),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(9),
@@ -1735,6 +1753,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
     };
     let shape = |id, x_emu, geometry| {
         GroupChild::Shape(GroupShape {
+            hyperlink: None,
             id: node(id),
             offset: PointEmu { x_emu, y_emu: 0 },
             extent: child_extent,
@@ -1755,6 +1774,7 @@ fn angular_presets_reach_exact_polygon_display_primitives() {
         })
     };
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(70),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(10),
@@ -1867,6 +1887,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     };
     let shape = |id, x_emu, path| {
         GroupChild::Shape(GroupShape {
+            hyperlink: None,
             id: node(id),
             offset: PointEmu { x_emu, y_emu: 0 },
             extent: child_extent,
@@ -1883,6 +1904,7 @@ fn a_custom_geometry_resolves_to_a_polyline_not_a_rectangle() {
     };
 
     let group = InlineNode::Group(Box::new(WordprocessingGroup {
+        hyperlink: None,
         id: node(90),
         anchor: Some(page_anchor(914_400, 914_400)),
         relative_height: Some(11),
@@ -2066,6 +2088,7 @@ fn footer_text_box_layout(page_instr: &str) -> casual_doc_layout::page::Paginate
     // The page number lives INSIDE a floating text box, with stale cached results
     // ("99") baked in — the bug is that these were shown verbatim on every page.
     let footer_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(400),
         anchor: Some(page_anchor(2_743_200, 9_144_000)),
         relative_height: Some(1),
@@ -2178,6 +2201,7 @@ fn a_page_field_in_an_inline_text_box_resolves() {
     // An INLINE text box (no anchor) flows onto a line; its PAGE field must resolve
     // through the ordinary field pass, which now recurses into inline text boxes.
     let inline_box = InlineNode::TextBox(Box::new(TextBox {
+        hyperlink: None,
         id: node(50),
         anchor: None,
         relative_height: None,

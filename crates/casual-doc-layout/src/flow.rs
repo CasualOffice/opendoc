@@ -8379,6 +8379,7 @@ mod tests {
         // line must start to the RIGHT of the logo — not under it.
         let logo_width = Twip(2000);
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            hyperlink: None,
             opacity: None,
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
@@ -8498,6 +8499,7 @@ mod tests {
         let logo_width = Twip(2000);
         let media = MediaId::new(NodeId::from_parts(71, 1).unwrap());
         let float = InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+            hyperlink: None,
             opacity: None,
             id: NodeId::from_parts(70, 1).unwrap(),
             media,
@@ -11321,6 +11323,7 @@ mod tests {
             id: node(714),
             properties: SdtProperties::default(),
             inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
                 opacity: None,
                 id: node(702),
                 media,
@@ -11377,6 +11380,7 @@ mod tests {
             form: None,
         }));
         let authored_box = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: node(707),
             anchor: None,
             relative_height: None,
@@ -11393,6 +11397,7 @@ mod tests {
             )],
         }));
         let widthless_box = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: node(710),
             anchor: None,
             relative_height: None,
@@ -11459,6 +11464,7 @@ mod tests {
             blocks: vec![paragraph(
                 722,
                 vec![InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
                     opacity: None,
                     id: node(723),
                     media,
@@ -13154,6 +13160,7 @@ mod tests {
             inlines: vec![
                 run_node(12, "before ", RunProperties::default()),
                 InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
                     opacity: None,
                     id: NodeId::from_parts(11, 1).unwrap(),
                     media: media_id,
@@ -13272,6 +13279,7 @@ mod tests {
             inlines: vec![
                 run_node(22, "Paragraph with an image: ", RunProperties::default()),
                 InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
                     opacity: None,
                     id: NodeId::from_parts(21, 1).unwrap(),
                     extent: Some(Extent {
@@ -13375,6 +13383,7 @@ mod tests {
                 id: NodeId::from_parts(id, 1).unwrap(),
                 properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
                     opacity: None,
                     id: NodeId::from_parts(id + 100, 1).unwrap(),
                     media: media_id,
@@ -13455,6 +13464,7 @@ mod tests {
         // A paragraph whose only inline is an authored-size text box holding one
         // paragraph, fill, and a 30-twip outline.
         let text_box = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13577,6 +13587,7 @@ mod tests {
             }],
         }));
         let text_box = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13650,6 +13661,7 @@ mod tests {
             id: NodeId::from_parts(21, 1).unwrap(),
             properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
                 opacity: None,
                 id: NodeId::from_parts(22, 1).unwrap(),
                 media: media_id,
@@ -13669,6 +13681,7 @@ mod tests {
             id: NodeId::from_parts(10, 1).unwrap(),
             properties: ParagraphProperties::default().into(),
             inlines: vec![InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
                 id: NodeId::from_parts(20, 1).unwrap(),
                 anchor: None,
                 relative_height: None,
@@ -13725,6 +13738,7 @@ mod tests {
             vec![run_node(22, "body properties", RunProperties::default())],
         )];
         let fixed = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: NodeId::from_parts(20, 1).unwrap(),
             anchor: None,
             relative_height: None,
@@ -13850,6 +13864,7 @@ mod tests {
         };
 
         let text_box = InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: NodeId::from_parts(30, 1).unwrap(),
             anchor: None,
             relative_height: None,

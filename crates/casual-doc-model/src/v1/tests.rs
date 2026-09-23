@@ -2095,6 +2095,7 @@ fn textbox_paragraph(para_id: NodeId, text_box: TextBox) -> BlockNode {
 #[test]
 fn text_box_with_block_content_validates_and_round_trips_json() {
     let text_box = TextBox {
+        hyperlink: None,
         id: tid(10),
         anchor: None,
         relative_height: None,
@@ -2135,6 +2136,7 @@ fn text_box_with_block_content_validates_and_round_trips_json() {
 #[test]
 fn invalid_text_box_normal_autofit_percentage_is_rejected() {
     let text_box = TextBox {
+        hyperlink: None,
         id: tid(10),
         anchor: None,
         relative_height: None,
@@ -2182,6 +2184,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
         rotation: None,
     };
     let group = WordprocessingGroup {
+        hyperlink: None,
         id: tid(30),
         anchor: Some(DrawingAnchor {
             horizontal: AnchorHorizontal {
@@ -2213,6 +2216,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
         transform: ident,
         children: vec![
             GroupChild::Shape(GroupShape {
+                hyperlink: None,
                 id: tid(31),
                 offset: PointEmu { x_emu: 0, y_emu: 0 },
                 extent: Extent {
@@ -2249,6 +2253,7 @@ fn group_with_retained_preset_shape_and_text_box_children_validates_and_round_tr
                 rotation: None,
             }),
             GroupChild::TextBox(GroupTextBox {
+                hyperlink: None,
                 id: tid(32),
                 offset: PointEmu {
                     x_emu: 50_000,
@@ -2326,6 +2331,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
     paragraph
         .inlines
         .push(InlineNode::Group(Box::new(WordprocessingGroup {
+            hyperlink: None,
             id: tid(30),
             anchor: None,
             relative_height: None,
@@ -2349,6 +2355,7 @@ fn retained_shape_preset_and_adjustment_bounds_are_validated() {
                 rotation: None,
             },
             children: vec![GroupChild::Shape(GroupShape {
+                hyperlink: None,
                 id: tid(31),
                 offset: PointEmu { x_emu: 0, y_emu: 0 },
                 extent: Extent {
@@ -2508,6 +2515,7 @@ fn shape_path_document(path: ShapePath) -> Document {
     paragraph
         .inlines
         .push(InlineNode::Group(Box::new(WordprocessingGroup {
+            hyperlink: None,
             id: tid(30),
             anchor: None,
             relative_height: None,
@@ -2522,6 +2530,7 @@ fn shape_path_document(path: ShapePath) -> Document {
                 rotation: None,
             },
             children: vec![GroupChild::Shape(GroupShape {
+                hyperlink: None,
                 id: tid(31),
                 offset: PointEmu { x_emu: 0, y_emu: 0 },
                 extent,
@@ -2542,6 +2551,7 @@ fn shape_path_document(path: ShapePath) -> Document {
 #[test]
 fn empty_text_box_is_rejected() {
     let text_box = TextBox {
+        hyperlink: None,
         id: tid(10),
         anchor: None,
         relative_height: None,
@@ -2560,6 +2570,7 @@ fn empty_text_box_is_rejected() {
 #[test]
 fn duplicate_id_inside_a_text_box_is_rejected() {
     let text_box = TextBox {
+        hyperlink: None,
         id: tid(10),
         anchor: None,
         relative_height: None,
@@ -2589,6 +2600,7 @@ fn wrap_in_textboxes(depth: u32, counter: &mut u64) -> BlockNode {
         id: para_id,
         properties: ParagraphProperties::default().into(),
         inlines: vec![InlineNode::TextBox(Box::new(TextBox {
+            hyperlink: None,
             id: box_id,
             anchor: None,
             relative_height: None,

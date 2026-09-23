@@ -54,6 +54,7 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::units::{Point, Rect, Size, Twip};
 use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_model::v1::BreakKind;
+use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::GridColumn;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
@@ -1077,6 +1078,16 @@ impl WasmDocument {
         // Same rule as `hit_test`: a link is hit where it is PAINTED. The rect
         // comparison below stays in that same layout, so both halves agree.
         let snapshot = LayoutSnapshot::new(self.painted_layout());
+        // A linked DRAWING first. It is asked before the text hit-test because
+        // a picture sits ON a paragraph: hit-testing text at that point answers
+        // with the anchor paragraph, which is not where the reader is pointing.
+        //
+        // Deliberately the same `LinkHit` as a text link, so hover, the link
+        // chip and activation are the code that already exists rather than a
+        // second copy that drifts.
+        if let Some(hit) = self.drawing_link_at(page, point, &snapshot) {
+            return Some(hit);
+        }
         let hit = snapshot.hit_test(page, point)?;
         if hit.zone != HitZone::Content {
             return None;
@@ -1130,6 +1141,75 @@ impl WasmDocument {
             start_offset: link.range.start.offset,
             end_node: link.range.end.node.to_string(),
             end_offset: link.range.end.offset,
+            target_node,
+            target_offset,
+            target_page,
+        })
+    }
+
+    /// The `a:hlinkClick` of the drawing under a page-local point, if it has
+    /// one.
+    ///
+    /// Outermost first. A group's own link wins over a linked child's, which is
+    /// what ONLYOFFICE does (`DrawingObjectsHandlers.handleGroup` asks the group
+    /// before iterating its children) and the only precedence verified against a
+    /// real implementation. The owner's Medical Incident Report Form puts the
+    /// same URL on every child of a group and none on the group, so both orders
+    /// agree there; this matters only for a document that disagrees with itself,
+    /// and then we behave like the editor people are coming from.
+    fn drawing_link_at(
+        &self,
+        page: u32,
+        point: Point,
+        snapshot: &LayoutSnapshot<'_>,
+    ) -> Option<LinkHit> {
+        let mut under: Vec<_> = self
+            .object_boxes_including_group_children()
+            .into_iter()
+            .filter(|obj| obj.page == page && obj.rect.contains(point))
+            .collect();
+        // `object_boxes_*` is in paint order, so the innermost/topmost is last;
+        // reversing and then preferring the root gives outermost-first without
+        // a second geometry walk.
+        under.reverse();
+        let node = under.iter().find_map(|obj| {
+            drawing_hyperlink_of(&self.document, obj.root)
+                .map(|_| obj.root)
+                .or_else(|| drawing_hyperlink_of(&self.document, obj.subject).map(|_| obj.subject))
+        })?;
+        let (link, paragraph) = drawing_hyperlink_with_paragraph(&self.document, node)?;
+        let (kind, url, anchor, target) = match &link.target {
+            HyperlinkTarget::External(external) => {
+                ("external", external.url.clone(), String::new(), None)
+            }
+            HyperlinkTarget::Internal(internal) => (
+                "internal",
+                String::new(),
+                internal.anchor.clone(),
+                resolve_bookmark(&self.document, &internal.anchor),
+            ),
+        };
+        let (target_node, target_offset, target_page) = target.map_or_else(
+            || (String::new(), 0, 0),
+            |pos| {
+                let target_page = snapshot
+                    .caret_rect(self.view_pos(pos))
+                    .map_or(0, |(page, _)| page);
+                (pos.node.to_string(), pos.offset, target_page)
+            },
+        );
+        // The anchor PARAGRAPH, collapsed: see
+        // `drawing_hyperlink_with_paragraph`.
+        let id = paragraph.to_string();
+        Some(LinkHit {
+            kind,
+            url,
+            anchor,
+            tooltip: link.tooltip.clone().unwrap_or_default(),
+            start_node: id.clone(),
+            start_offset: 0,
+            end_node: id,
+            end_offset: 0,
             target_node,
             target_offset,
             target_page,
@@ -2166,6 +2246,9 @@ impl WasmDocument {
             },
         );
         let drawing = Drawing {
+            // An inserted picture/shape is not linked; linking one is a
+            // separate gesture (`docs/109` HF-179).
+            hyperlink: None,
             opacity: None,
             id: drawing_id,
             media: media_id,
@@ -2211,6 +2294,7 @@ impl WasmDocument {
             height_emu: 914_400,  // 1"
         };
         let text_box = TextBox {
+            hyperlink: None,
             id: box_id,
             anchor: Some(new_object_anchor()),
             relative_height: None,
@@ -2291,6 +2375,9 @@ impl WasmDocument {
             height_emu: 914_400,  // 1"
         };
         let shape = GroupShape {
+            // An inserted picture/shape is not linked; linking one is a
+            // separate gesture (`docs/109` HF-179).
+            hyperlink: None,
             id: shape_id,
             offset: PointEmu { x_emu: 0, y_emu: 0 },
             extent,
@@ -2325,6 +2412,7 @@ impl WasmDocument {
             rotation: None,
         };
         let group = WordprocessingGroup {
+            hyperlink: None,
             id: group_id,
             anchor: Some(new_object_anchor()),
             relative_height: None,
@@ -13530,6 +13618,77 @@ fn visit_paragraphs_all_surfaces(document: &Document, visit: &mut impl FnMut(&Pa
 /// an inline TEXT BOX, whose own paragraphs are ordinary content in the same id
 /// space (without them `order_endpoints` cannot find a position inside a box and
 /// every edit there is rejected before an op is built) — exists once.
+/// The `a:hlinkClick` carried by the drawing object `node` identifies, wherever
+/// in the document it lives.
+///
+/// One lookup for every kind that can carry one — an inline picture, an
+/// anchored picture, a group, and a group's picture / shape / text-box child —
+/// because "which objects can be linked" is one question and answering it in
+/// six places is how the seventh gets forgotten.
+fn drawing_hyperlink_of(document: &Document, node: NodeId) -> Option<DrawingHyperlink> {
+    drawing_hyperlink_with_paragraph(document, node).map(|(link, _)| link)
+}
+
+/// [`drawing_hyperlink_of`], plus the id of the paragraph the object is anchored
+/// in.
+///
+/// The hit-test reports that paragraph as the link's range. A drawing has no
+/// text range of its own, and the host sets the text selection from whatever
+/// the range says — so reporting the DRAWING's id there would point the
+/// selection at a node that is not a paragraph. Reporting the paragraph it
+/// hangs off keeps every existing caller correct without any of them learning
+/// that a link can now be on a picture.
+fn drawing_hyperlink_with_paragraph(
+    document: &Document,
+    node: NodeId,
+) -> Option<(DrawingHyperlink, NodeId)> {
+    fn in_group(children: &[GroupChild], node: NodeId) -> Option<DrawingHyperlink> {
+        for child in children {
+            let found = match child {
+                GroupChild::Picture(picture) if picture.id == node => picture.hyperlink.clone(),
+                GroupChild::Shape(shape) if shape.id == node => shape.hyperlink.clone(),
+                GroupChild::TextBox(text_box) if text_box.id == node => text_box.hyperlink.clone(),
+                GroupChild::Group(group) if group.id == node => group.hyperlink.clone(),
+                GroupChild::Group(group) => in_group(&group.children, node),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    fn in_inlines(inlines: &[InlineNode], node: NodeId) -> Option<DrawingHyperlink> {
+        for inline in inlines {
+            let found = match inline {
+                InlineNode::Drawing(drawing) if drawing.id == node => drawing.hyperlink.clone(),
+                InlineNode::AnchoredDrawing(drawing) if drawing.id == node => {
+                    drawing.hyperlink.clone()
+                }
+                InlineNode::Group(group) if group.id == node => group.hyperlink.clone(),
+                InlineNode::Group(group) => in_group(&group.children, node),
+                InlineNode::TextBox(text_box) if text_box.id == node => text_box.hyperlink.clone(),
+                InlineNode::Hyperlink(link) => in_inlines(&link.inlines, node),
+                InlineNode::Sdt(sdt) => in_inlines(&sdt.inlines, node),
+                InlineNode::Field(field) => in_inlines(&field.inlines, node),
+                InlineNode::Revision(revision) => in_inlines(&revision.inlines, node),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    let mut found = None;
+    visit_paragraphs_all_surfaces(document, &mut |paragraph| {
+        if found.is_none() {
+            found = in_inlines(&paragraph.inlines, node).map(|link| (link, paragraph.id));
+        }
+    });
+    found
+}
+
 fn collect_block_text(blocks: &[BlockNode], out: &mut Vec<(NodeId, String)>) {
     visit_paragraphs(blocks, &mut |paragraph| {
         out.push((paragraph.id, node_plain_text(&paragraph.inlines)));
@@ -23171,6 +23330,7 @@ mod tests {
         let id = |n: u64| NodeId::from_parts(n, 907).unwrap();
         // Child space is TWICE the parent box, so a page delta halves.
         let group = WordprocessingGroup {
+            hyperlink: None,
             id: id(3),
             anchor: None,
             relative_height: None,
@@ -23194,6 +23354,7 @@ mod tests {
                 rotation: None,
             },
             children: vec![GroupChild::Shape(GroupShape {
+                hyperlink: None,
                 id: id(4),
                 offset: PointEmu { x_emu: 0, y_emu: 0 },
                 extent: Extent {
@@ -23314,6 +23475,286 @@ mod tests {
         );
     }
 
+    /// Every drawing link in `inlines`, split by where it is carried: on a
+    /// top-level drawing, on a group child, or on a RUN of a text box's own
+    /// text. Split rather than merged because the whole point of the guard is
+    /// that the three do not leak into each other.
+    fn collect_drawing_links(
+        inlines: &[InlineNode],
+        inline_links: &mut Vec<String>,
+        group_links: &mut Vec<String>,
+        run_links: &mut Vec<String>,
+    ) {
+        fn show(link: &DrawingHyperlink) -> String {
+            let target = match &link.target {
+                HyperlinkTarget::External(external) => external.url.clone(),
+                HyperlinkTarget::Internal(internal) => format!("#{}", internal.anchor),
+            };
+            match link.tooltip.as_deref() {
+                Some(tip) => format!("{target} ({tip})"),
+                None => target,
+            }
+        }
+        // No `run_links` here: a group child's link is a link on the OBJECT, and
+        // the text inside a grouped text box is reached by `visit_paragraphs_in`
+        // instead. Threading the run list through would be a parameter used only
+        // to pass itself on, which is what clippy pointed out.
+        fn walk_group(children: &[GroupChild], group_links: &mut Vec<String>) {
+            for child in children {
+                match child {
+                    GroupChild::Picture(picture) => {
+                        if let Some(link) = picture.hyperlink.as_ref() {
+                            group_links.push(show(link));
+                        }
+                    }
+                    GroupChild::Shape(shape) => {
+                        if let Some(link) = shape.hyperlink.as_ref() {
+                            group_links.push(show(link));
+                        }
+                    }
+                    // A `wps:wsp` carrying `wps:txbx` becomes a TextBox, not a
+                    // Shape — which is why the link has to live on both.
+                    GroupChild::TextBox(text_box) => {
+                        if let Some(link) = text_box.hyperlink.as_ref() {
+                            group_links.push(show(link));
+                        }
+                        // Its CONTENT is not walked here: `visit_paragraphs_in`
+                        // already reaches inside a text box, and walking it
+                        // again would count the run link twice.
+                    }
+                    GroupChild::Group(group) => walk_group(&group.children, group_links),
+                    // Every kind a group can hold is named above, so there is no
+                    // catch-all: a new one must be decided here rather than
+                    // silently contributing nothing.
+                }
+            }
+        }
+        for inline in inlines {
+            match inline {
+                InlineNode::Drawing(drawing) => {
+                    if let Some(link) = drawing.hyperlink.as_ref() {
+                        inline_links.push(show(link));
+                    }
+                }
+                InlineNode::AnchoredDrawing(drawing) => {
+                    if let Some(link) = drawing.hyperlink.as_ref() {
+                        inline_links.push(show(link));
+                    }
+                }
+                InlineNode::Group(group) => walk_group(&group.children, group_links),
+                InlineNode::Hyperlink(link) => {
+                    if let HyperlinkTarget::External(external) = &link.target {
+                        run_links.push(external.url.clone());
+                    }
+                    collect_drawing_links(&link.inlines, inline_links, group_links, run_links);
+                }
+                InlineNode::Sdt(sdt) => {
+                    collect_drawing_links(&sdt.inlines, inline_links, group_links, run_links)
+                }
+                InlineNode::Field(field) => {
+                    collect_drawing_links(&field.inlines, inline_links, group_links, run_links)
+                }
+                InlineNode::Revision(revision) => {
+                    collect_drawing_links(&revision.inlines, inline_links, group_links, run_links)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A hyperlink on a picture or a shape survives the import, on the object
+    /// that carries it.
+    ///
+    /// `docs/109` HF-179. `a:hlinkClick` was reported as unmodeled detail and
+    /// dropped: the owner's Medical Incident Report Form carries four of them,
+    /// all resolving to a real external URL, and every one of its clickable
+    /// images opened as a picture of a clickable image.
+    ///
+    /// The four cases here are the four the format actually produces, and the
+    /// last two are the ones a naive implementation gets wrong:
+    ///
+    /// 1. a top-level inline picture — the link on `pic:cNvPr`;
+    /// 2. a group's children, each carrying their OWN link, which is how Word
+    ///    writes a linked group (measured on that file: two on `wps:cNvPr`,
+    ///    two on `pic:cNvPr`, none on the `wp:docPr` above them);
+    /// 3. an `r:id` the package does not resolve — NOT a link, and still a
+    ///    reported loss, because the document said there was one;
+    /// 4. `a:hlinkClick` inside a shape's own `a:txBody`, which links a RUN of
+    ///    the box's text. Attaching that to the box would follow the wrong
+    ///    link from the wrong place, and it is the reason the importer tracks
+    ///    a non-visual-properties depth instead of matching on the tag alone.
+    #[test]
+    fn a_hyperlink_on_a_picture_survives_the_import() {
+        const LINKED: &[u8] = include_bytes!("../../../fixtures/generated/picture-hyperlink.docx");
+        let doc = open_document(LINKED).expect("open");
+
+        let mut inline = Vec::new();
+        let mut group_children = Vec::new();
+        let mut run_links = Vec::new();
+        visit_paragraphs_in(&doc.document, &mut |paragraph| {
+            collect_drawing_links(
+                &paragraph.inlines,
+                &mut inline,
+                &mut group_children,
+                &mut run_links,
+            );
+        });
+
+        // 1 — the top-level picture.
+        assert_eq!(
+            inline,
+            vec!["https://example.org/picture".to_owned()],
+            "the linked inline picture keeps its target, and the dangling and \
+             plain ones contribute none",
+        );
+
+        // 2 — both group children, each with its own target, and the shape's
+        // tooltip with it.
+        group_children.sort();
+        assert_eq!(
+            group_children,
+            vec![
+                "https://example.org/child".to_owned(),
+                "https://example.org/shape (Shape tip)".to_owned(),
+            ],
+            "a linked child inside a group owns its own link",
+        );
+
+        // 4 — the run inside the text box is still a RUN link.
+        assert_eq!(
+            run_links,
+            vec!["https://example.org/run".to_owned()],
+            "a link in the box's own text stays on the run",
+        );
+    }
+
+    /// One part of a written package, as text.
+    fn part_text(bytes: &[u8], part: &str) -> String {
+        let mut package = DocxPackage::open(bytes, viewer_limits()).expect("open package");
+        String::from_utf8(package.read_part(part).expect("read part")).expect("utf-8")
+    }
+
+    /// The hit-test under a linked picture reports the link, so hover, the
+    /// link chip and activation are the ones the editor already has.
+    ///
+    /// Modelling it and not surfacing it would have been the whole feature
+    /// missing: the document would know the picture was clickable and nothing
+    /// on screen would.
+    #[test]
+    fn the_hit_test_finds_a_picture_link_where_the_picture_is() {
+        const LINKED: &[u8] = include_bytes!("../../../fixtures/generated/picture-hyperlink.docx");
+        let doc = open_document(LINKED).expect("open");
+
+        // Ask at the centre of every linked object, found from the engine's own
+        // placement rather than from a guessed pixel.
+        let mut asked = 0_usize;
+        for object in doc.object_boxes_including_group_children() {
+            let Some(link) = drawing_hyperlink_of(&doc.document, object.subject)
+                .or_else(|| drawing_hyperlink_of(&doc.document, object.root))
+            else {
+                continue;
+            };
+            let HyperlinkTarget::External(expected) = &link.target else {
+                continue;
+            };
+            let centre = Point::new(
+                Twip(object.rect.origin.x.raw() + object.rect.size.width.raw() / 2),
+                Twip(object.rect.origin.y.raw() + object.rect.size.height.raw() / 2),
+            );
+            let hit = doc
+                .link_at(object.page, centre.x.raw(), centre.y.raw())
+                .unwrap_or_else(|| panic!("no link reported over a linked {} object", object.kind));
+            assert_eq!(hit.kind(), "external");
+            assert_eq!(
+                hit.url(),
+                expected.url,
+                "the reported link must be the one on the object under the pointer",
+            );
+            asked += 1;
+        }
+        assert!(
+            asked >= 2,
+            "the fixture must exercise more than one linked object; asked {asked}",
+        );
+
+        // …and a picture with no link reports none, so a plain image does not
+        // start behaving like a link.
+        let plain = doc
+            .object_boxes_including_group_children()
+            .into_iter()
+            .find(|object| {
+                drawing_hyperlink_of(&doc.document, object.subject).is_none()
+                    && drawing_hyperlink_of(&doc.document, object.root).is_none()
+            })
+            .expect("the fixture has an unlinked object");
+        let centre = Point::new(
+            Twip(plain.rect.origin.x.raw() + plain.rect.size.width.raw() / 2),
+            Twip(plain.rect.origin.y.raw() + plain.rect.size.height.raw() / 2),
+        );
+        assert!(
+            doc.link_at(plain.page, centre.x.raw(), centre.y.raw())
+                .is_none(),
+            "an unlinked picture must not report a link",
+        );
+    }
+
+    /// …and survives the SAVE, on the same object, through one relationship
+    /// per distinct URL.
+    ///
+    /// Reading it and dropping it on write would be the worse bug: the
+    /// document would open with working links and then lose them the first
+    /// time it was saved, silently, which is the shape of data loss a person
+    /// only discovers from somebody else.
+    #[test]
+    fn a_picture_hyperlink_survives_a_round_trip() {
+        const LINKED: &[u8] = include_bytes!("../../../fixtures/generated/picture-hyperlink.docx");
+        let doc = open_document(LINKED).expect("open");
+        let saved = doc.export_docx().expect("export");
+
+        // The written package says it, in the bytes.
+        let document = part_text(&saved, "word/document.xml");
+        assert_eq!(
+            document.matches("a:hlinkClick").count(),
+            3,
+            "one for the inline picture and one for each linked group child; \
+             the dangling one is not written because it is not a link",
+        );
+        assert!(
+            document.contains(r#"tooltip="Shape tip""#),
+            "the screen-tip is part of the link, not decoration",
+        );
+
+        let rels = part_text(&saved, "word/_rels/document.xml.rels");
+        for url in [
+            "https://example.org/picture",
+            "https://example.org/shape",
+            "https://example.org/child",
+        ] {
+            assert!(
+                rels.contains(url),
+                "the package must carry a relationship for {url}",
+            );
+        }
+
+        // …and it reads back as the same links, on the same objects. Asserted
+        // against the MODEL rather than the bytes, because that is what makes
+        // this a round-trip rather than a second spelling of the writer.
+        let reopened = open_document(&saved).expect("reopen");
+        let (mut inline, mut group, mut runs) = (Vec::new(), Vec::new(), Vec::new());
+        visit_paragraphs_in(&reopened.document, &mut |paragraph| {
+            collect_drawing_links(&paragraph.inlines, &mut inline, &mut group, &mut runs);
+        });
+        group.sort();
+        assert_eq!(inline, vec!["https://example.org/picture".to_owned()]);
+        assert_eq!(
+            group,
+            vec![
+                "https://example.org/child".to_owned(),
+                "https://example.org/shape (Shape tip)".to_owned(),
+            ],
+        );
+        assert_eq!(runs, vec!["https://example.org/run".to_owned()]);
+    }
     /// Filling a legacy `FORMTEXT` puts the text INSIDE the field.
     ///
     /// `docs/109` HF-175. Three functions answered "how long is this
@@ -29744,6 +30185,7 @@ mod tests {
                         text: "anchor paragraph".to_owned(),
                     }),
                     InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                        hyperlink: None,
                         opacity: None,
                         id: float_id,
                         media,
@@ -29827,6 +30269,7 @@ mod tests {
                 id: NodeId::from_parts(9, 2).unwrap(),
                 properties: ParagraphProperties::default().into(),
                 inlines: vec![InlineNode::Group(Box::new(WordprocessingGroup {
+                    hyperlink: None,
                     id: NodeId::from_parts(9, 3).unwrap(),
                     anchor: None,
                     relative_height: None,
@@ -29841,6 +30284,7 @@ mod tests {
                         rotation: None,
                     },
                     children: vec![GroupChild::Shape(GroupShape {
+                        hyperlink: None,
                         id: NodeId::from_parts(9, 4).unwrap(),
                         offset: PointEmu { x_emu: 0, y_emu: 0 },
                         extent,
@@ -31014,6 +31458,7 @@ mod tests {
         };
         let drawing = |id: NodeId, descr: Option<&str>| {
             InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
                 opacity: None,
                 id,
                 media,
