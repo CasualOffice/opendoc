@@ -29,6 +29,7 @@ import {
   runAppMenuCommand,
   setReviewMode,
   stableBox,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 import { GRAMMAR_DOUBLED, makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
 
@@ -246,7 +247,7 @@ test("the off switch is reachable from two surfaces and is remembered", async ({
 
   // Surface 1 — the Tools menu. `menu_taxonomy.test.mjs` holds the menu and the
   // command registry to agreement; this proves the row actually works.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Spell check off");
 
@@ -265,7 +266,7 @@ test("the off switch is reachable from two surfaces and is remembered", async ({
   await expect(page.locator(marker(typo))).toHaveCount(1, { timeout: 20_000 });
 
   // Surface 3 — the Settings panel checkbox, reflecting the same state.
-  await runAppMenuCommand(page, "tools", "view.settings");
+  await runFilePageCommand(page, "view.settings");
   await expect(page.locator("#spellCheckToggle")).toBeChecked();
   expect(consoleErrors).toEqual([]);
 });
@@ -385,11 +386,11 @@ test("grammar and spelling are independent switches, both remembered", async ({
 
   // Spelling off, grammar still on — the owner rated grammar the more
   // important of the two, so it must not be reachable only via spelling.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible();
 
-  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await runAppMenuCommand(page, "review", "tools.grammarCheck");
   await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Grammar check off");
 
@@ -398,7 +399,7 @@ test("grammar and spelling are independent switches, both remembered", async ({
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator(".overlay .grammar-error")).toHaveCount(0);
 
-  await runAppMenuCommand(page, "tools", "tools.grammarCheck");
+  await runAppMenuCommand(page, "review", "tools.grammarCheck");
   await expect(page.locator(grammarMark("doubled-word")).first()).toBeVisible({
     timeout: 20_000,
   });
@@ -406,7 +407,7 @@ test("grammar and spelling are independent switches, both remembered", async ({
     timeout: 5_000,
   });
   // Put spelling back so the stored preference does not leak into other specs.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   expect(consoleErrors).toEqual([]);
 });
 

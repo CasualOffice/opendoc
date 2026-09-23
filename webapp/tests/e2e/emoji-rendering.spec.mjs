@@ -38,8 +38,8 @@ test("a document containing emoji provisions the emoji face", async ({ page, con
 
   // Put emoji into the document through the picker, which routes through the
   // ordinary gated text path — the same content an import produces.
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
-  await page.locator('#appMenuPopover .app-menu-item[data-command="insert.emoji"]').click();
+  await page.locator("#tabInsert").click();
+  await page.locator('#panelInsert [data-command="insert.emoji"]').click();
   await expect(page.locator("#emojiDialog")).toBeVisible();
   await expect(page.locator("#emojiDialog")).toHaveClass(/glyph-panel/);
   await expect(page.locator("#emojiDialog")).not.toHaveAttribute("aria-modal");
@@ -62,8 +62,8 @@ test("the emoji face is requested once, not per glyph", async ({ page, consoleEr
 
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
-  await page.locator('#appMenuPopover .app-menu-item[data-command="insert.emoji"]').click();
+  await page.locator("#tabInsert").click();
+  await page.locator('#panelInsert [data-command="insert.emoji"]').click();
   await expect(page.locator("#emojiDialog")).toBeVisible();
   await page.locator('#emojiGrid .glyph-cell[data-glyph="\u{1F600}"]').click();
   await expect.poll(() => fontRequests.length, { timeout: 15_000 }).toBeGreaterThan(0);

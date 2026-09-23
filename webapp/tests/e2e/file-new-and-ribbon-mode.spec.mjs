@@ -20,10 +20,11 @@ import {
   expectEditorFocused,
   MOD,
   saveDocument,
+  openAppMenu,
 } from "./fixtures.mjs";
 
 async function runFromMenu(page, menu, commandId) {
-  await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
+  await openAppMenu(page, menu);
   const item = page.locator(`#appMenuPopover .app-menu-item[data-command="${commandId}"]`);
   await expect(item).toBeVisible();
   await item.click();
@@ -127,7 +128,13 @@ test("a new blank document saves as DOCX by default", async ({ page, consoleErro
 });
 
 // Ribbon density: three surfaces for one persisted choice.
-test("the compact-ribbon choice is reachable from View and the palette, and the chevron agrees", async ({
+//
+// The three are the chevron on the tab strip, the palette, and the View menu.
+// The first two live in the RIBBON chrome and the third in the compact chrome
+// (docs/122), so the ribbon assertions are made where the ribbon is on screen —
+// asserting `.ribbon` state straight after a compact-chrome menu click would be
+// asserting about a hidden element.
+test("the compact-ribbon choice is reachable from the chevron, the palette and View, and all three agree", async ({
   page,
   consoleErrors,
 }) => {
@@ -137,33 +144,40 @@ test("the compact-ribbon choice is reachable from View and the palette, and the 
   const chevron = page.locator("#ribbonViewToggle");
   await expect(band).toBeVisible();
 
-  // From the View menu.
-  await runFromMenu(page, "view", "view.compactRibbon");
+  // From the chevron, which used to be the only route.
+  await chevron.click();
   await expect(ribbon).toHaveClass(/is-collapsed/);
   await expect(band).toBeHidden();
-  // The one chevron that used to be the only route must reflect the same state,
-  // or the two controls are two independent switches for one preference.
   await expect(chevron).toHaveAttribute("aria-expanded", "false");
 
-  // The menu row reads back the current state, so it is a switch rather than an
-  // action whose effect the user has to remember.
-  await page.locator('.app-menu-button[data-menu="view"]').click();
+  // The View menu row reads back the current state, so it is a switch rather
+  // than an action whose effect the user has to remember — and it agrees with the
+  // chevron, or the two controls are two independent switches for one preference.
+  await openAppMenu(page, "view");
   await expect(
     page.locator('#appMenuPopover .app-menu-item[data-command="view.compactRibbon"]'),
   ).toContainText("Compact ribbon: on");
   await page.keyboard.press("Escape");
+  await page.locator("#modeRibbon").click();
 
   // From the palette, back off.
   await runFromPalette(page, "view.compactRibbon");
   await expect(band).toBeVisible();
   await expect(chevron).toHaveAttribute("aria-expanded", "true");
 
+  // And from the View menu, on again — the third surface really runs it.
+  await runFromMenu(page, "view", "view.compactRibbon");
+  await page.locator("#modeRibbon").click();
+  await expect(ribbon).toHaveClass(/is-collapsed/);
+  await runFromPalette(page, "view.compactRibbon");
+  await expect(band).toBeVisible();
+
   expect(consoleErrors).toEqual([]);
 });
 
 test("the compact-ribbon choice survives a reload", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
-  await runFromMenu(page, "view", "view.compactRibbon");
+  await page.locator("#ribbonViewToggle").click();
   await expect(page.locator(".ribbon")).toHaveClass(/is-collapsed/);
 
   await gotoEditor(page);

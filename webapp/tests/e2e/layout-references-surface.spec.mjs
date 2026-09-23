@@ -37,19 +37,31 @@ async function paletteRow(page, query, label) {
   return state;
 }
 
-test("the ribbon exposes Layout and References as real tabs, with Review still last", async ({
+test("the ribbon exposes File, Layout and References as real tabs, contextual tabs last", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
 
-  // Word's order: Layout and References follow Insert and precede the
-  // contextual tabs. Review stays last because the tab strip's End key is
-  // asserted (twice, in two other specs) to land there.
+  // ONLYOFFICE's order, which this editor adopted with the one-axis restructure
+  // (docs/122): File first and opening a page rather than a band, then Home,
+  // Insert, Layout, References, Review, View, with the CONTEXTUAL tabs at the
+  // right-hand end — where both ONLYOFFICE (Header & Footer, Chart design) and
+  // Word (Table Design / Layout) put theirs. Declared once in
+  // `RIBBON_TABS`; `menu_taxonomy.test.mjs` asserts the markup matches it.
   const tabs = await page
     .locator(".ribbon-tab[data-tab]")
     .evaluateAll((els) => els.map((el) => el.dataset.tab));
-  expect(tabs).toEqual(["home", "insert", "layout", "references", "table", "view", "review"]);
+  expect(tabs).toEqual([
+    "file",
+    "home",
+    "insert",
+    "layout",
+    "references",
+    "review",
+    "view",
+    "table",
+  ]);
 
   // ARIA: each tab must name a panel that actually exists, and selecting it must
   // be reflected on the tab, not only by the panel becoming visible.

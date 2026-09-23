@@ -25,13 +25,18 @@ function caretX(page) {
   });
 }
 
-// Inserts a field of `kind` through the real Insert ▸ Field… menu affordance
-// and its picker dialog, exactly as a user would reach it.
+// Inserts a field of `kind` through the real Insert ▸ Field affordance and its
+// picker dialog, exactly as a user would reach it.
+//
+// Through the Insert TAB, not the Insert menu. The menu bar is the compact
+// chrome's axis now (docs/122), and driving it here would put the rest of the
+// test in a chrome whose band — `#undoBtn` included — is not on screen. The
+// button carries `data-command="insert.field"`, so this is still the same
+// command, reached the way a user in the default chrome reaches it.
 async function insertFieldViaMenu(page, kind) {
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
-  const menuItem = page.locator('#appMenuPopover .app-menu-item[data-command="insert.field"]');
+  await page.locator("#tabInsert").click();
+  const menuItem = page.locator('#panelInsert [data-command="insert.field"]');
   await expect(menuItem).toBeVisible();
-  await expect(menuItem).toContainText("Field");
   await menuItem.click();
   await expect(page.locator("#fieldDialog")).toBeVisible();
   await page.locator(`.field-choice[data-field-kind="${kind}"]`).click();
@@ -46,6 +51,9 @@ test("insert field: page and date fields render inline and each undoes as one ac
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
+  // Undo lives on the HOME band, and reaching the picker meant switching to the
+  // Insert tab. Back to Home first: a hidden button is not a clickable one.
+  await page.locator("#tabHome").click();
   const undoBtn = page.locator("#undoBtn");
   // A freshly opened document has no history: nothing to undo yet.
   await expect(undoBtn).toBeDisabled();
@@ -59,6 +67,7 @@ test("insert field: page and date fields render inline and each undoes as one ac
 
   // A single Undo removes it: the caret returns to the paragraph start and there
   // is nothing left to undo (the field was the only history entry).
+  await page.locator("#tabHome").click();
   await undoBtn.click();
   await expect.poll(() => caretX(page)).toBe(startX);
   await expect(undoBtn).toBeDisabled();
@@ -68,6 +77,7 @@ test("insert field: page and date fields render inline and each undoes as one ac
   await insertFieldViaMenu(page, "date");
   await expect(undoBtn).toHaveAttribute("aria-label", "Undo Field change");
   await expect.poll(() => caretX(page)).toBeGreaterThan(startX);
+  await page.locator("#tabHome").click();
   await undoBtn.click();
   await expect(undoBtn).toBeDisabled();
 
@@ -82,8 +92,8 @@ test("insert field: the picker is keyboard accessible and Escape closes it witho
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
-  await page.locator('#appMenuPopover .app-menu-item[data-command="insert.field"]').click();
+  await page.locator("#tabInsert").click();
+  await page.locator('#panelInsert [data-command="insert.field"]').click();
   const dialog = page.locator("#fieldDialog");
   await expect(dialog).toBeVisible();
 
@@ -97,6 +107,7 @@ test("insert field: the picker is keyboard accessible and Escape closes it witho
   // Escape closes the picker and inserts nothing (still nothing to undo).
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  await page.locator("#tabHome").click();
   await expect(page.locator("#undoBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);
@@ -120,6 +131,7 @@ test("insert field: blocked in Viewing mode (read-only, nothing inserted)", asyn
   await page.locator("#cmdInput").press("Enter");
 
   await expect(page.locator("#status")).toContainText("read-only");
+  await page.locator("#tabHome").click();
   await expect(page.locator("#undoBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);

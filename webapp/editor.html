@@ -41,6 +41,11 @@
             title="Rename document"
           />
         </div>
+        <!-- The menu bar is COMPACT-MODE chrome only (`body.ribbon-mode` hides it
+             in style.css). Ribbon mode's one navigation axis is the tab strip,
+             whose first tab is File — ONLYOFFICE's arrangement, verified in
+             their `app/view/Toolbar.js:182-186`. Two navigation systems on
+             screen at once is `109` UX-014; see docs/122. -->
         <nav id="appMenuBar" class="app-menu-bar" aria-label="Application menus">
           <button type="button" class="app-menu-button" data-menu="file" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">File</button>
           <button type="button" class="app-menu-button" data-menu="edit" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Edit</button>
@@ -51,9 +56,12 @@
                both use. Its rows are the same commands the right-click menu and
                the palette run (docs/105 UX-012). -->
           <button type="button" class="app-menu-button" data-menu="table" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Table</button>
+          <!-- Review absorbs the two proofing switches; Tools and Help are gone.
+               Settings and Help are File-page items in ONLYOFFICE
+               (`DE.Views.FileMenu.btnSettingsCaption`/`btnHelpCaption`), and
+               Tools and Help were the two names that scrolled off the end of
+               this bar behind a hidden scrollbar (`109` HF-097). -->
           <button type="button" class="app-menu-button" data-menu="review" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Review</button>
-          <button type="button" class="app-menu-button" data-menu="tools" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Tools</button>
-          <button type="button" class="app-menu-button" data-menu="help" aria-haspopup="menu" aria-controls="appMenuPopover" aria-expanded="false">Help</button>
         </nav>
       </div>
       <div class="controls">
@@ -230,22 +238,66 @@
 
     <div class="ribbon">
       <div class="ribbon-tabs" role="tablist" aria-label="Ribbon">
+        <!-- File is the first tab, and the only one whose panel is a PAGE rather
+             than a band. Straight from ONLYOFFICE: `app/view/Toolbar.js:182`
+             declares `{caption: textTabFile, action: 'file', haspanel: false}`
+             ahead of Home/Insert/Layout/References, and `haspanel: false` is
+             precisely "this tab shows a panel, not a ribbon band". It carries
+             the rows that used to need a File menu, a Tools menu and a Help
+             menu in a second navigation system. -->
+        <button id="tabFile" type="button" class="ribbon-tab ribbon-tab-file" data-tab="file" role="tab" aria-controls="panelFile" aria-selected="false" tabindex="-1">File</button>
         <button id="tabHome" type="button" class="ribbon-tab" data-tab="home" role="tab" aria-controls="panelHome" aria-selected="true" tabindex="0">Home</button>
         <button id="tabInsert" type="button" class="ribbon-tab" data-tab="insert" role="tab" aria-controls="panelInsert" aria-selected="false" tabindex="-1">Insert</button>
         <!-- Layout and References sit where Word puts them (after Insert, before
              the contextual tabs). Every command on them already shipped; they
              were scattered across the View ribbon, the Tools menu and the Insert
              menu, and the palette already declared a `group: "Layout"` with no
-             tab to live on (docs/105 UX-010, OO-001/OO-005). Review stays the
-             last tab — `End` on the tab strip is asserted to land there. -->
+             tab to live on (docs/105 UX-010, OO-001/OO-005).
+
+             Review precedes View, which is the order ONLYOFFICE ships (their
+             tab captions run File, Home, Insert, Layout, References, Review,
+             View — `locale/en.json` `DE.Views.Toolbar.textTab*`) and the order
+             Word ships. `End` on the tab strip therefore lands on View. -->
         <button id="tabLayout" type="button" class="ribbon-tab" data-tab="layout" role="tab" aria-controls="panelLayout" aria-selected="false" tabindex="-1">Layout</button>
         <button id="tabReferences" type="button" class="ribbon-tab" data-tab="references" role="tab" aria-controls="panelReferences" aria-selected="false" tabindex="-1">References</button>
-        <button id="tabTable" type="button" class="ribbon-tab" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
-        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
         <button id="tabReview" type="button" class="ribbon-tab" data-tab="review" role="tab" aria-controls="panelReview" aria-selected="false" tabindex="-1">Review</button>
+        <button id="tabView" type="button" class="ribbon-tab" data-tab="view" role="tab" aria-controls="panelView" aria-selected="false" tabindex="-1">View</button>
+        <!-- Table is CONTEXTUAL, so it goes last. Both references put contextual
+             tabs at the right-hand end: ONLYOFFICE's Header & Footer and Chart
+             design sit after View (their chart tab is declared `aux: true`,
+             commented in `Mixtbar.js` as "show tab at the end of toolbar"), and
+             Word appends Table Design / Layout the same way. It used to sit
+             between References and View, where it read as a permanent tab that
+             happened to be greyed out. -->
+        <button id="tabTable" type="button" class="ribbon-tab ribbon-tab-contextual" data-tab="table" role="tab" aria-controls="panelTable" aria-selected="false" tabindex="-1" disabled>Table</button>
         <button id="ribbonViewToggle" type="button" class="ribbon-view-toggle" title="Collapse the ribbon (compact view)" aria-label="Collapse the ribbon" aria-expanded="true"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
       </div>
       <div class="ribbon-body">
+        <!-- The File PAGE, not a band. ONLYOFFICE's File tab carries
+             `haspanel: false` and opens a full-window route; doc 105 §1 already
+             specified "File backstage as a full-window route" for this chrome.
+             Its rows are rendered from `FILE_SURFACE` in `command_taxonomy.mjs`,
+             the same declaration the compact chrome's File dropdown reads — one
+             roster, two renderings, so they cannot drift.
+
+             `aria-label` rather than `aria-labelledby` on the inner region: the
+             page is a document-level route, and a screen reader landing in it
+             should hear what it is, not the tab that opened it. -->
+        <div id="panelFile" class="ribbon-panel file-page" data-panel="file" role="tabpanel" aria-labelledby="tabFile" hidden>
+          <div class="file-page-inner">
+            <div class="file-page-head">
+              <h2 class="file-page-title">File</h2>
+              <button id="filePageBack" type="button" class="btn file-page-back">
+                <span class="ms" aria-hidden="true">arrow_back</span> Back to document
+              </button>
+            </div>
+            <!-- Filled by `renderFilePage()`; empty in markup for the same reason
+                 the compact toolbar is — every row must resolve against the live
+                 command registry, and a hand-bound row here would be a second
+                 answer to "is Save available?". -->
+            <div id="filePageBody" class="file-page-body"></div>
+          </div>
+        </div>
         <!-- Home band rebuilt to mirror template.png (docs/64): a single no-wrap
              row of divider-separated groups with centered labels underneath.
              Only functional opendoc controls are present — Format Painter,
@@ -450,6 +502,15 @@
             <div class="rgroup-ctl">
               <button id="insertHeaderBtn" type="button" class="fmt" title="Edit the page header" aria-label="Edit header" disabled><span class="ms" aria-hidden="true">vertical_align_top</span></button>
               <button id="insertFooterBtn" type="button" class="fmt" title="Edit the page footer" aria-label="Edit footer" disabled><span class="ms" aria-hidden="true">vertical_align_bottom</span></button>
+              <!-- The two running-content variants had no ribbon face at all:
+                   they were reachable from the Insert MENU and the palette only,
+                   so removing the menu bar from ribbon mode would have left them
+                   palette-only. They sit beside the header and footer buttons
+                   because that is what they configure — ONLYOFFICE files both in
+                   the header/footer surface, and Word puts them in the Header &
+                   Footer tab's Options group. -->
+              <button id="insertFirstPageVariantBtn" type="button" class="fmt" title="Different first page header and footer" aria-label="Different first page" aria-pressed="false" disabled><span class="ms" aria-hidden="true">looks_one</span></button>
+              <button id="insertEvenOddVariantBtn" type="button" class="fmt" title="Different odd and even page headers and footers" aria-label="Different odd and even pages" aria-pressed="false" disabled><span class="ms" aria-hidden="true">import_contacts</span></button>
             </div>
             <span class="rgroup-label">Header &amp; footer</span>
           </div>
@@ -651,6 +712,21 @@
               <button id="reviewPanelBtn" type="button" class="fmt" title="Toggle comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
             </div>
             <span class="rgroup-label">Comments</span>
+          </div>
+          <!-- Proofing. Word's Review tab opens with a Proofing group, and these
+               two switches were the entire content of a `Tools` menu that
+               existed for nothing else — a whole top-level name for two
+               toggles, and one of the two names that scrolled off the end of the
+               menu bar (`109` HF-097). ONLYOFFICE keeps spell checking in File ▸
+               Advanced Settings; Word's Review ▸ Proofing is the closer fit for
+               a durable, one-click switch, so that is the placement taken. -->
+          <div class="rgroup" data-group="proofing">
+            <div class="rgroup-ctl">
+              <button id="reviewSpellCheckBtn" type="button" class="fmt" title="Check spelling as you type" aria-label="Spell check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span></button>
+              <button id="reviewGrammarCheckBtn" type="button" class="fmt" title="Check grammar as you type" aria-label="Grammar check" aria-pressed="false"><span class="ms" aria-hidden="true">spellcheck</span><span class="table-command-badge" aria-hidden="true">G</span></button>
+              <button id="reviewSmartQuotesBtn" type="button" class="fmt" title="Replace straight quotes with typographic quotes as you type" aria-label="Smart quotes" aria-pressed="false"><span class="ms" aria-hidden="true">format_quote</span></button>
+            </div>
+            <span class="rgroup-label">Proofing</span>
           </div>
         </div>
         <!-- Overflow: groups that don't fit the current width move here instead

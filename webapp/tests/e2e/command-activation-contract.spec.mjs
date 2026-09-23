@@ -28,9 +28,16 @@
 //
 // Every row and every button is discovered from the live DOM, so a command
 // added to a menu or the ribbon tomorrow is covered without touching this file.
-import { test, expect, gotoEditor, clickIntoFirstPage, openAppMenu } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  openAppMenu,
+  openFilePage,
+} from "./fixtures.mjs";
 
-const MENUS = ["file", "edit", "view", "insert", "format", "table", "review", "tools", "help"];
+const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
 const RIBBON_TABS = ["home", "insert", "layout", "references", "view", "review"];
 
 // The only commands this sweep may not activate, and why. Both hand control to
@@ -323,10 +330,10 @@ test.describe("Settings is reachable from every surface that offers it", () => {
   // "settings is broken".
   const panel = "#settingsPanel";
 
-  test("from the Tools menu", async ({ page, consoleErrors }) => {
+  test("from the File page, where ONLYOFFICE keeps Advanced Settings", async ({ page, consoleErrors }) => {
     await loadEditor(page);
-    await openAppMenu(page, "tools");
-    await page.locator('#appMenuPopover .app-menu-item[data-command="view.settings"]').click();
+    await openFilePage(page);
+    await page.locator('#filePageBody .file-page-item[data-command="view.settings"]').click();
     await expect(page.locator(panel)).toBeVisible();
     // Open means usable, not merely present: the panel takes the keyboard.
     await expect(page.locator(`${panel} :focus`)).toHaveCount(1);
@@ -335,8 +342,8 @@ test.describe("Settings is reachable from every surface that offers it", () => {
 
   test("from the command palette", async ({ page, consoleErrors }) => {
     await loadEditor(page);
-    await openAppMenu(page, "help");
-    await page.locator('#appMenuPopover .app-menu-item[data-command="help.commands"]').click();
+    await openFilePage(page);
+    await page.locator('#filePageBody .file-page-item[data-command="help.commands"]').click();
     await page.locator("#cmdInput").fill("settings");
     await page.locator("#cmdList .cmd-item").first().click();
     await expect(page.locator(panel)).toBeVisible();
@@ -360,8 +367,8 @@ test.describe("Settings is reachable from every surface that offers it", () => {
     // The fix moved light dismiss from `click` to `pointerdown`; the behaviour
     // it protects must survive that, or this would trade one defect for another.
     await loadEditor(page);
-    await openAppMenu(page, "tools");
-    await page.locator('#appMenuPopover .app-menu-item[data-command="view.settings"]').click();
+    await openFilePage(page);
+    await page.locator('#filePageBody .file-page-item[data-command="view.settings"]').click();
     await expect(page.locator(panel)).toBeVisible();
     await page.locator(".page-wrap .page").first().click({ position: { x: 60, y: 60 } });
     await expect(page.locator(panel)).toBeHidden();

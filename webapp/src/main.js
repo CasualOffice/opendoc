@@ -123,6 +123,8 @@ import {
   tableCommandLabel,
   tableMenuPlaceholders,
 } from "./command_taxonomy.mjs";
+import { FILE_SURFACE, fileMenuSections } from "./command_taxonomy.mjs";
+import { createMenuBar, renderCommandRows } from "./command_menu.mjs";
 import { createBackgroundMeasure, pageTotalLabel } from "./background_measure.mjs";
 import { BLANK_DOCX_PARTS, UNTITLED_DOCUMENT_NAME, zipStore } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
@@ -310,6 +312,8 @@ const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
 const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
+const insertFirstPageVariantBtn = document.getElementById("insertFirstPageVariantBtn");
+const insertEvenOddVariantBtn = document.getElementById("insertEvenOddVariantBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
 const insertEmojiBtn = document.getElementById("insertEmojiBtn");
 // Layout band (docs/105 UX-010).
@@ -343,12 +347,19 @@ const reviewAcceptAllBtn = document.getElementById("reviewAcceptAllBtn");
 const reviewRejectAllBtn = document.getElementById("reviewRejectAllBtn");
 const reviewCommentBtn = document.getElementById("reviewCommentBtn");
 const reviewPanelBtn = document.getElementById("reviewPanelBtn");
+const reviewSpellCheckBtn = document.getElementById("reviewSpellCheckBtn");
+const reviewGrammarCheckBtn = document.getElementById("reviewGrammarCheckBtn");
+const reviewSmartQuotesBtn = document.getElementById("reviewSmartQuotesBtn");
 const insertTableMenu = document.getElementById("insertTableMenu");
 const gridPicker = document.getElementById("gridPicker");
 const gridLabel = document.getElementById("gridLabel");
 const ribbonTabs = [...document.querySelectorAll(".ribbon-tab")];
 const ribbonPanels = [...document.querySelectorAll(".ribbon-panel")];
 const tabTable = document.getElementById("tabTable");
+// Declared with the other chrome elements rather than beside `renderFilePage`:
+// `selectRibbonTab` reaches for it, and a `const` in the temporal dead zone
+// would throw on the first tab switch of the boot sweep.
+const filePageBody = document.getElementById("filePageBody");
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
@@ -369,7 +380,13 @@ const replaceOneBtn = document.getElementById("replaceOne");
 const replaceAllBtn = document.getElementById("replaceAll");
 const findCloseBtn = document.getElementById("findClose");
 
-/** Shows the named ribbon tab's panel and marks its tab selected. */
+/** Shows the named ribbon tab's panel and marks its tab selected.
+ *
+ *  `file` is the one tab whose panel is a PAGE rather than a band: `body`
+ *  carries `.file-page-open` while it shows, which is what lifts it over the
+ *  work area (ONLYOFFICE's File tab is declared `haspanel: false` for the same
+ *  reason). Its rows are rebuilt on entry, so they can never show a stale
+ *  `enabled` — the shape `renderCompactToolbar` already uses. */
 function selectRibbonTab(name) {
   for (const t of ribbonTabs) {
     const selected = t.dataset.tab === name;
@@ -377,6 +394,8 @@ function selectRibbonTab(name) {
     t.tabIndex = selected ? 0 : -1;
   }
   for (const p of ribbonPanels) p.hidden = p.dataset.panel !== name;
+  document.body.classList.toggle("file-page-open", name === "file");
+  if (name === "file" && typeof renderFilePage === "function") renderFilePage();
   // Recompute overflow synchronously (not on a later frame) so a control is
   // already in its final inline-or-overflow location the moment the panel shows —
   // the newly shown panel reflows and the previous panel's groups are restored.
@@ -399,9 +418,36 @@ for (const t of ribbonTabs) {
     // tab change. Keyboard activation (`detail === 0`, and the arrow-key
     // navigation below) deliberately keeps focus on the tab strip, because
     // there the tabs ARE the thing being operated.
-    if (event.detail !== 0) focusEditorSurface();
+    //
+    // The File tab is the exception in both directions: it is a page, not a
+    // band, so focus belongs INSIDE it however it was opened. Sending focus back
+    // to the document would leave a full-window page showing with the caret
+    // behind it — the "opens but never takes focus" defect (`109` HF-070).
+    if (t.dataset.tab === "file") {
+      filePageBody?.querySelector(".file-page-item:not(:disabled)")?.focus({ preventScroll: true });
+    } else if (event.detail !== 0) {
+      focusEditorSurface();
+    }
   });
 }
+
+/** Leaves the File page for the document. Both Escape and the explicit Back
+ *  button land here: a full-window route whose only exit is another tab is a
+ *  trap, and ONLYOFFICE's own page carries a "Back to Document" item. */
+function closeFilePage() {
+  if (!document.body.classList.contains("file-page-open")) return false;
+  selectRibbonTab("home");
+  focusEditorSurface();
+  return true;
+}
+// Capture, so Escape leaves the page before any of the editor's own Escape
+// handlers see the key. Without capture the first handler to claim the event
+// would decide, and which one that is depends on binding order — the
+// light-dismiss contract this repo already enforces for dialogs.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (closeFilePage()) event.stopPropagation();
+}, true);
 
 document.querySelector(".ribbon-tabs")?.addEventListener("keydown", (event) => {
   if (!event.target.matches(".ribbon-tab")) return;
@@ -8589,6 +8635,15 @@ const LAYOUT_SURFACE = [
   { command: "layout.spacing", label: "Paragraph spacing…", kw: "spacing line before after leading paragraph fields", buttons: () => [layoutSpacingFieldsBtn], requires: "caret", run: () => toggleParagraphProperties(true, () => paraLineSpacing) },
   // Arrange: the object inspector's own wrap and geometry sections, reached from
   // a durable affordance instead of only the floating bar that appears on hover.
+  // The two running-content variants. No `label`/`kw`: `editorCommands` already
+  // declares both rows (their labels read as switches — "Different first page:
+  // on"), and a second declaration here would put two rows for one command in
+  // the palette. What they needed was a RIBBON FACE: they were reachable from
+  // the Insert menu and the palette only, so a chrome with no menu bar left them
+  // palette-only. `pressed` is what makes the button say which way the switch is
+  // set, the way the Review toggles do.
+  { command: "layout.firstPageVariant", buttons: () => [insertFirstPageVariantBtn], requires: "doc", pressed: () => runningVariantState().firstPage, run: () => toggleRunningVariant("firstPage") },
+  { command: "layout.evenOddVariant", buttons: () => [insertEvenOddVariantBtn], requires: "doc", pressed: () => runningVariantState().evenOdd, run: () => toggleRunningVariant("evenOdd") },
   { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
   { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
   {
@@ -8679,8 +8734,8 @@ function openObjectInspectorAt(selector) {
 // themselves report why nothing happened (no change at the cursor, none left to
 // accept), which is more use than a button that is silently dead.
 const REVIEW_SURFACE = [
-  { command: "review.mode.suggesting", button: () => reviewTrackBtn, run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting") },
-  { command: "view.showChanges", button: () => reviewShowChangesBtn, run: () => toggleShowChanges() },
+  { command: "review.mode.suggesting", button: () => reviewTrackBtn, run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
+  { command: "view.showChanges", button: () => reviewShowChangesBtn, run: () => toggleShowChanges(), pressed: () => showingChanges },
   { command: "review.previous", button: () => reviewPrevBtn, run: () => navigateReview(-1) },
   { command: "review.next", button: () => reviewNextBtn, run: () => navigateReview(1) },
   { command: "review.acceptNext", button: () => reviewAcceptBtn, run: () => decideReviewAndAdvance(true) },
@@ -8688,7 +8743,17 @@ const REVIEW_SURFACE = [
   { command: "review.acceptAll", button: () => reviewAcceptAllBtn, run: () => void decideAllReviewChanges(true) },
   { command: "review.rejectAll", button: () => reviewRejectAllBtn, run: () => void decideAllReviewChanges(false) },
   { command: "review.comment", button: () => reviewCommentBtn, requires: "range", run: () => openReviewComposer() },
-  { command: "review.toggle", button: () => reviewPanelBtn, run: () => toggleReview() },
+  { command: "review.toggle", button: () => reviewPanelBtn, run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
+  // Proofing. Both switches were the whole content of a `Tools` menu, which is
+  // one top-level name for two toggles — and one of the two names that scrolled
+  // off the end of the menu bar (`109` HF-097). Word's Review tab opens with a
+  // Proofing group, so that is where they go now that the ribbon is the only
+  // navigation axis in this chrome. `requires: "always"`: both are `noDoc`
+  // commands — they are preferences, and switching one with no document open is
+  // meaningful and already supported.
+  { command: "tools.spellCheck", button: () => reviewSpellCheckBtn, requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
+  { command: "tools.grammarCheck", button: () => reviewGrammarCheckBtn, requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
+  { command: "tools.smartQuotes", button: () => reviewSmartQuotesBtn, requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -9627,19 +9692,23 @@ function updateToolbar() {
       if (entry.requires !== "missing") {
         button.title = enabled ? (button.dataset.enabledTitle ?? button.title) : reason;
       }
+      // A switch has to say which way it is set, whichever table declares it.
+      if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
     }
   }
   // Review: a document is the only precondition, except commenting, which needs
   // text to attach to. The two toggles reflect engine state rather than a local
   // flag, so the ribbon always agrees with the footer's mode control.
+  // `pressed` replaced three hand-written `setAttribute("aria-pressed", …)`
+  // lines. Declaring it beside the command is what let the two proofing switches
+  // reflect their state without a fourth and fifth copy of the same line, and
+  // what stops the next toggle shipping mute.
   for (const entry of REVIEW_SURFACE) {
     const button = entry.button();
     if (!button) continue;
-    button.disabled = !doc || (entry.requires === "range" && !range);
+    if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range);
+    if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
   }
-  if (reviewTrackBtn) reviewTrackBtn.setAttribute("aria-pressed", String(reviewMode === "suggesting"));
-  if (reviewShowChangesBtn) reviewShowChangesBtn.setAttribute("aria-pressed", String(showingChanges));
-  if (reviewPanelBtn) reviewPanelBtn.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
   redoBtn.disabled = !doc || !doc.canRedo;
@@ -13092,165 +13161,74 @@ function editorCommands(context = { surface: "palette" }) {
   return cmds.filter((command) => doc || command.noDoc);
 }
 
-// ---- Application menus -----------------------------------------------------
-// The Vellum reference supplies the two-row title/menu composition, but its
-// labels all route to one prototype palette. OpenDoc renders real categorized
-// menus from the same command descriptors used by the palette and context menu,
-// so availability, shortcuts, mutation gates, and dynamic Undo/Redo labels stay
-// consistent across every command surface.
+// ---- One navigation axis: the compact menu bar and the ribbon's File page ---
+// The editor used to show TWO navigation systems at once — this menu bar and the
+// ribbon tab strip — so a command's home was a guess between two places (`109`
+// UX-014). Each chrome now has exactly one axis (docs/122):
+//
+//   compact mode  the menu bar IS the axis; File is a dropdown, as in Google
+//                 Docs and Drive. `style.css` hides the bar in ribbon mode.
+//   ribbon mode   the tab strip is the axis; File is its first tab and opens a
+//                 PAGE, as in ONLYOFFICE (`app/view/Toolbar.js:182`, the only
+//                 tab declared `haspanel: false`).
+//
+// Both read `FILE_SURFACE` and both render through `command_menu.mjs`, so the
+// two File rosters cannot drift and neither can invent its own gating: the rows
+// come from the same `editorCommands()` descriptors the palette and the context
+// menu use.
 const appMenuBar = document.getElementById("appMenuBar");
-const appMenuButtons = [...appMenuBar.querySelectorAll(".app-menu-button")];
 const appMenuPopover = document.getElementById("appMenuPopover");
-let activeAppMenu = null;
-let activeAppMenuTrigger = null;
-
-function appMenuFocusableItems() {
-  return [...appMenuPopover.querySelectorAll(".app-menu-item:not(:disabled)")];
-}
-
-function positionAppMenu(trigger) {
-  const rect = trigger.getBoundingClientRect();
-  const viewportWidth = document.documentElement.clientWidth;
-  const width = appMenuPopover.offsetWidth;
-  appMenuPopover.style.left = `${Math.max(8, Math.min(rect.left, viewportWidth - width - 8))}px`;
-  appMenuPopover.style.top = `${rect.bottom + 4}px`;
-}
-
-function closeAppMenu({ restoreFocus = false } = {}) {
-  if (appMenuPopover.hidden) return;
-  appMenuPopover.hidden = true;
-  for (const button of appMenuButtons) button.setAttribute("aria-expanded", "false");
-  const trigger = activeAppMenuTrigger;
-  activeAppMenu = null;
-  activeAppMenuTrigger = null;
-  if (restoreFocus) trigger?.focus({ preventScroll: true });
-}
-
-function renderAppMenu(name) {
-  const byId = new Map(
+const menuRegistry = () =>
+  new Map(
     editorCommands({ surface: "menu", hasRange: hasRange() }).map((command) => [command.id, command]),
   );
-  appMenuPopover.replaceChildren();
-  let renderedSections = 0;
-  for (const ids of APP_MENU_SECTIONS[name] ?? []) {
-    const commands = ids.map((id) => byId.get(id)).filter(Boolean);
-    if (!commands.length) continue;
-    if (renderedSections > 0) {
-      const separator = document.createElement("div");
-      separator.className = "app-menu-separator";
-      separator.setAttribute("role", "separator");
-      appMenuPopover.appendChild(separator);
-    }
-    renderedSections += 1;
-    for (const command of commands) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "app-menu-item";
-      item.setAttribute("role", "menuitem");
-      item.dataset.command = command.id;
-      item.disabled = command.enabled === false;
-      if (command.disabledReason) item.title = command.disabledReason;
+const appMenu = createMenuBar({
+  bar: appMenuBar,
+  popover: appMenuPopover,
+  sectionsFor: (name) => APP_MENU_SECTIONS[name] ?? [],
+  registry: menuRegistry,
+  formatShortcut,
+});
+const openAppMenu = (name, options) => appMenu.open(name, options);
+const closeAppMenu = (options) => appMenu.close(options);
 
-      const label = document.createElement("span");
-      label.className = "app-menu-item-label";
-      label.textContent = command.label;
-      const hint = document.createElement("span");
-      hint.className = "app-menu-item-hint";
-      hint.textContent = formatShortcut(command.shortcut);
-      item.append(label, hint);
-      item.addEventListener("click", () => {
-        if (command.enabled === false) return;
-        const trigger = activeAppMenuTrigger;
-        closeAppMenu();
-        trigger?.focus({ preventScroll: true });
+// The File page. Same rows, rendered as headed groups instead of a dropdown,
+// because a full-window route has the room to say what a group is and a dropdown
+// does not. Rebuilt on every open rather than kept in sync — the same reason the
+// compact toolbar is — so a row can never hold a stale `enabled`.
+function renderFilePage() {
+  if (!filePageBody) return 0;
+  return renderCommandRows(
+    filePageBody,
+    fileMenuSections(),
+    menuRegistry(),
+    {
+      itemClass: "file-page-item",
+      headingFor: (_ids, index) => FILE_SURFACE[index]?.heading,
+      formatShortcut,
+      onRun: (command) => {
+        // Every File row returns to the document first, which is what a dropdown
+        // does implicitly by closing and what ONLYOFFICE's page does through its
+        // own "Back to Document". One rule, no exception list: Settings and the
+        // Help rows open dialogs, and a modal over a full-window page is two
+        // layers of chrome between the user and the document they came for.
+        //
+        // Through `closeFilePage` rather than `selectRibbonTab` alone, because
+        // the row the click landed on is about to be hidden: without moving the
+        // keyboard somewhere real first, focus falls to <body> and a dialog
+        // opened from here has nowhere to hand it back to on Escape — the
+        // HF-062 failure, where the editor looked frozen after a dialog closed.
+        closeFilePage();
         command.run();
-      });
-      appMenuPopover.appendChild(item);
-    }
-  }
+      },
+    },
+  );
 }
 
-function openAppMenu(name, { focusFirst = true } = {}) {
-  const trigger = appMenuButtons.find((button) => button.dataset.menu === name);
-  if (!trigger) return;
-  for (const button of appMenuButtons) {
-    button.setAttribute("aria-expanded", String(button === trigger));
-  }
-  activeAppMenu = name;
-  activeAppMenuTrigger = trigger;
-  renderAppMenu(name);
-  appMenuPopover.setAttribute("aria-label", `${trigger.textContent.trim()} menu`);
-  appMenuPopover.hidden = false;
-  positionAppMenu(trigger);
-  if (focusFirst) appMenuFocusableItems()[0]?.focus({ preventScroll: true });
+{
+  const back = document.getElementById("filePageBack");
+  if (back) onButton(back, () => closeFilePage());
 }
-
-function adjacentAppMenuTrigger(trigger, direction) {
-  const index = appMenuButtons.indexOf(trigger);
-  return appMenuButtons[(index + direction + appMenuButtons.length) % appMenuButtons.length];
-}
-
-for (const button of appMenuButtons) {
-  button.addEventListener("click", () => {
-    if (!appMenuPopover.hidden && activeAppMenu === button.dataset.menu) {
-      closeAppMenu({ restoreFocus: true });
-    } else {
-      openAppMenu(button.dataset.menu);
-    }
-  });
-  button.addEventListener("pointerenter", () => {
-    if (!appMenuPopover.hidden && activeAppMenu !== button.dataset.menu) {
-      openAppMenu(button.dataset.menu, { focusFirst: false });
-    }
-  });
-  button.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      openAppMenu(button.dataset.menu);
-    } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-      event.preventDefault();
-      const next = adjacentAppMenuTrigger(button, event.key === "ArrowRight" ? 1 : -1);
-      next.focus({ preventScroll: true });
-      next.scrollIntoView({ inline: "nearest", block: "nearest" });
-    } else if (event.key === "Escape") {
-      closeAppMenu({ restoreFocus: true });
-    }
-  });
-}
-
-appMenuPopover.addEventListener("keydown", (event) => {
-  const items = appMenuFocusableItems();
-  const index = items.indexOf(document.activeElement);
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    event.preventDefault();
-    const direction = event.key === "ArrowDown" ? 1 : -1;
-    items[(index + direction + items.length) % items.length]?.focus();
-  } else if (event.key === "Home" || event.key === "End") {
-    event.preventDefault();
-    items[event.key === "Home" ? 0 : items.length - 1]?.focus();
-  } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-    event.preventDefault();
-    const next = adjacentAppMenuTrigger(activeAppMenuTrigger, event.key === "ArrowRight" ? 1 : -1);
-    next.scrollIntoView({ inline: "nearest", block: "nearest" });
-    openAppMenu(next.dataset.menu);
-  } else if (event.key === "Escape") {
-    event.preventDefault();
-    closeAppMenu({ restoreFocus: true });
-  } else if (event.key === "Tab") {
-    closeAppMenu();
-  }
-});
-
-document.addEventListener("pointerdown", (event) => {
-  if (
-    !appMenuPopover.hidden &&
-    !appMenuPopover.contains(event.target) &&
-    !appMenuBar.contains(event.target)
-  ) {
-    closeAppMenu();
-  }
-});
-window.addEventListener("resize", () => closeAppMenu());
 
 function buildCommands() {
   return editorCommands({ surface: "palette" });
@@ -13942,6 +13920,12 @@ function renderCommands(query) {
     // command's keyboard shortcut when it has one (so the palette teaches the
     // shortcut), else its group.
     const hint = c.enabled === false ? c.disabledReason : (formatShortcut(c.shortcut) || c.group);
+    // The shortcut, separately from the hint TEXT. The hint box holds a chord, a
+    // group name or a refusal reason depending on state, so a test reading it
+    // cannot tell "has a chord" from "has a group" — and a reachability guard
+    // that counts a group name as a keyboard surface passes for every command
+    // there is, which is the green-but-worthless guard this repo keeps catching.
+    if (c.shortcut) item.dataset.commandShortcut = formatShortcut(c.shortcut);
     item.innerHTML = `<span>${escapeHtml(c.label)}</span><span class="cmd-hint">${escapeHtml(hint)}</span>`;
     item.addEventListener("mousemove", () => setCmdSel(i));
     item.addEventListener("click", () => runCommand(i));
@@ -15307,6 +15291,11 @@ function setSmartQuotes(enabled) {
   smartQuotesEnabled = enabled;
   writePref(SMART_QUOTE_PREF, enabled ? "on" : "off");
   setStatus(enabled ? "Smart quotes on" : "Smart quotes off");
+  // Both proofing switches now have a Review-band face, and a switch that does
+  // not move when you flip it is worse than no switch. `updateToolbar` is this
+  // file's one "state changed, re-reflect every surface" call, so the reflection
+  // stays in one place rather than gaining a second copy here.
+  updateToolbar();
 }
 
 /** Spelling on or off, remembered with the other preferences. */
@@ -15316,6 +15305,7 @@ function setSpellCheckEnabled(enabled) {
   if (spellCheckToggle) spellCheckToggle.checked = enabled;
   spellChecker.setEnabled(enabled);
   setStatus(enabled ? "Spell check on" : "Spell check off");
+  updateToolbar();
 }
 
 /** Grammar on or off, remembered beside spelling and independent of it. */
@@ -15326,6 +15316,7 @@ function setGrammarCheckEnabled(enabled) {
   spellChecker.refresh();
   drawSelection();
   setStatus(enabled ? "Grammar check on" : "Grammar check off");
+  updateToolbar();
 }
 
 /** Adds a word and SAYS whether it was stored. A personal dictionary that
@@ -17361,6 +17352,7 @@ compactToolbarUi = createCompactToolbar({
   runControls,
   paraControls,
   formatToggleCache,
+  localizeShortcut: (text) => localizeShortcutText(text, EDITOR_KEYBOARD_PLATFORM),
 });
 
 /** Switches chrome. Mutually exclusive by construction — `body` carries exactly
@@ -17369,6 +17361,10 @@ compactToolbarUi = createCompactToolbar({
 function setChromeMode(mode, { persist = true } = {}) {
   chromeMode = mode === "compact" ? "compact" : "ribbon";
   const compact = chromeMode === "compact";
+  // The File PAGE is ribbon chrome: compact mode hides the whole ribbon, so
+  // switching modes with it open would leave `.file-page-open` set over a page
+  // nobody can see or leave. Compact mode answers File with a dropdown instead.
+  if (compact) closeFilePage();
   document.body.classList.toggle("compact-mode", compact);
   document.body.classList.toggle("ribbon-mode", !compact);
   // The toolbar IS the chrome — the wrapper it used to sit in was a second

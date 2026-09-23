@@ -8,7 +8,7 @@
 // without a single test noticing. These assertions are deliberately about
 // measured geometry at a viewport size, not about which rules the stylesheet
 // contains.
-import { test, expect, stableBox, gotoEditor } from "./fixtures.mjs";
+import { test, expect, stableBox, gotoEditor, useCompactChrome } from "./fixtures.mjs";
 
 const viewportMetrics = (page) =>
   page.evaluate(() => {
@@ -163,12 +163,19 @@ test("the object properties panel starts below the ribbon, expanded and collapse
 });
 
 // ---- HF-097 -----------------------------------------------------------------
-test("the menu bar shows that it has clipped Tools and Help rather than cutting them dead", async ({
+// The bar lost two names when Tools and Help dissolved into the File surface and
+// the Review band (docs/122), so it no longer clips at 460px — which is part of
+// what HF-097 asked for. The affordance still has to work where it DOES clip, so
+// the width moved down with the bar rather than the test being deleted: a guard
+// pinned to a width it has outgrown passes without checking anything.
+test("the menu bar shows that it has clipped a menu rather than cutting it dead", async ({
   page,
   consoleErrors,
 }) => {
-  await page.setViewportSize({ width: 460, height: 900 });
+  await page.setViewportSize({ width: 360, height: 900 });
   await gotoEditor(page);
+  // The bar is the compact chrome's navigation axis; ribbon mode hides it.
+  await useCompactChrome(page);
 
   const bar = page.locator("#appMenuBar");
   await expect(bar).toBeVisible();
@@ -185,11 +192,13 @@ test("the menu bar shows that it has clipped Tools and Help rather than cutting 
   expect(mask).toMatch(/gradient/);
   expect(mask).toMatch(/transparent|rgba\(0, 0, 0, 0\)/);
 
-  // Help is still reachable by scrolling the bar — it was never removed.
+  // The last name is still reachable by scrolling the bar — nothing is clipped
+  // away for good. Asserting "the last one", not "Help", keeps this about the
+  // scroll affordance rather than about which menus the bar happens to hold.
   await bar.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
   });
-  await expect(page.locator('.app-menu-button[data-menu="help"]')).toBeInViewport();
+  await expect(page.locator(".app-menu-button").last()).toBeInViewport();
 
   expect(consoleErrors).toEqual([]);
 });

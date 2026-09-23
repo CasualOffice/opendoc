@@ -5509,6 +5509,150 @@ body.is-format-painting .page-wrap * {
 body.compact-mode .ribbon { display: none; }
 body.ribbon-mode .compact-toolbar { display: none; }
 
+/* ONE navigation axis per chrome (`109` UX-014, docs/122). The editor used to
+ * show a menu bar AND a ribbon tab strip at the same time, so finding a command
+ * meant first guessing which of two systems owned it.
+ *
+ * Ribbon mode's axis is the tab strip, whose first tab is File — ONLYOFFICE's
+ * arrangement, and they ship no menu bar at all (`template/Viewport.template`
+ * has no menubar element; their locale has no Edit/Format/Tools menu strings).
+ * Compact mode has no band to hang a File page under, so its axis is the menu
+ * bar, which is what Google Docs shows above a single flat toolbar.
+ *
+ * Hidden with `display: none` rather than removed from the markup because the
+ * bar is one chrome's real navigation, not dead weight: `setChromeMode` switches
+ * which axis is live, and the compact chrome needs its buttons in the DOM. */
+body.ribbon-mode #appMenuBar { display: none; }
+
+/* …with ONE exception, and it is not a hedge. Before a document is open the
+ * empty-state block below hides the whole `.ribbon` — bands of disabled controls
+ * around a drop card read as a broken shell — which takes the tab strip and its
+ * File tab with it. Hiding the bar as well would leave a freshly loaded editor
+ * with NO route to Open at all: the drop card and nothing else. So the bar is the
+ * empty state's axis in both chromes, and there is still only ever one on screen,
+ * because the band it would compete with is not there. ONLYOFFICE does the same
+ * thing from the other side: their read-only viewport declares the File tab and
+ * nothing else (`Toolbar.js:1885`). */
+body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
+
+/* The File tab: a page, not a band. Set apart from the command tabs the way
+ * ONLYOFFICE sets theirs apart (`x-lone`) and Word tints its File tab, so it
+ * does not read as one more band to browse. */
+.ribbon-tab-file {
+  margin-right: 6px;
+}
+
+.ribbon-tab-file[aria-selected="true"] {
+  background: var(--bg-2);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+/* Contextual tabs sit at the right-hand end and say so: a permanent-looking tab
+ * that happens to be greyed out is a different message from a tab that appears
+ * when its object does. */
+.ribbon-tab-contextual {
+  margin-left: 6px;
+}
+
+/* The File page fills the work area. `--chrome-bottom` already tracks where the
+ * chrome ends in every density, so the page anchors to it rather than repeating
+ * the header/tab arithmetic — the same token the object, paragraph and table
+ * panels use. */
+.ribbon-panel.file-page {
+  position: fixed;
+  inset: var(--chrome-bottom) 0 0 0;
+  z-index: 6;
+  margin: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: auto;
+  background: var(--bg);
+  display: block;
+}
+
+/* `display: block` above is as specific as `.ribbon-panel[hidden]`, and it comes
+ * later, so without this the hidden File page stayed on screen swallowing every
+ * click on the document beneath it. Restated rather than reordered: a reader of
+ * either rule can see the other is accounted for. */
+.ribbon-panel.file-page[hidden] {
+  display: none;
+}
+
+.file-page-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 22px 20px 40px;
+}
+
+.file-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.file-page-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.file-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-page-item-heading {
+  margin: 14px 0 4px;
+  font-size: var(--fs-caption);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.file-page-item-heading:first-child {
+  margin-top: 0;
+}
+
+/* The rows are the menu rows, one size up: same shape, same disabled treatment,
+ * so a person who learned the compact File dropdown recognises the page. */
+.file-page-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-page-item:hover:not(:disabled),
+.file-page-item:focus-visible {
+  background: var(--bg-2);
+}
+
+.file-page-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.file-page-item-hint {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
 .compact-toolbar {
   /* The raised pill within the grey field — lighter than the chrome behind it,
      so it separates by SHADE with no border, exactly as Docs and the sister app

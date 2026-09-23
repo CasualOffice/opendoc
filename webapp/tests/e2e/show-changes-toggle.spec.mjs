@@ -10,6 +10,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   setReviewMode,
+  openAppMenu,
 } from "./fixtures.mjs";
 
 async function setIdentity(page, name, initials = "") {
@@ -45,7 +46,7 @@ test("the Show changes toggle renders the read-only markup view and back (REVIEW
   const showChanges = page.locator('#appMenuPopover [data-command="view.showChanges"]');
 
   async function toggleShowChanges() {
-    await page.locator('.app-menu-button[data-menu="view"]').click();
+    await openAppMenu(page, "view");
     await expect(showChanges).toBeVisible();
     await showChanges.click();
   }

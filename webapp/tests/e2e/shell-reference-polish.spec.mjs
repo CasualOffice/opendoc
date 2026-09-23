@@ -6,6 +6,8 @@ import {
   MOD,
   openCommandPalette,
   openAppMenu,
+  openFilePage,
+  expectEditorFocused,
 } from "./fixtures.mjs";
 
 test("the reference typography and icons load locally", async ({ page, consoleErrors }) => {
@@ -49,9 +51,10 @@ test("the command palette opens from the Help menu and restores focus on close",
   // which is the surface Word and Docs both use. What must survive is the
   // contract the box was guarding: a POINTER user can open the palette, and
   // closing it puts focus back where it came from rather than on <body>.
-  const helpMenu = page.locator('.app-menu-button[data-menu="help"]');
-  await expect(helpMenu).toBeVisible();
-  await expect(helpMenu).toHaveAttribute("aria-expanded", "false");
+  // The palette's clickable route is the File surface now: "Find a command" was
+  // a Help-menu row, and Help is a File group, as it is in ONLYOFFICE.
+  await expect(page.locator("#tabFile")).toBeVisible();
+  await expect(page.locator("#tabFile")).toHaveAttribute("aria-selected", "false");
 
   await openCommandPalette(page);
   await expect(page.locator("#cmdPalette")).toBeVisible();
@@ -59,10 +62,12 @@ test("the command palette opens from the Help menu and restores focus on close",
 
   await page.keyboard.press("Escape");
   await expect(page.locator("#cmdPalette")).toBeHidden();
-  // Focus returns to the menu button that opened it, not to the document body —
-  // the regression this test has always existed to catch.
-  await expect(helpMenu).toBeFocused();
-  await expect(helpMenu).toHaveAttribute("aria-expanded", "false");
+  // Focus returns somewhere real, not to the document body — the regression this
+  // test has always existed to catch. Running a File-page row closes the page,
+  // so "somewhere real" is the editing surface rather than the row, which no
+  // longer exists to receive it.
+  await expectEditorFocused(page);
+  await expect(page.locator("#tabFile")).toHaveAttribute("aria-selected", "false");
   expect(consoleErrors).toEqual([]);
 });
 
@@ -71,9 +76,16 @@ test("the no-document state keeps only useful top-bar actions", async ({ page, c
 
   await expect(page.locator("body")).not.toHaveClass(/doc-loaded/);
   // `.file` was the label wrapping the hidden file input — removed with the Open
-  // button it belonged to. The menu bar is what must be present with no document
-  // loaded, because it is the only way to load one.
+  // button it belonged to. A navigation axis is what must be present with no
+  // document loaded, because it is the only route to Open — and EXACTLY one, or
+  // the doubled-navigation defect is back (docs/122).
+  //
+  // In the empty state that axis is the menu bar in both chromes: the band is
+  // hidden here, so the tab strip is not on screen to be the axis. ONLYOFFICE
+  // arrives at the same shape from the other side — their read-only viewport
+  // declares the File tab and nothing else.
   await expect(page.locator(".app-menu-bar")).toBeVisible();
+  await expect(page.locator(".ribbon-tabs")).toBeHidden();
   await expect(page.locator("#settingsBtn")).toBeVisible();
   // Open, Save and Search are no longer top-bar controls at all: they duplicated
   // the File menu and the palette. Assert they are ABSENT rather than hidden —
@@ -251,7 +263,7 @@ for (const width of [720, 390]) {
     // used to be the Search box; it is now the menu bar, which is the only route
     // to Open, Save and the palette, so dropping it at a narrow width would
     // strand the user completely.
-    await expect(page.locator('.app-menu-button[data-menu="file"]')).toBeVisible();
+    await expect(page.locator("#tabFile")).toBeVisible();
     await expect(page.locator("#railOutline")).toContainText("Outline");
     expect(consoleErrors).toEqual([]);
   });

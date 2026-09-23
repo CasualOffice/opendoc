@@ -33,7 +33,7 @@
 // The completeness test at the end fails if the set of triggers the sweep found
 // ever shrinks, so a surface cannot leave the contract by quietly losing its
 // `aria-expanded`.
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, useCompactChrome } from "./fixtures.mjs";
 
 const RIBBON_TABS = ["home", "insert", "layout", "references", "view", "review"];
 
@@ -190,6 +190,10 @@ for (const tab of RIBBON_TABS) {
 
 test("the application menus close on an outside pointer press", async ({ page, consoleErrors }) => {
   await gotoEditor(page);
+  // The menu bar is the compact chrome's navigation axis (docs/122). In ribbon
+  // mode it is hidden, so `expandableTriggers` would report no menus and this
+  // test would pass by finding nothing to check — a guard that cannot fail.
+  await useCompactChrome(page);
   await clickIntoFirstPage(page);
   const menus = (await page.evaluate(expandableTriggers)).filter((t) => t.menu);
   expect(menus.length, "the menu bar exposed no menus").toBeGreaterThan(4);

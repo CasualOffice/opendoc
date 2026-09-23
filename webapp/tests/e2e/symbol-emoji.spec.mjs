@@ -27,11 +27,15 @@ function caretX(page) {
   });
 }
 
-// Opens a picker (`symbol` or `emoji`) through the real Insert menu affordance,
+// Opens a picker (`symbol` or `emoji`) through the real Insert affordance,
 // exactly as a user would reach it.
+//
+// The Insert TAB rather than the Insert menu: the bar is compact-chrome now
+// (docs/122), and switching chrome mid-test hides the band this spec later reads
+// `#undoBtn` from.
 async function openPickerViaMenu(page, which) {
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
-  const item = page.locator(`#appMenuPopover .app-menu-item[data-command="insert.${which}"]`);
+  await page.locator("#tabInsert").click();
+  const item = page.locator(`#panelInsert [data-command="insert.${which}"]`);
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.locator(`#${which}Dialog`)).toBeVisible();
@@ -45,6 +49,9 @@ test("insert symbol: a glyph lands at the caret as one undoable action, the pick
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
+  // Undo lives on the HOME band, and reaching the picker meant switching to the
+  // Insert tab. Back to Home first: a hidden button is not a clickable one.
+  await page.locator("#tabHome").click();
   const undoBtn = page.locator("#undoBtn");
   await expect(undoBtn).toBeDisabled(); // a fresh document has nothing to undo
 
@@ -71,6 +78,7 @@ test("insert symbol: a glyph lands at the caret as one undoable action, the pick
   await expect(euro).toBeVisible();
   await euro.click();
   await expect.poll(() => caretX(page)).toBeGreaterThan(startX);
+  await page.locator("#tabHome").click();
   await expect(undoBtn).toBeEnabled();
   await expect(undoBtn).toHaveAttribute("aria-label", "Undo Paste");
 
@@ -93,8 +101,10 @@ test("insert symbol: a glyph lands at the caret as one undoable action, the pick
 
   // Each insertion is exactly ONE undo: two undos remove both glyphs and return
   // the caret to the paragraph start with nothing left to undo.
+  await page.locator("#tabHome").click();
   await undoBtn.click();
   await expect.poll(() => caretX(page)).toBe(afterFirst);
+  await page.locator("#tabHome").click();
   await undoBtn.click();
   await expect.poll(() => caretX(page)).toBe(startX);
   await expect(undoBtn).toBeDisabled();
@@ -110,6 +120,9 @@ test("insert emoji: a glyph lands at the caret as one undoable action, the picke
   await clickIntoFirstPage(page);
   await moveCaretToDocStart(page);
 
+  // Undo lives on the HOME band, and reaching the picker meant switching to the
+  // Insert tab. Back to Home first: a hidden button is not a clickable one.
+  await page.locator("#tabHome").click();
   const undoBtn = page.locator("#undoBtn");
   await expect(undoBtn).toBeDisabled();
 
@@ -120,6 +133,7 @@ test("insert emoji: a glyph lands at the caret as one undoable action, the picke
   await expect(grin).toBeVisible();
   await grin.click();
   await expect.poll(() => caretX(page)).toBeGreaterThan(startX);
+  await page.locator("#tabHome").click();
   await expect(undoBtn).toBeEnabled();
   await expect(undoBtn).toHaveAttribute("aria-label", "Undo Paste");
 
@@ -132,6 +146,7 @@ test("insert emoji: a glyph lands at the caret as one undoable action, the picke
   await expect(page.locator("#emojiDialog")).toBeHidden();
 
   // One undo removes the single inserted emoji.
+  await page.locator("#tabHome").click();
   await undoBtn.click();
   await expect.poll(() => caretX(page)).toBe(startX);
   await expect(undoBtn).toBeDisabled();
@@ -158,6 +173,7 @@ test("insert symbol: blocked (read-only) in Viewing mode, nothing inserted", asy
 
   await expect(page.locator("#status")).toContainText("read-only");
   await expect(page.locator("#symbolDialog")).toBeHidden();
+  await page.locator("#tabHome").click();
   await expect(page.locator("#undoBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);
