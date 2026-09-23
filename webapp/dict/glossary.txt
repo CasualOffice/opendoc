@@ -271,6 +271,7 @@ docx
 draggable
 drawingml
 dropdown
+dropdowns
 embeddable
 embeddings
 endnote

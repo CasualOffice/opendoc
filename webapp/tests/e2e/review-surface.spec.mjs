@@ -9,7 +9,14 @@
 //
 // These tests drive the ribbon buttons and assert the document really changed,
 // because a button that merely exists is the failure being fixed, not the fix.
-import { test, expect, gotoEditor, clickIntoFirstPage, setReviewMode } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  setReviewMode,
+  useCompactChrome,
+} from "./fixtures.mjs";
 
 async function openReviewTab(page) {
   await page.locator("#tabReview").click();
@@ -37,6 +44,10 @@ test("the Review tab exposes Word's tracking, changes and comments groups", asyn
     "Tracking",
     "Changes",
     "Comments",
+    // Word's Review tab opens with a Proofing group. Spell check and smart
+    // quotes were the entire content of a `Tools` menu, and the ribbon chrome has
+    // no menu bar (docs/122), so they needed a band face.
+    "Proofing",
   ]);
   for (const id of [
     "#reviewTrackBtn",
@@ -49,6 +60,8 @@ test("the Review tab exposes Word's tracking, changes and comments groups", asyn
     "#reviewRejectAllBtn",
     "#reviewCommentBtn",
     "#reviewPanelBtn",
+    "#reviewSpellCheckBtn",
+    "#reviewSmartQuotesBtn",
   ]) {
     await expect(page.locator(id)).toBeVisible();
   }
@@ -133,8 +146,14 @@ test("every Review ribbon command is reachable from the menu bar", async ({
   // once — so the guard was arguing for the repetition it was not written to
   // cause. The requirement is that a ribbon command has a menu home, not which
   // menu that is; the home is reported below so a failure names it.
-  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review", "tools", "help"];
+  //
+  // The bar itself is COMPACT-chrome now (docs/122): ribbon mode's one axis is
+  // the tab strip. So the menu homes are read in the chrome that has menus, and
+  // the ribbon roster in the chrome that has a ribbon — which is the honest
+  // reading of the rule, since a user in either chrome can reach both.
+  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
   const home = new Map();
+  await useCompactChrome(page);
   for (const menu of MENUS) {
     await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
     const ids = await page
@@ -144,6 +163,7 @@ test("every Review ribbon command is reachable from the menu bar", async ({
     await page.keyboard.press("Escape");
   }
 
+  await page.locator("#modeRibbon").click();
   await openReviewTab(page);
   const ribbonCommands = await page
     .locator("#panelReview .rgroup button[data-command]")
@@ -176,8 +196,15 @@ test("review commands stay reachable by keyboard from the tab strip", async ({
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
+  // `End` lands on the last ENABLED tab. Review no longer holds that slot: the
+  // strip is now File · Home · Insert · Layout · References · Review · View plus
+  // the contextual Table, which is ONLYOFFICE's order (their captions run
+  // Review before View) and Word's. So this walks LEFT from the end instead,
+  // which is what a keyboard user does and what actually needs to work.
   await page.locator("#tabHome").focus();
   await page.keyboard.press("End");
+  await expect(page.locator("#tabView")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
   await expect(page.locator("#tabReview")).toBeFocused();
   await expect(page.locator("#panelReview")).toBeVisible();
 

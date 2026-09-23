@@ -20,6 +20,7 @@ import {
   moveCaretToDocStart,
   setReviewMode,
   MOD,
+  useCompactChrome,
 } from "./fixtures.mjs";
 
 // ---- HF-034 -----------------------------------------------------------------
@@ -29,6 +30,11 @@ test("Open is reachable and activatable by keyboard alone, with no pointer", asy
   consoleErrors,
 }) => {
   await gotoEditor(page);
+  // The menu bar is the compact chrome's navigation axis (docs/122); the ribbon
+  // chrome answers File with a tab, which `one-axis-navigation.spec.mjs` covers.
+  // This test is about the KEYBOARD route into Open, so it drives the chrome
+  // whose route is a menu.
+  await useCompactChrome(page);
 
   // The original defect was a `<label>` wrapping a hidden input: it takes no
   // focus and has no keydown wiring, so a freshly loaded editor had no keyboard

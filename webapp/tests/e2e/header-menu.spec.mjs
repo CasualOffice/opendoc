@@ -1,6 +1,22 @@
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  openAppMenu,
+  useCompactChrome,
+} from "./fixtures.mjs";
 
-// Review sits after Format, mirroring where Word puts its Review tab.
+// The menu bar is the COMPACT chrome's navigation axis, and its only one — the
+// ribbon tab strip is the ribbon chrome's (`109` UX-014, docs/122). Every test
+// here therefore enters compact mode first: it is asking whether the menus work,
+// not whether the editor boots with them showing.
+//
+// Review sits after Format, mirroring where Word puts its Review tab. Tools and
+// Help are gone: Settings and the Help rows are File-surface items, as they are
+// in ONLYOFFICE, and the two proofing switches are Review rows as they are in
+// Word. Two names fewer is two names that cannot scroll off the end of this bar
+// behind a hidden scrollbar (`109` HF-097).
 const MENU_LABELS = [
   "File",
   "Edit",
@@ -11,8 +27,6 @@ const MENU_LABELS = [
   // command used to have no menu home at all (docs/105 UX-012).
   "Table",
   "Review",
-  "Tools",
-  "Help",
 ];
 
 test("the Vellum-style title block exposes real menus and honest local document state", async ({
@@ -20,6 +34,7 @@ test("the Vellum-style title block exposes real menus and honest local document 
   consoleErrors,
 }) => {
   await gotoEditor(page);
+  await useCompactChrome(page);
 
   await expect(page.locator("#documentChrome")).toBeVisible();
   await expect(page.locator("#documentStateText")).toHaveText("Opened");
@@ -36,7 +51,7 @@ test("the Vellum-style title block exposes real menus and honest local document 
   await page.keyboard.type("M");
   await expect(page.locator("#documentStateText")).toHaveText("Edited");
 
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   const menu = page.locator("#appMenuPopover");
   await expect(menu).toBeVisible();
   await expect(menu.locator('[data-command="file.open"]')).toContainText("Open");
@@ -48,7 +63,10 @@ test("the Vellum-style title block exposes real menus and honest local document 
   await download;
   await expect(page.locator("#documentStateText")).toHaveText("Downloaded");
 
-  await page.locator("#undoBtn").click();
+  // `#undoBtn` is on the ribbon band, which compact mode hides. The compact
+  // chrome's own Undo runs the same `edit.undo` command — it is rendered from the
+  // registry by id, which is what makes one command answer both chromes.
+  await page.locator('#compactToolbar [data-command-id="edit.undo"]').click();
   await expect(page.locator("#documentStateText")).toHaveText("Edited");
   expect(consoleErrors).toEqual([]);
 });
@@ -58,6 +76,7 @@ test("application menus support keyboard traversal, disabled reasons, and real d
   consoleErrors,
 }) => {
   await gotoEditor(page);
+  await useCompactChrome(page);
   await clickIntoFirstPage(page);
 
   const edit = page.locator('.app-menu-button[data-menu="edit"]');
@@ -89,16 +108,18 @@ test("application menus support keyboard traversal, disabled reasons, and real d
   await expect(menu).toBeHidden();
   await expect(page.locator('.app-menu-button[data-menu="insert"]')).toBeFocused();
 
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   await menu.locator('[data-command="file.properties"]').click();
   await expect(page.locator("#propertiesPanel")).toBeVisible();
   await page.locator("#propertiesClose").click();
 
-  await page.locator('.app-menu-button[data-menu="help"]').click();
+  // "Find a command" was a Help-menu row; Help is a File group now, which is
+  // where ONLYOFFICE keeps it too.
+  await openAppMenu(page, "file");
   await menu.locator('[data-command="help.commands"]').click();
   await expect(page.locator("#cmdPalette")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.locator('.app-menu-button[data-menu="help"]')).toBeFocused();
+  await expect(page.locator('.app-menu-button[data-menu="file"]')).toBeFocused();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -108,6 +129,7 @@ test("the two-row header contains its width and keeps every menu reachable on a 
 }) => {
   await page.setViewportSize({ width: 480, height: 720 });
   await gotoEditor(page);
+  await useCompactChrome(page);
 
   const containment = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -121,13 +143,19 @@ test("the two-row header contains its width and keeps every menu reachable on a 
   expect(containment.headerRight).toBeLessThanOrEqual(containment.viewport);
   expect(containment.menuScrollable).toBe(true);
 
-  const help = page.locator('.app-menu-button[data-menu="help"]');
-  await help.evaluate((button) => button.scrollIntoView({ inline: "nearest", block: "nearest" }));
-  await help.click();
+  // The LAST name in the bar, whichever it is: that is the one the scroll
+  // affordance has to be able to reach. Naming Review rather than Help keeps the
+  // test about containment rather than about which menus exist.
+  const last = page.locator(".app-menu-button").last();
+  await expect(last).toHaveText("Review");
+  await last.evaluate((button) => button.scrollIntoView({ inline: "nearest", block: "nearest" }));
+  await last.click();
   const popoverBox = await page.locator("#appMenuPopover").boundingBox();
   expect(popoverBox.x).toBeGreaterThanOrEqual(0);
   expect(popoverBox.x + popoverBox.width).toBeLessThanOrEqual(480);
-  await expect(page.locator('[data-command="help.commands"]')).toBeVisible();
+  await expect(
+    page.locator('#appMenuPopover [data-command="review.toggle"]'),
+  ).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
@@ -166,7 +194,7 @@ test("document dialogs share the standard type and sizing system", async ({
 
   // Page setup moved out of Tools, where nobody looks for paper size, into
   // File — where Google Docs keeps it.
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   await page.locator('#appMenuPopover [data-command="layout.pageSetup"]').click();
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
   const pageSetupMetrics = await page.locator(".page-setup-dialog").evaluate((card) => ({

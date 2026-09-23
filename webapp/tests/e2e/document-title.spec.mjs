@@ -9,7 +9,14 @@
 // "OpenDoc". So every test here asserts the EXACT title, and the first one
 // pins the before-and-after: the title must have CHANGED from what an editor
 // with no document shows.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  openAppMenu,
+} from "./fixtures.mjs";
 
 /** What the tab reads with no document open — the static fallback in the HTML,
  *  read from the product rather than copied into the spec. */
@@ -45,7 +52,7 @@ test("unsaved changes are marked in the tab, and saving clears the mark", async 
   await expect(page).toHaveTitle("• opendoc-demo.docx — OpenDoc");
 
   const download = page.waitForEvent("download");
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   await page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]').click();
   await download;
   await expect(page).toHaveTitle("opendoc-demo.docx — OpenDoc");
@@ -65,7 +72,7 @@ test("renaming the document renames the tab", async ({ page }) => {
 
 test("a new blank document names itself in the tab", async ({ page }) => {
   await gotoEditor(page);
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   await page.locator('#appMenuPopover .app-menu-item[data-command="file.new"]').click();
   await expect(page.locator("#docTitle")).toHaveValue("Untitled document.docx");
   await expect(page).toHaveTitle("Untitled document.docx — OpenDoc");

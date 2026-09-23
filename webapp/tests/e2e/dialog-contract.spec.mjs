@@ -20,6 +20,8 @@ import {
   clickIntoFirstPage,
   MOD,
   expectEditorFocused,
+  openAppMenu,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 
 async function openPalette(page) {
@@ -78,15 +80,19 @@ const MODALS = [
   {
     id: "aboutDialog",
     name: "About",
-    // Opened from the Help MENU rather than the palette, because the menu is
-    // the surface the product previously lacked entirely — there was no About
-    // anywhere, so a bug report could not name its build.
-    opener: '.app-menu-button[data-menu="help"]',
+    // Opened from the File PAGE rather than the palette, because a durable
+    // surface is the thing the product previously lacked entirely — there was no
+    // About anywhere, so a bug report could not name its build. It was a Help
+    // menu row; Help is a File-page group now, as it is in ONLYOFFICE.
+    // No surviving opener: running a File-page row closes the page, so focus
+    // goes back to the editing surface first and that is where Escape must
+    // return it. A dialog that hands the keyboard to <body> is HF-062.
+    opener: null,
+    restore: EDITOR_SURFACE,
     focus: "#aboutClose",
     async open(page) {
       await gotoEditor(page);
-      await page.locator('.app-menu-button[data-menu="help"]').click();
-      await page.locator('#appMenuPopover .app-menu-item[data-command="help.about"]').click();
+      await runFilePageCommand(page, "help.about");
     },
   },
   {
@@ -149,7 +155,7 @@ const MODALS = [
     async open(page) {
       await gotoEditor(page);
       await clickIntoFirstPage(page);
-      await page.locator('.app-menu-button[data-menu="insert"]').click();
+      await openAppMenu(page, "insert");
       await page.locator('#appMenuPopover .app-menu-item[data-command="insert.field"]').click();
     },
   },

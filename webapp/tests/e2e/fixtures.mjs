@@ -248,12 +248,44 @@ export async function typeMoveFindUndo(page, marker) {
 // surviving surface instead, which is the thing actually worth guarding: if a
 // command stops being reachable from its menu, every spec using them fails.
 
-/** Opens one of the application menus and returns its popover locator. */
+/** Switches to the compact chrome, whose navigation axis IS the menu bar.
+ *
+ *  The menu bar used to show in both chromes, alongside the ribbon tab strip —
+ *  two navigation systems at once, which is `109` UX-014 and what the owner
+ *  asked to collapse. It is now compact-mode chrome only (`docs/122`), so a spec
+ *  that wants a menu has to be in the chrome that has menus. Idempotent: already
+ *  compact is a no-op. */
+export async function useCompactChrome(page) {
+  // Already showing the bar is enough — and it is showing in the ribbon chrome's
+  // EMPTY state, where the band is hidden and the bar is the axis. Switching
+  // chrome there would change the thing under test for no reason.
+  if (await page.locator("#appMenuBar").isVisible()) return;
+  await page.locator("#modeCompact").click();
+  await expect(page.locator("#appMenuBar")).toBeVisible();
+}
+
+/** Opens one of the application menus and returns its popover locator.
+ *
+ *  Enters the compact chrome first. Specs calling this are asking "is the
+ *  capability reachable from its menu", not "is the editor in ribbon mode" — the
+ *  guarantee, not the mechanism, which is the shape `expectEditorFocused` fixed
+ *  for focus. `one-axis-navigation.spec.mjs` is what guards the ribbon chrome's
+ *  own axis. */
 export async function openAppMenu(page, menu) {
+  await useCompactChrome(page);
   await page.locator(`.app-menu-button[data-menu="${menu}"]`).click();
   const popover = page.locator("#appMenuPopover");
   await expect(popover).toBeVisible();
   return popover;
+}
+
+/** Opens the ribbon chrome's File page and returns its body locator. */
+export async function openFilePage(page) {
+  if (await page.locator("body.compact-mode").count()) await page.locator("#modeRibbon").click();
+  await page.locator("#tabFile").click();
+  const body = page.locator("#filePageBody");
+  await expect(body).toBeVisible();
+  return body;
 }
 
 /** Runs a command through its application-menu row, by command id. Asserts the
@@ -275,24 +307,49 @@ export async function runAppMenuCommand(page, menu, commandId) {
   await row.click();
 }
 
-/** Opens the command palette through the Help menu — a real, clickable surface,
- *  not the keyboard chord, so this still proves a pointer user can get there. */
+/** Opens the command palette through the File page — a real, clickable surface,
+ *  not the keyboard chord, so this still proves a pointer user can get there.
+ *  It used to go through a Help menu; Help is a File-page group now, as it is in
+ *  ONLYOFFICE, and the RIBBON chrome is the default, so this drives the default. */
 export async function openCommandPalette(page) {
-  await runAppMenuCommand(page, "help", "help.commands");
+  await runFilePageCommand(page, "help.commands");
   await expect(page.locator("#cmdInput")).toBeFocused();
+}
+
+/** Runs a command through the File surface of whichever chrome is showing — the
+ *  ribbon chrome's File page, or the compact chrome's File dropdown. Both render
+ *  the same roster from `FILE_SURFACE`, so a spec that only cares "File ▸ X is
+ *  reachable and runs" must not have to know which chrome it is in, and must not
+ *  silently switch the chrome under a spec that chose one. */
+export async function runFilePageCommand(page, commandId) {
+  if (await page.locator("body.compact-mode").count()) {
+    await runAppMenuCommand(page, "file", commandId);
+    return;
+  }
+  await openFilePage(page);
+  const row = page.locator(`#filePageBody .file-page-item[data-command="${commandId}"]`);
+  await expect(row, `${commandId} should be reachable from the File page`).toBeVisible();
+  await expect(row, `${commandId} should be enabled on the File page`).toBeEnabled();
+  await row.click();
 }
 
 /** Saves the open document through File ▸ Save. */
 export async function saveDocument(page) {
-  await runAppMenuCommand(page, "file", "file.save");
+  await runFilePageCommand(page, "file.save");
 }
 
 /** Asserts File ▸ Save is present and enabled without invoking it. */
 export async function expectSaveEnabled(page) {
-  await openAppMenu(page, "file");
-  const row = page.locator(
-    '#appMenuPopover .app-menu-item[data-command="file.save"]',
-  );
+  if (await page.locator("body.compact-mode").count()) {
+    await openAppMenu(page, "file");
+    const row = page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]');
+    await expect(row).toBeVisible();
+    await expect(row).toBeEnabled();
+    await page.keyboard.press("Escape");
+    return;
+  }
+  await openFilePage(page);
+  const row = page.locator('#filePageBody .file-page-item[data-command="file.save"]');
   await expect(row).toBeVisible();
   await expect(row).toBeEnabled();
   await page.keyboard.press("Escape");

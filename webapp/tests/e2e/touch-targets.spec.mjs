@@ -12,6 +12,7 @@ import {
   gotoEditor,
   MOD,
   openCommandPalette,
+  openAppMenu,
 } from "./fixtures.mjs";
 
 // The iOS Safari floor: anything under 16px zooms the page on focus.
@@ -75,7 +76,7 @@ test.describe("with a coarse pointer", () => {
     await gotoEditor(page);
 
     // An application menu.
-    await page.locator('.app-menu-button[data-menu="edit"]').click();
+    await openAppMenu(page, "edit");
     const menuRow = page.locator("#appMenuPopover .app-menu-item").first();
     await expect(menuRow).toBeVisible();
     expect((await stableBox(menuRow)).height).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);
@@ -97,7 +98,11 @@ test.describe("with a coarse pointer", () => {
     expect(nav.height).toBeGreaterThanOrEqual(TOUCH_TARGET_PX);
 
     // ...and the growth is spent on floating chrome only: the document canvas
-    // must not have lost height to it.
+    // must not have lost height to it. Back in the ribbon chrome to measure it:
+    // the menu bar is the compact chrome's axis now (docs/122), so opening a menu
+    // above put this page in the chrome whose band is hidden — and a hidden band
+    // has no height to be too tall.
+    await page.locator("#modeRibbon").click();
     const ribbonHeight = (await stableBox(page.locator(".ribbon"))).height;
     expect(ribbonHeight).toBeLessThan(180);
 

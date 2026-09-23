@@ -11,7 +11,14 @@
 // Reading the document: the editor paints to CANVAS, so document text is not
 // in `#pages`. `#a11yDocument` is the model-derived off-screen mirror and is
 // where the text actually is.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  openAppMenu,
+} from "./fixtures.mjs";
 
 const MARKER = "CRASHRECOVERYMARKER";
 
@@ -82,7 +89,7 @@ test("work typed before a renderer crash is offered back, and comes back", async
   // through the pill (which is display only): anything that would replace the
   // restored document now asks first, because `documentIsDirty()` says the
   // work is still unsaved.
-  await recovered.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(recovered, "file");
   await recovered.locator('#appMenuPopover .app-menu-item[data-command="file.new"]').click();
   await expect(recovered.locator("#confirmDialog")).toBeVisible();
   await recovered.locator("#confirmCancel").click();
@@ -136,7 +143,7 @@ test("saving clears the draft, so the next load offers nothing", async ({ page }
 
   // Save through the real File ▸ Save route; the bytes leave the editor.
   const download = page.waitForEvent("download");
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   await page.locator('#appMenuPopover .app-menu-item[data-command="file.save"]').click();
   await download;
   await expect(page.locator("#documentStateText")).toHaveText("Downloaded");
@@ -176,7 +183,7 @@ test("the recovery offer survives being dismissed, and File ▸ Recover brings i
   await recovered.locator("#draftRecoveryDismiss").click();
   await expect(bar).toBeHidden();
 
-  await recovered.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(recovered, "file");
   const row = recovered.locator(
     '#appMenuPopover .app-menu-item[data-command="file.recoverDrafts"]',
   );
@@ -190,7 +197,7 @@ test("the recovery offer survives being dismissed, and File ▸ Recover brings i
 
 test("with nothing to recover, File ▸ Recover is disabled and says why", async ({ page }) => {
   await gotoEditor(page);
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   const row = page.locator('#appMenuPopover .app-menu-item[data-command="file.recoverDrafts"]');
   await expect(row).toBeVisible();
   await expect(row).toBeDisabled();

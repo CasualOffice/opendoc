@@ -5,7 +5,15 @@
 // mutation is a single undoable action and that navigation lands the caret on
 // the bookmark. A second test covers the Insert menu entry and inline
 // validation.
-import { test, expect, gotoEditor, clickIntoFirstPage, moveCaretToDocStart, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  moveCaretToDocStart,
+  MOD,
+  openAppMenu,
+} from "./fixtures.mjs";
 
 // Selects `count` characters forward from the current caret.
 async function selectForward(page, count) {
@@ -104,7 +112,7 @@ test("bookmark manager: Insert menu opens it; name is required; Escape closes it
   await moveCaretToDocStart(page);
 
   // Insert → Bookmark… opens the manager from the real application menu.
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
+  await openAppMenu(page, "insert");
   const menuItem = page.locator('#appMenuPopover .app-menu-item[data-command="insert.bookmark"]');
   await expect(menuItem).toBeVisible();
   await expect(menuItem).toContainText("Bookmark");

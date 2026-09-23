@@ -4,13 +4,7 @@
 // sheets. The Print command instead renders EVERY page independently into an
 // off-DOM `#printContainer` (one canvas per page), opens the print dialog, then
 // tears the container down — leaving the live virtualized viewport untouched.
-import {
-  test,
-  expect,
-  MOD,
-  documentPageCount,
-  shortcutHint,
-} from "./fixtures.mjs";
+import { test, expect, MOD, documentPageCount, shortcutHint, openAppMenu } from "./fixtures.mjs";
 
 // Open the default editor on the shipped sample (multi-page, so page-canvas
 // virtualization is genuinely in play — only on-screen pages have a live
@@ -121,7 +115,7 @@ test("Print is offered in the File menu", async ({ page, consoleErrors }) => {
   await stubPrint(page);
   await gotoSampleEditor(page);
 
-  await page.locator('.app-menu-button[data-menu="file"]').click();
+  await openAppMenu(page, "file");
   const item = page.locator('#appMenuPopover .app-menu-item[data-command="file.print"]');
   await expect(item).toBeVisible();
   await item.click();

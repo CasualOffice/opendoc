@@ -232,6 +232,13 @@ export function createCompactToolbar({
   runControls,
   paraControls,
   formatToggleCache,
+  // The registry stores chords in Apple glyphs and every other surface renders
+  // them for the keyboard in front of the user (`109` HF-025 / UX-009). This bar
+  // did not, so on a PC every one of its tooltips read "Undo (⌘Z)" — a key that
+  // keyboard does not have. Injected rather than imported so this module stays
+  // free of `main.js` (`module_seams.test.mjs`); the default keeps a caller that
+  // does not pass it working, unlocalised, rather than throwing.
+  localizeShortcut = (text) => text,
   table = COMPACT_TOOLBAR,
 }) {
   /** Where each adopted control came from, so leaving compact mode restores the
@@ -298,7 +305,9 @@ export function createCompactToolbar({
     el.type = "button";
     el.className = "ctool";
     el.dataset.commandId = command.id;
-    el.title = command.shortcut ? `${command.label} (${command.shortcut})` : command.label;
+    el.title = command.shortcut
+      ? localizeShortcut(`${command.label} (${command.shortcut})`)
+      : command.label;
     el.setAttribute("aria-label", command.label);
     if (entry.toggle) el.setAttribute("aria-pressed", "false");
     // `updateToolbar` reflects pressed state across EVERY surface by querying
@@ -365,7 +374,9 @@ export function createCompactToolbar({
       item.setAttribute("role", "menuitemradio");
       item.setAttribute("aria-checked", "false");
       item.setAttribute("aria-label", command.label);
-      item.title = command.shortcut ? `${command.label} (${command.shortcut})` : command.label;
+      item.title = command.shortcut
+        ? localizeShortcut(`${command.label} (${command.shortcut})`)
+        : command.label;
       item.appendChild(iconSpan(entry.icons[id]));
       onButton(item, () => runCommand(id));
       alignMenu.appendChild(item);

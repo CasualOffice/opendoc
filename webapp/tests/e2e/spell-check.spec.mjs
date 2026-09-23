@@ -29,6 +29,7 @@ import {
   runAppMenuCommand,
   setReviewMode,
   stableBox,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 import { GRAMMAR_DOUBLED, makeSpellingDocx, spellingTypoForPage } from "./large-docx.mjs";
 
@@ -246,7 +247,7 @@ test("the off switch is reachable from two surfaces and is remembered", async ({
 
   // Surface 1 — the Tools menu. `menu_taxonomy.test.mjs` holds the menu and the
   // command registry to agreement; this proves the row actually works.
-  await runAppMenuCommand(page, "tools", "tools.spellCheck");
+  await runAppMenuCommand(page, "review", "tools.spellCheck");
   await expect(page.locator(".overlay .spell-error")).toHaveCount(0);
   await expect(page.locator("#status")).toHaveText("Spell check off");
 
@@ -265,7 +266,7 @@ test("the off switch is reachable from two surfaces and is remembered", async ({
   await expect(page.locator(marker(typo))).toHaveCount(1, { timeout: 20_000 });
 
   // Surface 3 — the Settings panel checkbox, reflecting the same state.
-  await runAppMenuCommand(page, "tools", "view.settings");
+  await runFilePageCommand(page, "view.settings");
   await expect(page.locator("#spellCheckToggle")).toBeChecked();
   expect(consoleErrors).toEqual([]);
 });

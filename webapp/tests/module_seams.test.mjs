@@ -35,6 +35,15 @@ const SRC = new URL("../src/", import.meta.url);
  *  position-comparison helpers moved into `caret_navigation.mjs` (renamed from
  *  `caret_probe.mjs`) to pay for them.
  *  Was 18,373 before the first HF-085 extraction.
+ *  Lowered again to 17,408 by the one-axis navigation restructure (`109` UX-014,
+ *  `docs/122`), which is the ratchet working as intended: the application-menu
+ *  bar's ~150 lines of rendering and keyboard behaviour moved to
+ *  `command_menu.mjs`, where the new File PAGE reuses the same row builder rather
+ *  than growing a second copy of it, and that extraction paid for the File page,
+ *  the tab wiring, the five new band buttons and three small fixes with four
+ *  lines to spare. Re-measured from the merged file per the MERGE NOTE below: the
+ *  base read 17,412 against a ceiling of 17,425, and neither number described
+ *  this file.
  *  Lowered again to 17,801 by the spelling row (`109` HF-035, `docs/114`):
  *  the file was AT its ceiling with zero slack, so the 242 lines of curated
  *  Symbol/Emoji data moved to `glyph_sets.mjs` — pure data, already covered by
@@ -53,7 +62,7 @@ const SRC = new URL("../src/", import.meta.url);
  *  lowered the ceiling to its own half's measurement, so NEITHER number is
  *  right here — exactly the trap SKILL.md §5 records. This one is re-measured
  *  from the merged file. */
-const MAIN_JS_LINE_CEILING = 17425;
+const MAIN_JS_LINE_CEILING = 17408;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

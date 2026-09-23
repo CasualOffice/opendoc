@@ -17,6 +17,7 @@ import {
   openAppMenu,
   openCommandPalette,
   runAppMenuCommand,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 import { STANDARD_PLATFORM, formatShortcut } from "../../src/keyboard.mjs";
 
@@ -110,7 +111,7 @@ test.describe("a Windows keyboard", () => {
       expect(await collectGlyphs(page), `${tab} ribbon tab`).toEqual([]);
     }
 
-    for (const menu of ["file", "edit", "view", "insert", "format", "review", "tools", "help"]) {
+    for (const menu of ["file", "edit", "view", "insert", "format", "table", "review"]) {
       await openAppMenu(page, menu);
       expect(await collectGlyphs(page), `${menu} menu`).toEqual([]);
       await page.keyboard.press("Escape");
@@ -121,7 +122,7 @@ test.describe("a Windows keyboard", () => {
     expect(await collectGlyphs(page), "command palette").toEqual([]);
     await page.keyboard.press("Escape");
 
-    await runAppMenuCommand(page, "help", "help.shortcuts");
+    await runFilePageCommand(page, "help.shortcuts");
     expect(await collectGlyphs(page), "keyboard shortcuts dialog").toEqual([]);
     await page.keyboard.press("Escape");
 

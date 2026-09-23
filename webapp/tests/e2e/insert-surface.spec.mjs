@@ -21,6 +21,7 @@ import {
   setReviewMode,
   openCommandPalette,
   shortcutHint,
+  openAppMenu,
 } from "./fixtures.mjs";
 
 // A 1×1 PNG — the smallest thing `createImageBitmap` will decode, so the test
@@ -84,6 +85,12 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertFieldBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
+    // The two running-content variants joined the Header & footer group: they had
+    // no ribbon face at all and were reachable from the Insert menu and the
+    // palette only, so the ribbon chrome — which has no menu bar (docs/122) —
+    // would have left them palette-only.
+    "insertFirstPageVariantBtn",
+    "insertEvenOddVariantBtn",
     "insertSymbolBtn",
     "insertEmojiBtn",
   ]);
@@ -174,7 +181,7 @@ test("the Insert menu and the command palette agree with the ribbon on a freshly
 
   // The app menu: same commands, same availability — no "Place the caret…"
   // reason on anything that does not, in fact, need a caret.
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
+  await openAppMenu(page, "insert");
   for (const id of [
     "insert.table",
     "insert.image",
@@ -376,7 +383,7 @@ test("every Insert command has a ribbon face on some tab", async ({ page, consol
   await page.setViewportSize({ width: 1440, height: 900 });
   await gotoEditor(page);
 
-  await page.locator('.app-menu-button[data-menu="insert"]').click();
+  await openAppMenu(page, "insert");
   const menuCommands = await page
     .locator("#appMenuPopover .app-menu-item[data-command]")
     .evaluateAll((items) =>

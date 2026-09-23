@@ -12,6 +12,7 @@ import {
   clickIntoFirstPage,
   openAppMenu,
   runAppMenuCommand,
+  runFilePageCommand,
 } from "./fixtures.mjs";
 
 /** Command ids offered by a menu, in render order. */
@@ -28,7 +29,7 @@ test("no command is offered by two different menus", async ({ page, consoleError
   await gotoEditor(page);
   await clickIntoFirstPage(page);
 
-  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review", "tools", "help"];
+  const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
   const home = new Map();
   for (const menu of MENUS) {
     for (const id of await menuCommandIds(page, menu)) {
@@ -129,7 +130,7 @@ test("Help ▸ About opens and reports a version the engine supplied", async ({
 }) => {
   await gotoEditor(page);
 
-  await runAppMenuCommand(page, "help", "help.about");
+  await runFilePageCommand(page, "help.about");
   const dialog = page.locator("#aboutDialog");
   await expect(dialog).toBeVisible();
 
@@ -149,14 +150,24 @@ test("Help ▸ About opens and reports a version the engine supplied", async ({
   expect(consoleErrors).toEqual([]);
 });
 
-test("Page setup is in File, where Docs puts it, and not in Tools", async ({
+test("Page setup is on the File surface, where Docs puts it", async ({
   page,
   consoleErrors,
 }) => {
   await gotoEditor(page);
 
+  // There is no Tools menu to keep it out of any more — the whole menu is gone
+  // (docs/122). What is worth pinning is that File HAS it, in both renderings of
+  // the File roster.
   expect(await menuCommandIds(page, "file")).toContain("layout.pageSetup");
-  expect(await menuCommandIds(page, "tools")).not.toContain("layout.pageSetup");
+  await page.locator("#modeRibbon").click();
+  await page.locator("#tabFile").click();
+  expect(
+    await page
+      .locator("#filePageBody .file-page-item")
+      .evaluateAll((rows) => rows.map((r) => r.dataset.command)),
+  ).toContain("layout.pageSetup");
+  await page.keyboard.press("Escape");
 
   // And it still opens the dialog from there — a moved row that does not run
   // is worse than a buried one.

@@ -102,11 +102,11 @@ HF-094. FID-L-16 and FID-L-18 are partly closed with the remainder stated in the
 | Class | Rows | Open | Closed this session |
 | --- | ---: | ---: | --- |
 | EV — evidence and public claims | 7 | 1 | 6 (#528, this PR) |
-| UX — editor UI/UX | 24 | 20 | 4 (#537, #542) |
+| UX — editor UI/UX | 24 | 19 | 5 (#537, #542, one-axis navigation) |
 | CQ — engineering quality | 10 | 10 | 0 |
 | FID — fidelity and round-trip | 34 | 26 | 6 (#534, #536, #541, #543) |
 | OO — ONLYOFFICE fit-gap | 21 | 21 | 0 — analysis only, no implementation yet |
-| **Total** | **96** | **78** | **16** |
+| **Total** | **96** | **77** | **17** |
 
 **These counts are derived from the rows, not maintained by hand** — re-derive them rather
 than editing them, per CQ-007. (The first draft of this table said 55 rows and understated
@@ -187,7 +187,7 @@ repeated; see §2.4 for the `104` corrections that came out of it.
 | UX-011 | **No File backstage, no New document, no recent files.** There is no `file.new` anywhere; the only way in is the OS picker or the auto-loaded `sample.docx`. The editor cannot author a document from scratch — the most basic word-processor task — so every session begins by borrowing someone else's file. Cross-ref `HF-016`, `HF-073`. | P1 | M | `webapp/editor.html:80`; `webapp/src/main.js:11531, 11873-11878, 2676` | Fixed (#542) — File ▸ New builds a real minimal DOCX package in JS (5 parts, deterministic bytes) and opens it through the ordinary path. **Recent files NOT done** — `<input type=file>` yields no re-openable handle, so it would be a dead control |
 | UX-012 | **No Table menu on the menu bar, and the palette hides table commands on complex tables.** `APP_MENU_SECTIONS` contains zero `table.*` ids, so browsing the menus tells the user the editor has no table editing. The palette surfaces the 22 table commands only when `plainTableInfo(...)` is truthy — so inside a **merged** table it goes silent too, leaving the contextual ribbon tab and right-click as the only routes. | P2 | M | `webapp/src/main.js:11872-11914, 11791-11806, 6457-6590` | Open |
 | UX-013 | **Print has no visible chrome** — File menu, ⌘P and the palette only. Because the menu bar is hidden until a document loads, a new user has no discoverable print affordance at all. | P2 | S | `webapp/src/main.js:11537`; `webapp/editor.html:32` | Open |
-| UX-014 | **Menu taxonomy matches neither Word nor Docs:** Format painter under **Edit**; Page setup and Paragraph properties under **Tools**; Settings under **Tools**; header/footer under **Insert**; review mode duplicated in **View** and **Review**. | P2 | S | `webapp/src/main.js:11884, 11888, 11893, 11903, 11914` | Open |
+| UX-014 | **Menu taxonomy matches neither Word nor Docs:** Format painter under **Edit**; Page setup and Paragraph properties under **Tools**; Settings under **Tools**; header/footer under **Insert**; review mode duplicated in **View** and **Review**. | P2 | S | `webapp/src/main.js:11884, 11888, 11893, 11903, 11914` | Fixed — the taxonomy fault was a symptom of a deeper one: TWO navigation systems on screen at once, so a command's home was a guess between a menu bar and a ribbon tab strip. Each chrome now has exactly one axis, File first, per the owner's instruction and ONLYOFFICE's structure. Designed and evidenced in `122-ONE-AXIS-NAVIGATION-DESIGN.md`; Format painter is a Format row, Page setup and Settings are File-surface rows, review mode is View only, and the Tools and Help menus are gone. |
 | UX-015 | **Single-surface capabilities:** Pages panel (rail only), compact-ribbon toggle (chevron only — `HF-094`), table style gallery, line/paragraph spacing (in no menu), format painter (no context menu), Settings (not on the View ribbon, contra `64`:128). | P2 | M | `webapp/editor.html:1045-1049`; `webapp/src/main.js:822-862` | **Partly fixed** (#542) — the compact-ribbon toggle is no longer chevron-only: `view.compactRibbon` is a View-menu and palette command whose label reads back its state (`main.js:12187`, `:12421`), guarded by `file-new-and-ribbon-mode.spec.mjs:130,164`. That is HF-094. **Still open:** Pages panel (rail only), table style gallery, line/paragraph spacing, format painter, and Settings absent from the View ribbon |
 | UX-016 | **Two mode controls with different labels for one state** — the ribbon says "Edit / Suggest / Read only", the footer says "Editing / Suggesting / Read only". | P3 | S | `webapp/editor.html:346-348` vs `:1334-1336` | Open |
 
