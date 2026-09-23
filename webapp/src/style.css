@@ -86,6 +86,12 @@
      "the platform's red on paper" — but it is its own token, because a squiggle
      and a tracked deletion are not the same thing and one may move. */
   --paper-spelling: #d93025;
+  /* The grammar mark. A different colour from the spelling one because
+     Word and Docs both distinguish them, and a reader has to be able to
+     tell "this word is misspelled" from "this sentence is wrong" without
+     opening a menu. Blue on white paper, in the paper layer for the same
+     reason as its neighbours. */
+  --paper-grammar: #1a73e8;
 
   /* ---- Stacking ladder ------------------------------------------------------
      One ordered list for every body-level floating surface, so "what paints
@@ -5086,19 +5092,25 @@ body.is-format-painting .page-wrap * {
    rather than from this element.
    Two diagonal gradients rather than a data-URI SVG, so there is no colour
    literal hidden in an encoded string and no extra request. */
-.overlay .spell-error {
+.overlay .spell-error,
+.overlay .grammar-error {
+  --proofing-mark: var(--paper-spelling);
   position: absolute;
   pointer-events: none;
 }
-.overlay .spell-error::after {
+.overlay .grammar-error {
+  --proofing-mark: var(--paper-grammar);
+}
+.overlay .spell-error::after,
+.overlay .grammar-error::after {
   content: "";
   position: absolute;
   inset-inline: 0;
   bottom: -1px;
   height: 3px;
   background-image:
-    linear-gradient(45deg, transparent 40%, var(--paper-spelling) 40% 60%, transparent 60%),
-    linear-gradient(-45deg, transparent 40%, var(--paper-spelling) 40% 60%, transparent 60%);
+    linear-gradient(45deg, transparent 40%, var(--proofing-mark) 40% 60%, transparent 60%),
+    linear-gradient(-45deg, transparent 40%, var(--proofing-mark) 40% 60%, transparent 60%);
   background-size: 4px 3px;
   background-repeat: repeat-x;
   background-position: 0 100%, 2px 100%;

@@ -44,8 +44,16 @@ const SRC = new URL("../src/", import.meta.url);
  *  Lowered again to 17,658 by the compact-toolbar width/grouping fix: the bar's
  *  layout table, its grouping and its overflow fold moved to
  *  `compact_toolbar.mjs`, which is also what lets a test read the declared
- *  control set without a browser. */
-const MAIN_JS_LINE_CEILING = 17658;
+ *  control set without a browser.
+ *  Lowered again to 17,568 when grammar joined it (the owner raised grammar
+ *  above spelling on 2026-09-23): the bookmark manager moved to
+ *  `bookmark_manager.mjs`, keeping only the review-mode gate and the repaint,
+ *  which are about review mode and about pages rather than about bookmarks.
+ *  MERGE NOTE: both of the above came off the same 17,801 base and each
+ *  lowered the ceiling to its own half's measurement, so NEITHER number is
+ *  right here — exactly the trap SKILL.md §5 records. This one is re-measured
+ *  from the merged file. */
+const MAIN_JS_LINE_CEILING = 17425;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
