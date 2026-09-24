@@ -37,6 +37,15 @@ an output checksum that is validated outside the timed region.
 | `docx.part_read.document_xml` | Open the minimal package and read `word/document.xml`. | Bounded Deflate read and CRC verification. |
 | `model.normalized_load.100_paragraphs` | Open generated schema v0 JSON containing 100 text paragraphs. | Bounded parse, model validation, and session construction. |
 | `sdk.typing.100_graphemes` | Create a blank session and apply 100 single-grapheme insert transactions. | Public transaction, selection mapping, history, and event paths. |
+| `layout.repaginate.keystroke_240_paragraphs` | Re-paginate a 28-page document after each of 20 keystrokes, through the cached path the editor uses. | Galley cache, section planning, pagination and the post-pagination passes. |
+| `layout.repaginate.keystroke_240_paragraphs_markup` | The same keystroke with tracked changes showing, which rebuilds the markup layout beside the editing one. | The review view's own layout path, which had no cached counterpart until `109` HF-182. |
+
+The two layout cases close what `105` EV-002 recorded as a hole in this suite:
+it measured package open, part read, model load and SDK typing, and **no
+layout, render or repaint case at all** — so the one number a person actually
+feels, what a keystroke costs, could not be moved or defended. Their unit is a
+keystroke, not a document: each iteration edits one paragraph and re-paginates,
+which is what an editor does between frames.
 
 Fixture bytes are embedded or generated before sampling so filesystem latency is
 not accidentally included. Workload changes require a new ID or an explicit
