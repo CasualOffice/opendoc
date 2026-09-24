@@ -605,6 +605,8 @@
   "reviewBulkActions.acceptAllChanges.title": "Accept all changes",
   "reviewBulkActions.rejectAll": "Reject all",
   "reviewBulkActions.rejectAllChanges.title": "Reject all changes",
+  "reviewMarginComment.addComment.title": "Add a comment",
+  "reviewMarginComment.addCommentOnSelectedText.label": "Add a comment on the selected text",
   "reviewModeControl.editing": "Editing",
   "reviewModeControl.readOnly": "Read only",
   "reviewModeControl.suggesting": "Suggesting",

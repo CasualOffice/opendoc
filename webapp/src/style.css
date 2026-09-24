@@ -4380,6 +4380,36 @@ body.is-format-painting .page-wrap * {
   line-height: 1.5;
   box-shadow: var(--shadow-sm);
 }
+/* The margin comment affordance — Google Docs' Add-comment button, in the
+   right margin, on the line the selection starts on. Positioned by
+   `review_chrome.mjs` in the same scrolled content the cards live in, so it
+   rides the document scroll rather than being re-placed per frame. The 32px box
+   is `COMMENT_AFFORDANCE_SIZE` in `review_layout.mjs`, which is what decides
+   whether the margin is wide enough to hold it; `review_layout.test.mjs` reads
+   both so they cannot drift. No z-index, for the same reason `.review-sidebar`
+   has none: it is a later sibling of the page stack and paints above it. */
+.review-margin-add {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.review-margin-add[hidden] { display: none; }
+/* Dimmed, not gone, while nothing is selected: `review.comment` anchors to a
+   range, and a control that vanishes teaches nothing about how to get it back.
+   Its accessible name says what the missing precondition is. */
+.review-margin-add:disabled { opacity: 0.4; cursor: default; }
+.review-margin-add:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-text); }
+.review-margin-add:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.review-margin-add .ms { font-size: 18px; }
 .review-margin-card {
   position: absolute;
   left: 0;
@@ -6803,6 +6833,18 @@ body:not(.doc-loaded) .drop-title {
   .review-card-action,
   .object-bar-btn {
     min-height: 44px;
+  }
+
+  /* The margin comment affordance reaches the finger floor by GROWING ITS
+     TARGET, not its box — the same trick as the image resize grip (HF-098), and
+     for a stricter reason here: its 32px box is what `commentAffordanceSpot`
+     measures the page's right margin against, so a box that changed with the
+     pointer would make the "does this fit beside the page" answer depend on the
+     input device. 32px visual, 44px hit area. */
+  .review-margin-add::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
   }
 }
 

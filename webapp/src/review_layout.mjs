@@ -19,6 +19,81 @@
 /** Vertical space between two cards, in CSS pixels. */
 export const REVIEW_CARD_GAP = 8;
 
+/** The margin comment affordance's box, in CSS pixels. Duplicated in
+ *  `style.css` as `.review-margin-add`, and `review_layout.test.mjs` reads both
+ *  so the two cannot drift: the placement arithmetic below decides whether the
+ *  button fits in the margin, and it decides that from this number. */
+export const COMMENT_AFFORDANCE_SIZE = 32;
+
+/** Space between the page's right edge and the affordance, and the least space
+ *  left over on its far side. */
+export const COMMENT_AFFORDANCE_GAP = 12;
+
+/**
+ * Where the right-margin "add a comment" button goes — or `null` when it has no
+ * business being there.
+ *
+ * Google Docs' margin button: beside the page, on the line the caret is in,
+ * vertically centred against that line. `rect` is the caret's line, or a
+ * selection's FIRST line (what `selectionRects` answers with first), so a
+ * selection spanning pages still puts the button beside the sentence the reader
+ * began with.
+ *
+ * The one refusal worth having is the narrow one. `HF-088` is on record for what
+ * happens when review chrome is put in a margin that is not there, and a button
+ * floating over the text it points at is worse than no button. So the margin is
+ * measured, and if it cannot hold the button with a gap on both sides there is
+ * no position; the rail's Comments toggle and the Review band are still the
+ * durable entry points.
+ *
+ * This measurement is the ONLY gate, and that is deliberate. Measured on the
+ * rich fixture (794px sheet, 55px rail), the right margin is -458px at a 390px
+ * window, -148px at 700 — where the column becomes a bottom sheet — 26px at
+ * 900, and 56px at 960, which is the first width that clears `gap + size + gap`.
+ * So every width the bottom sheet covers is a width this already refuses: a
+ * `reviewSheetMode()` check beside it would be a condition that can never be
+ * the reason, which is a guard no test can drive red. One was written, and the
+ * spec meant to prove it passed whether it was there or not.
+ *
+ * Coordinates come back in BAND coordinates (see `mountReviewWindow`): the
+ * caller adds the live `bandOffset` back when it applies them, so a compressed
+ * document scrolls the button with its text instead of away from it.
+ *
+ * @param {object}  options
+ * @param {?object} options.rect          selection's first line, client coords,
+ *                                        with `top`, `bottom` and `pageRight`
+ * @param {number}  options.viewportLeft  viewport's client left edge
+ * @param {number}  options.viewportTop   viewport's client top edge
+ * @param {number}  options.viewportWidth viewport's `clientWidth` (no scrollbar)
+ * @param {number}  [options.scrollLeft]
+ * @param {number}  [options.scrollTop]
+ * @param {number}  [options.bandOffset]
+ * @param {number}  [options.size]
+ * @param {number}  [options.gap]
+ * @returns {?{left: number, top: number}}
+ */
+export function commentAffordanceSpot({
+  rect,
+  viewportLeft,
+  viewportTop,
+  viewportWidth,
+  scrollLeft = 0,
+  scrollTop = 0,
+  bandOffset = 0,
+  size = COMMENT_AFFORDANCE_SIZE,
+  gap = COMMENT_AFFORDANCE_GAP,
+}) {
+  if (!rect) return null;
+  const margin = viewportLeft + viewportWidth - rect.pageRight;
+  if (margin < gap + size + gap) return null;
+  return {
+    left: Math.round(rect.pageRight - viewportLeft + scrollLeft + gap),
+    top: Math.round(
+      rect.top + (rect.bottom - rect.top - size) / 2 - viewportTop + scrollTop - bandOffset,
+    ),
+  };
+}
+
 /**
  * Card tops, in the scroll coordinates of whichever container owns the scroll.
  *

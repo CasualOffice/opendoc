@@ -92,6 +92,8 @@ import {
   reviewStackHeight,
   stackReviewCards,
 } from "./review_layout.mjs";
+// One line, deliberately: main.js is on a line ratchet (`module_seams`).
+import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
 import {
   formatReviewDate,
   reviewAuthorDisplay,
@@ -1319,6 +1321,7 @@ const VIEWING_BANNER_DEFAULT = viewingBannerText?.textContent ?? "";
 const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
+const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
 let reviewMode = "editing";
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
@@ -1685,73 +1688,21 @@ function revisionRange(revision) {
   return range;
 }
 
-function reviewCardButton(label, action, danger = false, ariaLabel = "") {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = `review-margin-action${danger ? " danger" : ""}`;
-  button.textContent = label;
-  // A descriptive accessible name where the visible verb alone ("Accept",
-  // "Reply") lacks context for a screen reader (REVIEW-GAP-023).
-  if (ariaLabel) {
-    button.setAttribute("aria-label", ariaLabel);
-    button.title = ariaLabel;
-  }
-  button.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    await action();
-  });
-  return button;
-}
-
-function reviewIconButton(icon, label, action) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "review-margin-icon-action";
-  button.setAttribute("aria-label", label);
-  button.title = label;
-  const glyph = document.createElement("span");
-  glyph.className = "ms";
-  glyph.setAttribute("aria-hidden", "true");
-  glyph.textContent = icon;
-  button.appendChild(glyph);
-  button.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    await action();
-  });
-  return button;
-}
-
-/** Makes a textarea grow with its content (modern Docs/Word composer): height
- *  tracks the scroll height from a min of one row up to a cap, after which it
- *  scrolls. Returns a `resize()` the caller can invoke after programmatic value
- *  changes. */
-function autoGrowTextarea(textarea, { min = 34, max = 180 } = {}) {
-  const resize = () => {
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(max, Math.max(min, textarea.scrollHeight))}px`;
-  };
-  textarea.addEventListener("input", resize);
-  requestAnimationFrame(resize);
-  return resize;
-}
-
-/** Shared "modern comment" composer key handling: Enter submits, Shift+Enter
- *  inserts a newline, Escape cancels. Kept identical across the top-level comment
- *  box and every reply composer so the interaction never differs by surface (Q5).
- *  Always stops propagation so a keystroke in the composer never reaches the
- *  canvas editor or the card's expand/collapse handler. */
-function attachComposerKeys(textarea, { onSubmit, onCancel }) {
-  textarea.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-    if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      event.preventDefault();
-      onSubmit?.();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      onCancel?.();
-    }
-  });
-}
+/** The right-margin comment affordance (`review_chrome.mjs`). Placed against the
+ *  caret's line — or a selection's FIRST line, endpoints put in document order
+ *  so a backwards drag still anchors where the selection starts. A collapsed
+ *  selection falls through to `caretRect`, which is what keeps the button on the
+ *  page while nothing is selected: dimmed, since `review.comment` needs a
+ *  range. */
+const commentAffordance = createCommentAffordance({
+  button: reviewMarginCommentBtn,
+  viewport: viewportEl,
+  rect: () => {
+    if (!doc || !selection) return null;
+    const [start, end] = orderedSelectionEnds(selection, doc);
+    return reviewRangeClientRect(start.node, start.offset, end.node, end.offset);
+  },
+});
 
 function scheduleReviewMarginRender() {
   if (reviewMarginFrame) return;
@@ -1765,6 +1716,7 @@ function renderReviewMarginItems() {
   reviewSidebarBody.replaceChildren();
   if (!doc || !pages.length) {
     reviewSidebar.hidden = true;
+    commentAffordance.sync(false);
     viewportEl.classList.remove("has-review-sidebar");
     reviewLayout = [];
     reviewCardCache.clear();
@@ -1932,6 +1884,11 @@ function renderReviewMarginItems() {
   // comments are a scrollable, dismissable list.
   const sheet = show && reviewSheetMode();
   viewportEl.classList.toggle("review-sheet", sheet);
+  // The margin's affordance belongs to the margin's EMPTY state: shown exactly
+  // when the column is not. Deliberately NOT also gated on `reviewSheetMode()`
+  // — at the sheet's widths the page is already wider than the window, so
+  // `commentAffordanceSpot` refuses on the geometry first. See its note.
+  commentAffordance.sync(!show, bandOffset);
   reviewBtn.setAttribute("aria-pressed", String(show));
   railReview.setAttribute("aria-pressed", String(show));
   if (!show) {
@@ -2518,6 +2475,7 @@ function scheduleReviewWindow() {
   if (reviewWindowFrame) return;
   reviewWindowFrame = requestAnimationFrame(() => {
     reviewWindowFrame = 0;
+    commentAffordance.ride(bandOffset);
     mountReviewWindow();
   });
 }
@@ -8608,23 +8566,33 @@ function openObjectInspectorAt(selector) {
 // existed and was reachable ONLY from the command palette, or from buttons
 // living inside the review sidebar, which exist only while that sidebar is open.
 // So a user with a document full of tracked changes had no durable affordance
-// for accepting one. Each row names the command its button runs and whether the
+// for accepting one. Each row names the command its buttons run and whether the
 // button is a toggle, and `review-surface.spec.mjs` asserts the ribbon's id set
 // equals the Review menu's, so a command cannot reach one surface and miss the
-// other. Enablement is deliberately just "a document is open": the commands
+// other.
+//
+// `buttons`, plural, and the same shape LAYOUT_SURFACE/REFERENCE_SURFACE
+// already use — one command can have more than one face. `review.comment` has
+// two: the Review band's button and the right-margin affordance beside the
+// selection. They are declared together on purpose. A margin button wired up on
+// its own would be a second way to open the comment composer, free to drift
+// from the first in what it runs and in when it is available, which is the
+// command-surface defect class this table exists to prevent (`105` UX-004).
+//
+// Enablement is deliberately just "a document is open": the commands
 // themselves report why nothing happened (no change at the cursor, none left to
 // accept), which is more use than a button that is silently dead.
 const REVIEW_SURFACE = [
-  { command: "review.mode.suggesting", button: () => reviewTrackBtn, run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
-  { command: "view.showChanges", button: () => reviewShowChangesBtn, run: () => toggleShowChanges(), pressed: () => showingChanges },
-  { command: "review.previous", button: () => reviewPrevBtn, run: () => navigateReview(-1) },
-  { command: "review.next", button: () => reviewNextBtn, run: () => navigateReview(1) },
-  { command: "review.acceptNext", button: () => reviewAcceptBtn, run: () => decideReviewAndAdvance(true) },
-  { command: "review.rejectNext", button: () => reviewRejectBtn, run: () => decideReviewAndAdvance(false) },
-  { command: "review.acceptAll", button: () => reviewAcceptAllBtn, run: () => void decideAllReviewChanges(true) },
-  { command: "review.rejectAll", button: () => reviewRejectAllBtn, run: () => void decideAllReviewChanges(false) },
-  { command: "review.comment", button: () => reviewCommentBtn, requires: "range", run: () => openReviewComposer() },
-  { command: "review.toggle", button: () => reviewPanelBtn, run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
+  { command: "review.mode.suggesting", buttons: () => [reviewTrackBtn], run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
+  { command: "view.showChanges", buttons: () => [reviewShowChangesBtn], run: () => toggleShowChanges(), pressed: () => showingChanges },
+  { command: "review.previous", buttons: () => [reviewPrevBtn], run: () => navigateReview(-1) },
+  { command: "review.next", buttons: () => [reviewNextBtn], run: () => navigateReview(1) },
+  { command: "review.acceptNext", buttons: () => [reviewAcceptBtn], run: () => decideReviewAndAdvance(true) },
+  { command: "review.rejectNext", buttons: () => [reviewRejectBtn], run: () => decideReviewAndAdvance(false) },
+  { command: "review.acceptAll", buttons: () => [reviewAcceptAllBtn], run: () => void decideAllReviewChanges(true) },
+  { command: "review.rejectAll", buttons: () => [reviewRejectAllBtn], run: () => void decideAllReviewChanges(false) },
+  { command: "review.comment", buttons: () => [reviewCommentBtn, reviewMarginCommentBtn], requires: "range", run: () => openReviewComposer() },
+  { command: "review.toggle", buttons: () => [reviewPanelBtn], run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
   // Proofing. Both switches were the whole content of a `Tools` menu, which is
   // one top-level name for two toggles — and one of the two names that scrolled
   // off the end of the menu bar (`109` HF-097). Word's Review tab opens with a
@@ -8632,9 +8600,9 @@ const REVIEW_SURFACE = [
   // navigation axis in this chrome. `requires: "always"`: both are `noDoc`
   // commands — they are preferences, and switching one with no document open is
   // meaningful and already supported.
-  { command: "tools.spellCheck", button: () => reviewSpellCheckBtn, requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
-  { command: "tools.grammarCheck", button: () => reviewGrammarCheckBtn, requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
-  { command: "tools.smartQuotes", button: () => reviewSmartQuotesBtn, requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
+  { command: "tools.spellCheck", buttons: () => [reviewSpellCheckBtn], requires: "always", pressed: () => settings.spellCheck !== false, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
+  { command: "tools.grammarCheck", buttons: () => [reviewGrammarCheckBtn], requires: "always", pressed: () => settings.grammarCheck !== false, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
+  { command: "tools.smartQuotes", buttons: () => [reviewSmartQuotesBtn], requires: "always", pressed: () => smartQuotesEnabled, run: () => setSmartQuotes(!smartQuotesEnabled) },
 ];
 
 function insertCommandEnabled(commandId, context = {}) {
@@ -9593,10 +9561,11 @@ function updateToolbar() {
   // reflect their state without a fourth and fifth copy of the same line, and
   // what stops the next toggle shipping mute.
   for (const entry of REVIEW_SURFACE) {
-    const button = entry.button();
-    if (!button) continue;
-    if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range);
-    if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
+    for (const button of entry.buttons()) {
+      if (!button) continue;
+      if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range);
+      if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
+    }
   }
   // Ribbon: undo/redo/view controls need a document; the Table tab is contextual.
   undoBtn.disabled = !doc || !doc.canUndo;
@@ -9728,10 +9697,11 @@ function editSelectionLink() {
 // entry run, through the shared `onButton` seam, and carries its command id so
 // the ribbon's membership is readable from the DOM for the parity test.
 for (const entry of REVIEW_SURFACE) {
-  const button = entry.button();
-  if (!button) continue;
-  onButton(button, entry.run);
-  button.dataset.command = entry.command;
+  for (const button of entry.buttons()) {
+    if (!button) continue;
+    onButton(button, entry.run);
+    button.dataset.command = entry.command;
+  }
 }
 
 for (const entry of INSERT_SURFACE) {
