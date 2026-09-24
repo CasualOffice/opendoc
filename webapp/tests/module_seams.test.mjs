@@ -73,8 +73,15 @@ const SRC = new URL("../src/", import.meta.url);
  *  (`reviewCardButton`, `reviewIconButton`, `autoGrowTextarea`,
  *  `attachComposerKeys`) moved to `review_chrome.mjs`, which is also where the
  *  affordance's own controller lives. None of the four read a single piece of
- *  application state, so they had no business being in here. */
-const MAIN_JS_LINE_CEILING = 17314;
+ *  application state, so they had no business being in here.
+ *  Lowered again to 17,122 by the line-numbering work (`109` OO-022): the file
+ *  was AT its ceiling with one line of slack, so Word's whole Layout ▸ Page
+ *  Setup group — the geometry dialog's 212 lines, plus the new Line Numbers
+ *  popover — moved to `page_setup.mjs`. The two belong in one module because
+ *  they share one question, "which section is the caret in", and answering it
+ *  twice is how the dialog came to show one section's margins while writing
+ *  them to another. */
+const MAIN_JS_LINE_CEILING = 17122;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
