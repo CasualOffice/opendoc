@@ -66,6 +66,7 @@ const NOT_PROSE = new Set([
 
 function isProse(value) {
   const text = value.trim();
+  if (UNROUTABLE_TEXT.has(text)) return false;
   if (!TRANSLATABLE.test(text)) return false;
   if (NOT_PROSE.has(text.toLowerCase())) return false;
   // A bare identifier or dotted id — `file.export.pdf`, `chevron_right`,
@@ -74,6 +75,32 @@ function isProse(value) {
   // A url, a selector, a mime type, a format string.
   if (/^(https?:|\.\/|\/|#|[.#][A-Za-z-]+$|[a-z]+\/[a-z0-9+.-]+$)/.test(text)) return false;
   return true;
+}
+
+/** The strings that CANNOT go through the seam, each with the reason.
+ *
+ *  Promised by `docs/124` §4 and empty until something earned a place in it.
+ *  An entry here is a claim that routing the string would be WRONG, not that
+ *  routing it is inconvenient — so the list is expected to stay tiny, and a
+ *  reviewer should push back on any addition that reads like the latter.
+ */
+const UNROUTABLE = [
+  {
+    text: "Loading engine…",
+    reason:
+      "The pre-boot placeholder. It is on screen before any script runs, which " +
+      "is before a catalogue could exist, so English is the only thing it can " +
+      "honestly say. It was routed once: the sweep then wrote it back over the " +
+      "value the shell had cleared and the no-document editor claimed to be " +
+      "loading forever.",
+  },
+];
+
+const UNROUTABLE_TEXT = new Set(UNROUTABLE.map((entry) => entry.text));
+
+/** The allowlist, for a guard that wants to print the reasons. */
+export function unroutableStrings() {
+  return UNROUTABLE.map((entry) => ({ ...entry }));
 }
 
 /** Markup sites: a human-readable attribute, or a text node, with no
