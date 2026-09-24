@@ -163,6 +163,35 @@ benchmark; 70 hardcoded ⌘ glyphs and one locale.
 Effort is **engine-inclusive** and assumes a small focused team (2–3 engineers). Ranges are
 deliberately wide; §8 discusses total scale and what can be cut.
 
+### 6.0 The owner's delivery order, set 2026-09-25
+
+The phases below describe the WORK. This is the order it is done in, and where the two
+disagree, this wins. In the owner's words: *"lets target authoring gaps, and i18 complete
+them ... than mobile/touch .. than design and configuration and events and post messages
+and customisating and whitelabling via embeddibility .. and than sdk and release .. than
+proceed to collaboration at last"*.
+
+| | Cluster | `109` rows |
+| --: | --- | --- |
+| 1 | **Authoring gaps, and i18n, to completion** | OO-001, OO-005, OO-006, UX-006, UX-020; HF-081 |
+| 2 | **Mobile and touch** | UX-017, UX-018, UX-019 |
+| 3 | **Embeddability** — configuration, events, postMessage, customisation, white-labelling | HF-109 |
+| 4 | **SDK and release** | — |
+| 5 | **Collaboration — last** | HF-114, and CQ-002 with it |
+
+Two consequences worth stating plainly, because both reverse an earlier assumption in
+this document:
+
+- **Collaboration is last, not Phase 6.** Phase 6's design work (`107`, ADR-033) stands;
+  its scheduling does not.
+- **CQ-002 — the live editing path bypassing the transaction engine — moves with it.**
+  Unifying the two op sets is work only collaboration needs, so it is not a prerequisite
+  for anything in 1–4 and should not block them.
+
+Embeddability ahead of collaboration follows from §2: the licence is the wedge and
+embeddability is the product. A competitor's collaboration is hard to beat; their
+licence and their embed story are what customers actually leave over.
+
 ---
 
 ### Phase 0 — Evidence and foundations · *in flight*

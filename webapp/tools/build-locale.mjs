@@ -29,7 +29,11 @@ export function keysFromMarkup(source) {
     for (const [suffix, attribute] of Object.entries(ATTRIBUTE_KEYS)) {
       const key = attributes.match(new RegExp(`\\bdata-i18n-${suffix}="([^"]+)"`))?.[1];
       if (!key) continue;
-      const english = attributes.match(new RegExp(`\\b${attribute}="([^"]*)"`))?.[1];
+      // `(?<![-\\w])` and not `\\b`: `\\btitle="` also matches INSIDE
+      // `data-i18n-title="…"`, because `-` is a word boundary — so the
+      // extractor read the KEY as the English and wrote `foo.title` as the
+      // translation of `foo.title`.
+      const english = attributes.match(new RegExp(`(?<![-\\w])${attribute}="([^"]*)"`))?.[1];
       if (english === undefined) throw new Error(`${key}: data-i18n-${suffix} with no ${attribute}`);
       found.set(key, english);
     }

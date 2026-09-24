@@ -89,18 +89,47 @@ export function buildLanguagePicker(select, { saved, browser } = {}) {
  * built BEFORE the catalogue lands so the dialog is never empty, and rebuilt
  * after so its automatic entry is named in the language now in force.
  */
-export function startLocalisation({ select, settings, saveSettings, onLocalised }) {
+export function startLocalisation({
+  select,
+  settings,
+  saveSettings,
+  onLocalised,
+  status,
+  openSettings,
+}) {
   setCatalogue("en", EN_STRINGS);
   const sources = () => ({
     search: location.search,
     saved: settings.language,
     browser: navigator.languages ?? [],
   });
-  const apply = (tag) => useLocale(tag, { onLocalised });
+  /** The status bar names the language in ITSELF, so a reader who cannot read
+   *  the rest of the chrome can still see which language they are in and get
+   *  out of it. */
+  const nameInStatus = (tag) => {
+    const label = document.getElementById("languageStatusLabel");
+    if (!label) return;
+    const locale = LOCALES.find((candidate) => candidate.tag === tag);
+    label.textContent = locale?.endonym ?? tag;
+    label.lang = tag;
+  };
+  const apply = (tag) =>
+    useLocale(tag, { onLocalised }).then((inForce) => {
+      nameInStatus(inForce);
+      return inForce;
+    });
+  // One language setting, two ways in. The status control opens the same
+  // Settings the gear does rather than growing a second picker that could
+  // disagree with the first.
+  status?.addEventListener("click", () => openSettings?.());
   select?.addEventListener("change", async () => {
     settings.language = select.value;
     saveSettings();
-    await apply(preferredLocale(sources()));
+    // The CHOICE wins, not the URL. `?lang=` is there so a bug report can name
+    // a locale, and on load it should; but once a person has picked one from
+    // the dialog in front of them, re-deriving the answer put the URL's locale
+    // straight back and the picker appeared to do nothing.
+    await apply(select.value || preferredLocale({ ...sources(), search: "" }));
     buildLanguagePicker(select, sources());
   });
   buildLanguagePicker(select, sources());

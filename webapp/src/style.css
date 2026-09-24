@@ -6374,7 +6374,39 @@ body:not(.doc-loaded) .drop-title {
 }
 
 /* Footer zoom control (Word/Docs place zoom in the status bar). */
-.footer .zoom {
+.footer /* The language control in the status bar. A glyph plus the ENDONYM, because
+   "Deutsch" tells a German reader what they will get and "DE" does not. */
+.footer-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.footer-language:hover,
+.footer-language:focus-visible {
+  background: var(--surface-2, var(--surface));
+}
+
+.footer-language .ms {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.footer-language-label {
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zoom {
   display: inline-flex;
   align-items: center;
   gap: 1px;

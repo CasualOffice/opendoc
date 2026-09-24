@@ -22,10 +22,15 @@ const { scanMarkup, scanScript, scanTree, totalSites } = await import(
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Measured on `main` at 2026-09-24, the day the seam landed. Every number is
- *  a debt, and the only legal direction is down. */
+/** Every number is a debt, and the only legal direction is down.
+ *
+ *  1,323 when the seam landed on 2026-09-24. 473 on 2026-09-25, when the
+ *  markup went through it: `editor.html` fell from 853 to 8, which is the
+ *  whole of the chrome routed in one pass. What is left is almost all
+ *  `main.js` — strings a script builds, where the English has to move into
+ *  `en_strings.mjs` one surface at a time. */
 const CEILINGS = new Map([
-  ["editor.html", 853],
+  ["editor.html", 16],
   ["src/a11y_mirror.mjs", 1],
   ["src/blank_document.mjs", 8],
   ["src/bookmark_manager.mjs", 6],
@@ -38,7 +43,7 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  ["src/main.js", 367],
+  ["src/main.js", 366],
   ["src/pages_panel.mjs", 4],
   ["src/shortcut_labels.mjs", 2],
   ["src/spell_check.mjs", 6],

@@ -75,7 +75,13 @@ test("the Styles group offers exactly one control", () => {
   const source = stripHtmlComments(html);
   const start = source.indexOf('data-group="styles"');
   assert.ok(start > 0, "the Home band should still have a Styles group");
-  const group = source.slice(start, source.indexOf('<span class="rgroup-label">Styles', start));
+  // Ends at the group's own caption, found without assuming ATTRIBUTE ORDER:
+  // `class` is no longer the first attribute on that span (the i18n pass put a
+  // `data-i18n` key before it), and matching the literal string silently ran
+  // the slice to the end of the file and swept in eight unrelated selects.
+  const captionAt = source.slice(start).search(/<span\b[^>]*\brgroup-label\b[^>]*>\s*Styles/);
+  assert.ok(captionAt > 0, "the Styles group should still carry its caption");
+  const group = source.slice(start, start + captionAt);
 
   // One trigger, no select, and no second entry point. The group held three
   // controls for one job — a select, a card gallery and a "▾" popover that listed
