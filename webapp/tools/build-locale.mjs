@@ -18,6 +18,28 @@ import { fileURLToPath } from "node:url";
 
 const WEBAPP = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** The named and numeric entities that can appear in this markup, decoded.
+ *
+ *  The applier writes TEXT, not HTML — it has to, or a translation could
+ *  inject markup — so an entity left in the catalogue reaches the screen
+ *  literally. "Comments &amp; suggestions" is what the sidebar header showed
+ *  the first time this ran. Decoding at EXTRACTION means the catalogue holds
+ *  what a person reads and a translator sees a sentence rather than an escape.
+ */
+function decodeEntities(text) {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&times;/g, "\u00d7")
+    .replace(/&nbsp;/g, "\u00a0")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    // LAST, so a double-escaped "&amp;lt;" does not become "<".
+    .replace(/&amp;/g, "&");
+}
+
 /** `data-i18n-<suffix>` -> the attribute carrying its English. */
 const ATTRIBUTE_KEYS = { title: "title", label: "aria-label", placeholder: "placeholder", alt: "alt" };
 
@@ -35,7 +57,7 @@ export function keysFromMarkup(source) {
       // translation of `foo.title`.
       const english = attributes.match(new RegExp(`(?<![-\\w])${attribute}="([^"]*)"`))?.[1];
       if (english === undefined) throw new Error(`${key}: data-i18n-${suffix} with no ${attribute}`);
-      found.set(key, english);
+      found.set(key, decodeEntities(english));
     }
     const textKey = attributes.match(/\bdata-i18n="([^"]+)"/)?.[1];
     if (!textKey) continue;
@@ -43,7 +65,7 @@ export function keysFromMarkup(source) {
     const cut = after.search(/</);
     const english = (cut === -1 ? after : after.slice(0, cut)).trim();
     if (!english) throw new Error(`${textKey}: data-i18n on an element with no text`);
-    found.set(textKey, english);
+    found.set(textKey, decodeEntities(english));
   }
   return found;
 }
