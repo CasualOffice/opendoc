@@ -877,6 +877,7 @@ pub fn build_galley_cached(
         cache,
         dirty,
         NoteFlow::default(),
+        ReviewView::Editing,
     )
 }
 
@@ -892,6 +893,7 @@ pub(crate) fn build_galley_cached_labeled(
     cache: &mut GalleyCache,
     dirty: &DirtySet,
     notes: NoteFlow<'_>,
+    review_view: ReviewView,
 ) -> Vec<BlockFragment> {
     // A drop-cap paragraph and its following body paragraph are one coupled flow
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
@@ -903,7 +905,7 @@ pub(crate) fn build_galley_cached_labeled(
             document.body(),
             content_width,
             None,
-            ReviewView::Editing,
+            review_view,
             notes,
             single_section_line_grid(document),
         );
@@ -924,7 +926,7 @@ pub(crate) fn build_galley_cached_labeled(
         .as_ref()
         .map(resolve_palette);
     let mut ctx = FlowCtx {
-        review_view: ReviewView::Editing,
+        review_view,
         resolver: &resolver,
         scheme: document.definitions().font_scheme.as_ref(),
         report: &mut report,
