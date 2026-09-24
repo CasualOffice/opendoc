@@ -1700,7 +1700,14 @@
 
     <footer class="footer">
       <span class="foot-left">
-        <span data-i18n="ui.loadingEngine" id="status" class="status">Loading engine…</span>
+        <!-- NOT routed through the seam, deliberately. This element's content is
+             transient status the shell owns and clears; a `data-i18n` key made
+             the sweep write "Loading engine…" back over the cleared value, so
+             the no-document editor said it was still loading forever. The text
+             here is the PRE-BOOT placeholder — it is on screen before any
+             script runs, which is before a catalogue could exist, so English
+             is the only thing it could honestly say. -->
+        <span id="status" class="status">Loading engine…</span>
         <!-- The status line is the editor's only error channel — a failed open,
              a refused save, a blocked link, an edit Viewing mode rejected. It is
              painted text, so it announced nothing and a failure was

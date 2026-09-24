@@ -16,7 +16,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const { scanMarkup, scanScript, scanTree, totalSites } = await import(
+const { scanMarkup, scanScript, scanTree, totalSites, unroutableStrings } = await import(
   "../tools/string_sites.mjs"
 );
 
@@ -137,4 +137,28 @@ test("script: an id, a class or a css value at a human sink is not prose", () =>
   assert.deepEqual(scanScript('const o = { label: "file.export.pdf" };'), []);
   assert.deepEqual(scanScript('el.title = "";'), []);
   assert.deepEqual(scanScript('el.textContent = "—";'), []);
+});
+
+test("every allowlist entry carries a reason, and the list stays tiny", () => {
+  // `docs/124` §4 promised this list would be explicit and small, with a
+  // reason on every entry. An entry is a claim that routing the string would
+  // be WRONG — not that routing it is inconvenient — so the size bound is
+  // part of the promise, and a reviewer should push back on any addition that
+  // reads like the latter.
+  const entries = unroutableStrings();
+  assert.ok(entries.length <= 5, `${entries.length} exemptions is not "small"`);
+  for (const entry of entries) {
+    assert.ok(entry.text?.trim(), "an exemption with no string");
+    assert.ok(
+      (entry.reason ?? "").length > 60,
+      `"${entry.text}" is exempt with no argued reason — say why routing it would be wrong`,
+    );
+  }
+});
+
+test("an allowlisted string is not counted, and nothing else is exempt", () => {
+  // The exemption is by exact text, so it cannot quietly cover a family.
+  assert.deepEqual(scanMarkup('<span>Loading engine…</span>'), []);
+  assert.equal(scanMarkup('<span>Loading engines…</span>').length, 1);
+  assert.equal(scanMarkup('<span title="Loading engine…">x</span>').length, 0);
 });

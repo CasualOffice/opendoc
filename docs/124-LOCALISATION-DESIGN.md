@@ -75,6 +75,26 @@ orphan every translation.
 Command ids already exist and are already stable (`file.export.pdf`), so command labels,
 descriptions and disabled reasons key off them: `cmd.file.export.pdf.label`.
 
+### 3.2a What the seam must NOT touch
+
+Three kinds of string look routable and are not, each learned by routing it and
+watching what broke:
+
+1. **Transient status the shell owns.** `#status` is written and cleared by the
+   editor; a key made the sweep write its markup text back over the cleared value.
+   Its text is the pre-boot placeholder and belongs to no catalogue (§4's allowlist).
+2. **Anything the shell rewrites after the sweep.** A tooltip restored from a
+   boot-time snapshot, an `aria-label` recomputed on every state sync, a status pill
+   repainted on save — all were English until the user switched language, which is
+   the worst shape a localisation bug can take: invisible to whoever tests by
+   switching, visible to everyone who opens the editor in their own language. These
+   ARE routed, but the shell must resolve the key at the point of assignment rather
+   than rely on the sweep having been there.
+3. **Keyboard glyphs inside a routed string.** The catalogue carries `⌘` because the
+   markup it was extracted from does, so every relabel re-introduces it and the
+   platform sweep has to run again afterwards (`105` UX-009, re-broken by the markup
+   pass and re-closed).
+
 ### 3.3 Markup declares its own strings
 
 In `editor.html`, `data-i18n="key"` sets text content, `data-i18n-title`,
@@ -118,6 +138,16 @@ Three jobs, all in the existing `browser-smoke` lane so no new CI job is needed:
    The scanner is deliberately a scanner and not a parser, and it is biased towards
    counting a site it is unsure about: a false positive costs one line in a table, a
    false negative is a string that ships untranslated.
+
+   **The allowlist exists now, and has one entry.** It was promised here and stayed
+   empty until something earned a place in it: `Loading engine…`, the pre-boot
+   placeholder, which is on screen before any script runs — before a catalogue could
+   exist — so English is the only thing it can honestly say. It was routed once, in
+   the markup pass, and the sweep then wrote it back over the value the shell had
+   cleared: the no-document editor claimed to be loading forever. An entry is a claim
+   that routing a string would be WRONG, not that routing it is inconvenient, so
+   `no_unrouted_strings.test.mjs` requires an argued reason on each and caps the list
+   at five.
 3. **Every locale is complete.** Each catalogue has exactly the keys `en.json` has —
    no missing key, no orphan. A partially translated locale is not shipped half-lit; it
    is a build failure.
@@ -163,6 +193,9 @@ but calling them finished would be a quality claim nobody has earned.
 | `webapp/tests/no_unrouted_strings.test.mjs` | the per-file count of unrouted literals never rises, and the scanner itself detects what it claims to |
 | `webapp/tests/locales.test.mjs` | locale negotiation: `de-AT`→`de`, `zh-TW`→`zh-Hant` by script rather than truncation, fall-through to the next preference |
 | `webapp/tests/e2e/localisation.spec.mjs` | switching locale relabels the chrome, sets `lang`/`dir`, mirrors the chrome in `ar`, and leaves the document's own direction alone |
+| the same spec | **no routed string shows its English at FIRST PAINT** — the whole class, compared against the catalogues rather than a list, so a new surface regressing this way fails without anyone adding a case |
+| the same spec | the sweep does not re-assert text the shell owns (`#status`), asserted on the SETTLED value rather than a transient one |
+| `webapp/tests/e2e/shortcut-labels.spec.mjs` | the platform's own chord glyphs survive a relabel — the catalogue carries ⌘ because the markup does |
 
 ## 8. Delivery order
 
