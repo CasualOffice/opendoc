@@ -436,3 +436,69 @@ test("clicking inside a commented range places the caret at the click position",
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("replying to a comment far down the document does not jump to the top", async ({
+  page,
+  consoleErrors,
+}) => {
+  // The owner's report: "on adding reply on comment .. its again .. scrolling
+  // back to top of the page."
+  //
+  // A review edit went through the same path as a text edit, and that path
+  // ends in `scrollCaretIntoView`. The caret never moved — it is still
+  // wherever it was before the reviewer started reading, which after opening a
+  // document is paragraph one — so replying to a comment on page four scrolled
+  // the document back to page one. The existing reply test could not catch it:
+  // its comment is in the first paragraph, so the wrong scroll and the right
+  // one land in the same place.
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+  await moveCaretToDocStart(page);
+
+  // A document long enough that "the top" and "the comment" are far apart.
+  await page.evaluate(() => {
+    const line = "A filler sentence that pushes the comment well down the document. ";
+    const data = new DataTransfer();
+    data.setData("text/plain", `${line.repeat(6)}\n`.repeat(50));
+    document.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect.poll(() => page.locator(".page-wrap").count()).toBeGreaterThan(1);
+
+  // Comment on something near the END, then put the caret back at the top —
+  // which is exactly the state a reviewer is in when they scroll down to read.
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.locator("#selComment").click();
+  const sidebar = page.locator("#reviewSidebar");
+  const composer = sidebar.locator('[data-testid="review-comment-composer"]');
+  await expect(composer).toBeVisible();
+  await composer.fill("A comment a long way down");
+  await sidebar.locator('[data-testid="review-comment-submit"]').click();
+
+  const card = sidebar.locator(".review-margin-card.review-margin-comment").last();
+  await expect(card).toBeVisible();
+  await card.click();
+  await expect(card).toHaveAttribute("aria-expanded", "true");
+
+  const scrollBefore = await page.evaluate(() => document.getElementById("viewport").scrollTop);
+  expect(scrollBefore, "the comment should be far from the top of the document").toBeGreaterThan(200);
+
+  const reply = card.locator(".review-reply-composer textarea");
+  await reply.click();
+  await reply.fill("Replying without losing my place");
+  await card.locator(".review-reply-composer").getByRole("button", { name: "Reply" }).click();
+  await expect(card.locator(".review-margin-reply")).toContainText("Replying without losing my place");
+
+  const scrollAfter = await page.evaluate(() => document.getElementById("viewport").scrollTop);
+  expect(
+    scrollAfter,
+    `replying scrolled the document from ${scrollBefore} to ${scrollAfter} — back towards the caret, ` +
+      "which is at the top and is not where the reviewer is looking",
+  ).toBeGreaterThan(200);
+
+  expect(consoleErrors).toEqual([]);
+});
