@@ -30,6 +30,15 @@
 //! far rather than an error, matching the "render what we can" fallback (a VML
 //! document renders nothing today, so any recovered shape is strictly better).
 //!
+//! It also records the three things a WATERMARK is made of, because Word writes
+//! one as an ordinary `w:pict` float and nothing else identifies it: the shape's
+//! `type` (its `v:shapetype` reference), the `rotation` from its style, the
+//! warped-text child ([`VmlTextPath`] — whose words live in an **attribute**,
+//! `@string`), and a `v:imagedata`'s `gain`/`blacklevel` washout pair
+//! ([`VmlImageEffects`]). Recognising those as a watermark, and lifting it onto
+//! its section, is `crate::watermark`'s job — this module only reports what the
+//! markup said.
+//!
 //! This module does **not** depend on the document model, layout, or paint. It
 //! records neutral position/alignment, wrap, appearance, and text-box metadata;
 //! `body.rs` maps that intermediate onto the shared drawing/text-box model and
@@ -382,6 +391,16 @@ pub struct VmlFill {
     /// through the same shared path DrawingML gradients use; otherwise it falls
     /// back to the flat [`VmlFill::color`].
     pub gradient: Option<VmlGradient>,
+    /// The authored `v:fill@opacity` as an alpha byte, kept SEPARATELY from the
+    /// alpha already folded into [`VmlFill::color`].
+    ///
+    /// The two are not redundant. Folding is the right answer for a shape that
+    /// paints (one colour, one alpha), but a watermark's transparency is a
+    /// property of the watermark — Word's "Semitransparent" checkbox — rather than
+    /// of its ink, and a consumer that read the folded alpha and then applied its
+    /// own transparency would halve it twice. It is also the only place the
+    /// opacity survives when the shape declares no `fillcolor` at all.
+    pub opacity: Option<u8>,
 }
 
 /// A parsed VML gradient fill (`v:fill type="gradient"`/`"gradientRadial"`): its
@@ -528,16 +547,75 @@ pub struct VmlHr {
     pub pct_permille: Option<u16>,
 }
 
+/// A `v:textpath` — VML's warped-text ("WordArt") child, and the only place a
+/// text watermark's words are written: the string lives in an ATTRIBUTE, not in
+/// character data, so a consumer that reads only element text sees nothing
+/// (ECMA-376 Part 4 §14.1.2.23 `v:textpath`, `@string`).
+///
+/// The typography is a CSS fragment in `@style`, not run properties: Word writes
+/// `font-family:"Calibri";font-size:1pt` there, and bold/italic as
+/// `font-weight:bold` / `font-style:italic`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VmlTextPath {
+    /// `@string` — the displayed text, already XML-unescaped. `None` when the
+    /// attribute is absent, which is distinct from an empty string.
+    pub string: Option<String>,
+    /// `font-family` from `@style`, with the CSS quoting stripped.
+    pub font_family: Option<String>,
+    /// `font-size` from `@style`, in points.
+    pub font_size_points: Option<f64>,
+    /// `font-weight:bold`.
+    pub bold: bool,
+    /// `font-style:italic`.
+    pub italic: bool,
+    /// `@on` — whether the text is displayed at all (default `true`).
+    pub on: bool,
+}
+
+/// A `v:imagedata`'s washout controls. Word's "Washout" checkbox does not write a
+/// flag: it writes a contrast/brightness pair, `gain` and `blacklevel`
+/// (ECMA-376 Part 4 §14.1.2.11), in the `65536`-based fixed-point form
+/// (`gain="19661f"` ≈ 0.30, `blacklevel="22938f"` ≈ 0.35 — the values Word emits
+/// for a washed-out picture watermark). Their PRESENCE is what identifies a
+/// washed image; the magnitudes are kept so a consumer can tell Word's pair from
+/// a hand-authored one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VmlImageEffects {
+    /// `@gain` — contrast multiplier, `1.0` being unchanged.
+    pub gain: Option<f64>,
+    /// `@blacklevel` — brightness offset, `0.0` being unchanged.
+    pub blacklevel: Option<f64>,
+}
+
+impl VmlImageEffects {
+    /// Whether the image carries Word's washout pair at all. Either half alone
+    /// still means the producer asked for a washed image.
+    #[must_use]
+    pub fn washed_out(&self) -> bool {
+        self.gain.is_some() || self.blacklevel.is_some()
+    }
+}
+
 /// One parsed VML shape: an absolute box, its geometry, fill/stroke, an optional
 /// image relationship, and an optional text-box marker.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VmlDrawing {
     /// The shape's `id`, if any (diagnostic / stable identity).
     pub id: Option<String>,
+    /// The `type` attribute — a reference to a `v:shapetype` by id, written with
+    /// a leading `#` (`#_x0000_t136` is VML's plain-text WordArt type,
+    /// `#_x0000_t75` its picture frame, `#_x0000_t202` its text box). Kept
+    /// verbatim, including the `#`, because the value is how a producer names the
+    /// geometry it intended and it is the only signal that separates a warped-text
+    /// shape from an ordinary one.
+    pub shape_type: Option<String>,
     /// The shape geometry.
     pub kind: VmlShapeKind,
     /// The absolute position and size, in twips.
     pub position: VmlPosition,
+    /// `rotation` from `@style`, in degrees clockwise. CSS has no such property:
+    /// it is VML's own style extension (`rotation:315` is Word's diagonal stamp).
+    pub rotation_degrees: Option<f64>,
     /// The fill.
     pub fill: VmlFill,
     /// The stroke.
@@ -546,6 +624,10 @@ pub struct VmlDrawing {
     pub wrap: VmlWrap,
     /// The media relationship id from `v:imagedata@r:id`, if present.
     pub image_rid: Option<String>,
+    /// The `v:imagedata` washout controls, when the shape carried one.
+    pub image_effects: VmlImageEffects,
+    /// The warped-text child (`v:textpath`), if the shape carried one.
+    pub textpath: Option<VmlTextPath>,
     /// The text-box marker, if the shape carried a `v:textbox`.
     pub textbox: Option<VmlTextbox>,
     /// The horizontal-rule marker, if the shape carried `o:hr="t"`.
@@ -726,6 +808,75 @@ fn parse_opacity(value: &str) -> Option<u8> {
         value.parse::<f64>().ok()?
     };
     Some((fraction.clamp(0.0, 1.0) * 255.0).round() as u8)
+}
+
+/// Parses one VML scalar that may be written either plainly (`315`, `0.3`) or in
+/// the `65536`-based fixed-point form (`19661f`), which is how `arcsize`,
+/// `v:imagedata@gain`/`@blacklevel` and `style`'s `rotation` are all spelled.
+/// Returns `None` for anything unparseable or non-finite, so a caller degrades to
+/// "absent" rather than guessing a number.
+fn parse_fixed_point(value: &str) -> Option<f64> {
+    let value = value.trim();
+    let parsed = match value.strip_suffix('f') {
+        Some(fixed) => fixed.parse::<f64>().ok()? / 65_536.0,
+        None => value.parse::<f64>().ok()?,
+    };
+    parsed.is_finite().then_some(parsed)
+}
+
+/// Strips CSS string quoting from a `font-family` value: `"Calibri"` and
+/// `'Calibri'` both name the family `Calibri`. A multi-family list keeps only its
+/// first entry, which is what a shaper would pick anyway.
+fn parse_css_font_family(value: &str) -> Option<String> {
+    let first = value.split(',').next()?.trim();
+    let unquoted = first
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            first
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+        .unwrap_or(first)
+        .trim();
+    (!unquoted.is_empty()).then(|| unquoted.to_owned())
+}
+
+/// Parses a `v:textpath` element into [`VmlTextPath`]: `@string` verbatim, plus
+/// the typography from its CSS `@style` fragment.
+fn parse_textpath(element: &BytesStart<'_>) -> VmlTextPath {
+    let style = StyleProps::parse(&attr(element, b"style").unwrap_or_default());
+    VmlTextPath {
+        string: attr(element, b"string"),
+        font_family: style.get("font-family").and_then(parse_css_font_family),
+        // `font-size` is a CSS length; VML's textpath writes it in points, and
+        // `Len` normalizes any other unit through twips so `font-size:12pt` and
+        // `font-size:16px` both land on a real point size.
+        font_size_points: style
+            .len("font-size")
+            .map(|len| len.to_twips() as f64 / TWIPS_PER_POINT),
+        // CSS admits numeric weights; `bold` and anything >= 600 are bold.
+        bold: style.get("font-weight").is_some_and(|weight| {
+            let weight = weight.trim().to_ascii_lowercase();
+            weight == "bold"
+                || weight == "bolder"
+                || weight.parse::<f64>().is_ok_and(|value| value >= 600.0)
+        }),
+        italic: style.get("font-style").is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "italic" | "oblique"
+            )
+        }),
+        // `v:textpath@on` defaults to false in the schema but Word omits it on the
+        // shapes it draws, so an absent attribute is read as "displayed" — the
+        // conservative reading, since treating a drawn watermark as hidden would
+        // drop it.
+        on: attr(element, b"on")
+            .as_deref()
+            .map(parse_bool)
+            .unwrap_or(true),
+    }
 }
 
 fn parse_pair_i64(value: &str) -> Option<(i64, i64)> {
@@ -924,6 +1075,8 @@ enum ShapeLocal {
 struct ShapeBuilder {
     local: ShapeLocal,
     id: Option<String>,
+    /// The `type` attribute (a `#`-prefixed `v:shapetype` reference).
+    shape_type: Option<String>,
     style: StyleProps,
     filled_attr: Option<bool>,
     fill_color: Option<VmlColor>,
@@ -943,6 +1096,10 @@ struct ShapeBuilder {
     stroke_weight: Option<Len>,
     stroke_child_on: Option<bool>,
     image_rid: Option<String>,
+    /// The `v:imagedata` washout pair (`gain`/`blacklevel`).
+    image_effects: VmlImageEffects,
+    /// The `v:textpath` child (VML warped text).
+    textpath: Option<VmlTextPath>,
     path_attr: Option<String>,
     coordsize_attr: Option<(i64, i64)>,
     arcsize: Option<f64>,
@@ -959,6 +1116,7 @@ impl ShapeBuilder {
         Self {
             local,
             id: attr(element, b"id"),
+            shape_type: attr(element, b"type"),
             filled_attr: attr(element, b"filled").as_deref().map(parse_bool),
             fill_color: attr(element, b"fillcolor").as_deref().and_then(parse_color),
             fill_opacity: None,
@@ -979,11 +1137,17 @@ impl ShapeBuilder {
                 .and_then(parse_len),
             stroke_child_on: None,
             image_rid: None,
+            image_effects: VmlImageEffects::default(),
+            textpath: None,
             path_attr: attr(element, b"path"),
             coordsize_attr: attr(element, b"coordsize")
                 .as_deref()
                 .and_then(parse_pair_i64),
-            arcsize: attr(element, b"arcsize").as_deref().and_then(parse_arcsize),
+            // `arcsize` is a fraction of the smaller box dimension, written in the
+            // same plain-or-fixed-point spelling every other VML scalar uses.
+            arcsize: attr(element, b"arcsize")
+                .as_deref()
+                .and_then(parse_fixed_point),
             from: attr(element, b"from"),
             to: attr(element, b"to"),
             textbox: None,
@@ -1096,6 +1260,7 @@ impl ShapeBuilder {
             on: self.filled_attr.unwrap_or(true),
             gradient: self.build_gradient(color),
             color,
+            opacity: self.fill_opacity,
         };
         let stroke_on = self.stroke_child_on.unwrap_or(true) && self.stroked_attr.unwrap_or(true);
         let stroke = VmlStroke {
@@ -1104,14 +1269,25 @@ impl ShapeBuilder {
             weight_twips: self.stroke_weight.map(Len::to_twips),
         };
         let kind = self.resolve_kind(&position, group);
+        // A group's own `rotation` is NOT inherited: VML rotates a group as a unit
+        // about its own centre, which is not the same transform as rotating each
+        // child about its own, and no shape this importer maps needs the composed
+        // form. A shape inside a rotated group therefore reports only its own
+        // angle, which is what every watermark Word writes carries anyway (a
+        // watermark is never grouped).
+        let rotation_degrees = self.style.get("rotation").and_then(parse_fixed_point);
         VmlDrawing {
             id: self.id,
+            shape_type: self.shape_type,
             kind,
             position,
+            rotation_degrees,
             fill,
             stroke,
             wrap: self.wrap.inherit(group.map(|ctx| ctx.wrap)),
             image_rid: self.image_rid,
+            image_effects: self.image_effects,
+            textpath: self.textpath,
             textbox: self.textbox,
             hr: self.hr,
         }
@@ -1264,17 +1440,6 @@ fn parse_hr(element: &BytesStart<'_>) -> Option<VmlHr> {
     })
 }
 
-/// `arcsize` is a fraction of the smaller box dimension, either a decimal
-/// (`0.1`) or a `65536`-based integer with an `f` suffix (`3277f`).
-fn parse_arcsize(value: &str) -> Option<f64> {
-    let value = value.trim();
-    if let Some(num) = value.strip_suffix('f') {
-        Some(num.parse::<f64>().ok()? / 65536.0)
-    } else {
-        value.parse::<f64>().ok()
-    }
-}
-
 fn corner_radius(arcsize: Option<f64>, position: &VmlPosition) -> Option<i64> {
     let fraction = arcsize?;
     let w = position.width?;
@@ -1403,6 +1568,24 @@ fn on_open(
             if builder.image_rid.is_none() {
                 builder.image_rid = attr(element, b"id");
             }
+            // Washout is a gain/blacklevel pair, not a flag; `first`-wins mirrors
+            // `image_rid` so a malformed second `v:imagedata` cannot overwrite the
+            // first one's effects.
+            if !builder.image_effects.washed_out() {
+                builder.image_effects = VmlImageEffects {
+                    gain: attr(element, b"gain")
+                        .as_deref()
+                        .and_then(parse_fixed_point),
+                    blacklevel: attr(element, b"blacklevel")
+                        .as_deref()
+                        .and_then(parse_fixed_point),
+                };
+            }
+        }
+        b"textpath" => {
+            if builder.textpath.is_none() {
+                builder.textpath = Some(parse_textpath(element));
+            }
         }
         b"textbox" => {
             let style = StyleProps::parse(&attr(element, b"style").unwrap_or_default());
@@ -1490,6 +1673,75 @@ fn capture_txbx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn textpath_rotation_and_shape_type_are_captured() {
+        // Word's own text-watermark shape. The words are in an ATTRIBUTE
+        // (`v:textpath@string`), the angle is VML's `rotation` style extension —
+        // not a CSS property — and the shapetype reference is what separates
+        // plain-text WordArt from every other warped preset.
+        let xml = r##"<v:shape id="PowerPlusWaterMarkObject357476642" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:527.85pt;height:131.95pt;rotation:315" fillcolor="#c0c0c0" stroked="f"><v:fill opacity=".5"/><v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="DRAFT"/></v:shape>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        assert_eq!(drawing.shape_type.as_deref(), Some("#_x0000_t136"));
+        assert_eq!(drawing.rotation_degrees, Some(315.0));
+        let textpath = drawing.textpath.as_ref().expect("the textpath is captured");
+        assert_eq!(textpath.string.as_deref(), Some("DRAFT"));
+        assert_eq!(textpath.font_family.as_deref(), Some("Calibri"));
+        assert_eq!(textpath.font_size_points, Some(1.0));
+        assert!(!textpath.bold);
+        assert!(!textpath.italic);
+        assert!(textpath.on, "an absent `on` is read as displayed");
+        // The authored opacity survives SEPARATELY from the alpha folded into the
+        // fill colour, so a consumer cannot apply the transparency twice.
+        assert_eq!(drawing.fill.opacity, Some(128));
+        assert_eq!(drawing.fill.color.unwrap().a, 128);
+    }
+
+    #[test]
+    fn textpath_weight_slant_and_switch_off_are_read() {
+        let xml = r##"<v:shape type="#_x0000_t136" style="position:absolute;rotation:20643840f"><v:textpath on="f" style="font-family:'Times New Roman', serif;font-size:36pt;font-weight:700;font-style:italic" string="SAMPLE"/></v:shape>"##;
+        let drawing = &parse_vml_pict(xml)[0];
+        // `20643840f` is 315.0 in the 65536-based fixed-point spelling.
+        assert_eq!(drawing.rotation_degrees, Some(315.0));
+        let textpath = drawing.textpath.as_ref().unwrap();
+        assert_eq!(textpath.font_family.as_deref(), Some("Times New Roman"));
+        assert_eq!(textpath.font_size_points, Some(36.0));
+        assert!(textpath.bold, "a numeric weight >= 600 is bold");
+        assert!(textpath.italic);
+        assert!(!textpath.on);
+    }
+
+    #[test]
+    fn imagedata_washout_pair_is_captured_and_absence_is_distinguishable() {
+        // Word's "Washout" writes `gain="19661f" blacklevel="22938f"`; nothing
+        // else marks a washed image, so presence is the flag.
+        let washed = r##"<v:shape id="WordPictureWatermark11122333" type="#_x0000_t75"><v:imagedata r:id="rId4" o:title="" gain="19661f" blacklevel="22938f"/></v:shape>"##;
+        let drawing = &parse_vml_pict(washed)[0];
+        assert_eq!(drawing.image_rid.as_deref(), Some("rId4"));
+        assert!(drawing.image_effects.washed_out());
+        let gain = drawing.image_effects.gain.expect("gain parsed");
+        assert!((gain - 0.3).abs() < 0.001, "19661/65536 == 0.3, got {gain}");
+        let black = drawing.image_effects.blacklevel.expect("blacklevel parsed");
+        assert!((black - 0.35).abs() < 0.001, "22938/65536 == 0.35");
+
+        let plain = r##"<v:shape type="#_x0000_t75"><v:imagedata r:id="rId4"/></v:shape>"##;
+        let plain = &parse_vml_pict(plain)[0];
+        assert!(!plain.image_effects.washed_out());
+        assert_eq!(plain.rotation_degrees, None);
+        assert!(plain.textpath.is_none());
+    }
+
+    #[test]
+    fn a_shapetype_textpath_template_does_not_leak_onto_the_next_shape() {
+        // `v:shapetype` for `_x0000_t136` carries its own `<v:textpath on="t"
+        // fitshape="t"/>` with no `string`. If that template leaked, every
+        // following shape would look like warped text with nothing to stamp.
+        let xml = r##"<w:pict><v:shapetype id="_x0000_t136" coordsize="21600,21600" path="m@7,l@8,e"><v:path textpathok="t"/><v:textpath on="t" fitshape="t"/></v:shapetype><v:rect style="position:absolute;margin-left:1pt;margin-top:1pt;width:10pt;height:2pt" fillcolor="#000000"/></w:pict>"##;
+        let drawings = parse_vml_pict(xml);
+        assert_eq!(drawings.len(), 1, "the shapetype itself is not a shape");
+        assert!(drawings[0].textpath.is_none());
+        assert!(drawings[0].shape_type.is_none());
+    }
 
     #[test]
     fn parse_len_units_and_edges() {
