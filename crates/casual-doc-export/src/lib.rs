@@ -6555,3 +6555,552 @@ mod tests {
         assert_eq!(write_package(&source), Err(ExportError::NoRetainedParts));
     }
 }
+
+/// Watermark export (`109` OO-006): WordprocessingML has no watermark element, so
+/// a section's watermark is written as a floating VML shape inside each of the
+/// section's header parts — and a header part is *synthesized* when the section has
+/// none, because without one Word cannot show the watermark at all.
+///
+/// These guards assert the emitted XML rather than a round trip: the DOCX importer
+/// does not recognise a watermark yet (that half is in flight separately), so a
+/// write → reopen would compare a watermark against `None` and pass for the wrong
+/// reason. Full round-trip coverage lands with the import work.
+#[cfg(test)]
+mod watermark_tests {
+    use std::collections::BTreeMap;
+    use std::io::{Cursor, Write};
+
+    use casual_doc_import::{ImportConfig, ImportMode, import_main_document_xml, import_package};
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        Document, FontName, MediaId, MediaReference, Rgba, Watermark, WatermarkContent,
+        WatermarkLayout, WatermarkPicture, WatermarkText,
+    };
+    use casual_doc_ooxml::{DocxPackage, PackageLimits};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    use crate::{export_document, write_document};
+
+    const OFFICE_DOC_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+    const HEADER_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+    const HEADER_CT: &str =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+
+    fn zip_named(parts: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, bytes) in parts {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap().into_inner()
+    }
+
+    fn reopen(bytes: &[u8]) -> Document {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        import_package(
+            &mut package,
+            ImportConfig {
+                mode: ImportMode::Semantic,
+                ..ImportConfig::default()
+            },
+        )
+        .unwrap()
+        .document
+    }
+
+    /// One written part, as text.
+    fn part(bytes: &[u8], name: &str) -> String {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        String::from_utf8(
+            package
+                .read_part(name)
+                .unwrap_or_else(|error| panic!("{name} must be in the package: {error:?}")),
+        )
+        .unwrap()
+    }
+
+    /// Whether a part is in the written package at all.
+    fn has_part(bytes: &[u8], name: &str) -> bool {
+        let mut package = DocxPackage::open(bytes, PackageLimits::default()).unwrap();
+        package.read_part(name).is_ok()
+    }
+
+    /// A single-section package whose `w:sectPr` references one header part per
+    /// entry of `headers` (`(w:type token, part number)`), each carrying a
+    /// distinguishable paragraph. Built by hand and imported so the model's
+    /// `HeaderFooterId`s and the section's references are the importer's own.
+    fn package_with_headers(headers: &[(&str, u32)]) -> Vec<u8> {
+        let overrides: String = headers
+            .iter()
+            .map(|(_, n)| {
+                format!(r#"<Override PartName="/word/header{n}.xml" ContentType="{HEADER_CT}"/>"#)
+            })
+            .collect();
+        let content_types = format!(
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>{overrides}</Types>"#
+        );
+        let root_rels = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{OFFICE_DOC_REL}" Target="word/document.xml"/></Relationships>"#
+        );
+        let references: String = headers
+            .iter()
+            .map(|(kind, n)| format!(r#"<w:headerReference w:type="{kind}" r:id="rIdH{n}"/>"#))
+            .collect();
+        let document = format!(
+            r#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>body</w:t></w:r></w:p><w:sectPr>{references}<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:bottom="1440" w:left="1440" w:right="1440"/></w:sectPr></w:body></w:document>"#
+        );
+        let doc_rels: String = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{}</Relationships>"#,
+            headers
+                .iter()
+                .map(|(_, n)| format!(
+                    r#"<Relationship Id="rIdH{n}" Type="{HEADER_REL}" Target="header{n}.xml"/>"#
+                ))
+                .collect::<String>()
+        );
+        let header_parts: Vec<(String, Vec<u8>)> = headers
+            .iter()
+            .map(|(kind, n)| {
+                (
+                    format!("word/header{n}.xml"),
+                    format!(
+                        r#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>the {kind} header</w:t></w:r></w:p></w:hdr>"#
+                    )
+                    .into_bytes(),
+                )
+            })
+            .collect();
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", root_rels.as_bytes()),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", doc_rels.as_bytes()),
+        ];
+        for (name, bytes) in &header_parts {
+            parts.push((name.as_str(), bytes.as_slice()));
+        }
+        zip_named(&parts)
+    }
+
+    /// A header-less single-section document: the synthesis case.
+    fn document_without_headers() -> Document {
+        let xml = br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>body</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:bottom="1440" w:left="1440" w:right="1440"/></w:sectPr></w:body></w:document>"#;
+        import_main_document_xml(xml, ImportConfig::default())
+            .unwrap()
+            .document
+    }
+
+    fn text_watermark(text: &str) -> Watermark {
+        Watermark {
+            content: WatermarkContent::Text(WatermarkText {
+                text: text.to_owned(),
+                font: Some(FontName {
+                    name: "Calibri".to_owned(),
+                }),
+                size_half_points: None,
+                color: Rgba {
+                    r: 0xC0,
+                    g: 0xC0,
+                    b: 0xC0,
+                    a: 255,
+                },
+                bold: false,
+                italic: false,
+            }),
+            layout: WatermarkLayout::Diagonal,
+            semi_transparent: true,
+        }
+    }
+
+    /// A media entry plus the bytes a real save would hand the writer.
+    fn stamp_media(document: &mut Document) -> MediaId {
+        let media_id = MediaId::new(NodeId::from_parts(9, 9).expect("a valid node id"));
+        document.definitions_mut().media.insert(
+            media_id,
+            MediaReference {
+                relationship_id: "rIdWmImg".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/stamp.png".to_owned(),
+            },
+        );
+        media_id
+    }
+
+    /// Word stores a text watermark as a `v:shape` of the `_x0000_t136` text-path
+    /// type, in the header, whose `v:textpath@string` is the stamped words. Every
+    /// attribute asserted here is one Word will not render the stamp without.
+    #[test]
+    fn a_text_watermark_is_a_vml_text_path_shape_in_the_section_header() {
+        let mut document = reopen(&package_with_headers(&[("default", 1)]));
+        document.definitions_mut().sections[0].watermark = Some(text_watermark("DRAFT"));
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        let header = part(&written, "word/header1.xml");
+        assert!(
+            header.contains("<w:pict>"),
+            "the shape must be wrapped in w:pict: {header}"
+        );
+        assert!(
+            header.contains(r#"id="PowerPlusWaterMarkObject1""#),
+            "Word recognises a text watermark by this id prefix: {header}"
+        );
+        assert!(
+            header.contains(r##"type="#_x0000_t136""##) && header.contains(r#"o:spt="136""#),
+            "the text-path shapetype must be declared and referenced: {header}"
+        );
+        assert!(
+            header.contains(r#"string="DRAFT""#),
+            "the stamped words live in v:textpath@string: {header}"
+        );
+        assert!(
+            header.contains("rotation:315"),
+            "a diagonal watermark is Word's fixed rotation:315: {header}"
+        );
+        assert!(
+            header.contains(r##"fillcolor="#C0C0C0""##),
+            "the ink is the shape's fillcolor: {header}"
+        );
+        assert!(
+            header.contains(r#"<v:fill opacity=".5"/>"#),
+            "semitransparent is Word's <v:fill opacity=\".5\"/>: {header}"
+        );
+        assert!(
+            header.contains("mso-position-horizontal:center")
+                && header.contains("mso-position-vertical-relative:margin"),
+            "the stamp is centred on the margin box, not the flow: {header}"
+        );
+        assert!(
+            header.contains(r#"xmlns:v="urn:schemas-microsoft-com:vml""#),
+            "the VML prefix must be bound or the part is not well-formed: {header}"
+        );
+        // The header's own content survives; the shape rides its first paragraph
+        // rather than adding a paragraph of its own, which would make the header a
+        // line taller on every save.
+        assert!(header.contains("the default header"), "{header}");
+        assert_eq!(
+            header.matches("<w:p>").count(),
+            1,
+            "no extra paragraph: {header}"
+        );
+    }
+
+    /// A horizontal watermark must NOT carry the rotation. Without this, a guard
+    /// on `rotation:315` alone would pass for a writer that rotated everything.
+    #[test]
+    fn a_horizontal_watermark_carries_no_rotation() {
+        let mut document = reopen(&package_with_headers(&[("default", 1)]));
+        let mut watermark = text_watermark("DRAFT");
+        watermark.layout = WatermarkLayout::Horizontal;
+        document.definitions_mut().sections[0].watermark = Some(watermark);
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        let header = part(&written, "word/header1.xml");
+        assert!(header.contains(r#"string="DRAFT""#), "{header}");
+        assert!(
+            !header.contains("rotation:"),
+            "a level watermark has no rotation: {header}"
+        );
+    }
+
+    /// An opaque watermark must NOT carry `<v:fill opacity>`; the semitransparent
+    /// guard above would otherwise pass for a writer that always wrote it.
+    #[test]
+    fn an_opaque_watermark_carries_no_fill_opacity() {
+        let mut document = reopen(&package_with_headers(&[("default", 1)]));
+        let mut watermark = text_watermark("DRAFT");
+        watermark.semi_transparent = false;
+        document.definitions_mut().sections[0].watermark = Some(watermark);
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        let header = part(&written, "word/header1.xml");
+        assert!(header.contains(r#"string="DRAFT""#), "{header}");
+        assert!(
+            !header.contains("v:fill"),
+            "an opaque watermark writes no v:fill: {header}"
+        );
+    }
+
+    /// A header covers one page type, so a page whose header part lacks the shape
+    /// shows no watermark: the stamp has to be in EVERY header the section
+    /// references. Asserted per part, because a guard that only checked "some
+    /// header has it" would pass for a writer that stamped just the first.
+    #[test]
+    fn the_watermark_reaches_every_header_the_section_references() {
+        let mut document = reopen(&package_with_headers(&[("default", 1), ("first", 2)]));
+        assert_eq!(
+            document.definitions().sections[0].headers.len(),
+            2,
+            "the fixture must reference two header parts"
+        );
+        document.definitions_mut().sections[0].watermark = Some(text_watermark("DRAFT"));
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        for name in ["word/header1.xml", "word/header2.xml"] {
+            let header = part(&written, name);
+            assert!(
+                header.contains(r#"string="DRAFT""#),
+                "{name} must carry the stamp: {header}"
+            );
+        }
+    }
+
+    /// Word cannot show a watermark unless a header part exists, so one is
+    /// synthesized: the part, its content-type override, its document
+    /// relationship, and — the piece that makes it reachable — a `w:sectPr`
+    /// `w:headerReference` naming it.
+    #[test]
+    fn a_section_with_no_header_gets_one_synthesized_for_its_watermark() {
+        let mut document = document_without_headers();
+        assert!(
+            document.definitions().headers.iter().next().is_none()
+                && document.definitions().sections[0].headers.is_empty(),
+            "the fixture must have no header at all"
+        );
+        document.definitions_mut().sections[0].watermark = Some(text_watermark("CONFIDENTIAL"));
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        let header = part(&written, "word/header1.xml");
+        assert!(
+            header.contains(r#"string="CONFIDENTIAL""#),
+            "the synthesized part carries the stamp: {header}"
+        );
+        let content_types = part(&written, "[Content_Types].xml");
+        assert!(
+            content_types.contains(r#"PartName="/word/header1.xml""#),
+            "a part with no content type makes the package invalid: {content_types}"
+        );
+        let rels = part(&written, "word/_rels/document.xml.rels");
+        let rel_id = {
+            let target = rels
+                .find(r#"Target="header1.xml""#)
+                .expect("a header relationship");
+            let before = &rels[..target];
+            let id_at = before.rfind(r#"Id=""#).expect("the relationship's id") + 4;
+            before[id_at..].split('"').next().unwrap().to_owned()
+        };
+        let body = part(&written, "word/document.xml");
+        let sect_pr = &body[body.find("<w:sectPr>").expect("a sectPr")..];
+        assert!(
+            sect_pr.contains(&format!(
+                r#"<w:headerReference w:type="default" r:id="{rel_id}"/>"#
+            )),
+            "the synthesized header must be referenced from w:sectPr or it is \
+             unreachable and the watermark invisible: {sect_pr}"
+        );
+    }
+
+    /// `w:titlePg` means the first page uses a distinct header, so a watermarked
+    /// section that sets it needs BOTH page types covered — otherwise page 1 (or
+    /// every other page) silently loses the stamp.
+    #[test]
+    fn title_page_sections_get_a_synthesized_header_for_each_page_type() {
+        let mut document = reopen(&package_with_headers(&[("first", 1)]));
+        {
+            let section = &mut document.definitions_mut().sections[0];
+            section.title_page = Some(true);
+            section.watermark = Some(text_watermark("DRAFT"));
+        }
+        let written = write_document(&document, &BTreeMap::new()).unwrap();
+
+        // The existing `first` header is stamped in place...
+        assert!(
+            part(&written, "word/header1.xml").contains(r#"string="DRAFT""#),
+            "the section's own header must be stamped"
+        );
+        // ...and a `default` header is invented for every other page.
+        let synthesized = part(&written, "word/header2.xml");
+        assert!(
+            synthesized.contains(r#"string="DRAFT""#),
+            "pages 2+ need a default header to carry the stamp: {synthesized}"
+        );
+        let body = part(&written, "word/document.xml");
+        assert!(
+            body.contains(r#"<w:headerReference w:type="default" r:id="rIdWm"#),
+            "the invented default header must be referenced: {body}"
+        );
+    }
+
+    /// A header part shared by two sections with DIFFERENT watermarks cannot hold
+    /// both: the shape lives in the part and the part is one file. The first
+    /// section in document order wins and the drop is reported — never silent.
+    #[test]
+    fn two_sections_sharing_a_header_resolve_to_the_first_and_report_the_drop() {
+        // Both sections reference header1: the first via a paragraph section
+        // break, the second via the body sectPr.
+        let content_types = format!(
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="{HEADER_CT}"/></Types>"#
+        );
+        let root_rels = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{OFFICE_DOC_REL}" Target="word/document.xml"/></Relationships>"#
+        );
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdH1"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>
+            <w:p><w:r><w:t>two</w:t></w:r></w:p>
+            <w:sectPr><w:headerReference w:type="default" r:id="rIdH1"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+        </w:body></w:document>"#;
+        let doc_rels = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH1" Type="{HEADER_REL}" Target="header1.xml"/></Relationships>"#
+        );
+        let header = br#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>shared</w:t></w:r></w:p></w:hdr>"#;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", root_rels.as_bytes()),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels.as_bytes()),
+            ("word/header1.xml", header),
+        ]);
+        let mut model = reopen(&source);
+        assert_eq!(
+            model.definitions().sections.len(),
+            2,
+            "the fixture must have two sections"
+        );
+        assert_eq!(
+            model.definitions().sections[0].headers[0].reference,
+            model.definitions().sections[1].headers[0].reference,
+            "the two sections must SHARE one header part, or this guard cannot \
+             tell which section the shape was charged to"
+        );
+        {
+            let sections = &mut model.definitions_mut().sections;
+            sections[0].watermark = Some(text_watermark("FIRST"));
+            sections[1].watermark = Some(text_watermark("SECOND"));
+        }
+        let export = export_document(&model, &BTreeMap::new()).unwrap();
+
+        let header = part(&export.bytes, "word/header1.xml");
+        assert!(
+            header.contains(r#"string="FIRST""#),
+            "the first section in document order wins: {header}"
+        );
+        assert!(
+            !header.contains(r#"string="SECOND""#),
+            "the part cannot hold two stamps: {header}"
+        );
+        assert!(
+            export
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "docx.export.watermark.shared_header_conflict"),
+            "the dropped watermark must be reported, not silent: {:?}",
+            export.report.entries
+        );
+    }
+
+    /// A picture watermark is a `_x0000_t75` shape whose `v:imagedata` resolves
+    /// through the HEADER part's own rels, not `document.xml.rels`; `gain`/
+    /// `blacklevel` are Word's washout.
+    #[test]
+    fn a_picture_watermark_declares_its_image_in_the_headers_own_rels() {
+        let mut document = reopen(&package_with_headers(&[("default", 1)]));
+        let media_id = stamp_media(&mut document);
+        document.definitions_mut().sections[0].watermark = Some(Watermark {
+            content: WatermarkContent::Picture(WatermarkPicture {
+                media: media_id,
+                scale_percent: None,
+                washout: true,
+            }),
+            layout: WatermarkLayout::Horizontal,
+            semi_transparent: false,
+        });
+        let written = write_document(
+            &document,
+            &BTreeMap::from([("word/media/stamp.png".to_owned(), b"PNGDATA".to_vec())]),
+        )
+        .unwrap();
+
+        let header = part(&written, "word/header1.xml");
+        assert!(
+            header.contains(r#"id="WordPictureWatermark1""#)
+                && header.contains(r##"type="#_x0000_t75""##),
+            "Word recognises a picture watermark by this id and shape type: {header}"
+        );
+        assert!(
+            header.contains(r#"r:id="rIdWmImg""#),
+            "the shape must name the image relationship: {header}"
+        );
+        assert!(
+            header.contains(r#"gain="19661f""#) && header.contains(r#"blacklevel="22938f""#),
+            "washout is Word's gain/blacklevel pair: {header}"
+        );
+        let header_rels = part(&written, "word/_rels/header1.xml.rels");
+        assert!(
+            header_rels.contains("rIdWmImg") && header_rels.contains("media/stamp.png"),
+            "the image must be declared by the part that uses it: {header_rels}"
+        );
+        assert!(
+            has_part(&written, "word/media/stamp.png"),
+            "the package must contain the image it declares"
+        );
+    }
+
+    /// A picture watermark whose bytes the caller did not supply must produce NO
+    /// shape, NO relationship, NO synthesized part and NO `w:headerReference` —
+    /// the package invariant that nothing is announced that the package lacks
+    /// (FID-R-06) — and the loss must be reported.
+    #[test]
+    fn a_picture_watermark_without_bytes_is_omitted_whole_and_reported() {
+        let mut document = document_without_headers();
+        let media_id = stamp_media(&mut document);
+        document.definitions_mut().sections[0].watermark = Some(Watermark {
+            content: WatermarkContent::Picture(WatermarkPicture {
+                media: media_id,
+                scale_percent: None,
+                washout: true,
+            }),
+            layout: WatermarkLayout::Diagonal,
+            semi_transparent: false,
+        });
+        // No media map: the bytes are absent.
+        let export = export_document(&document, &BTreeMap::new()).unwrap();
+
+        assert!(
+            !has_part(&export.bytes, "word/header1.xml"),
+            "no header may be synthesized for a watermark that cannot be written"
+        );
+        let body = part(&export.bytes, "word/document.xml");
+        assert!(
+            !body.contains("w:headerReference"),
+            "a reference to a part that was never written is a corrupt package: {body}"
+        );
+        assert!(
+            export
+                .report
+                .entries
+                .iter()
+                .any(|entry| entry.feature == "docx.export.watermark.missing_picture_bytes"),
+            "the unwritable watermark must be reported: {:?}",
+            export.report.entries
+        );
+    }
+
+    /// The overwhelming majority of documents declare no watermark, and for them
+    /// nothing about the output may change: no VML prefix on the header root, no
+    /// `w:pict`, no extra header part, and an empty compatibility report.
+    #[test]
+    fn a_document_without_a_watermark_gains_nothing() {
+        let document = reopen(&package_with_headers(&[("default", 1)]));
+        assert!(document.definitions().sections[0].watermark.is_none());
+        let export = export_document(&document, &BTreeMap::new()).unwrap();
+
+        let header = part(&export.bytes, "word/header1.xml");
+        assert!(
+            !header.contains("xmlns:v") && !header.contains("w:pict"),
+            "an unwatermarked header must be exactly as before: {header}"
+        );
+        assert!(
+            !has_part(&export.bytes, "word/header2.xml"),
+            "no header part may be invented for a document with no watermark"
+        );
+        assert!(
+            !part(&export.bytes, "word/document.xml").contains("rIdWm"),
+            "no watermark relationship may be referenced"
+        );
+        assert!(export.report.is_empty(), "{:?}", export.report.entries);
+    }
+}
