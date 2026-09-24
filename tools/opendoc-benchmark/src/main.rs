@@ -19,6 +19,17 @@ mod native {
     use std::process::Command;
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+    use casual_doc_layout::document_layout::{
+        paginate_document_cached, paginate_document_view_cached,
+    };
+    use casual_doc_layout::flow::ReviewView;
+    use casual_doc_layout::incremental::{DirtySet, GalleyCache};
+    use casual_doc_layout::shape::ParleyShaper;
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, Document, InlineNode, Paragraph, ParagraphProperties, Run,
+        RunProperties,
+    };
     use casual_doc_ooxml::{DocxPackage, PackageLimits};
     use casual_doc_sdk::{
         Affinity, BlockSnapshot, Engine, EngineConfig, InlineSnapshot, InsertTextRequest,
@@ -419,7 +430,7 @@ USAGE:
         })
     }
 
-    fn benchmark_definitions() -> [BenchmarkDefinition; 4] {
+    fn benchmark_definitions() -> [BenchmarkDefinition; 6] {
         [
             BenchmarkDefinition {
                 id: "docx.package_open.minimal",
@@ -444,6 +455,25 @@ USAGE:
                 expected_unit_checksum: 100,
                 absolute_noise_nanoseconds: 50_000,
                 execute: normalized_load,
+            },
+            BenchmarkDefinition {
+                id: "layout.repaginate.keystroke_240_paragraphs",
+                work_units: LAYOUT_KEYSTROKES as u64,
+                full_iterations: 3,
+                // The page count the document settles at — a determinism check
+                // on the LAYOUT, not just on the timing: a change that quietly
+                // repaginates differently fails here before it is measured.
+                expected_unit_checksum: 28,
+                absolute_noise_nanoseconds: 2_000_000,
+                execute: layout_repaginate_after_keystroke,
+            },
+            BenchmarkDefinition {
+                id: "layout.repaginate.keystroke_240_paragraphs_markup",
+                work_units: LAYOUT_KEYSTROKES as u64,
+                full_iterations: 3,
+                expected_unit_checksum: 28,
+                absolute_noise_nanoseconds: 2_000_000,
+                execute: layout_repaginate_markup_after_keystroke,
             },
             BenchmarkDefinition {
                 id: "sdk.typing.100_graphemes",
@@ -571,6 +601,118 @@ USAGE:
             .snapshot()
             .map_err(|error| AppError::new(format!("normalized snapshot failed: {error}")))?;
         Ok(u64::try_from(snapshot.body.len()).unwrap_or(u64::MAX))
+    }
+
+    /// Paragraphs of ordinary prose, enough of them to make a multi-page
+    /// document — the shape a person is actually typing into when a keystroke
+    /// starts to feel slow.
+    const LAYOUT_PARAGRAPHS: usize = 240;
+    /// Keystrokes measured per iteration. Each one re-paginates, which is the
+    /// whole point: the cost being measured is per-keystroke, not per-document.
+    const LAYOUT_KEYSTROKES: usize = 20;
+
+    fn node_id(value: u64) -> NodeId {
+        NodeId::new(u128::from(value)).expect("benchmark node ids are never zero")
+    }
+
+    fn layout_document() -> Document {
+        let line = "The quick brown fox jumps over the lazy dog and keeps on running. ";
+        let body = (0..LAYOUT_PARAGRAPHS)
+            .map(|index| {
+                let id = u64::try_from(index).unwrap_or(0) + 1;
+                BlockNode::Paragraph(Paragraph {
+                    id: node_id(id),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: node_id(id + 1_000_000),
+                        properties: RunProperties::default().into(),
+                        text: line.repeat(6),
+                    })],
+                })
+            })
+            .collect();
+        Document::new(node_id(9_000_000), body, Definitions::default())
+            .expect("the benchmark document is well formed by construction")
+    }
+
+    /// Re-pagination after a keystroke, through the path the editor actually
+    /// uses (`paginate_document_cached` with the galley cache the session
+    /// holds). `105` EV-002 recorded that this suite had no layout, render or
+    /// repaint case at all, and `109` HF-182 is the frame budget that has no
+    /// number without one: a keystroke on an eleven-page document measures
+    /// p95 37 ms in the browser, and nothing here could say why or prove a fix.
+    fn layout_repaginate_after_keystroke(_inputs: &BenchmarkInputs) -> Result<u64, AppError> {
+        let mut document = layout_document();
+        let shaper = ParleyShaper::new();
+        let mut cache = GalleyCache::new();
+        // Warm the cache the way opening a document does, so the measurement is
+        // the EDIT cost and not the first-layout cost.
+        let mut pages = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new())
+            .pages
+            .len();
+        for keystroke in 0..LAYOUT_KEYSTROKES {
+            document = retype_first_paragraph(document, keystroke);
+            pages = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new())
+                .pages
+                .len();
+        }
+        Ok(u64::try_from(pages).unwrap_or(u64::MAX))
+    }
+
+    /// The same keystroke with tracked changes showing. The markup view has no
+    /// cached path, so this pays a second, fully re-shaped pagination on top of
+    /// the cached one — measured at p95 45 ms against the plain path's 37 ms in
+    /// the browser. Separated from the case above so a fix to either is visible
+    /// on its own.
+    fn layout_repaginate_markup_after_keystroke(
+        _inputs: &BenchmarkInputs,
+    ) -> Result<u64, AppError> {
+        let mut document = layout_document();
+        let shaper = ParleyShaper::new();
+        let mut cache = GalleyCache::new();
+        let _ = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new());
+        let mut markup_cache = GalleyCache::new();
+        let mut pages = paginate_document_view_cached(
+            &document,
+            &shaper,
+            &mut markup_cache,
+            &DirtySet::new(),
+            ReviewView::Markup,
+        )
+        .pages
+        .len();
+        for keystroke in 0..LAYOUT_KEYSTROKES {
+            document = retype_first_paragraph(document, keystroke);
+            let _ = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new());
+            pages = paginate_document_view_cached(
+                &document,
+                &shaper,
+                &mut markup_cache,
+                &DirtySet::new(),
+                ReviewView::Markup,
+            )
+            .pages
+            .len();
+        }
+        Ok(u64::try_from(pages).unwrap_or(u64::MAX))
+    }
+
+    /// One keystroke: the first paragraph's run grows by a character. Rebuilding
+    /// the document rather than mutating in place keeps this crate free of the
+    /// editing stack — what is being measured is LAYOUT, and the galley cache
+    /// invalidates on the content hash, so a grown run re-shapes exactly one
+    /// paragraph exactly as a real keystroke does.
+    fn retype_first_paragraph(document: Document, keystroke: usize) -> Document {
+        let mut body = document.body().to_vec();
+        if let Some(BlockNode::Paragraph(paragraph)) = body.first_mut()
+            && let Some(InlineNode::Run(run)) = paragraph.inlines.first_mut()
+        {
+            run.text
+                .push(char::from(b'a' + u8::try_from(keystroke % 26).unwrap_or(0)));
+        }
+        let id = document.id();
+        let definitions = document.definitions().clone();
+        Document::new(id, body, definitions).expect("growing a run keeps the document well formed")
     }
 
     fn typing_100_graphemes(inputs: &BenchmarkInputs) -> Result<u64, AppError> {

@@ -10,6 +10,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+casual-doc-layout.workspace = true
+casual-doc-model.workspace = true
 casual-doc-ooxml.workspace = true
 casual-doc-sdk.workspace = true
 serde.workspace = true

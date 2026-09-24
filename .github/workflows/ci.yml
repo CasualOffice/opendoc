@@ -102,10 +102,12 @@ jobs:
             .schemaVersion == 1
             and .mode == "smoke"
             and .buildProfile == "release"
-            and (.cases | length == 4)
+            and (.cases | length == 6)
             and ([.cases[].id] | sort) == ([
               "docx.package_open.minimal",
               "docx.part_read.document_xml",
+              "layout.repaginate.keystroke_240_paragraphs",
+              "layout.repaginate.keystroke_240_paragraphs_markup",
               "model.normalized_load.100_paragraphs",
               "sdk.typing.100_graphemes"
             ] | sort)
