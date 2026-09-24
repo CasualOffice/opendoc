@@ -300,3 +300,31 @@ test("the strings the shell writes itself are localised too", async ({ page }) =
   await expect(page.locator("#documentStateText")).toHaveText("Geöffnet");
   await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", /Rückgängig/);
 });
+
+test("the sweep does not re-assert text the shell owns", async ({ page, consoleErrors }) => {
+  // `#status` is transient status the shell writes and clears. Giving it a
+  // `data-i18n` key made `localizeTree` write "Loading engine…" back over the
+  // cleared value every time a catalogue landed, so the no-document editor
+  // said it was still loading — forever. The markup text is the PRE-BOOT
+  // placeholder, on screen before any script runs and therefore before a
+  // catalogue could exist; English is the only thing it can honestly say, and
+  // the shell owns it from the first frame onwards.
+  await page.goto("/editor.html?blank=1");
+  // The SETTLED value, not merely a value. A poll for "not the loading text"
+  // passes on the instant between the shell clearing it and the sweep putting
+  // it back, which is exactly the window the defect lived in — the first
+  // version of this test did that and stayed green with the key restored.
+  await page.waitForFunction(
+    () => document.getElementById("status")?.textContent !== "Loading engine…",
+    null,
+    { timeout: 20_000 },
+  );
+  await page.waitForTimeout(1_500);
+  await expect(page.locator("#status")).not.toHaveText("Loading engine…");
+
+  // And with a document, where the shell clears it outright.
+  await page.goto("/editor.html?fixture=rich&lang=de");
+  await page.waitForFunction(() => document.body.dataset.fontsReady === "true");
+  await expect(page.locator("#status")).toHaveText("");
+  expect(consoleErrors).toEqual([]);
+});
