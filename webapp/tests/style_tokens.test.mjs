@@ -205,3 +205,39 @@ test("every colour role clears its WCAG floor in both themes", () => {
   }
   assert.deepEqual(failures, []);
 });
+
+// ---- The frame does not move (the owner's "frame of webapp is not fixed") --
+
+test("the app shell refuses to rubber-band, and every chrome scroller contains its own", () => {
+  // Nothing in the shell overflows — header, band, work area and status bar
+  // are a flex column that fits, and `#viewport` does the scrolling. But with
+  // `overscroll-behavior: auto` the browser still bounces the ROOT when a
+  // gesture starts somewhere that cannot scroll, so dragging on the header or
+  // the toolbar moved the whole frame and sprang back on release.
+  const shell = css.match(/html,\s*\nbody\s*\{[^}]*\}/);
+  assert.ok(shell, "the html/body rule should still exist");
+  assert.match(
+    shell[0],
+    /overscroll-behavior:\s*none/,
+    "the shell must refuse the root's rubber-band",
+  );
+
+  // And a scroller inside the chrome must not hand the wheel to the document
+  // behind it when it reaches its end: that reads as the dialog stuttering and
+  // then the page lurching.
+  const chained = [];
+  // No `(^|\})` anchor: `matchAll` resumes after the brace it consumed, so an
+  // anchored pattern matches only every OTHER rule — which is why the first
+  // version of this guard stayed green with `.dialog-body`'s containment
+  // deleted.
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/overflow(-y)?\s*:\s*(auto|scroll)/.test(body)) continue;
+    if (/overscroll-behavior/.test(body)) continue;
+    const name = selector.trim().split("\n").pop().trim();
+    // `#viewport` IS the document, and chaining from it is the browser's
+    // ordinary behaviour rather than a defect.
+    if (/viewport|\.page/.test(name)) continue;
+    chained.push(name);
+  }
+  assert.deepEqual(chained, [], "these chrome scrollers chain their overscroll to the document");
+});

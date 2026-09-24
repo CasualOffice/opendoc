@@ -2018,7 +2018,7 @@ function renderReviewMarginItems() {
         if (!text || !reviewComposerState?.range) return;
         const { start, end } = reviewComposerState.range;
         const metadata = currentReviewTimestamp();
-        await runEdit(() => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date));
+        await runEdit(() => doc.addComment(start.node, start.offset, end.node, end.offset, text, undefined, undefined, metadata.date), { keepView: true });
         reviewComposerState = null;
         reviewSidebarPreference = true;
         announceReview("Comment added");
@@ -2083,7 +2083,7 @@ function renderReviewMarginItems() {
       header.append(
         reviewIconButton(item.data.resolved ? "undo" : "check", item.data.resolved ? "Reopen comment" : "Resolve comment", async () => {
           const resolving = !item.data.resolved;
-          await runEdit(() => doc.setCommentResolved(item.data.id, resolving));
+          await runEdit(() => doc.setCommentResolved(item.data.id, resolving), { keepView: true });
           announceReview(resolving ? "Comment resolved" : "Comment reopened");
           if (resolving) {
             activeReviewItemId = null;
@@ -2151,7 +2151,7 @@ function renderReviewMarginItems() {
           reviewCardButton("Delete", async () => {
             reviewDeleteConfirmId = null;
             activeReviewItemId = null;
-            await runEdit(() => doc.deleteComment(item.data.id));
+            await runEdit(() => doc.deleteComment(item.data.id), { keepView: true });
             drawSelection();
           }, true),
           reviewCardButton("Cancel", () => {
@@ -2317,7 +2317,7 @@ function renderReviewMarginItems() {
               const save = reviewCardButton("Save", async () => {
                 const text = input.value.trim();
                 if (!text) return;
-                await runEdit(() => doc.updateComment(reply.id, text));
+                await runEdit(() => doc.updateComment(reply.id, text), { keepView: true });
                 announceReview("Reply updated");
                 drawSelection();
               }, false, "Save reply");
@@ -2385,7 +2385,7 @@ function renderReviewMarginItems() {
           const text = textarea.value.trim();
           if (!text) return;
           const metadata = currentReviewTimestamp();
-          await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date));
+          await runEdit(() => doc.replyToComment(item.data.id, text, undefined, undefined, metadata.date), { keepView: true });
           announceReview("Reply added");
           drawSelection();
         }, false, "Send reply");
@@ -8663,9 +8663,8 @@ function repaintPage(i) {
  *  materialized until something scrolls there. Model geometry plus the band's
  *  arithmetic answers "where is that, in scroll coordinates" without either.
  *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
-/** Breathing room between a revealed caret and the edge it was revealed past.
- *  Flush looks right for one frame; the next repaint puts it back outside,
- *  which is the "3 px above" `viewer-scroll-ceiling` reported. */
+/** Breathing room between a revealed caret and the edge it was revealed past;
+ *  flush lasts one frame and the next repaint puts it back outside. */
 const SCROLL_INTO_VIEW_MARGIN = 8;
 
 function scrollModelRectIntoView(flat, block = "nearest") {
@@ -8679,8 +8678,7 @@ function scrollModelRectIntoView(flat, block = "nearest") {
   const viewportHeight = viewportEl.clientHeight;
   const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
   let wanted = docY;
-  // The same margin the overlay path keeps, in document space.
-  const margin = SCROLL_INTO_VIEW_MARGIN;
+  const margin = SCROLL_INTO_VIEW_MARGIN; // as the overlay path, in doc space
   if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
   else if (top < docY) wanted = top - margin;
   else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight + margin;
@@ -8943,7 +8941,7 @@ function adoptEditPosition(node, offset) {
   return at;
 }
 
-async function applyEditResult(res) {
+async function applyEditResult(res, { keepView = false } = {}) {
   const node = res.node;
   const offset = res.offset;
   const dirty = res.dirtyPages;
@@ -8977,7 +8975,10 @@ async function applyEditResult(res) {
     drawSelection();
   }
   scheduleChromeRefresh({ stats: true, outline: true });
-  scrollCaretIntoView();
+  // A review edit is not a text edit: the caret never moved, and it is usually
+  // nowhere near the comment being worked on — so scrolling it into view sent
+  // the reader back to wherever the caret happened to be (the top, normally).
+  if (!keepView) scrollCaretIntoView();
   // Any edit can introduce a scalar no provisioned face covers — an emoji from
   // the picker, a paste from another app, an IME commit. Coverage used to be
   // checked only on open and for the two edits known to add symbols (checklist
@@ -9075,7 +9076,7 @@ function blockMutationInViewing() {
  *
  *  Returns whether the edit actually landed, so a caller chaining several edits
  *  can stop instead of continuing against a document that never changed. */
-async function runEdit(thunk, { typing = false, gate = false } = {}) {
+async function runEdit(thunk, { typing = false, gate = false, keepView = false } = {}) {
   if (blockMutationInViewing()) return false;
   if (!typing) breakTypingSession();
   if (gate && blockUntrackedInSuggesting()) return false;
@@ -9098,7 +9099,7 @@ async function runEdit(thunk, { typing = false, gate = false } = {}) {
     setStatus(editRefusalMessage(err, { editingUnavailableReason: readOnlyReason }), "error");
     return false;
   }
-  await applyEditResult(res);
+  await applyEditResult(res, { keepView });
   return true;
 }
 
@@ -13887,9 +13888,8 @@ function runCommand(i) {
   const cmd = cmdMatches[i];
   if (!cmd || cmd.enabled === false) return;
   closeCmd();
-  // The palette has two faces: the modal, and the File page's PANE. From the
-  // pane there is no modal for `closeCmd` to close, and the command ran with
-  // the page still covering the document. No-op when the page is closed.
+  // From the File page's PANE there is no modal for `closeCmd` to close, so
+  // the command ran with the page still over the document. No-op when closed.
   closeFilePage();
   cmd.run();
 }

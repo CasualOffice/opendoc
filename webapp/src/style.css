@@ -478,6 +478,14 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* The shell is a FRAME, not a page. Nothing here overflows — the header, the
+     band, the work area and the status bar are a flex column that fits, and
+     `#viewport` does all the scrolling — but `overscroll-behavior: auto` still
+     lets the browser rubber-band the ROOT when a gesture starts over a part
+     that cannot scroll. The owner's report: dragging on the header or the
+     toolbar moved the whole frame and it sprang back on release. Nothing that
+     is not a scroller should move under a scroll. */
+  overscroll-behavior: none;
 }
 
 body {
