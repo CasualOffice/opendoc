@@ -762,10 +762,16 @@ pub trait GalleySink {
 
     /// Zeroes `w:spacing/@before` on the fragment at `index` (a no-op for a
     /// table row). See the lookback contract on [`GalleySink`].
+    ///
+    /// Implement it with `collapse_space_before` so the paragraph's top border
+    /// band survives the collapse.
     fn zero_space_before(&mut self, index: usize);
 
     /// Zeroes `w:spacing/@after` on the fragment at `index` (a no-op for a
     /// table row). See the lookback contract on [`GalleySink`].
+    ///
+    /// Implement it with `collapse_space_after` so the paragraph's bottom
+    /// border band survives the collapse.
     fn zero_space_after(&mut self, index: usize);
 
     /// Records that a top-level block of the flowed sequence starts at the next
@@ -773,6 +779,33 @@ pub trait GalleySink {
     /// window that has to re-flow galley fragment *f* knows which block to
     /// start flowing from.
     fn mark_block(&mut self) {}
+}
+
+/// Applies the `w:contextualSpacing` collapse to a fragment's space-*before*.
+///
+/// `w:spacing/@before` goes away; the paragraph's **top border band** does not.
+/// `space_before` carries both (`BoxMetrics::space_before` is documented as "top
+/// margin/border"), and Word suppresses only the spacing — a bordered list item
+/// with contextual spacing keeps its frame. So the field collapses to the band,
+/// not to zero. A table row has neither, and is left alone.
+pub(crate) fn collapse_space_before(fragment: &mut BlockFragment) {
+    if let BlockFragment::Paragraph {
+        box_metrics, decor, ..
+    } = fragment
+    {
+        box_metrics.space_before = decor.band_before();
+    }
+}
+
+/// Applies the `w:contextualSpacing` collapse to a fragment's space-*after*.
+/// The mirror of `collapse_space_before`: the bottom border band survives.
+pub(crate) fn collapse_space_after(fragment: &mut BlockFragment) {
+    if let BlockFragment::Paragraph {
+        box_metrics, decor, ..
+    } = fragment
+    {
+        box_metrics.space_after = decor.band_after();
+    }
 }
 
 /// The paint tier's sink: the galley itself. Every behavior here is what the
@@ -795,15 +828,11 @@ impl GalleySink for Vec<BlockFragment> {
     }
 
     fn zero_space_before(&mut self, index: usize) {
-        if let BlockFragment::Paragraph { box_metrics, .. } = &mut self[index] {
-            box_metrics.space_before = Twip::ZERO;
-        }
+        collapse_space_before(&mut self[index]);
     }
 
     fn zero_space_after(&mut self, index: usize) {
-        if let BlockFragment::Paragraph { box_metrics, .. } = &mut self[index] {
-            box_metrics.space_after = Twip::ZERO;
-        }
+        collapse_space_after(&mut self[index]);
     }
 }
 
@@ -921,15 +950,11 @@ impl GalleySink for MeasureSink {
     }
 
     fn zero_space_before(&mut self, index: usize) {
-        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(index) {
-            box_metrics.space_before = Twip::ZERO;
-        }
+        collapse_space_before(self.pending_mut(index));
     }
 
     fn zero_space_after(&mut self, index: usize) {
-        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(index) {
-            box_metrics.space_after = Twip::ZERO;
-        }
+        collapse_space_after(self.pending_mut(index));
     }
 
     fn mark_block(&mut self) {
@@ -1052,15 +1077,11 @@ impl GalleySink for WindowSink {
 
     fn zero_space_before(&mut self, index: usize) {
         let absolute = self.offset + index;
-        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(absolute) {
-            box_metrics.space_before = Twip::ZERO;
-        }
+        collapse_space_before(self.pending_mut(absolute));
     }
 
     fn zero_space_after(&mut self, index: usize) {
         let absolute = self.offset + index;
-        if let BlockFragment::Paragraph { box_metrics, .. } = self.pending_mut(absolute) {
-            box_metrics.space_after = Twip::ZERO;
-        }
+        collapse_space_after(self.pending_mut(absolute));
     }
 }
