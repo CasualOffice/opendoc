@@ -407,10 +407,14 @@ pub struct Page {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_numbers: Vec<PlacedLineNumber>,
     /// The section's watermark, stamped behind everything else on this page.
-    /// Empty until the post-pagination pass
-    /// ([`crate::watermark::place_watermarks`]) fills it; kept off the pagination
-    /// hot path so page reuse stays position-free, exactly like the running
-    /// header/footer and the line numbers.
+    /// `None` unless this page's section declares one; filled by the
+    /// post-pagination `watermark` pass off the hot path so page reuse (the
+    /// stabilization halt) stays position-free, like the running header/footer,
+    /// the page border, and the line numbers.
+    ///
+    /// The pass is named in prose rather than linked: its module is private, like
+    /// `line_number` and `page_border` beside it, so a doc link from this PUBLIC
+    /// field is a hard error under the docs gate's `-D warnings`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watermark: Option<PlacedWatermark>,
     /// First model position on this page (the stabilization-halt key).
