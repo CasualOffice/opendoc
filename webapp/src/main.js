@@ -99,7 +99,9 @@ import {
 import { attachComposerKeys, autoGrowTextarea, createCommentAffordance, reviewCardButton, reviewIconButton } from "./review_chrome.mjs";
 import {
   formatReviewDate,
+  reviewAuthorColor,
   reviewAuthorDisplay,
+  reviewAuthorKey,
   reviewCardAriaLabel,
   reviewChangeTypeLabel,
   reviewCommentTooltip,
@@ -340,6 +342,7 @@ const tableFormula = document.getElementById("tableFormula");
 const tableFormulaApply = document.getElementById("tableFormulaApply");
 const insertTableBtn = document.getElementById("insertTableBtn");
 const lineNumbersBtn = document.getElementById("lineNumbersBtn");
+const watermarkBtn = document.getElementById("watermarkBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertShapeBtn = document.getElementById("insertShapeBtn");
 const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
@@ -1434,64 +1437,6 @@ function readReviewData(doc) {
   try { comments = JSON.parse(doc.listComments()) ?? []; } catch { comments = []; }
   try { revisions = JSON.parse(doc.listRevisions()) ?? []; } catch { revisions = []; }
   return { comments, revisions };
-}
-
-// --- Per-author review color / attribution (docs/81 REVIEW-GAP-015) -----------
-//
-// Word and Google Docs give each distinct reviewer a stable, auto-assigned color
-// so overlapping authors are distinguishable at a glance, plus a hover tooltip
-// with name/date/change type (docs/68 §"Reference reading", §50). We mirror that:
-// a fixed cycling palette, keyed deterministically by the author's stable
-// identity, is assigned in the webapp only — presentation, never persisted into
-// the model (the engine keeps just the opaque `author` string). The projection
-// (`listComments`/`listRevisions`) exposes the author *name* (and comment
-// initials), which is the stable key docs/68 §50 specifies hashing.
-
-// Ten hues chosen to stay legible over the white document canvas and, as a solid
-// avatar fill with white text, in both light and dark themes. Deliberately not
-// the theme accent, so author colors never collide with selection/UI chrome.
-const REVIEW_AUTHOR_PALETTE = [
-  "#1a73e8", // blue
-  "#188038", // green
-  "#d93025", // red
-  "#9334e6", // purple
-  "#e37400", // orange
-  "#0b8043", // deep green
-  "#a50e0e", // dark red
-  "#8430ce", // violet
-  "#b06000", // amber-brown
-  "#12805c", // teal
-];
-
-// The neutral fallback for an item with no author at all ("You"/"Unknown"): a
-// grey that is not part of the palette, so an unattributed change never masquer-
-// ades as a specific reviewer's color.
-const REVIEW_AUTHOR_FALLBACK_COLOR = "#5f6368";
-
-/** The stable per-author key: the author name, else the initials, else empty
- *  (the unattributed "You"/"Unknown" bucket). Case-folded so "Ada"/"ada" share
- *  one color. */
-function reviewAuthorKey(item) {
-  const name = String(item?.author ?? "").trim();
-  if (name) return name.toLowerCase();
-  const initials = String(item?.initials ?? "").trim();
-  if (initials) return initials.toLowerCase();
-  return "";
-}
-
-/** A deterministic palette color for an author key. Empty key → neutral
- *  fallback. Same key always yields the same color within and across sessions
- *  (pure function of the key), so an author's insertions, deletions, and
- *  comments all render in one color. */
-function reviewAuthorColor(key) {
-  if (!key) return REVIEW_AUTHOR_FALLBACK_COLOR;
-  // FNV-1a-style rolling hash — stable, order-sensitive, no dependencies.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= key.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return REVIEW_AUTHOR_PALETTE[hash % REVIEW_AUTHOR_PALETTE.length];
 }
 
 /** Revision kinds that are real, visitable changes despite carrying no text. */
@@ -4534,7 +4479,13 @@ function updateObjectResizeReadout(drag, widthTwip, heightTwip) {
     drag.readout = readout;
   }
   const inches = (twip) => (twip / TWIPS_PER_INCH).toFixed(2);
-  readout.textContent = `${inches(widthTwip)} × ${inches(heightTwip)} in`;
+  // Through the seam, and through the key Page Setup's own preview label already
+  // declares: it is the same sentence, and a readout that says "in" in every
+  // language is the untranslated corner this ratchet exists to close.
+  readout.textContent = t("pageSetup.dimensions", {
+    width: inches(widthTwip),
+    height: inches(heightTwip),
+  });
 }
 
 /** Commits (or cancels) the resize on release through one engine geometry
@@ -8466,6 +8417,11 @@ const LAYOUT_SURFACE = [
   // null` for `insert.table`. Without it the wiring below would attach a handler
   // that re-clicks the button the popover manager is already listening on.
   { command: "layout.lineNumbers", label: "Line numbers", kw: "line numbers numbering margin legal pleading count suppress", buttons: () => [lineNumbersBtn], requires: "doc", ownsClick: true, run: () => pageSetup.openLineNumbers() },
+  // Watermark. NOT `ownsClick`: this one opens a modal the module registers
+  // itself, so the click belongs to this table's own wiring — the popover
+  // manager is not involved, and `page_setup.mjs` deliberately binds no listener
+  // of its own to the button.
+  { command: "layout.watermark", label: "Watermark", kw: "watermark draft confidential sample stamp diagonal background behind text", buttons: () => [watermarkBtn], requires: "doc", run: () => pageSetup.openWatermark(true) },
   // Paragraph: the existing relative nudges, plus the two fieldsets of the
   // paragraph-properties panel that hold the absolute indent and spacing values.
   // The ribbon deliberately does NOT carry its own numeric fields: the panel
@@ -17028,12 +16984,15 @@ propertiesApplyBtn.addEventListener("click", async () => {
   toggleProperties(false);
 });
 
-// ---- Page setup and line numbers -------------------------------------------
-// Word's Layout ▸ Page Setup group, in `page_setup.mjs`: the geometry dialog and
-// the Line Numbers popover, which share one answer to "which section is the
-// caret in". Nothing about either is decided here any more.
+// ---- Page setup, line numbers, watermark -----------------------------------
+// Word's Layout ▸ Page Setup group, in `page_setup.mjs`: the geometry dialog, the
+// Line Numbers popover and the Watermark dialog, which share one answer to
+// "which section is the caret in". None of the three is decided here any more.
 const pageSetup = createPageSetup({
   getDoc: () => doc,
+  // The same inventory the Home band's font menu offers, so the watermark's Font
+  // list cannot name a face no other control here can.
+  fontInventory,
   selectionNode: () => selection?.focus?.node ?? "",
   selectionEndpoints: selEndpoints,
   runEdit,

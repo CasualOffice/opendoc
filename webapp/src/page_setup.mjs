@@ -1,4 +1,5 @@
-// Word's Layout ▸ Page Setup group: the page-geometry dialog, and line numbers.
+// Word's Layout ▸ Page Setup group: the page-geometry dialog, line numbers, and
+// the watermark.
 //
 // Extracted from `main.js` under `109` HF-085, and for the reason the ratchet in
 // `module_seams.test.mjs` exists — the file was AT its ceiling, and line
@@ -6,12 +7,14 @@
 // `bookmark_manager.mjs`: a surface that owns its own markup and its own state,
 // whose entire need of the application is a handful of verbs it can be handed.
 //
-// The two belong together rather than in two modules. In Word they are one
-// group, and here they are additionally one QUESTION — "which section is the
+// The three belong together rather than in three modules. In Word they are one
+// group (bar the watermark, which Word keeps on a Design tab this product does
+// not have), and here they are additionally one QUESTION — "which section is the
 // caret in" — answered by one engine call (`section_of`, shared behind
-// `pageSetupSections` and `lineNumbering`). Two modules would have meant two
-// copies of the section list and two chances to show one section's values while
-// writing another's, which is the defect the engine side of this change fixed.
+// `pageSetupSections`, `lineNumbering` and `watermark`). Separate modules would
+// have meant separate copies of the section list and as many chances to show one
+// section's values while writing another's, which is the defect the engine side
+// of the line-numbering change fixed.
 //
 // What did NOT come across: `updateToolbar`'s enable/disable sweep and the
 // review-mode gate. Both are about the application's state rather than about
@@ -43,6 +46,7 @@ const LINE_NUMBER_MODES = new Map([
  * `io` is its entire contact with the application:
  *
  *   `getDoc()`            the open document, or null
+ *   `fontInventory()`     the font names the editor offers anywhere else
  *   `selectionNode()`     the focus node id, or "" when there is no selection
  *   `selectionEndpoints()` `[sNode, sOff, eNode, eOff]`, or null
  *   `runEdit(thunk, options)` Promise; applies an engine edit, repaints, and
@@ -293,7 +297,11 @@ export function createPageSetup(io) {
   // would put a second dismissal contract on screen for four radio buttons.
 
   if (!lineNumbersMenu) {
-    return { open: toggle, setEnabled: (on) => void (pageSetupBtn.disabled = !on) };
+    return {
+      open: toggle,
+      openWatermark: () => {},
+      setEnabled: (on) => void (pageSetupBtn.disabled = !on),
+    };
   }
 
   /** The section's line numbering as the engine reports it, or null. */
@@ -386,18 +394,249 @@ export function createPageSetup(io) {
     });
   }
 
-  return {
+  const api = {
     open: toggle,
     /** The palette's route to the popover. Clicking the trigger rather than
      *  opening directly keeps ONE path through the popover manager, so the
      *  light-dismiss contract and the `aria-expanded` state cannot diverge
      *  between the two ways in. */
     openLineNumbers: () => lineNumbersBtn.click(),
+    openWatermark: () => {},
     /** Line numbers and page setup are both document-scoped, so they enable and
-     *  disable together with the rest of the document-scoped chrome. */
+     *  disable together with the rest of the document-scoped chrome. The
+     *  watermark button is NOT here: it is declared in `LAYOUT_SURFACE`, and
+     *  that sweep already owns its `disabled` state and the reason it carries
+     *  while disabled. Two owners for one attribute is how a control ends up
+     *  enabled with the wrong tooltip. */
     setEnabled(on) {
       pageSetupBtn.disabled = !on;
       lineNumbersBtn.disabled = !on;
     },
   };
+
+  // ---- Watermark (`109` OO-006) -------------------------------------------
+  // Word's "Printed Watermark": a form that is filled in and then committed, so
+  // a MODAL like the page-geometry dialog above rather than a popover like line
+  // numbers. The engine has painted `Section::watermark` since the layout half of
+  // OO-006 (`casual-doc-layout/src/watermark.rs`) and nothing could ask for one.
+  //
+  // Two deliberate departures from Word, recorded here rather than left to be
+  // discovered:
+  //
+  //   * it applies to the CARET'S SECTION, not to every section. Word's dialog
+  //     is document-wide; the engine's watermark is a section property, and the
+  //     honest surface for a section property is the one the rest of this module
+  //     already presents (the dialog's own note says so). A document-wide apply
+  //     wants its own "Apply to" control, which is a bigger change than this;
+  //   * the picture half is offered as a DISABLED choice carrying its reason.
+  //     A picture watermark needs a media id the document already holds and the
+  //     host cannot register one (`insertImage` places a drawing in the flow and
+  //     returns no id), so a live control would be a dead control. It is still
+  //     what an imported picture watermark reads back as, and Apply round-trips
+  //     it untouched, so opening this dialog can never silently rewrite one.
+  const watermarkBtn = el("watermarkBtn");
+  const watermarkDialog = el("watermarkDialog");
+  if (!watermarkDialog || !watermarkBtn) return api;
+
+  const watermarkText = el("watermarkText");
+  const watermarkFont = el("watermarkFont");
+  const watermarkSize = el("watermarkSize");
+  const watermarkColor = el("watermarkColor");
+  const watermarkSemi = el("watermarkSemiTransparent");
+  const watermarkLayoutSeg = el("watermarkLayoutSeg");
+  const watermarkTextFields = el("watermarkTextFields");
+  const watermarkKinds = [...watermarkDialog.querySelectorAll('input[name="watermarkKind"]')];
+
+  /** The watermark the dialog is currently showing, as the engine reported it.
+   *  Kept because Apply has to write back the fields this form does NOT offer —
+   *  bold, italic, and a picture's media/scale/washout. */
+  let currentWatermark = null;
+
+  /** Word's own watermark size list, in points. Appended from script rather than
+   *  authored in the markup because a number is not a string a translator has to
+   *  see; "Auto" is in the markup precisely because it is. */
+  for (const points of [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72, 96, 120, 144]) {
+    const option = document.createElement("option");
+    option.value = String(points * 2); // half-points, the engine's unit
+    option.textContent = String(points);
+    watermarkSize.appendChild(option);
+  }
+
+  /** The section's watermark as the engine reports it, or null when the document
+   *  has no sections at all. A section with no watermark comes back as
+   *  `kind: "none"` carrying the defaults for a NEW one, so this form has no
+   *  separate "new watermark" state that could drift from the engine's idea of
+   *  one. */
+  function watermarkState() {
+    const doc = io.getDoc();
+    if (!doc) return null;
+    const raw = doc.watermark(io.selectionNode());
+    return raw === "null" ? null : JSON.parse(raw);
+  }
+
+  /** Which kind the radios are set to. */
+  function watermarkKind() {
+    return watermarkKinds.find((input) => input.checked)?.value ?? "none";
+  }
+
+  /** Which way the stamp runs. */
+  function watermarkLayout() {
+    return (
+      watermarkLayoutSeg.querySelector('button[aria-pressed="true"]')?.dataset.watermarkLayout ??
+      "diagonal"
+    );
+  }
+
+  /** Fills the Font list from the editor's own inventory, so a watermark cannot
+   *  be given a face no other control here can name. The first entry is the
+   *  document's default, which is what an absent `w:rFonts` resolves to. A face
+   *  the inventory does not hold — an imported watermark's own — is added rather
+   *  than dropped, for the reason the size list has the same rule below. */
+  function paintWatermarkFonts(selected) {
+    const names = io.fontInventory?.() ?? [];
+    watermarkFont.replaceChildren();
+    const fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = t("watermark.fontDefault");
+    watermarkFont.appendChild(fallback);
+    for (const name of selected && !names.includes(selected) ? [selected, ...names] : names) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      watermarkFont.appendChild(option);
+    }
+    watermarkFont.value = selected ?? "";
+  }
+
+  /** The chosen kind decides which half of the form is live. Word greys the text
+   *  fields under "No watermark" rather than hiding them, so the dialog does not
+   *  change shape as you choose. */
+  function reflectWatermarkKind() {
+    watermarkTextFields.disabled = watermarkKind() !== "text";
+  }
+
+  /** Paints every control from the engine's answer. False when there is no
+   *  section to carry a watermark, which is what stops the dialog opening on a
+   *  form that cannot be applied. */
+  function reflectWatermark() {
+    const state = watermarkState();
+    if (!state) return false;
+    currentWatermark = state;
+    for (const input of watermarkKinds) input.checked = input.value === state.kind;
+    watermarkText.value = state.text ?? "";
+    paintWatermarkFonts(state.font ?? "");
+    // An imported watermark can carry any size at all, and a <select> silently
+    // falls back to its first option for a value it does not hold — which would
+    // read as "Auto" and turn a 37pt stamp into an auto-fitted one the moment
+    // anybody pressed Apply. An off-list size joins the list instead.
+    const wanted = state.sizeHalfPoints == null ? "" : String(state.sizeHalfPoints);
+    if (wanted && ![...watermarkSize.options].some((option) => option.value === wanted)) {
+      const option = document.createElement("option");
+      option.value = wanted;
+      option.textContent = String(state.sizeHalfPoints / 2);
+      watermarkSize.appendChild(option);
+    }
+    watermarkSize.value = wanted;
+    // A picture watermark reports no colour at all, and `<input type=color>`
+    // resolves anything it cannot parse to black — which would read as a black
+    // stamp that nobody asked for.
+    watermarkColor.value = /^#[0-9a-f]{6}$/i.test(state.color ?? "") ? state.color : "#c0c0c0";
+    watermarkSemi.checked = state.semiTransparent === true;
+    for (const button of watermarkLayoutSeg.querySelectorAll("button")) {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.watermarkLayout === (state.layout || "diagonal")),
+      );
+    }
+    reflectWatermarkKind();
+    return true;
+  }
+
+  const watermarkModal = io.registerModal(watermarkDialog, {
+    initialFocus: () => watermarkKinds.find((input) => input.checked) ?? watermarkKinds[0],
+    fallbackFocus: () => watermarkBtn,
+    defaultAction: () => void applyWatermark(),
+  });
+
+  /** Opens the dialog on the engine's current answer, or closes it. */
+  function toggleWatermark(open) {
+    const show = open ?? !watermarkModal.isOpen;
+    if (show === watermarkModal.isOpen) return;
+    if (show && !reflectWatermark()) return; // no section to carry one
+    if (show) watermarkModal.open();
+    else watermarkModal.close();
+  }
+
+  /** Writes the section's watermark. One undoable action, whichever branch. */
+  async function applyWatermark() {
+    const doc = io.getDoc();
+    if (!doc || !currentWatermark) return;
+    const kind = watermarkKind();
+    // The engine refuses an empty stamp and leaves the section exactly as it
+    // was, so Apply would look like a button that does nothing. Refuse out loud,
+    // at the field, and keep the dialog open.
+    //
+    // The field is blanked first because `required` refuses only an EMPTY value:
+    // whitespace passes it, so a field holding three spaces would have been
+    // refused here in silence — the very defect this branch exists to avoid. The
+    // message is then the browser's own, in the browser's language, and costs no
+    // key of ours.
+    if (kind === "text" && !watermarkText.value.trim()) {
+      watermarkText.value = "";
+      watermarkText.reportValidity();
+      return;
+    }
+    const payload =
+      kind === "none"
+        ? { section: currentWatermark.section, kind: "none" }
+        : kind === "picture"
+          ? // Round-tripped verbatim: none of a picture's fields is editable
+            // here, so Apply must not invent values for them.
+            { ...currentWatermark }
+          : {
+              section: currentWatermark.section,
+              kind: "text",
+              text: watermarkText.value.trim(),
+              font: watermarkFont.value || null,
+              sizeHalfPoints: watermarkSize.value ? Number(watermarkSize.value) : null,
+              color: watermarkColor.value,
+              // Not in Word's dialog, and not invented here either: an imported
+              // watermark can be bold or italic, and dropping that on Apply
+              // would be a silent rewrite of the document.
+              bold: currentWatermark.bold === true,
+              italic: currentWatermark.italic === true,
+              layout: watermarkLayout(),
+              semiTransparent: watermarkSemi.checked,
+            };
+    await io.runEdit(() => doc.setWatermark(JSON.stringify(payload)), { gate: true });
+    watermarkModal.close();
+  }
+
+  for (const input of watermarkKinds) {
+    input.addEventListener("change", () => {
+      reflectWatermarkKind();
+      // Choosing "Text watermark" is choosing to type one, so the caret goes
+      // where the words go — the same courtesy the page-setup dialog's opening
+      // intents pay.
+      if (watermarkKind() === "text") watermarkText.focus();
+    });
+  }
+
+  watermarkLayoutSeg.addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-watermark-layout]");
+    if (!button) return;
+    for (const other of watermarkLayoutSeg.querySelectorAll("button")) {
+      other.setAttribute("aria-pressed", String(other === button));
+    }
+  });
+
+  el("watermarkCancel").addEventListener("click", () => toggleWatermark(false));
+  el("watermarkClose").addEventListener("click", () => toggleWatermark(false));
+  el("watermarkApply").addEventListener("click", () => void applyWatermark());
+
+  // The ribbon button's own click is wired by `LAYOUT_SURFACE`, which is also
+  // what gives the command its palette row; this is only the palette's and the
+  // ribbon's shared way in.
+  api.openWatermark = (open = true) => toggleWatermark(open);
+  return api;
 }

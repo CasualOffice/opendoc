@@ -94,6 +94,32 @@ const MODALS = [
     },
   },
   {
+    id: "watermarkDialog",
+    name: "Watermark",
+    // Word keeps Watermark on a Design tab this product does not have, so it is
+    // the fifth control in Layout ▸ Page Setup — where the rest of the section's
+    // furniture already lives.
+    //
+    // No surviving opener, and that is deliberate rather than a gap: every button
+    // wired from `LAYOUT_SURFACE` goes through `onButton`, which preventDefaults
+    // mousedown precisely so the ribbon never takes the keyboard off the document.
+    // So the requirement here is the one that actually holds for this route —
+    // Escape puts the keyboard back on the editing surface, where it was.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The radio group is the dialog's first decision (No watermark / Text
+    // watermark), and the checked one is where Word lands too. Named by state
+    // rather than by id so the row does not assume which kind the fixture's
+    // document has.
+    focus: '#watermarkDialog input[name="watermarkKind"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="layout"]').click();
+      await page.locator("#watermarkBtn").click();
+    },
+  },
+  {
     id: "aboutDialog",
     name: "About",
     // Opened from the File PAGE rather than the palette, because a durable

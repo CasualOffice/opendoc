@@ -145,3 +145,66 @@ export function reviewFormattingDescription(changes) {
     return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
   }).join("\n");
 }
+
+// --- Per-author review color (docs/81 REVIEW-GAP-015) ------------------------
+//
+// Word and Google Docs give each distinct reviewer a stable, auto-assigned color
+// so overlapping authors are distinguishable at a glance (docs/68 §50). We mirror
+// that: a fixed cycling palette, keyed deterministically by the author's stable
+// identity, assigned in the webapp only — presentation, never persisted into the
+// model (the engine keeps just the opaque `author` string). The projection
+// (`listComments`/`listRevisions`) exposes the author *name* (and comment
+// initials), which is the stable key docs/68 §50 specifies hashing.
+//
+// Here rather than in `main.js` because it is the same kind of thing as the rest
+// of this module: a pure function of one review item, with no DOM and no engine,
+// which is what makes the mapping provable without booting a browser. It moved to
+// pay for the watermark dialog's lines under the `module_seams` ratchet, and this
+// is a better home for it than the file it came out of.
+
+// Ten hues chosen to stay legible over the white document canvas and, as a solid
+// avatar fill with white text, in both light and dark themes. Deliberately not
+// the theme accent, so author colors never collide with selection/UI chrome.
+const REVIEW_AUTHOR_PALETTE = [
+  "#1a73e8", // blue
+  "#188038", // green
+  "#d93025", // red
+  "#9334e6", // purple
+  "#e37400", // orange
+  "#0b8043", // deep green
+  "#a50e0e", // dark red
+  "#8430ce", // violet
+  "#b06000", // amber-brown
+  "#12805c", // teal
+];
+
+// The neutral fallback for an item with no author at all ("You"/"Unknown"): a
+// grey that is not part of the palette, so an unattributed change never masquer-
+// ades as a specific reviewer's color.
+const REVIEW_AUTHOR_FALLBACK_COLOR = "#5f6368";
+
+/** The stable per-author key: the author name, else the initials, else empty
+ *  (the unattributed "You"/"Unknown" bucket). Case-folded so "Ada"/"ada" share
+ *  one color. */
+export function reviewAuthorKey(item) {
+  const name = String(item?.author ?? "").trim();
+  if (name) return name.toLowerCase();
+  const initials = String(item?.initials ?? "").trim();
+  if (initials) return initials.toLowerCase();
+  return "";
+}
+
+/** A deterministic palette color for an author key. Empty key → neutral
+ *  fallback. Same key always yields the same color within and across sessions
+ *  (pure function of the key), so an author's insertions, deletions, and
+ *  comments all render in one color. */
+export function reviewAuthorColor(key) {
+  if (!key) return REVIEW_AUTHOR_FALLBACK_COLOR;
+  // FNV-1a-style rolling hash — stable, order-sensitive, no dependencies.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return REVIEW_AUTHOR_PALETTE[hash % REVIEW_AUTHOR_PALETTE.length];
+}
