@@ -1463,6 +1463,23 @@
              rejected, filter/mode changed) — announced to a screen reader without
              stealing focus (REVIEW-GAP-023). -->
         <div id="reviewLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+        <!-- The margin comment affordance (Google Docs' margin button).
+             With the comment column closed the right margin was empty and
+             offered nothing, so the one place a reader looks when they want to
+             say something about a sentence — beside the sentence — was the only
+             place in the chrome with no affordance. Docs puts an Add-comment
+             button there, on the line the caret is in; Word instead puts a
+             Comments button in the top right and marks the text. This chrome
+             already renders comment cards in that margin, so Docs' button is the
+             one that belongs in it. It is dimmed until there is a range, because
+             that is what `review.comment` anchors to.
+             It is not a second way to comment: main.js declares it on the
+             existing `review.comment` row of REVIEW_SURFACE, so the ribbon
+             button, the context menu, the palette and this all run one function
+             under one enablement rule. `review_chrome.mjs` places it and
+             `review_layout.mjs` owns the arithmetic (including the refusal when
+             the margin is too thin to hold it — HF-088). -->
+        <button data-i18n-title="reviewMarginComment.addComment.title" data-i18n-label="reviewMarginComment.addCommentOnSelectedText.label" id="reviewMarginComment" type="button" class="review-margin-add" hidden title="Add a comment" aria-label="Add a comment on the selected text"><span class="ms" aria-hidden="true">add_comment</span></button>
         <aside data-i18n-label="viewport.commentsSuggestions.label" id="reviewSidebar" class="review-sidebar" hidden aria-label="Comments and suggestions">
           <div id="reviewSidebarHeader" class="review-sidebar-header">
             <div class="review-sidebar-headrow">

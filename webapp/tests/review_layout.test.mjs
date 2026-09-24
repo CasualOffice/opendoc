@@ -15,7 +15,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  COMMENT_AFFORDANCE_SIZE,
   REVIEW_CARD_GAP,
+  commentAffordanceSpot,
   reviewStackHeight,
   stackReviewCards,
 } from "../src/review_layout.mjs";
@@ -109,4 +111,85 @@ test("the stylesheet and main.js change shape at the same width", () => {
     "the sheet rules must be more specific than `.viewport.has-review-sidebar " +
       ".review-sidebar`, which is the tie the 860px rung lost",
   );
+});
+
+// ---- The right-margin comment affordance ------------------------------------
+//
+// Google Docs puts an Add-comment button in the page's right margin, on the
+// line the caret is in. ONLYOFFICE has no such button at all — with
+// their Comments panel closed the only signal is inside the text (a per-author
+// highlight plus a 2px range mark) and a 7px dot on the rail button — but its
+// comment popover is anchored at the point we place against:
+// `private_GetCommentWorldAnchorPoint` takes `X = Get_PageLimits(nPage).XLimit`
+// (the right edge of the text area) and `Y = m_oStartInfo.Y` (the commented
+// line), then offsets by the arrow width and clamps 25px clear of the canvas
+// edge. So the geometry below is not invented: it is the anchor both products
+// use, with the refusal ONLYOFFICE expresses as a clamp expressed instead as
+// "then there is no room for it" — a button overlapping the text it points at
+// is the HF-088 mistake in miniature.
+
+const VIEWPORT = { viewportLeft: 55, viewportTop: 100, viewportWidth: 1225 };
+
+/** A selection's first line, 19px tall, on a Letter sheet centred in VIEWPORT. */
+const line = (top, pageRight = 1076) => ({ top, bottom: top + 19, pageRight });
+
+test("the affordance sits in the margin, beside the page, centred on the line", () => {
+  const spot = commentAffordanceSpot({ rect: line(300), ...VIEWPORT });
+  // 1076 (page right) - 55 (viewport left) + 12 (gap).
+  assert.equal(spot.left, 1033);
+  // 300 + (19 - 32) / 2 - 100 = 193.5, rounded.
+  assert.equal(spot.top, 194);
+});
+
+test("the position is in scroll coordinates, so the button rides the document", () => {
+  const spot = commentAffordanceSpot({
+    rect: line(300),
+    ...VIEWPORT,
+    scrollTop: 4000,
+    scrollLeft: 40,
+  });
+  assert.equal(spot.top, 4194);
+  assert.equal(spot.left, 1073);
+});
+
+test("a compressed band is taken out, because the caller adds it back per frame", () => {
+  const plain = commentAffordanceSpot({ rect: line(300), ...VIEWPORT, scrollTop: 900 });
+  const banded = commentAffordanceSpot({
+    rect: line(300),
+    ...VIEWPORT,
+    scrollTop: 900,
+    bandOffset: 250,
+  });
+  assert.equal(plain.top - banded.top, 250);
+});
+
+test("no selection, no affordance", () => {
+  assert.equal(commentAffordanceSpot({ rect: null, ...VIEWPORT }), null);
+});
+
+test("a margin too thin to hold the button refuses rather than covering the page", () => {
+  // The button (32) needs a gap (12) on each side: 56px of margin, no less.
+  const fits = commentAffordanceSpot({ rect: line(300, 55 + 1225 - 56), ...VIEWPORT });
+  assert.ok(fits, "56px of margin is exactly enough");
+  const tight = commentAffordanceSpot({ rect: line(300, 55 + 1225 - 55), ...VIEWPORT });
+  assert.equal(tight, null, "55px is not, and overlapping the text is not the answer");
+});
+
+test("a page wider than the window has no margin at all", () => {
+  assert.equal(commentAffordanceSpot({ rect: line(300, 1400), ...VIEWPORT }), null);
+});
+
+test("the button's box is one number, in the arithmetic and in the stylesheet", () => {
+  const css = read("style.css");
+  const rule = css.match(/\.review-margin-add \{([^}]*)\}/);
+  assert.ok(rule, "style.css must declare `.review-margin-add`");
+  for (const axis of ["width", "height"]) {
+    assert.match(
+      rule[1],
+      new RegExp(`${axis}: ${COMMENT_AFFORDANCE_SIZE}px;`),
+      `\`.review-margin-add\` must be ${COMMENT_AFFORDANCE_SIZE}px on ${axis}: that is ` +
+        "the number `commentAffordanceSpot` measures the page's right margin against, " +
+        "so a stylesheet that disagrees decides the button fits where it does not",
+    );
+  }
 });

@@ -67,8 +67,14 @@ const SRC = new URL("../src/", import.meta.url);
  *  review-formatting labels. BOTH sides of that merge lowered the ceiling from
  *  17,362 to their own half's measurement — 17,324 and 17,330 — so neither
  *  number was right for the merged file, which is the same trap this note
- *  records above. Re-measured from the merged file. */
-const MAIN_JS_LINE_CEILING = 17344;
+ *  records above. Re-measured from the merged file.
+ *  Lowered again to 17,314 by the right-margin comment affordance: the file was
+ *  AT its ceiling, so the four DOM factories every comment card is built from
+ *  (`reviewCardButton`, `reviewIconButton`, `autoGrowTextarea`,
+ *  `attachComposerKeys`) moved to `review_chrome.mjs`, which is also where the
+ *  affordance's own controller lives. None of the four read a single piece of
+ *  application state, so they had no business being in here. */
+const MAIN_JS_LINE_CEILING = 17314;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
