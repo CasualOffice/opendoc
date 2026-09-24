@@ -478,6 +478,14 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* The shell is a FRAME, not a page. Nothing here overflows — the header, the
+     band, the work area and the status bar are a flex column that fits, and
+     `#viewport` does all the scrolling — but `overscroll-behavior: auto` still
+     lets the browser rubber-band the ROOT when a gesture starts over a part
+     that cannot scroll. The owner's report: dragging on the header or the
+     toolbar moved the whole frame and it sprang back on release. Nothing that
+     is not a scroller should move under a scroll. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -820,6 +828,7 @@ input {
   border-radius: var(--radius-popover);
   background: var(--surface);
   box-shadow: var(--shadow-popover);
+  overscroll-behavior: contain;
 }
 
 .app-menu-popover[hidden] {
@@ -999,8 +1008,11 @@ body.modal-open {
   display: grid;
   place-items: center;
   padding: var(--space-6);
+  /* No `backdrop-filter`. A 2px blur over a full-viewport scrim is re-rasterised
+     on every frame that anything above it scrolls, and the 42% scrim is already
+     what separates the dialog from the document — the blur was decoration
+     bought at the price of a class of scroll jank. */
   background: rgba(20, 22, 28, 0.42);
-  backdrop-filter: blur(2px);
 }
 
 .dialog-overlay[hidden] {
@@ -1112,6 +1124,7 @@ body.modal-open {
   min-height: 0;
   overflow: auto;
   padding: var(--dlg-pad-y) var(--dlg-pad-x);
+  overscroll-behavior: contain;
 }
 
 /* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
@@ -1646,6 +1659,7 @@ body.modal-open {
   padding: 0;
   overflow: auto;
   list-style: none;
+  overscroll-behavior: contain;
 }
 
 .field-choice {
@@ -1802,6 +1816,7 @@ body.modal-open {
   max-height: 320px;
   overflow: auto;
   padding: 2px;
+  overscroll-behavior: contain;
 }
 
 .glyph-cell {
@@ -2045,6 +2060,7 @@ body.modal-open {
   padding: 0;
   overflow: auto;
   list-style: none;
+  overscroll-behavior: contain;
 }
 
 .bookmark-row {
@@ -2286,6 +2302,7 @@ body.modal-open {
   border-radius: var(--radius-popover);
   box-shadow: var(--shadow-popover);
   color: var(--ink);
+  overscroll-behavior: contain;
 }
 
 .context-menu[hidden] {
@@ -2448,6 +2465,7 @@ body.modal-open {
   width: min(286px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .menu-heading {
@@ -2709,6 +2727,7 @@ body.modal-open {
   max-height: 340px;
   overflow: auto;
   padding: 6px;
+  overscroll-behavior: contain;
 }
 
 .cmd-item {
@@ -2801,6 +2820,7 @@ body.modal-open {
   overflow: auto;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4) var(--space-4);
+  overscroll-behavior: contain;
 }
 
 .find-search-row {
@@ -3713,6 +3733,7 @@ body.compact-mode {
   border-radius: var(--radius-popover);
   background: var(--surface);
   box-shadow: var(--shadow-popover);
+  overscroll-behavior: contain;
 }
 
 .ribbon-overflow-menu[hidden] {
@@ -4579,6 +4600,7 @@ body.is-format-painting .page-wrap * {
   min-width: 0;
   overflow: auto;
   padding: 6px;
+  overscroll-behavior: contain;
 }
 
 .side-panel.table-properties-panel,
@@ -5769,6 +5791,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
      (`#file-menu-panel .panel-menu`). */
   background: var(--bg);
   border-right: 1px solid var(--line);
+  overscroll-behavior: contain;
 }
 
 .file-page-body {
@@ -5784,6 +5807,7 @@ body.ribbon-mode:not(.doc-loaded) #appMenuBar { display: flex; }
   min-width: 0;
   padding: 20px 24px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .file-page-detail h2 {
@@ -7207,6 +7231,7 @@ body:not(.doc-loaded) .drop-title {
   width: 226px;
   max-height: min(520px, calc(100vh - 24px));
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .underline-style-option {
