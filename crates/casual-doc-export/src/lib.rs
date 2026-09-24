@@ -81,6 +81,8 @@ mod semantic_tests {
     use std::io::{Cursor, Write};
 
     use casual_doc_import::{ImportConfig, ImportMode, import_main_document_xml, import_package};
+    // Own line, kept out of any sorted list (the repo's parallel-PR rule).
+    use casual_doc_model::v1::{Rgba, WatermarkContent, WatermarkLayout};
     use casual_doc_ooxml::{DocxPackage, PackageLimits};
     use zip::write::SimpleFileOptions;
     use zip::{CompressionMethod, ZipWriter};
@@ -4874,6 +4876,102 @@ mod semantic_tests {
             m1, m2,
             "headers/footers + sectPr refs survive write -> reopen"
         );
+    }
+
+    /// Word's own watermark XML, in, out, and in again (`109` OO-006).
+    ///
+    /// This is the test NEITHER half could write. The import agent could not:
+    /// export did not write `SectionBoundary.watermark` yet, so a round trip
+    /// would have compared `None` against `None` and passed for the wrong reason.
+    /// The export agent could not: import did not recognise a watermark yet, so
+    /// reopening its output gave `None` however correct the XML was. Each wrote
+    /// the strongest assertion available to it — extracted values on one side,
+    /// emitted XML on the other — and the round trip only became assertable once
+    /// both landed. It is the one that matters, because it is the only one that
+    /// fails if the two halves disagree about anything.
+    #[test]
+    fn a_word_watermark_survives_the_round_trip() {
+        let content_types = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
+        let root_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+        let document = br#"<w:document xmlns:w="urn:w" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
+            <w:p><w:r><w:t>body</w:t></w:r></w:p>
+            <w:sectPr>
+                <w:headerReference w:type="default" r:id="rIdHa"/>
+                <w:pgSz w:w="12240" w:h="15840"/>
+                <w:pgMar w:top="1440" w:bottom="1440" w:start="1440" w:end="1440"/>
+                <w:cols w:num="1"/>
+            </w:sectPr>
+        </w:body></w:document>"#;
+        let doc_rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdHa" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+        // Word's shape, verbatim in shape: the magic id, the text-path shapetype,
+        // `rotation:315`, a half-opacity fill, and the words in `v:textpath@string`.
+        let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+            <w:p><w:r><w:pict>
+                <v:shape id="PowerPlusWaterMarkObject357476642" o:spid="_x0000_s2049" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:527.85pt;height:131.95pt;rotation:315;z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="#c0c0c0" stroked="f">
+                    <v:fill opacity=".5"/>
+                    <v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="DRAFT"/>
+                </v:shape>
+            </w:pict></w:r></w:p>
+        </w:hdr>"##;
+        let source = zip_named(&[
+            ("[Content_Types].xml", content_types),
+            ("_rels/.rels", root_rels),
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", doc_rels),
+            ("word/header1.xml", header),
+        ]);
+
+        // In: lifted off the header and onto the section, with its values read.
+        let m1 = reopen(&source);
+        let first = m1.definitions().sections[0]
+            .watermark
+            .clone()
+            .expect("Word's watermark shape is recognised and lifted onto the section");
+        let WatermarkContent::Text(text) = &first.content else {
+            panic!("a v:textpath shape is a TEXT watermark");
+        };
+        assert_eq!(text.text, "DRAFT", "the words come from v:textpath@string");
+        assert_eq!(
+            text.color,
+            Rgba {
+                r: 0xc0,
+                g: 0xc0,
+                b: 0xc0,
+                a: 255
+            },
+            "the ink is `fillcolor` at FULL alpha — the fill's opacity is \
+             `semi_transparent`, and folding it into the colour too would halve it twice"
+        );
+        assert!(first.semi_transparent, "`<v:fill opacity=\".5\"/>`");
+        assert_eq!(
+            first.layout,
+            WatermarkLayout::Diagonal,
+            "`rotation:315` is Word's diagonal"
+        );
+        assert!(
+            text.size_half_points.is_none(),
+            "`font-size:1pt` is Word's Auto sentinel, not a 0.5pt stamp"
+        );
+
+        // And it is NOT also a float: two copies would paint the stamp twice.
+        assert!(
+            m1.definitions().headers.iter().count() == 1,
+            "the header part survives the lift"
+        );
+
+        // Out and in again: the writer regenerates the shape, and the reader finds
+        // the same watermark.
+        let bytes = write_document(&m1, &BTreeMap::new()).unwrap();
+        let m2 = reopen(&bytes);
+        assert_eq!(
+            m2.definitions().sections[0].watermark,
+            Some(first),
+            "the watermark survives write -> reopen unchanged"
+        );
+
+        // The whole document, not just the watermark: a round trip that preserved
+        // the stamp while dropping the header's other content would pass above.
+        assert_eq!(m1, m2, "and so does everything else");
     }
 
     #[test]
