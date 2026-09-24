@@ -2759,6 +2759,7 @@ fn valid_section(
         paper_source: PaperSource::default(),
         page_borders: PageBorders::default(),
         line_numbering: LineNumbering::default(),
+        watermark: None,
         footnote_props: NoteProperties::default(),
         endnote_props: NoteProperties::default(),
         text_direction: None,

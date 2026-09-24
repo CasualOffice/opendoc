@@ -1323,6 +1323,7 @@ fn a_header_float_uses_the_section_recorded_on_its_page() {
         paper_source: Default::default(),
         page_borders: Default::default(),
         line_numbering: Default::default(),
+        watermark: None,
         footnote_props: Default::default(),
         endnote_props: Default::default(),
         text_direction: None,

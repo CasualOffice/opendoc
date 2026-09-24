@@ -11,6 +11,8 @@ use super::{
 // Separate `use` line (kept out of the sorted block above) to avoid import-list
 // merge collisions with other agents editing this shared model file.
 use super::PropChange;
+// Same rule: the watermark types' own imports go on their own line.
+use super::{FontName, Rgba};
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -620,6 +622,108 @@ impl LineNumbering {
     }
 }
 
+/// The longest watermark text, in bytes. Word's own dialog caps its combo box
+/// well below this; the bound exists so a document cannot carry an unbounded
+/// string into the layout pass, not to express a product limit.
+pub const MAX_WATERMARK_TEXT_BYTES: usize = 512;
+
+/// How a watermark is angled on the page — Word's Layout radio pair.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WatermarkLayout {
+    /// Rising left-to-right across the page, Word's default and the angle every
+    /// "DRAFT" stamp is recognised by. Word writes this as a fixed
+    /// `rotation:315` on the shape — not an angle derived from the page — so the
+    /// model names the choice and layout applies that one angle.
+    #[default]
+    Diagonal,
+    /// Level with the text.
+    Horizontal,
+}
+
+/// A text watermark ("DRAFT", "CONFIDENTIAL", a case number).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WatermarkText {
+    /// The words to stamp (non-empty, at most [`MAX_WATERMARK_TEXT_BYTES`]).
+    pub text: String,
+    /// The face to stamp them in. `None` takes the document's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<FontName>,
+    /// Size in half-points. `None` is Word's "Auto", which scales the text to
+    /// the page rather than picking a number — so it stays automatic here too
+    /// and is resolved by layout, where the page width is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_half_points: Option<u32>,
+    /// The ink.
+    pub color: Rgba,
+    /// Bold (`w:b` on the shape's run).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    /// Italic (`w:i`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+}
+
+/// A picture watermark: an image stamped behind the text, usually washed out.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WatermarkPicture {
+    /// The image, in `Definitions::media`.
+    pub media: MediaId,
+    /// Scale as a percentage of the image's natural size. `None` is Word's
+    /// "Auto" — fit the page — and is resolved by layout for the same reason
+    /// [`WatermarkText::size_half_points`] is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_percent: Option<u32>,
+    /// Wash the image out so text stays readable over it (Word's "Washout",
+    /// checked by default). Painted through the existing picture-opacity seam.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub washout: bool,
+}
+
+/// A section's watermark (Word's Design ▸ Watermark): text or a picture, stamped
+/// behind the body on every page of the section.
+///
+/// # Why this is a section property and not a header shape
+///
+/// Word has no watermark element. It stores one as a floating VML shape in each
+/// of a section's headers — `v:shape` with a `v:textpath` for text, `v:imagedata`
+/// with `gain`/`blacklevel` for a picture — and recognises it again by the
+/// `PowerPlusWaterMarkObject`/`WordPictureWatermark` shape id. That is a
+/// serialization detail of one producer, and modeling it literally would mean
+/// every consumer of this model re-deriving "is this shape a watermark" from a
+/// name, and a watermark silently becoming three unrelated shapes the moment a
+/// section has first/even/odd headers.
+///
+/// So the model says what the user asked for, once per section, and import lifts
+/// it out of the header while export puts it back in the shape Word expects.
+/// Round-tripping through Word is a mapping problem at the edges; it is not a
+/// reason for the middle of the system to hold a warped-text shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WatermarkContent {
+    /// Stamped words.
+    Text(WatermarkText),
+    /// A stamped image.
+    Picture(WatermarkPicture),
+}
+
+/// A section's watermark and how it sits on the page.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Watermark {
+    /// What is stamped.
+    pub content: WatermarkContent,
+    /// The angle.
+    #[serde(default)]
+    pub layout: WatermarkLayout,
+    /// Draw it faintly so the body stays readable (Word's "Semitransparent",
+    /// checked by default for text). Applied on top of the content's own alpha.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub semi_transparent: bool,
+}
+
 /// Where a section's footnotes or endnotes are placed (`w:footnotePr`/`w:endnotePr`
 /// `w:pos`). The union of `ST_FtnPos` (footnotes) and `ST_EdnPos` (endnotes) is
 /// modeled; an unknown token is reported by the importer, never silently kept.
@@ -746,6 +850,12 @@ pub struct SectionBoundary {
     /// Line numbering (`w:lnNumType`). Additive: omitted when empty.
     #[serde(default, skip_serializing_if = "LineNumbering::is_empty")]
     pub line_numbering: LineNumbering,
+    /// The section's watermark, stamped behind the body on every page. Word has
+    /// no watermark element and keeps one as a VML shape in each header; see
+    /// [`Watermark`] for why the model states it once instead. Additive: omitted
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<Watermark>,
     /// Per-section footnote properties (`w:footnotePr`). Additive: omitted when
     /// empty.
     #[serde(default, skip_serializing_if = "NoteProperties::is_empty")]

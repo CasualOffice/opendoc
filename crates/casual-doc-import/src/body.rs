@@ -6038,6 +6038,11 @@ impl BodyParser<'_> {
             paper_source,
             page_borders,
             line_numbering,
+            // Word keeps a watermark as a VML shape in the section's HEADERS, not
+            // in `w:sectPr`, so it cannot be read here — the header parts are
+            // imported separately and the shape has to be lifted out of them once
+            // both exist. `lift_header_watermarks` does that, after this.
+            watermark: None,
             footnote_props: clamp_note(accumulator.footnote_props),
             endnote_props: clamp_note(accumulator.endnote_props),
             text_direction: accumulator.text_direction,

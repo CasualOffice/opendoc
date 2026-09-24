@@ -140,7 +140,29 @@ pub fn render(
     // passed to every paint call so content outside an `exact`-height row's clip
     // rect is not drawn.
     let mut clip_stack: Vec<Mask> = Vec::new();
-    for item in &list.items {
+    // A `PushTransform` bracket is drawn OFF SCREEN and composited back through
+    // the transform, rather than the transform being threaded into every paint
+    // call. Two reasons, and the second is the one that decided it:
+    //
+    //  * every primitive inside the bracket is transformed, not just the ones
+    //    somebody remembered to thread. The alternative meant touching all
+    //    seventeen `Transform::identity()` draw sites plus the gradient and mask
+    //    internals, and a primitive missed there fails silently — it paints
+    //    unrotated, in the right place, and looks deliberate;
+    //  * the sub-list becomes one object. A rotated watermark IS one object whose
+    //    words are not individually angled, and compositing it as a unit is also
+    //    what lets its opacity apply to the whole stamp instead of per glyph.
+    //
+    // The cost is one page-sized transparent pixmap while a bracket is open.
+    // There is at most one per page (the watermark), so it is not on any hot path.
+    let mut items = list.items.iter();
+    #[allow(clippy::while_let_on_iterator)] // the transform arm consumes ahead
+    while let Some(item) = items.next() {
+        if let PaintItem::PushTransform(transform) = item {
+            let nested = collect_transform_bracket(&mut items);
+            draw_transformed(&nested, surface, dpi, fonts, media, *transform, &clip_stack);
+            continue;
+        }
         match item {
             PaintItem::Rect { rect, fill, stroke } => {
                 if let Some(path) = rect_path(*rect, dpi) {
@@ -236,6 +258,10 @@ pub fn render(
             PaintItem::PopClip => {
                 clip_stack.pop();
             }
+            // Handled by the bracket reader above; reaching either here means the
+            // list is unbalanced (a `PopTransform` with no open bracket), which is
+            // a malformed list rather than something to paint.
+            PaintItem::PushTransform(_) | PaintItem::PopTransform => {}
             PaintItem::Image {
                 media: id,
                 rect,
@@ -381,6 +407,68 @@ fn render_image(
         &paint,
         transform.pre_concat(placement),
         clip,
+    );
+}
+
+/// Reads the items of an open `PushTransform` bracket, up to its matching
+/// `PopTransform`, consuming that terminator. Nested brackets are kept INSIDE the
+/// returned list rather than flattened, so the recursive call composes them in
+/// the right order.
+///
+/// An unterminated bracket yields everything that is left, which paints the
+/// remainder transformed. That is the honest reading of a truncated list: the
+/// author said "from here, rotated", and nothing said stop.
+fn collect_transform_bracket<'a>(items: &mut impl Iterator<Item = &'a PaintItem>) -> DisplayList {
+    let mut depth = 1_usize;
+    let mut nested = DisplayList::new();
+    for item in items {
+        match item {
+            PaintItem::PushTransform(_) => depth += 1,
+            PaintItem::PopTransform => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        nested.push(item.clone());
+    }
+    nested
+}
+
+/// Draws `nested` into a transparent page-sized pixmap and composites it back
+/// through `transform`.
+///
+/// The enclosing clip is applied to the COMPOSITE, not inside the sub-surface:
+/// the sub-surface is in the same coordinate space, but its content moves when
+/// the transform is applied, so a clip tested before the move would cut the wrong
+/// pixels.
+fn draw_transformed(
+    nested: &DisplayList,
+    surface: &mut Surface,
+    dpi: f32,
+    fonts: &dyn GlyphSource,
+    media: &dyn MediaSource,
+    transform: ShapeTransform,
+    clip_stack: &[Mask],
+) {
+    let (width, height) = (surface.pixmap.width(), surface.pixmap.height());
+    let Some(pixmap) = Pixmap::new(width, height) else {
+        return;
+    };
+    let mut offscreen = Surface { pixmap };
+    render(nested, &mut offscreen, dpi, fonts, media);
+    surface.pixmap.draw_pixmap(
+        0,
+        0,
+        offscreen.pixmap.as_ref(),
+        &PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        },
+        object_transform(Some(&transform), dpi),
+        clip_stack.last(),
     );
 }
 

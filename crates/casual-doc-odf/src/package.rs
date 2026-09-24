@@ -471,6 +471,10 @@ impl<'a> OdtPackage<'a> {
                     paper_source: PaperSource::default(),
                     page_borders: PageBorders::default(),
                     line_numbering: LineNumbering::default(),
+                    // ODF puts a watermark in the page style's background
+                    // (`style:background-image`/`draw:fill`), not the body; not
+                    // lifted yet.
+                    watermark: None,
                     footnote_props: NoteProperties::default(),
                     endnote_props: NoteProperties::default(),
                     text_direction: geometry.text_direction,

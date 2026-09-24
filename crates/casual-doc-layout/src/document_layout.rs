@@ -925,6 +925,7 @@ fn finish_pagination_pass(
     // cannot precede it. Inert unless a section declares line numbering
     // (`docs/105` FID-L-09).
     crate::line_number::place_line_numbers(&mut layout, document, shaper);
+    crate::watermark::place_watermarks(&mut layout, document, shaper);
 
     layout
 }
@@ -1569,6 +1570,7 @@ mod cached_pagination_tests {
                 paper_source: PaperSource::default(),
                 page_borders: PageBorders::default(),
                 line_numbering: Default::default(),
+                watermark: None,
                 footnote_props: NoteProperties::default(),
                 endnote_props: NoteProperties::default(),
                 text_direction: None,

@@ -124,6 +124,7 @@ fn section() -> SectionBoundary {
         paper_source: Default::default(),
         page_borders: Default::default(),
         line_numbering: Default::default(),
+        watermark: None,
         footnote_props: Default::default(),
         endnote_props: Default::default(),
         text_direction: None,

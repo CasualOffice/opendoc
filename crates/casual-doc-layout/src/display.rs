@@ -291,6 +291,23 @@ pub enum PaintItem {
     PushClip(Rect),
     /// Pop the most recent clip.
     PopClip,
+    /// Push an affine transform about a centre point; subsequent items are drawn
+    /// through it until [`PaintItem::PopTransform`]. Nests, composing outermost
+    /// first, exactly like [`PaintItem::PushClip`].
+    ///
+    /// This is how ROTATED TEXT is expressed. A glyph run carries no angle of its
+    /// own, and giving it one would have meant a rotation field on the one paint
+    /// item that is constructed in a dozen places, for the sake of the single
+    /// object that needs it. A transform that brackets a group of items also
+    /// matches what the thing actually is: a watermark is one rotated object
+    /// whose parts — the words, or the picture — are not individually angled.
+    ///
+    /// Introduced for the watermark (`109` OO-006). `docs/105` FID-L-08 (vertical
+    /// and rotated text) is the other caller this seam is waiting for; it is not
+    /// implemented by this existing, and no flow content emits one yet.
+    PushTransform(ShapeTransform),
+    /// Pop the most recent transform.
+    PopTransform,
 }
 
 /// An ordered list of paint commands for one page (or one damage region during

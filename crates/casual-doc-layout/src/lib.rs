@@ -52,4 +52,5 @@ mod table_float;
 pub mod tabs;
 pub mod text;
 pub mod units;
+mod watermark;
 pub mod windowed;

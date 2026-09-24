@@ -15,6 +15,8 @@ use crate::display::{
     ShapeOutline, Stroke,
 };
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
+// Own line: keeps the watermark's import out of the shared sorted list above.
+use crate::page::PlacedWatermarkContent;
 use crate::text::{LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
 
@@ -252,6 +254,11 @@ fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
     let mut list = DisplayList::new();
+    // The watermark is behind EVERYTHING — before the `behindDoc` float band, not
+    // merely before the text. Word gives the shape `z-index:-251658752`, which is
+    // as far back as its z space goes, and a stamp that a behind-text picture
+    // covered would not be a watermark.
+    compose_watermark(&mut list, page);
     // The float layer is a single stable z-order: `behindDoc` floats paint below
     // the text layer, the rest above, each band ordered by (relativeHeight,
     // document order) so group children paint in child order and a shape can sit
@@ -359,6 +366,38 @@ fn compose_footnote_separators(list: &mut DisplayList, page: &Page) {
 /// Paints a resolved page-border frame: each present edge as a filled band along
 /// its side of the frame rectangle, reusing the shared edge painter (so pattern
 /// styles — double/dashed/… — match paragraph and table borders).
+/// Emits the page's watermark, bracketed by its rotation so the whole stamp turns
+/// as one object (`109` OO-006).
+fn compose_watermark(list: &mut DisplayList, page: &Page) {
+    let Some(stamp) = &page.watermark else {
+        return;
+    };
+    if let Some(transform) = stamp.transform {
+        list.push(PaintItem::PushTransform(transform));
+    }
+    match &stamp.content {
+        PlacedWatermarkContent::Text { runs } => {
+            for run in runs {
+                list.push(PaintItem::Glyphs { run: run.clone() });
+            }
+        }
+        PlacedWatermarkContent::Picture {
+            media,
+            rect,
+            opacity,
+        } => list.push(PaintItem::Image {
+            media: media.clone(),
+            rect: *rect,
+            crop: None,
+            transform: None,
+            opacity: *opacity,
+        }),
+    }
+    if stamp.transform.is_some() {
+        list.push(PaintItem::PopTransform);
+    }
+}
+
 fn compose_page_borders(list: &mut DisplayList, borders: &ResolvedPageBorders) {
     let rect = borders.rect;
     if let Some(edge) = borders.top {
