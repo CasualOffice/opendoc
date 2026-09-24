@@ -43,4 +43,8 @@ export const EN_STRINGS = Object.freeze({
   // reads out whatever the size fields currently say.
   "pageSetup.sectionNumber": "Section {number}",
   "pageSetup.dimensions": "{width} \u00d7 {height} in",
+  // The Watermark dialog's Font list is built from the editor's font inventory,
+  // so only its first entry is a word: the one that means "whatever face the
+  // document already uses", which is what an absent `w:rFonts` resolves to.
+  "watermark.fontDefault": "Document default",
 });

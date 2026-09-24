@@ -92,31 +92,38 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 876],
-  ["de", 876],
-  ["es", 876],
-  ["fr", 876],
-  ["hi", 876],
-  ["id", 876],
-  ["it", 876],
-  ["ja", 876],
-  ["ko", 876],
-  ["nl", 876],
-  ["pl", 876],
-  ["pt-BR", 876],
-  ["ru", 876],
-  ["tr", 876],
-  ["uk", 876],
-  ["vi", 876],
-  ["zh-Hans", 876],
-  ["zh-Hant", 876],
+  ["ar", 902],
+  ["de", 902],
+  ["es", 902],
+  ["fr", 902],
+  ["hi", 902],
+  ["id", 902],
+  ["it", 902],
+  ["ja", 902],
+  ["ko", 902],
+  ["nl", 902],
+  ["pl", 902],
+  ["pt-BR", 902],
+  ["ru", 902],
+  ["tr", 902],
+  ["uk", 902],
+  ["vi", 902],
+  ["zh-Hans", 902],
+  ["zh-Hant", 902],
 ]);
 
-/** English defines 850 keys today, and every locale answers all 850 — 100.0%,
+/** English defines 902 keys today, and every locale answers all 902 — 100.0%,
  *  up from the 301 (35.4%) the previous pass had reached. That is the whole
  *  routed surface: every ribbon tab's groups and controls, the menu bar, every
  *  dialog title and button, the field labels, the File page, and the status and
  *  error sentences, not only the chrome a person reads first.
+ *
+ *  876 → 902 is the watermark dialog (`109` OO-006), translated in the same
+ *  change that routed it: every locale answers its twenty-six keys, six of which
+ *  are copied from the string the same catalogue already uses for the Page setup
+ *  dialog's Apply, Cancel, Close, Font, Size and "applies to this section" rather
+ *  than translated a second time — two words for one button is how a dialog
+ *  starts reading as a different product from the one beside it.
  *
  *  The number in each row is still a floor, not a target, and at parity its
  *  job changes rather than ending: it is now what refuses a NEWLY routed

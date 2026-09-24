@@ -1541,6 +1541,56 @@ body.modal-open {
   gap: 20px;
 }
 
+/* ---- Watermark (`109` OO-006) --------------------------------------------- */
+/* Sized by what it holds, like `.page-setup-dialog` above: the widest row is
+   the three-cell Font/Size/Color grid, so the 640px standard constant would
+   leave a third of every row empty. */
+.watermark-dialog {
+  width: min(fit-content, 100%);
+  max-inline-size: min(100%, 56ch);
+}
+
+.watermark-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* The rhythm inside a fieldset is carried by margins on the rows, not by a gap
+   on the box: `fieldset { display: flex }` takes the legend out of the flow
+   inconsistently across engines, and this dialog's legends are load-bearing
+   (they are what a screen reader reads the radio group out under). */
+.watermark-body .dialog-check + .dialog-check,
+.watermark-body .dialog-field + .dialog-field-grid,
+.watermark-body .dialog-field-grid + .dialog-check,
+.watermark-body .dialog-check + .segmented {
+  margin-top: 12px;
+}
+
+/* A disabled choice is still carrying a sentence — the reason the picture half
+   is not offered — so it reads as unavailable rather than as absent. */
+.watermark-body .dialog-check:has(input:disabled) {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+/* The fields greyed while "No watermark" is chosen. `fieldset[disabled]` already
+   stops every control inside it, which is the behaviour; this is what says so. */
+#watermarkTextFields:disabled {
+  opacity: 0.55;
+}
+
+#watermarkColor {
+  width: 100%;
+  height: var(--h-field);
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
 /* ---- Table properties inspector ------------------------------------------ */
 .table-properties-grid {
   display: flex;

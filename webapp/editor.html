@@ -583,6 +583,12 @@
                    icon button rather than a fifth `fmt-big`: the four big ones
                    are the geometry the dialog owns, and this opens a popover. -->
               <button data-i18n-title="panelLayout.lineNumbers.title" data-i18n-label="panelLayout.lineNumbers.label" id="lineNumbersBtn" type="button" class="fmt" title="Line numbers" aria-label="Line numbers" aria-haspopup="menu" aria-expanded="false" aria-controls="lineNumbersMenu" disabled><span class="ms" aria-hidden="true">format_list_numbered</span></button>
+              <!-- Watermark (`109` OO-006). Word keeps it on the Design tab, which
+                   this product does not have; the thing a watermark IS — furniture
+                   painted behind every page of a section — belongs with the rest of
+                   the section's page setup, so it sits beside Line numbers. An icon
+                   button for the same reason: the band is budgeted at 1280px. -->
+              <button data-i18n-title="panelLayout.watermark.title" data-i18n-label="panelLayout.watermark.label" id="watermarkBtn" type="button" class="fmt" title="Watermark" aria-label="Watermark" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">branding_watermark</span></button>
             </div>
             <span data-i18n="panelLayout.pageSetup" class="rgroup-label">Page setup</span>
           </div>
@@ -951,6 +957,70 @@
           <div class="dialog-actions">
             <button data-i18n="pageSetupMenu.cancel" type="button" id="pageSetupCancel" class="dialog-button">Cancel</button>
             <button data-i18n="pageSetupMenu.apply2" type="button" id="pageSetupApply" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <!-- Watermark (`109` OO-006), Word's "Printed Watermark" dialog. A MODAL and
+         not a popover, unlike Line numbers next to it: this is a form that is
+         filled in and then committed, which is what Word makes it and what the
+         Page setup dialog above it already is — the one-shot presets that made a
+         popover right for line numbers have no equivalent here.
+
+         Word's picture half is NOT offered: a picture watermark needs a media id
+         the document already holds, and the host has no way to register one
+         (`insertImage` places a drawing in the flow and hands back no id). The
+         radio is present, disabled, carrying that reason — docs/63's rule is that
+         a gap says what it is rather than shipping a control that does nothing —
+         and it is what an imported picture watermark reads back as, so the dialog
+         never misreports the page. Word's preset text list (CONFIDENTIAL, DRAFT,
+         …) is also left out: the field takes any text, so a preset list is a
+         convenience, and it would be eight more sentences in eighteen languages
+         buying no capability. -->
+    <div id="watermarkDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="watermarkTitle" aria-describedby="watermarkDescription">
+      <section class="dialog-card watermark-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">branding_watermark</span>
+            <div>
+              <h2 data-i18n="watermarkDialog.watermark" id="watermarkTitle">Watermark</h2>
+              <p data-i18n="watermarkDialog.stampBehindText" id="watermarkDescription">A stamp painted behind the text on every page of this section.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="watermarkDialog.closeWatermark.label" id="watermarkClose" type="button" class="dialog-close" title="Close" aria-label="Close watermark">
+            <span class="ms" aria-hidden="true">close</span>
+          </button>
+        </header>
+        <div class="dialog-body watermark-body">
+          <fieldset class="dialog-group">
+            <legend data-i18n="watermarkDialog.kind">Watermark</legend>
+            <label class="dialog-check"><input id="watermarkKindNone" type="radio" name="watermarkKind" value="none" checked /><span data-i18n="watermarkDialog.noWatermark">No watermark</span></label>
+            <label class="dialog-check"><input id="watermarkKindText" type="radio" name="watermarkKind" value="text" /><span data-i18n="watermarkDialog.textWatermark">Text watermark</span></label>
+            <label data-i18n-title="watermarkDialog.pictureUnavailable.title" class="dialog-check" title="Picture watermarks need an image already registered in the document, and the editor cannot register one yet"><input id="watermarkKindPicture" type="radio" name="watermarkKind" value="picture" disabled /><span data-i18n="watermarkDialog.pictureWatermark">Picture watermark</span></label>
+          </fieldset>
+          <fieldset id="watermarkTextFields" class="dialog-group">
+            <legend data-i18n="watermarkDialog.textWatermarkFields">Text watermark</legend>
+            <label data-i18n="watermarkDialog.text" class="dialog-field">Text<input data-i18n-placeholder="watermarkDialog.confidential.placeholder" id="watermarkText" type="text" maxlength="255" placeholder="CONFIDENTIAL" autocomplete="off" spellcheck="false" required /></label>
+            <div class="dialog-field-grid">
+              <label data-i18n="watermarkDialog.font" class="dialog-field">Font<select id="watermarkFont" class="dialog-select"></select></label>
+              <label data-i18n="watermarkDialog.size" class="dialog-field">Size<select id="watermarkSize" class="dialog-select">
+                <option data-i18n="watermarkDialog.sizeAuto" value="">Auto</option>
+              </select></label>
+              <label data-i18n="watermarkDialog.color" class="dialog-field">Color<input id="watermarkColor" type="color" value="#c0c0c0" /></label>
+            </div>
+            <label class="dialog-check"><input id="watermarkSemiTransparent" type="checkbox" /><span data-i18n="watermarkDialog.semitransparent">Semitransparent</span></label>
+            <div data-i18n-label="watermarkDialog.layout.label" class="segmented orientation-segmented" id="watermarkLayoutSeg" role="radiogroup" aria-label="Watermark layout">
+              <button type="button" data-watermark-layout="diagonal" aria-pressed="true"><span class="ms" aria-hidden="true">text_rotation_angleup</span><span data-i18n="watermarkDialog.diagonal">Diagonal</span></button>
+              <button type="button" data-watermark-layout="horizontal" aria-pressed="false"><span class="ms" aria-hidden="true">text_rotation_none</span><span data-i18n="watermarkDialog.horizontal">Horizontal</span></button>
+            </div>
+          </fieldset>
+        </div>
+        <footer class="dialog-foot">
+          <span data-i18n="watermarkDialog.appliesSectionCanBe" class="dialog-note">Applies to this section and can be undone.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" type="button" id="watermarkCancel" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" type="button" id="watermarkApply" class="dialog-button dialog-button-primary">Apply</button>
           </div>
         </footer>
       </section>
