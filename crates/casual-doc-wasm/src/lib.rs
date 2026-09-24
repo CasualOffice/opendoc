@@ -57,6 +57,7 @@ use casual_doc_layout::windowed::NotWindowable;
 use casual_doc_model::v1::BreakKind;
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::GridColumn;
+use casual_doc_model::v1::MediaId;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AnchorHorizontal, AnchorVertical, BlockNode,
     BookmarkId, BorderEdge, Break, CellMargins, CellVerticalAlignment, Color, Comment, CommentId,
@@ -82,6 +83,9 @@ use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
+use casual_doc_model::v1::{
+    Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
+};
 use casual_doc_model::{IdGenerator, NodeId};
 #[cfg(test)]
 use casual_doc_ooxml::DocxPackage;
@@ -696,9 +700,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
         Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
-        Operation::SetSectionGeometry { .. } | Operation::SetSectionLineNumbering { .. } => {
-            HistoryKind::PageSetup
-        }
+        Operation::SetSectionGeometry { .. }
+        | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
         Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
@@ -7085,6 +7089,161 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// The watermark of the section holding `node`, in the shape
+    /// [`set_watermark`](Self::set_watermark) accepts. `kind` is `"none"` when the
+    /// section has none, which is also what the dialog opens on.
+    ///
+    /// `null` only when the document has no section at all.
+    #[wasm_bindgen(js_name = watermark)]
+    #[must_use]
+    pub fn watermark(&self, node: &str) -> String {
+        if self.document.definitions().sections.is_empty() {
+            return "null".to_string();
+        }
+        let section = self.section_of(node);
+        let existing = self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .find(|candidate| candidate.id.node_id() == section)
+            .and_then(|candidate| candidate.watermark.as_ref());
+        let payload = match existing {
+            None => WatermarkJson {
+                section: section.to_string(),
+                kind: "none".to_string(),
+                text: String::new(),
+                font: None,
+                size_half_points: None,
+                // What the dialog offers for a NEW watermark: Word's own default
+                // grey, which is light enough to read body text through.
+                color: "#c0c0c0".to_string(),
+                bold: false,
+                italic: false,
+                layout: "diagonal".to_string(),
+                semi_transparent: true,
+                media: None,
+                scale_percent: None,
+                washout: true,
+            },
+            Some(watermark) => {
+                let layout = match watermark.layout {
+                    WatermarkLayout::Diagonal => "diagonal",
+                    WatermarkLayout::Horizontal => "horizontal",
+                }
+                .to_string();
+                match &watermark.content {
+                    WatermarkContent::Text(text) => WatermarkJson {
+                        section: section.to_string(),
+                        kind: "text".to_string(),
+                        text: text.text.clone(),
+                        font: text.font.as_ref().map(|font| font.name.clone()),
+                        size_half_points: text.size_half_points,
+                        color: format!(
+                            "#{:02x}{:02x}{:02x}",
+                            text.color.r, text.color.g, text.color.b
+                        ),
+                        bold: text.bold,
+                        italic: text.italic,
+                        layout,
+                        semi_transparent: watermark.semi_transparent,
+                        media: None,
+                        scale_percent: None,
+                        washout: false,
+                    },
+                    WatermarkContent::Picture(picture) => WatermarkJson {
+                        section: section.to_string(),
+                        kind: "picture".to_string(),
+                        text: String::new(),
+                        font: None,
+                        size_half_points: None,
+                        color: String::new(),
+                        bold: false,
+                        italic: false,
+                        layout,
+                        semi_transparent: watermark.semi_transparent,
+                        media: Some(picture.media.node_id().to_string()),
+                        scale_percent: picture.scale_percent,
+                        washout: picture.washout,
+                    },
+                }
+            }
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Installs, replaces, or removes a section's watermark — the dialog's write
+    /// side. One undoable action.
+    ///
+    /// `kind: "none"` removes it. An empty or over-long text, or a picture naming
+    /// media the document does not hold, is refused by the engine and the section
+    /// is left exactly as it was.
+    #[wasm_bindgen(js_name = setWatermark)]
+    pub fn set_watermark(&mut self, watermark_json: &str) -> Result<EditResult, JsValue> {
+        let payload: WatermarkJson = serde_json::from_str(watermark_json)
+            .map_err(|e| to_js(format!("invalid watermark payload: {e}")))?;
+        let section = NodeId::from_str(&payload.section)
+            .map(SectionId::new)
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        let layout = if payload.layout == "horizontal" {
+            WatermarkLayout::Horizontal
+        } else {
+            WatermarkLayout::Diagonal
+        };
+        let watermark = match payload.kind.as_str() {
+            "none" => None,
+            "text" => {
+                let rgb = parse_hex_color(&payload.color)
+                    .ok_or_else(|| to_js("invalid watermark colour".to_string()))?;
+                Some(Box::new(Watermark {
+                    content: WatermarkContent::Text(WatermarkText {
+                        text: payload.text.clone(),
+                        font: payload
+                            .font
+                            .as_ref()
+                            .filter(|name| !name.is_empty())
+                            .map(|name| FontName { name: name.clone() }),
+                        size_half_points: payload.size_half_points,
+                        color: Rgba {
+                            r: rgb.r,
+                            g: rgb.g,
+                            b: rgb.b,
+                            a: 255,
+                        },
+                        bold: payload.bold,
+                        italic: payload.italic,
+                    }),
+                    layout,
+                    semi_transparent: payload.semi_transparent,
+                }))
+            }
+            "picture" => {
+                let media = payload
+                    .media
+                    .as_deref()
+                    .and_then(|id| NodeId::from_str(id).ok())
+                    .map(MediaId::new)
+                    .ok_or_else(|| to_js("invalid watermark media id".to_string()))?;
+                Some(Box::new(Watermark {
+                    content: WatermarkContent::Picture(WatermarkPicture {
+                        media,
+                        scale_percent: payload.scale_percent,
+                        washout: payload.washout,
+                    }),
+                    layout,
+                    semi_transparent: payload.semi_transparent,
+                }))
+            }
+            other => return Err(to_js(format!("unknown watermark kind {other:?}"))),
+        };
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![Operation::SetSectionWatermark { section, watermark }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
     /// Takes the selection's paragraphs out of the line count, or puts them back
     /// (`w:suppressLineNumbers`) — Word's "Suppress for Current Paragraph".
     ///
@@ -12780,6 +12939,45 @@ struct PageSetupJson {
 struct PageSetupSectionsJson {
     current: String,
     sections: Vec<PageSetupJson>,
+}
+
+/// The Watermark dialog's read and write shape.
+///
+/// Flat, with `kind` naming the variant, because the host is a form: it reads
+/// `text` and `color` without unwrapping a tagged union, and an absent field means
+/// "unset" rather than zero. `kind: "none"` is how a watermark is removed.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WatermarkJson {
+    section: String,
+    /// `"none"`, `"text"`, or `"picture"`.
+    kind: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    font: Option<String>,
+    /// Half-points; absent is Word's "Auto", resolved by layout against the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size_half_points: Option<u32>,
+    /// `#rrggbb`.
+    #[serde(default)]
+    color: String,
+    #[serde(default)]
+    bold: bool,
+    #[serde(default)]
+    italic: bool,
+    /// `"diagonal"` or `"horizontal"`.
+    #[serde(default)]
+    layout: String,
+    #[serde(default)]
+    semi_transparent: bool,
+    /// Picture watermark only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    media: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale_percent: Option<u32>,
+    #[serde(default)]
+    washout: bool,
 }
 
 /// The Line Numbers menu's read and write shape. Flat rather than nesting a
@@ -21552,7 +21750,9 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
         // must not scroll away from what the user was reading.
-        Operation::SetSectionLineNumbering { .. } => Pos::new(doc_id, 0),
+        Operation::SetSectionLineNumbering { .. } | Operation::SetSectionWatermark { .. } => {
+            Pos::new(doc_id, 0)
+        }
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
