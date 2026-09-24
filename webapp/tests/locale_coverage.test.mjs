@@ -92,27 +92,27 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 252],
-  ["de", 252],
-  ["es", 252],
-  ["fr", 252],
-  ["hi", 252],
-  ["id", 252],
-  ["it", 252],
-  ["ja", 252],
-  ["ko", 252],
-  ["nl", 252],
-  ["pl", 252],
-  ["pt-BR", 252],
-  ["ru", 252],
-  ["tr", 252],
-  ["uk", 252],
-  ["vi", 252],
-  ["zh-Hans", 252],
-  ["zh-Hant", 252],
+  ["ar", 301],
+  ["de", 301],
+  ["es", 301],
+  ["fr", 301],
+  ["hi", 301],
+  ["id", 301],
+  ["it", 301],
+  ["ja", 301],
+  ["ko", 301],
+  ["nl", 301],
+  ["pl", 301],
+  ["pt-BR", 301],
+  ["ru", 301],
+  ["tr", 301],
+  ["uk", 301],
+  ["vi", 301],
+  ["zh-Hans", 301],
+  ["zh-Hant", 301],
 ]);
 
-/** English defines 848 keys today. 252 translated is 29.7%: the chrome a
+/** English defines 848 keys today. 301 translated is 35.5%: the chrome a
  *  person reads first — every ribbon tab, every menu-bar name, the document
  *  title — plus the counts. The number in each row above is a floor, not a
  *  target. */
@@ -192,6 +192,21 @@ test("every locale carries every plural category ITS OWN language needs", () => 
     }
   }
   assert.deepEqual(gaps, []);
+});
+
+test("no catalogue value carries an HTML entity", () => {
+  // The applier writes TEXT, not HTML — it has to, or a translation could
+  // inject markup — so an entity that survives extraction reaches the screen
+  // literally. The review sidebar read "Comments &amp; suggestions" the first
+  // time the markup went through the seam.
+  const leaked = [];
+  for (const tag of tags) {
+    for (const [key, value] of Object.entries(read(tag))) {
+      if (typeof value !== "string") continue;
+      if (/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(value)) leaked.push(`${tag} ${key}: ${value}`);
+    }
+  }
+  assert.deepEqual(leaked, []);
 });
 
 test("every catalogue declares its own locale, direction and review state", () => {
