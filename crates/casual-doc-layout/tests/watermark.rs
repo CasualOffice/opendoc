@@ -253,35 +253,72 @@ fn semitransparent_halves_the_ink_and_opaque_leaves_it_alone() {
     assert_eq!(alpha(&faint), 128, "Word's `<v:fill opacity=\".5\"/>`");
 }
 
-#[test]
-fn an_auto_sized_stamp_fills_the_page_without_leaving_it() {
-    let doc = document(Some(draft(WatermarkLayout::Diagonal, true)));
+/// The stamp's own advance for a given page size, auto-sized and diagonal.
+fn auto_advance(width_twips: i32, height_twips: i32) -> i32 {
+    let mut definitions = Definitions::default();
+    let mut boundary = section(900, Some(draft(WatermarkLayout::Diagonal, true)));
+    boundary.page_size = PageSize {
+        width_twips,
+        height_twips,
+    };
+    definitions.sections.push(boundary);
+    let doc = Document::new(
+        node(1000),
+        vec![paragraph(1, "page one", false)],
+        definitions,
+    )
+    .expect("valid document");
     let layout = paginate(&doc);
     let PlacedWatermarkContent::Text { runs } =
         &layout.pages[0].watermark.as_ref().expect("a stamp").content
     else {
         panic!("text");
     };
-    let advance: i32 = runs
-        .iter()
+    runs.iter()
         .flat_map(|run| run.glyphs.iter())
         .map(|glyph| glyph.advance.raw())
-        .sum();
+        .sum()
+}
 
-    // Auto fits 85% of the span the stamp runs along — the page diagonal here.
-    // Asserted as a band rather than an exact number because the advance depends
-    // on the bundled face's metrics, but the band is tight enough to fail if the
-    // fit were against the page WIDTH (12,240) or not applied at all.
-    let diagonal = ((12_240f32).hypot(15_840f32)) as i32;
-    let target = (diagonal as f32 * 0.85) as i32;
-    assert!(
-        (advance - target).abs() < target / 20,
-        "auto-fit advance {advance} is not within 5% of {target} (page diagonal {diagonal})"
-    );
-    assert!(
-        advance < diagonal,
-        "an auto-sized stamp must not be longer than the diagonal it lies on"
-    );
+/// An auto-sized diagonal stamp has to fit the page it is stamped on — and the
+/// thing that must fit is its ROTATED BOUNDING BOX, not the line it lies along.
+///
+/// This replaces an assertion that the advance came within 5% of 85% of the page
+/// diagonal. That was a restatement of the implementation, and it was passing
+/// while the feature was broken: a length of `0.85 × diagonal` at 45° projects a
+/// box `0.85 × diagonal × cos45` wide, which on A4 is 12,395 twips across an
+/// 11,906-twip page. The stamp ran off both side edges. It fit on US Letter by
+/// 208 twips, and US Letter was the only size the test used.
+///
+/// So: assert the geometry the reader cares about, on both paper sizes, and let
+/// the constant be whatever satisfies it.
+#[test]
+fn an_auto_sized_diagonal_stamp_fits_inside_the_page() {
+    // (name, width, height) — A4 is the one the old assertion could not fail on.
+    for (name, w, h) in [("US Letter", 12_240, 15_840), ("A4", 11_906, 16_838)] {
+        let advance = auto_advance(w, h);
+        assert!(advance > 0, "{name}: nothing was stamped");
+
+        // The box a length `advance` projects at the fixed 315° angle.
+        let cos45 = std::f32::consts::FRAC_1_SQRT_2;
+        let box_w = (advance as f32 * cos45) as i32;
+        let box_h = box_w; // 45° projects equally on both axes
+        assert!(
+            box_w <= w,
+            "{name}: the stamp is {box_w} twips across a {w}-twip page — it runs off \
+             the side edges by {} twips",
+            box_w - w
+        );
+        assert!(box_h <= h, "{name}: the stamp is taller than the page");
+
+        // And it is not timid: it fills most of the page's shorter edge, so a fit
+        // cannot be satisfied by shrinking the stamp to nothing.
+        let shorter = w.min(h);
+        assert!(
+            box_w > shorter / 2,
+            "{name}: a {box_w}-twip stamp on a {shorter}-twip edge is not a watermark"
+        );
+    }
 }
 
 #[test]

@@ -229,8 +229,9 @@ fn the_diagonal_stamp_is_actually_rotated_and_not_merely_drawn() {
     // its bottom. An absolute ceiling would have been a claim about letterforms
     // dressed as a claim about rotation, and it failed on exactly that.
     //
-    // Measured, both at 96 dpi on US Letter: lean 318 diagonal vs 89 level, span
-    // 679 vs 159.
+    // Measured at 96 dpi on US Letter. The numbers moved once the auto-fit was
+    // corrected to bound the stamp's rotated BOX rather than its length, which is
+    // why they are stated as a ratio here and re-measured rather than pinned.
     let diagonal_lean = lean(&diagonal_ink).abs();
     let horizontal_lean = lean(&horizontal_ink).abs();
     assert!(

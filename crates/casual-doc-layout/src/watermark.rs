@@ -17,11 +17,19 @@
 //!
 //! - **Diagonal is 315°.** Word writes a fixed `rotation:315` on the shape, so
 //!   that angle is copied rather than derived from the page.
-//! - **Auto size fits 85% of the span it runs along** — the page diagonal when
-//!   diagonal, the content width when horizontal. Word's "Auto" scales the shape
-//!   to the page without publishing a formula; 85% leaves the stamp clear of the
-//!   page edge at every paper size the model allows. An explicit size is used as
-//!   given and never scaled.
+//! - **Auto size fits the stamp's ROTATED BOX inside 85% of the page** — not 85%
+//!   of the line it lies along. Word's "Auto" scales the shape to the page
+//!   without publishing a formula; 85% leaves it clear of the edge.
+//!
+//!   Fitting the text LENGTH to 85% of the diagonal is the obvious reading and it
+//!   is wrong: a length `L` at 45° projects a box `L·cos45` wide, so on A4 a stamp
+//!   fitted to 0.85 of the 20,622-twip diagonal is 12,395 twips across a
+//!   11,906-twip page and runs off both side edges by 0.17in each. It fit on US
+//!   Letter by 208 twips, which is why the first test of it passed. So the bound
+//!   is on the box: `L ≤ f · min(width/cosθ, height/sinθ)`.
+//!
+//!   An explicit size is used as given and never scaled — the author's
+//!   instruction outranks the fit.
 //! - **Semitransparent is 50% alpha**, applied on top of the content's own. Word
 //!   writes `<v:fill opacity=".5"/>` for a semitransparent text watermark.
 //! - **Washout reuses the picture-opacity seam** rather than a second mechanism:
@@ -137,13 +145,37 @@ fn page_centre(page_size: Size) -> Point {
     )
 }
 
-/// The span an auto-sized watermark is fitted to: the page's diagonal when it
-/// runs diagonally, its width when level.
+/// The longest an auto-sized stamp may be so that its ROTATED BOUNDING BOX still
+/// fits the page.
+///
+/// For a stamp of length `L` at angle θ the box is `L·cosθ` by `L·sinθ`, so
+/// fitting the box means `L ≤ min(width/cosθ, height/sinθ)` — the caller then
+/// takes its fraction of that. Returning the raw diagonal instead is the mistake
+/// the module header records: it overflows the width of any page taller than it is
+/// wide by more than the diagonal's own ratio allows.
 fn available_span(layout: WatermarkLayout, page_size: Size) -> f32 {
     let w = page_size.width.raw() as f32;
     let h = page_size.height.raw() as f32;
     match layout {
-        WatermarkLayout::Diagonal => w.hypot(h),
+        WatermarkLayout::Diagonal => {
+            // The magnitude of the fixed 315° angle. Written from the constant
+            // rather than as a literal 45 so the two cannot drift apart.
+            let theta = (f64::from(DIAGONAL_ROTATION) / 60_000.0).to_radians();
+            let (sin, cos) = (theta.sin().abs() as f32, theta.cos().abs() as f32);
+            // A stamp at 0° or 90° has one projection of zero; guard the divide so
+            // an angle change cannot turn this into an infinity.
+            let by_width = if cos > f32::EPSILON {
+                w / cos
+            } else {
+                f32::MAX
+            };
+            let by_height = if sin > f32::EPSILON {
+                h / sin
+            } else {
+                f32::MAX
+            };
+            by_width.min(by_height)
+        }
         WatermarkLayout::Horizontal => w,
     }
 }
