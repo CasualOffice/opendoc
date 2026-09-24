@@ -11,7 +11,21 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on BRANCHES, never on `main`.
+  #
+  # Cancelling everywhere saved CI minutes and cost the one thing CI is for:
+  # at the merge cadence this repo runs at, every push to `main` killed the
+  # previous run before it finished, and `main` went seven consecutive merges
+  # without a single completed verdict. The visible damage was not the missing
+  # data — it was that `cancelled` reads as "not a failure" at a glance, so a
+  # red `browser-smoke` sat on `main` unnoticed while three separate people
+  # and agents each independently re-derived whether it was theirs. Nobody
+  # could tell a new failure from a standing one because there was no green
+  # commit to compare against.
+  #
+  # A pull request still cancels its own superseded runs: there the newest
+  # push is the only one whose answer anyone wants.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
