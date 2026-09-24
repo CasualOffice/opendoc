@@ -79,6 +79,7 @@ use casual_doc_model::v1::{
     HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
 };
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
+use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
 use casual_doc_model::{IdGenerator, NodeId};
@@ -695,7 +696,9 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         | Operation::ReplaceTable { .. } => HistoryKind::TableFormatting,
         Operation::SetCoreProperties { .. } => HistoryKind::DocumentProperties,
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
-        Operation::SetSectionGeometry { .. } => HistoryKind::PageSetup,
+        Operation::SetSectionGeometry { .. } | Operation::SetSectionLineNumbering { .. } => {
+            HistoryKind::PageSetup
+        }
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
         Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
         Operation::CreateBookmark { .. }
@@ -6901,22 +6904,7 @@ impl WasmDocument {
         if sections.is_empty() {
             return "null".to_string();
         }
-        let mut current = sections[0].id.node_id();
-        // One index over every paragraph, built by a single walk: resolving each
-        // id with `paragraph_properties` walks the whole document per node, so a
-        // scan bounded by the document was quadratic in its length.
-        let by_id = ParagraphIndex::build(&self.document);
-        for (paragraph, _) in self.ordered_paragraphs() {
-            if paragraph.to_string() == node {
-                break;
-            }
-            if let Some(section) = by_id
-                .properties(paragraph)
-                .and_then(|properties| properties.section_break)
-            {
-                current = section.node_id();
-            }
-        }
+        let current = self.section_of(node);
         let payload = PageSetupSectionsJson {
             current: current.to_string(),
             sections: sections
@@ -6963,6 +6951,157 @@ impl WasmDocument {
             caret,
         )
         .map_err(to_js)
+    }
+
+    /// The `NodeId` of the section that `node` sits in — the section a
+    /// section-scoped dialog must edit when the caret is where it is.
+    ///
+    /// A section break is a PARAGRAPH property, and the model states its
+    /// direction precisely: `ParagraphProperties::section_break` means "this
+    /// paragraph ENDS the referenced section", with the final body-level section
+    /// being the trailing `sections` entry no paragraph references. So a
+    /// paragraph carrying a break is in the section it names, and the paragraph
+    /// AFTER it is in the next one — which is why passing a break advances to the
+    /// following entry rather than adopting the one just closed.
+    ///
+    /// Getting that direction wrong is not a rounding error: it makes every
+    /// paragraph past the first break report the section that just ended, so a
+    /// section-scoped dialog shows one section's values and writes them to
+    /// another. `pageSetupSections` did exactly that until this walk was shared
+    /// and tested against the model's own definition.
+    ///
+    /// Falls back to the last section (then the document id) when a document is
+    /// short of section entries, so an id is always returned.
+    fn section_of(&self, node: &str) -> NodeId {
+        let sections = &self.document.definitions().sections;
+        // One index over every paragraph, built by a single walk: resolving each
+        // id with `paragraph_properties` walks the whole document per node, so a
+        // scan bounded by the document was quadratic in its length.
+        let by_id = ParagraphIndex::build(&self.document);
+        let mut at = 0usize;
+        for (paragraph, _) in self.ordered_paragraphs() {
+            if paragraph.to_string() == node {
+                break;
+            }
+            if let Some(closed) = by_id
+                .properties(paragraph)
+                .and_then(|properties| properties.section_break)
+            {
+                // Advance from where the closed section actually sits, rather
+                // than counting breaks: a document whose breaks are not in
+                // `sections` order then still lands on the right entry.
+                at = sections
+                    .iter()
+                    .position(|candidate| candidate.id == closed)
+                    .map_or(at + 1, |found| found + 1);
+            }
+        }
+        sections
+            .get(at)
+            .or_else(|| sections.last())
+            .map_or_else(|| self.document.id(), |section| section.id.node_id())
+    }
+
+    /// Whether `node`'s EFFECTIVE properties take it out of the line count
+    /// (`w:suppressLineNumbers`, direct or inherited from its style).
+    ///
+    /// Resolved through the cascade to match what layout actually counts: a
+    /// direct-only read would show the menu unticked on a paragraph whose style
+    /// suppresses numbering, and layout would still skip it.
+    fn paragraph_suppresses_line_numbers(&self, node: &str) -> bool {
+        let cascade = StyleCascade::new(self.document.definitions());
+        NodeId::from_str(node)
+            .ok()
+            .and_then(|nid| paragraph_properties(&self.document, nid))
+            .is_some_and(|direct| cascade.resolve_paragraph(&direct).suppress_line_numbers)
+    }
+
+    /// The line numbering (`w:lnNumType`) of the section holding `node`, plus
+    /// whether that paragraph is itself excluded from the count — everything the
+    /// Line Numbers menu needs to show which way it is set.
+    ///
+    /// `null` when the document has no section. `countBy: null` means the section
+    /// numbers nothing: the empty rule is how numbering is off, which is the
+    /// interpretation import, layout and export already share
+    /// (`casual-doc-layout/src/line_number.rs`).
+    ///
+    /// `suppressed` reads the paragraph's EFFECTIVE value through the style
+    /// cascade, not its direct `w:pPr`, because a pleading template declares the
+    /// flag on its caption style — the same resolution
+    /// `line_number::suppressed_paragraphs` uses to decide what to count.
+    #[wasm_bindgen(js_name = lineNumbering)]
+    #[must_use]
+    pub fn line_numbering(&self, node: &str) -> String {
+        if self.document.definitions().sections.is_empty() {
+            return "null".to_string();
+        }
+        let section = self.section_of(node);
+        let rule = self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .find(|candidate| candidate.id.node_id() == section)
+            .map(|candidate| candidate.line_numbering)
+            .unwrap_or_default();
+        let payload = LineNumberingJson {
+            section: section.to_string(),
+            count_by: rule.count_by,
+            start: rule.start,
+            distance: rule.distance,
+            restart: rule.restart,
+            suppressed: self.paragraph_suppresses_line_numbers(node),
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Installs a section's line numbering from a JSON object in the shape
+    /// [`line_numbering`](Self::line_numbering) returns — the menu's write side.
+    /// One undoable action.
+    ///
+    /// An all-null payload installs the EMPTY rule, which is how numbering is
+    /// turned off. `suppressed` is ignored here: it is a paragraph property and
+    /// has its own entry point, so one call never silently edits both scopes.
+    #[wasm_bindgen(js_name = setLineNumbering)]
+    pub fn set_line_numbering(&mut self, line_numbering_json: &str) -> Result<EditResult, JsValue> {
+        let payload: LineNumberingJson = serde_json::from_str(line_numbering_json)
+            .map_err(|e| to_js(format!("invalid line numbering payload: {e}")))?;
+        let section = NodeId::from_str(&payload.section)
+            .map(SectionId::new)
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![Operation::SetSectionLineNumbering {
+                section,
+                line_numbering: LineNumbering {
+                    count_by: payload.count_by,
+                    start: payload.start,
+                    distance: payload.distance,
+                    restart: payload.restart,
+                },
+            }],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Takes the selection's paragraphs out of the line count, or puts them back
+    /// (`w:suppressLineNumbers`) — Word's "Suppress for Current Paragraph".
+    ///
+    /// Suppression removes a paragraph from the COUNT, not just from the display:
+    /// a pleading's caption block must not shift every numbered line below it.
+    #[wasm_bindgen(js_name = setSuppressLineNumbers)]
+    pub fn set_suppress_line_numbers(
+        &mut self,
+        start_node: &str,
+        start_offset: u32,
+        end_node: &str,
+        end_offset: u32,
+        on: bool,
+    ) -> Result<EditResult, JsValue> {
+        self.apply_paragraph_props(start_node, start_offset, end_node, end_offset, move |p| {
+            p.suppress_line_numbers = on;
+        })
     }
 
     /// The paragraph's indentation (left/right/first-line/hanging, in twips; 0 when
@@ -12641,6 +12780,29 @@ struct PageSetupJson {
 struct PageSetupSectionsJson {
     current: String,
     sections: Vec<PageSetupJson>,
+}
+
+/// The Line Numbers menu's read and write shape. Flat rather than nesting a
+/// `LineNumbering`, so the host reads `countBy` instead of `rule.countBy`; every
+/// field is nullable because every OOXML attribute is optional and an absent one
+/// means "the default", not "zero" (`line_number.rs` records which default).
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LineNumberingJson {
+    section: String,
+    #[serde(default)]
+    count_by: Option<i32>,
+    #[serde(default)]
+    start: Option<i32>,
+    #[serde(default)]
+    distance: Option<i32>,
+    #[serde(default)]
+    restart: Option<LineNumberRestart>,
+    /// Read-only on the way out: whether the paragraph asked about is itself
+    /// excluded from the count. Ignored on the way in — `setSuppressLineNumbers`
+    /// owns the paragraph scope.
+    #[serde(default)]
+    suppressed: bool,
 }
 
 fn default_section_columns() -> SectionColumns {
@@ -21388,6 +21550,9 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         Operation::UpdateReviewState { .. } => Pos::new(doc_id, 0),
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
+        // Section-scoped, and the caret does not move: turning line numbers on
+        // must not scroll away from what the user was reading.
+        Operation::SetSectionLineNumbering { .. } => Pos::new(doc_id, 0),
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
@@ -22496,6 +22661,206 @@ mod tests {
                 BlockNode::AltChunk(_) => 0,
             })
             .sum()
+    }
+
+    /// Reads `lineNumbering` back as the host sees it.
+    fn read_line_numbering(doc: &WasmDocument, node: &str) -> serde_json::Value {
+        serde_json::from_str(&doc.line_numbering(node)).expect("lineNumbering returns JSON")
+    }
+
+    /// Line Numbers (`109` OO-022): off by default, on through the JSON surface,
+    /// and off again on undo. The engine has painted `w:lnNumType` since P1F-36;
+    /// what this covers is the route a user now has to it.
+    #[test]
+    fn line_numbering_round_trips_through_the_json_surface() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+
+        let before = read_line_numbering(&doc, &node);
+        assert!(
+            before["countBy"].is_null(),
+            "an ordinary document numbers nothing to begin with"
+        );
+        let section = before["section"].as_str().expect("a section id").to_owned();
+
+        doc.set_line_numbering(&format!(
+            r#"{{"section":"{section}","countBy":5,"start":1,"distance":360,"restart":"continuous"}}"#
+        ))
+        .expect("set line numbering");
+
+        let after = read_line_numbering(&doc, &node);
+        assert_eq!(after["countBy"], 5, "every fifth line");
+        assert_eq!(after["start"], 1);
+        assert_eq!(after["distance"], 360);
+        assert_eq!(after["restart"], "continuous");
+        doc.document.validate().expect("document still valid");
+
+        doc.undo().expect("undo the line numbering change");
+        assert!(
+            read_line_numbering(&doc, &node)["countBy"].is_null(),
+            "undo turns numbering back off"
+        );
+    }
+
+    /// "Line Numbers → None" must install the EMPTY rule, because that is the one
+    /// value import, layout and export all agree means "no numbering"
+    /// (`casual-doc-layout/src/line_number.rs`). A clear that wrote `countBy: 0`
+    /// instead would read as off in the menu, paint nothing, and still export a
+    /// `w:lnNumType` no other producer writes.
+    #[test]
+    fn turning_line_numbering_off_installs_the_empty_rule() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let section = read_line_numbering(&doc, &node)["section"]
+            .as_str()
+            .expect("a section id")
+            .to_owned();
+
+        doc.set_line_numbering(&format!(r#"{{"section":"{section}","countBy":1}}"#))
+            .expect("turn numbering on");
+        assert!(
+            !doc.document.definitions().sections[0]
+                .line_numbering
+                .is_empty()
+        );
+
+        doc.set_line_numbering(&format!(r#"{{"section":"{section}"}}"#))
+            .expect("turn numbering off");
+        assert!(
+            doc.document.definitions().sections[0]
+                .line_numbering
+                .is_empty(),
+            "off is the empty rule, not a rule that happens to number nothing"
+        );
+    }
+
+    /// `w:suppressLineNumbers` takes one paragraph out of the count, and the read
+    /// side reports it so the menu can show which way it is set.
+    #[test]
+    fn suppressing_a_paragraph_is_visible_on_the_read_side() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        assert_eq!(read_line_numbering(&doc, &node)["suppressed"], false);
+
+        doc.set_suppress_line_numbers(&node, 0, &node, len, true)
+            .expect("suppress line numbers");
+        assert_eq!(
+            read_line_numbering(&doc, &node)["suppressed"],
+            true,
+            "the paragraph is out of the count"
+        );
+
+        doc.undo().expect("undo the suppression");
+        assert_eq!(read_line_numbering(&doc, &node)["suppressed"], false);
+    }
+
+    /// The read side resolves suppression through the STYLE CASCADE, not off the
+    /// direct `w:pPr` — a pleading template declares the flag on its caption
+    /// style, and layout skips those paragraphs
+    /// (`line_number::suppressed_paragraphs`). A direct-only read would show the
+    /// menu unticked on a paragraph layout is already not counting.
+    #[test]
+    fn suppression_inherited_from_a_style_is_reported_too() {
+        use casual_doc_model::v1::Style;
+
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+
+        // A pleading template's caption style: the flag lives on the STYLE, and
+        // no paragraph carries it directly.
+        let style_id = StyleId::new(NodeId::from_parts(91, 1).expect("a fresh style id"));
+        doc.document.definitions_mut().styles.insert(
+            style_id,
+            Style {
+                kind: StyleKind::Paragraph,
+                is_default: false,
+                name: Some("Pleading caption".to_owned()),
+                aliases: None,
+                based_on: None,
+                next: None,
+                link: None,
+                hidden: false,
+                ui_priority: None,
+                semi_hidden: false,
+                unhide_when_used: false,
+                q_format: true,
+                locked: false,
+                paragraph: Some(ParagraphProperties {
+                    suppress_line_numbers: true,
+                    ..ParagraphProperties::default()
+                }),
+                run: None,
+                table: None,
+                table_row: None,
+                table_cell: None,
+                conditional: Vec::new(),
+            },
+        );
+        doc.set_paragraph_style(&node, 0, &node, len, "Pleading caption")
+            .expect("apply the caption style");
+
+        assert_eq!(
+            read_line_numbering(&doc, &node)["suppressed"],
+            true,
+            "the flag is inherited from the paragraph's style, and layout already \
+             skips such paragraphs — a direct-only read would show the menu unticked"
+        );
+    }
+
+    /// Which section is a paragraph IN? `w:sectPr` marks the paragraph that ENDS
+    /// a section (`ParagraphProperties::section_break`), so in a two-section
+    /// document whose fourth paragraph carries the break, paragraphs one to four
+    /// are in the first section and paragraph five is in the SECOND.
+    ///
+    /// This is ground truth, asserted against the model's own definition rather
+    /// than against another caller of the same walk — the version of this test
+    /// that compared `lineNumbering` with `pageSetupSections` could not fail,
+    /// because both read the one helper and a broken helper breaks them alike.
+    #[test]
+    fn a_paragraph_after_a_section_break_is_in_the_section_that_follows_it() {
+        let d = wasm_document(orientation_change_document());
+        let first = sections_id(900).to_string();
+        let second = sections_id(901).to_string();
+
+        for (paragraph, expected, why) in [
+            (1_u64, &first, "before any break"),
+            (4, &first, "carries the break, so it ENDS the first section"),
+            (5, &second, "the first paragraph of the second section"),
+            (6, &second, "still in the second section"),
+        ] {
+            let node = sections_id(paragraph).to_string();
+            assert_eq!(
+                read_line_numbering(&d, &node)["section"]
+                    .as_str()
+                    .expect("a section id"),
+                expected,
+                "paragraph {paragraph} ({why})"
+            );
+        }
+    }
+
+    /// `lineNumbering` and `pageSetupSections` must name the SAME section for the
+    /// same node: they are two dialogs editing one section, and the walk that
+    /// answers "which section is the caret in" is now shared between them. Two
+    /// copies of that walk is how one dialog silently edits a different section
+    /// from the one the other is showing.
+    #[test]
+    fn both_section_dialogs_resolve_the_same_section_for_a_node() {
+        let doc = open_document(RICH_DOCX).expect("open the rich fixture");
+        for (node, _len) in doc.ordered_paragraphs() {
+            let node = node.to_string();
+            let setup: serde_json::Value = serde_json::from_str(&doc.page_setup_sections(&node))
+                .expect("pageSetupSections returns JSON");
+            assert_eq!(
+                read_line_numbering(&doc, &node)["section"],
+                setup["current"],
+                "the two section-scoped dialogs disagree about which section {node} is in"
+            );
+        }
     }
 
     /// insertFootnote → creates a footnote definition and splices its reference;

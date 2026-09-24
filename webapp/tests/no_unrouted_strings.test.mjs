@@ -43,7 +43,7 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  ["src/main.js", 366],
+  ["src/main.js", 364],
   ["src/pages_panel.mjs", 4],
   ["src/shortcut_labels.mjs", 2],
   ["src/spell_check.mjs", 6],

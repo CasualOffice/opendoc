@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::FormFieldKind;
+use casual_doc_model::v1::LineNumbering;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
@@ -826,6 +827,27 @@ pub enum Operation {
         section: SectionId,
         /// The new value (`None` clears the property).
         title_page: Option<bool>,
+    },
+    /// Replace one section's margin line numbering (`w:lnNumType`) — Word's
+    /// "Line Numbers" — leaving every other section property alone.
+    ///
+    /// Self-inverse, carrying the previous rule. Rejected (doc left unchanged)
+    /// if a value falls outside the model's domain: `count_by` and `start` are
+    /// `0..=32_767`, `distance` is `0..=31_680` twips.
+    ///
+    /// The EMPTY value is how numbering is turned off, and it is the same value
+    /// import produces for an attribute-less `w:lnNumType` and export skips —
+    /// one interpretation shared by import, layout, export, and now editing
+    /// (`casual-doc-layout/src/line_number.rs` records why).
+    ///
+    /// Section-scoped on purpose. `w:suppressLineNumbers`, which takes a single
+    /// paragraph out of the count, is a paragraph property and travels with the
+    /// paragraph-properties path instead.
+    SetSectionLineNumbering {
+        /// The section to update.
+        section: SectionId,
+        /// The rule to install; the empty value turns numbering off.
+        line_numbering: LineNumbering,
     },
     /// Turn distinct even/odd headers and footers on or off
     /// (`w:evenAndOddHeaders`) — Word's "Different Odd & Even Pages".
@@ -2030,6 +2052,35 @@ pub fn apply(
             Ok(Operation::SetSectionTitlePage {
                 section: *section,
                 title_page: previous,
+            })
+        }
+        Operation::SetSectionLineNumbering {
+            section,
+            line_numbering,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = boundary.line_numbering;
+            boundary.line_numbering = *line_numbering;
+            if doc.validate().is_err() {
+                // Put the section back before reporting, so a rejected edit
+                // leaves the document exactly as it was rather than holding a
+                // value `validate` has already refused.
+                doc.definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *section)
+                    .expect("the section we just found still exists")
+                    .line_numbering = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionLineNumbering {
+                section: *section,
+                line_numbering: previous,
             })
         }
         Operation::SetEvenAndOddHeaders { enabled } => {
@@ -5823,10 +5874,11 @@ fn scan_bookmark_markers(
 mod tests {
     use super::*;
     use casual_doc_model::IdGenerator;
+    // `LineNumbering` now arrives through `super::*`, which the op signature needs.
+    use casual_doc_model::v1::LineNumberRestart;
     use casual_doc_model::v1::{
-        Definitions, DocGrid, LineNumbering, NoteProperties, PageBorders, PageNumbering,
-        PaperSource, ParagraphProperties, Revision, RevisionKind, SectionBoundary, SectionColumns,
-        StyleKind,
+        Definitions, DocGrid, NoteProperties, PageBorders, PageNumbering, PaperSource,
+        ParagraphProperties, Revision, RevisionKind, SectionBoundary, SectionColumns, StyleKind,
     };
 
     fn n(counter: u64) -> NodeId {
@@ -8067,6 +8119,166 @@ mod tests {
 
         apply(&mut d, &mut ids, &inverse).unwrap();
         assert_eq!(d.definitions().sections[0].title_page, None);
+    }
+
+    /// A one-section document for the line-numbering tests.
+    fn line_numbered_document() -> (Document, IdGenerator, SectionId) {
+        let mut definitions = Definitions::default();
+        let boundary = section(950);
+        let section_id = boundary.id;
+        definitions.sections.push(boundary);
+        let d = Document::new(n(1000), vec![para(2, vec![run(3, "body")])], definitions)
+            .expect("valid document");
+        (d, IdGenerator::new(9), section_id)
+    }
+
+    /// Word's "Line Numbers" (`109` OO-022): a section rule, self-inverse. The
+    /// engine has painted `w:lnNumType` since P1F-36; this is the op that lets a
+    /// user ask for it.
+    #[test]
+    fn line_numbering_installs_and_restores() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        let rule = LineNumbering {
+            count_by: Some(5),
+            start: Some(1),
+            distance: Some(360),
+            restart: Some(LineNumberRestart::Continuous),
+        };
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionLineNumbering {
+                section: section_id,
+                line_numbering: rule,
+            },
+        )
+        .unwrap();
+        assert_eq!(d.definitions().sections[0].line_numbering, rule);
+        assert_eq!(
+            inverse,
+            Operation::SetSectionLineNumbering {
+                section: section_id,
+                line_numbering: LineNumbering::default(),
+            },
+            "the inverse carries the rule that was there before"
+        );
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(
+            d.definitions().sections[0].line_numbering,
+            LineNumbering::default(),
+            "undo turns numbering back off"
+        );
+    }
+
+    /// Turning numbering OFF is installing the empty value, not a separate op —
+    /// the interpretation `line_number.rs` shares with import and export. Worth a
+    /// test of its own because a "clear" that wrote `count_by: Some(0)` instead
+    /// would still look off in the UI while exporting a `w:lnNumType` no other
+    /// producer writes.
+    #[test]
+    fn the_empty_rule_is_how_numbering_is_turned_off() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionLineNumbering {
+                section: section_id,
+                line_numbering: LineNumbering {
+                    count_by: Some(1),
+                    ..LineNumbering::default()
+                },
+            },
+        )
+        .unwrap();
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionLineNumbering {
+                section: section_id,
+                line_numbering: LineNumbering::default(),
+            },
+        )
+        .unwrap();
+        assert!(
+            d.definitions().sections[0].line_numbering.is_empty(),
+            "an empty rule is indistinguishable from no line numbering"
+        );
+    }
+
+    /// An out-of-domain value is refused and the section is left exactly as it
+    /// was — not left holding a rule `Document::validate` has already rejected.
+    #[test]
+    fn an_out_of_domain_rule_is_refused_without_changing_the_section() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        let good = LineNumbering {
+            count_by: Some(2),
+            ..LineNumbering::default()
+        };
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionLineNumbering {
+                section: section_id,
+                line_numbering: good,
+            },
+        )
+        .unwrap();
+
+        for bad in [
+            LineNumbering {
+                count_by: Some(40_000),
+                ..LineNumbering::default()
+            },
+            LineNumbering {
+                start: Some(-1),
+                ..LineNumbering::default()
+            },
+            LineNumbering {
+                count_by: Some(1),
+                distance: Some(31_681),
+                ..LineNumbering::default()
+            },
+        ] {
+            let outcome = apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetSectionLineNumbering {
+                    section: section_id,
+                    line_numbering: bad,
+                },
+            );
+            assert!(
+                matches!(outcome, Err(EditError::ValueTooLarge)),
+                "{bad:?} is outside the model's domain and must be refused"
+            );
+            assert_eq!(
+                d.definitions().sections[0].line_numbering,
+                good,
+                "a refused edit leaves the previous rule in place, not the bad one"
+            );
+        }
+    }
+
+    /// Addressing a section that does not exist is `NodeNotFound`, not a panic
+    /// and not a silent no-op — the host resolves the id from a stale dialog.
+    #[test]
+    fn line_numbering_on_an_unknown_section_is_reported() {
+        let (mut d, mut ids, _) = line_numbered_document();
+        let outcome = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionLineNumbering {
+                section: SectionId::new(n(7777)),
+                line_numbering: LineNumbering {
+                    count_by: Some(1),
+                    ..LineNumbering::default()
+                },
+            },
+        );
+        assert!(matches!(outcome, Err(EditError::NodeNotFound)));
     }
 
     /// A shape group holding one shape, wrapped in a paragraph — the shape of

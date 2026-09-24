@@ -578,6 +578,11 @@
               <button data-i18n-title="panelLayout.pageOrientation.title" data-i18n-label="panelLayout.pageOrientation.label" id="layoutOrientationBtn" type="button" class="fmt fmt-big" title="Page orientation" aria-label="Page orientation" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">stay_current_portrait</span><span data-i18n="layoutOrientationBtn.orientation" class="fmt-big-label">Orientation</span></button>
               <button data-i18n-title="panelLayout.pageSize.title" data-i18n-label="panelLayout.pageSize.label" id="layoutSizeBtn" type="button" class="fmt fmt-big" title="Page size" aria-label="Page size" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">straighten</span><span data-i18n="layoutSizeBtn.size" class="fmt-big-label">Size</span></button>
               <button data-i18n-title="panelLayout.textColumns.title" data-i18n-label="panelLayout.textColumns.label" id="layoutColumnsBtn" type="button" class="fmt fmt-big" title="Text columns" aria-label="Text columns" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">view_column</span><span data-i18n="layoutColumnsBtn.columns" class="fmt-big-label">Columns</span></button>
+              <!-- Line numbers is Word's fifth Page Setup control, and the band is
+                   budgeted at 1280px with little slack (docs/64), so it is an
+                   icon button rather than a fifth `fmt-big`: the four big ones
+                   are the geometry the dialog owns, and this opens a popover. -->
+              <button data-i18n-title="panelLayout.lineNumbers.title" data-i18n-label="panelLayout.lineNumbers.label" id="lineNumbersBtn" type="button" class="fmt" title="Line numbers" aria-label="Line numbers" aria-haspopup="menu" aria-expanded="false" aria-controls="lineNumbersMenu" disabled><span class="ms" aria-hidden="true">format_list_numbered</span></button>
             </div>
             <span data-i18n="panelLayout.pageSetup" class="rgroup-label">Page setup</span>
           </div>
@@ -982,6 +987,30 @@
       <div class="menu-divider"></div>
       <label data-i18n="spacingMenu.spaceBefore" class="menu-row">Space before<input id="spaceBefore" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
       <label data-i18n="spacingMenu.spaceAfter" class="menu-row">Space after<input id="spaceAfter" type="number" min="0" max="720" step="1" inputmode="numeric" /><span class="menu-unit">pt</span></label>
+    </div>
+
+    <!-- Line numbers (`109` OO-022). The engine has painted `w:lnNumType` since
+         P1F-36 and nothing could ask for it. One popover, presets above the
+         exact fields — the shape `spacingMenu` established for "four common
+         answers, plus the precise ones". Word splits this into a dropdown and a
+         modal dialog; a second dismissal contract for four radio buttons is not
+         worth the inconsistency (docs/104 HF-043's whole finding). -->
+    <div data-i18n-label="ui.lineNumbers.label" id="lineNumbersMenu" class="context-menu spacing-menu" hidden role="menu" aria-label="Line numbers">
+      <div data-i18n="lineNumbersMenu.numbering" class="menu-heading">Numbering</div>
+      <button type="button" class="menu-item" data-linenumber="none" role="menuitemradio" aria-checked="true"><span class="menu-check" aria-hidden="true"></span><span data-i18n="lineNumbersMenu.none">None</span></button>
+      <button type="button" class="menu-item" data-linenumber="continuous" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="lineNumbersMenu.continuous">Continuous</span></button>
+      <button type="button" class="menu-item" data-linenumber="newPage" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="lineNumbersMenu.restartEachPage">Restart each page</span></button>
+      <button type="button" class="menu-item" data-linenumber="newSection" role="menuitemradio" aria-checked="false"><span class="menu-check" aria-hidden="true"></span><span data-i18n="lineNumbersMenu.restartEachSection">Restart each section</span></button>
+      <div class="menu-divider"></div>
+      <!-- Suppression removes a paragraph from the COUNT, not just from the
+           display: a pleading's caption block must not shift every numbered
+           line below it. -->
+      <label class="menu-row"><input id="lineNumberSuppress" type="checkbox" /><span data-i18n="lineNumbersMenu.skipThisParagraph">Skip this paragraph</span></label>
+      <div class="menu-divider"></div>
+      <div data-i18n="lineNumbersMenu.options" class="menu-heading">Options</div>
+      <label data-i18n="lineNumbersMenu.startAt" class="menu-row">Start at<input data-i18n-label="lineNumbersMenu.firstLineNumber.label" id="lineNumberStart" type="number" min="0" max="32767" step="1" inputmode="numeric" aria-label="First line number" /></label>
+      <label data-i18n="lineNumbersMenu.countBy" class="menu-row">Count by<input data-i18n-label="lineNumbersMenu.numberEveryNthLine.label" id="lineNumberCountBy" type="number" min="1" max="32767" step="1" inputmode="numeric" aria-label="Number every Nth line" /></label>
+      <label data-i18n="lineNumbersMenu.fromText" class="menu-row">From text<input data-i18n-label="lineNumbersMenu.gapFromTextToNumbers.label" id="lineNumberDistance" type="number" min="0" max="22" step="0.01" inputmode="decimal" aria-label="Gap from text to the numbers" /><span class="menu-unit">in</span></label>
     </div>
 
     <div data-i18n-label="ui.cellBorderFormatting.label" id="tableMenu" class="context-menu spacing-menu table-format-menu" hidden role="dialog" aria-label="Cell and border formatting">

@@ -38,4 +38,9 @@ export const EN_STRINGS = Object.freeze({
   "table.styleNamed": "Table style: {name}",
   "status.characters.noSpaces": "{count} characters (no spaces)",
   "settings.language.systemDefault": "System default ({name})",
+  // Page Setup builds two of its strings rather than declaring them in markup:
+  // the Section dropdown's options are one per section, and the preview's label
+  // reads out whatever the size fields currently say.
+  "pageSetup.sectionNumber": "Section {number}",
+  "pageSetup.dimensions": "{width} \u00d7 {height} in",
 });

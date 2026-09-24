@@ -21,6 +21,7 @@ import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
+import { createPageSetup } from "./page_setup.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
 import { createSpellChecker, spellingContextCommands } from "./spell_check.mjs";
@@ -338,6 +339,7 @@ const tableDescription = document.getElementById("tableDescription");
 const tableFormula = document.getElementById("tableFormula");
 const tableFormulaApply = document.getElementById("tableFormulaApply");
 const insertTableBtn = document.getElementById("insertTableBtn");
+const lineNumbersBtn = document.getElementById("lineNumbersBtn");
 const insertPictureBtn = document.getElementById("insertPictureBtn");
 const insertShapeBtn = document.getElementById("insertShapeBtn");
 const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
@@ -8454,10 +8456,16 @@ const LAYOUT_SURFACE = [
   // Page setup: one dialog, four fieldsets. Word's four buttons are four routes
   // into the same section geometry; each one opens the dialog with its own
   // fieldset focused rather than pretending to be a separate dialog.
-  { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [layoutMarginsBtn], requires: "doc", run: () => togglePageSetup(true, () => pageMarginTopInput) },
-  { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [layoutOrientationBtn], requires: "doc", run: () => togglePageSetup(true, () => pageOrientationSeg.querySelector('button[aria-pressed="true"]')) },
-  { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [layoutSizeBtn], requires: "doc", run: () => togglePageSetup(true, () => pageWidthInput) },
-  { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [layoutColumnsBtn], requires: "doc", run: () => togglePageSetup(true, () => pageColumnCount) },
+  { command: "layout.margins", label: "Page margins", kw: "margins page setup top bottom left right gutter", buttons: () => [layoutMarginsBtn], requires: "doc", run: () => pageSetup.open(true, "margins") },
+  { command: "layout.orientation", label: "Page orientation", kw: "orientation portrait landscape rotate page setup", buttons: () => [layoutOrientationBtn], requires: "doc", run: () => pageSetup.open(true, "orientation") },
+  { command: "layout.size", label: "Page size", kw: "size paper a4 letter legal width height page setup", buttons: () => [layoutSizeBtn], requires: "doc", run: () => pageSetup.open(true, "size") },
+  { command: "layout.columns", label: "Text columns", kw: "columns newspaper two three spacing separator page setup", buttons: () => [layoutColumnsBtn], requires: "doc", run: () => pageSetup.open(true, "columns") },
+  // The button's click is the popover's own (`registerPopover`), so this row
+  // declares `ownsClick` and contributes only the command id, the enablement
+  // rule and the palette row — the same split INSERT_SURFACE spells `activate:
+  // null` for `insert.table`. Without it the wiring below would attach a handler
+  // that re-clicks the button the popover manager is already listening on.
+  { command: "layout.lineNumbers", label: "Line numbers", kw: "line numbers numbering margin legal pleading count suppress", buttons: () => [lineNumbersBtn], requires: "doc", ownsClick: true, run: () => pageSetup.openLineNumbers() },
   // Paragraph: the existing relative nudges, plus the two fieldsets of the
   // paragraph-properties panel that hold the absolute indent and spacing values.
   // The ribbon deliberately does NOT carry its own numeric fields: the panel
@@ -9587,7 +9595,7 @@ function updateToolbar() {
   pasteBtn.disabled = !hasSel || !doc || reviewMode === "viewing";
   syncStylesGalleryActive();
   propertiesBtn.disabled = !doc;
-  pageSetupBtn.disabled = !doc;
+  pageSetup.setEnabled(Boolean(doc));
   viewOutlineBtn.disabled = !doc;
   viewOutlineBtn.setAttribute("aria-pressed", String(!outlinePanel.hidden));
   reviewBtn.disabled = !doc;
@@ -9724,7 +9732,7 @@ for (const entry of [...LAYOUT_SURFACE, ...REFERENCE_SURFACE]) {
     // Fallback for a control with no i18n key. Captured at BOOT, before a
     // catalogue exists, so always English — hence `authoredTitle`'s preference.
     button.dataset.enabledTitle = button.title;
-    if (entry.run) onButton(button, entry.run);
+    if (entry.run && !entry.ownsClick) onButton(button, entry.run);
   }
 }
 for (const key of ["bold", "italic", "underline", "strike"]) {
@@ -12701,7 +12709,7 @@ function editorCommands(context = { surface: "palette" }) {
     // accent and reviewer identity are host preferences that do not need a
     // document open, and the gear is the only other way to reach them.
     { id: "view.settings", label: "Settings", group: "View", kw: "theme accent dark appearance preferences identity author name initials", noDoc: true, run: () => toggleSettings(true) },
-    { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => togglePageSetup(true) },
+    { id: "layout.pageSetup", label: "Page setup", group: "Layout", kw: "margins orientation paper size", run: () => pageSetup.open(true) },
     { id: "layout.paragraph", label: "Paragraph properties", group: "Layout", kw: "spacing borders shading indent", enabled: !!selection, disabledReason: "Place the caret in a paragraph", run: () => toggleParagraphProperties(true) },
     // The Layout and References tabs' own rows, generated from the SAME tables
     // their buttons are built from, so a tab button and its palette row can
@@ -17020,218 +17028,19 @@ propertiesApplyBtn.addEventListener("click", async () => {
   toggleProperties(false);
 });
 
-// ---- Page setup (page size, margins, orientation) ----------------------------
-const pageSetupBtn = document.getElementById("pageSetupBtn");
-const pageSetupMenu = document.getElementById("pageSetupMenu");
-const pageOrientationSeg = document.getElementById("pageOrientationSeg");
-const pageWidthInput = document.getElementById("pageWidth");
-const pageHeightInput = document.getElementById("pageHeight");
-const pageMarginTopInput = document.getElementById("pageMarginTop");
-const pageMarginBottomInput = document.getElementById("pageMarginBottom");
-const pageMarginLeftInput = document.getElementById("pageMarginLeft");
-const pageMarginRightInput = document.getElementById("pageMarginRight");
-const pageSetupApplyBtn = document.getElementById("pageSetupApply");
-const pageSetupCancelBtn = document.getElementById("pageSetupCancel");
-const pageSetupCloseBtn = document.getElementById("pageSetupClose");
-const pagePreviewSheet = document.getElementById("pagePreviewSheet");
-const pagePreviewMargins = document.getElementById("pagePreviewMargins");
-const pagePreviewLabel = document.getElementById("pagePreviewLabel");
-const pageSetupSection = document.getElementById("pageSetupSection");
-const pageColumnCount = document.getElementById("pageColumnCount");
-const pageColumnGap = document.getElementById("pageColumnGap");
-const pageColumnSeparator = document.getElementById("pageColumnSeparator");
-
-let pageSetupCurrent = null; // the last-fetched {section, pageSize, pageMargins, orientation}
-
-function reflectPageSetupColumns(columns) {
-  const value = columns ?? { count: 1, spaceTwips: 0, separator: false };
-  pageColumnCount.value = String(Math.min(4, Math.max(1, value.count ?? 1)));
-  pageColumnGap.value = pageInchStr(value.spaceTwips ?? 0);
-  pageColumnSeparator.checked = value.separator === true;
-}
-
-function pageSetupColumnsPayload() {
-  const current = pageSetupCurrent.columns;
-  const count = Number(pageColumnCount.value) || 1;
-  const spaceTwips = inchTwips(pageColumnGap);
-  const separator = pageColumnSeparator.checked;
-  // Opening Page Setup and changing only page size/margins must not erase
-  // explicit unequal column widths. Normalize to equal columns only when a
-  // column control itself actually changed.
-  if (
-    current &&
-    count === current.count &&
-    spaceTwips === (current.spaceTwips ?? 0) &&
-    separator === (current.separator === true)
-  ) {
-    return current;
-  }
-  return {
-    ...(current ?? {}),
-    count,
-    spaceTwips,
-    separator,
-    equalWidth: true,
-    columns: [],
-  };
-}
-
-/** Twips → inches string for a page-geometry field (unlike inchStr, 0 shows
- * as "0" — a page dimension/margin is never meaningfully "unset"). */
-function pageInchStr(twip) {
-  return (twip / TWIPS_PER_INCH).toFixed(2).replace(/\.?0+$/, "") || "0";
-}
-
-function updatePageSetupPreview() {
-  const width = Math.max(1, Number(pageWidthInput.value) || 1);
-  const height = Math.max(1, Number(pageHeightInput.value) || 1);
-  const top = Math.max(0, Number(pageMarginTopInput.value) || 0);
-  const bottom = Math.max(0, Number(pageMarginBottomInput.value) || 0);
-  const left = Math.max(0, Number(pageMarginLeftInput.value) || 0);
-  const right = Math.max(0, Number(pageMarginRightInput.value) || 0);
-  const previewPercent = (value, dimension) =>
-    `${Math.min(38, Math.max(3, (value / dimension) * 100))}%`;
-
-  pagePreviewSheet.dataset.orientation = width > height ? "landscape" : "portrait";
-  pagePreviewSheet.style.setProperty("--page-ratio", `${width} / ${height}`);
-  pagePreviewMargins.style.setProperty("--preview-margin-top", previewPercent(top, height));
-  pagePreviewMargins.style.setProperty("--preview-margin-bottom", previewPercent(bottom, height));
-  pagePreviewMargins.style.setProperty("--preview-margin-left", previewPercent(left, width));
-  pagePreviewMargins.style.setProperty("--preview-margin-right", previewPercent(right, width));
-  pagePreviewLabel.textContent = `${pageInchStr(width * TWIPS_PER_INCH)} × ${pageInchStr(height * TWIPS_PER_INCH)} in`;
-}
-
-function reflectPageSetup() {
-  if (!doc) return false;
-  const raw = doc.pageSetupSections(selection?.focus?.node ?? "");
-  const list = raw === "null" ? null : JSON.parse(raw);
-  if (!list?.sections?.length) return false;
-  pageSetupSection.replaceChildren();
-  for (const [index, section] of list.sections.entries()) {
-    const option = document.createElement("option");
-    option.value = section.section;
-    option.textContent = `Section ${index + 1}`;
-    pageSetupSection.appendChild(option);
-  }
-  pageSetupSection.value = list.current;
-  pageSetupCurrent = list.sections.find((section) => section.section === list.current) ?? list.sections[0];
-  const { pageSize, pageMargins, orientation } = pageSetupCurrent;
-  pageWidthInput.value = pageInchStr(pageSize.widthTwips);
-  pageHeightInput.value = pageInchStr(pageSize.heightTwips);
-  pageMarginTopInput.value = pageInchStr(pageMargins.topTwips);
-  pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
-  pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
-  pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
-  reflectPageSetupColumns(pageSetupCurrent.columns);
-  const activeOrientation =
-    orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
-  for (const btn of pageOrientationSeg.querySelectorAll("button")) {
-    btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
-  }
-  updatePageSetupPreview();
-  return true;
-}
-
-pageSetupSection.addEventListener("change", () => {
-  if (!doc) return;
-  const raw = doc.pageSetupSections(selection?.focus?.node ?? "");
-  const list = raw === "null" ? null : JSON.parse(raw);
-  pageSetupCurrent = list?.sections?.find((section) => section.section === pageSetupSection.value) ?? null;
-  if (!pageSetupCurrent) return;
-  const { pageSize, pageMargins, orientation } = pageSetupCurrent;
-  pageWidthInput.value = pageInchStr(pageSize.widthTwips);
-  pageHeightInput.value = pageInchStr(pageSize.heightTwips);
-  pageMarginTopInput.value = pageInchStr(pageMargins.topTwips);
-  pageMarginBottomInput.value = pageInchStr(pageMargins.bottomTwips);
-  pageMarginLeftInput.value = pageInchStr(pageMargins.startTwips);
-  pageMarginRightInput.value = pageInchStr(pageMargins.endTwips);
-  reflectPageSetupColumns(pageSetupCurrent.columns);
-  const activeOrientation = orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
-  for (const btn of pageOrientationSeg.querySelectorAll("button")) {
-    btn.setAttribute("aria-pressed", String(btn.dataset.orientation === activeOrientation));
-  }
-  updatePageSetupPreview();
+// ---- Page setup and line numbers -------------------------------------------
+// Word's Layout ▸ Page Setup group, in `page_setup.mjs`: the geometry dialog and
+// the Line Numbers popover, which share one answer to "which section is the
+// caret in". Nothing about either is decided here any more.
+const pageSetup = createPageSetup({
+  getDoc: () => doc,
+  selectionNode: () => selection?.focus?.node ?? "",
+  selectionEndpoints: selEndpoints,
+  runEdit,
+  registerModal,
+  registerPopover,
 });
 
-// Which control the dialog should land on for THIS opening. Layout ▸ Margins and
-// Layout ▸ Columns are the same dialog reached with a different intent, and
-// Word/Docs both put you on the field you asked for; landing everyone on
-// Orientation would make three of the four buttons feel like the wrong button.
-// Reset on every open so a deep link cannot leak into the next plain opening.
-let pageSetupFocusTarget = null;
-
-const pageSetupModal = registerModal(pageSetupMenu, {
-  initialFocus: () =>
-    pageSetupFocusTarget?.() ?? pageOrientationSeg.querySelector('button[aria-pressed="true"]'),
-  fallbackFocus: () => pageSetupBtn,
-});
-
-function togglePageSetup(open, focusTarget = null) {
-  const show = open ?? !pageSetupModal.isOpen;
-  if (show === pageSetupModal.isOpen) return;
-  if (show && !reflectPageSetup()) return; // no section geometry to edit
-  pageSetupFocusTarget = show ? focusTarget : null;
-  pageSetupBtn.setAttribute("aria-expanded", String(show));
-  if (show) pageSetupModal.open();
-  else pageSetupModal.close();
-}
-pageSetupBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  togglePageSetup();
-});
-pageOrientationSeg.addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-orientation]");
-  if (!btn) return;
-  for (const b of pageOrientationSeg.querySelectorAll("button")) {
-    b.setAttribute("aria-pressed", String(b === btn));
-  }
-  // Swap width/height to match, mirroring Word's orientation toggle.
-  const w = Number(pageWidthInput.value) || 0;
-  const h = Number(pageHeightInput.value) || 0;
-  const wantLandscape = btn.dataset.orientation === "landscape";
-  if (wantLandscape === w > h) return; // already matches
-  const widthTwips = inchTwips(pageWidthInput);
-  const heightTwips = inchTwips(pageHeightInput);
-  pageWidthInput.value = pageInchStr(heightTwips);
-  pageHeightInput.value = pageInchStr(widthTwips);
-  updatePageSetupPreview();
-});
-pageSetupCancelBtn.addEventListener("click", () => togglePageSetup(false));
-pageSetupCloseBtn.addEventListener("click", () => togglePageSetup(false));
-for (const input of [
-  pageWidthInput,
-  pageHeightInput,
-  pageMarginTopInput,
-  pageMarginBottomInput,
-  pageMarginLeftInput,
-  pageMarginRightInput,
-]) {
-  input.addEventListener("input", updatePageSetupPreview);
-}
-pageSetupApplyBtn.addEventListener("click", async () => {
-  if (!doc || !pageSetupCurrent) return;
-  const orientation =
-    pageOrientationSeg.querySelector('button[aria-pressed="true"]')?.dataset.orientation ??
-    "portrait";
-  const payload = {
-    section: pageSetupCurrent.section,
-    pageSize: {
-      widthTwips: inchTwips(pageWidthInput),
-      heightTwips: inchTwips(pageHeightInput),
-    },
-    pageMargins: {
-      ...pageSetupCurrent.pageMargins,
-      topTwips: inchTwips(pageMarginTopInput),
-      bottomTwips: inchTwips(pageMarginBottomInput),
-      startTwips: inchTwips(pageMarginLeftInput),
-      endTwips: inchTwips(pageMarginRightInput),
-    },
-    columns: pageSetupColumnsPayload(),
-    orientation,
-  };
-  await runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
-  togglePageSetup(false);
-});
 fileEl.disabled = true;
 if (openBtn) openBtn.disabled = true;
 // No document is open yet, so every document-scoped control starts disabled.
