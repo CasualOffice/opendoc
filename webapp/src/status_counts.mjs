@@ -7,7 +7,7 @@
 // narrow-window ladder has shed — and they were five separately written
 // sentences with the plural rule hand-rolled into each. One of them is now one
 // call, and a translator sees one set of keys.
-import { t } from "./i18n.mjs";
+import { n, t } from "./i18n.mjs";
 
 /**
  * @param {{words: number, characters: number, charactersNoSpaces: number, paragraphs: number}} stats
@@ -33,4 +33,15 @@ export function countLabels({ words, characters, charactersNoSpaces, paragraphs 
       t("status.paragraphs", { count: paragraphs }),
     ].join("\n"),
   };
+}
+
+/** "Page 3 of 12" — the footer's position indicator.
+ *
+ *  Here rather than in the shell for the same reason the counts are: it is a
+ *  sentence built from numbers, and the numbers need the locale's own digits
+ *  and grouping. `total` arrives already formatted because it can be an
+ *  ESTIMATE ("~12") while a long document is still being measured, which is a
+ *  string decision rather than a numeric one. */
+export function pageIndicator(page, total) {
+  return t("status.pageOf", { page: n(page), total });
 }

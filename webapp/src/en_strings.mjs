@@ -21,6 +21,21 @@ export const EN_STRINGS = Object.freeze({
   "status.paragraphs.one": "{count} paragraph",
   "status.paragraphs.other": "{count} paragraphs",
   "status.characters.withSpaces": "{count} characters (with spaces)",
+  // Reassigned from script on every render, so the markup sweep never sees it.
+  "status.pageOf": "Page {page} of {total}",
+  "toolbar.undo": "Undo",
+  "toolbar.redo": "Redo",
+  // The engine names the action a step will undo ("Typing", "Table structure").
+  // A language that puts the verb after the object needs the whole sentence,
+  // not "Undo" plus a noun glued on, which is why this is one key and not two.
+  "toolbar.undoNamed": "Undo {name}",
+  "toolbar.redoNamed": "Redo {name}",
+  // The document-state pill. The words live in `status_policy.mjs`, which is
+  // DOM-free and knows nothing of catalogues; these are the same strings, keyed.
+  "status.state.opened": "Opened",
+  "status.state.edited": "Edited",
+  "status.state.downloaded": "Downloaded",
+  "table.styleNamed": "Table style: {name}",
   "status.characters.noSpaces": "{count} characters (no spaces)",
   "settings.language.systemDefault": "System default ({name})",
 });
