@@ -62,13 +62,13 @@ const SRC = new URL("../src/", import.meta.url);
  *  lowered the ceiling to its own half's measurement, so NEITHER number is
  *  right here — exactly the trap SKILL.md §5 records. This one is re-measured
  *  from the merged file.
- *  Lowered again to 17,324 when the red-main fixes landed: the review-formatting
- *  labels are `review_labels.mjs` now. Before that it was 17,362, when the File
- *  page grew its panes and the template
- *  gallery: the context menu's icon table, level helpers and row renderer are
- *  now `menu_render.mjs`, which reaches the open level stack through hooks and
- *  so owns no menu state. */
-const MAIN_JS_LINE_CEILING = 17324;
+ *  Lowered again when localisation landed on top of the red-main fixes: the
+ *  seam, the loader and the count sentences became modules, and so did the
+ *  review-formatting labels. BOTH sides of that merge lowered the ceiling from
+ *  17,362 to their own half's measurement — 17,324 and 17,330 — so neither
+ *  number was right for the merged file, which is the same trap this note
+ *  records above. Re-measured from the merged file. */
+const MAIN_JS_LINE_CEILING = 17344;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -81,6 +81,11 @@ const PURE_MODULES = [
   // The Symbol / Emoji sets: literal data with no behaviour, so nothing in it
   // has any business reaching a global.
   "glyph_sets.mjs",
+  // The localisation seam. Purity is the point: a locale's plural rules and
+  // fallback chain are answerable without a document existing, which is what
+  // lets `i18n.test.mjs` drive Russian's three plural forms in node. The DOM
+  // half — walking `data-i18n` attributes — is `localize.mjs`.
+  "i18n.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
   // The whole target -> cursor mapping. Its DOM half is `pointer_hover.mjs`;

@@ -309,6 +309,7 @@ hotfix
 href
 html
 iOS
+idempotent
 iframe
 impl
 incl

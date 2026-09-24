@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "ja",
+  "@@reviewed": false,
+  "settings.language.label": "言語",
+  "settings.language.note": "英語以外の翻訳は機械生成であり、ネイティブスピーカーによる確認は行われていません。",
+  "settings.language.systemDefault": "システムの既定 ({name})",
+  "status.characters.noSpaces": "{count} 文字 (スペースを含まない)",
+  "status.characters.other": "{count} 文字",
+  "status.characters.withSpaces": "{count} 文字 (スペースを含む)",
+  "status.paragraphs.other": "{count} 段落",
+  "status.words.other": "{count} 単語"
+}

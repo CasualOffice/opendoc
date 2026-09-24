@@ -1,0 +1,16 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "nl",
+  "@@reviewed": false,
+  "settings.language.label": "Taal",
+  "settings.language.note": "Vertalingen anders dan Engels zijn machinaal gemaakt en niet nagekeken door een moedertaalspreker.",
+  "settings.language.systemDefault": "Systeemstandaard ({name})",
+  "status.characters.noSpaces": "{count} tekens (zonder spaties)",
+  "status.characters.one": "{count} teken",
+  "status.characters.other": "{count} tekens",
+  "status.characters.withSpaces": "{count} tekens (met spaties)",
+  "status.paragraphs.one": "{count} alinea",
+  "status.paragraphs.other": "{count} alinea's",
+  "status.words.one": "{count} woord",
+  "status.words.other": "{count} woorden"
+}

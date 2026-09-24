@@ -1,0 +1,16 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "tr",
+  "@@reviewed": false,
+  "settings.language.label": "Dil",
+  "settings.language.note": "İngilizce dışındaki çeviriler makine tarafından üretilmiştir ve ana dili konuşan biri tarafından gözden geçirilmemiştir.",
+  "settings.language.systemDefault": "Sistem varsayılanı ({name})",
+  "status.characters.noSpaces": "{count} karakter (boşluksuz)",
+  "status.characters.one": "{count} karakter",
+  "status.characters.other": "{count} karakter",
+  "status.characters.withSpaces": "{count} karakter (boşluklarla)",
+  "status.paragraphs.one": "{count} paragraf",
+  "status.paragraphs.other": "{count} paragraf",
+  "status.words.one": "{count} kelime",
+  "status.words.other": "{count} kelime"
+}

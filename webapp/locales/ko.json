@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "ko",
+  "@@reviewed": false,
+  "settings.language.label": "언어",
+  "settings.language.note": "영어 외의 번역은 기계로 생성되었으며 원어민의 검수를 거치지 않았습니다.",
+  "settings.language.systemDefault": "시스템 기본값 ({name})",
+  "status.characters.noSpaces": "{count}자 (공백 제외)",
+  "status.characters.other": "{count}자",
+  "status.characters.withSpaces": "{count}자 (공백 포함)",
+  "status.paragraphs.other": "{count}개 단락",
+  "status.words.other": "{count}개 단어"
+}

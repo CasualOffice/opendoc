@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "id",
+  "@@reviewed": false,
+  "settings.language.label": "Bahasa",
+  "settings.language.note": "Terjemahan selain bahasa Inggris dihasilkan mesin dan belum ditinjau oleh penutur asli.",
+  "settings.language.systemDefault": "Bawaan sistem ({name})",
+  "status.characters.noSpaces": "{count} karakter (tanpa spasi)",
+  "status.characters.other": "{count} karakter",
+  "status.characters.withSpaces": "{count} karakter (dengan spasi)",
+  "status.paragraphs.other": "{count} paragraf",
+  "status.words.other": "{count} kata"
+}

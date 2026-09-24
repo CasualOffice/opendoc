@@ -1,0 +1,22 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "uk",
+  "@@reviewed": false,
+  "settings.language.label": "Мова",
+  "settings.language.note": "Переклади, крім англійського, створено машинно й не перевірено носієм мови.",
+  "settings.language.systemDefault": "Системний за замовчуванням ({name})",
+  "status.characters.few": "{count} символи",
+  "status.characters.many": "{count} символів",
+  "status.characters.noSpaces": "{count} символів (без пробілів)",
+  "status.characters.one": "{count} символ",
+  "status.characters.other": "{count} символа",
+  "status.characters.withSpaces": "{count} символів (з пробілами)",
+  "status.paragraphs.few": "{count} абзаци",
+  "status.paragraphs.many": "{count} абзаців",
+  "status.paragraphs.one": "{count} абзац",
+  "status.paragraphs.other": "{count} абзацу",
+  "status.words.few": "{count} слова",
+  "status.words.many": "{count} слів",
+  "status.words.one": "{count} слово",
+  "status.words.other": "{count} слова"
+}

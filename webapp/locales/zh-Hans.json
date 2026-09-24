@@ -1,0 +1,13 @@
+{
+  "@@direction": "ltr",
+  "@@locale": "zh-Hans",
+  "@@reviewed": false,
+  "settings.language.label": "语言",
+  "settings.language.note": "英语以外的译文由机器生成，未经母语者审校。",
+  "settings.language.systemDefault": "系统默认 ({name})",
+  "status.characters.noSpaces": "{count} 个字符（不含空格）",
+  "status.characters.other": "{count} 个字符",
+  "status.characters.withSpaces": "{count} 个字符（含空格）",
+  "status.paragraphs.other": "{count} 个段落",
+  "status.words.other": "{count} 个字词"
+}
