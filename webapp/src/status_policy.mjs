@@ -31,9 +31,9 @@ export function statusClassName(kind) {
  *  engine revision watermark, deliberately not by this string — which is what
  *  let an older boolean flag sit here with no readers. */
 export const DOCUMENT_STATE_BADGES = {
-  opened: { icon: "check_circle", text: "Opened" },
-  edited: { icon: "edit", text: "Edited" },
-  downloaded: { icon: "download_done", text: "Downloaded" },
+  opened: { icon: "check_circle", text: "Opened", key: "status.state.opened" },
+  edited: { icon: "edit", text: "Edited", key: "status.state.edited" },
+  downloaded: { icon: "download_done", text: "Downloaded", key: "status.state.downloaded" },
 };
 
 /**

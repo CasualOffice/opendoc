@@ -64,7 +64,9 @@ import {
   renderMenuLevel as renderMenuLevelRows,
 } from "./menu_render.mjs";
 import { modalIsOpen, registerModal, setModalHooks } from "./modal.mjs";
-import { countLabels } from "./status_counts.mjs";
+import { t } from "./i18n.mjs";
+import { authoredTitle, paintDocumentState } from "./localize.mjs";
+import { countLabels, pageIndicator } from "./status_counts.mjs";
 import { startLocalisation } from "./locale_boot.mjs";
 import { isShortcutLike, localizeShortcutGlyphs, localizeShortcutText } from "./shortcut_labels.mjs";
 import {
@@ -2820,11 +2822,7 @@ function announceStatus(text, kind) {
 }
 
 function setDocumentState(state) {
-  const next = documentStateBadge(state);
-  documentStateEl.dataset.state = next.state;
-  documentStateEl.querySelector(".ms").textContent = next.icon;
-  documentStateText.textContent = next.text;
-  documentStateEl.title = next.text;
+  paintDocumentState(documentStateBadge(state), documentStateEl, documentStateText);
   // Every path that changes document identity or saved-ness passes through
   // here — open, edit, rename, save, restore — so the browser tab is refreshed
   // from one place rather than from five call sites that will drift.
@@ -2972,11 +2970,8 @@ function updatePageNumber() {
     const flat = doc.caretRect(selection.focus.node, selection.focus.offset);
     if (flat.length) cur = flat[0];
   }
-  statPages.textContent = `Page ${cur} of ${pageTotalLabel(
-    pages.length,
-    doc.estimatedPageCount,
-    doc.pageCountIsExact,
-  )}`;
+  const total = pageTotalLabel(pages.length, doc.estimatedPageCount, doc.pageCountIsExact);
+  statPages.textContent = pageIndicator(cur, total);
   reflectPagesSelection(cur);
 }
 
@@ -9498,7 +9493,9 @@ function updateToolbar() {
   for (const control of tableRibbonControls) control.disabled = !inTable;
   tableStyleBtn.disabled = !inTable;
   const activeTableStyle = inTable && tableInfo?.found ? (doc.tableStyleAt?.(selection.focus.node) || "") : "";
-  tableStyleBtn.title = activeTableStyle ? `Table style: ${activeTableStyle}` : "Choose table style";
+  tableStyleBtn.title = activeTableStyle
+    ? t("table.styleNamed", { name: activeTableStyle })
+    : authoredTitle(tableStyleBtn);
   for (const control of tableRibbon.querySelectorAll(
     '[data-table-action*="column"]',
   )) {
@@ -9547,7 +9544,7 @@ function updateToolbar() {
       // authored title is the "missing" reason already, so only the transient
       // preconditions rewrite it.
       if (entry.requires !== "missing") {
-        button.title = enabled ? (button.dataset.enabledTitle ?? button.title) : reason;
+        button.title = enabled ? authoredTitle(button) : reason;
       }
       // A switch has to say which way it is set, whichever table declares it.
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
@@ -9572,12 +9569,12 @@ function updateToolbar() {
   redoBtn.disabled = !doc || !doc.canRedo;
   const undoLabel = doc?.undoLabel || "";
   const redoLabel = doc?.redoLabel || "";
-  const undoName = undoLabel ? `Undo ${undoLabel}` : "Undo";
-  const redoName = redoLabel ? `Redo ${redoLabel}` : "Redo";
+  // Through the seam: the boot sweep never sees these, so they stayed English.
+  const undoName = undoLabel ? t("toolbar.undoNamed", { name: undoLabel }) : t("toolbar.undo");
+  const redoName = redoLabel ? t("toolbar.redoNamed", { name: redoLabel }) : t("toolbar.redo");
   undoBtn.setAttribute("aria-label", undoName);
   redoBtn.setAttribute("aria-label", redoName);
-  // Reassigned on every state sync, so these outlive the boot sweep and have to
-  // be localized at the point of assignment (HF-025).
+  // Reassigned on every sync, so they outlive the boot sweep (HF-025).
   undoBtn.title = localizeShortcutText(`${undoName} (⌘Z)`, EDITOR_KEYBOARD_PLATFORM);
   redoBtn.title = localizeShortcutText(`${redoName} (⌘⇧Z)`, EDITOR_KEYBOARD_PLATFORM);
   findBtn.disabled = !doc;
@@ -9724,8 +9721,8 @@ for (const entry of [...LAYOUT_SURFACE, ...REFERENCE_SURFACE]) {
   for (const button of entry.buttons()) {
     if (!button) continue;
     button.dataset.command = entry.command;
-    // Remember the authored tooltip so `updateToolbar` can put it back after a
-    // precondition message has replaced it.
+    // Fallback for a control with no i18n key. Captured at BOOT, before a
+    // catalogue exists, so always English — hence `authoredTitle`'s preference.
     button.dataset.enabledTitle = button.title;
     if (entry.run) onButton(button, entry.run);
   }

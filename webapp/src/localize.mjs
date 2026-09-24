@@ -42,6 +42,21 @@ export function localizeTree(root = document) {
   }
 }
 
+/** A control's own tooltip, in the language now in force.
+ *
+ *  A disabled control has to say WHY, so the shell swaps its tooltip for the
+ *  reason and must put the real one back afterwards. It used to put back a
+ *  `dataset.enabledTitle` captured once at boot — which is before any
+ *  catalogue has loaded, so the snapshot is always the English in the markup,
+ *  and restoring it silently un-translated the control. Reading the key cannot
+ *  go stale, because the key is what the catalogue is indexed by; the snapshot
+ *  stays as the fallback for a control that carries no key. */
+export function authoredTitle(button) {
+  const key = button.dataset.i18nTitle;
+  if (key && has(key)) return t(key);
+  return button.dataset.enabledTitle ?? button.title;
+}
+
 /** Replaces an element's own words without touching what it CONTAINS.
  *
  *  `textContent = ...` is the obvious implementation and it is wrong here:
@@ -87,4 +102,19 @@ export async function fetchCatalogue(tag, base = "./locales") {
   } catch {
     return null;
   }
+}
+
+/** Paints the document-state pill in the language now in force.
+ *
+ *  `status_policy.mjs` names the states and stays catalogue-free, so it can be
+ *  unit-tested without one; it carries the key beside the English and this
+ *  resolves it. The pill is reassigned every time the document's saved-ness
+ *  changes, which is long after the boot sweep — so it showed "Opened" in
+ *  every language until the key existed. */
+export function paintDocumentState(badge, pill, textEl) {
+  pill.dataset.state = badge.state;
+  pill.querySelector(".ms").textContent = badge.icon;
+  const words = badge.key && has(badge.key) ? t(badge.key) : badge.text;
+  textEl.textContent = words;
+  pill.title = words;
 }

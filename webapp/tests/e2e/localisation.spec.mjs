@@ -237,3 +237,66 @@ test("the File page's Settings pane carries the picker too", async ({ page, cons
   await expect(page.locator("#filePageDetail #languageSelect")).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
+
+test("no routed string shows its English at FIRST PAINT", async ({ page, consoleErrors }) => {
+  // The class of defect this catches, rather than the three instances of it
+  // that prompted it.
+  //
+  // `localizeTree` sweeps the markup once at boot. Anything the shell writes
+  // AFTER that sweep — a tooltip restored from a boot-time snapshot, an
+  // aria-label recomputed on every state sync, a status pill repainted when
+  // the document saves — overwrites the translation with the English literal
+  // it was built from, and the control stays English until the user switches
+  // language and forces a re-sweep. Which is to say: the bug is invisible to
+  // anyone testing by switching language, and visible to every user who
+  // simply opens the editor in their own.
+  //
+  // So this asserts at first paint, without touching the picker, and does it
+  // by comparing against the CATALOGUES rather than a list of expected
+  // strings: any routed key whose English and translation differ must not be
+  // showing the English.
+  const [english, german] = await Promise.all([
+    page.request.get("/locales/en.json").then((r) => r.json()),
+    page.request.get("/locales/de.json").then((r) => r.json()),
+  ]);
+
+  await page.goto("/editor.html?fixture=rich&lang=de");
+  await page.waitForFunction(() => document.body.dataset.fontsReady === "true");
+
+  const leaked = await page.evaluate(
+    ({ en, de }) => {
+      const out = [];
+      const check = (key, actual) => {
+        const source = en[key];
+        const translated = de[key];
+        if (!source || !translated || source === translated) return;
+        if (actual === source) out.push(`${key} is showing "${source}"`);
+      };
+      for (const el of document.querySelectorAll("[data-i18n]")) {
+        check(el.dataset.i18n, el.textContent.trim());
+      }
+      for (const el of document.querySelectorAll("[data-i18n-title]")) {
+        check(el.dataset.i18nTitle, el.getAttribute("title"));
+      }
+      for (const el of document.querySelectorAll("[data-i18n-label]")) {
+        check(el.dataset.i18nLabel, el.getAttribute("aria-label"));
+      }
+      return out;
+    },
+    { en: english, de: german },
+  );
+
+  expect(leaked, "these controls were re-rendered from English after the sweep").toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the strings the shell writes itself are localised too", async ({ page }) => {
+  // The three that were wrong, named — a routed key can regress without the
+  // sweep guard above noticing if its English and its translation ever
+  // coincide, and these are the ones a person reads constantly.
+  await page.goto("/editor.html?fixture=rich&lang=de");
+  await page.waitForFunction(() => document.body.dataset.fontsReady === "true");
+  await expect(page.locator("#statPages")).toHaveText(/^Seite \d+ von/);
+  await expect(page.locator("#documentStateText")).toHaveText("Geöffnet");
+  await expect(page.locator("#undoBtn")).toHaveAttribute("aria-label", /Rückgängig/);
+});
