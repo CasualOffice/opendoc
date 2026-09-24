@@ -61,7 +61,7 @@ pub use opaque::{
 pub use report::{
     CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
     LedgerId, LedgerRecord, ModelOutcome, PartDisposition, PreservationKind, PreservationLedger,
-    RSID_CLASS_FEATURE, RetentionOutcome,
+    RSID_CLASS_FEATURE, RetentionOutcome, WATERMARK_CLASS_FEATURE,
 };
 pub use retain::RetainedSource;
 pub use vml::{
