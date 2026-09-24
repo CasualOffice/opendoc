@@ -141,6 +141,8 @@ import {
 import { reviewCurrentTargetIndex } from "./review_target.mjs";
 import {
   fileCategoryRowFor,
+  setPaneRenderer,
+  showSettingsPane,
   releaseSettingsPanel,
   renderFilePane,
   setFilePane,
@@ -8662,10 +8664,8 @@ function repaintPage(i) {
  *  arithmetic answers "where is that, in scroll coordinates" without either.
  *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
 /** Breathing room between a revealed caret and the edge it was revealed past.
- *  Flush looks right for one frame; the next repaint — and arrowing through a
- *  paginated document repaints constantly — puts it back outside, which is the
- *  "3 px above" `viewer-scroll-ceiling` reported. Word and Docs keep a line's
- *  worth. */
+ *  Flush looks right for one frame; the next repaint puts it back outside,
+ *  which is the "3 px above" `viewer-scroll-ceiling` reported. */
 const SCROLL_INTO_VIEW_MARGIN = 8;
 
 function scrollModelRectIntoView(flat, block = "nearest") {
@@ -13887,10 +13887,9 @@ function runCommand(i) {
   const cmd = cmdMatches[i];
   if (!cmd || cmd.enabled === false) return;
   closeCmd();
-  // The palette has two faces: the modal, and the File page's "Find a command"
-  // PANE. `closeCmd` closes the modal; from the pane there is none to close,
-  // and the command ran with the page still covering the document. Every other
-  // route into that page returns to the document first. No-op when closed.
+  // The palette has two faces: the modal, and the File page's PANE. From the
+  // pane there is no modal for `closeCmd` to close, and the command ran with
+  // the page still covering the document. No-op when the page is closed.
   closeFilePage();
   cmd.run();
 }
@@ -16859,14 +16858,11 @@ function toggleSettings(open) {
 }
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  // The Settings DIALOG and the Settings PANE are the same element. While the
-  // File page is open that element is parented INSIDE the page, so opening the
-  // dialog would have raised a half-dialog out of a pane. There is one
-  // Settings, so the gear goes to wherever it currently lives: the page's own
-  // pane while the page is open, the dialog otherwise.
-  if (document.body.classList.contains("file-page-open")) {
-    setFilePane("settings");
-    renderFilePage();
+  // The Settings DIALOG and the Settings PANE are the same element, and while
+  // the File page is open it is parented INSIDE the page — opening the dialog
+  // would raise a half-dialog out of a pane. One Settings, so the gear goes to
+  // wherever it currently lives.
+  if (showSettingsPane()) {
     document.querySelector('#filePageBody [data-file-pane="settings"]')?.focus();
     return;
   }
@@ -16877,13 +16873,17 @@ applySettings();
 // After `applySettings`, so the picker is built against the settings that were
 // actually loaded, and awaited nowhere: the editor draws in English and the
 // chosen language relabels it when its catalogue lands.
-// Locale (docs/124). After `applySettings`, so the picker is built against
-// the settings that were actually loaded, and awaited nowhere: the editor
-// draws in English and the chosen language relabels it when its catalogue
-// lands. The counts are the one surface markup cannot carry — they are
-// rendered from the engine — so re-rendering them is what this hands over.
+// Locale (docs/124). After `applySettings`, so the picker sees the settings
+// that loaded; awaited nowhere, so the editor draws in English and relabels
+// when the catalogue lands. The counts are the one surface markup cannot
+// carry, so re-rendering them is what this hands over.
+setPaneRenderer(() => renderFilePage());
 void startLocalisation({
   select: languageSelect,
+  status: document.getElementById("languageStatus"),
+  // Into the File page's pane when that page is open — that is where the
+  // settings element is parented — and the dialog otherwise.
+  openSettings: () => (showSettingsPane() ? undefined : toggleSettings(true)),
   settings,
   saveSettings,
   onLocalised: () => {

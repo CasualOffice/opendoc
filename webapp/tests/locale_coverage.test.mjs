@@ -23,6 +23,7 @@ const LOCALES = join(WEBAPP, "locales");
 
 const { buildCatalogue, serialise } = await import("../tools/build-locale.mjs");
 const { direction } = await import("../src/i18n.mjs");
+const { EN_STRINGS } = await import("../src/en_strings.mjs");
 
 const read = (tag) => JSON.parse(readFileSync(join(LOCALES, `${tag}.json`), "utf8"));
 const tags = readdirSync(LOCALES)
@@ -72,20 +73,97 @@ test("the owner asked for at least fifteen languages, and they are here", () => 
   );
 });
 
-test("every locale answers every plain key English has", () => {
-  const source = shape(english);
+/** Keys a locale MUST answer, whatever else it lags on: the ones with no
+ *  English sitting in the markup to fall back to. A script-side string that a
+ *  catalogue cannot answer renders as a dotted key, which is the one outcome
+ *  worth failing a build over. */
+const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
+
+/** Translation coverage per locale, measured on 2026-09-25. Only one direction
+ *  is legal — up.
+ *
+ *  The first design failed a locale that answered fewer keys than English. It
+ *  was the right instinct and the wrong mechanism: routing a surface through
+ *  the seam and translating it are two different days' work, and a gate that
+ *  refuses the first until the second is done means the routing never starts —
+ *  or means 15,000 machine translations land unreviewed in one commit. The
+ *  markup carries its English beside every key, so an untranslated string
+ *  reads as English rather than as an identifier, and what has to be true is
+ *  that coverage never FALLS. Same ratchet as the unrouted-string count it
+ *  faces across the seam: one number goes down, the other goes up. */
+const COVERAGE = new Map([
+  ["ar", 252],
+  ["de", 252],
+  ["es", 252],
+  ["fr", 252],
+  ["hi", 252],
+  ["id", 252],
+  ["it", 252],
+  ["ja", 252],
+  ["ko", 252],
+  ["nl", 252],
+  ["pl", 252],
+  ["pt-BR", 252],
+  ["ru", 252],
+  ["tr", 252],
+  ["uk", 252],
+  ["vi", 252],
+  ["zh-Hans", 252],
+  ["zh-Hant", 252],
+]);
+
+/** English defines 848 keys today. 252 translated is 29.7%: the chrome a
+ *  person reads first — every ribbon tab, every menu-bar name, the document
+ *  title — plus the counts. The number in each row above is a floor, not a
+ *  target. */
+
+test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
   for (const tag of tags) {
     if (tag === "en") continue;
-    const local = shape(read(tag));
-    for (const key of source.plain) {
-      if (!local.plain.has(key)) gaps.push(`${tag}: missing ${key}`);
-    }
-    for (const key of local.plain) {
-      if (!source.plain.has(key)) gaps.push(`${tag}: orphan ${key} — English no longer has it`);
+    const catalogue = read(tag);
+    const local = shape(catalogue);
+    for (const key of SCRIPT_KEYS) {
+      const parsed = split(key);
+      const answered = parsed.family
+        ? local.families.has(parsed.family)
+        : Object.hasOwn(catalogue, key);
+      if (!answered) gaps.push(`${tag}: missing ${key}`);
     }
   }
   assert.deepEqual(gaps, []);
+});
+
+test("no locale carries a key English no longer has", () => {
+  const source = shape(english);
+  const orphans = [];
+  for (const tag of tags) {
+    if (tag === "en") continue;
+    const local = shape(read(tag));
+    for (const key of local.plain) {
+      if (!source.plain.has(key)) orphans.push(`${tag}: ${key}`);
+    }
+    for (const family of local.families.keys()) {
+      if (!source.families.has(family)) orphans.push(`${tag}: ${family}.*`);
+    }
+  }
+  assert.deepEqual(orphans, []);
+});
+
+test("translation coverage never falls", () => {
+  const source = shape(english);
+  const total = source.plain.size + source.families.size;
+  const fell = [];
+  for (const [tag, floor] of COVERAGE) {
+    const local = shape(read(tag));
+    const answered =
+      [...source.plain].filter((key) => local.plain.has(key)).length +
+      [...source.families.keys()].filter((family) => local.families.has(family)).length;
+    if (answered < floor) {
+      fell.push(`${tag}: answers ${answered} of ${total}, was ${floor}`);
+    }
+  }
+  assert.deepEqual(fell, [], `of ${total} keys English defines`);
 });
 
 test("every locale carries every plural category ITS OWN language needs", () => {
@@ -96,10 +174,10 @@ test("every locale carries every plural category ITS OWN language needs", () => 
     const needed = new Intl.PluralRules(tag).resolvedOptions().pluralCategories;
     for (const family of source.families.keys()) {
       const have = local.families.get(family);
-      if (!have) {
-        gaps.push(`${tag}: no plural family ${family}`);
-        continue;
-      }
+      // A family this locale has not reached yet is the coverage ratchet's
+      // business, not this test's. What this one holds is that a family a
+      // locale DOES carry is complete for that language.
+      if (!have) continue;
       for (const category of needed) {
         // Russian needs one/few/many/other and Arabic six. English declares
         // two. A locale that only copied English's two is broken for most of

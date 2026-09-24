@@ -216,6 +216,25 @@ export function releaseSettingsPanel() {
 }
 
 
+/** Selects the Settings pane IF the File page is the surface on screen.
+ *
+ *  The Settings dialog and the Settings pane are the same element, and while
+ *  the page is open that element is parented inside it — so every route to
+ *  "show me Settings" has to ask this first, or it raises a half-dialog out of
+ *  a pane. Returns whether it handled it. */
+export function showSettingsPane() {
+  if (!document.body.classList.contains("file-page-open")) return false;
+  setFilePane("settings");
+  onPaneChange?.();
+  return true;
+}
+
+/** How the page re-renders itself after `showSettingsPane`. */
+let onPaneChange = null;
+export function setPaneRenderer(render) {
+  onPaneChange = render;
+}
+
 /** Which pane is showing, and how to change it. */
 export function currentFilePane() {
   return filePane;

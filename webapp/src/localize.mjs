@@ -11,7 +11,7 @@
 // as the extractor's source and as the fallback, so the file stays readable
 // and a catalogue that fails to load degrades to English rather than to a
 // screen of key names.
-import { activeLocale, direction, t } from "./i18n.mjs";
+import { activeLocale, direction, has, t } from "./i18n.mjs";
 
 /** Attribute suffix -> the DOM attribute it sets. */
 const ATTRIBUTE_KEYS = Object.freeze({
@@ -25,13 +25,39 @@ const ATTRIBUTE_KEYS = Object.freeze({
  *  run repeatedly — it is how a locale change is applied. */
 export function localizeTree(root = document) {
   for (const element of root.querySelectorAll("[data-i18n]")) {
-    element.textContent = t(element.dataset.i18n);
+    const key = element.dataset.i18n;
+    // A key this locale has no answer for is LEFT ALONE. The English is
+    // already in the markup beside the key — that is what it is there for —
+    // so an untranslated string reads as English rather than as a dotted
+    // identifier. It is also what makes translating incremental: routing a
+    // surface and translating it are two different days' work, and between
+    // them the product must still be readable.
+    if (has(key)) setLabelText(element, t(key));
   }
   for (const [suffix, attribute] of Object.entries(ATTRIBUTE_KEYS)) {
     for (const element of root.querySelectorAll(`[data-i18n-${suffix}]`)) {
-      element.setAttribute(attribute, t(element.dataset[`i18n${cap(suffix)}`]));
+      const key = element.dataset[`i18n${cap(suffix)}`];
+      if (has(key)) element.setAttribute(attribute, t(key));
     }
   }
+}
+
+/** Replaces an element's own words without touching what it CONTAINS.
+ *
+ *  `textContent = ...` is the obvious implementation and it is wrong here:
+ *  half the labels in this editor are `<label>Initials<input …></label>`, and
+ *  assigning textContent deletes the input. The element's first text node is
+ *  its own words; anything else under it belongs to something else. Falls back
+ *  to textContent for an element that has no text node yet, which is how an
+ *  empty placeholder gets its first words. */
+function setLabelText(element, text) {
+  for (const node of element.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE && node.nodeValue.trim()) {
+      node.nodeValue = text;
+      return;
+    }
+  }
+  if (element.childElementCount === 0) element.textContent = text;
 }
 
 function cap(value) {
