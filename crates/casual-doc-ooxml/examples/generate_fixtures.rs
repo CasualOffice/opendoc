@@ -20,6 +20,20 @@ const PAGINATION_FIDELITY_DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encodin
 /// which fonts are installed — the pagination scenarios the fixture
 /// discriminates then differ only in the body.
 const PAGINATION_FIDELITY_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:spacing w:line="300" w:lineRule="exact"/></w:pPr><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>Pagination fidelity fixture footer</w:t></w:r></w:p></w:ftr>"#;
+const WATERMARK_CONTENT_TYPES: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"##;
+const WATERMARK_DOCUMENT_RELS: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"##;
+/// The body of `watermark.docx`: one paragraph and a `w:sectPr` that references
+/// the header the watermark shape lives in.
+const WATERMARK_DOCUMENT: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p><w:r><w:t>Body text behind a DRAFT watermark.</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>"##;
+/// The header part of `watermark.docx`, shaped exactly as Word writes Design ▸
+/// Watermark: a floating `v:shape` whose `id` carries the
+/// `PowerPlusWaterMarkObject` prefix Word re-identifies its own watermark by, the
+/// plain-text WordArt shapetype (`#_x0000_t136`), `rotation:315` for the diagonal
+/// layout, `<v:fill opacity=".5"/>` for "Semitransparent", and the stamped words
+/// in `v:textpath@string` — an ATTRIBUTE, which is why an importer that reads only
+/// element text loses them. Import must LIFT this shape onto the section
+/// (`casual-doc-import/src/watermark.rs`) instead of leaving it a header float.
+const WATERMARK_HEADER: &[u8] = br##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w10="urn:schemas-microsoft-com:office:word"><w:p><w:r><w:rPr><w:noProof/></w:rPr><w:pict><v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" path="m@7,l@8,m@5,21600l@11,21600e"><v:path textpathok="t"/><v:textpath on="t" fitshape="t"/></v:shapetype><v:shape id="PowerPlusWaterMarkObject357476642" o:spid="_x0000_s2049" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:527.85pt;height:131.95pt;rotation:315;z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="#c0c0c0" stroked="f"><v:fill opacity=".5"/><v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="DRAFT"/></v:shape></w:pict></w:r></w:p></w:hdr>"##;
 const DOCUMENT: &[u8] = br#"<?xml version="1.0"?><w:document/>"#;
 const MIXED_UNICODE_DOCUMENT: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -62,6 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         output.join("visual-containment.docx"),
         package(&visual_containment_entries())?,
+    )?;
+
+    fs::write(
+        output.join("watermark.docx"),
+        package(&watermark_entries())?,
     )?;
 
     fs::write(
@@ -310,6 +329,40 @@ fn visual_containment_document() -> Vec<u8> {
 </w:document>"#,
     )
     .into_bytes()
+}
+
+/// `watermark.docx`: a body whose `w:sectPr` references a header carrying Word's
+/// own watermark shape. The importer's job is to lift it onto the section, so the
+/// fixture proves the whole package path — content types, the header
+/// relationship, and the header part — not just the XML mapping.
+fn watermark_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {
+    vec![
+        (
+            "word/document.xml".to_owned(),
+            WATERMARK_DOCUMENT.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "[Content_Types].xml".to_owned(),
+            WATERMARK_CONTENT_TYPES.to_vec(),
+            CompressionMethod::Stored,
+        ),
+        (
+            "_rels/.rels".to_owned(),
+            ROOT_RELATIONSHIPS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/_rels/document.xml.rels".to_owned(),
+            WATERMARK_DOCUMENT_RELS.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+        (
+            "word/header1.xml".to_owned(),
+            WATERMARK_HEADER.to_vec(),
+            CompressionMethod::Deflated,
+        ),
+    ]
 }
 
 fn pagination_fidelity_entries() -> Vec<(String, Vec<u8>, CompressionMethod)> {

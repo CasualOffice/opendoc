@@ -219,10 +219,25 @@ test("load-bearing honesty invariants hold (do not overstate public support)", (
   // grade must move again only when that gap closes.
   assert.equal(by["Line numbering (w:lnNumType)"].modeled, "full");
   assert.equal(by["Line numbering (w:lnNumType)"].rendered, "partial");
-  // `grep -ri watermark crates/` finds no watermark concept, and neither
-  // v:textpath nor a:prstTxWarp is typed, so warped watermark text cannot paint.
-  assert.equal(by["Watermarks & WordArt"].modeled, "none");
-  assert.equal(by["Watermarks & WordArt"].rendered, "none");
+  // This pair was pinned to "none" on the evidence that `grep -ri watermark
+  // crates/` found no watermark concept. That has gone false, and a guard
+  // holding a public page to a stale claim understates the engine exactly as
+  // badly as overstating it (EV-007). What exists now: `SectionBoundary.watermark`
+  // in the model, `casual-doc-layout/src/watermark.rs` stamping it after
+  // pagination (9 tests in casual-doc-layout/tests/watermark.rs), and
+  // `casual-doc-import/src/watermark.rs` lifting Word's header shape onto the
+  // section, reading `v:textpath@string`.
+  //
+  // PARTIAL, not full, and the halves must move separately:
+  //  * WordArt itself (`a:prstTxWarp`, and every warped preset but plain text) is
+  //    still neither typed nor painted — this family covers both.
+  //  * A DrawingML watermark is not recognised on import.
+  //  * The semantic DOCX writer does not write the watermark back yet, so
+  //    `roundtrips` stays "partial" too.
+  // Raise either cell only when the corresponding half actually closes.
+  assert.equal(by["Watermarks & WordArt"].modeled, "partial");
+  assert.equal(by["Watermarks & WordArt"].rendered, "partial");
+  assert.equal(by["Watermarks & WordArt"].roundtrips, "partial");
   // One writing-mode axis only: every layout reference to text_direction is
   // `None` in test scaffolding.
   assert.equal(by["Vertical & rotated text"].rendered, "none");

@@ -131,8 +131,8 @@ const FIDELITY = [
   },
   {
     family: "Watermarks & WordArt",
-    note: "Not modeled as a watermark. A Word watermark is a header VML or DrawingML shape carrying warped text (`v:textpath` / `a:prstTxWarp`); neither text-path form is typed, so the shape box can paint but its text does not. Preserved for export where it lands in the retained/opaque path.",
-    modeled: "none", rendered: "none", editable: "none", roundtrips: "partial",
+    note: "Watermarks are modeled and painted; WordArt is not. A watermark is a section property (`SectionBoundary.watermark`) rather than the header shape Word stores it as, and a post-pagination pass stamps it behind every page of its section — text or washed-out picture, diagonal or horizontal, semitransparent, at the authored font, size and colour. DOCX import recognises Word's own watermark (the `PowerPlusWaterMarkObject` / `WordPictureWatermark` shape ids, and a header-borne `#_x0000_t136` text path for other producers), reads the words out of `v:textpath@string`, and lifts the shape off the float layer so the stamp is not painted twice; a shape that looks like a watermark but cannot be lifted is reported and left as a float, never dropped. Four known gaps: a DrawingML watermark (`a:prstTxWarp`) is not recognised and stays an ordinary shape; a picture watermark's authored scale becomes Word's \"Auto\" because the natural size is not available at import; the semantic DOCX writer does not yet put the shape back, so a save relies on retention mode's byte floor; and there is no authoring UI — the engine operation and host API exist but nothing in the editor reaches them. General WordArt text paths (arched, curved, waved presets) are neither typed nor painted.",
+    modeled: "partial", rendered: "partial", editable: "none", roundtrips: "partial",
   },
   {
     family: "Bidi, RTL & CJK grid",

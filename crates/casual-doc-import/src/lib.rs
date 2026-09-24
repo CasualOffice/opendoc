@@ -51,6 +51,7 @@ mod styles;
 mod tables;
 mod theme;
 mod vml;
+mod watermark;
 
 pub use config::{ImportConfig, ImportMode};
 pub use error::ImportError;
@@ -60,13 +61,13 @@ pub use opaque::{
 pub use report::{
     CompatibilityEntry, CompatibilityReport, Disposition, DispositionViolation, FeatureLocation,
     LedgerId, LedgerRecord, ModelOutcome, PartDisposition, PreservationKind, PreservationLedger,
-    RSID_CLASS_FEATURE, RetentionOutcome,
+    RSID_CLASS_FEATURE, RetentionOutcome, WATERMARK_CLASS_FEATURE,
 };
 pub use retain::RetainedSource;
 pub use vml::{
-    VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlPosition, VmlRelFrame,
-    VmlShapeKind, VmlStroke, VmlTextAnchor, VmlTextbox, VmlVerticalAlign, VmlWrap, VmlWrapMode,
-    parse_vml_pict,
+    VmlColor, VmlDrawing, VmlFill, VmlHorizontalAlign, VmlHr, VmlHrAlign, VmlImageEffects,
+    VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextAnchor, VmlTextPath, VmlTextbox,
+    VmlVerticalAlign, VmlWrap, VmlWrapMode, parse_vml_pict,
 };
 
 use casual_doc_model::IdGenerator;
@@ -975,10 +976,18 @@ fn build_comments(
     Ok((map, index, people))
 }
 
-/// A header/footer definition map plus its relationship-id -> id resolution index.
+/// A header/footer definition map, its relationship-id -> id resolution index, and
+/// the watermark lifted out of each part that carried one.
+///
+/// The watermarks travel separately because they do not belong to the header at
+/// all: Word stores a watermark as a float in every header of a section, while the
+/// model states it once per section, so import lifts the shape out here and
+/// `watermark::lift_header_watermarks` attaches it to the sections that reference
+/// the header — which cannot happen until the body has been parsed.
 type BuiltHeaderFooters = (
     DefinitionMap<HeaderFooterId, HeaderFooter>,
     std::collections::BTreeMap<String, HeaderFooterId>,
+    std::collections::BTreeMap<HeaderFooterId, casual_doc_model::v1::Watermark>,
 );
 
 /// Parses each header/footer part into a `HeaderFooterId`-keyed definition map
@@ -999,6 +1008,7 @@ fn build_header_footers(
 ) -> Result<BuiltHeaderFooters, ImportError> {
     let mut map = DefinitionMap::default();
     let mut index = std::collections::BTreeMap::new();
+    let mut watermarks = std::collections::BTreeMap::new();
     for (relationship_id, part) in parts {
         // The header/footer id precedes its content ids; its media is added to
         // the shared table just before parsing so its drawings resolve.
@@ -1007,7 +1017,7 @@ fn build_header_footers(
             .map_err(|_| ImportError::LimitExceeded { limit: "node_ids" })?;
         let hf_id = HeaderFooterId::new(node);
         let media_index = media::build_into(&part.images, media, ids, reporter)?;
-        let blocks = body::parse_header_footer(
+        let parsed = body::parse_header_footer(
             &part.xml,
             ids,
             reporter,
@@ -1020,9 +1030,17 @@ fn build_header_footers(
             config,
         )?;
         index.insert(relationship_id.clone(), hf_id);
-        map.insert(hf_id, HeaderFooter { blocks });
+        if let Some(watermark) = parsed.watermark {
+            watermarks.insert(hf_id, watermark);
+        }
+        map.insert(
+            hf_id,
+            HeaderFooter {
+                blocks: parsed.blocks,
+            },
+        );
     }
-    Ok((map, index))
+    Ok((map, index, watermarks))
 }
 
 /// An extra part's bytes plus its own resolved image and external-hyperlink
@@ -1169,7 +1187,7 @@ pub(crate) fn import_with_sources(
         &mut reporter,
         config,
     )?;
-    let (headers, header_ids) = build_header_footers(
+    let (headers, header_ids, header_watermarks) = build_header_footers(
         header_parts,
         b"hdr",
         &styles,
@@ -1180,7 +1198,9 @@ pub(crate) fn import_with_sources(
         &mut reporter,
         config,
     )?;
-    let (footers, footer_ids) = build_header_footers(
+    // A footer never carries a watermark to lift (`crate::watermark` refuses the
+    // container), so the third element is always empty here.
+    let (footers, footer_ids, _) = build_header_footers(
         footer_parts,
         b"ftr",
         &styles,
@@ -1204,7 +1224,7 @@ pub(crate) fn import_with_sources(
 
     let body::BodyParse {
         blocks: mut body,
-        sections,
+        mut sections,
         embedded_part_names,
         page_background,
     } = body::parse(
@@ -1227,6 +1247,12 @@ pub(crate) fn import_with_sources(
         &mut bookmarks,
         config,
     )?;
+    // The second half of the watermark lift: the shapes left their headers during
+    // the header parse, and only now — with the body's `w:sectPr` boundaries built
+    // and each one's header references resolved — is it known which section each
+    // stamp belongs to. This is why `build_section_boundary` cannot set it.
+    watermark::lift_header_watermarks(&mut sections, &header_watermarks);
+
     if body.is_empty() {
         // A body with no paragraphs yields a single empty paragraph so the v1
         // document has a non-empty body.
