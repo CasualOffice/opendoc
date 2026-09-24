@@ -115,7 +115,7 @@ L = more than a week. Both are carried across verbatim; neither was rescaled.
 
 ## Summary
 
-**132 rows in the one queue: 47 Hotfix, 70 Audit, 15 Roadmap.**
+**135 rows in the one queue: 47 Hotfix, 73 Audit, 15 Roadmap.**
 
 Derived from the rows below by `webapp/tests/tracker_counts.test.mjs`. Do not edit these
 cells by hand — re-derive them. (`104`'s summary drifted for exactly as long as nothing
@@ -126,9 +126,9 @@ and the old sum-to-Total check could not see either.)
 | Lane | Rows | P0 | P1 | P2 | P3 | Unprioritised |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Hotfix | 47 | 0 | 7 | 26 | 14 | 0 |
-| Audit | 70 | 0 | 31 | 31 | 8 | 0 |
+| Audit | 73 | 0 | 30 | 34 | 9 | 0 |
 | Roadmap | 15 | 0 | 0 | 0 | 0 | 15 |
-| **Total** | **132** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
+| **Total** | **135** | **0** | **37** | **60** | **23** | **15** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
 
 **There are two P0s again, and that is a correction, not a regression.** Every P0 *inherited*
 from `104` and `105` is closed. HF-045 and HF-011 were re-graded into P0 on 2026-09-20
@@ -232,61 +232,64 @@ graded below the definition they meet.
 | 75 | FID-L-08 | Audit | Vertical and rotated text is entirely absent | P1 | L | Open | 105 §3.2 | — | — |
 | 76 | OO-001 | Audit | No table of contents, and no table of figures | P1 | L | Open | 105 §4.4 | — | Blocked-by RM-01 (the field evaluation engine), which sits later in this queue by the lane rule |
 | 77 | OO-005 | Audit | No captions and no cross-references | P1 | L | Open | 105 §4.4 | — | Blocked-by RM-01 |
-| 78 | OO-006 | Audit | No hyphenation, line numbering, watermark, or drop-cap authoring | P1 | L | Open | 105 §4.4 | FID-L-02, FID-L-10 | The authoring surface over the FID-L rendering rows |
-| 79 | UX-007 | Audit | ⌘⇧E toggles Suggesting but is advertised nowhere | P2 | S | Open | 105 §2.2 | — | — |
-| 80 | UX-008 | Audit | `insert.table` is two different products behind one command id | P2 | S | Open | 105 §2.2 | — | — |
-| 81 | UX-013 | Audit | Print has no visible chrome | P2 | S | Open | 105 §2.2 | OO-010 | — |
-| 82 | UX-023 | Audit | Invalid and mismatched ARIA on popup triggers | P2 | S | Open | 105 §2.3 | HF-070 | `aria-haspopup="region"` is not a valid token, so two buttons announce no popup at all |
-| 83 | CQ-009 | Audit | Design documents no longer describe the implementation | P2 | S | Re-opened (#542) | 105 §2A | — | `63`/`64` drift is how the ARIA and radiogroup defects entered |
-| 84 | FID-L-14 | Audit | Emphasis marks, outline, shadow, emboss, imprint and run borders are modeled and cascaded but unpainted | P2 | S | Partly fixed (#541) | 105 §3.2 | — | Remainder stated in the source row |
-| 85 | FID-L-15 | Audit | No OpenType feature control, and the `w:kern` threshold is unapplied | P2 | S | Open | 105 §3.2 | OO-021 | — |
-| 86 | FID-L-16 | Audit | `w:gutter` and `w:mirrorMargins` never reach the page configuration | P2 | S | Partly fixed (#536) | 105 §3.2 | — | Still open: `w:gutterAtTop` |
-| 87 | FID-L-18 | Audit | `w:jc="distribute"` silently collapses to ordinary justification | P2 | S | Partly fixed (#541) | 105 §3.2 | — | The loss is now reported; real inter-character distribution is the remainder |
-| 88 | UX-012 | Audit | No Table menu on the menu bar, and the palette hides table commands on complex tables | P2 | M | Open | 105 §2.2 | — | — |
-| 89 | UX-015 | Audit | Single-surface capabilities — Pages panel, table style gallery, line/paragraph spacing, format painter, Settings | P2 | M | Partly fixed (#542) | 105 §2.2 | HF-094 | Still open: everything except the compact-ribbon toggle. Settings absent from the View ribbon is related to HF-159 |
-| 90 | UX-024 | Audit | Focus and target-size gaps | P2 | M | Open | 105 §2.3 | HF-074 | Carries the visible focus indicator HF-074's skip-link fix left behind |
-| 91 | FID-L-10 | Audit | Watermarks do not appear | P2 | M | Open | 105 §3.2 | OO-006 | — |
-| 92 | FID-L-11 | Audit | `nextColumn` is treated as `continuous` | P2 | M | Open | 105 §3.2 | — | — |
-| 93 | FID-L-12 | Audit | Tight/through wrap uses the square bounding box, not `wp:wrapPolygon` | P2 | M | Open | 105 §3.2 | — | — |
-| 94 | FID-L-13 | Audit | Cell `noWrap`, `fitText`, `hideMark` and cell `textDirection` are unconsumed | P2 | M | Partly fixed | 105 §3.2 | FID-L-23 | `w:noWrap` is consumed as of 2026-09-23: the column solver takes a no-wrap cell's unwrapped width, plus its resolved `w:tcMar`, as the column **minimum**, so the column widens instead of the content wrapping (`casual-doc-layout/src/flow.rs`, `cell_no_wrap_applies`). Rotated `w:textDirection` and an absolute `w:tcW` are exempt, matching ONLYOFFICE's `CTableCell` min/max pass. **Still open: `fitText`, `hideMark`, and `textDirection` as a layout direction** — `textDirection` is read only as a no-wrap exemption and still rotates nothing. A no-wrap cell can also still wrap one line short, for the separate reason in FID-L-23. |
-| 95 | FID-L-17 | Audit | `w:kinsoku` is cascaded and never consumed | P2 | M | Open | 105 §3.2 | — | — |
-| 96 | FID-L-21 | Audit | `rich` and `table-merges` bottom edge diverges ~240 twips from LibreOffice | P2 | M | Open | 105 §3.2 | — | — |
-| 97 | FID-L-23 | Audit | The line breaker splits a line that fits its measure exactly, so a cell can wrap one line short of its own intrinsic width | P2 | M | Open | New 2026-09-23 (found under FID-L-13) | FID-L-13 | A paragraph whose content box equals its shaped single-line width still wraps: the breaker charges the candidate break's trailing space against the fit while the width measure hangs it. Measured in a table cell — 3653 twips of text in a 3653-twip content box gives two lines (3047 + 606); widen the box to 3853 and it is one line of measured width 3653. Found because it is what stops a `w:noWrap` cell (FID-L-13) reaching one line once its column is wide enough. Related: the solver's intrinsic widths exclude cell margins for **every** autofit column's preference — only the no-wrap minimum was corrected, deliberately, to keep the blast radius off the blessed geometry. |
-| 98 | FID-R-05 | Audit | Retained opaque parts are never invalidated on edit | P2 | M | Open | 105 §3.3 | — | — |
-| 99 | OO-008 | Audit | Table formulas are 4 functions over 2 directions; ONLYOFFICE has 18 over 4 | P2 | M | Open | 105 §4.4 | — | Blocked-by RM-01 for cell refs, ranges and bookmarks |
-| 100 | OO-010 | Audit | No print dialog — no range, duplex, colour/mono, margins or preview | P2 | M | Open | 105 §4.4 | HF-030, HF-036, HF-105, UX-013 | Broader than the HF print rows; blocked-by RM-04 for real-text output. See re-verification: the split between this row and HF-030/HF-105 needs an owner call |
-| 101 | OO-011 | Audit | No document protection, password, or digital signature | P2 | M | Open | 105 §4.4 | — | `106` Phase 7. The four restriction levels map onto the existing Editing/Suggesting/Viewing modes |
-| 102 | OO-012 | Audit | No content-control authoring | P2 | M | Open | 105 §4.4 | — | `w:sdt` already models, round-trips and paints checkbox state |
-| 103 | OO-020 | Audit | Ribbon and UI breadth rows worth copying cheaply | P2 | M | Open | 105 §4.4 | UX-003 | Blocked-by HF-085 (`commands.mjs`) |
-| 104 | OO-021 | Audit | Specific Home and Insert controls absent here | P2 | M | Open | 105 §4.4 | FID-L-15 | — |
-| 105 | CQ-008 | Audit | A dependency port is blocked at scale — 910 measured quick-xml 0.42 compile errors | P2 | L | Open (`M-009`) | 105 §2A | — | Do it with the Phase 2 parser reporting work, not separately |
-| 106 | FID-R-08 | Audit | Charts, SmartArt and OLE are preserved but never drawn | P2 | L | Open | 105 §3.3 | OO-014 | Blocked-by Q3 (render vs preserve-and-disclose) |
-| 107 | OO-007 | Audit | No document comparison or combine | P2 | L | Open | 105 §4.4 | — | `106` Phase 6.5 — the transform applied offline. Blocked-by RM-08 |
-| 108 | OO-009 | Audit | No equation editor | P2 | L | Open | 105 §4.4 | — | `99` §2 requires an authority ADR first, so UI-only synthesis cannot silently replace unsupported math |
-| 109 | OO-014 | Audit | Charts and SmartArt are not drawn, so there is nothing to author | P2 | L | Open | 105 §4.4 | FID-R-08, FID-L-04 | Blocked-by Q3 |
-| 110 | UX-025 | Audit | The editing-mode selector sits in the status bar, which no reference uses | P3 | S | Open | 123 §4.5 | UX-016 | ONLYOFFICE puts it at the right of the tab row, Google Docs at the right of the toolbar, Word at the right of the ribbon. Moving it touches the compact chrome, so it was kept out of the change that closed UX-016 |
-| 111 | FID-R-07 | Audit | Sub-part "retention" is not byte-exact | P3 | S | Open | 105 §3.3 | — | — |
-| 112 | FID-L-19 | Audit | Character-grid snapping is not applied | P3 | M | Open | 105 §3.2 | — | — |
-| 113 | OO-016 | Audit | AutoCorrect is smart quotes only — no math codes, no autoformat list triggers | P3 | M | Open | 105 §4.4 | HF-055 | Broader than HF-055, which is the smart-quote defect inside it |
-| 114 | OO-019 | Audit | No freehand drawing (Draw tab) | P3 | M | Open | 105 §4.4 | — | Minimal even in ONLYOFFICE |
-| 115 | FID-L-20 | Audit | EMF/WMF metafiles and browser-build SVG paint a placeholder | P3 | L | Open | 105 §3.2 | — | — |
-| 116 | OO-013 | Audit | No mail merge | P3 | L | Open | 105 §4.4 | — | Needs a host data contract. Theirs is xlsx-only, portal-bound and 100-recipient capped |
-| 117 | OO-017 | Audit | No plugin or macro surface | P3 | L | Open | 105 §4.4 | — | Open ABI decision; ADR-030 reserves the seam |
-| 118 | Q2 | Roadmap | Decide how to acquire a rights-cleared **Word-produced** corpus | — | — | Open | 106 §9 | FID-P-02 | Gates Phase 0's exit, and therefore every fidelity claim. Recommendation on file: generate with a licensed copy, review for redistribution, keep sensitive documents local |
-| 119 | Q6 | Roadmap | Decide the mobile commitment — fund it, or downgrade the support matrix | — | — | Open | 106 §9 | UX-018, UX-019 | `18` declares mobile/tablet browsers supported. Recommendation on file: fund it |
-| 120 | Q1 | Roadmap | Decide the **D-6 embed contract** — what a host mounts, configures and receives | — | — | Open | 106 §9 | HF-109, CQ-010 | Gates Phase 4, which is the wedge. Recommendation on file: model the surface on `DocsAPI`, but local-first — no `callbackUrl`, no server-held key |
-| 121 | Q4 | Roadmap | Decide **ADR-031** — PDF writer and font subsetter, build vs buy | — | — | Open | 106 §9 | RM-04 | On the critical path for a disqualifying gap. Decide early |
-| 122 | Q3 | Roadmap | Decide charts and SmartArt scope — render, or preserve-and-disclose | — | — | Open | 106 §9 | OO-014, FID-R-08 | Recommendation on file: preserve-and-disclose for the v1 claim |
-| 123 | Q7 | Roadmap | Decide the `.docm` policy — currently rejected at open, undecided | — | — | Open | 106 §9 | — | Recommendation on file: strip-and-open with an explicit finding; macros stay unexecuted |
-| 124 | RM-01 | Roadmap | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | — | — | Open | 106 §6 Phase 3 | OO-001, OO-005, OO-008 | **Blocks the whole References tab.** ONLYOFFICE ships only 14 field codes, so the bar is low |
-| 125 | RM-02 | Roadmap | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | — | — | Open | 106 §6 Phase 4 | HF-109 | `99` order 5. Blocked-by Q1 and HF-085 |
-| 126 | RM-03 | Roadmap | Host storage contract, in the opencalc shape | — | — | Open | 106 §6 Phase 4 | OO-004 | Owner decision 2026-09: storage YES |
-| 127 | RM-04 | Roadmap | Real-text PDF export — a `casual-doc-pdf` backend transcribing the shared `DisplayList`, never rasterized | — | — | Open | 106 §6 Phase 5 | HF-030, OO-010 | Designed end to end in `98`. Blocked-by Q4 |
-| 128 | RM-05 | Roadmap | Complete ODT beyond the current bounded subset | — | — | Open | 106 §6 Phase 5 | — | `95`/`96`/`97` |
-| 129 | RM-06 | Roadmap | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | — | — | Open | 106 §6 Phase 5 | HF-160 | RTF is carried separately as HF-160, which is already in flight. `106` §8 notes this set is the first thing to narrow if the schedule has to compress |
-| 130 | RM-07 | Roadmap | Tagged PDF and PDF/A | — | — | Open | 106 §6 Phase 5 | RM-04 | Phased, per `98` |
-| 131 | RM-08 | Roadmap | OT step 6.3 — T1 transform, tie-break by `(revision, site_id)`, TP1 property tests, the §4 budget benchmarks. No network | — | — | Open | 106 §6 Phase 6.3 | CQ-002 | Blocked-by CQ-002. Independently valuable: it is what makes OO-007 (compare/combine) fall out |
-| 132 | RM-09 | Roadmap | OT step 6.4 — T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | — | — | Open | 106 §6 Phase 6.4 | FID-R-02 | Blocked-by RM-08. Every tombstone must be reported through the disposition taxonomy, never silently dropped |
+| 78 | OO-006 | Audit | No watermark authoring — the engine imports, lays out, renders and exports one | P2 | S | Open | 105 §4.4 | OO-022, OO-023, OO-024 | **Split out of the old four-feature row on 2026-09-25, because they are not one piece of work.** Watermark is present in `casual-doc-layout/src/display.rs` and `casual-doc-render`, and round-trips through import and export. What is missing is a way to ASK for one. UI only |
+| 79 | OO-022 | Audit | No line-numbering authoring — the engine lays it out and paints it | P2 | S | Open (new 2026-09-25) | 105 §4.4 | OO-006 | `casual-doc-layout/src/line_number.rs` is wired at `document_layout.rs` and painted at `compose.rs`; `lnNumType` imports and exports. UI only. Low usage in general, near-universal in legal and contract work |
+| 80 | OO-024 | Audit | No hyphenation — and unlike its three former row-mates this one needs ENGINE work | P2 | M | Open (new 2026-09-25) | 105 §4.4 | OO-006 | `hyphenation` appears in import and export only: there is no layout implementation, so a hyphenated document round-trips without ever breaking a word. This is why the old OO-006 bundle was misleading — three quarters of it was a dialog and one quarter is a line-breaking algorithm |
+| 81 | UX-007 | Audit | ⌘⇧E toggles Suggesting but is advertised nowhere | P2 | S | Open | 105 §2.2 | — | — |
+| 82 | UX-008 | Audit | `insert.table` is two different products behind one command id | P2 | S | Open | 105 §2.2 | — | — |
+| 83 | UX-013 | Audit | Print has no visible chrome | P2 | S | Open | 105 §2.2 | OO-010 | — |
+| 84 | UX-023 | Audit | Invalid and mismatched ARIA on popup triggers | P2 | S | Open | 105 §2.3 | HF-070 | `aria-haspopup="region"` is not a valid token, so two buttons announce no popup at all |
+| 85 | CQ-009 | Audit | Design documents no longer describe the implementation | P2 | S | Re-opened (#542) | 105 §2A | — | `63`/`64` drift is how the ARIA and radiogroup defects entered |
+| 86 | FID-L-14 | Audit | Emphasis marks, outline, shadow, emboss, imprint and run borders are modeled and cascaded but unpainted | P2 | S | Partly fixed (#541) | 105 §3.2 | — | Remainder stated in the source row |
+| 87 | FID-L-15 | Audit | No OpenType feature control, and the `w:kern` threshold is unapplied | P2 | S | Open | 105 §3.2 | OO-021 | — |
+| 88 | FID-L-16 | Audit | `w:gutter` and `w:mirrorMargins` never reach the page configuration | P2 | S | Partly fixed (#536) | 105 §3.2 | — | Still open: `w:gutterAtTop` |
+| 89 | FID-L-18 | Audit | `w:jc="distribute"` silently collapses to ordinary justification | P2 | S | Partly fixed (#541) | 105 §3.2 | — | The loss is now reported; real inter-character distribution is the remainder |
+| 90 | UX-012 | Audit | No Table menu on the menu bar, and the palette hides table commands on complex tables | P2 | M | Open | 105 §2.2 | — | — |
+| 91 | UX-015 | Audit | Single-surface capabilities — Pages panel, table style gallery, line/paragraph spacing, format painter, Settings | P2 | M | Partly fixed (#542) | 105 §2.2 | HF-094 | Still open: everything except the compact-ribbon toggle. Settings absent from the View ribbon is related to HF-159 |
+| 92 | UX-024 | Audit | Focus and target-size gaps | P2 | M | Open | 105 §2.3 | HF-074 | Carries the visible focus indicator HF-074's skip-link fix left behind |
+| 93 | FID-L-10 | Audit | Watermarks do not appear | P2 | M | Open | 105 §3.2 | OO-006 | — |
+| 94 | FID-L-11 | Audit | `nextColumn` is treated as `continuous` | P2 | M | Open | 105 §3.2 | — | — |
+| 95 | FID-L-12 | Audit | Tight/through wrap uses the square bounding box, not `wp:wrapPolygon` | P2 | M | Open | 105 §3.2 | — | — |
+| 96 | FID-L-13 | Audit | Cell `noWrap`, `fitText`, `hideMark` and cell `textDirection` are unconsumed | P2 | M | Partly fixed | 105 §3.2 | FID-L-23 | `w:noWrap` is consumed as of 2026-09-23: the column solver takes a no-wrap cell's unwrapped width, plus its resolved `w:tcMar`, as the column **minimum**, so the column widens instead of the content wrapping (`casual-doc-layout/src/flow.rs`, `cell_no_wrap_applies`). Rotated `w:textDirection` and an absolute `w:tcW` are exempt, matching ONLYOFFICE's `CTableCell` min/max pass. **Still open: `fitText`, `hideMark`, and `textDirection` as a layout direction** — `textDirection` is read only as a no-wrap exemption and still rotates nothing. A no-wrap cell can also still wrap one line short, for the separate reason in FID-L-23. |
+| 97 | FID-L-17 | Audit | `w:kinsoku` is cascaded and never consumed | P2 | M | Open | 105 §3.2 | — | — |
+| 98 | FID-L-21 | Audit | `rich` and `table-merges` bottom edge diverges ~240 twips from LibreOffice | P2 | M | Open | 105 §3.2 | — | — |
+| 99 | FID-L-23 | Audit | The line breaker splits a line that fits its measure exactly, so a cell can wrap one line short of its own intrinsic width | P2 | M | Open | New 2026-09-23 (found under FID-L-13) | FID-L-13 | A paragraph whose content box equals its shaped single-line width still wraps: the breaker charges the candidate break's trailing space against the fit while the width measure hangs it. Measured in a table cell — 3653 twips of text in a 3653-twip content box gives two lines (3047 + 606); widen the box to 3853 and it is one line of measured width 3653. Found because it is what stops a `w:noWrap` cell (FID-L-13) reaching one line once its column is wide enough. Related: the solver's intrinsic widths exclude cell margins for **every** autofit column's preference — only the no-wrap minimum was corrected, deliberately, to keep the blast radius off the blessed geometry. |
+| 100 | FID-R-05 | Audit | Retained opaque parts are never invalidated on edit | P2 | M | Open | 105 §3.3 | — | — |
+| 101 | OO-008 | Audit | Table formulas are 4 functions over 2 directions; ONLYOFFICE has 18 over 4 | P2 | M | Open | 105 §4.4 | — | Blocked-by RM-01 for cell refs, ranges and bookmarks |
+| 102 | OO-010 | Audit | No print dialog — no range, duplex, colour/mono, margins or preview | P2 | M | Open | 105 §4.4 | HF-030, HF-036, HF-105, UX-013 | Broader than the HF print rows; blocked-by RM-04 for real-text output. See re-verification: the split between this row and HF-030/HF-105 needs an owner call |
+| 103 | OO-011 | Audit | No password protection or digital signature — form protection shipped | P2 | M | Partly fixed (HF-175) | 105 §4.4 | — | **Restated 2026-09-25.** `documentProtection` is read, honoured and written (`w:documentProtection edit="forms"` with legacy `w:ffData` fields), so a protected form opens protected and saves protected. Passwords and digital signatures are the remainder, and both are cryptography rather than UI |
+| 104 | OO-012 | Audit | No content-control authoring | P2 | M | Open | 105 §4.4 | — | `w:sdt` already models, round-trips and paints checkbox state |
+| 105 | OO-020 | Audit | Ribbon and UI breadth rows worth copying cheaply | P2 | M | Open | 105 §4.4 | UX-003 | Blocked-by HF-085 (`commands.mjs`) |
+| 106 | OO-021 | Audit | Specific Home and Insert controls absent here | P2 | M | Open | 105 §4.4 | FID-L-15 | — |
+| 107 | CQ-008 | Audit | A dependency port is blocked at scale — 910 measured quick-xml 0.42 compile errors | P2 | L | Open (`M-009`) | 105 §2A | — | Do it with the Phase 2 parser reporting work, not separately |
+| 108 | FID-R-08 | Audit | Charts, SmartArt and OLE are preserved but never drawn | P2 | L | Open | 105 §3.3 | OO-014 | Blocked-by Q3 (render vs preserve-and-disclose) |
+| 109 | OO-007 | Audit | No document comparison or combine | P2 | L | Open | 105 §4.4 | — | `106` Phase 6.5 — the transform applied offline. Blocked-by RM-08 |
+| 110 | OO-009 | Audit | No equation editor | P2 | L | Open | 105 §4.4 | — | `99` §2 requires an authority ADR first, so UI-only synthesis cannot silently replace unsupported math |
+| 111 | OO-014 | Audit | Charts and SmartArt are not drawn, so there is nothing to author | P2 | L | Open | 105 §4.4 | FID-R-08, FID-L-04 | Blocked-by Q3 |
+| 112 | OO-023 | Audit | No drop-cap authoring — the engine lays them out | P3 | S | Open (new 2026-09-25) | 105 §4.4 | OO-006 | Laid out in `casual-doc-layout/src/flow.rs` and `cascade.rs`, handled in `windowed.rs`, round-trips import and export. UI only. Genuinely rare in use, listed because it costs almost nothing once the other two exist |
+| 113 | UX-025 | Audit | The editing-mode selector sits in the status bar, which no reference uses | P3 | S | Open | 123 §4.5 | UX-016 | ONLYOFFICE puts it at the right of the tab row, Google Docs at the right of the toolbar, Word at the right of the ribbon. Moving it touches the compact chrome, so it was kept out of the change that closed UX-016 |
+| 114 | FID-R-07 | Audit | Sub-part "retention" is not byte-exact | P3 | S | Open | 105 §3.3 | — | — |
+| 115 | FID-L-19 | Audit | Character-grid snapping is not applied | P3 | M | Open | 105 §3.2 | — | — |
+| 116 | OO-016 | Audit | AutoCorrect is smart quotes only — no math codes, no autoformat list triggers | P3 | M | Open | 105 §4.4 | HF-055 | Broader than HF-055, which is the smart-quote defect inside it |
+| 117 | OO-019 | Audit | No freehand drawing (Draw tab) | P3 | M | Open | 105 §4.4 | — | Minimal even in ONLYOFFICE |
+| 118 | FID-L-20 | Audit | EMF/WMF metafiles and browser-build SVG paint a placeholder | P3 | L | Open | 105 §3.2 | — | — |
+| 119 | OO-013 | Audit | No mail merge | P3 | L | Open | 105 §4.4 | — | Needs a host data contract. Theirs is xlsx-only, portal-bound and 100-recipient capped |
+| 120 | OO-017 | Audit | No plugin or macro surface | P3 | L | Open | 105 §4.4 | — | Open ABI decision; ADR-030 reserves the seam |
+| 121 | Q2 | Roadmap | Decide how to acquire a rights-cleared **Word-produced** corpus | — | — | Open | 106 §9 | FID-P-02 | Gates Phase 0's exit, and therefore every fidelity claim. Recommendation on file: generate with a licensed copy, review for redistribution, keep sensitive documents local |
+| 122 | Q6 | Roadmap | Decide the mobile commitment — fund it, or downgrade the support matrix | — | — | Open | 106 §9 | UX-018, UX-019 | `18` declares mobile/tablet browsers supported. Recommendation on file: fund it |
+| 123 | Q1 | Roadmap | Decide the **D-6 embed contract** — what a host mounts, configures and receives | — | — | Open | 106 §9 | HF-109, CQ-010 | Gates Phase 4, which is the wedge. Recommendation on file: model the surface on `DocsAPI`, but local-first — no `callbackUrl`, no server-held key |
+| 124 | Q4 | Roadmap | Decide **ADR-031** — PDF writer and font subsetter, build vs buy | — | — | Open | 106 §9 | RM-04 | On the critical path for a disqualifying gap. Decide early |
+| 125 | Q3 | Roadmap | Decide charts and SmartArt scope — render, or preserve-and-disclose | — | — | Open | 106 §9 | OO-014, FID-R-08 | Recommendation on file: preserve-and-disclose for the v1 claim |
+| 126 | Q7 | Roadmap | Decide the `.docm` policy — currently rejected at open, undecided | — | — | Open | 106 §9 | — | Recommendation on file: strip-and-open with an explicit finding; macros stay unexecuted |
+| 127 | RM-01 | Roadmap | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | — | — | Open | 106 §6 Phase 3 | OO-001, OO-005, OO-008 | **Blocks the whole References tab.** ONLYOFFICE ships only 14 field codes, so the bar is low |
+| 128 | RM-02 | Roadmap | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | — | — | Open | 106 §6 Phase 4 | HF-109 | `99` order 5. Blocked-by Q1 and HF-085 |
+| 129 | RM-03 | Roadmap | Host storage contract, in the opencalc shape | — | — | Open | 106 §6 Phase 4 | OO-004 | Owner decision 2026-09: storage YES |
+| 130 | RM-04 | Roadmap | Real-text PDF export — a `casual-doc-pdf` backend transcribing the shared `DisplayList`, never rasterized | — | — | Open | 106 §6 Phase 5 | HF-030, OO-010 | Designed end to end in `98`. Blocked-by Q4 |
+| 131 | RM-05 | Roadmap | Complete ODT beyond the current bounded subset | — | — | Open | 106 §6 Phase 5 | — | `95`/`96`/`97` |
+| 132 | RM-06 | Roadmap | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | — | — | Open | 106 §6 Phase 5 | HF-160 | RTF is carried separately as HF-160, which is already in flight. `106` §8 notes this set is the first thing to narrow if the schedule has to compress |
+| 133 | RM-07 | Roadmap | Tagged PDF and PDF/A | — | — | Open | 106 §6 Phase 5 | RM-04 | Phased, per `98` |
+| 134 | RM-08 | Roadmap | OT step 6.3 — T1 transform, tie-break by `(revision, site_id)`, TP1 property tests, the §4 budget benchmarks. No network | — | — | Open | 106 §6 Phase 6.3 | CQ-002 | Blocked-by CQ-002. Independently valuable: it is what makes OO-007 (compare/combine) fall out |
+| 135 | RM-09 | Roadmap | OT step 6.4 — T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | — | — | Open | 106 §6 Phase 6.4 | FID-R-02 | Blocked-by RM-08. Every tombstone must be reported through the disposition taxonomy, never silently dropped |
 
 ## Rows that need re-verification
 
