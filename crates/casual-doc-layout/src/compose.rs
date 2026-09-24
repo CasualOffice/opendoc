@@ -1043,21 +1043,53 @@ fn push_border_rect(list: &mut DisplayList, rect: Rect, color: [u8; 4]) {
     });
 }
 
-/// Paints a paragraph's background shading (`w:shd`) as a fill covering `rect`
-/// and its borders (`w:pBdr`) as filled edge rects, both behind the text.
+/// Paints a paragraph's background shading (`w:shd`) and its borders (`w:pBdr`)
+/// behind the text, where `rect` is the paragraph's **content** box.
+///
+/// The border band sits *outside* that box, offset by the edge's `w:space`
+/// padding — the OOXML spelling of the CSS box model, and what Word and
+/// ONLYOFFICE both do (`x0 - Brd.Left.Size - Brd.Left.Space` for the leading
+/// edge; `BaseLineOffset += Brd.Top.Space + Brd.Top.Size` for the top one).
+///
+/// Drawing it *inside* the content box — as this did — put it in the same
+/// pixels every inline background legitimately owns, so a run's `w:highlight`
+/// or `w:rPr/w:shd`, composed after the decor, painted straight over the frame.
+/// Paint order alone cannot fix that: the frame and the text line would still be
+/// fighting for one band of pixels. The geometry has to separate them.
+///
+/// Shading fills the whole outer box, up to and under the border — Word fills
+/// behind the frame, not merely inside it.
 fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &ParagraphDecor) {
+    let b = &decor.borders;
+    let s = &decor.space;
+    // Outward offset per side: the padding plus the line's own width, and zero
+    // where no edge is drawn (an undrawn side keeps the shading flush with the
+    // text, as Word does).
+    let out = |edge: Option<ResolvedEdge>, space: Twip| {
+        edge.map_or(Twip::ZERO, |edge| space + edge.width)
+    };
+    let (top, bottom) = (out(b.top, s.top), out(b.bottom, s.bottom));
+    let (start, end) = (out(b.start, s.start), out(b.end, s.end));
+    let outer = Rect::new(
+        Point::new(rect.origin.x - start, rect.origin.y - top),
+        Size::new(
+            rect.size.width + start + end,
+            rect.size.height + top + bottom,
+        ),
+    );
     if let Some(fill) = decor.shading {
         list.push(PaintItem::Rect {
-            rect,
+            rect: outer,
             fill: Some(rgba(fill)),
             stroke: None,
         });
     }
-    let b = &decor.borders;
+    // The horizontal edges span the full outer width so the frame's corners
+    // close over the vertical bands.
     if let Some(e) = b.top {
         paint_border(
             list,
-            Rect::new(rect.origin, Size::new(rect.size.width, e.width)),
+            Rect::new(outer.origin, Size::new(outer.size.width, e.width)),
             e,
             BorderAxis::Horizontal,
         );
@@ -1066,8 +1098,8 @@ fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &Paragraph
         paint_border(
             list,
             Rect::new(
-                Point::new(rect.origin.x, rect.bottom() - e.width),
-                Size::new(rect.size.width, e.width),
+                Point::new(outer.origin.x, outer.bottom() - e.width),
+                Size::new(outer.size.width, e.width),
             ),
             e,
             BorderAxis::Horizontal,
@@ -1076,7 +1108,7 @@ fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &Paragraph
     if let Some(e) = b.start {
         paint_border(
             list,
-            Rect::new(rect.origin, Size::new(e.width, rect.size.height)),
+            Rect::new(outer.origin, Size::new(e.width, outer.size.height)),
             e,
             BorderAxis::Vertical,
         );
@@ -1085,8 +1117,8 @@ fn compose_paragraph_decor(list: &mut DisplayList, rect: Rect, decor: &Paragraph
         paint_border(
             list,
             Rect::new(
-                Point::new(rect.right() - e.width, rect.origin.y),
-                Size::new(e.width, rect.size.height),
+                Point::new(outer.right() - e.width, outer.origin.y),
+                Size::new(e.width, outer.size.height),
             ),
             e,
             BorderAxis::Vertical,
@@ -1472,6 +1504,7 @@ mod tests {
         );
     }
 
+    use crate::block::BlockBorderSpace;
     use crate::block::{BlockBorders, BoxMetrics, ParagraphDecor, ResolvedEdge};
     use crate::text::{Glyph, GlyphRun, Line, LineBreak, LineLayout};
 
@@ -1615,6 +1648,7 @@ mod tests {
             decor: ParagraphDecor {
                 shading: Some([220, 230, 240, 255]),
                 borders: BlockBorders::default(),
+                space: BlockBorderSpace::default(),
                 width: Twip(6000),
             },
         };
@@ -1662,6 +1696,7 @@ mod tests {
                     start: Some(edge),
                     end: Some(edge),
                 },
+                space: BlockBorderSpace::default(),
                 width: Twip(6000),
             },
         };
@@ -1685,6 +1720,150 @@ mod tests {
             border_rects, 4,
             "all four paragraph border edges are stroked"
         );
+    }
+
+    /// A bordered paragraph whose whole line is highlighted, laid out the way
+    /// the flow engine lays one out: the top/bottom border bands reserved in
+    /// `space_before`/`space_after`, the leading/trailing ones drawn into the
+    /// margin.
+    fn highlighted_bordered_paragraph(space: BlockBorderSpace) -> BlockFragment {
+        let edge = ResolvedEdge {
+            color: [192, 0, 0, 255],
+            width: Twip(30),
+            pattern: BorderPattern::Solid,
+        };
+        let decor = ParagraphDecor {
+            shading: None,
+            borders: BlockBorders {
+                top: Some(edge),
+                bottom: Some(edge),
+                start: Some(edge),
+                end: Some(edge),
+            },
+            space,
+            width: Twip(6000),
+        };
+        BlockFragment::Paragraph {
+            id: node(1),
+            lines: one_run_line(Twip(6000), Some([255, 255, 0, 255])),
+            box_metrics: BoxMetrics {
+                space_before: decor.band_before(),
+                space_after: decor.band_after(),
+                ..BoxMetrics::default()
+            },
+            break_control: crate::block::BreakControl::default(),
+            decor,
+        }
+    }
+
+    /// Every rect a fragment paints in `color`.
+    fn rects_filled(list: &DisplayList, color: Color) -> Vec<Rect> {
+        list.items
+            .iter()
+            .filter_map(|item| match item {
+                PaintItem::Rect {
+                    rect,
+                    fill: Some(c),
+                    stroke: None,
+                } if *c == color => Some(*rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn overlaps(a: Rect, b: Rect) -> bool {
+        a.origin.x < b.right()
+            && b.origin.x < a.right()
+            && a.origin.y < b.bottom()
+            && b.origin.y < a.bottom()
+    }
+
+    #[test]
+    fn a_run_highlight_never_covers_its_paragraph_border() {
+        // The reported defect: a `w:highlight` run inside a `w:pBdr` paragraph
+        // painted over the frame, because the border band was drawn *inside* the
+        // content box the highlight legitimately fills. The guarantee is
+        // geometric, not an ordering one — the two must not share pixels at all,
+        // with or without `w:space` padding.
+        for space in [
+            BlockBorderSpace::default(),
+            BlockBorderSpace {
+                top: Twip(20),
+                bottom: Twip(20),
+                start: Twip(80),
+                end: Twip(80),
+            },
+        ] {
+            let mut list = DisplayList::new();
+            compose_fragment(
+                &mut list,
+                &highlighted_bordered_paragraph(space),
+                Point::new(Twip(1000), Twip(2000)),
+            );
+            let borders = rects_filled(
+                &list,
+                Color {
+                    r: 192,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            );
+            let highlights = rects_filled(
+                &list,
+                Color {
+                    r: 255,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                },
+            );
+            assert_eq!(borders.len(), 4, "all four border edges paint ({space:?})");
+            assert_eq!(highlights.len(), 1, "the run highlight paints ({space:?})");
+            for border in &borders {
+                assert!(
+                    !overlaps(*border, highlights[0]),
+                    "border {border:?} shares pixels with highlight {:?} ({space:?})",
+                    highlights[0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_paragraph_border_stays_inside_the_space_its_box_reserves() {
+        // The other half of moving the frame outside the text: the band has to be
+        // paid for. `space_before`/`space_after` carry it (Word's
+        // `BaseLineOffset += Brd.Top.Space + Brd.Top.Size`), so the frame cannot
+        // land on the neighbouring paragraph's ink. Vertical only — Word draws
+        // the leading/trailing edges into the margin and reserves nothing.
+        let space = BlockBorderSpace {
+            top: Twip(20),
+            bottom: Twip(20),
+            start: Twip(80),
+            end: Twip(80),
+        };
+        let fragment = highlighted_bordered_paragraph(space);
+        let top = Twip(2000);
+        let bottom = top + fragment.height();
+        let mut list = DisplayList::new();
+        compose_fragment(&mut list, &fragment, Point::new(Twip(1000), top));
+        let borders = rects_filled(
+            &list,
+            Color {
+                r: 192,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+        );
+        assert_eq!(borders.len(), 4);
+        for border in &borders {
+            assert!(
+                border.origin.y >= top && border.bottom() <= bottom,
+                "border {border:?} escapes the fragment's box {top:?}..{bottom:?}"
+            );
+        }
     }
 
     #[test]

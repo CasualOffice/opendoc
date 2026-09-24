@@ -42,6 +42,7 @@ use casual_doc_model::v1::FormFieldKind;
 // Separate `use` line (anti-conflict): the run emphasis mark (`w:em`).
 use casual_doc_model::v1::EmphasisMark;
 
+use crate::block::BlockBorderSpace;
 use crate::block::{
     BlockBorders, BlockFragment, BorderPattern, BoxMetrics, BreakControl, CellBorders,
     CellBoxSpacing, CellContentMargins, CellFragment, CellVAlign, CellVerticalMerge,
@@ -1315,6 +1316,13 @@ fn paragraph_hash(
     break_control.widow_control.hash(&mut hasher);
     decor.shading.hash(&mut hasher);
     decor.width.0.hash(&mut hasher);
+    // The border padding moves where the frame paints (the vertical half also
+    // rides `space_before`/`space_after` above, but the leading/trailing half is
+    // paint-only, so editing just `w:space` must still miss the cache).
+    decor.space.top.0.hash(&mut hasher);
+    decor.space.bottom.0.hash(&mut hasher);
+    decor.space.start.0.hash(&mut hasher);
+    decor.space.end.0.hash(&mut hasher);
     for e in [
         decor.borders.top,
         decor.borders.bottom,
@@ -6782,9 +6790,14 @@ fn box_metrics(properties: &ParagraphProperties) -> BoxMetrics {
         Some(s) => s.after_twips.map_or(Twip::ZERO, Twip),
         None => Twip::ZERO,
     };
+    // The top/bottom border bands live above/below the text, so they are part of
+    // the space the block consumes — the field's own contract ("top margin/
+    // border"). Reserving them here is what keeps the paginator, hit testing and
+    // line numbering agreeing with what composition paints.
+    let (band_before, band_after) = paragraph_border_bands(properties);
     BoxMetrics {
-        space_before: before,
-        space_after: after,
+        space_before: before + band_before,
+        space_after: after + band_after,
         indent_start: indent.and_then(|i| i.start_twips).map_or(Twip::ZERO, Twip),
         indent_end: indent.and_then(|i| i.end_twips).map_or(Twip::ZERO, Twip),
     }
@@ -7153,11 +7166,49 @@ fn paragraph_decor(properties: &ParagraphProperties, width: Twip) -> ParagraphDe
     if shading.is_none() && borders.is_empty() {
         return ParagraphDecor::default();
     }
+    // `w:space` is only meaningful on an edge that is actually drawn; an edge
+    // resolved away (`nil`/`none`) contributes no padding, so the text box keeps
+    // hugging that side.
+    let space = BlockBorderSpace {
+        top: edge_space(borders.top, b.top.as_ref()),
+        bottom: edge_space(borders.bottom, b.bottom.as_ref()),
+        start: edge_space(borders.start, b.start.as_ref()),
+        end: edge_space(borders.end, b.end.as_ref()),
+    };
     ParagraphDecor {
         shading,
         borders,
+        space,
         width,
     }
+}
+
+/// The padding (twips) a drawn paragraph border edge keeps from the text:
+/// `w:pBdr/*/@w:space`, authored in points. Zero when the edge is not drawn, so
+/// reservation and painting agree on which sides have a band.
+fn edge_space(resolved: Option<ResolvedEdge>, authored: Option<&BorderEdge>) -> Twip {
+    if resolved.is_none() {
+        return Twip::ZERO;
+    }
+    Twip(authored.and_then(|e| e.space_points).unwrap_or(0) as i32 * 20)
+}
+
+/// The vertical bands (twips) a paragraph's top and bottom borders occupy
+/// *outside* the text box — padding plus line width per drawn edge.
+///
+/// Word reserves these during recalculation (`BaseLineOffset += Brd.Top.Space +
+/// Brd.Top.Size`), so the frame has room and cannot land on the neighbouring
+/// paragraph's ink. The leading/trailing bands are deliberately **not** reserved:
+/// Word draws those into the margin, leaving a bordered paragraph's text aligned
+/// with its unbordered neighbours'.
+fn paragraph_border_bands(properties: &ParagraphProperties) -> (Twip, Twip) {
+    let b = &properties.borders;
+    let band = |authored: Option<&BorderEdge>| {
+        single_edge(authored).map_or(Twip::ZERO, |edge| {
+            edge_space(Some(edge), authored) + edge.width
+        })
+    };
+    (band(b.top.as_ref()), band(b.bottom.as_ref()))
 }
 
 /// Converts a single model border edge to a drawable [`ResolvedEdge`] (no
@@ -7264,12 +7315,19 @@ fn alt_chunk_fragment(
         active_line_grid_pitch(&props, ctx),
     );
     let lines = shaper.shape_paragraph(&[run], constraints, range);
+    let decor = alt_chunk_decor(width);
     BlockFragment::Paragraph {
         id: chunk.id,
         lines,
-        box_metrics: BoxMetrics::default(),
+        // The placeholder's own frame is reserved the same way an authored
+        // `w:pBdr` is, so the dashed box has room above and below its text.
+        box_metrics: BoxMetrics {
+            space_before: decor.band_before(),
+            space_after: decor.band_after(),
+            ..BoxMetrics::default()
+        },
         break_control: BreakControl::default(),
-        decor: alt_chunk_decor(width),
+        decor,
     }
 }
 
@@ -7290,6 +7348,14 @@ fn alt_chunk_decor(width: Twip) -> ParagraphDecor {
             bottom: Some(edge),
             start: Some(edge),
             end: Some(edge),
+        },
+        // A 2pt breathing gap on every side, so the placeholder reads as a box
+        // around the notice rather than a rule touching its glyphs.
+        space: BlockBorderSpace {
+            top: Twip(40),
+            bottom: Twip(40),
+            start: Twip(40),
+            end: Twip(40),
         },
         width,
     }
@@ -10340,6 +10406,82 @@ mod tests {
         assert!(
             decor.borders.top.is_none() && decor.borders.start.is_none(),
             "only the declared edge is present"
+        );
+    }
+
+    #[test]
+    fn paragraph_border_space_reaches_the_decor_and_reserves_its_vertical_band() {
+        // `w:pBdr/*/@w:space` is the padding Word keeps between the frame and the
+        // text — the reason a highlighted run in a bordered paragraph does not
+        // touch, let alone cover, the border. It was parsed and then dropped on
+        // the floor at layout. Two things have to be true: the padding reaches
+        // composition, and the *vertical* band it opens is paid for in the
+        // paragraph's box (Word: `BaseLineOffset += Brd.Top.Space + Brd.Top.Size`).
+        use casual_doc_model::v1::ParagraphBorders;
+
+        let edge = |space| BorderEdge {
+            style: "single".to_owned(),
+            size_eighth_points: Some(12), // 12/8 pt = 30 twips
+            color: None,
+            space_points: Some(space),
+        };
+        let para = BlockNode::Paragraph(Paragraph {
+            id: NodeId::from_parts(30, 1).unwrap(),
+            properties: ParagraphProperties {
+                borders: ParagraphBorders {
+                    top: Some(edge(1)),
+                    bottom: Some(edge(2)),
+                    start: Some(edge(4)),
+                    // A `nil` end edge is not drawn, so it opens no padding.
+                    end: Some(BorderEdge {
+                        style: "nil".to_owned(),
+                        size_eighth_points: Some(12),
+                        color: None,
+                        space_points: Some(4),
+                    }),
+                    ..ParagraphBorders::default()
+                }
+                .into(),
+                ..ParagraphProperties::default()
+            }
+            .into(),
+            inlines: vec![run_node(31, "Framed", RunProperties::default())],
+        });
+        let document = Document::new(
+            NodeId::from_parts(1, 1).unwrap(),
+            vec![para],
+            Definitions::default(),
+        )
+        .unwrap();
+
+        let shaper = ParleyShaper::new();
+        let galley = build_galley(&document, &shaper, Twip::from_points(400));
+        let BlockFragment::Paragraph {
+            decor, box_metrics, ..
+        } = &galley[0]
+        else {
+            panic!("expected a paragraph fragment");
+        };
+        // A point is 20 twips.
+        assert_eq!(decor.space.top, Twip(20), "w:space=1 on the top edge");
+        assert_eq!(decor.space.bottom, Twip(40), "w:space=2 on the bottom edge");
+        assert_eq!(decor.space.start, Twip(80), "w:space=4 on the leading edge");
+        assert_eq!(
+            decor.space.end,
+            Twip::ZERO,
+            "an edge resolved away opens no padding"
+        );
+        // 30 twips of line + the padding, on each vertical side.
+        assert_eq!(
+            (box_metrics.space_before, box_metrics.space_after),
+            (Twip(50), Twip(70)),
+            "the top and bottom bands are reserved in the paragraph's box"
+        );
+        assert_eq!(
+            (box_metrics.indent_start, box_metrics.indent_end),
+            (Twip::ZERO, Twip::ZERO),
+            "the leading/trailing bands are NOT reserved — Word draws them into \
+             the margin so bordered text stays aligned with unbordered text"
         );
     }
 

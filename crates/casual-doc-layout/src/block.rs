@@ -105,10 +105,48 @@ impl BlockBorders {
     }
 }
 
+/// The padding (twips) each paragraph border edge keeps between itself and the
+/// text it frames — `w:pBdr/*/@w:space`, authored in points (ECMA-376
+/// §17.3.1.24). Zero on every edge for a document that omits the attribute.
+///
+/// This is the OOXML spelling of the CSS box model's *padding*: the content box
+/// holds the text (and therefore every inline background — run shading and
+/// `w:highlight`), the padding band is empty, and the border band sits outside
+/// both. Collapsing the three into one box is what let a highlighted run paint
+/// over its paragraph's border.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct BlockBorderSpace {
+    /// Padding below the top edge.
+    #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
+    pub top: Twip,
+    /// Padding above the bottom edge.
+    #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
+    pub bottom: Twip,
+    /// Padding inside the leading (start) edge.
+    #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
+    pub start: Twip,
+    /// Padding inside the trailing (end) edge.
+    #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
+    pub end: Twip,
+}
+
+impl BlockBorderSpace {
+    /// Whether every edge keeps zero padding (serializes to nothing).
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The paint-only decoration of a paragraph box: background shading (`w:shd`) and
 /// borders (`w:pBdr`), plus the content-box `width` they span (the flowed column
-/// width; the start/end indents are subtracted at composition). Layout-neutral —
-/// it is consumed by composition, not by the paginator.
+/// width; the start/end indents are subtracted at composition).
+///
+/// Horizontally layout-neutral — Word draws the leading/trailing border outside
+/// the text column, into the margin, so a bordered paragraph's text stays aligned
+/// with its unbordered neighbours. The *vertical* band is not free: the top and
+/// bottom edges are reserved in [`BoxMetrics::space_before`]/
+/// [`BoxMetrics::space_after`] by the flow engine, so the paginator sees them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ParagraphDecor {
     /// Background fill (`w:shd@fill`), RGBA; `None` = no shading.
@@ -117,6 +155,9 @@ pub struct ParagraphDecor {
     /// Border edges (`w:pBdr`).
     #[serde(default, skip_serializing_if = "BlockBorders::is_empty")]
     pub borders: BlockBorders,
+    /// Padding between each border edge and the text (`w:pBdr/*/@w:space`).
+    #[serde(default, skip_serializing_if = "BlockBorderSpace::is_zero")]
+    pub space: BlockBorderSpace,
     /// The paragraph's flowed content-box width (twips) — the span shading/borders
     /// cover, before subtracting the start/end indents.
     #[serde(default, skip_serializing_if = "crate::units::Twip::is_zero")]
@@ -129,6 +170,27 @@ impl ParagraphDecor {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.shading.is_none() && self.borders.is_empty()
+    }
+
+    /// Height (twips) the top border band takes above the text: the padding plus
+    /// the line's own width. Zero when no top edge is drawn.
+    ///
+    /// This is what the flow engine reserves in `space_before` so the band has
+    /// somewhere to live — Word's `BaseLineOffset += Brd.Top.Space + Brd.Top.Size`.
+    #[must_use]
+    pub fn band_before(&self) -> Twip {
+        self.borders
+            .top
+            .map_or(Twip::ZERO, |edge| self.space.top + edge.width)
+    }
+
+    /// Height (twips) the bottom border band takes below the text. The mirror of
+    /// [`ParagraphDecor::band_before`].
+    #[must_use]
+    pub fn band_after(&self) -> Twip {
+        self.borders
+            .bottom
+            .map_or(Twip::ZERO, |edge| self.space.bottom + edge.width)
     }
 }
 
