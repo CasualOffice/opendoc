@@ -79,8 +79,8 @@ test("the owner asked for at least fifteen languages, and they are here", () => 
  *  worth failing a build over. */
 const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
 
-/** Translation coverage per locale, measured on 2026-09-25. Only one direction
- *  is legal — up.
+/** Translation coverage per locale, measured on 2026-09-25 after the third
+ *  translation pass. Only one direction is legal — up.
  *
  *  The first design failed a locale that answered fewer keys than English. It
  *  was the right instinct and the wrong mechanism: routing a surface through
@@ -92,30 +92,36 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 301],
-  ["de", 301],
-  ["es", 301],
-  ["fr", 301],
-  ["hi", 301],
-  ["id", 301],
-  ["it", 301],
-  ["ja", 301],
-  ["ko", 301],
-  ["nl", 301],
-  ["pl", 301],
-  ["pt-BR", 301],
-  ["ru", 301],
-  ["tr", 301],
-  ["uk", 301],
-  ["vi", 301],
-  ["zh-Hans", 301],
-  ["zh-Hant", 301],
+  ["ar", 850],
+  ["de", 850],
+  ["es", 850],
+  ["fr", 850],
+  ["hi", 850],
+  ["id", 850],
+  ["it", 850],
+  ["ja", 850],
+  ["ko", 850],
+  ["nl", 850],
+  ["pl", 850],
+  ["pt-BR", 850],
+  ["ru", 850],
+  ["tr", 850],
+  ["uk", 850],
+  ["vi", 850],
+  ["zh-Hans", 850],
+  ["zh-Hant", 850],
 ]);
 
-/** English defines 848 keys today. 301 translated is 35.5%: the chrome a
- *  person reads first — every ribbon tab, every menu-bar name, the document
- *  title — plus the counts. The number in each row above is a floor, not a
- *  target. */
+/** English defines 850 keys today, and every locale answers all 850 — 100.0%,
+ *  up from the 301 (35.4%) the previous pass had reached. That is the whole
+ *  routed surface: every ribbon tab's groups and controls, the menu bar, every
+ *  dialog title and button, the field labels, the File page, and the status and
+ *  error sentences, not only the chrome a person reads first.
+ *
+ *  The number in each row is still a floor, not a target, and at parity its
+ *  job changes rather than ending: it is now what refuses a NEWLY routed
+ *  surface that ships untranslated. Whoever adds keys to `en.json` raises this
+ *  number in the same PR or the gate says so. */
 
 test("every locale answers every SCRIPT-side key, where English is not in the markup", () => {
   const gaps = [];
@@ -275,3 +281,4 @@ test("every string interpolates the placeholders its English does, and no others
   }
   assert.deepEqual(wrong, []);
 });
+
