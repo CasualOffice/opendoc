@@ -54,16 +54,77 @@ const local = (page, selector) =>
     };
   }, selector);
 
-/** Clicks a PAGE-LOCAL point, scrolling first if it is off-screen. */
+/** The page's box once it has STOPPED moving.
+ *
+ *  `stableBox` waits only for a non-zero width, which is not the same thing: a
+ *  box read during a scroll, or while the engine is still repainting after an
+ *  edit, is a perfectly valid non-zero box in the wrong place. Every click in
+ *  this spec is computed from the page's origin, so a box read one frame early
+ *  puts the click somewhere the test never meant — and the assertion that
+ *  fails is "painted and hit-testing disagree", which is exactly the defect
+ *  this file exists to catch. A false positive here is worse than most,
+ *  because it accuses the product of the thing the spec was written to find. */
+async function settledBox(page, target) {
+  let previous = await stableBox(target);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await page.waitForTimeout(50);
+    const box = await stableBox(target);
+    if (Math.abs(box.y - previous.y) < 0.5 && Math.abs(box.x - previous.x) < 0.5) return box;
+    previous = box;
+  }
+  return previous;
+}
+
+/** Scrolls whichever element actually scrolls the document, by `delta`.
+ *
+ *  `page.mouse.wheel` dispatches at the pointer's current position, so it does
+ *  nothing at all unless the pointer happens to be over the scroller — and
+ *  when it does nothing, the caller goes on to click the coordinate it wanted
+ *  to scroll INTO view. That is how this spec came to click the status bar and
+ *  report it as "painted and hit-testing disagree": the click was 700px down a
+ *  720px viewport, the footer owns the last 28 of those, and the failure named
+ *  the product instead of the harness. */
+async function scrollWorkArea(page, delta) {
+  return page.evaluate((dy) => {
+    let element = document.querySelector(".page-wrap .page");
+    while (element && element !== document.body) {
+      const style = getComputedStyle(element);
+      if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight) {
+        const before = element.scrollTop;
+        element.scrollTop += dy;
+        return element.scrollTop - before;
+      }
+      element = element.parentElement;
+    }
+    const root = document.scrollingElement;
+    const before = root.scrollTop;
+    root.scrollTop += dy;
+    return root.scrollTop - before;
+  }, delta);
+}
+
+/** Clicks a PAGE-LOCAL point, scrolling first if it is off-screen.
+ *
+ *  The safe band is the viewport less 60px at each end: the header owns the
+ *  top and the status bar the bottom, and a click into either is a click that
+ *  never reached the document. If the point cannot be brought inside that
+ *  band, this FAILS rather than clicking anyway — an unreachable coordinate is
+ *  a broken test, and it should say so in its own name instead of borrowing
+ *  the product's. */
 async function clickLocal(page, x, y, options = {}) {
   const target = page.locator(".page-wrap .page").first();
-  let box = await stableBox(target);
+  let box = await settledBox(page, target);
   const viewport = page.viewportSize().height;
-  if (box.y + y > viewport - 60 || box.y + y < 60) {
-    await page.mouse.wheel(0, box.y + y - viewport / 2);
-    await page.waitForTimeout(120);
-    box = await stableBox(target);
+  const outside = () => box.y + y > viewport - 60 || box.y + y < 60;
+  if (outside()) {
+    await scrollWorkArea(page, box.y + y - viewport / 2);
+    box = await settledBox(page, target);
   }
+  expect(
+    outside(),
+    `page-local y=${y} lands at ${Math.round(box.y + y)} in a ${viewport}px viewport, ` +
+      "outside the clickable band — the work area would not scroll it into reach",
+  ).toBe(false);
   await page.mouse.click(box.x + x, box.y + y, options);
 }
 
@@ -80,6 +141,11 @@ async function strike(page, n) {
   // Without the markup view the two layouts coincide and nothing here proves
   // anything.
   await expect(page.locator("body")).toHaveClass(/showing-changes/);
+  // 131 keystrokes in, the engine is still repainting. Every assertion after
+  // this one is a coordinate, so waiting for the page to stop moving is not
+  // politeness — it is the difference between measuring the layout and
+  // measuring a frame of the animation towards it.
+  await settledBox(page, page.locator(".page-wrap .page").first());
 }
 
 async function right(page, n) {

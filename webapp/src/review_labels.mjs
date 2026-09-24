@@ -86,3 +86,64 @@ export function reviewCardAriaLabel(item) {
   const kind = (reviewChangeTypeLabel(item.data.kind) || "change").toLowerCase();
   return `Suggested ${kind} by ${author}${suffix}`;
 }
+
+
+
+/** One side of a tracked formatting change, and the whole sentence that
+ *  describes one, in Word's words.
+ *
+ *  Moved out of the shell: between them they hold twenty-five property NAMES
+ *  and every value's rendering, all of it pure string work over plain objects,
+ *  and none of it anything the editor has to be running to be tested. */
+export function reviewFormattingValue(property, value) {
+  if (value == null) return "inherited";
+  // The model's logical alignment names, in Word's words ("Formatted: Centered").
+  if (property === "alignment") {
+    return { start: "Left", end: "Right", center: "Centered", justify: "Justified" }[value] ?? String(value);
+  }
+  if (typeof value === "boolean") return value ? "on" : "off";
+  if (property === "sizeHalfPoints" && Number.isFinite(Number(value))) {
+    return `${Number(value) / 2} pt`;
+  }
+  if (typeof value === "object") {
+    const scalar = Object.values(value).find((candidate) =>
+      ["string", "number", "boolean"].includes(typeof candidate));
+    return scalar == null ? "custom" : String(scalar);
+  }
+  return String(value);
+}
+
+export function reviewFormattingDescription(changes) {
+  const labels = {
+    bold: "Bold",
+    italic: "Italic",
+    underline: "Underline",
+    strike: "Strikethrough",
+    font: "Font",
+    sizeHalfPoints: "Font size",
+    color: "Text color",
+    highlight: "Highlight",
+    verticalAlignment: "Vertical alignment",
+    // Paragraph properties, from a tracked `w:pPrChange` (docs/108).
+    style: "Style",
+    alignment: "Alignment",
+    numbering: "List",
+    indentation: "Indent",
+    spacing: "Spacing",
+    keepNext: "Keep with next",
+    keepLines: "Keep lines together",
+    pageBreakBefore: "Page break before",
+    widowControl: "Widow/orphan control",
+    outlineLevel: "Outline level",
+    contextualSpacing: "Contextual spacing",
+    borders: "Borders",
+    shading: "Shading",
+    tabs: "Tab stops",
+    bidi: "Right-to-left",
+  };
+  return (changes ?? []).map((change) => {
+    const property = String(change?.property || "");
+    const label = labels[property] || property || "Formatting";
+    return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
+  }).join("\n");
+}

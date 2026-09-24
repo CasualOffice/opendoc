@@ -31,40 +31,71 @@ async function openMultiPage(page) {
   await expect
     .poll(async () => page.locator("#viewport").evaluate((v) => v.scrollHeight))
     .toBeGreaterThan(onePage * 2);
-  // Wait for pagination to SETTLE, not merely to have started: page wraps are
-  // added as the layout converges, and clicking while the count is still moving
-  // aims at a page that is about to be somewhere else.
+  // Wait for pagination to SETTLE, not merely to have started: the document's
+  // page count climbs as the layout converges, and aiming at a page while it
+  // is still moving aims at a page that is about to be somewhere else.
+  //
+  // The count comes from the STATUS BAR, which reports the document's pages.
+  // Counting `.page-wrap` elements counts the pages the viewer has MOUNTED —
+  // a sliding window of two or three around the scroll position — and calling
+  // that "the document has 3 pages" is how this spec came to scroll to a page
+  // that then unmounted under it.
   let last = -1;
   await expect
-    .poll(async () => {
-      const now = await page.locator(".page-wrap").count();
-      const stable = now === last;
-      last = now;
-      return stable && now > 1;
-    }, { intervals: [250, 250, 250, 250, 250, 250, 250, 250] })
+    .poll(
+      async () => {
+        const now = await documentPageCount(page);
+        const stable = now === last;
+        last = now;
+        return stable && now > 1;
+      },
+      { intervals: [250, 250, 250, 250, 250, 250, 250, 250] },
+    )
     .toBe(true);
   return last;
 }
 
-/** Scrolls the viewport to a later page and returns its stable wrapper. */
-async function scrollToPage(page, index) {
-  // Every page keeps a lightweight `.page-wrap`; only nearby ones mount a canvas
-  // (virtualization), so scrolling one into view is what makes it paintable.
-  const target = page.locator(".page-wrap").nth(index);
-  // `scrollIntoViewIfNeeded` can align the page's BOTTOM, leaving its top above
-  // the viewport — a click at "the top of the page" then lands off-screen and
-  // reports a product failure that is really a harness one.
+/** How many pages the DOCUMENT has, as the status bar reports it. */
+async function documentPageCount(page) {
+  const text = (await page.locator("#statPages").textContent()) ?? "";
+  const match = text.match(/of\s+~?\s*([\d,]+)/i);
+  return match ? Number(match[1].replace(/,/g, "")) : 0;
+}
+
+/** Scrolls the viewport to a page BY NUMBER and returns its stable wrapper.
+ *
+ *  `.page-wrap` is not "a page of the document" — it is a page the viewer has
+ *  MOUNTED. The viewer keeps a sliding window of them, so `.nth(2)` is the
+ *  third mounted wrap, and the moment you scroll, the window slides and that
+ *  index means a different page or no page at all. This spec used to hold a
+ *  locator across exactly that scroll, and it worked only while the window
+ *  happened to be big enough that nothing moved — until the chrome gave 50px
+ *  back to the document (docs/123) and it was not. The page NUMBER is the
+ *  stable identity, and `data-page-number` carries it. */
+async function scrollToPage(page, number) {
+  const selector = `.page-wrap[data-page-number="${number}"]`;
+  // Scroll by geometry rather than by element: the element may not be mounted
+  // yet, which is the whole reason for scrolling to it.
+  await page.evaluate((n) => {
+    const viewport = document.getElementById("viewport");
+    const first = document.querySelector(".page-wrap");
+    const stride = first ? first.getBoundingClientRect().height + 24 : 1146;
+    viewport.scrollTop = Math.max(0, (n - 1) * stride);
+  }, number);
+  const target = page.locator(selector);
+  await expect(target, `page ${number} should mount once scrolled to`).toHaveCount(1);
   await target.evaluate((el) => el.scrollIntoView({ block: "start" }));
-  await page.waitForTimeout(400);
-  const canvas = target.locator(".page").first();
+  // Re-query: the scroll above can slide the mounted window, and a locator is
+  // resolved fresh each time precisely so it survives that.
+  await expect(page.locator(selector)).toHaveCount(1);
   let box = null;
   await expect
     .poll(async () => {
-      box = await canvas.boundingBox();
+      box = await page.locator(`${selector} .page`).first().boundingBox();
       return box?.width ?? 0;
     })
     .toBeGreaterThan(0);
-  return target;
+  return page.locator(selector);
 }
 
 /** Double-clicks a page's header band, retried.
@@ -104,7 +135,7 @@ test("[1] typing works on a later page, not only page one", async ({ page, conso
   const pageCount = await openMultiPage(page);
   expect(pageCount, "the corpus document must be multi-page").toBeGreaterThan(1);
 
-  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  const target = await scrollToPage(page, Math.min(3, pageCount));
   expect(await clickIntoPage(page, target), "a click on a later page must place a caret").toBe(true);
 
   await page.keyboard.type("LATERPAGE");
@@ -120,7 +151,7 @@ test("[1b] the caret stays on the page that was clicked", async ({ page, console
   const pageCount = await openMultiPage(page);
   expect(pageCount).toBeGreaterThan(1);
 
-  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  const target = await scrollToPage(page, Math.min(3, pageCount));
   expect(await clickIntoPage(page, target)).toBe(true);
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
   expect(before, "the viewport is scrolled away from page one").toBeGreaterThan(100);
@@ -204,7 +235,7 @@ test("[3] entering the header does not jump the view to another page", async ({
   expect(pageCount).toBeGreaterThan(1);
 
   // Work on a later page, as a user editing a long document would be.
-  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  const target = await scrollToPage(page, Math.min(3, pageCount));
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);
 
   await enterHeaderAt(page, target);
@@ -223,7 +254,7 @@ test("[3b] typing in a header keeps the view on that header", async ({ page, con
   const pageCount = await openMultiPage(page);
   expect(pageCount).toBeGreaterThan(1);
 
-  const target = await scrollToPage(page, Math.min(2, pageCount - 1));
+  const target = await scrollToPage(page, Math.min(3, pageCount));
   await enterHeaderAt(page, target);
   await expect(page.locator(".overlay .caret")).toHaveCount(1);
   const before = await page.locator("#viewport").evaluate((v) => v.scrollTop);

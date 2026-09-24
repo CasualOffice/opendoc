@@ -96,6 +96,7 @@ import {
   reviewCardAriaLabel,
   reviewChangeTypeLabel,
   reviewCommentTooltip,
+  reviewFormattingDescription,
   reviewRevisionTooltip,
 } from "./review_labels.mjs";
 import { previewInkIsLegible } from "./contrast.mjs";
@@ -1653,59 +1654,6 @@ function reviewRangeClientRect(startNode, startOffset, endNode, endOffset) {
     bottom: canvasRect.top + (y + height) * sy,
     pageRight: canvasRect.right,
   };
-}
-
-function reviewFormattingValue(property, value) {
-  if (value == null) return "inherited";
-  // The model's logical alignment names, in Word's words ("Formatted: Centered").
-  if (property === "alignment") {
-    return { start: "Left", end: "Right", center: "Centered", justify: "Justified" }[value] ?? String(value);
-  }
-  if (typeof value === "boolean") return value ? "on" : "off";
-  if (property === "sizeHalfPoints" && Number.isFinite(Number(value))) {
-    return `${Number(value) / 2} pt`;
-  }
-  if (typeof value === "object") {
-    const scalar = Object.values(value).find((candidate) =>
-      ["string", "number", "boolean"].includes(typeof candidate));
-    return scalar == null ? "custom" : String(scalar);
-  }
-  return String(value);
-}
-
-function reviewFormattingDescription(changes) {
-  const labels = {
-    bold: "Bold",
-    italic: "Italic",
-    underline: "Underline",
-    strike: "Strikethrough",
-    font: "Font",
-    sizeHalfPoints: "Font size",
-    color: "Text color",
-    highlight: "Highlight",
-    verticalAlignment: "Vertical alignment",
-    // Paragraph properties, from a tracked `w:pPrChange` (docs/108).
-    style: "Style",
-    alignment: "Alignment",
-    numbering: "List",
-    indentation: "Indent",
-    spacing: "Spacing",
-    keepNext: "Keep with next",
-    keepLines: "Keep lines together",
-    pageBreakBefore: "Page break before",
-    widowControl: "Widow/orphan control",
-    outlineLevel: "Outline level",
-    contextualSpacing: "Contextual spacing",
-    borders: "Borders",
-    shading: "Shading",
-    tabs: "Tab stops",
-    bidi: "Right-to-left",
-  };
-  return (changes ?? []).map((change) => {
-    const property = String(change?.property || "");
-    const label = labels[property] || property || "Formatting";
-    return `${label}: ${reviewFormattingValue(property, change?.before)} → ${reviewFormattingValue(property, change?.after)}`;
-  }).join("\n");
 }
 
 function revisionRange(revision) {
@@ -8714,6 +8662,13 @@ function repaintPage(i) {
  *  materialized until something scrolls there. Model geometry plus the band's
  *  arithmetic answers "where is that, in scroll coordinates" without either.
  *  `block` matches `scrollOverlayIntoView`. Returns whether it scrolled. */
+/** Breathing room between a revealed caret and the edge it was revealed past.
+ *  Flush looks right for one frame; the next repaint — and arrowing through a
+ *  paginated document repaints constantly — puts it back outside, which is the
+ *  "3 px above" `viewer-scroll-ceiling` reported. Word and Docs keep a line's
+ *  worth. */
+const SCROLL_INTO_VIEW_MARGIN = 8;
+
 function scrollModelRectIntoView(flat, block = "nearest") {
   if (!pageBandModel || !flat || flat.length < 5) return false;
   const [pageNumber, , y, , h] = flat;
@@ -8725,9 +8680,11 @@ function scrollModelRectIntoView(flat, block = "nearest") {
   const viewportHeight = viewportEl.clientHeight;
   const { docY } = scrollToDoc(pageBandModel, viewportHeight, viewportEl.scrollTop - bandTopInScroller);
   let wanted = docY;
+  // The same margin the overlay path keeps, in document space.
+  const margin = SCROLL_INTO_VIEW_MARGIN;
   if (block === "center") wanted = top + (bottom - top) / 2 - viewportHeight / 2;
-  else if (top < docY) wanted = top;
-  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight;
+  else if (top < docY) wanted = top - margin;
+  else if (bottom > docY + viewportHeight) wanted = bottom - viewportHeight + margin;
   else return false;
   const target = bandTopInScroller + docToScroll(pageBandModel, viewportHeight, Math.max(0, wanted));
   const max = Math.max(0, viewportEl.scrollHeight - viewportEl.clientHeight);
@@ -8773,9 +8730,9 @@ function scrollOverlayIntoView(marker, block = "nearest") {
   if (block === "center") {
     delta = markerRect.top + markerRect.height / 2 - (viewportRect.top + viewportRect.height / 2);
   } else if (markerRect.top < viewportRect.top) {
-    delta = markerRect.top - viewportRect.top;
+    delta = markerRect.top - viewportRect.top - SCROLL_INTO_VIEW_MARGIN;
   } else if (markerRect.bottom > viewportRect.bottom) {
-    delta = markerRect.bottom - viewportRect.bottom;
+    delta = markerRect.bottom - viewportRect.bottom + SCROLL_INTO_VIEW_MARGIN;
   } else {
     return;
   }
@@ -13931,6 +13888,11 @@ function runCommand(i) {
   const cmd = cmdMatches[i];
   if (!cmd || cmd.enabled === false) return;
   closeCmd();
+  // The palette has two faces: the modal, and the File page's "Find a command"
+  // PANE. `closeCmd` closes the modal; from the pane there is none to close,
+  // and the command ran with the page still covering the document. Every other
+  // route into that page returns to the document first. No-op when closed.
+  closeFilePage();
   cmd.run();
 }
 

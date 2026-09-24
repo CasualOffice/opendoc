@@ -73,6 +73,25 @@ test("previous and next scroll the canvas to the selected match", async ({
   await moveCaretToDocStart(page);
   await page.keyboard.type(marker);
   await page.keyboard.press(`${MOD}+End`);
+  // Filler between the two matches, so the second is genuinely off screen and
+  // "Next scrolled to it" is a claim with content. The fixture's own text ends
+  // near the top of its single page: both matches were on screen together, and
+  // this test passed only because the chrome used to be tall enough to push
+  // the second one just past the edge (docs/123 gave 50px back and it stopped
+  // being true). A test whose premise depends on the height of the toolbar is
+  // a test that will break again.
+  await page.evaluate(() => {
+    const line = "Filler line that pushes the second match well below the fold. ";
+    const data = new DataTransfer();
+    data.setData("text/plain", `${line.repeat(4)}\n`.repeat(40));
+    document.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect
+    .poll(async () => page.locator("#viewport").evaluate((el) => el.scrollHeight))
+    .toBeGreaterThan(2000);
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.type(marker);
   await moveCaretToDocStart(page);
 
@@ -93,10 +112,32 @@ test("previous and next scroll the canvas to the selected match", async ({
       scrollTop: viewport.scrollTop,
       visible: highlight.top >= viewportRect.top && highlight.bottom <= viewportRect.bottom,
       panelTop: document.querySelector("#findPanel").getBoundingClientRect().top,
+      viewportTop: viewportRect.top,
+      viewportBottom: viewportRect.bottom,
+      highlightTop: highlight.top,
+      highlightBottom: highlight.bottom,
     };
   });
-  expect(Math.abs(nextState.scrollTop - firstScroll)).toBeGreaterThan(10);
+  // Where the match sat before the scroll: the viewport frame does not move,
+  // so undoing the scroll delta puts the match back where it was.
+  const delta = nextState.scrollTop - firstScroll;
+  nextState.wasVisibleBefore =
+    nextState.highlightTop + delta >= nextState.viewportTop &&
+    nextState.highlightBottom + delta <= nextState.viewportBottom;
+  // The contract is "Next brings the match into view", not "Next scrolls at
+  // least 10 pixels". The magnitude was calibration against a particular
+  // chrome height, and it broke the day the chrome gave 50px back to the
+  // document (docs/123) and 7px of scroll became enough. What is checked
+  // instead is exact and geometry-independent: the canvas moved, the match is
+  // visible now, and — reconstructed from the scroll delta — it was NOT
+  // visible before, so the scroll was the thing that revealed it.
+  const scrolled = nextState.scrollTop - firstScroll;
+  expect(Math.abs(scrolled), "Next must move the canvas").toBeGreaterThan(0);
   expect(nextState.visible).toBe(true);
+  expect(
+    nextState.wasVisibleBefore,
+    "the match was already on screen, so this proves nothing about scrolling",
+  ).toBe(false);
   expect(nextState.panelTop).toBeCloseTo(panelTop, 0);
 
   await page.locator("#findPrev").click();

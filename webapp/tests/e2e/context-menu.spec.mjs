@@ -17,12 +17,36 @@ async function selectTypedMarker(page, marker) {
   }
 }
 
+/** Focuses the editing surface and waits for it to actually hold the keyboard.
+ *
+ *  `#pages` is not the focus owner — the editable proxy `#editorTextInput` is
+ *  (docs/105 UX-001) — so focusing `#pages` starts a REDIRECT. A key pressed
+ *  before that redirect lands arrives at neither element, and the keyboard
+ *  context menu simply never opened: a race that reported itself as "Shift+F10
+ *  does not work on a table". Waiting for the surface to hold focus is the
+ *  same thing the fixtures' own guidance says to assert. */
+async function focusEditor(page) {
+  await page.locator("#pages").focus();
+  // Specifically the PROXY, not "either of the two" — `#pages` holding focus
+  // is the mid-redirect state, and that is exactly the moment a keypress is
+  // lost.
+  await page.waitForFunction(() => document.activeElement?.id === "editorTextInput");
+}
+
 async function insertTwoByTwoTable(page) {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
   await page.locator('[data-tab="insert"]').click();
   await page.locator("#insertTableBtn").click();
+  await expect(page.locator("#insertTableMenu")).toBeVisible();
   await page.locator('.gc[data-r="2"][data-c="2"]').click();
+  // The click starts the edit; the table exists when the engine says the caret
+  // is in one, and the Table tab enabling IS that statement. Without waiting
+  // for it, the next keystroke is delivered mid-edit and the context menu is
+  // built for a caret that is not in a table yet — which reported itself as
+  // "Shift+F10 does not open on a table". `dialog-contract.spec.mjs`'s copy of
+  // this helper already waited; this one did not.
+  await expect(page.locator("#tabTable")).toBeEnabled();
 }
 
 test("right-click preserves a text selection and exposes context-aware commands", async ({
@@ -157,7 +181,7 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   consoleErrors,
 }) => {
   await insertTwoByTwoTable(page);
-  await page.locator("#pages").focus();
+  await focusEditor(page);
   await page.keyboard.press("Shift+F10");
   const menu = page.locator(".editor-context-menu");
   const submenu = page.locator(".editor-submenu");
@@ -174,18 +198,18 @@ test("table and suggestion contexts expose exact commands and mode-safe reasons"
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
-  await page.locator("#pages").focus();
+  await focusEditor(page);
   await page.keyboard.press("Shift+F10");
   await menu.locator('[data-command-id="table.select"]').click();
   await submenu.locator('[data-command-id="table.select.row"]').click();
   await expect(page.locator(".table-cell-selection")).toHaveCount(2);
-  await page.locator("#pages").focus();
+  await focusEditor(page);
   await page.keyboard.press("Shift+F10");
   await expect(menu.locator('[data-command-id="table.merge"]')).toBeEnabled();
   await page.keyboard.press("Escape");
 
   await setReviewMode(page, "suggesting");
-  await page.locator("#pages").focus();
+  await focusEditor(page);
   await page.keyboard.press("Shift+F10");
   await menu.locator('[data-command-id="table.insert"]').click();
   // Disabled rows are greyed in place with no reason text (Google Docs style):
@@ -235,7 +259,7 @@ test("the menu is contextual — a table cell exposes table tools a text selecti
 
   // Table cell: the very same surface now gains Insert / Delete / Select tools.
   await insertTwoByTwoTable(page);
-  await page.locator("#pages").focus();
+  await focusEditor(page);
   await page.keyboard.press("Shift+F10");
   await expect(menu.locator('[data-command-id="table.insert"]')).toBeVisible();
   await expect(menu.locator('[data-command-id="table.delete"]')).toBeVisible();
