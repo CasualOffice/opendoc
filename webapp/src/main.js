@@ -9544,7 +9544,7 @@ function updateToolbar() {
       // authored title is the "missing" reason already, so only the transient
       // preconditions rewrite it.
       if (entry.requires !== "missing") {
-        button.title = enabled ? authoredTitle(button) : reason;
+        button.title = enabled ? authoredTitle(button, EDITOR_KEYBOARD_PLATFORM) : reason;
       }
       // A switch has to say which way it is set, whichever table declares it.
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
@@ -16854,6 +16854,8 @@ void startLocalisation({
   settings,
   saveSettings,
   onLocalised: () => {
+    // Every relabel re-introduces ⌘ from the catalogue (`105` UX-009, #599).
+    localizeShortcutGlyphs(document.body, EDITOR_KEYBOARD_PLATFORM);
     if (doc) updateStats();
   },
 });

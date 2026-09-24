@@ -126,9 +126,9 @@ and the old sum-to-Total check could not see either.)
 | Lane | Rows | P0 | P1 | P2 | P3 | Unprioritised |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Hotfix | 47 | 0 | 7 | 26 | 14 | 0 |
-| Audit | 70 | 0 | 31 | 31 | 8 | 0 |
+| Audit | 70 | 0 | 30 | 32 | 8 | 0 |
 | Roadmap | 15 | 0 | 0 | 0 | 0 | 15 |
-| **Total** | **132** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
+| **Total** | **132** | **0** | **37** | **58** | **22** | **15** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
 
 **There are two P0s again, and that is a correction, not a regression.** Every P0 *inherited*
 from `104` and `105` is closed. HF-045 and HF-011 were re-graded into P0 on 2026-09-20
@@ -233,7 +233,7 @@ graded below the definition they meet.
 | 75 | FID-L-08 | Audit | Vertical and rotated text is entirely absent | P1 | L | Open | 105 §3.2 | — | — |
 | 76 | OO-001 | Audit | No table of contents, and no table of figures | P1 | L | Open | 105 §4.4 | — | Blocked-by RM-01 (the field evaluation engine), which sits later in this queue by the lane rule |
 | 77 | OO-005 | Audit | No captions and no cross-references | P1 | L | Open | 105 §4.4 | — | Blocked-by RM-01 |
-| 78 | OO-006 | Audit | No hyphenation, line numbering, watermark, or drop-cap authoring | P1 | L | Open | 105 §4.4 | FID-L-02, FID-L-10 | The authoring surface over the FID-L rendering rows |
+| 78 | OO-006 | Audit | No watermark — and unlike its former row-mates the ENGINE has none either | P2 | M | Open | 105 §4.4 | OO-022, OO-023, OO-024 | **Corrected 2026-09-25.** When this was split out I recorded watermark as "the engine imports, lays out, renders and exports one" and that is wrong: of 16 mentions of `watermark` across `crates`, **zero are code** — every one is a comment about how Word washes out a picture. The claim came from a grep that counted comments. So this is a full feature (model, import, export, layout, render, UI), not a dialog, and it sits with OO-024 rather than with OO-022/OO-023 |
 | 79 | UX-007 | Audit | ⌘⇧E toggles Suggesting but is advertised nowhere | P2 | S | Open | 105 §2.2 | — | — |
 | 80 | UX-008 | Audit | `insert.table` is two different products behind one command id | P2 | S | Open | 105 §2.2 | — | — |
 | 81 | UX-013 | Audit | Print has no visible chrome | P2 | S | Open | 105 §2.2 | OO-010 | — |

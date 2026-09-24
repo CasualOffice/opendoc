@@ -12,6 +12,7 @@
 // and a catalogue that fails to load degrades to English rather than to a
 // screen of key names.
 import { activeLocale, direction, has, t } from "./i18n.mjs";
+import { localizeShortcutText } from "./shortcut_labels.mjs";
 
 /** Attribute suffix -> the DOM attribute it sets. */
 const ATTRIBUTE_KEYS = Object.freeze({
@@ -51,10 +52,14 @@ export function localizeTree(root = document) {
  *  and restoring it silently un-translated the control. Reading the key cannot
  *  go stale, because the key is what the catalogue is indexed by; the snapshot
  *  stays as the fallback for a control that carries no key. */
-export function authoredTitle(button) {
+export function authoredTitle(button, platform) {
   const key = button.dataset.i18nTitle;
-  if (key && has(key)) return t(key);
-  return button.dataset.enabledTitle ?? button.title;
+  const title = key && has(key) ? t(key) : (button.dataset.enabledTitle ?? button.title);
+  // Glyphs at the point of assignment. The catalogue carries ⌘ because the
+  // markup it was extracted from does, and the boot-time platform sweep is
+  // long past by the time a tooltip is restored — so a Windows or Linux
+  // keyboard was advertised a chord it cannot press (`105` UX-009).
+  return platform ? localizeShortcutText(title, platform) : title;
 }
 
 /** Replaces an element's own words without touching what it CONTAINS.
