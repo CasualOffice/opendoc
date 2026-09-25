@@ -254,11 +254,6 @@ fn shape_outline(stroke: &AnchorStroke) -> ShapeOutline {
 #[must_use]
 pub fn compose_page(page: &Page) -> DisplayList {
     let mut list = DisplayList::new();
-    // The watermark is behind EVERYTHING — before the `behindDoc` float band, not
-    // merely before the text. Word gives the shape `z-index:-251658752`, which is
-    // as far back as its z space goes, and a stamp that a behind-text picture
-    // covered would not be a watermark.
-    compose_watermark(&mut list, page);
     // The float layer is a single stable z-order: `behindDoc` floats paint below
     // the text layer, the rest above, each band ordered by (relativeHeight,
     // document order) so group children paint in child order and a shape can sit
@@ -268,6 +263,26 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for anchor in floats.iter().filter(|anchor| anchor.behind_doc) {
         compose_anchor(&mut list, anchor);
     }
+    // The watermark sits ABOVE the behind-text float band and below the text.
+    //
+    // It was first emitted at index 0, behind everything, with a comment claiming
+    // that "a stamp a behind-text picture covered would not be a watermark" — which
+    // is the right principle and the opposite of what that position does. Reported
+    // from the live build as the watermark "hiding behind" pictures.
+    //
+    // Word would in fact bury it here: its shape carries `z-index:-251658752`,
+    // behind any ordinary float. That is a well-known annoyance of Word's, not a
+    // behaviour worth reproducing exactly — a decorative picture placed behind the
+    // text is the single most likely thing to sit under a page-sized stamp, and a
+    // watermark it erases is not doing the one job it has.
+    //
+    // Still below the TEXT layer, so the stamp never makes a word harder to read.
+    // What can still cover it is an opaque fill in the text layer itself — table
+    // cell shading, paragraph shading, an in-flow picture — because those are
+    // painted inside their own fragments and cannot be separated from the glyphs
+    // above them without splitting the fragment pass in two. That limit is Word's
+    // too, and it is recorded rather than hidden.
+    compose_watermark(&mut list, page);
     // Column separator rules (`w:cols/@w:sep`): a thin vertical hairline centered in
     // each inter-column gap, painted under the text layer (the gap carries no
     // glyphs, so z-order is immaterial).

@@ -7182,9 +7182,10 @@ impl WasmDocument {
     pub fn set_watermark(&mut self, watermark_json: &str) -> Result<EditResult, JsValue> {
         let payload: WatermarkJson = serde_json::from_str(watermark_json)
             .map_err(|e| to_js(format!("invalid watermark payload: {e}")))?;
-        let section = NodeId::from_str(&payload.section)
-            .map(SectionId::new)
-            .map_err(|_| to_js("invalid section id".to_string()))?;
+        // The payload's `section` is READ-ONLY. The reader reports which section the
+        // caret is in, so the dialog can show that section's stamp; the writer
+        // ignores it, because the write is document-wide (see below). Parsing it
+        // here and then discarding it would be a validation that protects nothing.
         let layout = if payload.layout == "horizontal" {
             WatermarkLayout::Horizontal
         } else {
@@ -7236,12 +7237,33 @@ impl WasmDocument {
             }
             other => return Err(to_js(format!("unknown watermark kind {other:?}"))),
         };
+        // EVERY section, not the caret's.
+        //
+        // Reported from the live build: "on one orientation change and watermark
+        // vanish from that page onward". An orientation change is a new section, the
+        // new section had no watermark, and the stamp stopped — correct for a
+        // per-section property and wrong for what the user asked for.
+        //
+        // Word has no per-section watermark UI at all: Design ▸ Watermark writes the
+        // same shape into every header of every section, so document-wide is not a
+        // simplification here, it is the behaviour. The model stays per-section
+        // because that is what OOXML can express and what import has to be able to
+        // read back; it is the WRITE that fans out.
+        //
+        // One operation per section, in one action, so undo takes the whole stamp
+        // off rather than leaving it on the sections the loop reached first.
+        let ops: Vec<Operation> = self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .map(|candidate| Operation::SetSectionWatermark {
+                section: candidate.id,
+                watermark: watermark.clone(),
+            })
+            .collect();
         let caret = Pos::new(self.document.id(), 0);
-        self.apply_action_caret(
-            vec![Operation::SetSectionWatermark { section, watermark }],
-            caret,
-        )
-        .map_err(to_js)
+        self.apply_action_caret(ops, caret).map_err(to_js)
     }
 
     /// Takes the selection's paragraphs out of the line count, or puts them back
@@ -23039,6 +23061,55 @@ mod tests {
                     .expect("a section id"),
                 expected,
                 "paragraph {paragraph} ({why})"
+            );
+        }
+    }
+
+    /// A watermark applied from anywhere lands on EVERY section, so it does not
+    /// stop at the next orientation change.
+    ///
+    /// Reported from the live build: "on one orientation change and watermark vanish
+    /// from that page onward". An orientation change is a new section; the write went
+    /// to the caret's section only, so the new one had none and the stamp stopped
+    /// mid-document. Word's Design ▸ Watermark has no per-section notion at all — it
+    /// writes the same shape into every section — so document-wide is the behaviour
+    /// rather than a convenience.
+    #[test]
+    fn a_watermark_reaches_every_section_not_just_the_caret_s() {
+        let mut doc = wasm_document(orientation_change_document());
+        assert!(
+            doc.document.definitions().sections.len() >= 2,
+            "this fixture changes orientation mid-document, which is two sections"
+        );
+        // The caret is in the FIRST section; the second is the landscape one.
+        let node = sections_id(1).to_string();
+        let section = read_line_numbering(&doc, &node)["section"]
+            .as_str()
+            .expect("a section id")
+            .to_owned();
+
+        doc.set_watermark(&format!(
+            // `r##` because the colour literal contains `"#`, which closes an `r#`.
+            r##"{{"section":"{section}","kind":"text","text":"DRAFT","color":"#c0c0c0","layout":"diagonal","semiTransparent":true}}"##
+        ))
+        .expect("apply a watermark");
+
+        for (index, boundary) in doc.document.definitions().sections.iter().enumerate() {
+            assert!(
+                boundary.watermark.is_some(),
+                "section {} carries no watermark, so the stamp stops there",
+                index + 1
+            );
+        }
+
+        // And undo takes it off ALL of them: one action, not one per section, or
+        // undo would leave the stamp on whichever sections the loop reached first.
+        doc.undo().expect("undo the watermark");
+        for (index, boundary) in doc.document.definitions().sections.iter().enumerate() {
+            assert!(
+                boundary.watermark.is_none(),
+                "section {} kept its watermark after a single undo",
+                index + 1
             );
         }
     }
