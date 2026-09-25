@@ -360,6 +360,57 @@ fn document_metadata_reaches_the_info_dictionary() {
 }
 
 #[test]
+fn a_watermark_layer_exports_with_a_multiply_blend_state() {
+    use casual_doc_layout::display::{DisplayList, LayerBlend, PaintItem, ShapeTransform};
+    use casual_doc_layout::units::{Point, Twip};
+
+    // A watermark's layer: rotated, and multiplied so that being painted LAST does
+    // not mean covering the text. PDF is the one surface where getting this wrong is
+    // invisible on screen — the page would look right in the editor and hide the
+    // text when printed.
+    let stamped = {
+        let mut list = DisplayList::new();
+        list.push(PaintItem::PushLayer {
+            transform: Some(ShapeTransform {
+                rotation: 315 * 60_000,
+                flip_h: false,
+                flip_v: false,
+                center: Point::new(Twip(6_120), Twip(7_920)),
+            }),
+            blend: LayerBlend::Multiply,
+        });
+        list.push(PaintItem::PopLayer);
+        list
+    };
+    let export = write_pdf(
+        &[page_of(&stamped)],
+        &casual_doc_pdf::BundledFontSource,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    let text = String::from_utf8_lossy(&export.bytes).into_owned();
+    assert!(
+        text.contains("/BM/Multiply"),
+        "the layer's blend must reach the PDF as a real blend mode, or the stamp \
+         covers the text in print while looking correct on screen"
+    );
+    assert!(
+        text.contains("/ExtGState"),
+        "and the state must be declared in the page's resources"
+    );
+    assert!(
+        text.contains("/GSMultiply gs"),
+        "and selected in the content stream: {}",
+        text.lines()
+            .filter(|line| line.contains("gs"))
+            .take(4)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+}
+
+#[test]
 fn a_face_that_forbids_embedding_is_refused_out_loud() {
     // A face whose OS/2 fsType is "restricted licence" may not be embedded.
     // The export must say so rather than quietly dropping the text, drawing

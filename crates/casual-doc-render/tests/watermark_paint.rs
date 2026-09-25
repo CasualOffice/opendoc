@@ -96,6 +96,32 @@ fn document(watermark: Option<Watermark>) -> Document {
     .expect("valid document")
 }
 
+/// Word's own watermark look: light grey and semitransparent.
+///
+/// The multiply test MUST use this rather than the black stamp below. Black over
+/// text is black whichever way it is composited, so a black stamp cannot tell
+/// multiplication from ordinary source-over — mutation testing found exactly that:
+/// disabling the blend entirely left the test green.
+fn grey_stamp(layout: WatermarkLayout) -> Watermark {
+    Watermark {
+        content: WatermarkContent::Text(WatermarkText {
+            text: "DRAFT".to_owned(),
+            font: None,
+            size_half_points: None,
+            color: Rgba {
+                r: 0xc0,
+                g: 0xc0,
+                b: 0xc0,
+                a: 255,
+            },
+            bold: false,
+            italic: false,
+        }),
+        layout,
+        semi_transparent: true,
+    }
+}
+
 fn stamp(layout: WatermarkLayout) -> Watermark {
     Watermark {
         content: WatermarkContent::Text(WatermarkText {
@@ -244,6 +270,125 @@ fn the_diagonal_stamp_is_actually_rotated_and_not_merely_drawn() {
         diagonal_lean > 200,
         "and it leans across a real fraction of the page, not by a glyph: {diagonal_lean}px"
     );
+}
+
+/// The two properties multiply buys, in pixels — the reason the stamp may be
+/// painted on top of the page at all.
+///
+/// The live build reported the stamp "hiding behind" tables and pictures. It was
+/// painted underneath, so anything opaque erased it; painting it on top with normal
+/// blending would only have traded that for dimmed text. Multiplication escapes the
+/// choice, and both halves are checkable:
+///
+///   * over an OPAQUE FILL covering the whole page, the stamp is still there;
+///   * **no pixel anywhere on the page gets lighter.** Multiplication cannot
+///     brighten, so the stamp cannot fade, wash out or erase one thing the page
+///     already drew — which is precisely what painting on top would otherwise risk.
+///
+/// The second is the property that licenses the design, and it is asserted over
+/// EVERY pixel rather than over the black ones. The first attempt claimed text
+/// pixels were byte-identical, reasoning that `0 x anything = 0`. That is true of
+/// pure black and false of an anti-aliased edge: a `15` edge pixel measured `0`
+/// with the stamp — darker, not lighter, so text becomes a shade heavier and never
+/// fainter. "Never lighter" is both the honest claim and the stronger one.
+#[test]
+fn a_multiplied_stamp_survives_an_opaque_fill_and_leaves_text_untouched() {
+    use casual_doc_layout::display::{Color, PaintItem};
+
+    /// Paints one page, optionally covering it first with an opaque fill — the
+    /// table shading or full-page picture that used to erase the stamp.
+    fn paint_over_fill(watermark: Option<Watermark>, fill: bool) -> (u32, u32, Vec<u8>) {
+        // A page with real text on it, not the one-word page the other tests use:
+        // the readability half of this test is vacuous without enough glyphs under
+        // the stamp for the comparison to mean anything.
+        let mut definitions = Definitions::default();
+        definitions.sections.push(section(watermark));
+        let body: Vec<BlockNode> = (0..12)
+            .map(|n| {
+                BlockNode::Paragraph(Paragraph {
+                    id: node(100 + n * 2),
+                    properties: ParagraphProperties::default().into(),
+                    inlines: vec![InlineNode::Run(Run {
+                        id: node(101 + n * 2),
+                        properties: RunProperties::default().into(),
+                        text: "The quick brown fox jumps over the lazy dog, twice over. ".repeat(3),
+                    })],
+                })
+            })
+            .collect();
+        let doc = Document::new(node(1000), body, definitions).expect("valid document");
+        let pages = paginate_document(&doc, &ParleyShaper::new());
+        let page = &pages.pages[0];
+        let width = page.page_size.width.to_device_px(DPI).ceil() as u32;
+        let height = page.page_size.height.to_device_px(DPI).ceil() as u32;
+        let mut list = casual_doc_layout::display::DisplayList::new();
+        if fill {
+            // Emitted FIRST so it is beneath everything the page paints, which is
+            // exactly where a table's cell shading sits.
+            list.push(PaintItem::Rect {
+                rect: casual_doc_layout::units::Rect::new(
+                    casual_doc_layout::units::Point::new(
+                        casual_doc_layout::units::Twip(0),
+                        casual_doc_layout::units::Twip(0),
+                    ),
+                    casual_doc_layout::units::Size::new(
+                        page.page_size.width,
+                        page.page_size.height,
+                    ),
+                ),
+                fill: Some(Color::rgb(0xcc, 0xdd, 0xee)),
+                stroke: None,
+            });
+        }
+        list.items.extend(compose_page(page).items);
+        let mut surface = Surface::new(width, height).unwrap();
+        render(
+            &list,
+            &mut surface,
+            DPI,
+            &BundledFontSource,
+            &MapMediaSource::default(),
+        );
+        (width, height, surface.data().to_vec())
+    }
+
+    // 1. Visible over an opaque fill that covers the entire page.
+    let (w, h, filled_plain) = paint_over_fill(None, true);
+    let (_, _, filled_stamped) = paint_over_fill(Some(grey_stamp(WatermarkLayout::Diagonal)), true);
+    let changed = filled_plain
+        .chunks(4)
+        .zip(filled_stamped.chunks(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert!(
+        changed > 500,
+        "a page covered by an opaque fill must still show the stamp; only {changed} \
+         pixel(s) differ, which is what being painted UNDERNEATH looks like"
+    );
+
+    // 2. Nothing on the page gets lighter, anywhere. This is the whole readability
+    //    guarantee: a stamp that cannot brighten cannot wash anything out.
+    let (_, _, plain) = paint_over_fill(None, false);
+    let (_, _, stamped) = paint_over_fill(Some(grey_stamp(WatermarkLayout::Diagonal)), false);
+    let mut text_pixels = 0usize;
+    for (before, after) in plain.chunks(4).zip(stamped.chunks(4)) {
+        for channel in 0..3 {
+            assert!(
+                after[channel] <= before[channel],
+                "the stamp brightened a pixel, which multiplication cannot do: \
+                 {before:?} -> {after:?}"
+            );
+        }
+        if (u32::from(before[0]) + u32::from(before[1]) + u32::from(before[2])) / 3 < 40 {
+            text_pixels += 1;
+        }
+    }
+    assert!(
+        text_pixels > 500,
+        "the guarantee above is vacuous without real text under the stamp; only \
+         {text_pixels} near-black pixel(s) on the page"
+    );
+    let _ = (w, h);
 }
 
 #[test]

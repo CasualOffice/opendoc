@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use casual_doc_layout::display::{DisplayList, PaintItem};
+// Own line (anti-conflict): the layer blend the watermark composites through.
+use casual_doc_layout::display::LayerBlend;
 // Kept on a separate `use` line (anti-conflict): the shape fill/outline/geometry
 // display types the shape paint path consumes (`Color` aliased to avoid clashing
 // with `tiny_skia::Color`).
@@ -40,7 +42,7 @@ use skrifa::metrics::Metrics;
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 use tiny_skia::{
-    Color, FillRule, FilterQuality, GradientStop as SkGradientStop, IntRect, IntSize,
+    BlendMode, Color, FillRule, FilterQuality, GradientStop as SkGradientStop, IntRect, IntSize,
     LinearGradient, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Point as SkPoint,
     RadialGradient, Rect as SkRect, Shader, SpreadMode, Stroke, StrokeDash, Transform,
 };
@@ -158,9 +160,18 @@ pub fn render(
     let mut items = list.items.iter();
     #[allow(clippy::while_let_on_iterator)] // the transform arm consumes ahead
     while let Some(item) = items.next() {
-        if let PaintItem::PushTransform(transform) = item {
-            let nested = collect_transform_bracket(&mut items);
-            draw_transformed(&nested, surface, dpi, fonts, media, *transform, &clip_stack);
+        if let PaintItem::PushLayer { transform, blend } = item {
+            let nested = collect_layer(&mut items);
+            draw_layer(
+                &nested,
+                surface,
+                dpi,
+                fonts,
+                media,
+                *transform,
+                *blend,
+                &clip_stack,
+            );
             continue;
         }
         match item {
@@ -258,10 +269,10 @@ pub fn render(
             PaintItem::PopClip => {
                 clip_stack.pop();
             }
-            // Handled by the bracket reader above; reaching either here means the
-            // list is unbalanced (a `PopTransform` with no open bracket), which is
-            // a malformed list rather than something to paint.
-            PaintItem::PushTransform(_) | PaintItem::PopTransform => {}
+            // Handled by the layer reader above; reaching either here means the
+            // list is unbalanced (a `PopLayer` with no open layer), which is a
+            // malformed list rather than something to paint.
+            PaintItem::PushLayer { .. } | PaintItem::PopLayer => {}
             PaintItem::Image {
                 media: id,
                 rect,
@@ -410,21 +421,21 @@ fn render_image(
     );
 }
 
-/// Reads the items of an open `PushTransform` bracket, up to its matching
-/// `PopTransform`, consuming that terminator. Nested brackets are kept INSIDE the
+/// Reads the items of an open `PushLayer`, up to its matching `PopLayer`,
+/// consuming that terminator. Nested brackets are kept INSIDE the
 /// returned list rather than flattened, so the recursive call composes them in
 /// the right order.
 ///
-/// An unterminated bracket yields everything that is left, which paints the
-/// remainder transformed. That is the honest reading of a truncated list: the
-/// author said "from here, rotated", and nothing said stop.
-fn collect_transform_bracket<'a>(items: &mut impl Iterator<Item = &'a PaintItem>) -> DisplayList {
+/// An unterminated layer yields everything that is left, which composites the
+/// remainder through it. That is the honest reading of a truncated list: the
+/// author said "from here, in this layer", and nothing said stop.
+fn collect_layer<'a>(items: &mut impl Iterator<Item = &'a PaintItem>) -> DisplayList {
     let mut depth = 1_usize;
     let mut nested = DisplayList::new();
     for item in items {
         match item {
-            PaintItem::PushTransform(_) => depth += 1,
-            PaintItem::PopTransform => {
+            PaintItem::PushLayer { .. } => depth += 1,
+            PaintItem::PopLayer => {
                 depth -= 1;
                 if depth == 0 {
                     break;
@@ -444,13 +455,15 @@ fn collect_transform_bracket<'a>(items: &mut impl Iterator<Item = &'a PaintItem>
 /// the sub-surface is in the same coordinate space, but its content moves when
 /// the transform is applied, so a clip tested before the move would cut the wrong
 /// pixels.
-fn draw_transformed(
+#[allow(clippy::too_many_arguments)] // one offscreen composite; every input is used
+fn draw_layer(
     nested: &DisplayList,
     surface: &mut Surface,
     dpi: f32,
     fonts: &dyn GlyphSource,
     media: &dyn MediaSource,
-    transform: ShapeTransform,
+    transform: Option<ShapeTransform>,
+    blend: LayerBlend,
     clip_stack: &[Mask],
 ) {
     let (width, height) = (surface.pixmap.width(), surface.pixmap.height());
@@ -465,9 +478,17 @@ fn draw_transformed(
         offscreen.pixmap.as_ref(),
         &PixmapPaint {
             quality: FilterQuality::Bilinear,
+            blend_mode: match blend {
+                LayerBlend::Normal => BlendMode::SourceOver,
+                // Multiplied so the layer can be painted OVER the page without
+                // hiding it: multiplication never brightens, and black text
+                // multiplied by anything is still black. `compose_page` records why
+                // the watermark needs that.
+                LayerBlend::Multiply => BlendMode::Multiply,
+            },
             ..PixmapPaint::default()
         },
-        object_transform(Some(&transform), dpi),
+        object_transform(transform.as_ref(), dpi),
         clip_stack.last(),
     );
 }
