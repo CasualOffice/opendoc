@@ -1550,6 +1550,105 @@ body.modal-open {
   max-inline-size: min(100%, 56ch);
 }
 
+/* ---- Drop cap ------------------------------------------------------------- */
+.drop-cap-dialog {
+  width: min(fit-content, 100%);
+  max-inline-size: min(100%, 52ch);
+}
+
+.drop-cap-body {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.drop-cap-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(92px, 1fr));
+  gap: var(--space-2);
+}
+
+.drop-cap-choice {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.drop-cap-choice:has(input:checked) {
+  border-color: var(--accent-text);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.drop-cap-choice:focus-within {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.drop-cap-choice input {
+  position: absolute;
+  opacity: 0;
+}
+
+.drop-cap-sample {
+  display: grid;
+  height: 52px;
+  grid-template-columns: 24px 1fr;
+  align-items: start;
+  overflow: hidden;
+  color: var(--ink);
+}
+
+.drop-cap-sample b {
+  align-self: start;
+  font-family: Georgia, serif;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.drop-cap-sample i {
+  height: 38px;
+  margin-top: 3px;
+  background: repeating-linear-gradient(to bottom, var(--line-strong) 0 2px, transparent 2px 11px);
+}
+
+.drop-cap-sample[data-mode="drop"] b,
+.drop-cap-sample[data-mode="margin"] b {
+  grid-row: span 2;
+  font-size: 47px;
+  line-height: 0.92;
+}
+
+.drop-cap-sample[data-mode="margin"] {
+  grid-template-columns: 20px 1fr;
+  overflow: visible;
+}
+
+.drop-cap-sample[data-mode="margin"] b {
+  transform: translateX(-5px);
+}
+
+.drop-cap-sample[data-mode="margin"] i {
+  padding-left: 5px;
+  border-left: 1px solid var(--line-strong);
+  background-clip: content-box;
+}
+
+.drop-cap-lines {
+  width: 8rem;
+}
+
+.drop-cap-lines:has(input:disabled) {
+  opacity: 0.55;
+}
+
 .watermark-body {
   display: flex;
   min-width: 0;

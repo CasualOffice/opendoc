@@ -23419,6 +23419,54 @@ mod tests {
         );
     }
 
+    /// The public mutation is not merely a model/export operation: its result is
+    /// repaginated through the production layout owned by `WasmDocument`, where
+    /// the framed initial becomes a zero-height overlay and the body text begins
+    /// to its right. This closes the API-to-layout seam the model-only tests do
+    /// not cross.
+    #[test]
+    fn the_drop_cap_host_api_reaches_the_paginated_layout() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (cap, _len) = doc.ordered_paragraphs()[0];
+        doc.set_drop_cap(&cap.to_string(), "drop", 3)
+            .expect("apply through the host API");
+        let body = body_paragraphs(&doc)
+            .into_iter()
+            .find(|(id, _)| *id != cap)
+            .map(|(id, _)| id)
+            .expect("the split body paragraph");
+
+        let fragment = |id| {
+            doc.painted_layout()
+                .pages
+                .iter()
+                .flat_map(|page| &page.placed)
+                .find(|placed| placed.fragment.node_id() == id)
+                .map(|placed| &placed.fragment)
+                .expect("paragraph is present in paginated output")
+        };
+        let BlockFragment::Paragraph { lines: initial, .. } = fragment(cap) else {
+            panic!("drop-cap paragraph");
+        };
+        assert_eq!(
+            initial.height(),
+            Twip::ZERO,
+            "the initial overlays the body's line box rather than consuming a line"
+        );
+        assert!(
+            initial.lines[0].runs[0].size >= Twip(1_170),
+            "the paginated initial carries its three-line ink size"
+        );
+
+        let BlockFragment::Paragraph { lines, .. } = fragment(body) else {
+            panic!("drop-cap body paragraph");
+        };
+        assert!(
+            lines.lines[0].runs[0].origin.x > Twip::ZERO,
+            "the first body line is excluded to the right of the initial"
+        );
+    }
+
     /// The menu answers for the PAIR, from either half. A reader who clicks in the
     /// body and opens the menu must see the drop cap that is plainly on screen.
     #[test]

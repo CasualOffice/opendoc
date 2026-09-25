@@ -21,6 +21,7 @@ import { renderAccessibilityMirror } from "./a11y_mirror.mjs";
 import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
+import { createDropCapDialog } from "./drop_cap.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
@@ -46,19 +47,8 @@ import {
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
-import {
-  formatShortcut,
-  keyboardPlatform,
-  lineDeletionDirection,
-  navigationDirection,
-  navigationShortcuts,
-  wordDeletionDirection,
-} from "./keyboard.mjs";
-import {
-  clampContextMenuPosition,
-  moveMenuIndex,
-  normalizeMenuEntries,
-} from "./context_menu.mjs";
+import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, navigationShortcuts, wordDeletionDirection } from "./keyboard.mjs";
+import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
   focusMenuIndex,
   menuItemAt,
@@ -349,6 +339,7 @@ const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
+const insertDropCapBtn = document.getElementById("insertDropCapBtn");
 const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
 const insertFirstPageVariantBtn = document.getElementById("insertFirstPageVariantBtn");
@@ -8378,6 +8369,7 @@ const INSERT_SURFACE = [
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
   { command: "insert.field", buttons: [insertFieldBtn, refFieldBtn], requires: "doc", activate: () => openFieldDialog() },
+  { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => openDropCapDialog() },
   // Notes live on References only, as they do in Word. The app-menu row and the
   // palette entry are untouched, so the command keeps three surfaces.
   { command: "insert.footnote", buttons: [refFootnoteBtn], requires: "doc", activate: () => insertNote("footnote") },
@@ -12630,6 +12622,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.footer", label: "Edit footer", group: "Insert", kw: "footer running page number bottom margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("footer") },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
     { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: insertCommandEnabled("insert.field"), run: () => openFieldDialog() },
+    { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => openDropCapDialog() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
@@ -13457,6 +13450,14 @@ if (fieldDialog) {
     }
   });
 }
+
+const dropCapDialog = createDropCapDialog({
+  registerModal, getDoc: () => doc, selectionNode: () => selection?.focus.node ?? "",
+  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
+  apply: (mode, lines) => runEdit(() => doc.setDropCap(selection.focus.node, mode, lines), { gate: true }),
+  status: setStatus, fallbackFocus: () => pagesEl,
+});
+function openDropCapDialog() { dropCapDialog.open(); }
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------
 // Word's Insert ▸ Symbol and Docs' Insert ▸ Special characters / emoji, built to
@@ -17078,4 +17079,3 @@ function setChromeMode(mode, { persist = true } = {}) {
   }
   setChromeMode(chromeMode, { persist: false });
 }
-
