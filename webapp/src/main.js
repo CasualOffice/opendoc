@@ -87,6 +87,7 @@ import {
   slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
+import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
@@ -10019,31 +10020,26 @@ fontSizeSel.addEventListener("change", () => {
 // `reflect()` that syncs its controls to the caret paragraph.
 const TWIPS_PER_POINT = 20;
 const popovers = [];
-
-function openPopover(p, { keyboard = false } = {}) {
+function openPopover(p, { keyboard = false, anchor = p.btn } = {}) {
   // An object can be selected with no text caret behind it (clicking a float
   // first thing), and its Fill/Outline pickers must still open.
   if (!selection && !objectSelection) return;
   for (const q of popovers) if (q !== p) closePopover(q);
-  const r = p.btn.getBoundingClientRect();
+  // Measure the control the user actually activated, never a hidden popover owner.
+  const visibleAnchor = popoverAnchor(anchor, p.btn);
+  const r = visibleAnchor.getBoundingClientRect();
   p.menu.hidden = false;
-  p.btn.setAttribute("aria-expanded", "true");
+  p.activeTrigger = visibleAnchor;
+  p.btn.setAttribute("aria-expanded", String(visibleAnchor === p.btn));
+  visibleAnchor.setAttribute("aria-expanded", "true");
   p.reflect();
-  const gutter = 8;
-  const width = p.menu.offsetWidth;
-  const height = p.menu.offsetHeight;
-  const left = Math.min(
-    Math.max(gutter, r.left),
-    Math.max(gutter, window.innerWidth - width - gutter),
+  const at = popoverPosition(
+    r,
+    { width: p.menu.offsetWidth, height: p.menu.offsetHeight },
+    { width: window.innerWidth, height: window.innerHeight },
   );
-  const below = r.bottom + 4;
-  const above = r.top - height - 4;
-  const top =
-    below + height <= window.innerHeight - gutter
-      ? below
-      : Math.max(gutter, above);
-  p.menu.style.left = `${Math.round(left)}px`;
-  p.menu.style.top = `${Math.round(top)}px`;
+  p.menu.style.left = `${at.left}px`;
+  p.menu.style.top = `${at.top}px`;
   // Opened from the keyboard, the popover takes focus (docs/104 HF-070: it used
   // to leave focus on the trigger, so reaching a swatch meant tabbing through
   // the rest of the ribbon first). Opened by pointer it deliberately does NOT,
@@ -10075,13 +10071,16 @@ function closePopover(p) {
   // Closing must not strand the keyboard: if focus is inside the menu it goes
   // back to the trigger, which is where the user's place was.
   const holdsFocus = p.menu.contains(document.activeElement);
+  const trigger = p.activeTrigger ?? p.btn;
   p.menu.hidden = true;
   p.btn.setAttribute("aria-expanded", "false");
-  if (holdsFocus) p.btn.focus({ preventScroll: true });
+  if (trigger !== p.btn) trigger.setAttribute("aria-expanded", "false");
+  if (holdsFocus) trigger.focus({ preventScroll: true });
+  p.activeTrigger = null;
 }
 
 function registerPopover(btn, menu, reflect) {
-  const p = { btn, menu, reflect };
+  const p = { btn, menu, reflect, activeTrigger: null };
   popovers.push(p);
   onButton(btn, (event) =>
     menu.hidden ? openPopover(p, { keyboard: event?.detail === 0 }) : closePopover(p),
@@ -10123,7 +10122,9 @@ document.addEventListener("pointerdown", (e) => {
       !p.menu.hidden &&
       !p.menu.contains(e.target) &&
       e.target !== p.btn &&
-      !p.btn.contains(e.target)
+      !p.btn.contains(e.target) &&
+      e.target !== p.activeTrigger &&
+      !p.activeTrigger?.contains(e.target)
     ) {
       closePopover(p);
     }
@@ -12576,8 +12577,8 @@ function editorCommands(context = { surface: "palette" }) {
     },
     { id: "format.grow", label: "Increase font size", group: "Format", kw: "grow bigger larger font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(1) },
     { id: "format.shrink", label: "Decrease font size", group: "Format", kw: "shrink smaller font", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => stepFontSize(-1) },
-    { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => textColorCaret.click() },
-    { id: "format.highlight", label: "Highlight color…", group: "Format", kw: "marker colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => highlightCaret.click() },
+    { id: "format.color", label: "Text color…", group: "Format", kw: "font foreground colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: (anchor) => openPopover(textColorPopover, { anchor }) },
+    { id: "format.highlight", label: "Highlight color…", group: "Format", kw: "marker colour", enabled: !!selection, disabledReason: "Place the caret or select text", run: (anchor) => openPopover(highlightPopover, { anchor }) },
     { id: "format.case.upper", label: "Change case: UPPERCASE", group: "Format", kw: "capitals uppercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("upper") },
     { id: "format.case.lower", label: "Change case: lowercase", group: "Format", kw: "lowercase", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("lower") },
     { id: "format.case.title", label: "Change case: Capitalize Each Word", group: "Format", kw: "title case capitalize", enabled: (context.hasRange ?? hasRange()), disabledReason: "Select text to change case", run: () => applyChangeCase("title") },
@@ -17078,4 +17079,3 @@ function setChromeMode(mode, { persist = true } = {}) {
   }
   setChromeMode(chromeMode, { persist: false });
 }
-

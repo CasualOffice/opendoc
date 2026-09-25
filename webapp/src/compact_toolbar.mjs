@@ -120,8 +120,20 @@ export const COMPACT_TOOLBAR = [
       { id: "format.bold", icon: "format_bold", toggle: true, fmt: "bold", needs: "run" },
       { id: "format.italic", icon: "format_italic", toggle: true, fmt: "italic", needs: "run" },
       { id: "format.underline", icon: "format_underlined", toggle: true, fmt: "underline", needs: "run" },
-      { id: "format.color", icon: "format_color_text", needs: "run" },
-      { id: "format.highlight", icon: "ink_highlighter", needs: "run" },
+      {
+        id: "format.color",
+        icon: "format_color_text",
+        needs: "run",
+        popup: "dialog",
+        controls: "textColorMenu",
+      },
+      {
+        id: "format.highlight",
+        icon: "ink_highlighter",
+        needs: "run",
+        popup: "dialog",
+        controls: "highlightMenu",
+      },
     ],
   },
   {
@@ -264,9 +276,9 @@ export function createCompactToolbar({
   /** Runs a registry command by id, resolved LIVE. `enabled` is a BOOLEAN on
    *  this registry, not a predicate — every other surface gates on
    *  `enabled === false`. Calling it threw on every click, once. */
-  function runCommand(id) {
+  function runCommand(id, anchor) {
     const live = editorCommands({ surface: "compact" }).find((c) => c.id === id);
-    if (live && live.enabled !== false) live.run();
+    if (live && live.enabled !== false) live.run(anchor);
   }
 
   function iconSpan(name) {
@@ -310,6 +322,11 @@ export function createCompactToolbar({
       : command.label;
     el.setAttribute("aria-label", command.label);
     if (entry.toggle) el.setAttribute("aria-pressed", "false");
+    if (entry.popup) {
+      el.setAttribute("aria-haspopup", entry.popup);
+      el.setAttribute("aria-expanded", "false");
+    }
+    if (entry.controls) el.setAttribute("aria-controls", entry.controls);
     // `updateToolbar` reflects pressed state across EVERY surface by querying
     // `[data-fmt]`, and enablement via the `runControls`/`paraControls` lists.
     // Stamping the same attribute is what makes one sync serve both chromes.
@@ -323,7 +340,7 @@ export function createCompactToolbar({
       paraControls.push(el);
       contributed.push([paraControls, el]);
     }
-    onButton(el, () => runCommand(command.id));
+    onButton(el, () => runCommand(command.id, el));
     return el;
   }
 
