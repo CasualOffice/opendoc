@@ -77,6 +77,9 @@ pub use picture::NoMediaSource;
 pub use picture::PdfMediaSource;
 
 use content::Transcriber;
+// Own line (anti-conflict): the multiply `ExtGState`'s name, shared with the
+// content stream that selects it so the two cannot disagree.
+use content::MULTIPLY_GS_NAME;
 use font::FontError;
 use writer::Writer;
 use writer::text_string;
@@ -346,6 +349,13 @@ fn write_pdf_with_metadata(
             writer::num(alpha),
             writer::num(alpha)
         ));
+    }
+    // The multiply blend a watermark layer composites through. Declared only when
+    // the content stream actually selected it, so an ordinary page's resource
+    // dictionary is byte-identical to before.
+    if transcriber.uses_multiply_blend() {
+        alpha_entries.push_str(&writer::name(MULTIPLY_GS_NAME));
+        alpha_entries.push_str("<</Type/ExtGState/BM/Multiply>>");
     }
 
     let mut findings = Vec::new();

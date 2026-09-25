@@ -11,7 +11,7 @@
 //! invisible is exactly what this feature was.
 
 use casual_doc_layout::compose::compose_page;
-use casual_doc_layout::display::PaintItem;
+use casual_doc_layout::display::{LayerBlend, PaintItem};
 use casual_doc_layout::document_layout::paginate_document;
 use casual_doc_layout::page::PlacedWatermarkContent;
 use casual_doc_layout::shape::ParleyShaper;
@@ -183,56 +183,75 @@ fn behind_text_picture() -> casual_doc_layout::page::PlacedAnchor {
     }
 }
 
-/// Where the stamp sits in the paint order: ABOVE a behind-text picture, BELOW the
-/// body text.
+/// Where the stamp sits in the paint order, and how it composites.
 ///
-/// The first version of this asserted the bracket was at index 0 — behind
-/// everything — and it passed for the wrong reason: the test document has no
-/// floats, so index 0 and "above the float band" are the same position. The live
-/// build then showed the watermark hiding behind pictures, which is the defect that
-/// assertion existed to prevent and could not see. The page here carries a
-/// page-sized behind-text picture so the two positions are distinguishable.
+/// This assertion has been wrong twice, each time by being weaker than the claim
+/// in its own name:
+///
+///  1. it asserted the bracket sat at index 0, "behind everything else". That
+///     passed for the wrong reason — the test page had no floats, so index 0 and
+///     "above the float band" are the same position there — and the live build
+///     then showed the stamp hidden behind pictures.
+///  2. it asserted the stamp sat above the float band and below the text. That is
+///     a real position, but it still loses to anything opaque INSIDE the text
+///     layer: a table's cell shading, a paragraph's shading, an in-flow picture.
+///
+/// The stamp is now painted LAST, over the finished page, and MULTIPLIED. So the
+/// claim is no longer about where it sits relative to one kind of content — it is
+/// that nothing on the page can be painted after it, and that it composites by
+/// multiplication. `casual-doc-render/tests/watermark_paint.rs` proves what that
+/// buys in pixels.
 #[test]
-fn the_stamp_paints_over_a_behind_text_picture_and_under_the_body() {
+fn the_stamp_paints_last_and_multiplies() {
     let doc = document(Some(draft(WatermarkLayout::Diagonal, true)));
     let mut layout = paginate(&doc);
     layout.pages[0].anchored.push(behind_text_picture());
     let list = compose_page(&layout.pages[0]);
 
-    let image = list
+    let open = list
         .items
         .iter()
-        .position(|item| matches!(item, PaintItem::Image { .. }))
-        .expect("the behind-text picture paints");
-    let bracket = list
-        .items
-        .iter()
-        .position(|item| matches!(item, PaintItem::PushTransform(_)))
-        .expect("the diagonal stamp opens a transform bracket");
+        .position(|item| matches!(item, PaintItem::PushLayer { .. }))
+        .expect("the stamp opens a layer");
     let close = list
         .items
         .iter()
-        .position(|item| matches!(item, PaintItem::PopTransform))
-        .expect("the bracket closes");
+        .position(|item| matches!(item, PaintItem::PopLayer))
+        .expect("the layer closes");
 
-    assert!(
-        image < bracket,
-        "the stamp must paint OVER a picture placed behind the text, or the picture \
-         erases it — image at {image}, stamp at {bracket}"
+    // Nothing is painted after the stamp: it is the last thing on the page, so no
+    // fill, picture or float can erase it.
+    assert_eq!(
+        close,
+        list.items.len() - 1,
+        "the stamp must be the LAST thing painted; {} item(s) follow it",
+        list.items.len() - 1 - close
     );
     assert!(
-        list.items[bracket..close]
+        list.items[open..close]
             .iter()
             .any(|item| matches!(item, PaintItem::Glyphs { .. })),
-        "the stamp's glyphs are inside its own transform bracket"
+        "the stamp's glyphs are inside its own layer"
     );
+    // And the page's own content is all before it — including the picture that
+    // used to cover it.
     assert!(
-        list.items[close..]
+        list.items[..open]
             .iter()
-            .any(|item| matches!(item, PaintItem::Glyphs { .. })),
-        "and the body text paints AFTER the bracket closes, so the stamp never makes \
-         a word harder to read"
+            .any(|item| matches!(item, PaintItem::Image { .. })),
+        "the behind-text picture paints before the stamp"
     );
+
+    // Multiplied, which is what lets it be painted on top at all.
+    let Some(PaintItem::PushLayer { blend, transform }) = list.items.get(open) else {
+        panic!("a layer");
+    };
+    assert_eq!(
+        *blend,
+        LayerBlend::Multiply,
+        "a normal-blended stamp on top would dim the text; multiplication cannot"
+    );
+    assert!(transform.is_some(), "and this one is the diagonal");
 }
 
 #[test]
@@ -249,15 +268,21 @@ fn a_horizontal_watermark_carries_no_rotation() {
         "level means no transform at all, not a zero-degree one"
     );
     let list = compose_page(&layout.pages[0]);
+    // It is still a LAYER — every stamp is, because a level watermark still needs
+    // the multiply — but that layer carries no transform.
+    let open = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PushLayer { .. }))
+        .expect("a level stamp still opens a layer");
+    let Some(PaintItem::PushLayer { transform, blend }) = list.items.get(open) else {
+        panic!("a layer");
+    };
     assert!(
-        !list
-            .items
-            .iter()
-            .any(|item| matches!(item, PaintItem::PushTransform(_))),
-        "and so it emits no bracket"
+        transform.is_none(),
+        "level means no transform at all, not a zero-degree one"
     );
-    // It still paints: the stamp's glyphs lead the list.
-    assert!(matches!(list.items.first(), Some(PaintItem::Glyphs { .. })));
+    assert_eq!(*blend, LayerBlend::Multiply);
 }
 
 #[test]

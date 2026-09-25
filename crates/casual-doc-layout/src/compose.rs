@@ -16,6 +16,7 @@ use crate::display::{
 };
 use crate::page::{AnchorContent, AnchorStroke, Page, PlacedAnchor, ResolvedPageBorders};
 // Own line: keeps the watermark's import out of the shared sorted list above.
+use crate::display::LayerBlend;
 use crate::page::PlacedWatermarkContent;
 use crate::text::{LineLayout, TextBoxContentLayout};
 use crate::units::{Point, Rect, Size, Twip};
@@ -263,26 +264,6 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for anchor in floats.iter().filter(|anchor| anchor.behind_doc) {
         compose_anchor(&mut list, anchor);
     }
-    // The watermark sits ABOVE the behind-text float band and below the text.
-    //
-    // It was first emitted at index 0, behind everything, with a comment claiming
-    // that "a stamp a behind-text picture covered would not be a watermark" — which
-    // is the right principle and the opposite of what that position does. Reported
-    // from the live build as the watermark "hiding behind" pictures.
-    //
-    // Word would in fact bury it here: its shape carries `z-index:-251658752`,
-    // behind any ordinary float. That is a well-known annoyance of Word's, not a
-    // behaviour worth reproducing exactly — a decorative picture placed behind the
-    // text is the single most likely thing to sit under a page-sized stamp, and a
-    // watermark it erases is not doing the one job it has.
-    //
-    // Still below the TEXT layer, so the stamp never makes a word harder to read.
-    // What can still cover it is an opaque fill in the text layer itself — table
-    // cell shading, paragraph shading, an in-flow picture — because those are
-    // painted inside their own fragments and cannot be separated from the glyphs
-    // above them without splitting the fragment pass in two. That limit is Word's
-    // too, and it is recorded rather than hidden.
-    compose_watermark(&mut list, page);
     // Column separator rules (`w:cols/@w:sep`): a thin vertical hairline centered in
     // each inter-column gap, painted under the text layer (the gap carries no
     // glyphs, so z-order is immaterial).
@@ -330,6 +311,27 @@ pub fn compose_page(page: &Page) -> DisplayList {
     for anchor in floats.iter().filter(|anchor| !anchor.behind_doc) {
         compose_anchor(&mut list, anchor);
     }
+    // The watermark is painted LAST, over the finished page, and MULTIPLIED.
+    //
+    // It was emitted first, behind everything, which is where Word keeps it
+    // (`z-index:-251658752`). The live build showed what that costs: the stamp was
+    // "hiding behind" tables and pictures, because anything opaque in front of it
+    // erases it — a table's cell shading, a paragraph's shading, an in-flow
+    // picture, a decorative float placed behind the text. Word has the same defect
+    // and users work around it by deleting the fill.
+    //
+    // Painting on top with normal blending would only trade the defect for a worse
+    // one: the stamp would dim the text. Multiplying escapes the choice entirely,
+    // because multiplication cannot brighten and cannot darken black:
+    //
+    //     white paper  x  light grey  ->  light grey   (the stamp is visible)
+    //     table fill   x  light grey  ->  darker fill  (the stamp is visible)
+    //     black text   x  light grey  ->  black text   (the text is UNCHANGED)
+    //
+    // So the stamp is visible over every kind of content, and provably cannot make
+    // a word harder to read. That is the compositing model of ink on paper, which
+    // is what a watermark is.
+    compose_watermark(&mut list, page);
     list
 }
 
@@ -387,9 +389,13 @@ fn compose_watermark(list: &mut DisplayList, page: &Page) {
     let Some(stamp) = &page.watermark else {
         return;
     };
-    if let Some(transform) = stamp.transform {
-        list.push(PaintItem::PushTransform(transform));
-    }
+    // Always a layer, transform or not: a level watermark still needs the
+    // multiply, and the bracket is also what makes the stamp composite as one
+    // object rather than glyph by glyph.
+    list.push(PaintItem::PushLayer {
+        transform: stamp.transform,
+        blend: LayerBlend::Multiply,
+    });
     match &stamp.content {
         PlacedWatermarkContent::Text { runs } => {
             for run in runs {
@@ -408,9 +414,7 @@ fn compose_watermark(list: &mut DisplayList, page: &Page) {
             opacity: *opacity,
         }),
     }
-    if stamp.transform.is_some() {
-        list.push(PaintItem::PopTransform);
-    }
+    list.push(PaintItem::PopLayer);
 }
 
 fn compose_page_borders(list: &mut DisplayList, borders: &ResolvedPageBorders) {

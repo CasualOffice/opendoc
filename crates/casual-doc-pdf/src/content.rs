@@ -22,6 +22,7 @@ use casual_doc_layout::display::DisplayList;
 use casual_doc_layout::display::Fill;
 use casual_doc_layout::display::Gradient;
 use casual_doc_layout::display::GradientKind;
+use casual_doc_layout::display::LayerBlend;
 use casual_doc_layout::display::PaintItem;
 use casual_doc_layout::display::ShapeGeometry;
 use casual_doc_layout::display::ShapeOutline;
@@ -56,6 +57,10 @@ use crate::writer::name as pdf_name;
 use crate::writer::num;
 
 /// Twips per PDF point.
+/// The `ExtGState` name for the multiply blend. Distinct from the `GS{n}` alpha
+/// names so both can live in one resource dictionary.
+pub(crate) const MULTIPLY_GS_NAME: &str = "GSMultiply";
+
 const TWIPS_PER_POINT: f32 = 20.0;
 
 /// Display-list stroke widths are device pixels at 96 DPI (`compose::stroke_px`);
@@ -95,6 +100,9 @@ pub(crate) struct Transcriber<'a> {
     pub(crate) images: ImageTable,
     /// Constant-alpha graphics states, keyed by the alpha byte.
     alphas: BTreeMap<u8, String>,
+    /// Whether any layer asked for the multiply blend, so the page's resource
+    /// dictionary declares its `ExtGState` exactly when it is referenced.
+    multiply_blend: bool,
     /// `(resource name, shading dictionary body)` for every gradient placed.
     shadings: Vec<(String, String)>,
     /// Paint items the backend could not represent, by stable code.
@@ -109,6 +117,7 @@ impl<'a> Transcriber<'a> {
             fonts: FontTable::new(),
             images: ImageTable::new(),
             alphas: BTreeMap::new(),
+            multiply_blend: false,
             shadings: Vec::new(),
             gaps: BTreeMap::new(),
             font_source,
@@ -122,6 +131,11 @@ impl<'a> Transcriber<'a> {
     }
 
     /// The constant-alpha graphics states placed so far, as `(name, alpha)`.
+    /// Whether the page referenced the multiply `ExtGState`.
+    pub(crate) fn uses_multiply_blend(&self) -> bool {
+        self.multiply_blend
+    }
+
     pub(crate) fn alphas(&self) -> impl Iterator<Item = (&String, f32)> {
         self.alphas
             .iter()
@@ -248,17 +262,26 @@ impl<'a> Transcriber<'a> {
                     out.op("Q");
                 }
             }
-            // A transform bracket is PDF's own graphics-state save plus a `cm`,
-            // which is what the display list's bracket was modelled on. Counted
-            // on the same counter as clips: both are `q`/`Q` pairs, and a
-            // `PopTransform` arriving with nothing open must not emit a bare `Q`
-            // that would pop the page's own state.
-            PaintItem::PushTransform(transform) => {
+            // A layer is PDF's own graphics-state save plus, as needed, a blend
+            // mode and a `cm` — which is what the display list's bracket was
+            // modelled on. Counted on the same counter as clips: both are `q`/`Q`
+            // pairs, and a `PopLayer` arriving with nothing open must not emit a
+            // bare `Q` that would pop the page's own state.
+            PaintItem::PushLayer { transform, blend } => {
                 out.op("q");
                 out.clips += 1;
-                out.concat_transform(transform);
+                // `/BM /Multiply` through an `ExtGState`, the same mechanism the
+                // picture alphas already use. Without it a watermark exported to
+                // PDF would be the one place it still covered the text, since the
+                // display list paints it last.
+                if matches!(blend, LayerBlend::Multiply) {
+                    self.blend_multiply(out);
+                }
+                if let Some(transform) = transform {
+                    out.concat_transform(transform);
+                }
             }
-            PaintItem::PopTransform => {
+            PaintItem::PopLayer => {
                 if out.clips > 0 {
                     out.clips -= 1;
                     out.op("Q");
@@ -293,6 +316,16 @@ impl<'a> Transcriber<'a> {
 
     /// Selects the constant-alpha graphics state for `alpha`, minting one the
     /// first time a value is seen. Fully opaque paint needs no state change.
+    /// Selects the multiply blend mode, registering its `ExtGState` on first use.
+    ///
+    /// Named apart from the alpha states so one resource dictionary can hold both
+    /// and neither overwrites the other's name.
+    fn blend_multiply(&mut self, out: &mut Content) {
+        self.multiply_blend = true;
+        out.bytes
+            .extend_from_slice(format!("{} gs\n", pdf_name(MULTIPLY_GS_NAME)).as_bytes());
+    }
+
     fn alpha(&mut self, out: &mut Content, alpha: u8) {
         if alpha == 255 {
             return;

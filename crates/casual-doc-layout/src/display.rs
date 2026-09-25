@@ -291,23 +291,59 @@ pub enum PaintItem {
     PushClip(Rect),
     /// Pop the most recent clip.
     PopClip,
-    /// Push an affine transform about a centre point; subsequent items are drawn
-    /// through it until [`PaintItem::PopTransform`]. Nests, composing outermost
-    /// first, exactly like [`PaintItem::PushClip`].
+    /// Push a LAYER: subsequent items are composited as one group, optionally
+    /// through an affine transform and a non-normal blend, until
+    /// [`PaintItem::PopLayer`]. Nests, composing outermost first, exactly like
+    /// [`PaintItem::PushClip`].
     ///
     /// This is how ROTATED TEXT is expressed. A glyph run carries no angle of its
     /// own, and giving it one would have meant a rotation field on the one paint
     /// item that is constructed in a dozen places, for the sake of the single
-    /// object that needs it. A transform that brackets a group of items also
-    /// matches what the thing actually is: a watermark is one rotated object
-    /// whose parts — the words, or the picture — are not individually angled.
+    /// object that needs it. A bracket around a group also matches what the thing
+    /// actually is: a watermark is one rotated object whose parts — the words, or
+    /// the picture — are neither individually angled nor individually blended.
+    ///
+    /// The BLEND is what lets a watermark sit on top of the page without hiding
+    /// anything. A normal-blended stamp has to choose: behind the content, where an
+    /// opaque table fill erases it, or in front, where it dims the text. Multiplied,
+    /// it does not have to choose — see [`LayerBlend::Multiply`].
     ///
     /// Introduced for the watermark (`109` OO-006). `docs/105` FID-L-08 (vertical
     /// and rotated text) is the other caller this seam is waiting for; it is not
-    /// implemented by this existing, and no flow content emits one yet.
-    PushTransform(ShapeTransform),
-    /// Pop the most recent transform.
-    PopTransform,
+    /// implemented by this existing, and no flow content emits a layer yet.
+    PushLayer {
+        /// Rotation/flip about a centre point, or `None` for an upright layer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform: Option<ShapeTransform>,
+        /// How the layer composites onto what is already painted.
+        #[serde(default)]
+        blend: LayerBlend,
+    },
+    /// Pop the most recent layer.
+    PopLayer,
+}
+
+/// How a [`PaintItem::PushLayer`] group composites onto the page beneath it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LayerBlend {
+    /// Ordinary source-over: the layer covers what is beneath it.
+    #[default]
+    Normal,
+    /// Multiply the layer with what is beneath it.
+    ///
+    /// This is the compositing model of ink on paper, and it is what makes a
+    /// watermark behave like one. Multiplying by a value never brightens, so:
+    ///
+    /// - over white paper, a light grey stamp shows as light grey;
+    /// - over an opaque table fill or a picture, it shows as a darkening of that
+    ///   fill — it is not erased by it, which normal blending underneath cannot
+    ///   achieve at all;
+    /// - over black text, `0 x anything = 0`, so **the text is returned
+    ///   unchanged**. A multiplied stamp painted on top of the page provably
+    ///   cannot make a word harder to read, which is the whole reason it may be
+    ///   painted on top.
+    Multiply,
 }
 
 /// An ordered list of paint commands for one page (or one damage region during
