@@ -360,3 +360,39 @@ test("leaving compact mode gives the ribbon its borrowed controls back", async (
 
   expect(consoleErrors).toEqual([]);
 });
+
+test("compact text-color menus anchor to the visible compact controls", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await page.locator("#modeCompact").click();
+
+  for (const [command, menuId] of [
+    ["format.color", "textColorMenu"],
+    ["format.highlight", "highlightMenu"],
+  ]) {
+    const trigger = page.locator(`#compactToolbar [data-command-id="${command}"]`);
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-controls", menuId);
+    await trigger.click();
+
+    const menu = page.locator(`#${menuId}`);
+    await expect(menu).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const [triggerBox, menuBox] = await Promise.all([trigger.boundingBox(), menu.boundingBox()]);
+    expect(triggerBox).not.toBeNull();
+    expect(menuBox).not.toBeNull();
+    expect(Math.abs(menuBox.x - triggerBox.x), `${menuId} should share its trigger's x`).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(menuBox.y - (triggerBox.y + triggerBox.height + 4)),
+      `${menuId} should open four pixels below its trigger`,
+    ).toBeLessThanOrEqual(1);
+
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  }
+
+  expect(consoleErrors).toEqual([]);
+});

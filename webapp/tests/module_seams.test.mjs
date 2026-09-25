@@ -114,6 +114,7 @@ const PURE_MODULES = [
   // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
   // hover cascade with plain objects, with no browser and no engine.
   "pointer_cursor.mjs",
+  "popover_position.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what
