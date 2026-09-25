@@ -157,38 +157,81 @@ fn the_watermark_is_stamped_on_every_page_of_the_section() {
     }
 }
 
+/// A behind-text picture placed on the page, for the z-order assertion below.
+fn behind_text_picture() -> casual_doc_layout::page::PlacedAnchor {
+    use casual_doc_layout::page::{AnchorContent, AnchorZ, PlacedAnchor};
+    use casual_doc_layout::units::{Point, Rect, Size, Twip};
+    PlacedAnchor {
+        node: None,
+        content: AnchorContent::Image {
+            media: "decoration.png".to_owned(),
+            crop: None,
+            border: None,
+            opacity: None,
+        },
+        rect: Rect::new(
+            Point::new(Twip(0), Twip(0)),
+            Size::new(Twip(12_240), Twip(15_840)),
+        ),
+        behind_doc: true,
+        z: AnchorZ {
+            relative_height: 1,
+            order: 0,
+        },
+        descr: None,
+        transform: None,
+    }
+}
+
+/// Where the stamp sits in the paint order: ABOVE a behind-text picture, BELOW the
+/// body text.
+///
+/// The first version of this asserted the bracket was at index 0 — behind
+/// everything — and it passed for the wrong reason: the test document has no
+/// floats, so index 0 and "above the float band" are the same position. The live
+/// build then showed the watermark hiding behind pictures, which is the defect that
+/// assertion existed to prevent and could not see. The page here carries a
+/// page-sized behind-text picture so the two positions are distinguishable.
 #[test]
-fn the_stamp_reaches_the_paint_list_behind_everything_else() {
+fn the_stamp_paints_over_a_behind_text_picture_and_under_the_body() {
     let doc = document(Some(draft(WatermarkLayout::Diagonal, true)));
-    let layout = paginate(&doc);
+    let mut layout = paginate(&doc);
+    layout.pages[0].anchored.push(behind_text_picture());
     let list = compose_page(&layout.pages[0]);
 
-    // Behind EVERYTHING: the bracket opens at index 0. A watermark that painted
-    // after the body would be a highlighter over the text, which is the one thing
-    // it must never be.
-    assert!(
-        matches!(list.items.first(), Some(PaintItem::PushTransform(_))),
-        "the diagonal stamp opens the page's paint list, got {:?}",
-        list.items.first()
-    );
+    let image = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::Image { .. }))
+        .expect("the behind-text picture paints");
+    let bracket = list
+        .items
+        .iter()
+        .position(|item| matches!(item, PaintItem::PushTransform(_)))
+        .expect("the diagonal stamp opens a transform bracket");
     let close = list
         .items
         .iter()
         .position(|item| matches!(item, PaintItem::PopTransform))
         .expect("the bracket closes");
+
     assert!(
-        list.items[1..close]
+        image < bracket,
+        "the stamp must paint OVER a picture placed behind the text, or the picture \
+         erases it — image at {image}, stamp at {bracket}"
+    );
+    assert!(
+        list.items[bracket..close]
             .iter()
             .any(|item| matches!(item, PaintItem::Glyphs { .. })),
         "the stamp's glyphs are inside its own transform bracket"
     );
-
-    // And the body is outside it, so the rotation applies to the stamp alone.
     assert!(
         list.items[close..]
             .iter()
             .any(|item| matches!(item, PaintItem::Glyphs { .. })),
-        "the body text paints after the bracket closes"
+        "and the body text paints AFTER the bracket closes, so the stamp never makes \
+         a word harder to read"
     );
 }
 
