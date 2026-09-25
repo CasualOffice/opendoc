@@ -83,6 +83,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertLinkBtn",
     "insertBookmarkBtn",
     "insertFieldBtn",
+    "insertDropCapBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
     // The two running-content variants joined the Header & footer group: they had
@@ -123,6 +124,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertLinkBtn", "Add or edit link"],
     ["#insertBookmarkBtn", "Bookmark"],
     ["#insertFieldBtn", "Insert field"],
+    ["#insertDropCapBtn", "Drop cap"],
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertSymbolBtn", "Insert symbol"],
@@ -159,6 +161,7 @@ test("every Insert ribbon button is live on a freshly loaded document — only L
     "#insertPictureBtn",
     "#insertBookmarkBtn",
     "#insertFieldBtn",
+    "#insertDropCapBtn",
     "#insertSymbolBtn",
     "#insertEmojiBtn",
   ]) {
@@ -187,6 +190,7 @@ test("the Insert menu and the command palette agree with the ribbon on a freshly
     "insert.image",
     "insert.bookmark",
     "insert.field",
+    "insert.dropCap",
     "insert.symbol",
     "insert.emoji",
   ]) {
@@ -203,7 +207,7 @@ test("the Insert menu and the command palette agree with the ribbon on a freshly
   // longer teaches a precondition that does not exist.
   await openCommandPalette(page);
   await expect(page.locator("#cmdPalette")).toBeVisible();
-  for (const label of ["Picture…", "Symbol…", "Emoji…", "Field…", "Bookmark…"]) {
+  for (const label of ["Picture…", "Symbol…", "Emoji…", "Field…", "Bookmark…", "Drop cap…"]) {
     await page.locator("#cmdInput").fill(label.replace("…", ""));
     const item = page.locator(".cmd-item", { hasText: label }).first();
     await expect(item).toBeVisible();
@@ -342,6 +346,49 @@ test("Insert ▸ Bookmark opens the bookmark manager with no prior click", async
   expect(consoleErrors).toEqual([]);
 });
 
+test("Insert ▸ Drop cap creates, changes, removes, and restores the initial as one-step edits", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await openInsertTab(page);
+
+  await page.locator("#insertDropCapBtn").click();
+  await expect(page.locator("#dropCapDialog")).toBeVisible();
+  await expect(page.locator('input[name="dropCapMode"][value="none"]')).toBeChecked();
+  await expect(page.locator("#dropCapLines")).toHaveValue("3");
+
+  await page.locator('input[name="dropCapMode"][value="drop"]').check();
+  await page.locator("#dropCapLines").fill("4");
+  await page.locator('#dropCapDialog button[type="submit"]').click();
+  await expect(page.locator("#status")).toContainText("Drop cap applied");
+
+  // The engine returns the BODY half as the new caret. Reopening from there has
+  // to read the same pair back; otherwise the dialog would claim "None" for the
+  // large initial visibly sitting beside it.
+  await page.locator("#insertDropCapBtn").click();
+  await expect(page.locator('input[name="dropCapMode"][value="drop"]')).toBeChecked();
+  await expect(page.locator("#dropCapLines")).toHaveValue("4");
+  await page.locator('input[name="dropCapMode"][value="margin"]').check();
+  await page.locator("#dropCapLines").fill("5");
+  await page.locator('#dropCapDialog button[type="submit"]').click();
+
+  await page.locator("#insertDropCapBtn").click();
+  await expect(page.locator('input[name="dropCapMode"][value="margin"]')).toBeChecked();
+  await expect(page.locator("#dropCapLines")).toHaveValue("5");
+  await page.locator('input[name="dropCapMode"][value="none"]').check();
+  await page.locator('#dropCapDialog button[type="submit"]').click();
+  await expect(page.locator("#status")).toContainText("Drop cap removed");
+
+  await page.keyboard.press(`${process.platform === "darwin" ? "Meta" : "Control"}+z`);
+  await page.locator("#insertDropCapBtn").click();
+  await expect(page.locator('input[name="dropCapMode"][value="margin"]')).toBeChecked();
+  await expect(page.locator("#dropCapLines")).toHaveValue("5");
+  await page.keyboard.press("Escape");
+
+  expect(consoleErrors).toEqual([]);
+});
+
 test("the load-time insertion point exists but paints no caret until the editor surface is focused", async ({
   page,
   consoleErrors,
@@ -424,6 +471,7 @@ test("Viewing mode refuses every ribbon insert on a freshly loaded document", as
     ["#insertSymbolBtn", "#symbolDialog"],
     ["#insertEmojiBtn", "#emojiDialog"],
     ["#insertFieldBtn", "#fieldDialog"],
+    ["#insertDropCapBtn", "#dropCapDialog"],
   ]) {
     await page.locator(button).click();
     await expect(page.locator(dialog)).toBeHidden();
@@ -433,6 +481,20 @@ test("Viewing mode refuses every ribbon insert on a freshly loaded document", as
   // Nothing entered history: a refused insert is not an edit.
   await expect(page.locator("#undoBtn")).toBeDisabled();
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("Suggesting mode refuses an untracked drop-cap edit before opening its dialog", async ({
+  page,
+  consoleErrors,
+}) => {
+  await gotoEditor(page);
+  await setReviewMode(page, "suggesting");
+  await openInsertTab(page);
+  await page.locator("#insertDropCapBtn").click();
+  await expect(page.locator("#dropCapDialog")).toBeHidden();
+  await expect(page.locator("#status")).toContainText("cannot be tracked yet");
+  await expect(page.locator("#undoBtn")).toBeDisabled();
   expect(consoleErrors).toEqual([]);
 });
 

@@ -47,4 +47,8 @@ export const EN_STRINGS = Object.freeze({
   // so only its first entry is a word: the one that means "whatever face the
   // document already uses", which is what an absent `w:rFonts` resolves to.
   "watermark.fontDefault": "Document default",
+  "dropCap.applied": "Drop cap applied",
+  "dropCap.command": "Drop cap…",
+  "dropCap.readError": "Drop cap settings could not be read",
+  "dropCap.removed": "Drop cap removed",
 });

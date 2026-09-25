@@ -79,6 +79,10 @@ use casual_doc_model::v1::{
     DocumentProtectionEdit, FormCheckBox, FormFieldKind, GroupChild, HeaderFooterId,
     HeaderFooterKind, PointEmu, SdtCheckbox, SdtCheckboxSymbol, SdtControlData, Symbol,
 };
+use casual_doc_model::v1::{
+    DropCapFrame, DropCapMode, FrameHorizontalAlignment, FrameHorizontalAnchor,
+    FrameVerticalAlignment, FrameVerticalAnchor, FrameWrap,
+};
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
@@ -7266,6 +7270,329 @@ impl WasmDocument {
         self.apply_action_caret(ops, caret).map_err(to_js)
     }
 
+    /// The `(drop cap, body)` paragraph pair `node` belongs to, whichever half it
+    /// names, or `None` when it is not part of one.
+    ///
+    /// A pair is two ADJACENT top-level body paragraphs where the first carries a
+    /// drop-cap frame and holds exactly one character — the same three conditions
+    /// `flow.rs` checks before laying one out. Anything else is not a drop cap
+    /// however its `w:framePr` reads, and saying so here is what stops the menu
+    /// offering to remove something layout is not drawing.
+    fn drop_cap_pair(&self, node: &str) -> Option<(NodeId, NodeId)> {
+        let Ok(id) = NodeId::from_str(node) else {
+            return None;
+        };
+        let paragraphs: Vec<&Paragraph> = self
+            .document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .collect();
+        let cascade = StyleCascade::new(self.document.definitions());
+        paragraphs.windows(2).find_map(|pair| {
+            let (cap, body) = (pair[0], pair[1]);
+            if cap.id != id && body.id != id {
+                return None;
+            }
+            // Resolved through the cascade, because a style can carry the frame —
+            // the same resolution layout uses.
+            let framed = cascade
+                .resolve_paragraph(&cap.properties)
+                .drop_cap_frame
+                .is_some();
+            let single = {
+                let text = self.paragraph_text(cap.id);
+                let mut chars = text.chars();
+                chars.next().is_some() && chars.next().is_none()
+            };
+            (framed && single).then_some((cap.id, body.id))
+        })
+    }
+
+    /// The effective run size of `body`'s first run, in half-points — what the
+    /// initial goes back to when the drop cap is removed. Falls back to the
+    /// document default, which is also what an unstyled paragraph resolves to.
+    fn body_size_half_points(&self, body: NodeId) -> u32 {
+        let cascade = StyleCascade::new(self.document.definitions());
+        self.document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id == body => {
+                    let style = paragraph.properties.style_ref;
+                    let direct = paragraph.inlines.iter().find_map(|inline| match inline {
+                        InlineNode::Run(run) => Some(run.properties.clone()),
+                        _ => None,
+                    })?;
+                    Some(cascade.resolve_run(style, &direct))
+                }
+                _ => None,
+            })
+            .and_then(|resolved| resolved.size_half_points)
+            // `w:docDefaults` sz=22 (11pt) is the OOXML default a document with no
+            // `styles.xml` resolves to, which is the case this falls back for.
+            .unwrap_or(22)
+    }
+
+    /// Splits the paragraph at `node` after its first character and frames the
+    /// leading half as a drop cap, in one undoable action.
+    fn create_drop_cap(
+        &mut self,
+        node: &str,
+        mode: DropCapMode,
+        lines: u8,
+    ) -> Result<EditResult, JsValue> {
+        let id = NodeId::from_str(node).map_err(|_| to_js("invalid node id".to_string()))?;
+        let properties = paragraph_properties(&self.document, id)
+            .ok_or_else(|| to_js("no such paragraph".to_string()))?;
+        let text = self
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id == id => {
+                    Some(self.paragraph_text(paragraph.id))
+                }
+                _ => None,
+            })
+            .ok_or_else(|| to_js("no such paragraph".to_string()))?;
+        // The initial is the first CHARACTER, which is not the first byte: a
+        // paragraph opening on "Édouard" or "書" would be cut inside a character
+        // and the split refused.
+        let cut = drop_cap_cut(&text).map_err(to_js)?;
+        let new_id = self
+            .edit_ids
+            .next_id()
+            .map_err(|_| to_js("node ids exhausted".to_string()))?;
+
+        let mut leading = properties.clone();
+        leading.drop_cap_frame = Some(drop_cap_frame(mode, lines));
+        // `w:keepNext` is not decoration: the initial and the text it wraps must
+        // not be split across a page, and Word writes it on every drop cap.
+        leading.keep_next = true;
+        // The frame is the whole of the leading half's identity. A section break or
+        // a page break inherited onto a one-character paragraph would fire between
+        // the initial and its own body.
+        leading.section_break = None;
+        leading.page_break_before = false;
+
+        let caret = Pos::new(new_id, 0);
+        self.apply_action_caret(
+            vec![
+                Operation::SplitParagraph {
+                    at: Pos::new(id, cut),
+                    new_id,
+                    properties: Some(Box::new(SplitProperties {
+                        leading,
+                        trailing: properties,
+                    })),
+                },
+                // The initial has to be large, because layout preserves the run's
+                // own ink and only floors the exclusion box at `lines x 240` twips
+                // (`collapse_drop_cap_fragment`). A frame with a body-sized letter
+                // wraps text around three empty lines.
+                Operation::FormatText {
+                    range: EditRange {
+                        start: Pos::new(id, 0),
+                        end: Pos::new(id, cut),
+                    },
+                    delta: FormatDelta {
+                        size_half_points: Some(drop_cap_size_half_points(lines)),
+                        ..FormatDelta::default()
+                    },
+                },
+            ],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
+    /// Changes an existing drop cap's frame without re-splitting anything.
+    fn reframe_drop_cap(
+        &mut self,
+        cap: NodeId,
+        mode: DropCapMode,
+        lines: u8,
+    ) -> Result<EditResult, JsValue> {
+        let mut properties = paragraph_properties(&self.document, cap)
+            .ok_or_else(|| to_js("no such paragraph".to_string()))?;
+        properties.drop_cap_frame = Some(drop_cap_frame(mode, lines));
+        properties.keep_next = true;
+        let letter = self
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id == cap => {
+                    Some(self.paragraph_text(paragraph.id))
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let end = u32::try_from(letter.len()).unwrap_or(1);
+        self.apply_action_caret(
+            vec![
+                Operation::SetParagraphProperties {
+                    node: cap,
+                    properties: Box::new(properties),
+                },
+                // The size tracks the line count, or a 2-line cap keeps a 3-line
+                // letter and overhangs its own frame.
+                Operation::FormatText {
+                    range: EditRange {
+                        start: Pos::new(cap, 0),
+                        end: Pos::new(cap, end),
+                    },
+                    delta: FormatDelta {
+                        size_half_points: Some(drop_cap_size_half_points(lines)),
+                        ..FormatDelta::default()
+                    },
+                },
+            ],
+            Pos::new(cap, 0),
+        )
+        .map_err(to_js)
+    }
+
+    /// Joins a drop-cap pair back into one paragraph, clearing the frame and the
+    /// initial's size.
+    fn remove_drop_cap(&mut self, cap: NodeId, body: NodeId) -> Result<EditResult, JsValue> {
+        let letter = self
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(paragraph) if paragraph.id == cap => {
+                    Some(self.paragraph_text(paragraph.id))
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+        let end = u32::try_from(letter.len()).unwrap_or(1);
+        let mut merged = paragraph_properties(&self.document, body).unwrap_or_default();
+        // The surviving paragraph is the BODY's, so it must not inherit the
+        // frame — the whole point of removing the drop cap.
+        merged.drop_cap_frame = None;
+        self.apply_action_caret(
+            vec![
+                // Size first, while the initial is still its own paragraph and its
+                // offsets are known. After the join it sits at the head of a longer
+                // paragraph, and the range would have to be recomputed.
+                // Back to the BODY's own size rather than cleared: the letter
+                // may have been deliberately bolded or coloured, and
+                // `ClearFormatting` would take that with it. Only the size was
+                // ours to set, so only the size is put back.
+                Operation::FormatText {
+                    range: EditRange {
+                        start: Pos::new(cap, 0),
+                        end: Pos::new(cap, end),
+                    },
+                    delta: FormatDelta {
+                        size_half_points: Some(self.body_size_half_points(body)),
+                        ..FormatDelta::default()
+                    },
+                },
+                Operation::JoinParagraphs {
+                    first: cap,
+                    second: body,
+                    properties: Some(Box::new(merged)),
+                },
+            ],
+            Pos::new(cap, 0),
+        )
+        .map_err(to_js)
+    }
+
+    /// The drop cap at `node`, in the shape [`set_drop_cap`](Self::set_drop_cap)
+    /// accepts: `{"mode":"none"|"drop"|"margin","lines":N}`.
+    ///
+    /// A drop cap is a PAIR of paragraphs, exactly as Word writes one: a
+    /// one-character paragraph carrying `w:framePr/@w:dropCap`, immediately
+    /// followed by the body it belongs to. So this answers for the pair, whichever
+    /// half the caret is in — a reader who clicks in the body and opens the menu
+    /// must see the drop cap that is plainly on screen, not "none".
+    #[wasm_bindgen(js_name = dropCap)]
+    #[must_use]
+    pub fn drop_cap(&self, node: &str) -> String {
+        let payload = self
+            .drop_cap_pair(node)
+            .and_then(|(cap, _body)| {
+                paragraph_properties(&self.document, cap)?
+                    .drop_cap_frame
+                    .map(|frame| DropCapJson {
+                        mode: match frame.mode {
+                            DropCapMode::Drop => "drop",
+                            DropCapMode::Margin => "margin",
+                        }
+                        .to_string(),
+                        lines: u32::from(frame.lines),
+                    })
+            })
+            .unwrap_or_else(|| DropCapJson {
+                mode: "none".to_string(),
+                // What the menu offers for a new drop cap; Word's own default.
+                lines: 3,
+            });
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Applies or removes a drop cap on the paragraph at `node` — Word's
+    /// Insert ▸ Drop Cap. One undoable action.
+    ///
+    /// `mode` is `"none"`, `"drop"` (in the text column) or `"margin"`. `lines` is
+    /// how many body lines the initial occupies (Word's range is 1..=10).
+    ///
+    /// Applying SPLITS the paragraph after its first character and frames the
+    /// leading half; removing JOINS the pair back together. That is what a drop cap
+    /// is in OOXML, and doing it any other way would produce a frame layout does
+    /// not recognise — `flow.rs` requires a framed paragraph of exactly one
+    /// character followed by another paragraph.
+    #[wasm_bindgen(js_name = setDropCap)]
+    pub fn set_drop_cap(
+        &mut self,
+        node: &str,
+        mode: &str,
+        lines: u32,
+    ) -> Result<EditResult, JsValue> {
+        let existing = self.drop_cap_pair(node);
+        if mode == "none" {
+            let Some((cap, body)) = existing else {
+                // Nothing to remove. Not an error: the menu's None is idempotent,
+                // and a caret in an ordinary paragraph choosing None must not throw.
+                //
+                // Reported as the document UNCHANGED rather than routed through an
+                // empty edit: `apply_action_caret` with no operations is refused,
+                // and `finish_edit` would bump the revision and repaint — marking a
+                // document dirty, and its Save enabled, for a menu click that did
+                // nothing.
+                return Ok(EditResult {
+                    node: node.to_string(),
+                    offset: 0,
+                    revision: self.revision,
+                    page_count: self.page_count(),
+                    dirty: Vec::new(),
+                });
+            };
+            return self.remove_drop_cap(cap, body);
+        }
+        let frame_mode = match mode {
+            "drop" => DropCapMode::Drop,
+            "margin" => DropCapMode::Margin,
+            other => return Err(to_js(format!("unknown drop cap mode {other:?}"))),
+        };
+        // Word's dialog offers 1..=10; the model's field is a `u8`.
+        let lines = u8::try_from(lines.clamp(1, 10)).unwrap_or(3);
+        match existing {
+            // Already framed: only the frame changes, so neither the split nor the
+            // letter's size is touched. Re-splitting would cut the body again.
+            Some((cap, _)) => self.reframe_drop_cap(cap, frame_mode, lines),
+            None => self.create_drop_cap(node, frame_mode, lines),
+        }
+    }
+
     /// Takes the selection's paragraphs out of the line count, or puts them back
     /// (`w:suppressLineNumbers`) — Word's "Suppress for Current Paragraph".
     ///
@@ -12961,6 +13288,79 @@ struct PageSetupJson {
 struct PageSetupSectionsJson {
     current: String,
     sections: Vec<PageSetupJson>,
+}
+
+/// The Drop Cap menu's read and write shape.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DropCapJson {
+    /// `"none"`, `"drop"`, or `"margin"`.
+    mode: String,
+    /// Body lines the initial occupies.
+    lines: u32,
+}
+
+/// The run size a drop-cap initial needs, in half-points, so its ink fills the
+/// `lines` it claims.
+///
+/// Layout floors the exclusion box at `lines x 240` twips
+/// (`collapse_drop_cap_fragment`) and otherwise preserves the run's own ink, so
+/// the size has to come from somewhere: a frame with a body-sized letter wraps
+/// text around three empty lines. A capital's ink is about 0.615 of its font size
+/// in these faces, so filling `lines x 240` twips needs
+/// `lines x 240 / 0.615 = lines x 390` twips, which is `lines x 39` half-points.
+///
+/// That reproduces this repository's own drop-cap fixture exactly — 117 for three
+/// lines (`fixtures/generated/visual-containment.docx`) — which is the only
+/// producer evidence available here; the fixture records no derivation of its own.
+fn drop_cap_size_half_points(lines: u8) -> u32 {
+    u32::from(lines) * 39
+}
+
+/// Where to cut a paragraph so its first CHARACTER becomes the drop-cap initial,
+/// or why it cannot carry one.
+///
+/// Returns a byte offset, not a character count: a paragraph opening on "Édouard"
+/// or "書" must be cut after the whole character. Cutting at byte 1 would split a
+/// multi-byte character, and the split would be refused deeper in the edit path
+/// with an error about positions rather than about drop caps.
+///
+/// Separated from `create_drop_cap` so both outcomes are testable: the error side
+/// of a `wasm_bindgen` method cannot be asserted in a native test, because
+/// building the `JsValue` panics outside a browser.
+fn drop_cap_cut(text: &str) -> Result<u32, String> {
+    let mut chars = text.chars();
+    let first = chars
+        .next()
+        .ok_or_else(|| "an empty paragraph has no initial to drop".to_string())?;
+    if chars.next().is_none() {
+        // A frame needs a following paragraph to wrap beside it (`flow.rs` pairs
+        // them), so a one-character paragraph would be framed and draw nothing.
+        return Err("a one-character paragraph has no body to wrap beside the initial".to_string());
+    }
+    u32::try_from(first.len_utf8()).map_err(|_| "initial too long to address".to_string())
+}
+
+/// The frame a drop cap carries. The anchors, alignment and spacing are Word's own
+/// for an Insert ▸ Drop Cap, and `wrap: Around` is required — `flow.rs` lays out
+/// only `Around`/`Auto`/absent, so any other value would frame the paragraph and
+/// draw nothing.
+fn drop_cap_frame(mode: DropCapMode, lines: u8) -> DropCapFrame {
+    DropCapFrame {
+        mode,
+        lines,
+        wrap: Some(FrameWrap::Around),
+        horizontal_anchor: Some(FrameHorizontalAnchor::Text),
+        vertical_anchor: Some(FrameVerticalAnchor::Text),
+        horizontal_alignment: Some(FrameHorizontalAlignment::Left),
+        vertical_alignment: Some(FrameVerticalAlignment::Top),
+        horizontal_position_twips: None,
+        vertical_position_twips: None,
+        // 90 twips (0.0625in) between the initial and the text beside it, which is
+        // what Word writes and what the fixture carries.
+        horizontal_space_twips: Some(90),
+        vertical_space_twips: Some(0),
+    }
 }
 
 /// The Watermark dialog's read and write shape.
@@ -22883,6 +23283,315 @@ mod tests {
                 BlockNode::AltChunk(_) => 0,
             })
             .sum()
+    }
+
+    /// Reads `dropCap` back as the host sees it.
+    fn read_drop_cap(doc: &WasmDocument, node: &str) -> serde_json::Value {
+        serde_json::from_str(&doc.drop_cap(node)).expect("dropCap returns JSON")
+    }
+
+    /// The top-level body paragraphs, as `(id, text)`.
+    fn body_paragraphs(doc: &WasmDocument) -> Vec<(NodeId, String)> {
+        doc.document
+            .body()
+            .iter()
+            .filter_map(|block| match block {
+                BlockNode::Paragraph(paragraph) => {
+                    Some((paragraph.id, doc.paragraph_text(paragraph.id)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Word's Insert ▸ Drop Cap (`109` OO-006): the initial becomes its own framed
+    /// one-character paragraph in front of the body, which is the ONLY shape
+    /// `flow.rs` lays out — it requires a framed paragraph of exactly one character
+    /// followed by another paragraph. A frame written onto the whole paragraph
+    /// would be a drop cap in the file and nothing on the page.
+    #[test]
+    fn a_drop_cap_splits_the_initial_into_its_own_framed_paragraph() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let before = doc.paragraph_text(NodeId::from_str(&node).unwrap());
+        let initial = before.chars().next().expect("a first character");
+        let paragraphs_before = body_paragraphs(&doc).len();
+
+        assert_eq!(read_drop_cap(&doc, &node)["mode"], "none");
+        doc.set_drop_cap(&node, "drop", 3)
+            .expect("apply a drop cap");
+
+        let paragraphs = body_paragraphs(&doc);
+        assert_eq!(
+            paragraphs.len(),
+            paragraphs_before + 1,
+            "the paragraph was split in two"
+        );
+        let (cap_id, cap_text) = paragraphs
+            .iter()
+            .find(|(id, _)| id.to_string() == node)
+            .cloned()
+            .expect("the leading half keeps the original id");
+        assert_eq!(
+            cap_text,
+            initial.to_string(),
+            "the framed half holds exactly the initial"
+        );
+        let frame = paragraph_properties(&doc.document, cap_id)
+            .and_then(|p| p.drop_cap_frame)
+            .expect("the leading half carries the frame");
+        assert_eq!(frame.mode, DropCapMode::Drop);
+        assert_eq!(frame.lines, 3);
+        assert_eq!(
+            frame.wrap,
+            Some(FrameWrap::Around),
+            "`flow.rs` lays out only Around/Auto/absent, so anything else draws nothing"
+        );
+        assert!(
+            paragraph_properties(&doc.document, cap_id).is_some_and(|p| p.keep_next),
+            "`w:keepNext` keeps the initial on the same page as the text it wraps"
+        );
+
+        // The body text is intact — the split must not have eaten the initial twice.
+        let body_text: String = paragraphs
+            .iter()
+            .filter(|(id, _)| id.to_string() != node)
+            .map(|(_, text)| text.clone())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            body_text.contains(&before[initial.len_utf8()..]),
+            "the body keeps everything after the initial"
+        );
+        doc.document.validate().expect("valid after the split");
+    }
+
+    /// The initial has to be BIG. Layout preserves the run's own ink and only
+    /// floors the exclusion box at `lines x 240` twips, so a frame around a
+    /// body-sized letter wraps text around three empty lines.
+    #[test]
+    fn the_initial_is_sized_to_the_lines_it_claims() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        doc.set_drop_cap(&node, "drop", 3)
+            .expect("apply a drop cap");
+
+        let cap = NodeId::from_str(&node).unwrap();
+        let size = doc
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(p) if p.id == cap => {
+                    p.inlines.iter().find_map(|inline| match inline {
+                        InlineNode::Run(run) => run.properties.size_half_points,
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .expect("the initial's run carries an explicit size");
+        // 117 for three lines — the value this repository's own drop-cap fixture
+        // carries (`fixtures/generated/visual-containment.docx`).
+        assert_eq!(size, 117);
+
+        // And it tracks the line count rather than being a constant.
+        doc.set_drop_cap(&node, "drop", 2).expect("two lines now");
+        let smaller = doc
+            .document
+            .body()
+            .iter()
+            .find_map(|block| match block {
+                BlockNode::Paragraph(p) if p.id == cap => {
+                    p.inlines.iter().find_map(|inline| match inline {
+                        InlineNode::Run(run) => run.properties.size_half_points,
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .expect("still sized");
+        assert!(
+            smaller < size,
+            "a two-line cap is smaller than a three-line one ({smaller} vs {size})"
+        );
+    }
+
+    /// The public mutation is not merely a model/export operation: its result is
+    /// repaginated through the production layout owned by `WasmDocument`, where
+    /// the framed initial becomes a zero-height overlay and the body text begins
+    /// to its right. This closes the API-to-layout seam the model-only tests do
+    /// not cross.
+    #[test]
+    fn the_drop_cap_host_api_reaches_the_paginated_layout() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (cap, _len) = doc.ordered_paragraphs()[0];
+        doc.set_drop_cap(&cap.to_string(), "drop", 3)
+            .expect("apply through the host API");
+        let body = body_paragraphs(&doc)
+            .into_iter()
+            .find(|(id, _)| *id != cap)
+            .map(|(id, _)| id)
+            .expect("the split body paragraph");
+
+        let fragment = |id| {
+            doc.painted_layout()
+                .pages
+                .iter()
+                .flat_map(|page| &page.placed)
+                .find(|placed| placed.fragment.node_id() == id)
+                .map(|placed| &placed.fragment)
+                .expect("paragraph is present in paginated output")
+        };
+        let BlockFragment::Paragraph { lines: initial, .. } = fragment(cap) else {
+            panic!("drop-cap paragraph");
+        };
+        assert_eq!(
+            initial.height(),
+            Twip::ZERO,
+            "the initial overlays the body's line box rather than consuming a line"
+        );
+        assert!(
+            initial.lines[0].runs[0].size >= Twip(1_170),
+            "the paginated initial carries its three-line ink size"
+        );
+
+        let BlockFragment::Paragraph { lines, .. } = fragment(body) else {
+            panic!("drop-cap body paragraph");
+        };
+        assert!(
+            lines.lines[0].runs[0].origin.x > Twip::ZERO,
+            "the first body line is excluded to the right of the initial"
+        );
+    }
+
+    /// The menu answers for the PAIR, from either half. A reader who clicks in the
+    /// body and opens the menu must see the drop cap that is plainly on screen.
+    #[test]
+    fn the_drop_cap_reads_back_from_either_half_of_the_pair() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        doc.set_drop_cap(&node, "margin", 4).expect("apply");
+
+        let body = body_paragraphs(&doc)
+            .into_iter()
+            .find(|(id, _)| id.to_string() != node)
+            .map(|(id, _)| id.to_string())
+            .expect("the body half");
+
+        for (half, which) in [(&node, "the framed half"), (&body, "the body half")] {
+            let read = read_drop_cap(&doc, half);
+            assert_eq!(read["mode"], "margin", "{which} reports the mode");
+            assert_eq!(read["lines"], 4, "{which} reports the line count");
+        }
+    }
+
+    /// Removing a drop cap joins the pair back together and puts the initial's size
+    /// back — the document returns to one paragraph, not two with a big letter.
+    #[test]
+    fn removing_a_drop_cap_joins_the_pair_and_restores_the_size() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let before = doc.paragraph_text(NodeId::from_str(&node).unwrap());
+        let count_before = body_paragraphs(&doc).len();
+
+        doc.set_drop_cap(&node, "drop", 3).expect("apply");
+        doc.set_drop_cap(&node, "none", 3).expect("remove");
+
+        let paragraphs = body_paragraphs(&doc);
+        assert_eq!(
+            paragraphs.len(),
+            count_before,
+            "the pair is one paragraph again"
+        );
+        let (id, text) = paragraphs
+            .iter()
+            .find(|(id, _)| id.to_string() == node)
+            .cloned()
+            .expect("the surviving paragraph");
+        assert_eq!(text, before, "and it reads exactly as it did before");
+        assert!(
+            paragraph_properties(&doc.document, id)
+                .and_then(|p| p.drop_cap_frame)
+                .is_none(),
+            "the frame is gone — the whole point of removing it"
+        );
+        assert_eq!(read_drop_cap(&doc, &node)["mode"], "none");
+        doc.document.validate().expect("valid after the join");
+    }
+
+    /// Selecting None on a paragraph that has no drop cap is a no-op, not an error:
+    /// the menu's None is idempotent and a caret anywhere must be able to choose it.
+    #[test]
+    fn removing_a_drop_cap_that_is_not_there_is_not_an_error() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let before = body_paragraphs(&doc).len();
+        doc.set_drop_cap(&node, "none", 3)
+            .expect("None on an unframed paragraph is accepted");
+        assert_eq!(body_paragraphs(&doc).len(), before, "and changes nothing");
+    }
+
+    /// Changing an existing drop cap's mode must NOT split the paragraph again —
+    /// that would cut a second letter off the body every time the menu was used.
+    #[test]
+    fn changing_the_mode_reframes_rather_than_splitting_again() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        doc.set_drop_cap(&node, "drop", 3).expect("apply");
+        let after_first = body_paragraphs(&doc);
+
+        doc.set_drop_cap(&node, "margin", 3)
+            .expect("switch to margin");
+        let after_second = body_paragraphs(&doc);
+        assert_eq!(
+            after_first.len(),
+            after_second.len(),
+            "reframing does not add a paragraph"
+        );
+        assert_eq!(
+            after_first, after_second,
+            "and does not move a single character between them"
+        );
+        assert_eq!(read_drop_cap(&doc, &node)["mode"], "margin");
+    }
+
+    /// A paragraph with nothing after its initial has no body to wrap beside it, so
+    /// it is refused rather than framed into an invisible drop cap.
+    /// What can and cannot carry a drop cap, and where the cut lands.
+    ///
+    /// Asserted on `drop_cap_cut` rather than through `setDropCap`, because the
+    /// error side of a `wasm_bindgen` method cannot be reached in a native test —
+    /// building the `JsValue` panics outside a browser. That is also why the
+    /// decision lives in its own function.
+    #[test]
+    fn only_a_paragraph_with_a_body_after_its_initial_can_carry_a_drop_cap() {
+        assert!(
+            drop_cap_cut("").is_err(),
+            "an empty paragraph has no initial"
+        );
+        assert!(
+            drop_cap_cut("D").is_err(),
+            "a one-character paragraph has no body to wrap beside the initial"
+        );
+        assert_eq!(
+            drop_cap_cut("Draft").unwrap(),
+            1,
+            "ASCII initial is one byte"
+        );
+        // The reason this is a byte offset and not a character count.
+        assert_eq!(
+            drop_cap_cut("Édouard").unwrap(),
+            2,
+            "É is two bytes — cutting at 1 would split the character"
+        );
+        assert_eq!(drop_cap_cut("書道").unwrap(), 3, "書 is three bytes");
     }
 
     /// Reads `lineNumbering` back as the host sees it.

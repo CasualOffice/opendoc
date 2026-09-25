@@ -92,27 +92,27 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 902],
-  ["de", 902],
-  ["es", 902],
-  ["fr", 902],
-  ["hi", 902],
-  ["id", 902],
-  ["it", 902],
-  ["ja", 902],
-  ["ko", 902],
-  ["nl", 902],
-  ["pl", 902],
-  ["pt-BR", 902],
-  ["ru", 902],
-  ["tr", 902],
-  ["uk", 902],
-  ["vi", 902],
-  ["zh-Hans", 902],
-  ["zh-Hant", 902],
+  ["ar", 913],
+  ["de", 913],
+  ["es", 913],
+  ["fr", 913],
+  ["hi", 913],
+  ["id", 913],
+  ["it", 913],
+  ["ja", 913],
+  ["ko", 913],
+  ["nl", 913],
+  ["pl", 913],
+  ["pt-BR", 913],
+  ["ru", 913],
+  ["tr", 913],
+  ["uk", 913],
+  ["vi", 913],
+  ["zh-Hans", 913],
+  ["zh-Hant", 913],
 ]);
 
-/** English defines 902 keys today, and every locale answers all 902 — 100.0%,
+/** English defines 913 keys today, and every locale answers all 913 — 100.0%,
  *  up from the 301 (35.4%) the previous pass had reached. That is the whole
  *  routed surface: every ribbon tab's groups and controls, the menu bar, every
  *  dialog title and button, the field labels, the File page, and the status and
@@ -124,6 +124,10 @@ const COVERAGE = new Map([
  *  dialog's Apply, Cancel, Close, Font, Size and "applies to this section" rather
  *  than translated a second time — two words for one button is how a dialog
  *  starts reading as a different product from the one beside it.
+ *
+ *  902 → 913 is Insert ▸ Drop Cap: the ribbon group label, command label, the
+ *  dialog's six new strings, and its three status announcements landed
+ *  translated together with the authoring surface.
  *
  *  The number in each row is still a floor, not a target, and at parity its
  *  job changes rather than ending: it is now what refuses a NEWLY routed
@@ -288,4 +292,3 @@ test("every string interpolates the placeholders its English does, and no others
   }
   assert.deepEqual(wrong, []);
 });
-

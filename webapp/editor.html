@@ -525,8 +525,9 @@
           <div class="rgroup" data-group="insert-text">
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertFieldPageNumber.title" data-i18n-label="panelInsert.insertField.label" id="insertFieldBtn" type="button" class="fmt" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span></button>
+              <button data-i18n-title="dropCap.name" data-i18n-label="dropCap.name" id="insertDropCapBtn" type="button" class="fmt" title="Drop cap" aria-label="Drop cap" aria-haspopup="dialog" aria-controls="dropCapDialog" disabled><span class="ms" aria-hidden="true">format_size</span></button>
             </div>
-            <span class="rgroup-label">Text</span>
+            <span data-i18n="panelInsert.text" class="rgroup-label">Text</span>
           </div>
           <!-- Footnote and Endnote moved to References ▸ Notes, which is where
                Word keeps them and the only place it keeps them. They are still
@@ -1295,6 +1296,38 @@
           <p data-i18n="bookmarkDialog.noBookmarksYetSelect" id="bookmarkEmpty" class="bookmark-empty" hidden>No bookmarks yet. Select text and add one above.</p>
         </div>
         <footer class="dialog-foot"><span data-i18n="bookmarkDialog.eachChangeOneUndoable" class="dialog-note">Each change is one undoable action.</span><div class="dialog-actions"><button data-i18n="bookmarkDialog.done" id="bookmarkDone" type="button" class="dialog-button">Done</button></div></footer>
+      </section>
+    </div>
+    <div id="dropCapDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="dropCapTitle" aria-describedby="dropCapDescription">
+      <section class="dialog-card dialog-card-compact drop-cap-dialog">
+        <header class="dialog-head">
+          <div class="dialog-heading">
+            <span class="ms dialog-heading-icon" aria-hidden="true">format_size</span>
+            <div>
+              <h2 data-i18n="dropCap.name" id="dropCapTitle">Drop cap</h2>
+              <p data-i18n="dropCap.description" id="dropCapDescription">Make the first letter span several lines.</p>
+            </div>
+          </div>
+          <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="dropCap.close.label" id="dropCapClose" type="button" class="dialog-close" title="Close" aria-label="Close drop cap"><span class="ms" aria-hidden="true">close</span></button>
+        </header>
+        <form id="dropCapForm" class="dialog-body drop-cap-body">
+          <fieldset class="dialog-group">
+            <legend data-i18n="dropCap.name">Drop cap</legend>
+            <div class="drop-cap-options">
+              <label class="drop-cap-choice"><input type="radio" name="dropCapMode" value="none" checked /><span class="drop-cap-sample" data-mode="none" aria-hidden="true"><b>A</b><i></i></span><span data-i18n="lineNumbersMenu.none">None</span></label>
+              <label class="drop-cap-choice"><input type="radio" name="dropCapMode" value="drop" /><span class="drop-cap-sample" data-mode="drop" aria-hidden="true"><b>A</b><i></i></span><span data-i18n="dropCap.dropped">Dropped</span></label>
+              <label class="drop-cap-choice"><input type="radio" name="dropCapMode" value="margin" /><span class="drop-cap-sample" data-mode="margin" aria-hidden="true"><b>A</b><i></i></span><span data-i18n="dropCap.inMargin">In margin</span></label>
+            </div>
+          </fieldset>
+          <label data-i18n="dropCap.lines" class="dialog-field drop-cap-lines">Lines<input id="dropCapLines" type="number" min="1" max="10" step="1" inputmode="numeric" value="3" /></label>
+        </form>
+        <footer class="dialog-foot">
+          <span data-i18n="fieldDialog.oneUndoableAction" class="dialog-note">One undoable action.</span>
+          <div class="dialog-actions">
+            <button data-i18n="watermarkDialog.cancel" id="dropCapCancel" type="button" class="dialog-button">Cancel</button>
+            <button data-i18n="watermarkDialog.apply" type="submit" form="dropCapForm" class="dialog-button dialog-button-primary">Apply</button>
+          </div>
+        </footer>
       </section>
     </div>
     <div id="fieldDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="fieldTitle" aria-describedby="fieldDescription">
