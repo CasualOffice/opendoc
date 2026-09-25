@@ -306,6 +306,42 @@ pub struct PlacedLineNumber {
     pub run: GlyphRun,
 }
 
+/// A resolved watermark, ready to paint: its content already positioned in
+/// page-local twips, plus the rotation applied to the whole stamp.
+///
+/// The rotation is on the STAMP and not on its parts because that is what a
+/// watermark is — one angled object whose words are not individually angled.
+/// `compose_page` emits it as a `PushTransform`/`PopTransform` bracket.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct PlacedWatermark {
+    /// What is stamped.
+    pub content: PlacedWatermarkContent,
+    /// Rotation about the page centre, or `None` for a level watermark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<ShapeTransform>,
+}
+
+/// The two kinds of stamp.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum PlacedWatermarkContent {
+    /// Shaped words, positioned unrotated and centred on the page.
+    Text {
+        /// The shaped runs, in visual order.
+        runs: Vec<GlyphRun>,
+    },
+    /// An image, scaled into `rect`.
+    Picture {
+        /// The media reference id, resolved by the backend against
+        /// `Definitions::media` (stringly, matching `PaintItem::Image`).
+        media: String,
+        /// The destination box, centred on the page.
+        rect: Rect,
+        /// Opacity in 1000ths of a percent; `None` is fully opaque.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opacity: Option<u32>,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ColumnSeparator {
     /// The rule's x in page-local twips (the gap's horizontal center).
@@ -370,6 +406,17 @@ pub struct Page {
     /// border, and anchored floats.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_numbers: Vec<PlacedLineNumber>,
+    /// The section's watermark, stamped behind everything else on this page.
+    /// `None` unless this page's section declares one; filled by the
+    /// post-pagination `watermark` pass off the hot path so page reuse (the
+    /// stabilization halt) stays position-free, like the running header/footer,
+    /// the page border, and the line numbers.
+    ///
+    /// The pass is named in prose rather than linked: its module is private, like
+    /// `line_number` and `page_border` beside it, so a doc link from this PUBLIC
+    /// field is a hard error under the docs gate's `-D warnings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<PlacedWatermark>,
     /// First model position on this page (the stabilization-halt key).
     pub start: ModelPos,
     /// One-past-last model position on this page.

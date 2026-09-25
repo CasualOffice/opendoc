@@ -248,6 +248,22 @@ impl<'a> Transcriber<'a> {
                     out.op("Q");
                 }
             }
+            // A transform bracket is PDF's own graphics-state save plus a `cm`,
+            // which is what the display list's bracket was modelled on. Counted
+            // on the same counter as clips: both are `q`/`Q` pairs, and a
+            // `PopTransform` arriving with nothing open must not emit a bare `Q`
+            // that would pop the page's own state.
+            PaintItem::PushTransform(transform) => {
+                out.op("q");
+                out.clips += 1;
+                out.concat_transform(transform);
+            }
+            PaintItem::PopTransform => {
+                if out.clips > 0 {
+                    out.clips -= 1;
+                    out.op("Q");
+                }
+            }
         }
         Ok(())
     }

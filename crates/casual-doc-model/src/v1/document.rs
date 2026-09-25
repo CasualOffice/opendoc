@@ -373,6 +373,18 @@ impl Document {
                     ));
                 }
             }
+            // A picture watermark names a media part, so it can dangle the same
+            // way an inline picture can. Checked here rather than in
+            // `check_section_domains`, which is deliberately a pure function of
+            // one section and knows nothing of the definition maps.
+            if let Some(Watermark {
+                content: WatermarkContent::Picture(picture),
+                ..
+            }) = &section.watermark
+                && !self.definitions.media.contains_key(&picture.media)
+            {
+                return Err(ModelError::DanglingMediaRef(picture.media.node_id()));
+            }
             // The `w:sectPrChange` prior snapshot: bound its metadata, then the prior
             // section's own domains (a prior never carries a further change, and its
             // historical header/footer references are not re-validated here).
@@ -2279,6 +2291,33 @@ fn check_section_domains(section: &SectionBoundary) -> Result<(), ModelError> {
             (0..=31_680).contains(&distance),
             "section.line_numbering.distance",
         )?;
+    }
+    if let Some(watermark) = &section.watermark {
+        match &watermark.content {
+            WatermarkContent::Text(text) => {
+                // Non-empty because an empty watermark is the absent one, and
+                // bounded because layout shapes this string on every page.
+                check_domain(
+                    !text.text.is_empty() && text.text.len() <= MAX_WATERMARK_TEXT_BYTES,
+                    "section.watermark.text",
+                )?;
+                if let Some(size) = text.size_half_points {
+                    // `w:sz`'s own domain: 1/2pt to 1638pt.
+                    check_domain((2..=3_276).contains(&size), "section.watermark.size")?;
+                }
+                if let Some(font) = &text.font {
+                    check_domain(!font.name.is_empty(), "section.watermark.font")?;
+                }
+            }
+            WatermarkContent::Picture(picture) => {
+                if let Some(scale) = picture.scale_percent {
+                    // Word's own scale combo runs 5%..500%; anything outside it
+                    // is a value no producer writes and layout would have to
+                    // clamp silently.
+                    check_domain((1..=1_000).contains(&scale), "section.watermark.scale")?;
+                }
+            }
+        }
     }
     for value in [section.paper_source.first, section.paper_source.other]
         .into_iter()

@@ -33,6 +33,12 @@ use casual_doc_import::{RelationshipOwner, RetainedParts};
 use casual_doc_model::strip_xml_forbidden;
 use casual_doc_model::v1::BookmarkId;
 use casual_doc_model::v1::DrawingHyperlink;
+use casual_doc_model::v1::PageSize;
+use casual_doc_model::v1::SectionId;
+use casual_doc_model::v1::Watermark;
+use casual_doc_model::v1::WatermarkContent;
+use casual_doc_model::v1::WatermarkLayout;
+use casual_doc_model::v1::WatermarkText;
 use casual_doc_model::v1::{
     AbstractNumbering, AbstractNumberingId, Alignment, AltChunk, AnchorHorizontal, AnchorVertical,
     AnchoredDrawing, AppProperties, BlockNode, BorderEdge, BreakKind, CellMergeAnnotation,
@@ -349,10 +355,24 @@ struct IdTokens {
     endnotes: BTreeMap<NoteId, u32>,
     comments: BTreeMap<CommentId, u32>,
     bookmarks: BTreeMap<BookmarkId, u32>,
+    /// The header parts synthesized to carry a section's watermark, as
+    /// `(page type, relationship id)` per section, in `w:headerReference` order.
+    ///
+    /// It lives here because a `w:sectPr` is written from four different depths
+    /// (the body's trailing section, a paragraph's section break, and — for the
+    /// prior snapshot — inside `w:sectPrChange`), and `IdTokens` is the one thing
+    /// already threaded to all of them. Like every other field it is a pure
+    /// function of `Definitions`, so the reference written into `w:sectPr` and the
+    /// part written into the package are derived from the same computation and
+    /// cannot name different relationships. See `watermark_plan`.
+    watermark_headers: BTreeMap<SectionId, Vec<(HeaderFooterKind, String)>>,
 }
 
 impl IdTokens {
-    fn new(defs: &Definitions) -> Self {
+    /// `available_media` is needed because a picture watermark whose bytes the
+    /// caller did not supply must not get a `w:headerReference` to a part the
+    /// package will not contain — see `watermark_plan`.
+    fn new(defs: &Definitions, available_media: &DefinitionMap<MediaId, MediaReference>) -> Self {
         fn number<K: Copy + Ord, V>(map: &DefinitionMap<K, V>) -> BTreeMap<K, u32> {
             map.iter()
                 .enumerate()
@@ -365,6 +385,14 @@ impl IdTokens {
                 })
                 .collect()
         }
+        let mut watermark_headers: BTreeMap<SectionId, Vec<(HeaderFooterKind, String)>> =
+            BTreeMap::new();
+        for synth in watermark_plan(defs, available_media).synthesized {
+            watermark_headers
+                .entry(synth.section)
+                .or_default()
+                .push((synth.kind, synth.rel_id));
+        }
         Self {
             abstract_numbering: number(&defs.abstract_numbering),
             numbering: number(&defs.numbering),
@@ -372,7 +400,17 @@ impl IdTokens {
             endnotes: number(&defs.endnotes),
             comments: number(&defs.comments),
             bookmarks: number(&defs.bookmarks),
+            watermark_headers,
         }
+    }
+
+    /// The `(page type, relationship id)` pairs for the header parts synthesized to
+    /// carry `section`'s watermark. Empty for the overwhelming majority of
+    /// documents, which declare no watermark at all.
+    fn watermark_headers(&self, section: SectionId) -> &[(HeaderFooterKind, String)] {
+        self.watermark_headers
+            .get(&section)
+            .map_or(&[][..], Vec::as_slice)
     }
 
     /// Footnote and endnote `w:id` live in separate spaces in OOXML, so a note is
@@ -491,7 +529,6 @@ pub fn export_document_with_retained_parts(
 ) -> Result<DocxExport, ExportError> {
     let definitions = document.definitions();
     let mut reporter = Reporter::default();
-    let id_tokens = IdTokens::new(definitions);
     // The media the package will contain. An entry whose bytes the caller did
     // not supply is dropped here, once, and everything downstream — the body
     // reference, the relationship, the content-type default and the ZIP entry —
@@ -500,6 +537,9 @@ pub fn export_document_with_retained_parts(
     // relationship, which is a package advertising a picture it cannot supply
     // (FID-R-06). Word drew a broken-image box and nothing was reported.
     let available_media = available_media(definitions, media, &mut reporter);
+    // Built after `available_media`: the watermark header references it carries
+    // must not name a part the package will not contain (see `watermark_plan`).
+    let id_tokens = IdTokens::new(definitions, &available_media);
     // Embedded-object (chart/diagram/OLE) part relationships, emitted with their
     // verbatim ids so the body reference and the relationship agree. Collected
     // before the body is written so their ids are reserved against hyperlink
@@ -674,15 +714,68 @@ pub fn export_document_with_retained_parts(
             people_xml(&definitions.people)?,
         ));
     }
+    // Which header part carries which section's watermark, and which header parts
+    // have to be invented because a section wants a watermark and has nowhere to
+    // put it. Computed once here; `IdTokens` recomputes the same pure function for
+    // the `w:sectPr` references, so the reference and the part agree by
+    // construction rather than by two lists being kept in step.
+    let plan = watermark_plan(definitions, &available_media);
+    for _ in 0..plan.conflicts {
+        // Two sections with different watermarks sharing one header part: the
+        // first in document order won, and this says so rather than letting a
+        // watermark vanish silently. `watermark_plan` documents why that
+        // resolution and not part-cloning.
+        reporter.record_construct(
+            "docx.export.watermark.shared_header_conflict",
+            "word/document.xml",
+            "sectPr",
+            None,
+            Disposition::OmittedNotRetained,
+        );
+    }
+    for _ in 0..plan.unwritable {
+        // A picture watermark whose image bytes the caller did not supply. The
+        // shape, its relationship, its part and its `w:headerReference` are all
+        // absent together (FID-R-06); the loss is named here.
+        reporter.record_construct(
+            "docx.export.watermark.missing_picture_bytes",
+            "word/document.xml",
+            "sectPr",
+            Some("watermark"),
+            Disposition::OmittedNotRetained,
+        );
+    }
     // Headers then footers, each a part with an id-derived relationship id the
     // section's `w:sectPr` references. Emitted in ascending-id order so the
     // importer (which keys by relationship order) re-allocates matching ids.
+    let mut header_parts = 0usize;
     for (index, (id, header)) in definitions.headers.iter().enumerate() {
-        let (bytes, own_rels, own_media) =
-            header_footer_xml("w:hdr", &header.blocks, definitions, &available_media)?;
+        let part_name = format!("word/header{}.xml", index + 1);
+        // The watermark this part carries, if any: the shape is built per PART
+        // because the image relationship it names has to be one this part declares.
+        let owner = plan.in_header.get(id).and_then(|section_id| {
+            definitions
+                .sections
+                .iter()
+                .position(|section| section.id == *section_id)
+        });
+        let shape = owner.and_then(|position| {
+            watermark_shape(
+                &definitions.sections[position],
+                position + 1,
+                &available_media,
+            )
+        });
+        let (bytes, own_rels, own_media) = header_footer_xml(
+            "w:hdr",
+            &header.blocks,
+            definitions,
+            &available_media,
+            shape.as_ref(),
+        )?;
         extras.push(
             ExtraPart::new(
-                &format!("word/header{}.xml", index + 1),
+                &part_name,
                 HEADER_CT,
                 HEADER_REL_TYPE,
                 &format!("header{}.xml", index + 1),
@@ -692,10 +785,53 @@ pub fn export_document_with_retained_parts(
             .with_own_rels(own_rels)
             .with_own_media(own_media),
         );
+        header_parts = index + 1;
+    }
+    // Header parts that exist only to carry a watermark. Word has no watermark
+    // element and reads one only from a header, so a section with no header of a
+    // page type it uses cannot express its watermark at all until a part exists —
+    // and Word itself leaves exactly such a part behind when a user watermarks a
+    // header-less document. Numbered after the real headers so the part names
+    // cannot collide, and in `plan.synthesized`'s document order so the package
+    // stays byte-deterministic.
+    for (offset, synth) in plan.synthesized.iter().enumerate() {
+        let number = header_parts + offset + 1;
+        let part_name = format!("word/header{number}.xml");
+        let Some(position) = definitions
+            .sections
+            .iter()
+            .position(|section| section.id == synth.section)
+        else {
+            continue;
+        };
+        let Some(shape) = watermark_shape(
+            &definitions.sections[position],
+            position + 1,
+            &available_media,
+        ) else {
+            // Unreachable: `watermark_plan` only synthesizes for a section whose
+            // watermark it has already established is writable. Skipping rather
+            // than panicking keeps the part and its reference absent together.
+            continue;
+        };
+        let (bytes, own_rels, own_media) =
+            header_footer_xml("w:hdr", &[], definitions, &available_media, Some(&shape))?;
+        extras.push(
+            ExtraPart::new(
+                &part_name,
+                HEADER_CT,
+                HEADER_REL_TYPE,
+                &format!("header{number}.xml"),
+                bytes,
+            )
+            .with_rel_id(synth.rel_id.clone())
+            .with_own_rels(own_rels)
+            .with_own_media(own_media),
+        );
     }
     for (index, (id, footer)) in definitions.footers.iter().enumerate() {
         let (bytes, own_rels, own_media) =
-            header_footer_xml("w:ftr", &footer.blocks, definitions, &available_media)?;
+            header_footer_xml("w:ftr", &footer.blocks, definitions, &available_media, None)?;
         extras.push(
             ExtraPart::new(
                 &format!("word/footer{}.xml", index + 1),
@@ -1504,7 +1640,7 @@ fn notes_xml(
         defs,
         media: available_media,
         rels: RelBuilder::new(reserved),
-        tokens: IdTokens::new(defs),
+        tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -1549,7 +1685,7 @@ fn comments_xml(
         defs,
         media: available_media,
         rels: RelBuilder::new(reserved),
-        tokens: IdTokens::new(defs),
+        tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start("w:comments");
     r.push_attribute(("xmlns:w", W_NS));
@@ -1583,6 +1719,7 @@ fn comments_xml(
                         &paragraph.inlines,
                         &mut ctx,
                         comment.para_id.as_deref(),
+                        None,
                     )?;
                 }
                 _ => write_block(&mut w, block, &mut ctx)?,
@@ -1704,23 +1841,34 @@ fn people_xml(people: &[Person]) -> Result<Vec<u8>, ExportError> {
 
 /// Emits a header or footer part (`w:hdr`/`w:ftr`) from its blocks. Uses a fresh
 /// per-part `Ctx` so a hyperlink inside routes to the part's own rels (returned).
+/// `watermark` is the section watermark this part has to carry (headers only;
+/// Word never puts a watermark in a footer, and a footer shape would be clipped
+/// out of the bottom margin on a page whose footer is short).
 fn header_footer_xml(
     root: &str,
     blocks: &[BlockNode],
     defs: &Definitions,
     available_media: &DefinitionMap<MediaId, MediaReference>,
+    watermark: Option<&WatermarkShape<'_>>,
 ) -> Result<PartWithRels, ExportError> {
     let mut w = new_writer();
     // The images this part uses, reserved so a hyperlink minted inside the part
     // cannot be handed an id an image already holds — which is how a header's
     // `r:embed` came to resolve to a hyperlink.
-    let own_media = part_media(blocks, available_media);
+    let mut own_media = part_media(blocks, available_media);
+    // A picture watermark's image belongs to THIS part, exactly like a header
+    // logo's: the `v:imagedata r:id` is resolved through `header{n}.xml.rels`.
+    if let Some((rel_id, target)) = watermark.and_then(|shape| shape.image_rel.clone())
+        && !own_media.iter().any(|(id, _)| *id == rel_id)
+    {
+        own_media.push((rel_id, target));
+    }
     let reserved: BTreeSet<String> = own_media.iter().map(|(id, _)| id.clone()).collect();
     let mut ctx = Ctx {
         defs,
         media: available_media,
         rels: RelBuilder::new(reserved),
-        tokens: IdTokens::new(defs),
+        tokens: IdTokens::new(defs, available_media),
     };
     let mut r = start(root);
     r.push_attribute(("xmlns:w", W_NS));
@@ -1728,9 +1876,50 @@ fn header_footer_xml(
     // `xmlns:w14` so a content-control checkbox's `w14:checkbox` detail is
     // well-formed when a block sdt lives in a header/footer.
     r.push_attribute(("xmlns:w14", W14_NS));
+    if watermark.is_some() {
+        // `v`/`o` carry the watermark's VML shape. Declared only when a watermark
+        // is present so a header without one serializes byte-identically to
+        // before this slice — the property the golden baselines rest on.
+        r.push_attribute(("xmlns:v", V_NS));
+        r.push_attribute(("xmlns:o", O_NS));
+    }
     w.write_event(Event::Start(r)).map_err(pkg)?;
-    for block in blocks {
-        write_block(&mut w, block, &mut ctx)?;
+    // Word puts the watermark's run at the START of the header's FIRST paragraph
+    // rather than in a paragraph of its own. Two reasons to match it: the shape is
+    // absolutely positioned against the margin box, so its place in the flow never
+    // moves it, while an extra paragraph would make the header one line taller —
+    // and, worse, that paragraph would survive every save/load cycle once import
+    // lifts the shape back out, so a document would grow an empty header line per
+    // round trip. A header with no leading paragraph gets one synthesized, which
+    // is exactly what Word writes into an empty header.
+    match (watermark, blocks.split_first()) {
+        (Some(shape), Some((BlockNode::Paragraph(paragraph), rest))) => {
+            write_paragraph(
+                &mut w,
+                &paragraph.properties,
+                &paragraph.inlines,
+                &mut ctx,
+                None,
+                Some(shape),
+            )?;
+            for block in rest {
+                write_block(&mut w, block, &mut ctx)?;
+            }
+        }
+        (Some(shape), _) => {
+            w.write_event(Event::Start(start("w:p"))).map_err(pkg)?;
+            write_watermark_run(&mut w, shape)?;
+            w.write_event(Event::End(BytesEnd::new("w:p")))
+                .map_err(pkg)?;
+            for block in blocks {
+                write_block(&mut w, block, &mut ctx)?;
+            }
+        }
+        (None, _) => {
+            for block in blocks {
+                write_block(&mut w, block, &mut ctx)?;
+            }
+        }
     }
     w.write_event(Event::End(BytesEnd::new(root)))
         .map_err(pkg)?;
@@ -1750,6 +1939,616 @@ fn hf_kind_token(kind: HeaderFooterKind) -> &'static str {
         HeaderFooterKind::First => "first",
         HeaderFooterKind::Even => "even",
     }
+}
+
+// ---------------------------------------------------------------------------
+// Watermarks (`109` OO-006) — the DOCX half of Word's Design ▸ Watermark.
+//
+// WordprocessingML has **no watermark element**. Word stores one as a floating
+// VML shape inside each of a section's HEADER parts and recognises it again by
+// the shape's id prefix (`PowerPlusWaterMarkObject` for text,
+// `WordPictureWatermark` for a picture). The model deliberately does not mirror
+// that — see `Watermark`'s own documentation for why — so this file is where the
+// section property is put back into the shape Word expects.
+//
+// Three things about that mapping are not obvious and are decided here:
+//
+// 1. **Routing.** A watermark is a property of a SECTION, and Word reads it from
+//    a HEADER. The shape therefore goes into every header part the section
+//    references, because a header covers one page type (`default`/`first`/`even`)
+//    and a page whose header part lacks the shape shows no watermark at all.
+// 2. **Synthesis.** A section with no header for a page type it uses gets one
+//    invented — part, content type, relationship, and the `w:sectPr`
+//    `w:headerReference`. This is what Word itself does: watermarking a document
+//    that has no header leaves a `header1.xml` behind whose only content is the
+//    shape. Without the part the watermark is simply not expressible.
+// 3. **Sharing.** Two sections with different watermarks can reference one header
+//    part, which the format cannot represent. See `watermark_plan`.
+//
+// Geometry is in points because that is VML's unit; the model is in twips
+// (1 pt = 20 twips).
+// ---------------------------------------------------------------------------
+
+/// VML `z-index` Word writes on a watermark shape. Negative puts the stamp
+/// *behind* the body text, which is the whole point of a watermark; the exact
+/// magnitude is Word's own, copied rather than invented so the stamp keeps its
+/// relative order against other floating shapes a document may already carry.
+const WATERMARK_Z_INDEX: &str = "-251658752";
+
+/// `rotation` (degrees) on a diagonal watermark's shape. Word writes a fixed
+/// `rotation:315` rather than an angle derived from the page, and
+/// `casual-doc-layout::watermark` paints that same fixed angle, so the two halves
+/// agree by construction.
+const WATERMARK_DIAGONAL_ROTATION: &str = "315";
+
+/// `<v:fill opacity>` for a semitransparent watermark — Word's `.5`.
+const WATERMARK_FILL_OPACITY: &str = ".5";
+
+/// Word's washout pair on `v:imagedata`: `gain` scales the image toward white and
+/// `blacklevel` lifts its black point. VML writes both as 16.16 fixed point with
+/// an `f` suffix, so `19661f` is 19661/65536 = 0.30 and `22938f` is 0.35. These
+/// are the values Word's "Washout" checkbox produces, measured from its output.
+const WATERMARK_WASHOUT_GAIN: &str = "19661f";
+const WATERMARK_WASHOUT_BLACKLEVEL: &str = "22938f";
+
+/// The fraction of the available span an auto-sized watermark fills.
+///
+/// **This must stay equal to `casual-doc-layout::watermark::AUTO_FIT_FRACTION`.**
+/// It is duplicated rather than shared because export does not (and should not)
+/// depend on the layout crate: the writer's job is bytes, the layout pass's job is
+/// pixels, and a dependency from one to the other to reach a constant would invert
+/// the crate graph. The two numbers describe the same decision — Word's "Auto"
+/// scales the stamp to the page without publishing a formula, and 85% leaves it
+/// clear of the page edge at every paper size the model admits — so a document we
+/// write renders the same in Word as in our own viewer.
+const WATERMARK_AUTO_FIT_FRACTION: f64 = 0.85;
+
+/// Width-to-height ratio of an auto-sized text watermark's shape box, measured
+/// from Word's own output (`width:415.15pt;height:207.55pt` — 2.0002:1).
+const WATERMARK_AUTO_ASPECT: f64 = 2.0;
+
+/// Average glyph advance as a fraction of the em, used *only* to size the shape
+/// box of an explicitly-sized text watermark.
+///
+/// `v:textpath` inherits `fitshape="t"` from the `_x0000_t136` shapetype, which
+/// means the glyphs are stretched into the shape's box: the **box**, not the
+/// `font-size`, is what sets the rendered size, and Word derives the box by
+/// *measuring* the text. This crate cannot measure text — it has no shaper and no
+/// font bytes, which is `casual-doc-layout`'s job — so the box is estimated.
+///
+/// 0.55 em is the average advance of uppercase Latin in Calibri, Word's own
+/// default watermark face: `DRAFT` measures 2.77 em over five glyphs. The
+/// consequence is named rather than hidden — an explicitly-sized stamp in a file
+/// we wrote can be stretched or squeezed in Word by however much the real face
+/// departs from that average, and Word recomputes the box exactly the first time
+/// the user re-opens the Watermark dialog. Our own renderer never reads this
+/// number; it shapes the text with the real face.
+const WATERMARK_AVERAGE_ADVANCE_EM: f64 = 0.55;
+
+/// Single-line box height as a multiple of the font size, for the same estimate.
+const WATERMARK_LINE_HEIGHT_EM: f64 = 1.2;
+
+/// Twips per point (`ST_TwipsMeasure` is 1/20 pt).
+const TWIPS_PER_POINT: f64 = 20.0;
+
+/// A header part synthesized purely to carry a watermark: the section it serves,
+/// the page type its `w:headerReference` claims, and the relationship id both the
+/// reference and the part's `document.xml.rels` entry use.
+struct SynthesizedWatermarkHeader {
+    section: SectionId,
+    kind: HeaderFooterKind,
+    rel_id: String,
+}
+
+/// Which header part carries which section's watermark, plus the header parts that
+/// have to be invented because the format cannot express a watermark without one.
+///
+/// Derived purely from [`Definitions`] and the available-media table, so every
+/// place that needs part of the answer recomputes the whole thing and they cannot
+/// disagree — the same one-table discipline the media/relationship/content-type
+/// quartet holds. O(sections x headers per section), i.e. O(document sections).
+struct WatermarkPlan {
+    /// The section whose watermark each EXISTING header part carries.
+    in_header: BTreeMap<HeaderFooterId, SectionId>,
+    /// Parts invented for sections that had no header to put the shape in, in
+    /// document order (so part names and relationship ids are deterministic).
+    synthesized: Vec<SynthesizedWatermarkHeader>,
+    /// How many sections' watermarks were dropped because a header part they
+    /// reference already carries another section's. Reported, never dropped
+    /// silently (FID-R-01).
+    conflicts: usize,
+    /// How many sections' watermarks the package cannot express because their
+    /// picture's bytes were not supplied. Also reported.
+    unwritable: usize,
+}
+
+/// The relationship id a synthesized watermark header is reached by. The `rIdWm`
+/// prefix cannot collide with the minted `rId{n}` ids or with `hf_rel_id`'s
+/// `rIdHf{n}`, and deriving it from the section plus the page type keeps the
+/// package byte-deterministic without threading a counter.
+fn watermark_header_rel_id(section: SectionId, kind: HeaderFooterKind) -> String {
+    format!(
+        "rIdWm{}{}",
+        section.node_id().as_u128(),
+        hf_kind_token(kind)
+    )
+}
+
+/// Builds the [`WatermarkPlan`] for a document.
+///
+/// # The page types a section needs a header for
+///
+/// `default` always; `first` when the section sets `w:titlePg`; `even` when the
+/// document sets `w:evenAndOddHeaders`. A page type the section uses but has no
+/// header for would show no watermark, so a part is synthesized for it — which is
+/// what Word does when it adds a watermark to such a document.
+///
+/// # The shared-header conflict, and why the first section wins
+///
+/// One header part can be referenced by two sections. If those sections carry
+/// *different* watermarks, the format cannot hold both: the shape lives in the
+/// part, and the part is one file. The resolution here is **the first section in
+/// document order wins, and the loss is reported**, for four reasons:
+///
+/// 1. Word's Design ▸ Watermark writes the *same* watermark into every header of
+///    every section — it has no per-section watermark UI — so a document where two
+///    sections sharing a header disagree is not a state Word can produce, and
+///    nothing is lost that Word would ever have shown.
+/// 2. The alternative, cloning the header part so each section gets its own copy,
+///    silently un-shares content the document deliberately shares: editing "the"
+///    header afterwards would change only one section. That is a larger and far
+///    less visible change to the document than dropping a decoration.
+/// 3. First-in-document-order is the precedence the rest of this writer already
+///    uses, and it keeps the output byte-deterministic.
+/// 4. The drop is *named* in the compatibility report
+///    (`docx.export.watermark.shared_header_conflict`), so it is reported loss and
+///    not silent loss — the distinction AGENTS.md makes a hard rule.
+/// # A watermark the package cannot express at all
+///
+/// A picture watermark whose bytes the caller did not supply is skipped *by the
+/// plan*, not by the writer downstream: dropping it here means the shape, the
+/// image relationship, the synthesized part, the content-type entry and the
+/// `w:headerReference` all disappear together, holding the package invariant that
+/// **no relationship is written for content the package does not contain**
+/// (FID-R-06). Skipping it later would have left a `w:headerReference` pointing at
+/// a part that was never written.
+fn watermark_plan(
+    defs: &Definitions,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
+) -> WatermarkPlan {
+    let mut plan = WatermarkPlan {
+        in_header: BTreeMap::new(),
+        synthesized: Vec::new(),
+        conflicts: 0,
+        unwritable: 0,
+    };
+    for section in &defs.sections {
+        let Some(watermark) = section.watermark.as_ref() else {
+            continue;
+        };
+        if let WatermarkContent::Picture(picture) = &watermark.content
+            && available_media.get(&picture.media).is_none()
+        {
+            plan.unwritable += 1;
+            continue;
+        }
+        for reference in &section.headers {
+            match plan.in_header.entry(reference.reference) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(section.id);
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    // Already claimed. Same section twice (a section may
+                    // reference one part for two page types) is not a conflict.
+                    if *slot.get() != section.id {
+                        plan.conflicts += 1;
+                    }
+                }
+            }
+        }
+        for kind in [
+            HeaderFooterKind::Default,
+            HeaderFooterKind::First,
+            HeaderFooterKind::Even,
+        ] {
+            let needed = match kind {
+                HeaderFooterKind::Default => true,
+                HeaderFooterKind::First => section.title_page == Some(true),
+                HeaderFooterKind::Even => defs.settings.even_and_odd_headers,
+            };
+            if needed && !section.headers.iter().any(|href| href.kind == kind) {
+                plan.synthesized.push(SynthesizedWatermarkHeader {
+                    section: section.id,
+                    kind,
+                    rel_id: watermark_header_rel_id(section.id, kind),
+                });
+            }
+        }
+    }
+    plan
+}
+
+/// Everything one header part needs to emit one section's watermark shape: the
+/// watermark itself, the shape id Word recognises it by, the page box the stamp is
+/// measured against, and — for a picture — the image relationship *in this part's
+/// own rels*.
+struct WatermarkShape<'a> {
+    watermark: &'a Watermark,
+    /// `PowerPlusWaterMarkObject{n}` / `WordPictureWatermark{n}`. Word identifies
+    /// a watermark by this prefix; `n` keeps two sections' shapes distinct and is
+    /// the section's 1-based document position, so it is stable across exports.
+    /// Shape ids are part-scoped, so one section's stamp repeated in its three
+    /// header parts reuses the same id exactly as Word's does.
+    shape_id: String,
+    /// The `r:id` of the image relationship this part declares (picture only).
+    image_rel_id: Option<String>,
+    /// The `(rId, target)` the part's own `_rels` must carry for that image.
+    image_rel: Option<MediaRel>,
+    /// The page the stamp is centred on and sized against.
+    page_size: PageSize,
+}
+
+/// Resolves a section's watermark into the shape a header part will emit.
+///
+/// `None` only for a section the [`WatermarkPlan`] already excluded (no watermark,
+/// or a picture whose bytes are missing), so a caller that walks the plan never
+/// sees it; the `Option` exists so the two cannot drift into disagreement.
+/// `position` is the section's 1-based document position, which names the shape.
+fn watermark_shape<'a>(
+    section: &'a SectionBoundary,
+    position: usize,
+    available_media: &DefinitionMap<MediaId, MediaReference>,
+) -> Option<WatermarkShape<'a>> {
+    let watermark = section.watermark.as_ref()?;
+    match &watermark.content {
+        WatermarkContent::Text(_) => Some(WatermarkShape {
+            watermark,
+            shape_id: format!("PowerPlusWaterMarkObject{position}"),
+            image_rel_id: None,
+            image_rel: None,
+            page_size: section.page_size,
+        }),
+        WatermarkContent::Picture(picture) => {
+            let reference = available_media.get(&picture.media)?;
+            Some(WatermarkShape {
+                watermark,
+                shape_id: format!("WordPictureWatermark{position}"),
+                image_rel_id: Some(reference.relationship_id.clone()),
+                image_rel: Some((
+                    reference.relationship_id.clone(),
+                    media_target(&reference.part_name).to_owned(),
+                )),
+                page_size: section.page_size,
+            })
+        }
+    }
+}
+
+/// Page width/height in points.
+fn watermark_page_pt(page_size: PageSize) -> (f64, f64) {
+    (
+        f64::from(page_size.width_twips) / TWIPS_PER_POINT,
+        f64::from(page_size.height_twips) / TWIPS_PER_POINT,
+    )
+}
+
+/// The span an auto-sized stamp is fitted to, in points: the page diagonal when it
+/// runs diagonally, the page width when level. Mirrors
+/// `casual-doc-layout::watermark::available_span`.
+fn watermark_span_pt(layout: WatermarkLayout, page_size: PageSize) -> f64 {
+    let (width, height) = watermark_page_pt(page_size);
+    match layout {
+        WatermarkLayout::Diagonal => width.hypot(height),
+        WatermarkLayout::Horizontal => width,
+    }
+}
+
+/// The shape box (width, height) in points for a text watermark.
+///
+/// Auto size takes [`WATERMARK_AUTO_FIT_FRACTION`] of the span at Word's measured
+/// [`WATERMARK_AUTO_ASPECT`]; an explicit size is estimated from the glyph count
+/// (see [`WATERMARK_AVERAGE_ADVANCE_EM`] for why an estimate is the honest option
+/// here) and clamped to the same fraction of the span so an over-long string can
+/// never run off the page.
+fn watermark_text_box_pt(
+    text: &WatermarkText,
+    layout: WatermarkLayout,
+    page_size: PageSize,
+) -> (f64, f64) {
+    let span = watermark_span_pt(layout, page_size) * WATERMARK_AUTO_FIT_FRACTION;
+    match text.size_half_points {
+        None => (span, span / WATERMARK_AUTO_ASPECT),
+        Some(half_points) => {
+            let size_pt = f64::from(half_points) / 2.0;
+            let glyphs = text.text.chars().count().max(1) as f64;
+            let width = (glyphs * size_pt * WATERMARK_AVERAGE_ADVANCE_EM).min(span);
+            (
+                width.max(1.0),
+                (size_pt * WATERMARK_LINE_HEIGHT_EM).max(1.0),
+            )
+        }
+    }
+}
+
+/// The side of a picture watermark's square box, in points.
+///
+/// Mirrors `casual-doc-layout::watermark::picture_rect`: the box is square and
+/// measured against the page's shorter edge because neither half of the system
+/// knows the image's natural dimensions — the media table carries none. Word's
+/// scale is nominally a percentage of the image's natural size; treating it as a
+/// percentage of the page keeps the written file and our own rendering identical,
+/// and the deviation is recorded in the model and the layout module rather than
+/// being invisible in one half only.
+fn watermark_picture_side_pt(scale_percent: Option<u32>, page_size: PageSize) -> f64 {
+    let (width, height) = watermark_page_pt(page_size);
+    let shorter = width.min(height);
+    match scale_percent {
+        Some(percent) => shorter * f64::from(percent) / 100.0,
+        None => shorter * WATERMARK_AUTO_FIT_FRACTION,
+    }
+    .max(1.0)
+}
+
+/// The `style` attribute of a watermark shape.
+///
+/// `position:absolute` with `mso-position-horizontal:center` /
+/// `mso-position-vertical:center` against `margin` is how Word anchors a
+/// watermark: centred on the margin box, not on the text flow, so the stamp does
+/// not move when the run it is anchored to moves. `margin-left`/`margin-top` are
+/// written as `0` because the `mso-position-*` pair overrides them — Word writes
+/// them anyway, and omitting them makes some consumers fall back to the offsets.
+fn watermark_style(shape: &WatermarkShape<'_>, width_pt: f64, height_pt: f64) -> String {
+    let mut style = format!(
+        "position:absolute;margin-left:0;margin-top:0;width:{width_pt:.2}pt;height:{height_pt:.2}pt"
+    );
+    if shape.watermark.layout == WatermarkLayout::Diagonal {
+        style.push_str(";rotation:");
+        style.push_str(WATERMARK_DIAGONAL_ROTATION);
+    }
+    style.push_str(";z-index:");
+    style.push_str(WATERMARK_Z_INDEX);
+    style.push_str(
+        ";mso-position-horizontal:center;mso-position-horizontal-relative:margin\
+         ;mso-position-vertical:center;mso-position-vertical-relative:margin",
+    );
+    style
+}
+
+/// Emits the watermark as `<w:r><w:pict>…</w:pict></w:r>`.
+///
+/// The run carries `w:noProof` because the stamp is not prose: Word marks the
+/// watermark run so the spell checker ignores the word "DRAFT".
+fn write_watermark_run(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shape: &WatermarkShape<'_>,
+) -> Result<(), ExportError> {
+    w.write_event(Event::Start(start("w:r"))).map_err(pkg)?;
+    w.write_event(Event::Start(start("w:rPr"))).map_err(pkg)?;
+    w.write_event(Event::Empty(start("w:noProof")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:rPr")))
+        .map_err(pkg)?;
+    w.write_event(Event::Start(start("w:pict"))).map_err(pkg)?;
+    match &shape.watermark.content {
+        WatermarkContent::Text(text) => write_watermark_text_shape(w, shape, text)?,
+        WatermarkContent::Picture(picture) => {
+            write_watermark_picture_shape(w, shape, picture.washout)?;
+        }
+    }
+    w.write_event(Event::End(BytesEnd::new("w:pict")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the `_x0000_t136` text-path shapetype and the text watermark shape.
+///
+/// `_x0000_t136` is VML's warped-text shape (ECMA-376 Part 4 §14.1, the VML
+/// `o:spt` catalogue): its `path` and `v:formulas` are the standard definition and
+/// its `v:textpath on="t" fitshape="t"` is what makes the string render as
+/// stretched outlines. The definition is written out rather than relying on the
+/// consumer's built-in table for `_x0000_t*` ids, because the geometry — not the
+/// font size — is what sizes the stamp.
+fn write_watermark_text_shape(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shape: &WatermarkShape<'_>,
+    text: &WatermarkText,
+) -> Result<(), ExportError> {
+    let mut shapetype = start("v:shapetype");
+    shapetype.push_attribute(("id", "_x0000_t136"));
+    shapetype.push_attribute(("coordsize", "21600,21600"));
+    shapetype.push_attribute(("o:spt", "136"));
+    shapetype.push_attribute(("adj", "10800"));
+    shapetype.push_attribute(("path", "m@7,l@8,m@5,21600l@6,21600e"));
+    w.write_event(Event::Start(shapetype)).map_err(pkg)?;
+    w.write_event(Event::Start(start("v:formulas")))
+        .map_err(pkg)?;
+    for eqn in [
+        "sum #0 0 10800",
+        "prod #0 2 1",
+        "sum 21600 0 @1",
+        "sum 0 0 @2",
+        "sum 21600 0 @3",
+        "if @0 @3 0",
+        "if @0 21600 @1",
+        "if @0 0 @2",
+        "if @0 @4 21600",
+        "mid @5 @6",
+        "mid @8 @5",
+        "mid @7 @8",
+        "mid @6 @7",
+        "sum @6 0 @5",
+    ] {
+        let mut f = start("v:f");
+        f.push_attribute(("eqn", eqn));
+        w.write_event(Event::Empty(f)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("v:formulas")))
+        .map_err(pkg)?;
+    let mut path = start("v:path");
+    path.push_attribute(("textpathok", "t"));
+    path.push_attribute(("o:connecttype", "custom"));
+    path.push_attribute(("o:connectlocs", "@9,0;@10,10800;@11,21600;@12,10800"));
+    path.push_attribute(("o:connectangles", "270,180,90,0"));
+    w.write_event(Event::Empty(path)).map_err(pkg)?;
+    let mut textpath = start("v:textpath");
+    textpath.push_attribute(("on", "t"));
+    textpath.push_attribute(("fitshape", "t"));
+    w.write_event(Event::Empty(textpath)).map_err(pkg)?;
+    w.write_event(Event::Start(start("v:handles")))
+        .map_err(pkg)?;
+    let mut handle = start("v:h");
+    handle.push_attribute(("position", "#0,bottomRight"));
+    handle.push_attribute(("xrange", "6629,14971"));
+    w.write_event(Event::Empty(handle)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("v:handles")))
+        .map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("v:shapetype")))
+        .map_err(pkg)?;
+
+    let (width_pt, height_pt) =
+        watermark_text_box_pt(text, shape.watermark.layout, shape.page_size);
+    let mut el = start("v:shape");
+    el.push_attribute(("id", shape.shape_id.as_str()));
+    el.push_attribute(("type", "#_x0000_t136"));
+    el.push_attribute((
+        "style",
+        watermark_style(shape, width_pt, height_pt).as_str(),
+    ));
+    // `o:allowincell="f"`: the stamp is positioned against the page margin even
+    // when the run that anchors it ends up inside a table cell.
+    el.push_attribute(("o:allowincell", "f"));
+    // The ink. `stroked="f"` because a watermark is filled outlines, not a
+    // stroked shape — an outline would read as a border around every glyph.
+    let fillcolor = format!(
+        "#{:02X}{:02X}{:02X}",
+        text.color.r, text.color.g, text.color.b
+    );
+    el.push_attribute(("fillcolor", fillcolor.as_str()));
+    el.push_attribute(("stroked", "f"));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    if shape.watermark.semi_transparent {
+        let mut fill = start("v:fill");
+        fill.push_attribute(("opacity", WATERMARK_FILL_OPACITY));
+        w.write_event(Event::Empty(fill)).map_err(pkg)?;
+    }
+    let mut path = start("v:textpath");
+    // The textpath's own style carries the face. `font-size:1pt` is Word's
+    // placeholder for an auto-sized stamp: `fitshape="t"` stretches the glyphs
+    // into the shape box, so the box sets the size and the declared size is only
+    // read when the box is recomputed. An explicit size is written as itself so
+    // the number the user chose survives a round trip through this file even
+    // though the box is what renders.
+    // Written with literal quotation marks: `push_attribute` escapes the value,
+    // so these become the `&quot;` pair Word writes. Escaping them here too would
+    // emit `&amp;quot;` and Word would look for a face called `"Calibri"`.
+    let mut style = String::from("font-family:\"");
+    style.push_str(match &text.font {
+        Some(font) => font.name.as_str(),
+        None => "Calibri",
+    });
+    style.push_str("\";font-size:");
+    match text.size_half_points {
+        Some(half_points) => {
+            style.push_str(&format!("{:.1}pt", f64::from(half_points) / 2.0));
+        }
+        None => style.push_str("1pt"),
+    }
+    if text.bold {
+        style.push_str(";font-weight:bold");
+    }
+    if text.italic {
+        style.push_str(";font-style:italic");
+    }
+    path.push_attribute(("style", style.as_str()));
+    path.push_attribute(("string", strip_xml_forbidden(&text.text).as_ref()));
+    w.write_event(Event::Empty(path)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("v:shape")))
+        .map_err(pkg)?;
+    Ok(())
+}
+
+/// Emits the `_x0000_t75` picture shapetype and the picture watermark shape.
+///
+/// `_x0000_t75` is VML's picture frame; `v:imagedata` names the image by a
+/// relationship in **this part's** `_rels`, which is why the shape's rId is
+/// threaded in rather than minted here. `gain`/`blacklevel` are Word's washout.
+fn write_watermark_picture_shape(
+    w: &mut Writer<Cursor<Vec<u8>>>,
+    shape: &WatermarkShape<'_>,
+    washout: bool,
+) -> Result<(), ExportError> {
+    let mut shapetype = start("v:shapetype");
+    shapetype.push_attribute(("id", "_x0000_t75"));
+    shapetype.push_attribute(("coordsize", "21600,21600"));
+    shapetype.push_attribute(("o:spt", "75"));
+    shapetype.push_attribute(("o:preferrelative", "t"));
+    shapetype.push_attribute(("path", "m@4@5l@4@11@9@11@9@5xe"));
+    shapetype.push_attribute(("filled", "f"));
+    shapetype.push_attribute(("stroked", "f"));
+    w.write_event(Event::Start(shapetype)).map_err(pkg)?;
+    let mut stroke = start("v:stroke");
+    stroke.push_attribute(("joinstyle", "miter"));
+    w.write_event(Event::Empty(stroke)).map_err(pkg)?;
+    w.write_event(Event::Start(start("v:formulas")))
+        .map_err(pkg)?;
+    for eqn in [
+        "if lineDrawn pixelLineWidth 0",
+        "sum @0 1 0",
+        "sum 0 0 @1",
+        "prod @2 1 2",
+        "prod @3 21600 pixelWidth",
+        "prod @3 21600 pixelHeight",
+        "sum @0 0 1",
+        "prod @6 1 2",
+        "prod @7 21600 pixelWidth",
+        "sum @8 21600 0",
+        "prod @7 21600 pixelHeight",
+        "sum @10 21600 0",
+    ] {
+        let mut f = start("v:f");
+        f.push_attribute(("eqn", eqn));
+        w.write_event(Event::Empty(f)).map_err(pkg)?;
+    }
+    w.write_event(Event::End(BytesEnd::new("v:formulas")))
+        .map_err(pkg)?;
+    let mut path = start("v:path");
+    path.push_attribute(("o:extrusionok", "f"));
+    path.push_attribute(("gradientshapeok", "t"));
+    path.push_attribute(("o:connecttype", "rect"));
+    w.write_event(Event::Empty(path)).map_err(pkg)?;
+    let mut lock = start("o:lock");
+    lock.push_attribute(("v:ext", "edit"));
+    lock.push_attribute(("aspectratio", "t"));
+    w.write_event(Event::Empty(lock)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("v:shapetype")))
+        .map_err(pkg)?;
+
+    let WatermarkContent::Picture(picture) = &shape.watermark.content else {
+        // Unreachable: this writer is only reached from the Picture arm.
+        return Ok(());
+    };
+    let side_pt = watermark_picture_side_pt(picture.scale_percent, shape.page_size);
+    let mut el = start("v:shape");
+    el.push_attribute(("id", shape.shape_id.as_str()));
+    el.push_attribute(("type", "#_x0000_t75"));
+    el.push_attribute(("style", watermark_style(shape, side_pt, side_pt).as_str()));
+    el.push_attribute(("o:allowincell", "f"));
+    w.write_event(Event::Start(el)).map_err(pkg)?;
+    let mut imagedata = start("v:imagedata");
+    if let Some(rel_id) = &shape.image_rel_id {
+        imagedata.push_attribute(("r:id", rel_id.as_str()));
+    }
+    imagedata.push_attribute(("o:title", ""));
+    if washout {
+        imagedata.push_attribute(("gain", WATERMARK_WASHOUT_GAIN));
+        imagedata.push_attribute(("blacklevel", WATERMARK_WASHOUT_BLACKLEVEL));
+    }
+    w.write_event(Event::Empty(imagedata)).map_err(pkg)?;
+    w.write_event(Event::End(BytesEnd::new("v:shape")))
+        .map_err(pkg)?;
+    Ok(())
 }
 
 /// Emits `word/fontTable.xml` from the model's font descriptors, in order.
@@ -2691,7 +3490,7 @@ fn document_xml(
         defs: document.definitions(),
         media: available_media,
         rels: RelBuilder::new(media_rel_ids),
-        tokens: IdTokens::new(document.definitions()),
+        tokens: IdTokens::new(document.definitions(), available_media),
     };
     for block in document.body() {
         write_block(&mut w, block, &mut ctx)?;
@@ -2699,7 +3498,7 @@ fn document_xml(
     // The body-level section (the last, in the common single-section case). Its
     // header/footer references land in a later slice.
     if let Some(section) = document.definitions().sections.last() {
-        write_section_properties(&mut w, section)?;
+        write_section_properties(&mut w, section, ctx.tokens.watermark_headers(section.id))?;
     }
 
     w.write_event(Event::End(BytesEnd::new("w:body")))
@@ -2712,9 +3511,14 @@ fn document_xml(
 /// Emits a `w:sectPr` (header/footer references, page geometry, columns). Used
 /// both for the body-level trailing section and, nested in a paragraph's
 /// `w:pPr`, for a per-paragraph section break.
+/// `watermark_headers` are the header parts synthesized to carry this section's
+/// watermark (see `watermark_plan`). They have to be *referenced* from here or the
+/// part is unreachable and the watermark invisible — Word finds a header only
+/// through `w:headerReference`, never by part name.
 fn write_section_properties(
     w: &mut Writer<Cursor<Vec<u8>>>,
     section: &SectionBoundary,
+    watermark_headers: &[(HeaderFooterKind, String)],
 ) -> Result<(), ExportError> {
     w.write_event(Event::Start(start("w:sectPr")))
         .map_err(pkg)?;
@@ -2727,6 +3531,18 @@ fn write_section_properties(
             el.push_attribute(("w:type", hf_kind_token(reference.kind)));
             el.push_attribute(("r:id", hf_rel_id(reference.reference).as_str()));
             w.write_event(Event::Empty(el)).map_err(pkg)?;
+        }
+        // The synthesized watermark headers join the header references, after the
+        // section's own. `CT_SectPr` puts header and footer references in one
+        // repeating group (`EG_HdrFtrReferences`), so order between them is free;
+        // Word writes headers first and so do we.
+        if element == "w:headerReference" {
+            for (kind, rel_id) in watermark_headers {
+                let mut el = start(element);
+                el.push_attribute(("w:type", hf_kind_token(*kind)));
+                el.push_attribute(("r:id", rel_id.as_str()));
+                w.write_event(Event::Empty(el)).map_err(pkg)?;
+            }
         }
     }
     write_section_note_props(w, "w:footnotePr", &section.footnote_props)?;
@@ -2966,7 +3782,11 @@ fn write_section_properties(
             el.push_attribute(("w:id", revision_id.as_str()));
         }
         w.write_event(Event::Start(el)).map_err(pkg)?;
-        write_section_properties(w, change.prior.as_ref())?;
+        // No watermark header reference in the PRIOR snapshot: it records what the
+        // section properties were before a tracked format change, and a header part
+        // synthesized by this export was not part of that history. Claiming it here
+        // would fabricate a reference in a revision record.
+        write_section_properties(w, change.prior.as_ref(), &[])?;
         w.write_event(Event::End(BytesEnd::new("w:sectPrChange")))
             .map_err(pkg)?;
     }
@@ -3153,9 +3973,14 @@ fn write_block(
     ctx: &mut Ctx,
 ) -> Result<(), ExportError> {
     match block {
-        BlockNode::Paragraph(paragraph) => {
-            write_paragraph(w, &paragraph.properties, &paragraph.inlines, ctx, None)
-        }
+        BlockNode::Paragraph(paragraph) => write_paragraph(
+            w,
+            &paragraph.properties,
+            &paragraph.inlines,
+            ctx,
+            None,
+            None,
+        ),
         BlockNode::Table(table) => write_table(w, table, ctx),
         BlockNode::Sdt(sdt) => {
             w.write_event(Event::Start(start("w:sdt"))).map_err(pkg)?;
@@ -3902,12 +4727,17 @@ fn theme_color_token(slot: ThemeColorRef) -> &'static str {
     }
 }
 
+/// `watermark` is emitted as this paragraph's FIRST run, before its own content.
+/// Only a header part's leading paragraph is ever given one — see
+/// `header_footer_xml` for why the shape rides an existing paragraph instead of
+/// getting one of its own.
 fn write_paragraph(
     w: &mut Writer<Cursor<Vec<u8>>>,
     properties: &ParagraphProperties,
     inlines: &[InlineNode],
     ctx: &mut Ctx,
     para_id: Option<&str>,
+    watermark: Option<&WatermarkShape<'_>>,
 ) -> Result<(), ExportError> {
     let mut p = start("w:p");
     // `para_id` is set only for a comment's anchor paragraph, carrying the
@@ -3922,6 +4752,9 @@ fn write_paragraph(
         .section_break
         .and_then(|id| ctx.defs.sections.iter().find(|boundary| boundary.id == id));
     write_paragraph_properties(w, properties, section, &ctx.tokens)?;
+    if let Some(shape) = watermark {
+        write_watermark_run(w, shape)?;
+    }
     for inline in inlines {
         write_inline(w, inline, ctx, false)?;
     }
@@ -4166,7 +4999,7 @@ fn write_paragraph_properties(
     // The section break precedes `w:pPrChange` in CT_PPr; it marks this paragraph
     // as a section's end.
     if let Some(section) = section {
-        write_section_properties(w, section)?;
+        write_section_properties(w, section, tokens.watermark_headers(section.id))?;
     }
     // `w:pPrChange` is the last child of `w:pPr` (after `w:sectPr`); its `w:pPr`
     // is the prior snapshot (CT_PPrBase — no mark rPr, sectPr, or nested change,

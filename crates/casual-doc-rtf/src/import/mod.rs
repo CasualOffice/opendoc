@@ -715,6 +715,9 @@ impl<'a> Importer<'a> {
             paper_source: casual_doc_model::v1::PaperSource::default(),
             page_borders: casual_doc_model::v1::PageBorders::default(),
             line_numbering: casual_doc_model::v1::LineNumbering::default(),
+            // RTF has no watermark construct of its own (Word writes one as a
+            // `\\shp` in the header, which this importer does not lift).
+            watermark: None,
             footnote_props: casual_doc_model::v1::NoteProperties::default(),
             endnote_props: casual_doc_model::v1::NoteProperties::default(),
             text_direction: None,

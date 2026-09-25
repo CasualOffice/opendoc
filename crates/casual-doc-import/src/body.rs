@@ -38,6 +38,7 @@ use casual_doc_model::v1::{
 // merge collisions with other agents editing this shared file.
 use casual_doc_model::v1::DrawingHyperlink;
 use casual_doc_model::v1::NumberFormat;
+use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{MAX_SHAPE_PATH_COMMANDS, ShapePath, ShapePathCommand};
 use casual_doc_model::{IdGenerator, NodeId};
 use quick_xml::events::{BytesStart, Event};
@@ -60,6 +61,7 @@ use crate::vml::{
     VmlPosition, VmlRelFrame, VmlShapeKind, VmlStroke, VmlTextAnchor, VmlVerticalAlign, VmlWrap,
     VmlWrapMode, parse_vml_pict,
 };
+use crate::watermark::{WatermarkLoss, recognise as recognise_watermark};
 
 /// A run/tab/break/drawing/hyperlink/field segment before ids and normalization.
 // `Run` is the largest and most common variant (it holds the full
@@ -1194,6 +1196,12 @@ struct BodyParser<'a> {
     /// When set (`b"hdr"`/`b"ftr"`), the parser reads a header/footer part whose
     /// root element is the single block container.
     hf_root: Option<&'static [u8]>,
+    /// The watermark lifted out of THIS part, when it is a header carrying one
+    /// (`crate::watermark`). A header holds at most one — Word writes exactly the
+    /// shape the dialog asked for — so the first recognised stamp wins and a
+    /// second is left on the float layer as an ordinary shape rather than
+    /// silently replacing it.
+    watermark: Option<Watermark>,
     /// Section reference resolution: header relationship id -> definition id.
     header_ids: &'a BTreeMap<String, HeaderFooterId>,
     /// Section reference resolution: footer relationship id -> definition id.
@@ -1372,6 +1380,7 @@ impl<'a> BodyParser<'a> {
             skip_note_customised: false,
             notes: Vec::new(),
             hf_root: None,
+            watermark: None,
             header_ids: inputs.header_ids,
             footer_ids: inputs.footer_ids,
             comment_ids: inputs.comment_ids,
@@ -1480,6 +1489,19 @@ pub(crate) fn parse_notes(
         .collect())
 }
 
+/// A header/footer part parse result: its block content, plus the watermark
+/// lifted out of it.
+///
+/// The watermark is returned rather than left in the blocks because Word keeps one
+/// as a float in the header while the model states it once per section — the shape
+/// has to leave this part entirely, or the page would paint it twice. It is always
+/// `None` for a footer: `crate::watermark` will not lift one from a container Word
+/// never writes one into.
+pub(crate) struct HeaderFooterParse {
+    pub blocks: Vec<BlockNode>,
+    pub watermark: Option<Watermark>,
+}
+
 /// Parses a header/footer part (`word/header1.xml` / `word/footer1.xml`) into its
 /// block content. `root` is `b"hdr"` or `b"ftr"`.
 #[allow(clippy::too_many_arguments)]
@@ -1494,7 +1516,7 @@ pub(crate) fn parse_header_footer(
     bookmarks: &mut DefinitionMap<BookmarkId, Bookmark>,
     root: &'static [u8],
     config: ImportConfig,
-) -> Result<Vec<BlockNode>, ImportError> {
+) -> Result<HeaderFooterParse, ImportError> {
     let empty_notes = BTreeMap::new();
     let empty_hf = BTreeMap::new();
     let empty_comment = BTreeMap::new();
@@ -1524,7 +1546,10 @@ pub(crate) fn parse_header_footer(
     // Commit any table left open by truncated header/footer markup.
     let roots = parser.tables.flush_open(&mut *parser.ids)?;
     parser.blocks.extend(roots);
-    Ok(parser.blocks)
+    Ok(HeaderFooterParse {
+        blocks: parser.blocks,
+        watermark: parser.watermark,
+    })
 }
 
 /// Parses the comments part (`word/comments.xml`) into its comments, each keyed
@@ -5480,6 +5505,19 @@ impl BodyParser<'_> {
         let drawings = raw.as_deref().map(parse_vml_pict).unwrap_or_default();
         let mut emitted = false;
         for drawing in &drawings {
+            // A watermark is LIFTED, not placed: it leaves the float layer entirely
+            // and becomes a property of the section whose header holds it, so the
+            // page paints one stamp (`casual_doc_layout::watermark`) rather than a
+            // header float AND a stamp. `lift_watermark` returns true only when it
+            // took ownership of the shape.
+            if self.lift_watermark(drawing) {
+                // Counted as emitted so the tail of this function drops the staged
+                // inline `v:imagedata` embed: without that, a picture watermark
+                // would ALSO appear as an inline image in the header's text flow,
+                // and an empty pict would be reported as unmapped.
+                emitted = true;
+                continue;
+            }
             if let Some(segment) = self.vml_segment(drawing)? {
                 self.push_segment(segment);
                 emitted = true;
@@ -5535,6 +5573,63 @@ impl BodyParser<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Lifts a watermark shape out of this part, returning whether it took the
+    /// shape — in which case the caller must NOT also place it on the float layer.
+    ///
+    /// Word stores a watermark as a floating VML shape in each header of the
+    /// section and re-identifies it by the shape's `id`; the model states it once
+    /// per section instead (see `casual_doc_model::v1::Watermark`). So the lift is:
+    /// recognise the shape here, where the raw VML is still available, park the
+    /// extracted [`Watermark`] on the part, and let
+    /// [`crate::watermark::lift_header_watermarks`] attach it to the sections that
+    /// reference this header once the body has been parsed.
+    ///
+    /// Three cases deliberately do NOT take the shape, and each reports itself
+    /// rather than dropping anything:
+    ///
+    /// * **Not a header.** A watermark in a footer or in body flow has no header to
+    ///   be lifted from; Word never writes one there. Reported, left as a float.
+    /// * **A header that already has one.** The dialog produces exactly one shape
+    ///   per header, so a second is something else's doing and stays a float.
+    /// * **Nothing stampable** (no `v:textpath@string`, an unresolvable image).
+    ///   Reported, left as a float, so the page still shows the object.
+    ///
+    /// A `header_only` recognition (plain-text WordArt with none of Word's
+    /// watermark ids) seen outside a header is not treated as a watermark at all —
+    /// it is ordinary WordArt and raises nothing.
+    fn lift_watermark(&mut self, drawing: &VmlDrawing) -> bool {
+        let Some(recognised) = recognise_watermark(drawing) else {
+            return false;
+        };
+        let in_header = self.hf_root == Some(b"hdr");
+        if !in_header {
+            if !recognised.header_only {
+                self.reporter
+                    .report_watermark(WatermarkLoss::WrongContainer.reason());
+            }
+            return false;
+        }
+        if self.watermark.is_some() {
+            self.reporter
+                .report_watermark(WatermarkLoss::Duplicate.reason());
+            return false;
+        }
+        // The relationship resolves against THIS part's media index, which is the
+        // header part's own — a header's `r:id` namespace is independent of the
+        // main document's.
+        let media_index = self.media_index;
+        match recognised.into_watermark(|rid| media_index.get(rid).copied()) {
+            Ok(watermark) => {
+                self.watermark = Some(watermark);
+                true
+            }
+            Err(loss) => {
+                self.reporter.report_watermark(loss.reason());
+                false
+            }
+        }
     }
 
     /// Maps one parsed [`VmlDrawing`] onto a shared drawing/text-box [`Segment`].
@@ -6038,6 +6133,11 @@ impl BodyParser<'_> {
             paper_source,
             page_borders,
             line_numbering,
+            // Word keeps a watermark as a VML shape in the section's HEADERS, not
+            // in `w:sectPr`, so it cannot be read here — the header parts are
+            // imported separately and the shape has to be lifted out of them once
+            // both exist. `lift_header_watermarks` does that, after this.
+            watermark: None,
             footnote_props: clamp_note(accumulator.footnote_props),
             endnote_props: clamp_note(accumulator.endnote_props),
             text_direction: accumulator.text_direction,

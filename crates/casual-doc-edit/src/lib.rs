@@ -33,6 +33,7 @@ use std::collections::HashSet;
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
 use casual_doc_model::v1::TextBoxBodyProperties;
+use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
 use casual_doc_model::v1::{CropRect, MAX_DESCR_BYTES};
 use casual_doc_model::v1::{Field, FieldKind};
@@ -827,6 +828,21 @@ pub enum Operation {
         section: SectionId,
         /// The new value (`None` clears the property).
         title_page: Option<bool>,
+    },
+    /// Replace one section's watermark — Word's Design ▸ Watermark — leaving every
+    /// other section property alone. `None` removes it.
+    ///
+    /// Self-inverse, carrying the previous watermark. Rejected (doc left
+    /// unchanged) if a value falls outside the model's domain: empty or
+    /// over-long text, a size outside `w:sz`'s own range, a scale outside
+    /// 1..=1000 percent, or a picture naming media the document does not hold.
+    ///
+    /// Boxed to keep the enum small — the text variant carries a `String`.
+    SetSectionWatermark {
+        /// The section to update.
+        section: SectionId,
+        /// The watermark to install, or `None` to remove it.
+        watermark: Option<Box<Watermark>>,
     },
     /// Replace one section's margin line numbering (`w:lnNumType`) — Word's
     /// "Line Numbers" — leaving every other section property alone.
@@ -2081,6 +2097,31 @@ pub fn apply(
             Ok(Operation::SetSectionLineNumbering {
                 section: *section,
                 line_numbering: previous,
+            })
+        }
+        Operation::SetSectionWatermark { section, watermark } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = boundary.watermark.take();
+            boundary.watermark = watermark.as_ref().map(|w| (**w).clone());
+            if doc.validate().is_err() {
+                // Put it back before reporting: a rejected edit leaves the
+                // document as it was, not holding a value `validate` refused.
+                doc.definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *section)
+                    .expect("the section we just found still exists")
+                    .watermark = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionWatermark {
+                section: *section,
+                watermark: previous.map(Box::new),
             })
         }
         Operation::SetEvenAndOddHeaders { enabled } => {
@@ -8262,6 +8303,145 @@ mod tests {
         }
     }
 
+    /// A DRAFT stamp for the watermark tests.
+    fn draft_watermark() -> Watermark {
+        Watermark {
+            content: casual_doc_model::v1::WatermarkContent::Text(
+                casual_doc_model::v1::WatermarkText {
+                    text: "DRAFT".to_owned(),
+                    font: None,
+                    size_half_points: None,
+                    color: casual_doc_model::v1::Rgba {
+                        r: 192,
+                        g: 192,
+                        b: 192,
+                        a: 255,
+                    },
+                    bold: false,
+                    italic: false,
+                },
+            ),
+            layout: casual_doc_model::v1::WatermarkLayout::Diagonal,
+            semi_transparent: true,
+        }
+    }
+
+    /// Word's Design ▸ Watermark (`109` OO-006): a section property, self-inverse.
+    #[test]
+    fn a_watermark_installs_and_undo_removes_it() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        let watermark = draft_watermark();
+
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionWatermark {
+                section: section_id,
+                watermark: Some(Box::new(watermark.clone())),
+            },
+        )
+        .unwrap();
+        assert_eq!(d.definitions().sections[0].watermark, Some(watermark));
+        assert_eq!(
+            inverse,
+            Operation::SetSectionWatermark {
+                section: section_id,
+                watermark: None,
+            },
+            "the inverse carries what was there before — nothing"
+        );
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(
+            d.definitions().sections[0].watermark,
+            None,
+            "undo takes the stamp off"
+        );
+    }
+
+    /// Replacing one watermark with another keeps the ORIGINAL in the inverse, so
+    /// undo restores the first stamp rather than clearing the section.
+    #[test]
+    fn replacing_a_watermark_restores_the_previous_one_on_undo() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        let first = draft_watermark();
+        let mut second = draft_watermark();
+        let casual_doc_model::v1::WatermarkContent::Text(text) = &mut second.content else {
+            panic!("text");
+        };
+        text.text = "CONFIDENTIAL".to_owned();
+
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionWatermark {
+                section: section_id,
+                watermark: Some(Box::new(first.clone())),
+            },
+        )
+        .unwrap();
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionWatermark {
+                section: section_id,
+                watermark: Some(Box::new(second.clone())),
+            },
+        )
+        .unwrap();
+        assert_eq!(d.definitions().sections[0].watermark, Some(second));
+
+        apply(&mut d, &mut ids, &inverse).unwrap();
+        assert_eq!(
+            d.definitions().sections[0].watermark,
+            Some(first),
+            "undo restores DRAFT, it does not clear the section"
+        );
+    }
+
+    /// An out-of-domain watermark is refused and the section is left exactly as it
+    /// was — never holding a value `Document::validate` has already rejected.
+    #[test]
+    fn an_invalid_watermark_is_refused_without_changing_the_section() {
+        let (mut d, mut ids, section_id) = line_numbered_document();
+        let good = draft_watermark();
+        apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetSectionWatermark {
+                section: section_id,
+                watermark: Some(Box::new(good.clone())),
+            },
+        )
+        .unwrap();
+
+        for bad_text in ["", &"x".repeat(600)] {
+            let mut bad = draft_watermark();
+            let casual_doc_model::v1::WatermarkContent::Text(text) = &mut bad.content else {
+                panic!("text");
+            };
+            text.text = bad_text.to_owned();
+            let outcome = apply(
+                &mut d,
+                &mut ids,
+                &Operation::SetSectionWatermark {
+                    section: section_id,
+                    watermark: Some(Box::new(bad)),
+                },
+            );
+            assert!(
+                matches!(outcome, Err(EditError::ValueTooLarge)),
+                "text of {} bytes is outside the model's domain",
+                bad_text.len()
+            );
+            assert_eq!(
+                d.definitions().sections[0].watermark,
+                Some(good.clone()),
+                "a refused edit leaves DRAFT in place, not the bad value"
+            );
+        }
+    }
+
     /// Addressing a section that does not exist is `NodeNotFound`, not a panic
     /// and not a silent no-op — the host resolves the id from a stale dialog.
     #[test]
@@ -9337,6 +9517,7 @@ mod tests {
             paper_source: PaperSource::default(),
             page_borders: PageBorders::default(),
             line_numbering: LineNumbering::default(),
+            watermark: None,
             footnote_props: NoteProperties::default(),
             endnote_props: NoteProperties::default(),
             text_direction: None,

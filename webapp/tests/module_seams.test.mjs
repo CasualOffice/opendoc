@@ -80,8 +80,17 @@ const SRC = new URL("../src/", import.meta.url);
  *  popover — moved to `page_setup.mjs`. The two belong in one module because
  *  they share one question, "which section is the caret in", and answering it
  *  twice is how the dialog came to show one section's margins while writing
- *  them to another. */
-const MAIN_JS_LINE_CEILING = 17122;
+ *  them to another.
+ *  Lowered again to 17,081 by the watermark dialog (`109` OO-006): the file was
+ *  AT its ceiling with zero slack, so the per-author review COLOUR — the palette,
+ *  the author key and the FNV hash over it — moved to `review_labels.mjs`, where
+ *  the rest of the pure per-review-item vocabulary already lives and where the
+ *  mapping is provable without a browser. The dialog itself went into
+ *  `page_setup.mjs`, beside the rest of Word's Page Setup group; what the handful
+ *  of lines still here buy is the button binding, the `LAYOUT_SURFACE` row that
+ *  makes the command reachable from the palette as well as the ribbon, and the
+ *  font inventory handed to the module. */
+const MAIN_JS_LINE_CEILING = 17081;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

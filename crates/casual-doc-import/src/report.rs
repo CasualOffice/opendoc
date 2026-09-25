@@ -41,6 +41,18 @@ const MAX_REPORT_FEATURES: usize = 4_096;
 /// and in `35-DISPOSITION-TAXONOMY.md`.
 pub const RSID_CLASS_FEATURE: &str = "docx.rsid";
 
+/// Stable feature identifier for watermark markup that was recognised but could
+/// not be lifted onto its section. The shape itself still reaches the float layer,
+/// so this is a `degraded` finding, not an omission: what is lost is that the
+/// stamp is a *watermark* — repeated on every page of the section, behind the
+/// body, unselectable — and not that the ink disappeared.
+///
+/// It is a `docx.`-prefixed class rather than an element name because no element
+/// names it: Word writes a watermark as a `v:shape` like any other, and the only
+/// thing that identifies it is the shape's `id`. Reporting `v:shape` would tell a
+/// caller nothing about which shape, or why.
+pub const WATERMARK_CLASS_FEATURE: &str = "docx.watermark";
+
 /// How a construct was represented in the model.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ModelOutcome {
@@ -780,6 +792,27 @@ impl Reporter {
             RSID_CLASS_FEATURE.to_owned(),
             FeatureLocation::default(),
             Finding::Omitted,
+        );
+    }
+
+    /// Reports watermark markup that was recognised as a watermark but could not
+    /// become one — see [`WATERMARK_CLASS_FEATURE`] and
+    /// [`crate::watermark::WatermarkLoss`] for the four ways that happens.
+    ///
+    /// `Degraded`, because the caller leaves the shape on the float layer when it
+    /// calls this: the page still shows the object, it just is not a watermark.
+    /// The `reason` becomes the location's "attribute", which is the only field
+    /// the report carries that can say *which* way it failed while keeping one
+    /// feature name and one occurrence count for the class.
+    pub(crate) fn report_watermark(&mut self, reason: &str) {
+        self.insert(
+            WATERMARK_CLASS_FEATURE.to_owned(),
+            FeatureLocation {
+                part_name: None,
+                element: Some("shape".to_owned()),
+                attribute: Some(reason.to_owned()),
+            },
+            Finding::Degraded,
         );
     }
 

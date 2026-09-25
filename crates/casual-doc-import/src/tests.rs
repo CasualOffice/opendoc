@@ -5165,6 +5165,608 @@ fn vml_pict_with_unresolved_image_is_reported() {
     assert!(features(&import).contains(&"pict"));
 }
 
+// ---- watermarks (109 OO-006 / 105 FID-L-10) ------------------------------
+//
+// Word has no watermark element: Design ▸ Watermark writes a floating VML shape
+// into every header of the section and recognises it again by the shape's `id`.
+// The model states it once per section, so import must LIFT the shape out of the
+// header — and must not leave it on the float layer as well, or the page paints
+// the stamp twice. Every test below asserts the extracted VALUES (text, ink,
+// angle, transparency), not merely that a watermark exists: a watermark that is
+// present but blank, black and level is not the one the document asked for.
+
+/// The header part Word writes for a "DRAFT" text watermark, verbatim in shape
+/// (the `v:shapetype` template precedes the shape, as Word emits it).
+const WATERMARK_HEADER: &[u8] = br##"<w:hdr xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:o="urn:o" xmlns:w10="urn:w10">
+    <w:p><w:r><w:pict>
+        <v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" path="m@7,l@8,m@5,21600l@11,21600e"><v:path textpathok="t"/><v:textpath on="t" fitshape="t"/></v:shapetype>
+        <v:shape id="PowerPlusWaterMarkObject357476642" o:spid="_x0000_s2049" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:527.85pt;height:131.95pt;rotation:315;z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" o:allowincell="f" fillcolor="#c0c0c0" stroked="f">
+            <v:fill opacity=".5"/>
+            <v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="DRAFT"/>
+        </v:shape>
+    </w:pict></w:r></w:p>
+</w:hdr>"##;
+
+/// A body referencing one header by `r:id`.
+fn document_with_header(relationship_id: &str) -> Vec<u8> {
+    format!(
+        r##"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+            <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+            <w:sectPr><w:headerReference w:type="default" r:id="{relationship_id}"/>
+                <w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+        </w:body></w:document>"##
+    )
+    .into_bytes()
+}
+
+/// The section's watermark, or `None`.
+fn section_watermark(import: &Import) -> Option<&casual_doc_model::v1::Watermark> {
+    import.document.definitions().sections[0].watermark.as_ref()
+}
+
+/// The watermark's text content, panicking if it is a picture — so a test that
+/// asserts text values cannot pass on a picture watermark.
+fn watermark_text(import: &Import) -> &casual_doc_model::v1::WatermarkText {
+    match &section_watermark(import)
+        .expect("the section carries a watermark")
+        .content
+    {
+        casual_doc_model::v1::WatermarkContent::Text(text) => text,
+        other => panic!("expected a text watermark, got {other:?}"),
+    }
+}
+
+/// How many graphic objects (floats and inline drawings alike) a header holds.
+///
+/// This is the counter-assertion to the lift: a watermark that was lifted AND
+/// left behind paints twice, and the only visible difference is one extra object
+/// in the header. Counting every graphic kind rather than the one the current
+/// mapping happens to produce means the guard still fails if that mapping
+/// changes.
+fn header_graphic_count(import: &Import) -> usize {
+    let mut count = 0;
+    for (_, header) in import.document.definitions().headers.iter() {
+        for block in &header.blocks {
+            if let BlockNode::Paragraph(paragraph) = block {
+                count += paragraph
+                    .inlines
+                    .iter()
+                    .filter(|inline| {
+                        matches!(
+                            inline,
+                            InlineNode::Drawing(_)
+                                | InlineNode::AnchoredDrawing(_)
+                                | InlineNode::Group(_)
+                                | InlineNode::TextBox(_)
+                        )
+                    })
+                    .count();
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn word_text_watermark_is_lifted_onto_the_section_with_its_values() {
+    let import = import_with_header_footer(
+        &document_with_header("rId2"),
+        &[("rId2", WATERMARK_HEADER)],
+        &[],
+    );
+
+    let watermark = section_watermark(&import).expect("the watermark reached the section");
+    // `rotation:315` is Word's diagonal stamp, not a page-derived angle.
+    assert_eq!(
+        watermark.layout,
+        casual_doc_model::v1::WatermarkLayout::Diagonal
+    );
+    // `<v:fill opacity=".5"/>` is the "Semitransparent" checkbox.
+    assert!(watermark.semi_transparent);
+
+    let text = watermark_text(&import);
+    // The words live in `v:textpath@string` — an attribute, not element text.
+    assert_eq!(text.text, "DRAFT");
+    assert_eq!(
+        text.font.as_ref().map(|font| font.name.as_str()),
+        Some("Calibri"),
+        "the CSS-quoted font-family resolves to a family name"
+    );
+    // `font-size:1pt` is Word's Auto sentinel: layout fits the page.
+    assert_eq!(text.size_half_points, None);
+    // `fillcolor="#c0c0c0"` at FULL alpha — the transparency is the flag above,
+    // and folding it in here too would halve it twice.
+    assert_eq!(
+        text.color,
+        casual_doc_model::v1::Rgba {
+            r: 0xc0,
+            g: 0xc0,
+            b: 0xc0,
+            a: 255
+        }
+    );
+    assert!(!text.bold);
+    assert!(!text.italic);
+}
+
+#[test]
+fn the_lifted_watermark_does_not_also_remain_on_the_float_layer() {
+    let import = import_with_header_footer(
+        &document_with_header("rId2"),
+        &[("rId2", WATERMARK_HEADER)],
+        &[],
+    );
+    assert!(section_watermark(&import).is_some(), "it was lifted");
+    assert_eq!(
+        header_graphic_count(&import),
+        0,
+        "the shape must leave the header: a float plus a stamp paints twice"
+    );
+    // Nothing was lost, so nothing is reported.
+    assert!(!features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_watermark_without_rotation_is_horizontal() {
+    // Word's Layout radio pair is diagonal (`rotation:315`) or horizontal (no
+    // rotation at all). An importer that ignored the angle would import BOTH as
+    // the same thing, which is why the diagonal and horizontal cases are
+    // asserted against each other rather than in isolation.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;width:400pt;height:100pt" fillcolor="#c0c0c0">
+            <v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" string="CONFIDENTIAL"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    let watermark = section_watermark(&import).expect("lifted");
+    assert_eq!(
+        watermark.layout,
+        casual_doc_model::v1::WatermarkLayout::Horizontal
+    );
+    // No `v:fill opacity` means the user cleared "Semitransparent".
+    assert!(!watermark.semi_transparent);
+    assert_eq!(watermark_text(&import).text, "CONFIDENTIAL");
+}
+
+#[test]
+fn a_rotation_equivalent_to_315_is_still_diagonal() {
+    // `-45` normalises to 315: the same stamp, spelled the way a hand-authored
+    // or converted file may carry it.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;rotation:-45" fillcolor="silver">
+            <v:textpath style="font-size:1pt" string="DRAFT"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    assert_eq!(
+        section_watermark(&import).expect("lifted").layout,
+        casual_doc_model::v1::WatermarkLayout::Diagonal
+    );
+    // `fillcolor="silver"` is Word's own default watermark grey.
+    assert_eq!(
+        watermark_text(&import).color,
+        casual_doc_model::v1::Rgba {
+            r: 0xc0,
+            g: 0xc0,
+            b: 0xc0,
+            a: 255
+        }
+    );
+}
+
+#[test]
+fn an_explicit_watermark_size_weight_and_slant_survive() {
+    // A size the user CHOSE (any size above the 1pt Auto sentinel) reaches the
+    // model in half-points, and the CSS weight/slant become bold/italic.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;rotation:315" fillcolor="#ff0000">
+            <v:textpath style="font-family:'Times New Roman';font-size:54pt;font-weight:bold;font-style:italic" string="SAMPLE"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    let text = watermark_text(&import);
+    assert_eq!(text.size_half_points, Some(108), "54pt == 108 half-points");
+    assert_eq!(
+        text.font.as_ref().map(|font| font.name.as_str()),
+        Some("Times New Roman")
+    );
+    assert!(text.bold);
+    assert!(text.italic);
+    assert_eq!(
+        text.color,
+        casual_doc_model::v1::Rgba {
+            r: 0xff,
+            g: 0,
+            b: 0,
+            a: 255
+        }
+    );
+}
+
+#[test]
+fn a_producer_watermark_without_words_magic_id_is_lifted_from_a_header() {
+    // LibreOffice/Aspose write the plain-text WordArt shapetype without Word's
+    // `PowerPlusWaterMarkObject` id. Inside a header that is a watermark.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="Shape1" type="#_x0000_t136" style="position:absolute;rotation:315" fillcolor="#808080">
+            <v:fill opacity="0.5"/>
+            <v:textpath style="font-family:&quot;Liberation Sans&quot;" string="INTERNAL"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    let text = watermark_text(&import);
+    assert_eq!(text.text, "INTERNAL");
+    assert_eq!(
+        text.color,
+        casual_doc_model::v1::Rgba {
+            r: 0x80,
+            g: 0x80,
+            b: 0x80,
+            a: 255
+        }
+    );
+    // No `font-size` at all is Auto, exactly like the 1pt sentinel.
+    assert_eq!(text.size_half_points, None);
+    assert_eq!(header_graphic_count(&import), 0);
+}
+
+#[test]
+fn plain_text_wordart_in_the_body_is_not_a_watermark() {
+    // The geometric arm is header-only on purpose: a `#_x0000_t136` shape in body
+    // flow is ordinary WordArt. Lifting it would delete a visible object from the
+    // page and re-stamp it on every page of the section, so it stays a float —
+    // and raises nothing, because a decorative title is not a loss.
+    let document = br##"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><w:pict>
+            <v:shape id="Shape1" type="#_x0000_t136" style="position:absolute;margin-left:10pt;margin-top:10pt;width:200pt;height:40pt;z-index:-1" fillcolor="#ff0000">
+                <v:textpath style="font-size:36pt" string="Newsletter"/>
+            </v:shape>
+        </w:pict></w:r></w:p>
+    </w:body></w:document>"##;
+    let import = import(document);
+    assert!(
+        import
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .all(|section| section.watermark.is_none()),
+        "body WordArt must not become a section watermark"
+    );
+    assert!(
+        paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::Group(_))),
+        "it stays on the float layer"
+    );
+    assert!(!features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_watermark_shape_in_the_body_is_reported_and_stays_a_float() {
+    // Word's magic id is trusted anywhere, so a watermark shape in body flow IS
+    // recognised — but there is no header to lift it from and no section it could
+    // be charged to unambiguously. It is reported, not silently re-anchored, and
+    // the object still paints.
+    let document = br##"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:v="urn:v"><w:body>
+        <w:p><w:r><w:pict>
+            <v:shape id="PowerPlusWaterMarkObject99" type="#_x0000_t136" style="position:absolute;margin-left:10pt;margin-top:10pt;width:200pt;height:40pt;z-index:-1" fillcolor="#c0c0c0">
+                <v:textpath style="font-size:1pt" string="DRAFT"/>
+            </v:shape>
+        </w:pict></w:r></w:p>
+    </w:body></w:document>"##;
+    let import = import(document);
+    assert!(
+        import
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .all(|section| section.watermark.is_none())
+    );
+    assert!(features(&import).contains(&"docx.watermark"));
+    assert!(
+        paragraph(&import, 0)
+            .inlines
+            .iter()
+            .any(|inline| matches!(inline, InlineNode::Group(_))),
+        "nothing is dropped: the shape still reaches the float layer"
+    );
+}
+
+#[test]
+fn a_watermark_shape_in_a_footer_is_reported_and_stays_a_float() {
+    // Word never writes a watermark into a footer, and a stamp lifted from one
+    // would silently change where it is anchored.
+    let document = br##"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:r><w:t>Body.</w:t></w:r></w:p>
+        <w:sectPr><w:footerReference w:type="default" r:id="rId3"/></w:sectPr>
+    </w:body></w:document>"##;
+    let footer = br##"<w:ftr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;margin-left:1pt;margin-top:1pt;width:100pt;height:20pt;z-index:-1" fillcolor="#c0c0c0">
+            <v:textpath style="font-size:1pt" string="DRAFT"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:ftr>"##;
+    let import = import_with_header_footer(document, &[], &[("rId3", footer)]);
+    assert!(
+        import.document.definitions().sections[0]
+            .watermark
+            .is_none()
+    );
+    assert!(features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_watermark_with_no_string_to_stamp_is_reported_not_dropped() {
+    // A `v:textpath` with no `string` (or a blank one) has nothing to stamp. The
+    // model refuses an empty watermark — `check_section` would fail the whole
+    // import — so it degrades to a reported float rather than taking the document
+    // down or inventing words.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;margin-left:1pt;margin-top:1pt;width:100pt;height:20pt;z-index:-1" fillcolor="#c0c0c0">
+            <v:textpath style="font-size:1pt" string="   "/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    assert!(section_watermark(&import).is_none());
+    assert!(features(&import).contains(&"docx.watermark"));
+    assert_eq!(
+        header_graphic_count(&import),
+        1,
+        "the unmappable shape is kept, not dropped"
+    );
+}
+
+#[test]
+fn a_picture_watermark_is_lifted_with_its_media_and_washout() {
+    // `WordPictureWatermark…` plus `v:imagedata`: the media resolves through the
+    // HEADER part's own relationships, and the `gain`/`blacklevel` pair Word
+    // writes for "Washout" becomes the washout flag.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v" xmlns:o="urn:o"><w:p><w:r><w:pict>
+        <v:shape id="WordPictureWatermark11122333" type="#_x0000_t75" style="position:absolute;margin-left:0;margin-top:0;width:400pt;height:300pt;z-index:-251658752" o:allowincell="f">
+            <v:imagedata r:id="rId4" o:title="" gain="19661f" blacklevel="22938f"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let header_part = crate::PartSources {
+        xml: header.to_vec(),
+        images: vec![image_source("rId4", "word/media/stamp.png")],
+        ..Default::default()
+    };
+    let import = import_with_sources(
+        &document_with_header("rId2"),
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[("rId2".to_owned(), header_part)],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+
+    let watermark = section_watermark(&import).expect("the picture watermark reached the section");
+    // No rotation on a picture watermark: Word stamps it level.
+    assert_eq!(
+        watermark.layout,
+        casual_doc_model::v1::WatermarkLayout::Horizontal
+    );
+    let picture = match &watermark.content {
+        casual_doc_model::v1::WatermarkContent::Picture(picture) => picture,
+        other => panic!("expected a picture watermark, got {other:?}"),
+    };
+    assert!(picture.washout, "gain/blacklevel is Word's Washout");
+    // Scale is deliberately Auto: the natural size the model's percentage is
+    // relative to is not carried by the media table (see `into_watermark`).
+    assert_eq!(picture.scale_percent, None);
+    // The media it points at is the header part's image, in the shared table.
+    let media = import
+        .document
+        .definitions()
+        .media
+        .get(&picture.media)
+        .expect("the watermark's media resolves");
+    assert_eq!(media.part_name, "word/media/stamp.png");
+    assert_eq!(
+        header_graphic_count(&import),
+        0,
+        "the picture shape leaves the header entirely, inline embed included"
+    );
+}
+
+#[test]
+fn a_picture_watermark_with_an_unresolved_relationship_is_reported() {
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="WordPictureWatermark1" type="#_x0000_t75" style="position:absolute;margin-left:0;margin-top:0;width:400pt;height:300pt;z-index:-1">
+            <v:imagedata r:id="rIdMissing" gain="19661f"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    assert!(section_watermark(&import).is_none());
+    assert!(features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_washed_out_picture_that_is_not_a_watermark_stays_a_picture() {
+    // Washout is ordinary picture formatting (Format ▸ Corrections). Only Word's
+    // `WordPictureWatermark` id makes a faded image a watermark; there is no
+    // geometric arm for pictures, because `#_x0000_t75` is EVERY VML image.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:r="urn:r" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="Picture 3" type="#_x0000_t75" style="position:absolute;margin-left:0;margin-top:0;width:400pt;height:300pt;z-index:-1">
+            <v:imagedata r:id="rId4" gain="19661f" blacklevel="22938f"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let header_part = crate::PartSources {
+        xml: header.to_vec(),
+        images: vec![image_source("rId4", "word/media/logo.png")],
+        ..Default::default()
+    };
+    let import = import_with_sources(
+        &document_with_header("rId2"),
+        None,
+        None,
+        None,
+        &std::collections::BTreeMap::new(),
+        None,
+        None,
+        None,
+        None,
+        &[("rId2".to_owned(), header_part)],
+        &[],
+        None,
+        &[],
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        ImportConfig::default(),
+    )
+    .unwrap();
+    assert!(section_watermark(&import).is_none());
+    assert_eq!(
+        header_graphic_count(&import),
+        1,
+        "it is still a positioned picture in the header"
+    );
+    assert!(!features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn only_the_section_whose_header_carries_the_watermark_gets_one() {
+    // Two sections with DIFFERENT headers, one of which carries the stamp. If the
+    // lift were charged to the wrong section — or to every section — this is the
+    // guard that notices; a single-section fixture cannot tell the difference.
+    let document = br##"<w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:body>
+        <w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdPlain"/>
+            <w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>
+            <w:r><w:t>First section.</w:t></w:r></w:p>
+        <w:p><w:r><w:t>Second section.</w:t></w:r></w:p>
+        <w:sectPr><w:headerReference w:type="default" r:id="rIdStamped"/>
+            <w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    </w:body></w:document>"##;
+    let plain =
+        br##"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>Plain header</w:t></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(
+        document,
+        &[("rIdPlain", plain), ("rIdStamped", WATERMARK_HEADER)],
+        &[],
+    );
+    let sections = &import.document.definitions().sections;
+    assert_eq!(sections.len(), 2, "two section boundaries");
+    assert!(
+        sections[0].watermark.is_none(),
+        "the plain-header section must not inherit the stamp"
+    );
+    let stamped = sections[1]
+        .watermark
+        .as_ref()
+        .expect("the stamped section carries it");
+    match &stamped.content {
+        casual_doc_model::v1::WatermarkContent::Text(text) => assert_eq!(text.text, "DRAFT"),
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_document_with_no_watermark_still_has_none() {
+    // The baseline: every other document must import exactly as before. A header
+    // with an ordinary positioned shape keeps its float and gains no watermark.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:rect style="position:absolute;margin-left:10pt;margin-top:10pt;width:100pt;height:2pt;z-index:-1" fillcolor="#000000"/>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    assert!(section_watermark(&import).is_none());
+    assert_eq!(
+        header_graphic_count(&import),
+        1,
+        "the rule is still a float"
+    );
+    assert!(!features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_hidden_textpath_is_not_stamped() {
+    // `v:textpath@on="f"` switches the words off. Painting them would ADD ink the
+    // producer suppressed, so the shape is reported and left as a float.
+    let header = br##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+        <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;margin-left:1pt;margin-top:1pt;width:100pt;height:20pt;z-index:-1;rotation:315" fillcolor="#c0c0c0">
+            <v:textpath on="f" style="font-size:1pt" string="DRAFT"/>
+        </v:shape>
+    </w:pict></w:r></w:p></w:hdr>"##;
+    let import = import_with_header_footer(&document_with_header("rId2"), &[("rId2", header)], &[]);
+    assert!(section_watermark(&import).is_none());
+    assert!(features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn a_watermark_string_past_the_model_bound_is_reported_not_imported() {
+    // `MAX_WATERMARK_TEXT_BYTES` is a model DOMAIN: an over-long string would make
+    // `Document::new` reject the document, so a hostile header must degrade to a
+    // reported float instead of making the file unopenable.
+    let long = "A".repeat(casual_doc_model::v1::MAX_WATERMARK_TEXT_BYTES + 1);
+    let header = format!(
+        r##"<w:hdr xmlns:w="urn:w" xmlns:v="urn:v"><w:p><w:r><w:pict>
+            <v:shape id="PowerPlusWaterMarkObject1" type="#_x0000_t136" style="position:absolute;margin-left:1pt;margin-top:1pt;width:100pt;height:20pt;z-index:-1" fillcolor="#c0c0c0">
+                <v:textpath style="font-size:1pt" string="{long}"/>
+            </v:shape>
+        </w:pict></w:r></w:p></w:hdr>"##
+    );
+    let import = import_with_header_footer(
+        &document_with_header("rId2"),
+        &[("rId2", header.as_bytes())],
+        &[],
+    );
+    assert!(section_watermark(&import).is_none());
+    assert!(features(&import).contains(&"docx.watermark"));
+}
+
+#[test]
+fn the_watermark_fixture_imports_end_to_end_through_the_package() {
+    // The same lift through the real package path: content types, the header
+    // relationship, and the header part, rather than hand-fed part sources.
+    let bytes = include_bytes!("../../../fixtures/generated/watermark.docx");
+    let mut package = DocxPackage::open(bytes, casual_doc_ooxml::PackageLimits::default()).unwrap();
+    let import = import_package(&mut package, ImportConfig::default()).unwrap();
+    let section = import
+        .document
+        .definitions()
+        .sections
+        .last()
+        .expect("a section boundary");
+    let watermark = section.watermark.as_ref().expect("lifted from the header");
+    assert_eq!(
+        watermark.layout,
+        casual_doc_model::v1::WatermarkLayout::Diagonal
+    );
+    assert!(watermark.semi_transparent);
+    match &watermark.content {
+        casual_doc_model::v1::WatermarkContent::Text(text) => {
+            assert_eq!(text.text, "DRAFT");
+            assert_eq!(
+                text.color,
+                casual_doc_model::v1::Rgba {
+                    r: 0xc0,
+                    g: 0xc0,
+                    b: 0xc0,
+                    a: 255
+                }
+            );
+        }
+        other => panic!("expected a text watermark, got {other:?}"),
+    }
+    assert_eq!(
+        header_graphic_count(&import),
+        0,
+        "the shape does not also remain in the header"
+    );
+}
+
 // ---- media / hyperlinks inside extra parts -------------------------------
 
 fn image_source(rid: &str, part: &str) -> crate::MediaSource {

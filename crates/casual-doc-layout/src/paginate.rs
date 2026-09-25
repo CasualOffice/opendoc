@@ -1582,6 +1582,7 @@ fn page_shell(
         page_borders: None,
         // Filled by the post-pagination line-number pass, off the hot path.
         line_numbers: Vec::new(),
+        watermark: None,
         start: at,
         end: at,
         flow,
@@ -2043,6 +2044,7 @@ mod tests {
             paper_source: PaperSource::default(),
             page_borders: PageBorders::default(),
             line_numbering: Default::default(),
+            watermark: None,
             footnote_props: NoteProperties::default(),
             endnote_props: NoteProperties::default(),
             text_direction: None,
