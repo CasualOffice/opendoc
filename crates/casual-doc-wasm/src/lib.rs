@@ -35417,4 +35417,48 @@ mod tests {
             small_n * 2
         );
     }
+
+    /// TEMPORARY HF-182 measurement probe. Removed before the PR.
+    #[test]
+    #[ignore]
+    fn zz_hf182_keystroke_probe() {
+        use std::time::Instant;
+        for n in [400usize, 800, 1600] {
+            let mut d = plain_text_document(n);
+            let ordered = d.ordered_paragraphs();
+            let first = ordered[0].0.to_string();
+            let last = ordered[ordered.len() - 1].0.to_string();
+            // warm
+            let _ = d.type_text(&last, 6, &last, 6, "x".to_owned(), 1).unwrap();
+            for (label, node) in [("first", &first), ("last", &last)] {
+                let mut d = plain_text_document(n);
+                let mut offset = 6u32;
+                let _ = d.type_text(node, offset, node, offset, "x".to_owned(), 1).unwrap();
+                offset += 1;
+                casual_doc_edit::reset_block_visits();
+                let start = Instant::now();
+                let k = 20;
+                for _ in 0..k {
+                    let _ = d.type_text(node, offset, node, offset, "x".to_owned(), 1).unwrap();
+                    offset += 1;
+                }
+                let per = start.elapsed().as_micros() / k as u128;
+                let visits = casual_doc_edit::block_visits() / k as u64;
+                // Split: how much of that is the layout call in `finish_edit`?
+                let mut cache = std::mem::take(&mut d.galley_cache);
+                let t = Instant::now();
+                for _ in 0..k {
+                    let _ = casual_doc_layout::document_layout::paginate_document_cached(
+                        &d.document,
+                        &d.shaper,
+                        &mut cache,
+                        &casual_doc_layout::incremental::DirtySet::new(),
+                    );
+                }
+                let layout_us = t.elapsed().as_micros() / k as u128;
+                d.galley_cache = cache;
+                println!("n={n:5} at={label:5} pages={:3} per_keystroke={per:6}us layout={layout_us:6}us block_visits={visits:8}", d.page_count());
+            }
+        }
+    }
 }
