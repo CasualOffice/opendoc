@@ -1437,10 +1437,16 @@
           <label data-i18n="linkDialogForm.textDisplay" for="linkTextInput">Text to display</label>
           <input data-i18n-placeholder="linkDialogForm.textShownDocument.placeholder" id="linkTextInput" type="text" autocomplete="off" spellcheck="false" placeholder="Text shown in the document" />
 
-          <span data-i18n="linkDialogForm.link" class="link-field-label" id="linkTargetLabel">Link to</span>
-          <div class="link-mode" role="tablist" aria-labelledby="linkTargetLabel">
-            <button data-i18n="linkDialogForm.webAddress" type="button" id="linkModeUrl" class="link-mode-tab is-active" role="tab" aria-selected="true" aria-controls="linkModeUrlPanel">Web address</button>
-            <button data-i18n="linkDialogForm.placeDocument" type="button" id="linkModePlace" class="link-mode-tab" role="tab" aria-selected="false" aria-controls="linkModePlacePanel">Place in this document</button>
+          <!-- "Link to" sits ON the tab strip's row rather than above it. It is
+               a two-word label for a two-choice control, and stacked it spent a
+               whole 24px row of a dialog whose complaint was height. Google Docs
+               puts the same chooser inline; Word labels it in place. -->
+          <div class="link-mode-row">
+            <span data-i18n="linkDialogForm.link" class="link-field-label" id="linkTargetLabel">Link to</span>
+            <div class="link-mode" role="tablist" aria-labelledby="linkTargetLabel">
+              <button data-i18n="linkDialogForm.webAddress" type="button" id="linkModeUrl" class="link-mode-tab is-active" role="tab" aria-selected="true" aria-controls="linkModeUrlPanel">Web address</button>
+              <button data-i18n="linkDialogForm.placeDocument" type="button" id="linkModePlace" class="link-mode-tab" role="tab" aria-selected="false" aria-controls="linkModePlacePanel">Place in this document</button>
+            </div>
           </div>
 
           <div id="linkModeUrlPanel" class="link-mode-panel" role="tabpanel" aria-labelledby="linkModeUrl">
