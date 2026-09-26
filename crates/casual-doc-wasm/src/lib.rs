@@ -11813,7 +11813,6 @@ impl WasmDocument {
             ReviewView::Editing,
             previous,
         );
-        let editing_dirty = pages_to_repaint(&update);
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
         // that is the markup layout, which `set_show_changes` built once and
@@ -11844,7 +11843,10 @@ impl WasmDocument {
                 self.markup_layout = Some(markup.layout);
                 dirty
             }
-            None => editing_dirty,
+            // Only now, because computing it is a whole-document comparison on
+            // the paths that could not resume — wasted work when the markup
+            // layout above is the one the renderer reads.
+            None => pages_to_repaint(&update),
         };
         self.layout = BodyLayout::Whole(update.layout);
         EditResult {
