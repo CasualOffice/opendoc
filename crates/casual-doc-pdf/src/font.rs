@@ -644,7 +644,9 @@ mod tests {
         // inversion cannot reach.
         let orphan = 2050_u16;
         assert!(
-            charmap.mappings().all(|(_, glyph)| glyph.to_u32() != u32::from(orphan)),
+            charmap
+                .mappings()
+                .all(|(_, glyph)| glyph.to_u32() != u32::from(orphan)),
             "the stand-in glyph must genuinely have no character-map entry"
         );
         let kept: BTreeSet<u16> = [0, mapped, ligature, orphan].into_iter().collect();

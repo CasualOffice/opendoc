@@ -38,7 +38,8 @@ list can carry is listed here, including the ones that are not covered.
 | Family | State | Notes |
 | --- | --- | --- |
 | Text runs (`PaintItem::Glyphs`) | **Supported** | `Type0`/`Identity-H`; the CIDs *are* the shaper's glyph ids, and per-glyph `TJ` adjustments reproduce the shaper's advances exactly. `w:w` character scaling maps to `Tz`. |
-| Text extraction (select / search / copy) | **Supported** | A `ToUnicode` CMap per face, built by inverting the face's `cmap`. A ligature glyph, or one reached only by substitution, has no character that way and is counted and reported as `pdf.font.unmapped_glyphs` rather than guessed at. |
+| Text extraction (select / search / copy) | **Supported** | A `ToUnicode` CMap per face. Its baseline is the inversion of the face's `cmap`; over it, the **real source text** of each glyph is resolved from the display list's cluster offsets against the document (`GlyphRun::node` names the paragraph; `crates/casual-doc-pdf/src/cluster.rs`), so a **ligature** maps to every character it stands for — `<GID> <00660069>` for `fi`, not the presentation form `U+FB01` the `cmap` inversion produced — and a **substituted** glyph the `cmap` cannot reach maps to its characters instead of to nothing. A multi-character cluster always wins over the inversion; a single-character one only fills a gap, because there the inversion is already exact while the model text can legitimately differ from the shaped text (`w:caps`, `w:vanish`). Still on the inversion alone: a run with no source characters (list marker, tab-leader fill, inline math box, recomputed `PAGE` field), a cluster drawn by several glyphs (see below), and any export driven through `write_pdf` without a `PdfTextSource`. Anything neither source names is counted and reported as `pdf.font.unmapped_glyphs`, over the glyphs the document actually **draws**. |
+| A cluster drawn by several glyphs (a decomposed `é`) | **Left to the per-glyph inversion, deliberately** | `ToUnicode` is keyed by glyph id, not by position, so giving the cluster's whole text to its first glyph would emit that text again for every later glyph of the cluster that is itself mapped. Left alone the cluster copies as base-plus-marks, which is canonically equivalent to it. `bfrange` is not used: the crate's own reader supports `bfchar` only, and a range cannot express one glyph standing for several characters. |
 | Font embedding and subsetting (TrueType `glyf`) | **Supported** | The glyph identity space is retained and unused outlines emptied; `cvt `/`fpgm`/`prep` are kept, composites closed transitively, and the PostScript name carries an `ABCDEF+` subset tag. A committed guard holds every embedded face for a one-page fixture under 40 KB. |
 | Font embedding (CFF/OpenType outlines, collection members) | **Partial** | Embedded **whole** as `FontFile3 /OpenType`, not subset, and reported as `pdf.font.not_subsetted`. A CFF charstring subsetter is not written. |
 | A face whose licence forbids embedding (`OS/2.fsType`) | **Supported, as a refusal** | The export fails, naming the face. No substitution, no outlines, no rasterized text, no silent drop. A face flagged no-subsetting is embedded whole with a finding. |
@@ -115,9 +116,19 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
    export's pagination with an existing `FontRegistry`, or have the browser host drive
    `write_pdf` with the display lists it already holds. Until then the registry path
    embeds bundled and system-tier faces only.
-2. **Exact `ToUnicode`.** Carry cluster text through the display list (or alongside it)
-   so ligature and substituted glyphs map to their real characters instead of being
-   reported as unmapped.
+2. **Exact `ToUnicode` — done for model text, open for the rest.** `GlyphRun` carries a
+   `node: Option<NodeId>` anchor (a fixed-size anchor, not a `String` per run) and the
+   exporter resolves each glyph's cluster against that paragraph's own text, so ligature
+   and substituted glyphs now map to their real characters. What is still on the `cmap`
+   inversion alone, and would need work of its own: a run with no source characters at
+   all (list marker, tab-leader fill, inline math box, recomputed `PAGE` field — none of
+   these *has* model text to name, so this is a limit of the concept rather than a gap in
+   the implementation), a cluster drawn by several glyphs, an offset where the model text
+   and the shaped text diverge (`w:vanish` contributes model bytes but no glyphs, `w:caps`
+   rewrites case — the same divergence that misplaces a caret in those paragraphs, so the
+   fix belongs to the offset accounting, not here), and `write_pdf` called without a
+   `PdfTextSource`, which the browser viewer seam will need once it drives export itself
+   (item 1).
 3. **Phase 1 semantics** (§6): the `StructureTree` bridge first, then XMP metadata,
    hyperlink annotations, destinations, the outline tree and page ranges.
 4. **CFF subsetting**, so OpenType faces stop being embedded whole.
@@ -134,8 +145,14 @@ Each guard was driven red by mutating the production code before it was trusted
 shifting the text matrix by 10 pt; forcing whole-face embedding; skipping glyph emission
 entirely; deriving the file `/ID` from a counter; ignoring `OS/2.fsType`; dropping the
 placeholder mark; disabling picture de-duplication; dropping `/Title`; skipping the
-composite-glyph closure; claiming `can_import`; and downgrading a degraded finding to
-`Mapped`.
+composite-glyph closure; claiming `can_import`; downgrading a degraded finding to
+`Mapped`; and — for the exact-`ToUnicode` guards — restoring the `cmap`-inversion-only
+map, and separately dropping the `GlyphRun::node` anchor the shaper populates. Both turn
+`"Rich document-properties fixture body."` back into `"…ﬁxture…"` and
+`"often afflicted by fjords"` back into `"oen aﬄicted by ords"`, which is what the reader
+saw before the fix. Those two guards also assert the bundled face **really substitutes**
+— fewer glyphs than characters, and at least one drawn glyph genuinely outside the face's
+`cmap` — because without that the assertions would hold whether or not it did.
 
 The guards assert the guarantee rather than the mechanism: the file is parsed back and
 interrogated the way a reader would — text extractable and matching the document, every

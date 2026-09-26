@@ -839,11 +839,7 @@ fn a_substituted_glyph_with_no_character_map_entry_copies_out_too() {
     let unreachable: Vec<u32> = drawn
         .iter()
         .copied()
-        .filter(|id| {
-            !charmap
-                .mappings()
-                .any(|(_, glyph)| glyph.to_u32() == *id)
-        })
+        .filter(|id| !charmap.mappings().any(|(_, glyph)| glyph.to_u32() == *id))
         .collect();
     assert!(
         !unreachable.is_empty(),

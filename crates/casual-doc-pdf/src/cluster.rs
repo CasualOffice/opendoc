@@ -175,8 +175,7 @@ impl ClusterText {
         let face = self.by_face.entry(font.0).or_default();
         let better_already = face.get(&glyph).is_some_and(|held| {
             let (held_chars, candidate_chars) = (held.chars().count(), text.chars().count());
-            held_chars > candidate_chars
-                || (held_chars == candidate_chars && held.as_str() <= text)
+            held_chars > candidate_chars || (held_chars == candidate_chars && held.as_str() <= text)
         });
         if !better_already {
             face.insert(glyph, text.to_owned());
@@ -313,7 +312,11 @@ mod tests {
         // the whole text -- the map is keyed by glyph id, so both would emit it.
         let run = run_of(Some(node(7)), &[(40, 0), (41, 0), (42, 3)]);
         let solitary: Vec<_> = solitary_clusters(&run).collect();
-        assert_eq!(solitary, vec![(3, 42)], "only the lone glyph claims a cluster");
+        assert_eq!(
+            solitary,
+            vec![(3, 42)],
+            "only the lone glyph claims a cluster"
+        );
     }
 
     #[test]
