@@ -359,6 +359,154 @@ fn document_metadata_reaches_the_info_dictionary() {
     assert_eq!(decode_text_string(bytes), title);
 }
 
+/// A real watermarked DOCUMENT, through the real export entry point.
+///
+/// The layer test below drives a display list built by hand. That proves the PDF
+/// writer honours a layer; it proves nothing about whether a watermarked document
+/// ever produces one. `export_document` runs its own pagination and composition,
+/// so "the writer can" and "the export does" are separate claims — and the owner
+/// reported the PDF side as not done while the hand-built test was green.
+#[test]
+fn a_watermarked_document_exports_a_multiplied_stamp() {
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, Document, InlineNode, PageMargins, PageSize, Paragraph,
+        ParagraphProperties, Rgba, Run, RunProperties, SectionBoundary, SectionColumns, SectionId,
+        Watermark, WatermarkContent, WatermarkLayout, WatermarkText,
+    };
+
+    let node = |id: u64| NodeId::from_parts(id, 1).unwrap();
+    let mut definitions = Definitions::default();
+    definitions.sections.push(SectionBoundary {
+        id: SectionId::new(node(900)),
+        page_size: PageSize {
+            width_twips: 12_240,
+            height_twips: 15_840,
+        },
+        page_margins: PageMargins {
+            top_twips: 1_440,
+            bottom_twips: 1_440,
+            start_twips: 1_440,
+            end_twips: 1_440,
+            header_twips: None,
+            footer_twips: None,
+            gutter_twips: None,
+        },
+        columns: SectionColumns {
+            count: 1,
+            space_twips: None,
+            separator: None,
+            equal_width: None,
+            columns: Vec::new(),
+        },
+        headers: Vec::new(),
+        footers: Vec::new(),
+        section_type: None,
+        title_page: None,
+        vertical_alignment: None,
+        page_numbering: Default::default(),
+        doc_grid: Default::default(),
+        orientation: None,
+        paper_source: Default::default(),
+        page_borders: Default::default(),
+        line_numbering: Default::default(),
+        watermark: Some(Watermark {
+            content: WatermarkContent::Text(WatermarkText {
+                text: "DRAFT".to_owned(),
+                font: None,
+                size_half_points: None,
+                color: Rgba {
+                    r: 0xc0,
+                    g: 0xc0,
+                    b: 0xc0,
+                    a: 255,
+                },
+                bold: false,
+                italic: false,
+            }),
+            layout: WatermarkLayout::Diagonal,
+            semi_transparent: true,
+        }),
+        footnote_props: Default::default(),
+        endnote_props: Default::default(),
+        text_direction: None,
+        bidi: false,
+        section_change: None,
+    });
+    let document = Document::new(
+        node(1000),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: node(1),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: node(2),
+                properties: RunProperties::default().into(),
+                text: "Body text under the stamp.".to_owned(),
+            })],
+        })],
+        definitions,
+    )
+    .expect("valid document");
+
+    let export = casual_doc_pdf::export_document(
+        &document,
+        &MapMediaSource::new(),
+        &PdfExportOptions::default(),
+    )
+    .expect("export the watermarked document");
+    let text = String::from_utf8_lossy(&export.bytes).into_owned();
+
+    // The blend state is declared in the page's resources. That half is readable
+    // from the raw bytes, because object dictionaries are not compressed.
+    assert!(
+        text.contains("/BM/Multiply"),
+        "a watermarked document must export its stamp as a multiplied layer, or the \
+         saved PDF is the one place the stamp still covers the text"
+    );
+
+    // The content stream IS compressed, so it has to be inflated before anything can
+    // be asserted about the operators in it. Searching the raw file for `gs` finds
+    // nothing however correct the stream is — which is exactly how this test failed
+    // first: `/BM/Multiply` present, the selection unfindable, and the conclusion
+    // "PDF is not done" available to anyone reading only the raw bytes.
+    let pdf = casual_doc_pdf::inspect::parse(&export.bytes).expect("parse the export");
+    let streams: String = pdf
+        .pages()
+        .iter()
+        .filter_map(|page| pdf.get(page, "Contents"))
+        .map(|contents| pdf.resolve(contents))
+        .filter_map(|object| pdf.stream_data(object))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .collect();
+
+    assert!(
+        streams.contains("/GSMultiply gs"),
+        "the content stream must SELECT the multiply state, or declaring it changes \
+         nothing: {}",
+        streams
+            .lines()
+            .filter(|line| line.contains("gs"))
+            .take(4)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    // And the stamp is real content inside that state, not an empty bracket: a
+    // `/BM` with nothing drawn under it would satisfy every assertion above.
+    let at = streams
+        .find("/GSMultiply gs")
+        .expect("the selection was just asserted");
+    let after = &streams[at..];
+    assert!(
+        after.contains(" cm"),
+        "the stamp's rotation follows its blend state as a `cm`"
+    );
+    assert!(
+        after.contains(" Tf") && after.contains("TJ"),
+        "and its glyphs are drawn inside the multiplied state, which is the only \
+         thing that makes the blend matter"
+    );
+}
+
 #[test]
 fn a_watermark_layer_exports_with_a_multiply_blend_state() {
     use casual_doc_layout::display::{DisplayList, LayerBlend, PaintItem, ShapeTransform};

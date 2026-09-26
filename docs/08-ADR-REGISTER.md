@@ -384,9 +384,9 @@ questions are the dependency posture (writer/subsetter) and the Phase-2 scope ga
 item from being decided implicitly in code.
 
 **Consequence:** Phase 0 is implemented and registered in `casual-doc-io` as the
-export-only `application.pdf` adapter, so a Rust host reaches it through the same
-registry seam as DOCX and ODT; the browser host is not wired to it yet, and doc 98 lists
-exactly what that wiring is. The Phase-2 accessibility/archival gate remains a separate
+export-only `application.pdf` adapter, so Rust and browser hosts reach it through the
+same registry/WASM seam as DOCX and ODT; the web File surface exposes it as Export as
+PDF. Physical Print remains a separate raster path. The Phase-2 accessibility/archival gate remains a separate
 in/out decision because it ≈ doubles the effort and shapes the semantic `StructureTree`
 from day one — nothing in Phase 0 forecloses it. Phase 1's semantic features (links,
 outline, destinations) stay blocked on that `StructureTree` bridge, which layout does not

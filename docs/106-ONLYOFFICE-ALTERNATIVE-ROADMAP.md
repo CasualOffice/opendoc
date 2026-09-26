@@ -314,7 +314,7 @@ and print today emits a 150-DPI raster with no selectable text.
 
 | Work | Rows |
 | --- | --- |
-| **PDF export** — `98` designs it end to end: a `casual-doc-pdf` backend transcribing the shared `DisplayList`, selectable text, embedded subset fonts, vector paint, never rasterized. **Blocked on ADR-031** (writer/subsetter build-vs-buy) | `98`, ADR-031 |
+| **PDF export Phase 0 — shipped and browser-reachable:** `casual-doc-pdf` transcribes the shared `DisplayList` into deterministic vector PDF with selectable text, embedded TrueType subsets, vector paint, and image XObjects; File → Export as PDF reaches it through the registry/WASM seam. Remaining PDF work is live-font parity, Phase 1 semantics, CFF subsetting, print handoff, and the separately gated tagged PDF/PDF-A scope. | `98`, ADR-031 |
 | Print dialog: range, duplex with edge flip, colour/mono, margins, preview. Consider their pattern — the engine renders preview into a *second named surface* via the same renderer | **OO-010**, HF-030, HF-036, HF-105 |
 | Complete ODT beyond the current bounded subset | `95`/`96`/`97` |
 | **RTF, HTML, Markdown, EPUB, FB2** import/export; DOTX/OTT templates | new adapters |

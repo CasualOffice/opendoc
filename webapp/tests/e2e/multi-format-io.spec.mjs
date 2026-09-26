@@ -60,6 +60,19 @@ test("browser Open and Save dispatch text through the generic ODT exporter", asy
   const bytes = await readFile(path);
   expect(bytes.subarray(0, 2).toString()).toBe("PK");
 
+  // Drive the product command, not WasmDocument directly: this is the guard
+  // that the registered real-text exporter is actually reachable from File.
+  const pdfDownloadPromise = page.waitForEvent("download");
+  await runAppMenuCommand(page, "file", "file.export.pdf");
+  const pdfDownload = await pdfDownloadPromise;
+  expect(pdfDownload.suggestedFilename()).toBe("notes.pdf");
+  const pdfPath = await pdfDownload.path();
+  const pdfBytes = await readFile(pdfPath);
+  expect(pdfBytes.subarray(0, 8).toString()).toBe("%PDF-1.7");
+  const pdfText = pdfBytes.toString("latin1");
+  expect(pdfText).toContain("/Subtype/Type0");
+  expect(pdfText).toContain("/ToUnicode");
+
   await page.locator("#file").setInputFiles({
     name: "roundtrip.odt",
     mimeType: "application/vnd.oasis.opendocument.text",

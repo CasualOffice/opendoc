@@ -160,7 +160,7 @@ the fidelity matrix (`webapp/src/fidelity.js`), which the frontend unit tests pi
 
 | Area | State |
 | --- | --- |
-| **PDF export** | **Not built.** Designed end to end in `98-PDF-EXPORT-AND-PRINT-DESIGN.md`; blocked on ADR-031 (writer/subsetter build-vs-buy) and a Phase-2 scope gate. Printing currently goes through the browser from engine-rendered pages |
+| **PDF export** | **Phase 0 built and browser-reachable.** File → Export as PDF produces deterministic vector PDF with selectable/searchable text, embedded TrueType subsets, vector paint, and image XObjects through the generic registry/WASM seam. Still open: live host-font parity, Phase 1 semantics, CFF subsetting, tagged PDF/PDF-A, and replacing the physical-print raster path; see `98-PDF-EXPORT-AND-PRINT-DESIGN.md`. |
 | Charts, SmartArt | Modeled as first-class references, preserved byte-for-byte, **not drawn** — an embedded preview if the file has one, else a placeholder |
 | Colour fonts / colour emoji | Not rasterized. Emoji render through a monochrome face; no COLR/CBDT/sbix path |
 | Text wrap around floats | Top-and-bottom and square reserve shared flow, including in cells, headers and footers. **Tight and through contour wrapping, and page-coupled reflow, remain partial** |
