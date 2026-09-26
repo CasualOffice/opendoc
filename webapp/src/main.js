@@ -123,12 +123,12 @@ import {
   twipsToInchText,
 } from "./units.mjs";
 import {
-  announcementRegion,
   documentStateBadge,
   documentTabTitle,
   isObjectSelectionStatus,
   statusClassName,
 } from "./status_policy.mjs";
+import { createStatusChannel } from "./status_channel.mjs";
 import {
   APP_MENU_SECTIONS,
   flattenCommandTree,
@@ -199,10 +199,16 @@ function writePref(key, value) {
 }
 
 const statusEl = document.getElementById("status");
-// Off-screen mirrors of the status line: routine messages announce politely,
-// failures assertively (see the markup comment beside them in editor.html).
-const statusLiveRegion = document.getElementById("statusLiveRegion");
-const statusAlertRegion = document.getElementById("statusAlertRegion");
+// Every channel a status message can reach a person through, wired once (`109`
+// UX-017). The regions and the toast are body-level, outside the footer half
+// that `display: none` takes away below 620px — see the comment beside them in
+// editor.html for the measurement that forced the move.
+const statusChannel = createStatusChannel({
+  live: document.getElementById("statusLiveRegion"),
+  alert: document.getElementById("statusAlertRegion"),
+  toast: document.getElementById("statusToast"),
+  statusLine: statusEl,
+});
 const reviewLiveRegion = document.getElementById("reviewLiveRegion");
 const fileEl = document.getElementById("file");
 // The header's Open button. It is the only keyboard route into the app before a
@@ -2741,7 +2747,7 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
   statusClearTimer = 0;
   statusEl.textContent = text;
   statusEl.className = statusClassName(kind);
-  announceStatus(text, kind);
+  statusChannel.publish(text, kind);
   if (text && timeout > 0) {
     statusClearTimer = window.setTimeout(() => {
       statusEl.textContent = "";
@@ -2749,24 +2755,6 @@ function setStatus(text, kind = "", { timeout = 0 } = {}) {
       statusClearTimer = 0;
     }, timeout);
   }
-}
-
-/** Speaks a status message. `announcementRegion` decides which region hears
- *  it. The clear-then-next-frame write is what makes a repeated identical
- *  message (the same edit refused twice) count as a change worth announcing —
- *  the same trick `announceReview` uses. */
-function announceStatus(text, kind) {
-  const region =
-    announcementRegion(kind) === "assertive" ? statusAlertRegion : statusLiveRegion;
-  if (!region) return;
-  // Only one of the two regions may hold text, or a screen reader browsing the
-  // footer meets the last error long after it stopped being true.
-  if (statusLiveRegion) statusLiveRegion.textContent = "";
-  if (statusAlertRegion) statusAlertRegion.textContent = "";
-  if (!text) return;
-  requestAnimationFrame(() => {
-    region.textContent = text;
-  });
 }
 
 function setDocumentState(state) {
@@ -16040,7 +16028,10 @@ function reportAutosaveUnavailable(reason) {
   draftUnavailableReason = reason;
   stopDraftHeartbeat();
   setDraftStatus("Autosave unavailable", "unavailable", `Autosave is not running: ${reason}. Save the document to keep your work.`);
-  announceStatus(`Autosave unavailable: ${reason}`, "error");
+  // `publish`, not `announce`: the draft pill it pairs with is `priority 3` in
+  // the footer's informational half, so it is the FIRST thing shed as the window
+  // narrows — a broken promise about the user's work must not narrow away with it.
+  statusChannel.publish(`Autosave unavailable: ${reason}`, "error");
 }
 
 function setDraftStatus(text, state = "", title = "") {
@@ -16412,7 +16403,9 @@ function renderDraftRecovery({ announce = false } = {}) {
   draftRecoveryBar.hidden = false;
   if (announce) {
     const first = draftOffers[0];
-    announceStatus(
+    // `announce`, not `publish`: the recovery bar is its own on-screen surface at
+    // every width, so a toast would be a second copy of what is already in view.
+    statusChannel.announce(
       `Unsaved work recovered: ${first.name}, autosaved ${describeDraftAge(now - (first.savedAt ?? now))}. Restore or delete it from the recovery bar.`,
     );
   }

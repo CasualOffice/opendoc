@@ -1910,20 +1910,14 @@
              here is the PRE-BOOT placeholder — it is on screen before any
              script runs, which is before a catalogue could exist, so English
              is the only thing it could honestly say. -->
+        <!-- The visible half of the feedback channel — a failed open, a refused
+             save, a blocked link, an edit Viewing mode rejected. The live regions
+             that carry the same message to assistive technology used to live HERE,
+             which is the whole of `109` UX-017: this container is `display: none`
+             below 620px, and a `display: none` subtree is not in the accessibility
+             tree, so the editor went silent and inaudible at the same width. They
+             now sit at body level, beside the toast, next to the closing script. -->
         <span id="status" class="status">Loading engine…</span>
-        <!-- The status line is the editor's only error channel — a failed open,
-             a refused save, a blocked link, an edit Viewing mode rejected. It is
-             painted text, so it announced nothing and a failure was
-             indistinguishable from the app doing nothing. These two off-screen
-             regions carry the same message to assistive technology: routine
-             messages politely, `kind === "error"` assertively, both written by
-             `setStatus`. They mirror rather than replace the visible line
-             because the visible text is read synchronously (tests and the
-             progressive-disclosure layout depend on it) while a live region has
-             to be cleared and rewritten on a later frame to re-announce a
-             repeated identical message. -->
-        <span id="statusLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
-        <span id="statusAlertRegion" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></span>
         <!-- data-status-priority drives the status bar's progressive
              disclosure (see "Status-bar progressive disclosure" in style.css):
              higher numbers are shed first as the window narrows, mirroring how
@@ -1969,6 +1963,33 @@
         </span>
       </span>
     </footer>
+
+    <!-- THE FEEDBACK CHANNEL (`109` UX-017), at body level on purpose.
+         Every one of the ~124 `setStatus` calls arrives here through
+         `src/status_channel.mjs`.
+
+         Body level, because these were inside `.foot-left` and that container is
+         `display: none` below 620px. Measured through Chromium's own
+         accessibility tree: the refusal "Viewing mode is read-only; switch to
+         Editing to change the document" was present in 4 AX nodes at 1280px and
+         in ZERO at 390px. ONLYOFFICE puts its one announcement region on `body`
+         for exactly this reason
+         (`common/main/lib/util/ScreenReaderHelper.js:43-46`).
+
+         Routine messages go politely, `kind === "error"` assertively. They mirror
+         rather than replace the visible line, because the visible text is read
+         synchronously (tests and the progressive-disclosure layout depend on it)
+         while a live region has to be cleared and rewritten on a later frame to
+         re-announce a repeated identical message.
+
+         The toast is the VISIBLE fallback, in Google Docs' snackbar shape: pinned
+         to the viewport rather than to the chrome, so it survives every
+         breakpoint. It is `aria-hidden` and holds nothing focusable — the live
+         region above is the single thing that speaks, so a refusal is announced
+         once rather than twice. -->
+    <span id="statusLiveRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+    <span id="statusAlertRegion" class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"></span>
+    <div id="statusToast" class="toast" aria-hidden="true" hidden></div>
 
     <script type="module" src="./src/main.js"></script>
   </body>
