@@ -8897,7 +8897,9 @@ async function applyEditResult(res, { keepView = false } = {}) {
   // A review edit is not a text edit: the caret never moved, and it is usually
   // nowhere near the comment being worked on — so scrolling it into view sent
   // the reader back to wherever the caret happened to be (the top, normally).
-  if (!keepView) scrollCaretIntoView();
+  // ...and neither is an OBJECT edit: the user is manipulating the object, not
+  // the caret, so following the caret throws them off it (`object-edit-keeps-view`).
+  if (!keepView && !objectSelection) scrollCaretIntoView();
   // Any edit can introduce a scalar no provisioned face covers — an emoji from
   // the picker, a paste from another app, an IME commit. Coverage used to be
   // checked only on open and for the two edits known to add symbols (checklist

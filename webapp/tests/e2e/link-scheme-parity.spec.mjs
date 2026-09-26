@@ -13,6 +13,7 @@ import {
   clickIntoFirstPage,
   moveCaretToDocStart,
   MOD,
+  stableBox,
 } from "./fixtures.mjs";
 
 // Records every `window.open` the page attempts instead of performing it, so a
@@ -51,7 +52,12 @@ async function pointInsideLink(page) {
   await moveCaretToDocStart(page);
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
-  const box = await page.locator(".overlay .caret").first().boundingBox();
+  // `stableBox`, not `boundingBox`: the bare call gave
+  // `TypeError: Cannot read properties of null (reading 'x')` on a loaded CI
+  // runner, because the overlay re-renders and detaches the caret. A visibility
+  // check in front of it only widens that window; polling the measurement is
+  // what closes it, and it is the mechanism this repo already has.
+  const box = await stableBox(page.locator(".overlay .caret").first());
   return { x: box.x + 2, y: box.y + box.height / 2 };
 }
 

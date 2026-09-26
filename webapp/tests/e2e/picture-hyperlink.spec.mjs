@@ -9,7 +9,7 @@
 // existing ones and not a second implementation. This asserts that routing
 // actually reaches the surface — modelling a link nothing surfaces would be the
 // whole feature missing.
-import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { test, expect, gotoEditor, stableBox } from "./fixtures.mjs";
 
 const LINKED = "../fixtures/generated/picture-hyperlink.docx";
 
@@ -23,8 +23,16 @@ const LINKED = "../fixtures/generated/picture-hyperlink.docx";
  *  One click per point, never two: a second click inside a group descends into
  *  it, which is a different gesture with its own assertion below. */
 async function clickUntilLinkOffered(page) {
+  // `stableBox`, not `boundingBox`: a bare `boundingBox()` gave
+  // `TypeError: Cannot read properties of null (reading 'x')` on a loaded CI
+  // runner. Putting `await expect(sheet).toBeVisible()` in front of it does NOT
+  // fix that — it made the spec fail locally every time, because the viewer
+  // re-renders pages and detaches the element between the two round trips, so
+  // the extra await only widens the window. `stableBox` polls the measurement
+  // itself until the element reports a real box, which is the mechanism this
+  // repo already has for exactly this (`object-command-reach` uses it).
   const sheet = page.locator('.page-wrap[data-page-number="1"] .page');
-  const box = await sheet.boundingBox();
+  const box = await stableBox(sheet);
   for (let fy = 0.03; fy < 0.7; fy += 0.015) {
     for (let fx = 0.05; fx < 0.95; fx += 0.03) {
       const point = { x: box.x + box.width * fx, y: box.y + box.height * fy };
