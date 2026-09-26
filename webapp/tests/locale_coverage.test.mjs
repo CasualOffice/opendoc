@@ -92,27 +92,27 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 913],
-  ["de", 913],
-  ["es", 913],
-  ["fr", 913],
-  ["hi", 913],
-  ["id", 913],
-  ["it", 913],
-  ["ja", 913],
-  ["ko", 913],
-  ["nl", 913],
-  ["pl", 913],
-  ["pt-BR", 913],
-  ["ru", 913],
-  ["tr", 913],
-  ["uk", 913],
-  ["vi", 913],
-  ["zh-Hans", 913],
-  ["zh-Hant", 913],
+  ["ar", 1015],
+  ["de", 1015],
+  ["es", 1015],
+  ["fr", 1015],
+  ["hi", 1015],
+  ["id", 1015],
+  ["it", 1015],
+  ["ja", 1015],
+  ["ko", 1015],
+  ["nl", 1015],
+  ["pl", 1015],
+  ["pt-BR", 1015],
+  ["ru", 1015],
+  ["tr", 1015],
+  ["uk", 1015],
+  ["vi", 1015],
+  ["zh-Hans", 1015],
+  ["zh-Hant", 1015],
 ]);
 
-/** English defines 913 keys today, and every locale answers all 913 — 100.0%,
+/** English defines 1,015 keys today, and every locale answers all 1,015 — 100.0%,
  *  up from the 301 (35.4%) the previous pass had reached. That is the whole
  *  routed surface: every ribbon tab's groups and controls, the menu bar, every
  *  dialog title and button, the field labels, the File page, and the status and
@@ -128,6 +128,17 @@ const COVERAGE = new Map([
  *  902 → 913 is Insert ▸ Drop Cap: the ribbon group label, command label, the
  *  dialog's six new strings, and its three status announcements landed
  *  translated together with the authoring surface.
+ *
+ *  913 → 1,015 is References ▸ Insert Caption and Cross-reference (`105`
+ *  OO-005): the two dialogs, the References band's new Captions group, and the
+ *  eleven previously-raw Review and View strings that change routed while paying
+ *  the unrouted-string ratchet. Eighty-two of the 102 are markup keys, which fall
+ *  back to the English sitting in `editor.html` and which this ratchet therefore
+ *  does NOT force — they were translated anyway, because the floor is a floor
+ *  and not a target: leaving them would have taken the shipped catalogues from
+ *  100% to 95% while this gate stayed green. Six values are identical in every
+ *  locale on purpose (the five numbering-format samples "1, 2, 3, …" and "100%"),
+ *  which is a translation decision, not an omission.
  *
  *  The number in each row is still a floor, not a target, and at parity its
  *  job changes rather than ending: it is now what refuses a NEWLY routed
