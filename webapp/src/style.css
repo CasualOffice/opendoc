@@ -913,10 +913,50 @@ input {
  * dialogs. It is one now, in the shared `.dialog-overlay` shell, so it inherits
  * the scrim, the scroll containment and the one modal contract — and the shape
  * the File page already knows how to borrow. */
-.settings-dialog {
-  /* Wide enough for the reviewer-identity pair on one row, no wider. The
-     shared dialog body already caps its own height and scrolls. */
-  max-inline-size: min(100%, 520px);
+/* Wide enough for two columns of settings; see `.settings-body`. It was 520px
+   and one column, which put 779px of content into 542px of body — the worst
+   overflow of any dialog here, and the 237px below the fold held Autosave and
+   both proofing toggles.
+   Qualified by `.dialog-card` on purpose: that rule is declared LATER in this
+   file at the same specificity, so a bare `.settings-dialog { width }` loses to
+   its 640px and the card silently comes out narrower than it asks for — which
+   is also why the previous value here was expressed as `max-inline-size`. At
+   640 the reviewer-identity pair no longer fits side by side and stacks, so
+   this is load-bearing rather than cosmetic. */
+.dialog-card.settings-dialog {
+  width: min(720px, 100%);
+  max-inline-size: min(100%, 720px);
+}
+
+/* Six topics, read down one column then down the next.
+ *
+ * Every section here is a heading plus one short control — a three-button
+ * segmented, seven 26px swatches, one select — so a single column spent its
+ * height on headings and left 250-280px of every row empty beside the control
+ * that row exists for. Word's Options answers the same problem with a category
+ * rail and Google Docs' Preferences with a much tighter list; both put more than
+ * one topic in view at once, which is the part that matters.
+ *
+ * Multi-column rather than a grid, and it is the mechanism `.shortcuts-body`
+ * already uses for the same shape: a grid equalises row heights, so pairing a
+ * 54px Accent with a 129px Reviewer identity would pay 75px for the privilege.
+ * Columns flow instead, so each section is only as tall as it is.
+ *
+ * `column-count: 2` is a CEILING, not a target — the used count is the smaller
+ * of it and what `column-width` fits, so this is one column on a phone and two
+ * in the File page's wide pane, with no breakpoint enumerated. The width is in
+ * `rem` and not `vw`: this card is 720px whatever the viewport is, so a
+ * viewport-relative track would silently fall back to one column on a large
+ * monitor — the opposite of what it reads like. */
+.settings-body {
+  column-count: 2;
+  column-width: 17rem;
+  column-gap: clamp(20px, 2.4vw, 32px);
+}
+
+/* A setting and its own note must not be split across the column break. */
+.settings-section {
+  break-inside: avoid;
 }
 
 /* 20px between groups, the same figure `.page-setup-fields` and
@@ -1067,6 +1107,51 @@ body.modal-open {
 
 .dialog-card-compact {
   width: min(var(--dialog-width-compact), 100%);
+}
+
+/* Two of the compact cards are smaller than the 380px constant and one is
+ * bigger, so both are stated per dialog rather than by moving a constant that
+ * four dialogs share. See `.field-dialog` for why the spelling is the bare
+ * `fit-content` keyword.
+ *
+ * SPLIT CELL. Word's Split Cells is one of the smallest dialogs it ships — a
+ * title, two spinners, OK and Cancel — and ours was a 380px card holding two
+ * 144px boxes for a number between 1 and 20, because `.dialog-field-grid`'s
+ * shared track floor is 7rem. That floor is right for the margin and paper
+ * fields it was written for; it is not right for a cell count, so this dialog
+ * states its own. The card then falls to what the ACTION ROW needs, which is
+ * the widest thing left in it. */
+#splitCellDialog .dialog-card {
+  width: fit-content;
+  max-inline-size: min(100%, 46ch);
+}
+
+#splitCellDialog .dialog-field-grid {
+  grid-template-columns: repeat(2, max-content);
+}
+
+/* Two digits and a stepper. In `ch` so it follows the font rather than being a
+ * pixel that happened to fit Inter on one machine; the clipping contract in
+ * `dialog-contract.spec.mjs` is what catches it if a font makes this too tight. */
+#splitCellDialog .dialog-field > input {
+  width: 11ch;
+}
+
+/* CONFIRM. The one card here that was too NARROW, and measurably so: at 380px
+ * the footer could not fit "Save the .docx first to keep your work." beside
+ * "Keep editing" and "Discard and open", so `.dialog-foot`'s `flex-wrap` put
+ * the buttons on their own line and the row stood 86px tall instead of 52px —
+ * 34px spent on a wrap nobody asked for — while the message above it broke
+ * across four lines. Word and Google Docs both set a confirmation wider than
+ * this and keep its buttons on one line.
+ *
+ * `fit-content` rather than another constant because this dialog's text is
+ * supplied at runtime by `confirmModal()`: a short question gets a small card,
+ * and the ceiling is the width at which the longest action row this product
+ * builds still fits on one line. */
+#confirmDialog .dialog-card {
+  width: fit-content;
+  max-inline-size: min(100%, 56ch);
 }
 
 /* `hidden` is the weakest promise in the platform: it is a UA `display: none`,
@@ -1235,10 +1320,23 @@ body.modal-open {
 }
 
 /* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
-   whole keymap is scannable without scrolling past the group you want; one
-   column as soon as that would squeeze the key chips. */
+ * whole keymap is scannable without scrolling past the group you want; one
+ * column as soon as that would squeeze the key chips.
+ *
+ * Measured at 1280x720: the card took the 760px "wide" constant, which gave the
+ * body 716px and two multicol columns of 346px. The widest GROUP in the keymap
+ * — a group is only as wide as its widest label plus its widest chord — is
+ * 250px (REVIEW), and five of the eight are under 200px. So 96px of every
+ * column, 192px of the card, was empty gutter: a constant, not a measure.
+ *
+ * The width is in `ch` rather than pixels because what it has to hold is TEXT.
+ * The groups grow with the font and so does this, which a pixel tuned on one
+ * machine's Inter would not — and the Linux runner's fonts are not these.
+ * 80ch leaves the two columns about 36px of slack over the widest group here,
+ * and `.shortcuts-group` below now wraps its label column rather than
+ * overflowing if a translation or a substituted font eats that slack. */
 .shortcuts-dialog {
-  width: min(var(--dialog-width-wide), 100%);
+  width: min(80ch, 100%);
 }
 
 /* About is a short fact list, so it is sized by its CONTENT rather than by a
@@ -1246,7 +1344,8 @@ body.modal-open {
    a twenty-field one and leaves the middle empty. `fit-content` with a ceiling
    keeps it honest at every viewport, including 390px. */
 .about-dialog {
-  width: min(fit-content, 100%);
+  /* `fit-content`, NOT `min(fit-content, 100%)` — see `.field-dialog`. */
+  width: fit-content;
   /* Three facts and three links. A `ch` ceiling keeps the description from
      dragging the card out to the 640px standard constant, which is nearly
      three times what the content needs. */
@@ -1317,7 +1416,12 @@ body.modal-open {
 .shortcuts-group {
   break-inside: avoid;
   display: grid;
-  grid-template-columns: max-content max-content;
+  /* `minmax(0, max-content)` on the LABEL column, not bare `max-content`: the
+     card is now sized to the measured width of these groups, so a group that
+     grew — a longer translation, a substituted font on another platform — has
+     to wrap inside its column instead of painting across the next one. The
+     chord column stays `max-content`: a key chord must never break. */
+  grid-template-columns: minmax(0, max-content) max-content;
   justify-content: start;
   align-items: baseline;
   column-gap: clamp(8px, 1vw, 16px);
@@ -1439,6 +1543,79 @@ body.modal-open {
 .dialog-button-primary:hover {
   border-color: var(--primary-bg-hover);
   background: var(--primary-bg-hover);
+}
+
+/* ---- Document properties --------------------------------------------------- */
+/* Two columns, because the dialog holds two topics.
+ *
+ * Measured at 1280x720, the laptop where the complaint shows: the card was
+ * 640x672 — the full height the shell allows — and the body still reported 696px
+ * of content in 560px of box. 136px of the dialog was below the fold, and what
+ * was below it was the file's own facts: Revision, Language, Content status,
+ * Version, and the whole "Producer and saved statistics" disclosure.
+ *
+ * The cause is that one column was carrying two unrelated things: six fields you
+ * TYPE, then eight facts you READ. Word does not stack those either — its
+ * Properties dialog puts them on separate tabs (Summary, Statistics). Tabs need a
+ * script and a second dismissal surface, so the same separation is spatial here:
+ * the form on the left, the facts on the right, both visible at once, which is
+ * strictly more than a tab strip gives.
+ *
+ * `auto-fit` rather than two fixed tracks so the phone case needs no breakpoint:
+ * below ~570px of body only one 268px track fits and the two halves stack, which
+ * is the layout this replaces and the right one at that width. */
+.properties-dialog {
+  /* Unchanged at the 640px standard constant. The fix here is the SHAPE, not
+     the width: two 268px tracks and the gap floor need 556px and the body has
+     596px, so the split costs nothing on the horizontal and a wider card would
+     only take more of the screen for the same content. */
+  width: min(var(--dialog-width-standard), 100%);
+}
+
+.properties-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 268px), 1fr));
+  /* No ROW gap. There is only ever one row here, except when the two halves
+     stack — and there the facts block brings its own 20px margin and 16px
+     inset back with the separator, so a row gap on top of that would spend an
+     extra 20px on the narrowest screen, which is the one with none to spare. */
+  gap: 0 clamp(20px, 2.4vw, 32px);
+  align-content: start;
+  /* So the rule below can ask whether the two halves are actually side by side
+     — see the `@container` query. A grid stretched by its parent's width does
+     not size to its contents, which is the condition `inline-size` containment
+     requires. */
+  container-type: inline-size;
+}
+
+.properties-facts {
+  min-width: 0;
+}
+
+/* The rule and the 36px of air above "File details" separated it from the form
+   when the form was directly ABOVE it. Beside the form, the same rule separates
+   it from the top of the card instead, and the column edge already says what
+   the hairline was saying — so it goes.
+   It comes back when the two halves stack, which is a fact about the container
+   and not about the viewport: the same body is wide in a dialog, wide in the
+   File page's pane, and narrow on a phone. 555px is one pixel under the two
+   268px tracks plus the 20px gap floor, i.e. exactly the width at which
+   `auto-fit` gives up on the second column — so the two rules can never
+   disagree about which layout is on screen. The disclosures under it keep their
+   separator in both, because there the boundary is still between two stacked
+   things. */
+.properties-facts > .metadata-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+@container (max-width: 555px) {
+  .properties-facts > .metadata-section:first-child {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--line);
+  }
 }
 
 /* 16px between rows against the 6px that binds a label to its own input: a
@@ -1571,22 +1748,37 @@ body.modal-open {
      content no longer fills 760px, and a dialog that stays wide after its
      contents shrink is exactly the "bigger but not more useful" complaint.
      The ch ceiling keeps a long margin label from stretching it back out. */
+  /* This declaration DOES NOT PARSE and never has — see `.field-dialog`, which
+     explains why, and `dialog_density.test.mjs`, which ratchets it. Left as
+     written rather than corrected in passing: the one-word fix changes this
+     card's rendered width, and Page setup is not this change's to redesign. */
   width: min(fit-content, 100%);
   max-inline-size: min(100%, 68ch);
 }
 
-/* `.field-dialog` declared no width at all, so it inherited the 640px standard
-   constant for a six-row list whose widest row measures 268px — 330px of every
-   row was empty. Two columns of content-sized cards instead. */
+/* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
+ * this file — every one that was meant to be sized by its contents. `min()`
+ * takes <length-percentage> terms and `fit-content` is a sizing KEYWORD, so the
+ * whole declaration is dropped at parse time: `CSS.supports("width",
+ * "min(fit-content, 100%)")` is `false` in Chromium, and the computed width of
+ * every one of those cards was still `.dialog-card`'s own `min(640px, 100%)`.
+ *
+ * So what they actually had was the 640px constant clamped by their
+ * `max-inline-size` ch ceiling — a constant, which is the very thing they were
+ * written to stop being. Insert field measured 426px, which is exactly its
+ * 52ch ceiling and not the 357px its rows add up to.
+ *
+ * `fit-content` on its own is the correct spelling and needs no clamp: it is
+ * defined as `min(max-content, max(min-content, stretch))`, so it already
+ * cannot exceed the space available to it. `dialog_density.test.mjs` requires
+ * the keyword form on the cards it names and ratchets the broken one, because
+ * the broken spelling is the obvious way to write this and reads as correct.
+ *
+ * Insert field is a six-row picker whose widest row measures 313px; at the
+ * inherited constant, 69px of the card and 69px of every row were empty. */
 .field-dialog {
-  width: min(fit-content, 100%);
+  width: fit-content;
   max-inline-size: min(100%, 52ch);
-}
-
-.field-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(clamp(13rem, 20vw, 17rem), 1fr));
-  gap: var(--space-2);
 }
 
 .page-setup-body {
@@ -1689,19 +1881,23 @@ body.modal-open {
    the three-cell Font/Size/Color grid, so the 640px standard constant would
    leave a third of every row empty. */
 .watermark-dialog {
-  width: min(fit-content, 100%);
+  /* `fit-content` on its own, NOT `min(fit-content, 100%)` — see `.field-dialog`
+     for why that spelling never parsed. `fit-content` already cannot exceed the
+     available space, so the `min()` bought nothing even in intent. */
+  width: fit-content;
   max-inline-size: min(100%, 56ch);
 }
 
 /* ---- Drop cap ------------------------------------------------------------- */
 .drop-cap-dialog {
-  width: min(fit-content, 100%);
+  /* `fit-content`, not the unparseable `min()` — see `.field-dialog`. */
+  width: fit-content;
   max-inline-size: min(100%, 52ch);
 }
 
 .drop-cap-body {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .drop-cap-options {
@@ -1810,9 +2006,20 @@ body.modal-open {
 /* Sized by what it holds, like `.number-control`: this takes 1 to 10, and it
    was a 128px box for two digits. The allowance is four characters plus the
    input's own padding plus Chromium's spin buttons, which is the same
-   arithmetic `.number-control` documents. */
+   arithmetic `.number-control` documents.
+
+   The label sits BESIDE the value rather than above it. `.dialog-field` stacks
+   its label, which is right for a full-width text input and wrong for a
+   two-digit one: it spent a 60px row on a 69px control and left 267px of that
+   row empty. Word's Drop Cap dialog writes it inline — "Lines to drop: [3]" —
+   and so does every options row in this product's own menus (`.menu-row`).
+   Grid rather than flex so the bare "Lines" text node becomes a real item. */
 .drop-cap-lines {
+  display: grid;
   width: fit-content;
+  grid-template-columns: max-content max-content;
+  align-items: center;
+  gap: 0 var(--space-3);
 }
 
 .drop-cap-lines > input {
@@ -1841,6 +2048,34 @@ body.modal-open {
   margin-top: 12px;
 }
 
+/* The kind radios read across. Three short phrases stacked cost 84px and left
+   ~320px empty beside each one; on one line they cost 20px and the whole
+   decision — none, text, picture — is one glance instead of three. They wrap to
+   a second line on their own when the card is narrower than they are, which is
+   what happens at 400px. */
+.watermark-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px clamp(14px, 2.4vw, 22px);
+}
+
+/* The stacked-row rhythm above does not apply inside a row. */
+.watermark-kinds .dialog-check + .dialog-check {
+  margin-top: 0;
+}
+
+/* Font, Size and Colour on ONE row. The shared `.dialog-field-grid` gives every
+   cell a 9rem floor, which is right for a pair of margin spinners and wrong for
+   a colour well: three 9rem tracks plus gaps need 456px and the body is 415px,
+   so the grid wrapped and Colour took a 60px row of its own with a 216px swatch
+   in it — a control stretched to its container, which is the defect the last
+   pass removed everywhere else. Sized to content here: the selects already
+   report their widest option (`.dialog-body .dialog-select`), and the well is
+   sized by the swatch rather than by a label it does not have. */
+#watermarkTextFields .dialog-field-grid {
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) max-content;
+}
+
 /* A disabled choice is still carrying a sentence — the reason the picture half
    is not offered — so it reads as unavailable rather than as absent. */
 .watermark-body .dialog-check:has(input:disabled) {
@@ -1855,7 +2090,9 @@ body.modal-open {
 }
 
 #watermarkColor {
-  width: 100%;
+  /* A swatch, not a field: it has no text to fit, so it is sized by the
+     ~3.5rem of colour a user needs to see rather than by the cell around it. */
+  inline-size: 3.5rem;
   height: var(--h-field);
   padding: 2px;
   border: 1px solid var(--line-strong);
@@ -2007,8 +2244,19 @@ body.modal-open {
 }
 
 /* ---- Bookmark manager ---------------------------------------------------- */
+/* Measured at 1280x720: a 460px card whose body's max-content is 338px — the
+ * "No bookmarks yet" line, which is the widest thing in it — so a quarter of
+ * every row was empty. Word's Bookmark dialog is about 360px wide and Google
+ * Docs' is a narrow list; a bookmark name is a few words, not a sentence.
+ *
+ * `fit-content` so a document with three short bookmarks gets a small card, and
+ * a ch ceiling so a 200-character bookmark name cannot drag it out — the name
+ * is ellipsised at any width, but `text-overflow` does not shrink an element's
+ * max-content contribution, so without the ceiling one long name would set the
+ * card width. */
 .bookmark-dialog {
-  width: min(460px, 100%);
+  width: fit-content;
+  max-inline-size: min(100%, 46ch);
 }
 
 .bookmark-body {
@@ -2262,7 +2510,6 @@ body.modal-open {
 }
 
 .link-body > label + *,
-.link-body > .link-field-label + *,
 .link-body > .dialog-field-note,
 .bookmark-add > label + *,
 .bookmark-add > .dialog-field-note {
@@ -2284,6 +2531,17 @@ body.modal-open {
   color: var(--muted);
   font-size: var(--fs-small);
   font-weight: 600;
+}
+
+/* "Link to" beside its tab strip instead of over it. `wrap`, not `nowrap`:
+   at 400px, or with a translation that makes the two tab labels longer than
+   the card, the strip drops to its own line rather than being squeezed — which
+   is the stacked layout this replaces, reached only when it is needed. */
+.link-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .link-body input,
@@ -8394,6 +8652,21 @@ body:not(.doc-loaded) .drop-title {
   width: 100%;
   max-width: none;
   margin: 0;
+}
+
+/* The FOOT takes the same measure as the body, for the same reason the body
+   takes it: in a pane the card is the page, so nothing in it may start 22px in
+   from where the pane's heading starts. The rule above did this for the body
+   when the panes landed and left the action row behind, and the gap stayed
+   invisible for as long as some text in the body happened to sit at the page's
+   left edge — every pane had one, so the "same left edge" guard was measuring
+   the body and reporting on the card. Document properties' two columns took
+   that text out of the first column and the footer's own inset surfaced:
+   heading at 344, body at 344, "Changes apply as one undoable action." at 366.
+   It is one inset for the whole card now. */
+#filePageDetail .panel-in-page .dialog-foot {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 #filePageDetail .panel-in-page .dialog-body {

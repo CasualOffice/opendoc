@@ -13,8 +13,12 @@
 //    so a six-row list and a twenty-field form were the same size and the
 //    smaller one was mostly padding.
 //
-// The measured geometry — spinner widths, gap sizes, preview boxes — is guarded
-// in `webapp/tests/e2e/dialog-density.spec.mjs`, which needs a real layout.
+// The measured geometry — what a card actually renders at, and whether it hides
+// content below its own fold — needs a real layout, so it is guarded in
+// `webapp/tests/e2e/dialog-fit.spec.mjs`. (This line named
+// `e2e/dialog-density.spec.mjs` for several commits. That file has never
+// existed: the citation was a claim that geometry was covered when nothing
+// covered it.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -60,11 +64,17 @@ test("a dialog that shrank its contents is allowed to shrink", () => {
   // Page setup's preview and spinners were cut to their content; if the card
   // stays pinned to the "wide" constant the dialog is still as big and no more
   // useful, which is the complaint in one sentence.
-  for (const selector of [".page-setup-dialog", ".field-dialog", ".about-dialog"]) {
+  for (const selector of [
+    ".field-dialog",
+    ".about-dialog",
+    ".bookmark-dialog",
+    "#splitCellDialog .dialog-card",
+    "#confirmDialog .dialog-card",
+  ]) {
     const body = rule(selector);
     assert.match(
       body,
-      /width:\s*min\(fit-content/,
+      /width:\s*fit-content\s*;/,
       `${selector} must be sized by its content, not by a width constant`,
     );
     assert.match(
@@ -73,6 +83,56 @@ test("a dialog that shrank its contents is allowed to shrink", () => {
       `${selector} needs a ceiling so one long label cannot stretch it back out`,
     );
   }
+});
+
+// `min()` takes <length-percentage> terms. `fit-content` is a sizing KEYWORD,
+// so `width: min(fit-content, 100%)` does not parse and the whole declaration
+// is thrown away — `CSS.supports("width", "min(fit-content, 100%)")` is false
+// in Chromium. It reads as correct, it is the obvious way to write "size to the
+// content but never overflow", and it shipped on all three cards the previous
+// pass was written to make content-sized. Measured in the browser afterwards:
+// every one of them still computed `.dialog-card`'s `min(640px, 100%)` and was
+// being clamped by its `max-inline-size` ch ceiling instead — a constant, which
+// is the defect that pass set out to remove. Insert field measured 426px,
+// exactly its 52ch ceiling, against the 357px its rows add up to.
+//
+// The keyword alone is both correct and sufficient: `fit-content` is defined as
+// `min(max-content, max(min-content, stretch))`, so it already cannot exceed
+// the space available to it and needs no clamp.
+// A RATCHET rather than a zero, because one rule still carries the broken
+// spelling:
+//
+//   `.page-setup-dialog` — correcting the spelling changes that card's rendered
+//     width for the first time, and Page setup wants a layout pass of its own
+//     rather than a width change made in passing.
+//
+// `.watermark-dialog` and `.drop-cap-dialog` were the other two. They were left
+// at 3 while a parallel change owned them; both are corrected in this same
+// commit, so the number comes down with them — which is what a ratchet is for.
+//
+// The ratchet arms the rule for everything else immediately: no NEW card can be
+// written this way. A ceiling nobody lowers stops being a ratchet and becomes a
+// comment, so the test also fails if the count drops below it.
+const MIN_FIT_CONTENT_RATCHET = 1;
+
+test("no new card asks for `min(fit-content, …)`, which is not valid CSS", () => {
+  // Comments first: the rules above explain this defect in prose, and a guard
+  // that reads its own explanation as a violation would be unfixable.
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const offenders = [...code.matchAll(/^.*\bmin\(\s*fit-content\b.*$/gm)].map((m) => m[0].trim());
+  assert.ok(
+    offenders.length <= MIN_FIT_CONTENT_RATCHET,
+    `\`min(fit-content, …)\` does not parse, so the declaration is dropped and ` +
+      `the element keeps whatever width it inherited. Write \`width: fit-content\`, ` +
+      `which cannot exceed the available space anyway. ${offenders.length} uses, ` +
+      `ratchet ${MIN_FIT_CONTENT_RATCHET}:\n  ${offenders.join("\n  ")}`,
+  );
+  assert.equal(
+    offenders.length,
+    MIN_FIT_CONTENT_RATCHET,
+    `the ratchet is above the real count (${offenders.length}). Lower ` +
+      `MIN_FIT_CONTENT_RATCHET to it, or the guard stops guarding.`,
+  );
 });
 
 test("the narrow-width override no longer stacks paired number fields", () => {
