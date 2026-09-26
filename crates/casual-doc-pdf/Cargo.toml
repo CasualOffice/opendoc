@@ -24,6 +24,13 @@ casual-doc-layout.workspace = true
 # `PaintItem::Image` carries the model's `CropRect`; `DocumentProperties`
 # supplies the PDF `/Info` dictionary.
 casual-doc-model.workspace = true
+# `ParagraphIndex`: the one-walk paragraph index the `ToUnicode` cluster
+# resolution looks paragraphs up in. Resolving a `GlyphRun`'s node anchor with
+# `find_paragraph`/`paragraph_properties` instead would be a LINEAR SCAN per run
+# -- quadratic in document length, the mistake `documentOutline` shipped once.
+# Reused rather than reimplemented so both paths answer identically; no new
+# supply-chain surface (an in-tree crate whose only dependency is the model).
+casual-doc-edit.workspace = true
 # Parse-only OpenType reader (fontations): underline/strikeout metrics, glyph
 # advances for the `/W` array, and the character map inverted to build the
 # `ToUnicode` CMap. Already in the tree via `parley`/`fontique`/
