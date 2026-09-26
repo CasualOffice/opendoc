@@ -135,6 +135,7 @@ import {
   tableMenuPlaceholders,
 } from "./command_taxonomy.mjs";
 import { FILE_SURFACE, fileMenuSections } from "./command_taxonomy.mjs";
+import { FIELD_KINDS, fieldLabel, fieldResultText } from "./field_kinds.mjs";
 import {
   createMenuBar,
   renderCommandRows,
@@ -345,6 +346,9 @@ const insertTextBoxBtn = document.getElementById("insertTextBoxBtn");
 const insertLinkBtn = document.getElementById("insertLinkBtn");
 const insertBookmarkBtn = document.getElementById("insertBookmarkBtn");
 const insertFieldBtn = document.getElementById("insertFieldBtn");
+const insertPageNumberBtn = document.getElementById("insertPageNumberBtn");
+const insertDateBtn = document.getElementById("insertDateBtn");
+const insertCommentBtn = document.getElementById("insertCommentBtn");
 const insertDropCapBtn = document.getElementById("insertDropCapBtn");
 const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
@@ -8378,6 +8382,21 @@ const INSERT_SURFACE = [
   { command: "insert.link", buttons: [insertLinkBtn], requires: "range", activate: () => editSelectionLink() },
   { command: "insert.bookmark", buttons: [insertBookmarkBtn, refBookmarkBtn], requires: "doc", activate: () => openBookmarkManager() },
   { command: "insert.field", buttons: [insertFieldBtn, refFieldBtn], requires: "doc", activate: () => openFieldDialog() },
+  // Page number and Date are the two field kinds the competition puts on the
+  // Insert TAB rather than behind a generic field picker: Word's Insert tab has
+  // Page Number in its Header & Footer group and Date & Time in its Text group,
+  // and ONLYOFFICE's Insert tab has both as their own buttons (their groups 5
+  // and 6). Here they were one level deeper — Insert ▸ Field, then a row in the
+  // picker — which is a reachability gap, not a missing capability.
+  //
+  // They are the SAME commands the palette already registers per kind
+  // (`insert.field.<kind>`, generated from FIELD_KINDS) running the SAME
+  // `insertFieldAtCaret`, so there is no second insert path to keep in step:
+  // this table supplies the enablement and the click, exactly as it does for the
+  // picker's own button. The other four kinds (number of pages, time, file name,
+  // author) stay in the picker, where Word and ONLYOFFICE also keep them.
+  { command: "insert.field.page", buttons: [insertPageNumberBtn], requires: "doc", activate: () => insertFieldAtCaret("page") },
+  { command: "insert.field.date", buttons: [insertDateBtn], requires: "doc", activate: () => insertFieldAtCaret("date") },
   { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => openDropCapDialog() },
   // Notes live on References only, as they do in Word. The app-menu row and the
   // palette entry are untouched, so the command keeps three surfaces.
@@ -8552,7 +8571,16 @@ const REVIEW_SURFACE = [
   { command: "review.rejectNext", buttons: () => [reviewRejectBtn], run: () => decideReviewAndAdvance(false) },
   { command: "review.acceptAll", buttons: () => [reviewAcceptAllBtn], run: () => void decideAllReviewChanges(true) },
   { command: "review.rejectAll", buttons: () => [reviewRejectAllBtn], run: () => void decideAllReviewChanges(false) },
-  { command: "review.comment", buttons: () => [reviewCommentBtn, reviewMarginCommentBtn], requires: "range", run: () => openReviewComposer() },
+  // Three faces, and the third is on the INSERT band: ONLYOFFICE carries Comment
+  // on both Insert and Collaboration, and Word's Insert tab has a Comments group
+  // of its own. Commenting was already in this editor's Insert MENU (Google
+  // Docs files it at Insert ▸ Comment, which is where `command_taxonomy.mjs`
+  // took it from) but had no Insert BAND button, so in the ribbon chrome — which
+  // has no menu bar (docs/122) — the Insert tab could not reach it at all.
+  // Declared here rather than beside the new button for the reason the comment
+  // above gives: a second wiring is free to drift in what it runs and in when it
+  // is available.
+  { command: "review.comment", buttons: () => [reviewCommentBtn, insertCommentBtn, reviewMarginCommentBtn], requires: "range", run: () => openReviewComposer() },
   // `requires: "comment"` — the caret is inside a commented range. Word and
   // ONLYOFFICE both target that comment rather than a sidebar selection, so a
   // reviewer never has to open a panel to resolve what they are reading.
@@ -13153,41 +13181,10 @@ function openBookmarkManager() {
 
 // ---- Insert field ----------------------------------------------------------
 // A Word/Docs-style field inserter over the engine's insertField op (one
-// undoable "Field change"). PAGE/NUMPAGES recompute at pagination and carry no
-// cached text; the clock/context kinds (date/time/filename/author) cache an
-// already-formatted string the HOST computes here, because the engine reads no
-// clock or filesystem (see the insertField binding, crates/casual-doc-wasm).
-// The insert mirrors the bookmark/table structural inserts: blocked in Viewing
-// (read-only) and Suggesting (no tracked-revision representation yet).
-const FIELD_KINDS = [
-  { kind: "page", label: "Page number", icon: "tag", kw: "page number current", note: "Current page number" },
-  { kind: "numpages", label: "Number of pages", icon: "tag", kw: "number of pages count total", note: "Total page count" },
-  { kind: "date", label: "Date", icon: "calendar_today", kw: "date today", note: "Today’s date" },
-  { kind: "time", label: "Time", icon: "schedule", kw: "time clock now", note: "Current time" },
-  { kind: "filename", label: "File name", icon: "description", kw: "file name filename document", note: "This document’s file name" },
-  { kind: "author", label: "Author", icon: "person", kw: "author name creator", note: "The active author" },
-];
-const FIELD_LABELS = new Map(FIELD_KINDS.map((f) => [f.kind, f.label]));
-
-/** The already-formatted display text a cached field kind shows. PAGE/NUMPAGES
- *  recompute at pagination and take no cached text (undefined → the binding's
- *  `None`). The engine reads no clock or filesystem, so date/time are formatted
- *  with the locale-default medium `Intl.DateTimeFormat`, filename is the editor's
- *  current document name, and author is the active review author. */
-function fieldResultText(kind) {
-  switch (kind) {
-    case "date":
-      return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date());
-    case "time":
-      return new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(new Date());
-    case "filename":
-      return currentName;
-    case "author":
-      return settings.authorName.trim() || "You";
-    default:
-      return undefined; // page / numpages: engine recomputes, no cached text
-  }
-}
+// undoable "Field change"). The kind table and the host-side result formatter
+// are `field_kinds.mjs`; the insert mirrors the bookmark/table structural
+// inserts: blocked in Viewing (read-only) and Suggesting (no tracked-revision
+// representation yet).
 
 /** Inserts a common field at the caret as a single undoable "Field change".
  *  Fails closed exactly like the bookmark/table inserts (`blockMutationInViewing`
@@ -13205,7 +13202,7 @@ async function insertFieldAtCaret(kind) {
   const { node, offset } = selection.focus;
   let res;
   try {
-    res = doc.insertField(node, offset, kind, fieldResultText(kind));
+    res = doc.insertField(node, offset, kind, fieldResultText(kind, { fileName: currentName, authorName: settings.authorName }));
   } catch (err) {
     console.warn("insertField ignored:", err?.message ?? err);
     setStatus("A field can’t be inserted at this position", "error");
@@ -13213,7 +13210,7 @@ async function insertFieldAtCaret(kind) {
     return;
   }
   await applyEditResult(res);
-  setStatus(`Inserted ${FIELD_LABELS.get(kind) ?? "field"}`);
+  setStatus(`Inserted ${fieldLabel(kind)}`);
   focusEditorSurface();
 }
 

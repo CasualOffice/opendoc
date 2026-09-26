@@ -520,10 +520,35 @@
             </div>
             <span data-i18n="panelInsert.links" class="rgroup-label">Links</span>
           </div>
+          <!-- Comments is Word's own Insert-tab group, and it sits immediately
+               after Links there; ONLYOFFICE likewise puts Comment on the Insert
+               tab straight after Hyperlink, as well as on Collaboration. The
+               command is `review.comment` — the same one the Review band and the
+               right-margin affordance run, declared once in REVIEW_SURFACE — so
+               this is a third face on an existing command, not a second
+               composer. It was already in the Insert MENU and had no Insert BAND
+               button, which in the ribbon chrome (no menu bar, docs/122) left
+               the Insert tab unable to reach commenting at all. -->
+          <div class="rgroup" data-group="insert-comments">
+            <div class="rgroup-ctl">
+              <button data-i18n-title="panelReview.addCommentSelection.title" data-i18n-label="panelReview.addComment.label" id="insertCommentBtn" type="button" class="fmt" title="Add a comment on the selection" aria-label="Add comment" disabled><span class="ms" aria-hidden="true">add_comment</span></button>
+            </div>
+            <span data-i18n="panelInsert.comments" class="rgroup-label">Comments</span>
+          </div>
           <div class="rgroup" data-group="insert-text">
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.insertFieldPageNumber.title" data-i18n-label="panelInsert.insertField.label" id="insertFieldBtn" type="button" class="fmt" title="Insert a field (page number, date, file name…)" aria-label="Insert field" aria-haspopup="dialog" disabled><span class="ms" aria-hidden="true">data_object</span></button>
               <button data-i18n-title="dropCap.name" data-i18n-label="dropCap.name" id="insertDropCapBtn" type="button" class="fmt" title="Drop cap" aria-label="Drop cap" aria-haspopup="dialog" aria-controls="dropCapDialog" disabled><span class="ms" aria-hidden="true">format_size</span></button>
+              <!-- Word's Text group order is Quick Parts ▸ Field, Drop Cap, then
+                   Date & Time, so the date field goes here and last. It inserts
+                   directly — no picker — which is the point of promoting it.
+                   Deliberately NOT called "Date & time": this button inserts the
+                   DATE field, and the TIME kind stays in Insert ▸ Field with the
+                   other three. Word and ONLYOFFICE label their button "Date &
+                   time" because it opens a format chooser that can include the
+                   time; a control here has to do what its label says, so the
+                   label names the one field it inserts. -->
+              <button data-i18n-title="panelInsert.insertDateField.title" data-i18n-label="fieldList.date" id="insertDateBtn" type="button" class="fmt" title="Insert today’s date as a field" aria-label="Date" disabled><span class="ms" aria-hidden="true">calendar_today</span></button>
             </div>
             <span data-i18n="panelInsert.text" class="rgroup-label">Text</span>
           </div>
@@ -536,6 +561,15 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelInsert.editPageHeader.title" data-i18n-label="panelInsert.editHeader.label" id="insertHeaderBtn" type="button" class="fmt" title="Edit the page header" aria-label="Edit header" disabled><span class="ms" aria-hidden="true">vertical_align_top</span></button>
               <button data-i18n-title="panelInsert.editPageFooter.title" data-i18n-label="panelInsert.editFooter.label" id="insertFooterBtn" type="button" class="fmt" title="Edit the page footer" aria-label="Edit footer" disabled><span class="ms" aria-hidden="true">vertical_align_bottom</span></button>
+              <!-- Page Number is the THIRD control in Word's Insert ▸ Header &
+                   Footer group, after Header and Footer, and ONLYOFFICE puts its
+                   Page number button directly after Header/Footer too — because
+                   a page number is what people put in a running area. It inserts
+                   the PAGE field straight away rather than opening the field
+                   picker, which is the whole reachability point. The two
+                   running-content variants stay last: they are options ON the
+                   header and footer, not another thing to insert. -->
+              <button data-i18n-title="panelInsert.insertPageNumberField.title" data-i18n-label="fieldList.pageNumber" id="insertPageNumberBtn" type="button" class="fmt" title="Insert the page number as a field that updates as pages reflow" aria-label="Page number" disabled><span class="ms" aria-hidden="true">tag</span></button>
               <!-- The two running-content variants had no ribbon face at all:
                    they were reachable from the Insert MENU and the palette only,
                    so removing the menu bar from ribbon mode would have left them

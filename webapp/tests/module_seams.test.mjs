@@ -101,8 +101,15 @@ const SRC = new URL("../src/", import.meta.url);
  *  asks — the swatch vocabularies (`TEXT_STANDARD_COLORS`, `HIGHLIGHT_COLORS`,
  *  the name→hex/label maps) went to `palettes.mjs`, which also makes "every
  *  highlight the engine can write is offerable" provable in node — and leaves
- *  27 lines of slack so the next two concurrent PRs do not collide the same way. */
-const MAIN_JS_LINE_CEILING = 17054;
+ *  27 lines of slack so the next two concurrent PRs do not collide the same way.
+ *  Lowered again to 17,040 by the Insert-band reachability round (Page number,
+ *  Date and Comment as direct band buttons): the three `INSERT_SURFACE` /
+ *  `REVIEW_SURFACE` rows and their rationale cost more than the 14 lines of
+ *  slack that were left, so the field VOCABULARY — the kind table and the
+ *  host-side result formatter — moved to `field_kinds.mjs`. It is data plus one
+ *  pure function, so what a date field caches is now answerable in node, which
+ *  is the ratchet buying a seam rather than just a smaller file. */
+const MAIN_JS_LINE_CEILING = 17040;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -122,6 +129,9 @@ const PURE_MODULES = [
   "i18n.mjs",
   "contrast.mjs",
   "edit_errors.mjs",
+  // The field vocabulary: the kind table plus the host-side result formatter.
+  // No DOM and no engine, so "what does a date field cache" is a node question.
+  "field_kinds.mjs",
   // The whole target -> cursor mapping. Its DOM half is `pointer_hover.mjs`;
   // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
   // hover cascade with plain objects, with no browser and no engine.

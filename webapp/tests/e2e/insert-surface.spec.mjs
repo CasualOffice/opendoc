@@ -82,10 +82,18 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "insertTextBoxBtn",
     "insertLinkBtn",
     "insertBookmarkBtn",
+    // Comment: Word's Insert tab has a Comments group directly after Links, and
+    // ONLYOFFICE carries Comment on Insert as well as Collaboration. Same
+    // `review.comment` command as the Review band's button.
+    "insertCommentBtn",
     "insertFieldBtn",
     "insertDropCapBtn",
+    // Date last in Word's Text group (Quick Parts ▸ Field, Drop Cap, Date & Time).
+    "insertDateBtn",
     "insertHeaderBtn",
     "insertFooterBtn",
+    // Page Number is the third control in Word's Insert ▸ Header & Footer group.
+    "insertPageNumberBtn",
     // The two running-content variants joined the Header & footer group: they had
     // no ribbon face at all and were reachable from the Insert menu and the
     // palette only, so the ribbon chrome — which has no menu bar (docs/122) —
@@ -108,6 +116,8 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     "Table",
     "Illustrations",
     "Links",
+    // Word's own Insert-tab group, in Word's own position: straight after Links.
+    "Comments",
     "Text",
     "Header & footer",
     "Symbols",
@@ -123,10 +133,13 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertTextBoxBtn", "Insert text box"],
     ["#insertLinkBtn", "Add or edit link"],
     ["#insertBookmarkBtn", "Bookmark"],
+    ["#insertCommentBtn", "Add comment"],
     ["#insertFieldBtn", "Insert field"],
     ["#insertDropCapBtn", "Drop cap"],
+    ["#insertDateBtn", "Date"],
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
+    ["#insertPageNumberBtn", "Page number"],
     ["#insertSymbolBtn", "Insert symbol"],
     ["#insertEmojiBtn", "Insert emoji"],
   ];
@@ -162,6 +175,8 @@ test("every Insert ribbon button is live on a freshly loaded document — only L
     "#insertBookmarkBtn",
     "#insertFieldBtn",
     "#insertDropCapBtn",
+    "#insertPageNumberBtn",
+    "#insertDateBtn",
     "#insertSymbolBtn",
     "#insertEmojiBtn",
   ]) {
@@ -172,6 +187,10 @@ test("every Insert ribbon button is live on a freshly loaded document — only L
   // selected text, so with nothing selected it stays disabled — that guard must
   // survive the un-gating of its neighbours.
   await expect(page.locator("#insertLinkBtn")).toBeDisabled();
+  // Comment is the other one, for the same reason: a comment anchors to a range.
+  // It is `review.comment`, so its precondition comes from REVIEW_SURFACE rather
+  // than from this table, and the two must not disagree.
+  await expect(page.locator("#insertCommentBtn")).toBeDisabled();
 
   expect(consoleErrors).toEqual([]);
 });
@@ -190,6 +209,10 @@ test("the Insert menu and the command palette agree with the ribbon on a freshly
     "insert.image",
     "insert.bookmark",
     "insert.field",
+    // The two promoted kinds are menu rows as well as band buttons — Word's
+    // Insert menu offers Page Number and Date & Time directly too.
+    "insert.field.page",
+    "insert.field.date",
     "insert.dropCap",
     "insert.symbol",
     "insert.emoji",

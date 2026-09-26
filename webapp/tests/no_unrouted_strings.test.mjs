@@ -38,12 +38,17 @@ const CEILINGS = new Map([
   ["src/command_taxonomy.mjs", 8],
   ["src/compact_toolbar.mjs", 18],
   ["src/export_commands.mjs", 6],
+  // The six field-kind labels and their picker notes ("Page number", "Today's
+  // date", …). They were six of `main.js`'s 348 and moved here with the table,
+  // so this is the same debt relocated, not a new one — main.js came down by
+  // exactly six in the same commit.
+  ["src/field_kinds.mjs", 6],
   ["src/fidelity.js", 5],
   ["src/file_pane.mjs", 12],
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  ["src/main.js", 348],
+  ["src/main.js", 342],
   ["src/pages_panel.mjs", 4],
   // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
   // sixteen of `main.js`'s 364 and moved here with the table, so this is the

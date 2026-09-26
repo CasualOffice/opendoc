@@ -140,7 +140,14 @@ export const APP_MENU_SECTIONS = {
     // Editing mode is View ▸ Mode in Docs. It was in both View and Review.
     ["review.mode.editing", "review.mode.suggesting", "review.mode.viewing"],
   ],
-  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field", "insert.dropCap"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
+  // `insert.field.page` and `insert.field.date` sit beside `insert.field`, not
+  // inside the picker only: the Insert BAND gives those two kinds their own
+  // buttons (Word's Insert tab has Page Number and Date & Time; ONLYOFFICE's
+  // has both), and `insert-surface.spec.mjs` holds the band and this menu at
+  // exact parity on the `insert.` namespace — a ribbon face with no menu row is
+  // the drift that guard exists to catch. The remaining four kinds stay
+  // picker-only and are reachable from the palette by name.
+  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field", "insert.field.page", "insert.field.date", "insert.dropCap"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
