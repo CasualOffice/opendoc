@@ -178,6 +178,11 @@ export const APP_MENU_SECTIONS = {
     ["table.distribute.rows", "table.distribute.columns"],
     ["table.sort.ascending", "table.sort.descending"],
     ["table.cellFormat", "table.properties"],
+    // Clearing the table style. The named styles are generated per document, so
+    // they cannot be listed here — the ribbon's chooser and the palette's
+    // `table.style.<name>` rows are their two surfaces — but "back to no style"
+    // is a fixed command and the Table menu is where Word keeps it.
+    ["table.style.none"],
   ],
   review: [
     ["review.toggle"],
@@ -218,6 +223,7 @@ export const TABLE_MENU_LABELS = new Map([
   ["table.sort.descending", "Sort descending"],
   ["table.cellFormat", "Cell formatting…"],
   ["table.properties", "Table properties…"],
+  ["table.style.none", "No table style"],
 ]);
 
 /** The menu names the bar offers, in bar order. */

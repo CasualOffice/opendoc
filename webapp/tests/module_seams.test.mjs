@@ -181,12 +181,21 @@ const PURE_MODULES = [
   // question "does the picker offer every highlight the engine can write?" is
   // answerable against the Rust source in node (`palettes.test.mjs`).
   "palettes.mjs",
+  // The memoized "does this document hold an object?" answer (`109` HF-183). The
+  // engine call is injected, which is what lets `object_presence.test.mjs` count
+  // engine calls and payload bytes at n and 2n objects in node — a complexity
+  // guard, where a browser could only offer a stopwatch.
+  "object_presence.mjs",
   "popover_position.mjs",
   // The radio-group pattern. It is handed its container and never reaches for a
   // global one, which is what lets `radio_group.test.mjs` drive the arrow
   // arithmetic in node and what would let a host mount a segmented control of
   // its own on the same contract.
   "radio_group.mjs",
+  // Which command each Home / View / Table ribbon control stands for (`109`
+  // UX-005). Selectors and ids only: the caller supplies the root, so the table
+  // is checkable in node and cannot quietly grow a DOM opinion.
+  "ribbon_faces.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what
@@ -197,6 +206,9 @@ const PURE_MODULES = [
   // lets `spelling.test.mjs` run the whole dictionary through them in node.
   "spelling.mjs",
   "status_policy.mjs",
+  // The Table band's structural controls. Handed its root and its engine, so the
+  // operation tables are set-comparable against `editor.html` in node.
+  "table_band.mjs",
   "text_rules.mjs",
   "units.mjs",
 ];

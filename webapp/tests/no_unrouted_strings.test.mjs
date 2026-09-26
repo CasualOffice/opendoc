@@ -48,7 +48,11 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  ["src/main.js", 342],
+  // 338 after `109` UX-005: the table-style chooser's "No table style" became one
+  // `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
+  // row, so one meaning stopped being two literals. Lowered rather than left at
+  // 342, because slack nobody reclaims is room for the file to grow back free.
+  ["src/main.js", 338],
   ["src/pages_panel.mjs", 4],
   // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
   // sixteen of `main.js`'s 364 and moved here with the table, so this is the

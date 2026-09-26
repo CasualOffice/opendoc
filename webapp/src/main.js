@@ -167,6 +167,9 @@ import {
 import { followExternalTarget } from "./link_targets.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createObjectPresence } from "./object_presence.mjs";
+import { stampRibbonFaces } from "./ribbon_faces.mjs";
+import { bindTableBand } from "./table_band.mjs";
 
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
@@ -3090,6 +3093,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure = null;
     if (doc) doc.free();
     doc = next;
+    // A different document, so the remembered object answer belongs to a
+    // document that no longer exists.
+    objectPresence.forget();
     currentSourceFormat = doc.sourceFormat;
     applyActiveAuthorToDocument();
     // Word/Docs: an open document always has an insertion point, so Insert ▸
@@ -4963,15 +4969,15 @@ function selectedObjectContext() {
 /** Whether the document holds any floating object at all, which is what decides
  *  if the "select next object" commands are offered rather than greyed. Asked of
  *  the engine's own paint order so the answer cannot drift from what traversal
- *  would actually land on. */
+ *  would actually land on — and memoized, because the question is asked on a
+ *  per-keystroke path while `objectOrder()` is O(objects) (`109` HF-183; the
+ *  whole argument, and the invalidation contract, is in `object_presence.mjs`).
+ *
+ *  Cost: O(1) per call, O(objects) once per edit. */
+const objectPresence = createObjectPresence(() => doc.objectOrder());
 function documentHasObjects() {
   if (!doc) return false;
-  try {
-    const objects = JSON.parse(doc.objectOrder());
-    return Array.isArray(objects) && objects.length > 0;
-  } catch {
-    return false;
-  }
+  return objectPresence.has();
 }
 
 /** Moves the object selection `step` places through the document's objects, in
@@ -8571,6 +8577,11 @@ function readRevision(res) {
  *  Call with the revision read BEFORE `res.free()`. */
 function noteDocumentEdited(revision) {
   clearFindParagraphCache();
+  // Every landed edit can add or remove a floating object, so the memoized
+  // yes/no answer is dropped here — the one choke point every edit passes
+  // (`109` HF-183). Costs one engine call on the next question, which is the
+  // price of not asking on every keystroke.
+  objectPresence.forget();
   if (revision === null || revision === undefined) revisionUnreadable = true;
   else currentRevision = revision;
   setDocumentState("edited");
@@ -9278,7 +9289,14 @@ function updateToolbar() {
   // descriptors — the same rule the Insert menu and the palette use. Nothing
   // about Insert is decided here any more; a per-button rule written at this
   // spot is exactly how the ribbon drifted out of sync with the menu.
-  for (const entry of INSERT_SURFACE) {
+  // Home, View and Table name the commands their controls stand for (`109` UX-005).
+// The four tables below do the same for the tabs that were already declarative;
+// the argument, and why an unmatched selector is reported rather than swallowed,
+// is in `ribbon_faces.mjs`.
+const unstampedFaces = stampRibbonFaces(document);
+if (unstampedFaces.length) console.warn("ribbon faces with no control:", unstampedFaces.join(", "));
+
+for (const entry of INSERT_SURFACE) {
     const enabled = insertCommandEnabled(entry.command, { hasRange: range });
     for (const button of entry.buttons) button.disabled = !enabled;
   }
@@ -9371,13 +9389,16 @@ function populateStyles() {
   scheduleRibbonOverflow();
 }
 
+/** One literal for one meaning: the chooser's clear row, and the palette's. */
+const NO_TABLE_STYLE = "No table style";
+
 function populateTableStyles() {
   tableStyleMenu.replaceChildren();
   const clear = document.createElement("button");
   clear.type = "button";
   clear.className = "table-style-choice table-style-clear";
   clear.dataset.tableStyle = "";
-  clear.textContent = "No table style";
+  clear.textContent = NO_TABLE_STYLE;
   tableStyleMenu.appendChild(clear);
   for (const style of doc?.listTableStyles?.() || []) {
     const button = document.createElement("button");
@@ -11002,59 +11023,20 @@ function reflectTableMenu() {
 }
 const tablePopover = registerPopover(tableBtn, tableFmtMenu, reflectTableMenu);
 
-const TABLE_RIBBON_ACTIONS = {
-  "insert-row-above": (n) => doc.insertRow(n, false),
-  "insert-row-below": (n) => doc.insertRow(n, true),
-  "insert-column-left": (n) => doc.insertColumn(n, false),
-  "insert-column-right": (n) => doc.insertColumn(n, true),
-  "delete-row": (n) => doc.deleteRow(n),
-  "delete-column": (n) => doc.deleteColumn(n),
-  "delete-table": (n) => doc.deleteTable(n),
-};
-
-for (const b of tableRibbon.querySelectorAll("[data-table-action]")) {
-  onButton(b, () => {
-    if (!selection || !doc) return;
-    const run = TABLE_RIBBON_ACTIONS[b.dataset.tableAction];
-    if (!run) return;
+// The band's structural controls, declared in `table_band.mjs` (`109` UX-005).
+// Its Select handler used to be a second copy of `selectTableContext`.
+bindTableBand({
+  root: tableRibbon,
+  onButton,
+  getDoc: () => doc,
+  getSelection: () => selection,
+  runEdit,
+  clearTableSelection: () => {
     tableSelection = null;
-    runEdit(() => run(selection.focus.node), { gate: true });
-  });
-}
-
-for (const b of tableRibbon.querySelectorAll("[data-table-distribute]")) {
-  onButton(b, () => {
-    if (!selection || !doc) return;
-    const command = b.dataset.tableDistribute;
-    tableSelection = null;
-    runEdit(() =>
-      command === "rows"
-        ? doc.distributeTableRows(selection.focus.node)
-        : doc.distributeTableColumns(selection.focus.node),
-      { gate: true },
-    );
-  });
-}
-
-for (const b of tableRibbon.querySelectorAll("[data-table-sort]")) {
-  onButton(b, () => {
-    if (!selection || !doc) return;
-    const column = caretTableColumn(selection.focus.node);
-    runEdit(() => doc.sortTable(selection.focus.node, b.dataset.tableSort, column), { gate: true });
-  });
-}
-
-for (const b of tableRibbon.querySelectorAll("[data-table-select]")) {
-  onButton(b, () => {
-    if (!selection || !doc) return;
-    const mode = b.dataset.tableSelect;
-    tableSelection = { node: selection.focus.node, mode };
-    drawSelection();
-    setStatus(`Selected table ${mode}`);
-    updateToolbar();
-    focusEditorSurface();
-  });
-}
+  },
+  selectTableContext,
+  caretTableColumn,
+});
 
 onButton(mergeCellsBtn, async () => {
   if (!selection || !doc) return;
@@ -12647,6 +12629,24 @@ function editorCommands(context = { surface: "palette" }) {
         kw: `table ${trail} ${entry.label}`.toLowerCase(),
       })),
     );
+    // Table STYLE, generated from the engine's own list — the very list the band's
+    // chooser renders (`populateTableStyles`). It was the one table capability with
+    // a single surface: the `#tableStyleBtn` popover and nothing else, no menu row
+    // and no palette row, so applying a table style was mouse-only (`109` UX-005).
+    // Generated rather than enumerated, for the same reason `style.<name>` is: a
+    // style the document defines gets its command without anyone writing it down.
+    const applyTableStyle = (name) =>
+      runEdit(() => doc.applyTableStyle(selection.focus.node, name), { gate: true });
+    cmds.push({ id: "table.style.none", label: NO_TABLE_STYLE, group: "Table", kw: "table style clear none plain remove banding", run: () => applyTableStyle("") });
+    for (const name of doc.listTableStyles?.() ?? []) {
+      cmds.push({
+        id: `table.style.${name}`,
+        label: `Table style: ${name}`,
+        group: "Table",
+        kw: `table style banding grid ${name}`.toLowerCase(),
+        run: () => applyTableStyle(name),
+      });
+    }
   } else if (context.surface === "menu") {
     // The Table MENU must exist even when the caret is not in a table: an empty
     // popover says the editor cannot edit tables (UX-012). `command_taxonomy`
