@@ -14,7 +14,9 @@ import {
   documentStateBadge,
   documentTabTitle,
   isObjectSelectionStatus,
+  needsToast,
   statusClassName,
+  toastDuration,
 } from "../src/status_policy.mjs";
 
 // A refusal the user cannot hear reads as the editor doing nothing at all —
@@ -24,6 +26,43 @@ test("a refusal interrupts; nothing else does", () => {
   assert.equal(announcementRegion("error"), "assertive");
   for (const kind of ["", "ok", "warn", undefined]) {
     assert.equal(announcementRegion(kind), "polite", `"${kind}" must not interrupt`);
+  }
+});
+
+// `109` UX-017. The whole defect was a channel that disappeared: below 620px the
+// status line and both live regions were inside a `display: none` container, so
+// the editor refused and said nothing anywhere. These two rules are what decides
+// that a message reaches a second surface, and they are the half that can be
+// answered without a browser.
+test("a message the status line cannot show always gets the second channel", () => {
+  for (const kind of ["", "ok", "error", undefined]) {
+    assert.equal(
+      needsToast(kind, false),
+      true,
+      `"${kind}" must still reach the user when the status line is not on screen`,
+    );
+  }
+});
+
+test("a refusal is escalated even when the status line IS on screen", () => {
+  assert.equal(needsToast("error", true), true);
+});
+
+// The converse, and the reason this is a rule rather than "always toast": a card
+// over the document for every toolbar press would be worse than the defect.
+test("a confirmation the status line is already showing is not escalated", () => {
+  for (const kind of ["", "ok", undefined]) {
+    assert.equal(needsToast(kind, true), false, `"${kind}" must not throw a card`);
+  }
+});
+
+test("a refusal stays on screen longer than a confirmation, because it has to be read", () => {
+  assert.ok(toastDuration("error") > toastDuration(""));
+  // Long enough to read a sentence with a way out in it, short enough not to be
+  // litter — both inside the range a snackbar uses.
+  for (const kind of ["error", "", "ok"]) {
+    assert.ok(toastDuration(kind) >= 2000, `${kind} is too brief to read`);
+    assert.ok(toastDuration(kind) <= 10000, `${kind} outstays its message`);
   }
 });
 
