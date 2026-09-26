@@ -120,6 +120,38 @@ const MODALS = [
     },
   },
   {
+    id: "dropCapDialog",
+    name: "Drop cap",
+    // Shipped in #614 carrying `aria-modal="true"` but never added to this
+    // table, so the coverage test below was the only thing that failed — and it
+    // failed on `main` rather than on the PR, because `browser-smoke` stops at
+    // the unit lane and the unit lane was already red on the `main.js` ratchet.
+    // Nothing was wrong with the dialog itself: it goes through the shared
+    // `registerModal`, so it answers the contract as soon as it is asked to.
+    //
+    // No surviving opener, for the same reason as Watermark above: the button is
+    // bound from `INSERT_SURFACE` through `onButton`, which preventDefaults
+    // mousedown precisely so the ribbon never takes the keyboard off the
+    // document. So the requirement is that Escape puts it back on the editing
+    // surface.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // The mode radio group is the dialog's first decision (None / Dropped / In
+    // margin) and is what `createDropCapDialog` asks for initial focus on. Named
+    // by state rather than by id so the row does not assume which mode the
+    // fixture's first paragraph carries.
+    focus: '#dropCapDialog input[name="dropCapMode"]:checked',
+    async open(page) {
+      await gotoEditor(page);
+      // A caret is a precondition, not a nicety: `open()` returns early when
+      // there is no selection node, so without this the dialog never appears and
+      // the row fails for the wrong reason.
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#insertDropCapBtn").click();
+    },
+  },
+  {
     id: "aboutDialog",
     name: "About",
     // Opened from the File PAGE rather than the palette, because a durable
