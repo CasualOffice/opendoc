@@ -24,10 +24,28 @@
 // change the values and should still be caught.
 import { test, expect } from "./fixtures.mjs";
 
-// Panes whose content is genuinely taller than a laptop viewport. `Export` and
-// `New document` are deliberately absent: they size to their grid and a test
-// that asserts scrolling on a pane that fits would be asserting nothing.
+// Panes with more content than a short window. `Export` and `New document` are
+// deliberately absent: they size to their grid and a test that asserts scrolling
+// on a pane that fits would be asserting nothing.
 const TALL_PANES = ["Settings", "Page setup", "Document properties", "Keyboard shortcuts"];
+
+// The test CREATES the overflow it needs instead of depending on how tall the
+// dialogs happen to be, because that dependency broke it.
+//
+// It ran at 1280x720 and asserted each pane overflowed there. #616 then made the
+// dialogs genuinely shorter — Settings' card 672 -> 565, Document properties'
+// 672 -> 460 — and at 720 both panes came to fit EXACTLY (662/662 measured), so
+// the precondition failed and `main` went red on a change that had improved the
+// product. That is a test pinned to a circumstance rather than to the guarantee:
+// the guarantee is "a pane taller than its window can be scrolled to the bottom",
+// and nothing about it says which window size makes a pane taller.
+//
+// 520px is a real short window — a split screen, or a laptop with the dock and a
+// browser toolbar — and at it all four panes overflow with room to spare
+// (measured on this fixture: 595/462, 767/462, 514/462, 726/462). The
+// per-pane precondition below is KEPT so that if a future change makes even this
+// window big enough for a pane, the test says so instead of quietly passing.
+const SHORT_WINDOW = { width: 1280, height: 520 };
 
 async function openFilePage(page) {
   await page.goto("/editor.html?fixture=rich");
@@ -40,7 +58,7 @@ async function openFilePage(page) {
 }
 
 test.describe("File page panes scroll", () => {
-  test.use({ viewport: { width: 1280, height: 720 } });
+  test.use({ viewport: SHORT_WINDOW });
 
   for (const name of TALL_PANES) {
     test(`${name}: the wheel reaches content below the fold`, async ({ page, consoleErrors }) => {
@@ -55,7 +73,7 @@ test.describe("File page panes scroll", () => {
       // Precondition: this pane really does overflow at this size, or the test
       // below would pass on a pane with nothing to scroll.
       const overflows = await pane.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
-      expect(overflows, `${name} must overflow at 720px for this test to mean anything`).toBe(true);
+      expect(overflows, `${name} must overflow at ${SHORT_WINDOW.height}px for this test to mean anything`).toBe(true);
 
       await pane.evaluate((el) => {
         el.scrollTop = 0;
