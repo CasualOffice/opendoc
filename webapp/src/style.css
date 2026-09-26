@@ -1619,15 +1619,27 @@ body.modal-open {
   background: repeating-linear-gradient(to bottom, var(--line-strong) 0 2px, transparent 2px 11px);
 }
 
+/* `auto`, not a pixel column: the 47px sample glyph measures ~36px in Georgia
+   and was painting over the ruled lines beside it out of a 24px column — the
+   opposite of what a drop cap does, which is RESERVE the width the text then
+   wraps around. A fixed column also cannot be right on both platforms, since
+   the Linux runner has no Georgia and falls back to a serif of its own metrics.
+   Letting the column size to the letter is correct for any face.
+   `line-height: normal` for the same reason: 0.92 made the box shorter than the
+   glyph's own line box, so the element reported content taller than its box. */
+.drop-cap-sample[data-mode="drop"],
+.drop-cap-sample[data-mode="margin"] {
+  grid-template-columns: auto 1fr;
+}
+
 .drop-cap-sample[data-mode="drop"] b,
 .drop-cap-sample[data-mode="margin"] b {
   grid-row: span 2;
   font-size: 47px;
-  line-height: 0.92;
+  line-height: normal;
 }
 
 .drop-cap-sample[data-mode="margin"] {
-  grid-template-columns: 20px 1fr;
   overflow: visible;
 }
 
