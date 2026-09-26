@@ -137,3 +137,75 @@ test("resizing an object shows the size you are dragging to", async ({
 
   expect(consoleErrors).toEqual([]);
 });
+
+
+// ---- The object commands' availability follows the document (`109` HF-183) ----
+// `documentHasObjects()` is what decides whether "Select next object" is offered
+// or greyed with a reason, and it is now MEMOIZED, because it called
+// `objectOrder()` and parsed the whole paint order to answer a yes/no question —
+// O(objects) on a path the command palette runs on every keystroke and the chord
+// dispatcher runs on every press (`docs/107` §4: per-interaction work is O(1) in
+// document size).
+//
+// The cost of a cache is a stale answer, so this drives the transition in a real
+// browser rather than trusting the invalidation: a document with no objects at
+// all, then one inserted, with no reload in between. The complexity itself is
+// guarded in node (`tests/object_presence.test.mjs`), where engine calls and
+// payload bytes can be counted at n and 2n objects; a browser could only offer a
+// stopwatch.
+test("inserting the first object enables the object commands, with no reload", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.goto("/editor.html?fixture=float");
+  await page.waitForFunction(() => document.querySelectorAll(".page-wrap").length > 0, null, {
+    timeout: 45_000,
+  });
+
+  // A blank document: the one state where the answer is "no objects".
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.locator("#cmdInput").fill("New blank");
+  await page.locator("#cmdList [role=option]").first().click();
+  await expect(page.locator("#docTitle")).toHaveValue("Untitled document.docx");
+
+  const selectNext = async () => {
+    await page.keyboard.press("Meta+Shift+KeyP");
+    await page.locator("#cmdInput").fill("select next object");
+    const row = page.locator('#cmdList [data-command-id="object.selectNext"]').first();
+    await expect(row).toBeVisible();
+    const state = {
+      disabled: await row.isDisabled(),
+      reason: (await row.getAttribute("title")) ?? "",
+    };
+    await page.keyboard.press("Escape");
+    return state;
+  };
+
+  // Greyed, and it says why — never a dead control (SKILL.md §10).
+  expect(await selectNext()).toEqual({
+    disabled: true,
+    reason: "This document has no images, shapes or text boxes",
+  });
+
+  // Insert one. Nothing reloads; the only thing that can make the answer change
+  // is the invalidation at the edit choke point.
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.locator("#cmdInput").fill("text box");
+  await page.locator('#cmdList [data-command-id="insert.textbox"]').first().click();
+  // A fresh text box opens for TEXT ENTRY rather than merely being selected, which
+  // is Word's behaviour; what matters here is that an object now exists.
+  await expect(page.locator("#pages")).toHaveAttribute("data-object-kind", "textbox");
+
+  const afterInsert = await selectNext();
+  expect(
+    afterInsert.disabled,
+    "the object commands must notice the object that was just inserted — a stale " +
+      "memo greys them out with a text box on the page",
+  ).toBe(false);
+
+  // And back again: undo removes it, so the answer must return to "no objects".
+  await page.keyboard.press("Meta+KeyZ");
+  await expect.poll(async () => (await selectNext()).disabled).toBe(true);
+
+  expect(consoleErrors).toEqual([]);
+});
