@@ -325,6 +325,7 @@ keepLines
 keepNext
 kerning
 keydown
+keymap
 kinsoku
 libreoffice
 lifecycle
