@@ -49,6 +49,16 @@
 // fails the guard, which is how the next hand-bound button gets caught at the
 // moment it is added rather than at the next audit.
 //
+// RELATED, AND NOT YET ONE MECHANISM: `one-axis-navigation.spec.mjs` carries a
+// hand-written `VALUE_FAMILIES` list mapping the same prefixes to the same
+// controls, so that a `format.size.14` row is not reported as palette-only. Six of
+// its eight entries are now declared here, in the DOM, where the app itself says
+// it. The remaining two are not ribbon controls (`view.zoom.` is owned by the
+// footer's zoom field, `insert.field.` by the field dialog), so that list cannot
+// simply be derived from this one yet — but it should be, and the way there is to
+// let those two surfaces declare their family too rather than to grow a second
+// copy of this table.
+//
 // Selectors, not element references, so this file is DATA: it can be read and
 // checked in node with no DOM (the caller hands in the root, so nothing here
 // reaches for a global `document`), and `main.js` keeps its own element bindings.
