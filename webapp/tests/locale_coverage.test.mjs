@@ -92,27 +92,27 @@ const SCRIPT_KEYS = new Set(Object.keys(EN_STRINGS));
  *  that coverage never FALLS. Same ratchet as the unrouted-string count it
  *  faces across the seam: one number goes down, the other goes up. */
 const COVERAGE = new Map([
-  ["ar", 1015],
-  ["de", 1015],
-  ["es", 1015],
-  ["fr", 1015],
-  ["hi", 1015],
-  ["id", 1015],
-  ["it", 1015],
-  ["ja", 1015],
-  ["ko", 1015],
-  ["nl", 1015],
-  ["pl", 1015],
-  ["pt-BR", 1015],
-  ["ru", 1015],
-  ["tr", 1015],
-  ["uk", 1015],
-  ["vi", 1015],
-  ["zh-Hans", 1015],
-  ["zh-Hant", 1015],
+  ["ar", 1021],
+  ["de", 1021],
+  ["es", 1021],
+  ["fr", 1021],
+  ["hi", 1021],
+  ["id", 1021],
+  ["it", 1021],
+  ["ja", 1021],
+  ["ko", 1021],
+  ["nl", 1021],
+  ["pl", 1021],
+  ["pt-BR", 1021],
+  ["ru", 1021],
+  ["tr", 1021],
+  ["uk", 1021],
+  ["vi", 1021],
+  ["zh-Hans", 1021],
+  ["zh-Hant", 1021],
 ]);
 
-/** English defines 1,015 keys today, and every locale answers all 1,015 — 100.0%,
+/** English defines 1,021 keys today, and every locale answers all 1,021 — 100.0%,
  *  up from the 301 (35.4%) the previous pass had reached. That is the whole
  *  routed surface: every ribbon tab's groups and controls, the menu bar, every
  *  dialog title and button, the field labels, the File page, and the status and
@@ -129,10 +129,10 @@ const COVERAGE = new Map([
  *  dialog's six new strings, and its three status announcements landed
  *  translated together with the authoring surface.
  *
- *  913 → 1,015 is References ▸ Insert Caption and Cross-reference (`105`
+ *  913 → 1,021 is References ▸ Insert Caption and Cross-reference (`105`
  *  OO-005): the two dialogs, the References band's new Captions group, and the
  *  eleven previously-raw Review and View strings that change routed while paying
- *  the unrouted-string ratchet. Eighty-two of the 102 are markup keys, which fall
+ *  the unrouted-string ratchet. Eighty-five of the 108 are markup keys, which fall
  *  back to the English sitting in `editor.html` and which this ratchet therefore
  *  does NOT force — they were translated anyway, because the floor is a floor
  *  and not a target: leaving them would have taken the shipped catalogues from
