@@ -793,12 +793,23 @@ pub fn paginate_document_view_cached(
         // [`paginate_document_view`]; a cached single pass could serve a marker
         // numbered for a page the reference no longer sits on. Correctness over
         // incrementality, on a rare path.
+        cache.discard_retention();
         return paginate_document_view(document, shaper, review_view);
     }
     let plans = build_section_plans(document, shaper, &labels);
-    let runs =
+    let mut runs =
         build_section_runs_cached(document, shaper, &plans, cache, dirty, &labels, review_view);
-    finish_pagination(document, shaper, &plans, &runs, review_view, &labels)
+    let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+    // Hand the body galley back to the cache so the NEXT edit can move the
+    // fragments of its unchanged blocks across instead of deriving them
+    // (`109` HF-182). The galley is moved, not copied: pagination is done with
+    // it, and a copy per keystroke would reintroduce the cost this removes.
+    if let [run] = runs.as_mut_slice() {
+        cache.retain_galley(std::mem::take(&mut run.galley), labels.fingerprint());
+    } else {
+        cache.discard_retention();
+    }
+    layout
 }
 
 /// The shared pagination tail: paginate the section runs into pages, then run the
@@ -1243,6 +1254,11 @@ fn build_section_runs_cached(
         _ => false,
     };
     if !single_trailing_section || !referenced_endnotes(document.body()).is_empty() {
+        // This build never came through the cached galley builder, so no galley is
+        // retained from it — and any galley retained from an earlier build must go
+        // too, or it would be reused across a body this one changed without
+        // reporting.
+        cache.discard_retention();
         return build_section_runs(document, shaper, plans, review_view, labels);
     }
     // One full-width run over the whole body, built incrementally. Mirrors the
@@ -1267,6 +1283,14 @@ fn build_section_runs_cached(
     // Same lift as the uncached builder: a positioned table is not a block in
     // the flow. The incremental path must agree with the fresh one fragment for
     // fragment or the two would paginate the same document differently.
+    //
+    // The lift REMOVES fragments after the builder recorded which block produced
+    // which range, so the galley it leaves behind cannot be retained for reuse —
+    // its ranges no longer describe it. Inert for a document that positions no
+    // table, which is the overwhelming majority.
+    if crate::table_float::has_floating_table(document) {
+        cache.refuse_retention();
+    }
     crate::table_float::lift_floating_rows(&mut galley, document);
     vec![SectionRun {
         config,

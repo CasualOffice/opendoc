@@ -122,9 +122,27 @@ fn split_probe(n: usize) -> (u128, u128) {
 #[test]
 #[ignore]
 fn hf182_phase_split() {
+    use casual_doc_layout::document_layout::paginate_document_cached;
     for &n in &[240usize, 480, 960, 1920] {
+        // Full cached pipeline on the very same document, in the same test, so
+        // the three numbers are comparable.
+        let shaper = ParleyShaper::new();
+        let mut document = doc(n);
+        let mut cache = GalleyCache::new();
+        let _ = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new());
+        let k = 20u128;
+        let t = Instant::now();
+        for j in 1..=k {
+            document = retype(document, 0, j as usize);
+            let _ = paginate_document_cached(&document, &shaper, &mut cache, &DirtySet::new());
+        }
+        let full_us = t.elapsed().as_micros() / k;
         let (galley_us, paginate_us) = split_probe(n);
-        println!("n={n:5} galley={galley_us:6}us paginate={paginate_us:6}us");
+        println!(
+            "n={n:5} full={full_us:6}us galley={galley_us:6}us paginate={paginate_us:6}us \
+             rest={:6}us",
+            full_us.saturating_sub(galley_us + paginate_us)
+        );
     }
 }
 

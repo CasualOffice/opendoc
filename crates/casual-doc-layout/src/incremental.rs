@@ -59,6 +59,9 @@ pub struct DirtySet {
     all: bool,
     /// The explicitly changed nodes.
     nodes: BTreeSet<NodeId>,
+    /// Whether the caller guarantees `nodes` is the COMPLETE damage — see
+    /// [`DirtySet::complete`].
+    complete: bool,
 }
 
 impl DirtySet {
@@ -74,7 +77,44 @@ impl DirtySet {
         Self {
             all: true,
             nodes: BTreeSet::new(),
+            complete: false,
         }
+    }
+
+    /// A damage set the caller declares **complete**: `nodes` are the only nodes
+    /// whose layout inputs changed, the document's block structure is unchanged,
+    /// and its `definitions` (styles, numbering, sections, settings, media) are
+    /// unchanged.
+    ///
+    /// An ordinary damage set is only a *hint*: the galley cache re-derives every
+    /// paragraph's content hash and compares, so a caller that forgets a node is
+    /// still served a correct layout — at `O(document)` per edit, which is the
+    /// cost `docs/107` B1 forbids (`109` HF-182). A complete set is the
+    /// **validity stamp** that lets the cache skip re-deriving a clean
+    /// paragraph altogether, which is what makes the work proportional to the
+    /// edit rather than to the document.
+    ///
+    /// The promise is load-bearing: under-reporting here serves a STALE
+    /// fragment. Two things keep that honest — the reuse path also requires the
+    /// block ids to still line up positionally, so a structural change degrades
+    /// to the hash path instead of lying, and the layout crate's
+    /// `incremental_matches_the_fresh_path_*` battery compares an incrementally
+    /// built layout with a freshly built one after every edit shape the editor
+    /// can produce. Callers that cannot make the promise must not use this
+    /// constructor; [`DirtySet::from_iter`] is the hint-only form.
+    #[must_use]
+    pub fn complete<I: IntoIterator<Item = NodeId>>(nodes: I) -> Self {
+        Self {
+            all: false,
+            nodes: nodes.into_iter().collect(),
+            complete: true,
+        }
+    }
+
+    /// Whether this set is a complete damage report (see [`DirtySet::complete`]).
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.complete && !self.all
     }
 
     /// Marks node `id` as changed.
@@ -119,6 +159,7 @@ impl FromIterator<NodeId> for DirtySet {
         Self {
             all: false,
             nodes: iter.into_iter().collect(),
+            complete: false,
         }
     }
 }
@@ -229,6 +270,69 @@ struct CachedParagraph {
     last_used: u64,
 }
 
+/// One body block's contribution to a built galley: which block it was, the
+/// half-open fragment range it produced, the content hash it was built under,
+/// and whether it advanced the document's list-numbering counters.
+#[derive(Clone, Copy, Debug)]
+struct RetainedBlock {
+    /// The body block this range came from.
+    node: NodeId,
+    /// First fragment index (inclusive).
+    start: u32,
+    /// One past the last fragment index.
+    end: u32,
+    /// The content hash the block's fragment was built under, so a debug build
+    /// can prove a reuse was not stale.
+    hash: u64,
+    /// Whether this block's fragments may be moved into a later build at all.
+    ///
+    /// False for everything whose fragments are not a pure function of the block
+    /// itself: a numbered paragraph (flowing it advances the list counters the
+    /// numbered paragraphs after it read), a paragraph carrying a note reference
+    /// or an inline text box (its nested content is not in the hash, and an edit
+    /// inside it names the *inner* node, which is not this block), a table, a
+    /// block content control and an `altChunk` placeholder (same reason, one
+    /// level down).
+    reusable: bool,
+}
+
+/// A completed build's galley, kept whole so the next build can **move** the
+/// fragments of unchanged blocks into the new galley instead of re-deriving
+/// them.
+///
+/// This is the structural-sharing half of the incremental story. The
+/// paragraph-keyed [`GalleyCache::entries`] map already stopped an edit from
+/// re-*shaping* clean paragraphs, but a hit still cost a style-cascade
+/// resolution, a flow-item collection (which resolves fonts), a content hash and
+/// a deep clone of the shaped lines — per clean paragraph, per keystroke. That
+/// left the editor's per-keystroke layout `O(document)` with a smaller constant:
+/// measured at 1.47 ms for 960 paragraphs and 3.2 ms for 1,920, i.e. exactly
+/// linear (`109` HF-182). Reusing the *galley* instead of the *shaping* removes
+/// the per-clean-paragraph work rather than shrinking it.
+#[derive(Clone, Debug)]
+struct RetainedGalley {
+    /// The wrap width the galley was built at.
+    width: Twip,
+    /// The note-label generation it was built under, so a galley built before a
+    /// note was added is not reused after.
+    labels: u64,
+    /// One entry per top-level body block, in document order.
+    blocks: Vec<RetainedBlock>,
+    /// The fragments. Each is taken (`Option::take`) as it moves into the build
+    /// in progress, so nothing is copied.
+    fragments: Vec<Option<BlockFragment>>,
+}
+
+/// One body block's fragments, moved out of the retained galley for reuse, with
+/// the content hash they were built under so a debug build can prove the reuse
+/// was not stale.
+pub(crate) struct ReusedBlock {
+    /// The fragments, in galley order.
+    pub(crate) fragments: Vec<BlockFragment>,
+    /// The content hash the block was built under.
+    pub(crate) hash: u64,
+}
+
 /// A cache of shaped paragraph fragments, keyed by paragraph
 /// [`casual_doc_model::NodeId`], that lets [`crate::flow::build_galley_cached`]
 /// rebuild the galley after an edit while re-shaping only the paragraphs that
@@ -271,6 +375,41 @@ pub struct GalleyCache {
     /// Entries evicted by the budget during the most recent build — telemetry,
     /// so a thrash guard can assert eviction is not fighting the window.
     evicted_last_build: usize,
+    /// The galley the LAST completed build produced in the **editing** view,
+    /// kept for [`RetainedGalley`]'s reason.
+    retained_editing: Option<RetainedGalley>,
+    /// The same for the **markup** view. Two slots and not one: the editor
+    /// rebuilds both views from this one cache on every keystroke while "show
+    /// changes" is on, so a single slot would thrash between them.
+    retained_markup: Option<RetainedGalley>,
+    /// The retained galley the build in progress is moving fragments out of.
+    /// Taken from `retained` by `begin_build` and dropped (or replaced by the
+    /// new galley) when the build ends.
+    reusing: Option<RetainedGalley>,
+    /// The review view the build in progress is for — which retained slot the
+    /// galley handed back at the end belongs in. `false` is the editing view.
+    building_markup: bool,
+    /// The block records the build in progress has produced so far. Becomes the
+    /// next [`RetainedGalley`]'s `blocks` when the galley is handed back.
+    pending_blocks: Vec<RetainedBlock>,
+    /// Whether the build in progress is allowed to retain its galley at all.
+    /// Cleared by anything that makes the block-to-fragment correspondence
+    /// unreliable — a floating table lifted out of the flow, a drop-cap pair, a
+    /// build that did not come through the single-trailing-section fast path.
+    pending_retainable: bool,
+    /// Whether the build in progress reused any retained fragment. When it did,
+    /// the block structure is unchanged by the caller's own promise, so the
+    /// liveness sweep at the end of the build has nothing to collect and is
+    /// skipped — it is itself `O(document)`.
+    reused_any: bool,
+    /// Blocks whose fragments the most recent build **re-derived** — the work an
+    /// edit actually cost, as opposed to the blocks it merely walked past.
+    rebuilt_last_build: usize,
+    /// The lowest fragment index the most recent build re-derived, or `None` if
+    /// it re-derived nothing. This is the resume point an incremental
+    /// re-pagination needs, known exactly rather than recovered by diffing two
+    /// galleys.
+    first_rebuilt_last_build: Option<usize>,
 }
 
 impl GalleyCache {
@@ -345,9 +484,54 @@ impl GalleyCache {
         self.shaped_last_build
     }
 
-    /// Begins a rebuild at `width`: resets the per-build shaped counter and, if
-    /// the wrap width changed, clears every entry (all paragraphs must re-wrap).
-    pub(crate) fn begin_build(&mut self, width: Twip) {
+    /// Blocks whose fragments the most recent build re-derived — the work the
+    /// edit actually cost.
+    ///
+    /// This is the number a complexity guard reads. `shaped_last_build` counts
+    /// only the paragraphs handed to the shaper, which has been `1` per keystroke
+    /// since the paragraph cache landed; it says nothing about the cascade
+    /// resolution, item collection, hashing and fragment copy a cache *hit* still
+    /// paid, which is what made a keystroke `O(document)` (`109` HF-182). This
+    /// counts blocks that went through that derivation at all.
+    ///
+    /// In a debug build the derivation also runs for a reused block, to prove the
+    /// reuse was not stale — that verification is deliberately **not** counted
+    /// here, so the guarantee this number expresses ("the layout work an edit
+    /// causes does not grow with the document") reads the same in both profiles.
+    #[must_use]
+    pub fn rebuilt_last_build(&self) -> usize {
+        self.rebuilt_last_build
+    }
+
+    /// The lowest galley fragment index the most recent build re-derived, or
+    /// `None` when it re-derived none. The exact resume point an incremental
+    /// re-pagination needs — no galley diff required.
+    #[must_use]
+    pub fn first_rebuilt_last_build(&self) -> Option<usize> {
+        self.first_rebuilt_last_build
+    }
+
+    /// Whether the most recent build reused a retained galley, i.e. took the
+    /// incremental path rather than deriving every block of the document.
+    #[must_use]
+    pub fn reused_retained_galley(&self) -> bool {
+        self.reused_any
+    }
+
+    /// Begins a rebuild at `width`: resets the per-build counters and, if the
+    /// wrap width changed, clears every entry (all paragraphs must re-wrap).
+    ///
+    /// `markup` selects which retained-galley slot this build reads and writes,
+    /// `labels` is the note-label generation it is built under, and `dirty` must
+    /// be [`DirtySet::is_complete`] for the retained galley to be offered at all.
+    /// `O(1)`, except for the entry clear a width change forces.
+    pub(crate) fn begin_build(
+        &mut self,
+        width: Twip,
+        markup: bool,
+        labels: u64,
+        dirty: &DirtySet,
+    ) {
         if self.width != Some(width) {
             self.entries.clear();
             self.bytes = 0;
@@ -355,7 +539,153 @@ impl GalleyCache {
         }
         self.shaped_last_build = 0;
         self.evicted_last_build = 0;
+        self.rebuilt_last_build = 0;
+        self.first_rebuilt_last_build = None;
+        self.reused_any = false;
+        self.building_markup = markup;
+        self.pending_blocks = Vec::new();
+        self.pending_retainable = true;
         self.live.clear();
+        // The retained galley is TAKEN, not borrowed: its fragments move into the
+        // build in progress, and whatever that build produces replaces it at the
+        // end. A build that never hands a galley back therefore leaves no stale
+        // one behind.
+        let slot = if markup {
+            &mut self.retained_markup
+        } else {
+            &mut self.retained_editing
+        };
+        self.reusing = slot.take().filter(|retained| {
+            dirty.is_complete() && retained.width == width && retained.labels == labels
+        });
+    }
+
+    /// The fragments body block `index` produced during the previous build, moved
+    /// out for reuse — or `None` when this build must derive them.
+    ///
+    /// Reuse requires all of:
+    ///
+    /// - a retained galley for this view, width and note-label generation
+    ///   (established by `begin_build`);
+    /// - a **complete** damage set that does not name this block;
+    /// - the block at this position still being the same node, which is what
+    ///   makes a wrong structural promise degrade to the slow path rather than
+    ///   serve the wrong fragment;
+    /// - the block not having advanced the list-numbering counters, which the
+    ///   numbered paragraphs after it read.
+    ///
+    /// `O(fragments returned)` — moves, no copying and no hashing.
+    pub(crate) fn reuse_block(
+        &mut self,
+        index: usize,
+        node: NodeId,
+        dirty: &DirtySet,
+    ) -> Option<ReusedBlock> {
+        if dirty.contains(node) {
+            return None;
+        }
+        let retained = self.reusing.as_mut()?;
+        let block = *retained.blocks.get(index)?;
+        if block.node != node || !block.reusable {
+            return None;
+        }
+        let mut fragments = Vec::with_capacity((block.end - block.start) as usize);
+        for slot in retained
+            .fragments
+            .get_mut(block.start as usize..block.end as usize)?
+        {
+            fragments.push(slot.take()?);
+        }
+        self.reused_any = true;
+        Some(ReusedBlock {
+            fragments,
+            hash: block.hash,
+        })
+    }
+
+    /// Records that the build in progress produced `fragments` fragments for body
+    /// block `node`, starting at galley index `start`, under content `hash`.
+    ///
+    /// `derived` distinguishes a block this build re-derived from one whose
+    /// fragments it moved across, which is what `rebuilt_last_build` counts.
+    pub(crate) fn note_block(
+        &mut self,
+        node: NodeId,
+        start: usize,
+        fragments: usize,
+        hash: u64,
+        reusable: bool,
+        derived: bool,
+    ) {
+        if derived {
+            self.rebuilt_last_build += 1;
+            self.first_rebuilt_last_build = Some(
+                self.first_rebuilt_last_build
+                    .map_or(start, |first| first.min(start)),
+            );
+        }
+        if !self.pending_retainable {
+            return;
+        }
+        self.pending_blocks.push(RetainedBlock {
+            node,
+            start: start as u32,
+            end: (start + fragments) as u32,
+            hash,
+            reusable,
+        });
+    }
+
+    /// Drops every retained galley, including the build in progress's. Called by
+    /// any layout path that bypasses the cached builder — a multi-section body, a
+    /// drop-cap pair, `eachPage` note numbering — because a galley retained
+    /// before such a build would be reused *after* it without the intervening
+    /// document change having been reported.
+    pub(crate) fn discard_retention(&mut self) {
+        self.retained_editing = None;
+        self.retained_markup = None;
+        self.reusing = None;
+        self.pending_retainable = false;
+        self.pending_blocks = Vec::new();
+    }
+
+    /// Refuses retention for the build in progress: the next build derives every
+    /// block. Called by anything that breaks the block-to-fragment
+    /// correspondence a retained galley depends on.
+    pub(crate) fn refuse_retention(&mut self) {
+        self.pending_retainable = false;
+        self.pending_blocks = Vec::new();
+    }
+
+    /// Hands `galley` — the finished body galley of the build in progress — to the
+    /// cache so the next build can move its unchanged blocks across.
+    ///
+    /// The galley is **moved**, never copied, which is the point: the caller has
+    /// already paginated from it and does not need it again. A caller that hands
+    /// none back simply leaves the cache without a retained galley, and the next
+    /// build takes the hashing path.
+    ///
+    /// `O(galley)` in `Option` wrapping, no fragment copied.
+    pub(crate) fn retain_galley(&mut self, galley: Vec<BlockFragment>, labels: u64) {
+        let blocks = std::mem::take(&mut self.pending_blocks);
+        let contiguous = blocks
+            .last()
+            .is_some_and(|last| last.end as usize == galley.len());
+        let Some(width) = self.width else { return };
+        if !self.pending_retainable || !contiguous {
+            return;
+        }
+        let retained = RetainedGalley {
+            width,
+            labels,
+            blocks,
+            fragments: galley.into_iter().map(Some).collect(),
+        };
+        if self.building_markup {
+            self.retained_markup = Some(retained);
+        } else {
+            self.retained_editing = Some(retained);
+        }
     }
 
     /// Drops every entry this build did not use, then evicts
@@ -365,6 +695,17 @@ impl GalleyCache {
     /// paragraph the document no longer has — that part is liveness, not
     /// eviction, and it happens whether or not a budget is set.
     pub(crate) fn end_build(&mut self) {
+        self.reusing = None;
+        // An incremental build reused a retained galley, which took both the
+        // caller's promise that the block structure is unchanged and the block
+        // ids lining up positionally. So no paragraph left the document, the
+        // sweep has nothing to collect — and the sweep, plus the byte re-total
+        // beside it, is itself `O(document)`, which is the cost this path exists
+        // to remove.
+        if self.reused_any {
+            self.live.clear();
+            return;
+        }
         let live = std::mem::take(&mut self.live);
         self.entries.retain(|id, _| live.contains(id));
         self.bytes = self.entries.values().map(|entry| entry.bytes).sum();

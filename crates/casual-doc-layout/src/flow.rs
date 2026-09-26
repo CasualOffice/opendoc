@@ -899,6 +899,11 @@ pub(crate) fn build_galley_cached_labeled(
     // unit. Until the cache key owns that adjacency, use the canonical fresh path
     // rather than serving either half under a stale independent paragraph key.
     if contains_drop_cap_pair(document.body(), &StyleCascade::new(document.definitions())) {
+        // Nothing this build produces is retained, and nothing retained before it
+        // survives: a galley kept from before the drop cap appeared would
+        // otherwise be reused after it was removed, with the intervening change
+        // never reported.
+        cache.discard_retention();
         return build_galley_for_blocks_inner(
             document,
             shaper,
@@ -948,11 +953,37 @@ pub(crate) fn build_galley_cached_labeled(
         note_label: notes.label,
         note_labels: notes.labels,
     };
-    cache.begin_build(content_width);
+    // A galley retained by the previous build can only be reused if it was built
+    // under the same note labels; a note added, removed or renumbered changes
+    // markers that are not in any paragraph's content hash.
+    let labels_generation = notes.labels.map_or(0, NoteLabels::fingerprint);
+    cache.begin_build(
+        content_width,
+        review_view == ReviewView::Markup,
+        labels_generation,
+        dirty,
+    );
     let mut galley = Vec::new();
-    for block in document.body() {
+    for (block_index, block) in document.body().iter().enumerate() {
+        let block_start = galley.len();
         match block {
             BlockNode::Paragraph(paragraph) => {
+                // The incremental path: an unchanged paragraph's fragments move
+                // straight out of the retained galley. Skipping the derivation
+                // below — cascade resolution, flow-item collection (which resolves
+                // a face per run), the content hash and a deep copy of the shaped
+                // lines — is what takes a keystroke from `O(document)` to
+                // `O(edit)`; the paragraph cache alone only made the derivation
+                // cheaper, not absent (`109` HF-182).
+                let mut reused = cache.reuse_block(block_index, paragraph.id, dirty);
+                if !cfg!(debug_assertions)
+                    && let Some(block) = reused.take()
+                {
+                    let produced = block.fragments.len();
+                    galley.extend(block.fragments);
+                    cache.note_block(paragraph.id, block_start, produced, block.hash, true, false);
+                    continue;
+                }
                 // Resolve effective properties through the style cascade and record
                 // the effective style so runs inherit the paragraph style's `rPr`.
                 ctx.para_style = ctx.cascade.paragraph_style(&paragraph.properties);
@@ -1014,6 +1045,29 @@ pub(crate) fn build_galley_cached_labeled(
                     mark_size,
                 );
 
+                // A debug build derived the paragraph even though its fragments
+                // were reused, so that the hash it *would* have been built under
+                // can be checked against the one it *was* built under. That turns
+                // every test in the workspace that edits a document into a
+                // verifier of the reuse promise (`DirtySet::complete`), while a
+                // release build never pays for the derivation at all.
+                if let Some(block) = reused {
+                    debug_assert_eq!(
+                        block.hash, hash,
+                        "a reused galley fragment must be what the fresh path \
+                         would build for paragraph {:?}",
+                        paragraph.id
+                    );
+                    debug_assert!(
+                        !uncacheable && !numbered,
+                        "paragraph {:?} was retained as reusable but is not",
+                        paragraph.id
+                    );
+                    let produced = block.fragments.len();
+                    galley.extend(block.fragments);
+                    cache.note_block(paragraph.id, block_start, produced, block.hash, true, false);
+                    continue;
+                }
                 if !uncacheable && let Some(fragment) = cache.reusable(paragraph.id, hash, dirty) {
                     // The cached fragment is section-break-pure (the break is not
                     // folded into the hash — a *neighboring* paragraph's section-type
@@ -1022,6 +1076,7 @@ pub(crate) fn build_galley_cached_labeled(
                     let mut fragment = fragment.clone();
                     apply_section_break_to_fragment(&mut fragment, &paragraph.properties, &ctx);
                     galley.push(fragment);
+                    cache.note_block(paragraph.id, block_start, 1, hash, true, true);
                     continue;
                 }
                 let range = ModelRange::new(
@@ -1062,9 +1117,15 @@ pub(crate) fn build_galley_cached_labeled(
                 let mut fragment = fragment;
                 apply_section_break_to_fragment(&mut fragment, &paragraph.properties, &ctx);
                 galley.push(fragment);
+                cache.note_block(paragraph.id, block_start, 1, hash, !uncacheable && !numbered, true);
             }
             BlockNode::Table(table) => {
-                flow_table(table, shaper, content_width, &mut galley, &mut ctx)
+                flow_table(table, shaper, content_width, &mut galley, &mut ctx);
+                // Not reusable: a numbered paragraph in a cell advances the list
+                // counters, and an edit inside a cell names the cell's paragraph,
+                // not this table.
+                let produced = galley.len() - block_start;
+                cache.note_block(table.id, block_start, produced, 0, false, true);
             }
             BlockNode::Sdt(sdt) => {
                 // A block-level content control (`w:sdt`) is a transparent
@@ -1075,6 +1136,8 @@ pub(crate) fn build_galley_cached_labeled(
                 // galley. The wrapper itself contributes no box. (These recursed
                 // children are not paragraph-cached, but block SDTs are rare.)
                 galley.extend(flow_blocks(&sdt.blocks, shaper, content_width, &mut ctx).0);
+                let produced = galley.len() - block_start;
+                cache.note_block(sdt.id, block_start, produced, 0, false, true);
             }
             // TODO(altchunk): the embedded part's actual content (HTML/RTF/nested
             // WordprocessingML) is not parsed or modeled — only an opaque part
@@ -1085,6 +1148,7 @@ pub(crate) fn build_galley_cached_labeled(
             // visible approximation, not rendered altChunk content.
             BlockNode::AltChunk(chunk) => {
                 galley.push(alt_chunk_fragment(chunk, shaper, content_width, &mut ctx));
+                cache.note_block(chunk.id, block_start, 1, 0, false, true);
             }
         }
     }
