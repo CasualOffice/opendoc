@@ -56,10 +56,89 @@ function buildPrintStyle(wIn, hIn) {
   return style;
 }
 
-/** Print the rendered document pages. Read-only, always allowed (no mutation
- *  gate, no unsaved-changes requirement). */
-export function printDocument(doc) {
+/** The engine's own id for the real-text PDF writer (`casual_doc_io::formats`),
+ *  the same one File ▸ Export as PDF dispatches through. */
+const PDF_FORMAT = "application.pdf";
+
+/** How long to keep the print frame alive when the browser never reports
+ *  `afterprint`. Revoking the blob or removing the frame while the print
+ *  preview still needs it cancels the job, so the cleanup errs late. */
+const PRINT_FRAME_TTL_MS = 120_000;
+
+/** Print through the real-text PDF, which is what `PDF-PRINT-0` in `docs/98`
+ *  specifies: "PDF → browser print handoff (`window.print()` on a PDF
+ *  object/hidden frame)".
+ *
+ *  Returns false — without printing — when the engine cannot produce a PDF, so
+ *  the caller can fall back to the raster path rather than leaving the user with
+ *  a Print command that silently did nothing.
+ */
+async function printViaPdf(doc) {
+  let bytes;
+  try {
+    const artifact = doc.exportAs(PDF_FORMAT, "semantic");
+    bytes = artifact.bytes;
+    artifact.free();
+  } catch (err) {
+    console.warn("print: PDF export unavailable, falling back to raster:", err?.message ?? err);
+    return false;
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const frame = document.createElement("iframe");
+  frame.id = "printFrame";
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("tabindex", "-1");
+  // Off-screen rather than `display:none`: a frame that is not laid out has no
+  // print view to invoke in Chromium.
+  frame.style.cssText =
+    "position:fixed; right:0; bottom:0; width:1px; height:1px; opacity:0; border:0; pointer-events:none;";
+  const loaded = new Promise((resolve, reject) => {
+    frame.addEventListener("load", resolve, { once: true });
+    frame.addEventListener("error", reject, { once: true });
+  });
+  frame.src = url;
+  document.body.appendChild(frame);
+  try {
+    await loaded;
+    const view = frame.contentWindow;
+    if (!view) throw new Error("print frame has no view");
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      frame.remove();
+      URL.revokeObjectURL(url);
+    };
+    view.addEventListener?.("afterprint", cleanup, { once: true });
+    setTimeout(cleanup, PRINT_FRAME_TTL_MS);
+    view.focus();
+    view.print();
+    return true;
+  } catch (err) {
+    console.warn("print: PDF handoff failed, falling back to raster:", err?.message ?? err);
+    frame.remove();
+    URL.revokeObjectURL(url);
+    return false;
+  }
+}
+
+/** Print the document. Read-only, always allowed (no mutation gate, no
+ *  unsaved-changes requirement).
+ *
+ *  Prefers the PDF handoff so the printed output carries REAL TEXT. The raster
+ *  path below prints a 150-DPI picture of each page, which is visibly soft on a
+ *  600-DPI printer and — because "Print" is how most people produce a PDF —
+ *  produced PDFs with no selectable, searchable or screen-readable text at all.
+ *  It stays as the fallback for a build whose engine cannot write PDF.
+ */
+export async function printDocument(doc) {
   if (!doc) return;
+  if (await printViaPdf(doc)) return;
+  printViaRaster(doc);
+}
+
+/** The 150-DPI page-image path. Fallback only — see `printDocument`. */
+function printViaRaster(doc) {
   teardownPrint(); // clear any stale build from an interrupted prior print
   const count = doc.pageCount;
   if (!count) return;

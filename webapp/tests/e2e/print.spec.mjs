@@ -26,33 +26,54 @@ async function gotoSampleEditor(page) {
   );
 }
 
-// Stub `window.print` before any app script loads so triggering the Print
-// command never opens a real dialog. The stub records how many print-page
-// canvases existed in the container at the instant print was called (the build
-// is torn down synchronously right after), so the test can assert one per page.
-async function stubPrint(page) {
+// Capture every blob the app hands to `URL.createObjectURL` before any app
+// script loads, so the test can read the bytes Print actually produced. The
+// frame's own `print()` is never reached in headless Chromium, which is fine:
+// what this asserts is WHAT was handed to the browser, not that a dialog opened.
+async function capturePrintArtifact(page) {
   await page.addInitScript(() => {
+    window.__blobs = [];
+    const original = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (object) => {
+      window.__blobs.push(object);
+      return original(object);
+    };
     window.__printCalls = 0;
-    window.__printPageCounts = [];
     window.print = () => {
       window.__printCalls += 1;
-      window.__printPageCounts.push(
-        document.querySelectorAll("#printContainer .print-page").length,
-      );
     };
   });
 }
 
-test("⌘P builds one print canvas per page, prints, then restores the viewport", async ({
-  page,
-  consoleErrors,
-}) => {
-  await stubPrint(page);
+/** The PDF Print handed the browser, once it exists. Polled rather than slept
+ *  on: the export runs across later turns of the event loop. */
+async function printedPdf(page) {
+  const read = () =>
+    page.evaluate(async () => {
+      const blob = window.__blobs.find((b) => b && b.type === "application/pdf");
+      if (!blob) return null;
+      const text = await blob.text();
+      return {
+        header: text.slice(0, 8),
+        hasTextFont: text.includes("/Subtype/Type0"),
+        hasToUnicode: text.includes("/ToUnicode"),
+      };
+    });
+  await expect
+    .poll(async () => (await read()) !== null, { message: "Print must hand the browser a PDF" })
+    .toBe(true);
+  return read();
+}
+
+test("⌘P prints REAL TEXT, not a picture of the pages", async ({ page, consoleErrors }) => {
+  // The whole point of the change this guards. Print used to rasterize every
+  // page at 150 DPI and print the images: soft on a 600-DPI printer, and —
+  // because Print is how most people produce a PDF — a PDF with no selectable,
+  // searchable or screen-readable text in it at all. `docs/98` PDF-PRINT-0
+  // specifies the handoff this asserts.
+  await capturePrintArtifact(page);
   await gotoSampleEditor(page);
 
-  // The DOCUMENT's page count, not the number of sheets on screen: the viewer
-  // materializes a sheet only near the viewport (`docs/113` §8.6), and "one
-  // print canvas per page" is a claim about the document.
   const pageCount = await documentPageCount(page);
   expect(pageCount).toBeGreaterThan(1); // the demo is multi-page
   const sheetsBefore = await page.locator(".page-wrap").count();
@@ -60,27 +81,22 @@ test("⌘P builds one print canvas per page, prints, then restores the viewport"
 
   await page.keyboard.press(`${MOD}+p`);
 
-  // (b) window.print was called exactly once...
-  const calls = await page.evaluate(() => window.__printCalls);
-  expect(calls).toBe(1);
+  const pdf = await printedPdf(page);
 
-  // (a) ...and at that moment the print container held one canvas PER PAGE.
-  const printedCounts = await page.evaluate(() => window.__printPageCounts);
-  expect(printedCounts).toEqual([pageCount]);
+  expect(pdf.header).toBe("%PDF-1.7");
+  // A `Type0` font and a `ToUnicode` map are the difference between text a
+  // reader can select, search and hear, and a picture of that text.
+  expect(pdf.hasTextFont, "printed PDF must embed a real text font").toBe(true);
+  expect(pdf.hasToUnicode, "printed PDF must carry a ToUnicode map").toBe(true);
 
-  // (c) After printing, the container and its stylesheet are gone, the viewport
-  // is intact, and the live virtualized page canvases are back.
-  await expect(page.locator("#printContainer")).toHaveCount(0);
-  await expect(page.locator("#printStyle")).toHaveCount(0);
+  // The raster fallback must NOT have run: no page images were built.
+  expect(await page.locator("#printContainer").count()).toBe(0);
+  expect(await page.locator(".print-page").count()).toBe(0);
+
+  // The viewport is untouched — printing never disturbs the virtualized set.
   await expect(page.locator("#viewport")).toBeVisible();
   expect(await page.locator(".page-wrap").count()).toBe(sheetsBefore);
-  expect(await page.locator(".page-wrap .page").count()).toBeGreaterThan(0);
-
-  // Memory-budget invariant: printing must not leave every page's canvas alive.
-  // Only a viewport-bounded handful of live rasters remain (never one per page),
-  // and no print-page canvases linger anywhere.
   expect(await page.locator(".page-wrap .page").count()).toBeLessThan(pageCount);
-  expect(await page.locator(".print-page").count()).toBe(0);
 
   expect(consoleErrors).toEqual([]);
 });
@@ -89,7 +105,7 @@ test("Print is reachable from the command palette with its ⌘P hint", async ({
   page,
   consoleErrors,
 }) => {
-  await stubPrint(page);
+  await capturePrintArtifact(page);
   await gotoSampleEditor(page);
 
   await page.keyboard.press(`${MOD}+Shift+p`);
@@ -101,18 +117,16 @@ test("Print is reachable from the command palette with its ⌘P hint", async ({
   await expect(item.locator(".cmd-hint")).toHaveText(shortcutHint("⌘P"));
   await item.click();
 
-  const pageCount = await documentPageCount(page);
-  const calls = await page.evaluate(() => window.__printCalls);
-  const printedCounts = await page.evaluate(() => window.__printPageCounts);
-  expect(calls).toBe(1);
-  expect(printedCounts).toEqual([pageCount]);
+  // Reachability is the claim, so the assertion is that running it from HERE
+  // produces the same real-text PDF the shortcut does.
+  expect((await printedPdf(page)).hasTextFont).toBe(true);
   await expect(page.locator("#printContainer")).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);
 });
 
 test("Print is offered in the File menu", async ({ page, consoleErrors }) => {
-  await stubPrint(page);
+  await capturePrintArtifact(page);
   await gotoSampleEditor(page);
 
   await openAppMenu(page, "file");
@@ -120,9 +134,7 @@ test("Print is offered in the File menu", async ({ page, consoleErrors }) => {
   await expect(item).toBeVisible();
   await item.click();
 
-  const pageCount = await documentPageCount(page);
-  const printedCounts = await page.evaluate(() => window.__printPageCounts);
-  expect(printedCounts).toEqual([pageCount]);
+  expect((await printedPdf(page)).hasTextFont).toBe(true);
 
   expect(consoleErrors).toEqual([]);
 });
