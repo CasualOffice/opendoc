@@ -48,11 +48,30 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  // 338 after `109` UX-005: the table-style chooser's "No table style" became one
-  // `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
-  // row, so one meaning stopped being two literals. Lowered rather than left at
-  // 342, because slack nobody reclaims is room for the file to grow back free.
-  ["src/main.js", 338],
+  // 342 → 338 in `109` UX-005: the table-style chooser's "No table style" became
+  // one `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
+  // row, so one meaning stopped being two literals.
+  //
+  // 338 → the number below in OO-005 (captions and cross-references): the object
+  // right-click menu's nine labels moved out with the menu itself (next entry),
+  // and the Outline panel's empty sentence and the cross-reference command's "not
+  // possible yet" reason are both routed now. The one string this round ADDED is
+  // the References palette row's "Insert caption" — that table's labels are read
+  // at import, before a catalogue exists, so English there is the same deliberate
+  // debt every other row in it carries.
+  //
+  // MEASURED from the rebased file, not arithmetic on the two branches' numbers.
+  // Both lanes lowered this ceiling from 342 independently, and subtracting both
+  // reclaims would have been a guess: that is the exact shape of the merge trap
+  // recorded in `module_seams.test.mjs`, where two branches each measured honestly
+  // against a file the other was about to change.
+  ["src/main.js", 325],
+  // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
+  // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
+  // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here
+  // with the menu builder, so this is the same debt in a new place, not a new
+  // debt — main.js came down by more than nine in the same commit.
+  ["src/object_context_menu.mjs", 9],
   ["src/pages_panel.mjs", 4],
   // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
   // sixteen of `main.js`'s 364 and moved here with the table, so this is the

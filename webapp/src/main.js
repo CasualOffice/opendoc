@@ -22,6 +22,10 @@ import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createDropCapDialog } from "./drop_cap.mjs";
+import { createCaptionDialog } from "./caption_dialog.mjs";
+import { createCrossReferenceDialog } from "./cross_reference_dialog.mjs";
+import { buildObjectContextCommands } from "./object_context_menu.mjs";
+import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
@@ -384,6 +388,7 @@ const layoutBringForwardBtn = document.getElementById("layoutBringForwardBtn");
 // References band (the IA half of OO-001/OO-005).
 const refTocBtn = document.getElementById("refTocBtn");
 const refBookmarkBtn = document.getElementById("refBookmarkBtn");
+const refCaptionBtn = document.getElementById("refCaptionBtn");
 const refCrossRefBtn = document.getElementById("refCrossRefBtn");
 const refFootnoteBtn = document.getElementById("refFootnoteBtn");
 const refEndnoteBtn = document.getElementById("refEndnoteBtn");
@@ -7288,7 +7293,7 @@ function buildContextCommands(context) {
   // Right-clicking a selected drawing/image/text box shows OBJECT commands, not
   // the paragraph-text menu (docs/85 §4.1; Word/Google Docs image menu). The
   // object was already selected by the handler that resolved this context.
-  if (context.surface === "object") return buildObjectContextCommands(context);
+  if (context.surface === "object") return buildObjectContextCommands(context, objectContextMenuHost);
   const registry = new Map(editorCommands(context).map((command) => [command.id, command]));
   const pick = (id, extra = {}) => {
     const base = registry.get(id);
@@ -7550,6 +7555,11 @@ function buildContextCommands(context) {
     return commands.filter(Boolean);
   }
 
+  // Insert caption, on the TABLE menu as well as the picture menu: a table is
+  // the second thing Word captions, and right-clicking it is how a reader
+  // reaches it (`DocumentHolderExt.js:46`).
+  commands.push(...referenceObjectMenuRows());
+
   // 3 — Table cell: lead with the table tools (Insert / Delete / Merge / Split,
   // then Select / Autofit & sort, then the property dialogs), matching Word's
   // and Google Docs' table menus. The generic text-format rows are demoted to a
@@ -7572,164 +7582,25 @@ function buildContextCommands(context) {
   return commands.filter(Boolean);
 }
 
-// Builds the right-click menu for a selected object (image / text box). This is
-// the object counterpart to `buildContextCommands`: it emits object commands
-// (Wrap / Alt text / Crop / Delete) instead of paragraph-text ones, reusing the
-// exact same functions the floating object context bar wires up. Mutations are
-// disabled — with the object review-mode reason — in Viewing and Suggesting,
-// mirroring how the text menu greys its structural rows; the underlying
-// functions still gate fail-closed, so the menu can never bypass a review mode.
-function buildObjectContextCommands(context) {
-  // Object edits are untrackable, so they are read-only in Viewing and blocked
-  // (untracked) in Suggesting — the same gate `runEdit({ gate:true })` applies.
-  const mutationEnabled = reviewMode === "editing";
-  const mutationReason =
-    // Same rule as `blockMutationInViewing`: "turn on Editing" is advice the
-    // reader cannot act on when the DOCUMENT is the thing that is read-only.
-    readOnlyReason ||
-    (reviewMode === "viewing"
-      ? "Turn on Editing to change this object"
-      : "Object changes cannot be tracked in Suggesting mode");
-  const commands = [];
-
-  // Wrap text — a submenu of wrap modes, only for a floating (anchored) object,
-  // exactly like the context bar. The active mode is checked on the right.
-  if (context.canWrap) {
-    const active = doc.objectWrap(context.ref.root);
-    commands.push({
-      id: "object.wrap",
-      label: "Wrap text",
-      group: "arrange",
-      icon: "wrap",
-      submenu: WRAP_MODES.map(([value, text]) => ({
-        id: `object.wrap.${value}`,
-        label: text,
-        group: "wrap",
-        shortcut: value === active ? "✓" : "",
-        enabled: mutationEnabled,
-        disabledReason: mutationReason,
-        run: () => setObjectWrap(value),
-      })),
-    });
-  }
-
-  // Alt text — opens the shared alt-text dialog (its Apply pre-checks the gate).
-  if (context.canAltText) {
-    commands.push({
-      id: "object.altText",
-      label: "Alt text…",
-      group: "arrange",
-      icon: "altText",
-      enabled: mutationEnabled,
-      disabledReason: mutationReason,
-      run: () => openAltTextDialog(),
-    });
-  }
-
-  // Shape Fill / Shape Outline — the two live controls of Word's Shape Format
-  // tab, reachable from the menu as well as the bar so neither surface is the
-  // only way in.
-  if (context.kind === "shape" && (context.canFill || context.canStroke)) {
-    const swatch = (hex) => ({
-      id: `object.fill.${hex}`,
-      label: hex.toUpperCase(),
-      group: "swatch",
-      enabled: mutationEnabled,
-      disabledReason: mutationReason,
-    });
-    if (context.canFill) {
-      commands.push({
-        id: "object.fill",
-        label: "Shape fill",
-        group: "arrange",
-        icon: "format",
-        submenu: [
-          {
-            id: "object.fill.none",
-            label: "No fill",
-            group: "reset",
-            enabled: mutationEnabled,
-            disabledReason: mutationReason,
-            run: () => applyShapeFill(null),
-          },
-          ...SHAPE_MENU_COLORS.map((hex) => ({
-            ...swatch(hex),
-            run: () => applyShapeFill(hex),
-          })),
-        ],
-      });
-    }
-    if (context.canStroke) {
-      commands.push({
-        id: "object.outline",
-        label: "Shape outline",
-        group: "arrange",
-        icon: "format",
-        submenu: [
-          {
-            id: "object.outline.none",
-            label: "No outline",
-            group: "reset",
-            enabled: mutationEnabled,
-            disabledReason: mutationReason,
-            run: () => applyShapeOutline({ color: null }),
-          },
-          ...SHAPE_MENU_COLORS.map((hex) => ({
-            ...swatch(hex),
-            id: `object.outline.${hex}`,
-            run: () => applyShapeOutline({ color: hex }),
-          })),
-        ],
-      });
-    }
-  }
-
-  // Crop — picture-only; a text box has no source rectangle to crop.
-  if (context.canCrop) {
-    commands.push({
-      id: "object.crop",
-      label: "Crop image",
-      group: "arrange",
-      icon: "crop",
-      enabled: mutationEnabled,
-      disabledReason: mutationReason,
-      run: () => enterCropMode(),
-    });
-  }
-
-  // Properties — Word's "Size and Position…", Docs' "All image options". It had
-  // exactly ONE route in the whole product: a button on the floating bar, which
-  // a keyboard user cannot reach because Tab is bound to object traversal while
-  // an object is selected. Adding it here puts it on the right-click menu and,
-  // through the palette flattening in `editorCommands`, on the palette too.
-  //
-  // Not gated on `mutationEnabled`: reading an object's exact geometry is useful
-  // in Viewing and Suggesting, and the panel's own Apply buttons already refuse
-  // the write.
-  commands.push({
-    id: "object.properties",
-    label: "Properties…",
-    group: "arrange",
-    icon: "tune",
-    enabled: true,
-    run: () => toggleObjectInspector(true),
-  });
-
-  // Delete — the destructive action, kept in its own trailing group.
-  if (context.canDelete) {
-    commands.push({
-      id: "object.delete",
-      label: "Delete",
-      group: "delete",
-      icon: "delete",
-      danger: true,
-      enabled: mutationEnabled,
-      disabledReason: mutationReason,
-      run: () => deleteSelectedObject(),
-    });
-  }
-  return commands;
-}
+// The object right-click menu's ROWS are `object_context_menu.mjs`; this is the
+// application state and the verbs it needs. Extracted to pay for the captions
+// work under the line ratchet, and to give 156 lines of menu policy its first
+// test (`tests/object_context_menu.test.mjs`).
+const objectContextMenuHost = {
+  reviewMode: () => reviewMode,
+  readOnlyReason: () => readOnlyReason,
+  wrapModes: () => WRAP_MODES,
+  shapeColors: () => SHAPE_MENU_COLORS,
+  objectWrap: (root) => doc.objectWrap(root),
+  documentRows: referenceObjectMenuRows,
+  setObjectWrap,
+  openAltText: () => openAltTextDialog(),
+  applyShapeFill,
+  applyShapeOutline,
+  enterCrop: () => enterCropMode(),
+  openProperties: () => toggleObjectInspector(true),
+  deleteObject: () => deleteSelectedObject(),
+};
 
 // Resolves a pointer event to an OBJECT context (or null). Prefers a fresh
 // object hit-test at the point; falls back to the already-selected object when
@@ -8249,13 +8120,32 @@ const REFERENCE_SURFACE = [
     requires: "missing",
     reason: "A table of contents needs field evaluation and update, which the engine does not expose yet",
   },
+  // Word's Captions group. Both rows need an insertion point and nothing more:
+  // a caption attaches to the caret's block — which is also the block that holds
+  // a selected picture or table, since selecting an object puts the caret at its
+  // anchor — and a cross-reference is inserted at the caret. `contextMenu: true`
+  // is what puts Insert caption on the object and table right-click menus, the
+  // way ONLYOFFICE does (`DocumentHolderExt.js:46`), from this one declaration.
+  {
+    command: "reference.caption",
+    // English, like every other row in this table: these labels are evaluated at
+    // import, before `startLocalisation` installs a catalogue, so a `t()` here
+    // would put the KEY in the palette. The context-menu row, which is built on
+    // demand, does route through the catalogue.
+    label: "Insert caption",
+    kw: "caption figure table equation label numbering sequence seq chapter",
+    buttons: () => [refCaptionBtn],
+    requires: "caret",
+    contextMenu: true,
+    run: () => captionDialog.open(),
+  },
   {
     command: "reference.crossReference",
     label: "Cross-reference",
-    kw: "cross reference ref heading bookmark figure numbered item",
+    kw: "cross reference ref heading bookmark figure numbered item caption footnote endnote",
     buttons: () => [refCrossRefBtn],
-    requires: "missing",
-    reason: "A cross-reference needs the REF field engine, which does not exist yet",
+    requires: "caret",
+    run: () => crossRefDialog.open(),
   },
   {
     command: "reference.updateFields",
@@ -8269,6 +8159,25 @@ const REFERENCE_SURFACE = [
     reason: "Updating cached fields needs a field-evaluation pass the engine does not expose yet; page numbers already recompute at pagination",
   },
 ];
+
+/** The References rows Word and ONLYOFFICE put on the picture, table and
+ *  equation right-click menus (`DocumentHolderExt.js:46` — Insert caption, at
+ *  the top, ahead of their own separator). Derived from the ONE declaration in
+ *  `REFERENCE_SURFACE` that carries `contextMenu`, so the ribbon button, the
+ *  palette row and both menus cannot disagree about the command's label or about
+ *  whether it is available — the single-surface/restated-row defect `docs/105`
+ *  UX-004 keeps finding. Deliberately NOT on the prose menu: neither Word nor
+ *  ONLYOFFICE offers a caption where there is nothing to caption. */
+function referenceObjectMenuRows() {
+  return REFERENCE_SURFACE.filter((entry) => entry.contextMenu).map((entry) => ({
+    id: entry.command,
+    label: entry.label,
+    group: "caption",
+    enabled: ribbonSurfaceEnabled(entry),
+    disabledReason: ribbonSurfaceReason(entry),
+    run: entry.run,
+  }));
+}
 
 /** Whether a Layout/References row's precondition is met right now. */
 function ribbonSurfaceEnabled(entry) {
@@ -11442,45 +11351,21 @@ function buildAccessibilityTree() {
 }
 
 // ---- Outline panel (heading tree → scroll-to) -------------------------------
+// The rows themselves are `outline_panel.mjs`; what is left here is the two
+// pieces of editor state it needs and the caret move a row performs.
 /** Rebuilds the outline list from the document's headings (no-op when hidden). */
 function buildOutline() {
   if (!doc || outlinePanel.hidden) return;
-  const rows = doc.documentOutline(); // "level\tnode\ttext"
-  outlineBody.replaceChildren();
-  if (!rows.length) {
-    const empty = document.createElement("div");
-    empty.className = "outline-empty";
-    empty.textContent = "No headings yet. Apply a Heading style to build an outline.";
-    outlineBody.appendChild(empty);
-    return;
-  }
-  for (const row of rows) {
-    const tab = row.indexOf("\t");
-    const tab2 = row.indexOf("\t", tab + 1);
-    const level = Math.min(6, Math.max(1, Number(row.slice(0, tab)) || 1));
-    const node = row.slice(tab + 1, tab2);
-    const text = row.slice(tab2 + 1);
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = `outline-item lvl-${level}`;
-    item.dataset.node = node;
-    item.textContent = text;
-    item.title = text;
-    item.addEventListener("click", () => navigateToNode(node));
-    outlineBody.appendChild(item);
-  }
-  reflectOutlineSelection();
+  renderOutline(outlineBody, doc.documentOutline(), {
+    emptyText: t("outline.noHeadings"),
+    onPick: navigateToNode,
+    activeNode: selection?.focus?.node ?? "",
+  });
 }
 
 /** Keeps the outline's active row synchronized with the model-backed caret. */
 function reflectOutlineSelection() {
-  const activeNode = selection?.focus?.node ?? "";
-  for (const item of outlineBody.querySelectorAll(".outline-item")) {
-    const active = item.dataset.node === activeNode;
-    item.classList.toggle("is-active", active);
-    if (active) item.setAttribute("aria-current", "location");
-    else item.removeAttribute("aria-current");
-  }
+  reflectOutlineActive(outlineBody, selection?.focus?.node ?? "");
 }
 
 /** Places the caret at the start of `node` and scrolls it into view. */
@@ -12675,7 +12560,7 @@ function editorCommands(context = { surface: "palette" }) {
     // commands are submenus (Wrap text) and a palette entry whose `run` is a
     // submenu is a dead row.
     cmds.push(
-      ...flattenCommandTree(buildObjectContextCommands(selectedObjectContext()), (entry, trail) => ({
+      ...flattenCommandTree(buildObjectContextCommands(selectedObjectContext(), objectContextMenuHost), (entry, trail) => ({
         label: trail ? `Object: ${trail} ${entry.label}` : `Object: ${entry.label}`,
         group: "Object",
         kw: `object image picture shape text box ${trail} ${entry.label}`.toLowerCase(),
@@ -13202,6 +13087,29 @@ const dropCapDialog = createDropCapDialog({
   mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
   apply: (mode, lines) => runEdit(() => doc.setDropCap(selection.focus.node, mode, lines), { gate: true }),
   status: setStatus, fallbackFocus: () => pagesEl,
+});
+
+// ---- References ▸ Insert caption / Cross-reference (OO-005) -----------------
+// Both dialogs live in their own modules; both insert through the SAME gated,
+// tracked, undoable path every other edit uses (`runEdit({ gate: true })`), so
+// each is one Undo and each fails closed in Viewing and in Suggesting. The
+// caption's target is the caret's block: selecting a picture or a table puts the
+// caret at its anchor (`selectObject`), so one expression serves both.
+const referenceDialogHost = {
+  registerModal, getDoc: () => doc, status: setStatus, fallbackFocus: () => pagesEl,
+  mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
+};
+const captionDialog = createCaptionDialog({
+  ...referenceDialogHost,
+  targetNode: () => selection?.focus.node ?? "",
+  insert: (o) => runEdit(() => doc.insertCaption(o.targetNode, o.label, o.text, o.position,
+    o.excludeLabel, o.numberFormat, o.chapterLevel, o.separator), { gate: true }),
+});
+const crossRefDialog = createCrossReferenceDialog({
+  ...referenceDialogHost,
+  caret: () => (selection ? { node: selection.focus.node, offset: selection.focus.offset } : null),
+  insert: (o) => runEdit(() => doc.insertCrossReference(o.caretNode, o.caretOffset,
+    o.targetNode, o.referenceTo, o.hyperlink), { gate: true }),
 });
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------
