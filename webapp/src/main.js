@@ -165,6 +165,7 @@ import {
 } from "./blank_document.mjs";
 import { followExternalTarget } from "./link_targets.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
+import { createRuler } from "./ruler.mjs";
 
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
@@ -3659,8 +3660,8 @@ async function renderAll() {
   bandEl.style.height = `${pageBandModel.height}px`;
   pageWindow = { first: 0, last: -1 };
   bandOffset = 0;
-  pagesEl.replaceChildren(ruler, bandEl); // ruler sits above the pages, same width
-  buildRuler();
+  pagesEl.replaceChildren(rulerView.element, bandEl); // sits above the pages, same width
+  rulerView.build();
   // Measured after the band is in the document and before any sheet is placed:
   // the ruler and the viewport's padding sit above the band, and the mapping
   // between scroll space and document space is band-local.
@@ -4100,7 +4101,7 @@ function drawSelection() {
   updateReviewControls();
   scheduleReviewMarginRender();
   updatePageNumber();
-  updateRulerMarkers();
+  rulerView.syncToCaret();
   positionSelToolbar();
 }
 
@@ -8067,250 +8068,26 @@ document.addEventListener("keydown", (event) => {
 viewportEl.addEventListener("scroll", () => hideContextMenu(), { passive: true });
 window.addEventListener("resize", () => hideContextMenu());
 
-// ---- Horizontal ruler (margins + the caret paragraph's indent markers) -------
-const ruler = document.createElement("div");
-ruler.className = "ruler";
-ruler.hidden = true;
-const rulerTrack = document.createElement("div");
-rulerTrack.className = "ruler-track";
-ruler.appendChild(rulerTrack);
-
-let rulerGeom = null; // { widthTwip, marginStartTwip, marginEndTwip }
-let rulerScale = 0; // px per twip at the current zoom
-const markers = {}; // key -> element
-let tabInsertCode = 0; // the type new ruler tabs get: 0 L, 1 C, 2 R, 3 decimal
-const TAB_LETTER = ["L", "C", "R", "."];
-
-/** Rebuilds the ruler scale, margin zones, and ticks for the current page/zoom. */
-function buildRuler() {
-  if (!doc || !pages.length || !pageBandModel) {
-    ruler.hidden = true;
-    return;
-  }
-  const g = doc.pageGeometry();
-  rulerGeom = {
-    width: g.widthTwip,
-    marginStart: g.marginStartTwip,
-    marginEnd: g.marginEndTwip,
-  };
-  // The first page's rendered width, from the band geometry rather than from a
-  // sheet element: page 1 has no sheet at all once the reader has scrolled away
-  // from it, and the ruler still has to be the width of the paper.
-  const pageWidthPx = pageBandModel.widths[0];
-  rulerScale = pageWidthPx / rulerGeom.width;
-  ruler.style.width = `${pageWidthPx}px`;
-  const px = (t) => t * rulerScale;
-
-  rulerTrack.replaceChildren();
-  const contentStart = rulerGeom.marginStart;
-
-  // The white content span between the (shaded) page margins. Clicking it adds a
-  // tab stop at that position (in the current tab type) on the caret paragraph.
-  const content = document.createElement("div");
-  content.className = "ruler-content";
-  content.style.left = `${px(rulerGeom.marginStart)}px`;
-  content.style.width = `${px(rulerGeom.width - rulerGeom.marginStart - rulerGeom.marginEnd)}px`;
-  content.addEventListener("pointerdown", (e) => {
-    if (!doc || !selection || e.button !== 0) return;
-    const pos = Math.max(0, Math.round(e.offsetX / rulerScale));
-    e.preventDefault();
-    e.stopPropagation();
-    runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, tabInsertCode), { paragraphLevel: true });
-    updateRulerMarkers();
-  });
-  rulerTrack.appendChild(content);
-
-  // Word-style tab-type selector at the ruler's left edge; click to cycle L/C/R/dot.
-  const corner = document.createElement("button");
-  corner.type = "button";
-  corner.className = "tab-corner";
-  corner.title = "Tab stop type — click to change";
-  corner.textContent = TAB_LETTER[tabInsertCode];
-  corner.addEventListener("click", () => {
-    tabInsertCode = (tabInsertCode + 1) % TAB_LETTER.length;
-    corner.textContent = TAB_LETTER[tabInsertCode];
-  });
-  rulerTrack.appendChild(corner);
-
-  // Minor ticks every 1/8", plus a numbered major tick at each inch measured from
-  // the left margin (0 at the content edge).
-  for (let t = 0; t <= rulerGeom.width; t += TWIPS_PER_INCH / 8) {
-    const tick = document.createElement("div");
-    tick.className = "ruler-tick minor";
-    tick.style.left = `${px(t)}px`;
-    rulerTrack.appendChild(tick);
-  }
-  for (let i = 0, t = contentStart; t <= rulerGeom.width + 1; i++, t = contentStart + i * TWIPS_PER_INCH) {
-    const tick = document.createElement("div");
-    tick.className = "ruler-tick major";
-    tick.style.left = `${px(t)}px`;
-    rulerTrack.appendChild(tick);
-    if (i > 0) {
-      const num = document.createElement("div");
-      num.className = "ruler-num";
-      num.textContent = String(i);
-      num.style.left = `${px(t)}px`;
-      rulerTrack.appendChild(num);
-    }
-  }
-
-  // Indent markers (recreated each build; positioned by the selection). Only the
-  // markers are pointer-interactive; the rest of the ruler is click-through, so a
-  // marker drag can never steal a page click.
-  for (const [key, cls] of [
-    ["firstLine", "down"],
-    ["left", "up"],
-    ["right", "up"],
-  ]) {
-    const m = document.createElement("div");
-    m.className = `ruler-marker ${cls}`;
-    m.dataset.marker = key;
-    m.title =
-      key === "firstLine" ? "First-line indent" : key === "left" ? "Left indent" : "Right indent";
-    m.addEventListener("pointerdown", (e) => startMarkerDrag(key, e));
-    rulerTrack.appendChild(m);
-    markers[key] = m;
-  }
-
-  ruler.hidden = false;
-  updateRulerMarkers();
-}
-
-/** Positions the three indent markers from the caret paragraph's indentation. */
-function updateRulerMarkers() {
-  if (!rulerGeom || !markers.left) return;
-  const px = (t) => t * rulerScale;
-  let start = 0;
-  let end = 0;
-  let firstLine = 0;
-  if (doc && selection) {
-    const ind = doc.paragraphIndent(selection.focus.node);
-    start = ind.startTwip;
-    end = ind.endTwip;
-    firstLine = ind.firstLineTwip - ind.hangingTwip;
-    ind.free();
-  }
-  const contentStart = rulerGeom.marginStart;
-  const contentEnd = rulerGeom.width - rulerGeom.marginEnd;
-  markers.left.style.left = `${px(contentStart + start)}px`;
-  markers.firstLine.style.left = `${px(contentStart + start + firstLine)}px`;
-  markers.right.style.left = `${px(contentEnd - end)}px`;
-  renderTabStops();
-}
-
-/** Draws the caret paragraph's tab stops as glyphs on the ruler (recreated each
- *  update). Each glyph: click cycles its type, drag moves it, drag off removes it. */
-function renderTabStops() {
-  for (const g of rulerTrack.querySelectorAll(".tab-glyph")) g.remove();
-  if (!doc || !selection || !rulerGeom) return;
-  const px = (t) => t * rulerScale;
-  const tabs = doc.paragraphTabs(selection.focus.node); // flat [pos, code, …]
-  for (let k = 0; k < tabs.length; k += 2) {
-    const pos = tabs[k];
-    const code = tabs[k + 1];
-    const g = document.createElement("div");
-    g.className = `tab-glyph tab-${code}`;
-    g.textContent = TAB_LETTER[code] ?? "L";
-    g.style.left = `${px(rulerGeom.marginStart + pos)}px`;
-    g.title = "Tab stop — click to change type, drag to move, drag off to remove";
-    g.addEventListener("pointerdown", (e) => startTabDrag(pos, code, g, e));
-    rulerTrack.appendChild(g);
-  }
-}
-
-/** A tab-glyph pointer interaction: no move → cycle type; horizontal move →
- *  reposition; released off the ruler → delete (Word's drag-off-to-remove). */
-function startTabDrag(pos, code, glyph, ev) {
-  if (!doc || !selection || ev.button !== 0) return;
-  ev.preventDefault();
-  ev.stopPropagation();
-  const trackRect = rulerTrack.getBoundingClientRect();
-  const px = (t) => t * rulerScale;
-  let moved = false;
-  let curPos = pos;
-  const onMove = (e) => {
-    if (Math.abs(e.clientX - ev.clientX) > 3 || Math.abs(e.clientY - ev.clientY) > 3) moved = true;
-    curPos = Math.max(0, Math.round((e.clientX - trackRect.left) / rulerScale - rulerGeom.marginStart));
-    glyph.style.left = `${px(rulerGeom.marginStart + curPos)}px`; // live
-  };
-  const onUp = (e) => {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    const offRuler = e.clientY > trackRect.bottom + 14 || e.clientY < trackRect.top - 14;
-    if (offRuler) {
-      runToolbarEdit((a, b, c, d) => doc.removeTabStop(a, b, c, d, pos), { paragraphLevel: true });
-    } else if (moved && curPos !== pos) {
-      runToolbarEdit((a, b, c, d) => doc.moveTabStop(a, b, c, d, pos, curPos), { paragraphLevel: true });
-    } else {
-      runToolbarEdit((a, b, c, d) => doc.setTabStop(a, b, c, d, pos, (code + 1) % TAB_LETTER.length), { paragraphLevel: true });
-    }
-    updateRulerMarkers();
-  };
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-}
-
-/** Drag an indent marker. Uses window-level move/up listeners (never
- *  setPointerCapture) so the pointer is always released — the ruler acts on the
- *  caret paragraph, so a selection is required. */
-function startMarkerDrag(key, ev) {
-  if (!doc || !selection || !rulerGeom) return;
-  ev.preventDefault();
-  ev.stopPropagation(); // don't let the pointerdown fall through to the page
-
-  const trackRect = rulerTrack.getBoundingClientRect();
-  const px = (t) => t * rulerScale;
-  const contentStart = rulerGeom.marginStart;
-  const contentEnd = rulerGeom.width - rulerGeom.marginEnd;
-
-  // The left marker carries the first-line marker with it (Word/Docs behaviour);
-  // capture the current first-line offset so it is preserved during the drag.
-  const ind = doc.paragraphIndent(selection.focus.node);
-  const startTwip = ind.startTwip;
-  const firstLineOff = ind.firstLineTwip - ind.hangingTwip;
-  ind.free();
-
-  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-  const xTwipAt = (clientX) => clamp((clientX - trackRect.left) / rulerScale, 0, rulerGeom.width);
-
-  // Live visual feedback while dragging (model is committed on pointerup).
-  const preview = (x) => {
-    if (key === "left") {
-      markers.left.style.left = `${px(x)}px`;
-      markers.firstLine.style.left = `${px(x + firstLineOff)}px`;
-    } else {
-      markers[key].style.left = `${px(x)}px`;
-    }
-  };
-
-  // Resolve the marker's ruler x to an absolute indent for the WASM setter.
-  const commit = async (x) => {
-    let call;
-    if (key === "left") {
-      const twips = Math.round(x - contentStart);
-      call = (sn, so, en, eo) => doc.setLeftIndent(sn, so, en, eo, twips);
-    } else if (key === "firstLine") {
-      const twips = Math.round(x - contentStart - startTwip);
-      call = (sn, so, en, eo) => doc.setFirstLineIndent(sn, so, en, eo, twips);
-    } else {
-      const twips = Math.round(contentEnd - x);
-      call = (sn, so, en, eo) => doc.setRightIndent(sn, so, en, eo, twips);
-    }
-    await runToolbarEdit(call);
-    updateRulerMarkers(); // snap to the model's clamped truth
-  };
-
-  markers[key].classList.add("dragging");
-  const onMove = (e) => preview(xTwipAt(e.clientX));
-  const onUp = (e) => {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    markers[key].classList.remove("dragging");
-    commit(xTwipAt(e.clientX));
-  };
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-}
+// ---- Horizontal ruler ---------------------------------------------------------
+// The strip itself lives in `ruler.mjs`. It is bound to the live `doc`,
+// `selection`, `pages` and `pageBandModel` through getters rather than values,
+// because all four are replaced wholesale when a document is opened or
+// re-paginated, and a ruler holding a stale one draws the wrong page.
+const rulerView = createRuler({
+  getDoc: () => doc,
+  getSelection: () => selection,
+  getPages: () => pages,
+  getBandModel: () => pageBandModel,
+  runToolbarEdit,
+  twipsPerInch: TWIPS_PER_INCH,
+  labels: {
+    tabCorner: "Tab stop type — click to change",
+    firstLine: "First-line indent",
+    left: "Left indent",
+    right: "Right indent",
+    tabGlyph: "Tab stop — click to change type, drag to move, drag off to remove",
+  },
+});
 
 // ---- Editing (keys → semantic edits through the WASM choke point) ------------
 
@@ -15798,11 +15575,20 @@ const zoomMenu = document.getElementById("zoomMenu");
 const zoomMenuBtn = document.getElementById("zoomMenuBtn");
 const clampZoom = (z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
-/** Fit-to-viewport factor: constrain the first page's width (fit-width) or both
- *  width and height (fit-page) to the viewport, minus comfortable gutters. */
+/** Fit-to-viewport factor: constrain the caret page's width (fit-width) or both
+ *  width and height (fit-page) to the viewport, minus comfortable gutters.
+ *
+ *  The CARET's page, not page 0. Fitting page 0 on a document whose later section
+ *  turns landscape sized the view to the portrait page and let every landscape
+ *  page overflow the viewport sideways — a "Fit width" that does not fit. This is
+ *  the same page-1-is-the-document assumption the ruler carried; the page index
+ *  comes from the ruler so the two cannot disagree about which page the user is
+ *  on. It deliberately re-fits when the caret crosses a section break, because
+ *  the alternative is a fit that is wrong for the page being read. */
 function computeFitZoom(mode) {
   if (!doc) return zoomFactor;
-  const size = doc.pageSize(0);
+  const page = Math.max(0, Math.min(rulerView.builtForPage(), pages.length - 1));
+  const size = doc.pageSize(page);
   const wIn = size.widthTwip / TWIPS_PER_INCH;
   const hIn = size.heightTwip / TWIPS_PER_INCH;
   size.free();

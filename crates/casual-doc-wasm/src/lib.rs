@@ -6863,11 +6863,70 @@ impl WasmDocument {
         })
     }
 
-    /// The first section's page geometry (width + side margins, in twips) — what the
-    /// horizontal ruler draws its scale and margin zones from.
-    #[wasm_bindgen(js_name = pageGeometry)]
-    #[must_use]
-    pub fn page_geometry(&self) -> RulerGeometry {
+    /// One PAGE's geometry (width + side margins, in twips) — what the horizontal
+    /// ruler draws its scale and margin zones from.
+    ///
+    /// Takes the page because the answer differs per page, and the ruler has to
+    /// describe the page the caret is on. This replaced a `pageGeometry()` that
+    /// returned `default_config` — the document's OPENING section — for every
+    /// page. On a document whose second section turns landscape, the ruler kept
+    /// the portrait width and the portrait margins: the scale was wrong, so the
+    /// inch ticks were wrong, and the shaded margin zones did not line up with
+    /// the paper underneath them. The neighbouring [`pageSetup`](Self::page_setup)
+    /// already carried a warning that it "is not the answer to any question about
+    /// a page the user is looking at"; the ruler was asking exactly that question
+    /// of exactly that kind of accessor.
+    ///
+    /// Complexity: O(1). The section list is short and indexed by the page's own
+    /// `section` id, so this is safe to call on every zoom and scroll — which the
+    /// ruler does. Deliberately NOT keyed by a node id: `section_of` builds a
+    /// paragraph index and walks the document, and per-interaction work must be
+    /// O(1) in document size (`docs/107` §4).
+    ///
+    /// # Errors
+    /// When `index` is not a page of this document.
+    #[wasm_bindgen(js_name = pageRulerGeometry)]
+    pub fn page_ruler_geometry(&self, index: u32) -> Result<RulerGeometry, JsValue> {
+        self.page_ruler_geometry_inner(index).map_err(to_js)
+    }
+
+    /// See [`WasmDocument::page_ruler_geometry`]. Split out so native tests take
+    /// the same path as the `#[wasm_bindgen]` boundary.
+    fn page_ruler_geometry_inner(&self, index: u32) -> Result<RulerGeometry, String> {
+        let total = self.page_count();
+        if index >= total {
+            return Err(format!("page index {index} out of range (0..{total})"));
+        }
+        // A windowed body is single-section by construction
+        // (`NotWindowable::MultipleSections`), so the opening config IS that
+        // section's and no page has to be materialized to say so. Only the whole
+        // path can hold a second section, and that is the path that looks one up.
+        if self.windowed_page_box(index as usize).is_some() {
+            return Ok(self.ruler_geometry_of_config());
+        }
+        let page = self.render_page_of(index)?;
+        let section = page.section;
+        Ok(self
+            .document
+            .definitions()
+            .sections
+            .iter()
+            .find(|candidate| candidate.id == section)
+            .map_or_else(
+                // An unknown section id is a broken document rather than a
+                // landscape one; the opening geometry is the honest fallback and
+                // matches what `page_box` does with the same miss.
+                || self.ruler_geometry_of_config(),
+                |s| RulerGeometry {
+                    width_twip: s.page_size.width_twips,
+                    margin_start_twip: s.page_margins.start_twips,
+                    margin_end_twip: s.page_margins.end_twips,
+                },
+            ))
+    }
+
+    /// The opening section's ruler geometry, from the layout config.
+    fn ruler_geometry_of_config(&self) -> RulerGeometry {
         let c = &self.default_config;
         RulerGeometry {
             width_twip: c.page_size.width.raw(),
@@ -34435,6 +34494,72 @@ mod tests {
         );
         assert_eq!(page_5["footerTwips"], 2_880);
         assert_eq!(page_5["headerLinked"], false, "its header is its own");
+    }
+
+    // ---- The ruler describes the page, not the document's opening section -------
+    //
+    // The owner's report: "rulers doesn't work for landscape pages". The ruler
+    // asked `pageGeometry()`, which returned `default_config` — the OPENING
+    // section — for every page, so on this fixture pages 5 and 6 were drawn with
+    // page 1's portrait width and page 1's 1,440-twip margins. The scale is
+    // `pageWidthPx / width`, so getting the width wrong moves every inch tick,
+    // and the shaded margin zones stopped lining up with the paper under them.
+    //
+    // Both halves matter, and the shared fixture only separates one of them: its
+    // two sections differ in width (12,240 vs 15,840) but its `sections_boundary`
+    // helper takes a VERTICAL margin and hardcodes 1,440 on both sides. So a
+    // change that fixed the width and left the margins on the opening section
+    // would pass against it unchanged. This test therefore widens the landscape
+    // section's side margins itself, rather than editing the shared helper and
+    // with it `sections.docx` and every running-content test that drives it.
+
+    #[test]
+    fn the_ruler_geometry_of_a_landscape_page_is_its_own_section() {
+        let mut document = orientation_change_document();
+        {
+            let landscape = document
+                .definitions_mut()
+                .sections
+                .get_mut(1)
+                .expect("the fixture's second section");
+            landscape.page_margins.start_twips = 2_880;
+            landscape.page_margins.end_twips = 2_880;
+        }
+        let d = wasm_document(document);
+        let portrait = d
+            .page_ruler_geometry_inner(0)
+            .expect("page 1 ruler geometry");
+        let landscape = d
+            .page_ruler_geometry_inner(4)
+            .expect("page 5 ruler geometry");
+
+        assert_eq!(portrait.width_twip, 12_240, "page 1 is portrait");
+        assert_eq!(portrait.margin_start_twip, 1_440);
+        assert_eq!(portrait.margin_end_twip, 1_440);
+
+        assert_eq!(
+            landscape.width_twip, 15_840,
+            "page 5 is in the landscape section, so the ruler is as wide as the \
+             paper — with `pageGeometry()` this was 12,240 and every tick was wrong"
+        );
+        assert_eq!(
+            landscape.margin_start_twip, 2_880,
+            "the landscape section's own margin, not the opening section's 1,440 \
+             — the shaded zones have to line up with the paper underneath them"
+        );
+        assert_eq!(landscape.margin_end_twip, 2_880);
+    }
+
+    #[test]
+    fn a_page_index_past_the_end_is_refused_rather_than_answered() {
+        // Silently answering with the opening geometry is how the defect this
+        // replaces stayed invisible: a wrong ruler looks like a ruler.
+        let d = wasm_document(orientation_change_document());
+        let total = d.page_count();
+        let err = d
+            .page_ruler_geometry_inner(total)
+            .expect_err("a page that does not exist has no ruler geometry");
+        assert!(err.contains("out of range"), "{err}");
     }
 
     /// Emits `webapp/sections.docx` — the two-section, orientation-changing

@@ -123,8 +123,23 @@ const SRC = new URL("../src/", import.meta.url);
  *  moved to `radio_group.mjs` and the call sites now say what they mean
  *  (`reflect`, `select`, `value`) instead of querying `[aria-pressed="true"]`.
  *  That is the ratchet doing its job: the file shrank BECAUSE six copies of one
- *  rule became one, not because anything was trimmed. */
-const MAIN_JS_LINE_CEILING = 17000;
+ *  rule became one, not because anything was trimmed.
+ *  Lowered to 16,831 by the landscape-ruler fix — the biggest single drop so far,
+ *  and the clearest case for why the ratchet is worth paying. The fix needed a
+ *  dozen lines in a file with ZERO slack, so the whole 244-line ruler moved to
+ *  `ruler.mjs`: the strip, the indent markers, the tab stops and both drag
+ *  interactions, which are one cohesive thing keyed to one scale — and the scale
+ *  was the thing that was wrong. It also came out with no English in it (the five
+ *  titles are passed in), so the unrouted-string ceilings did not move at all.
+ *  RE-MEASURED on the merge of UX-021 and the landscape ruler, which is the
+ *  THIRD time this trap has been recorded here and the first time both halves
+ *  were extractions rather than additions. UX-021 measured 17,000 and the ruler
+ *  16,831, each honestly against a `main.js` of 17,045 — and NEITHER describes
+ *  the merged file, because the two removed different code. Git applied both
+ *  deletions, so the merge is smaller than either branch predicted. The number
+ *  below is measured from the merged file; it is the only one that was ever
+ *  meaningful. */
+const MAIN_JS_LINE_CEILING = 16779;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
