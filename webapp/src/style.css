@@ -7114,7 +7114,10 @@ body:not(.doc-loaded) .drop-title {
    is `aria-hidden` so a refusal is spoken once. */
 .toast {
   position: fixed;
-  left: var(--space-3);
+  /* Logical, not `left`: the editor sets `documentElement.dir` from the active
+     locale (`src/localize.mjs:95`), and a snackbar belongs on the reading-start
+     side in Arabic and Hebrew as much as in English. */
+  inset-inline-start: var(--space-3);
   bottom: calc(var(--h-footer) + var(--space-3));
   z-index: var(--z-toast);
   max-width: min(420px, calc(100vw - 2 * var(--space-3)));
