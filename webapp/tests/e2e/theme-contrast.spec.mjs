@@ -121,5 +121,31 @@ for (const theme of ["light", "dark"]) {
 
     const failures = await page.evaluate(auditRegion, "body");
     expect(failures, `unreadable text in the ${theme} theme`).toEqual([]);
+
+    // The toast (`109` UX-017) is `hidden` at rest, and this sweep skips
+    // `display: none` — so a whole new text surface, and the one that carries
+    // every refusal below 620px, would have shipped unaudited. It has exactly
+    // two visual states, so both are put on screen here rather than driven
+    // through the app: a refusal reaches the error state, but nothing reaches
+    // the plain one at desktop width, which is where the token pairing would be
+    // measured.
+    for (const kind of ["", "error"]) {
+      await page.evaluate((k) => {
+        const toast = document.getElementById("statusToast");
+        toast.textContent =
+          "Viewing mode is read-only; switch to Editing to change the document";
+        if (k) toast.dataset.kind = k;
+        else toast.removeAttribute("data-kind");
+        toast.hidden = false;
+        toast.classList.add("is-shown");
+      }, kind);
+      // `body`, not `#statusToast`: `auditRegion` walks a region's DESCENDANTS,
+      // and the toast's text is its own child node, so scoping to the element
+      // would audit nothing at all and pass.
+      expect(
+        await page.evaluate(auditRegion, "body"),
+        `unreadable toast text (kind "${kind || "plain"}") in the ${theme} theme`,
+      ).toEqual([]);
+    }
   });
 }
