@@ -154,11 +154,14 @@ impl ReferenceScan {
         labels
     }
 
+    /// The row the walk recorded for `node`. O(interest), which a command keeps to
+    /// the two nodes it asked about — never O(document), which is the whole reason
+    /// `ScanRequest::interest` exists.
     fn found(&self, node: NodeId) -> Option<&InterestRecord> {
         self.interest.iter().find(|record| record.node == node)
     }
 
-    /// The node's document order, or the end of the document when the walk never
+    /// O(interest). The node's document order, or the end of the document when the walk never
     /// saw it (so a caption asked for against an unknown node sorts last rather
     /// than first, which would silently renumber everything).
     fn order(&self, node: NodeId) -> usize {
@@ -166,7 +169,7 @@ impl ReferenceScan {
             .map_or(self.paragraphs, |record| record.order)
     }
 
-    /// The 1-based ordinal of the enclosing chapter at `level` — what Word's
+    /// O(interest). The 1-based ordinal of the enclosing chapter at `level` — what Word's
     /// `STYLEREF N \s` shows. At least 1: a caption before the first heading
     /// belongs to chapter 1, which is what Word displays there too.
     fn chapter_ordinal(&self, node: NodeId, level: u8) -> u32 {
@@ -177,7 +180,7 @@ impl ReferenceScan {
     }
 
     /// The `_Ref` bookmark on `node` covering exactly `[start, end)`, if there is
-    /// one.
+    /// one. O(interest x bookmarks on that paragraph) — both small by construction.
     fn reference_bookmark(&self, node: NodeId, start: u32, end: u32) -> Option<BookmarkId> {
         self.found(node).and_then(|record| {
             record
@@ -190,6 +193,7 @@ impl ReferenceScan {
 }
 
 /// The `\s` restart level a `SEQ` instruction asks for, if any.
+/// O(instruction length); O(1) in document size.
 fn sequence_restart_level(instruction: &str) -> Option<u8> {
     let tokens: Vec<&str> = instruction.split_whitespace().collect();
     let index = tokens.iter().position(|token| *token == "\\s")?;
@@ -197,7 +201,7 @@ fn sequence_restart_level(instruction: &str) -> Option<u8> {
 }
 
 /// The number format a `SEQ` instruction's `\*` picture switch asks for, or
-/// arabic when it has none.
+/// arabic when it has none. O(instruction length); O(1) in document size.
 fn sequence_format(instruction: &str) -> CaptionNumberFormat {
     let tokens: Vec<&str> = instruction.split_whitespace().collect();
     let Some(index) = tokens.iter().position(|token| *token == "\\*") else {

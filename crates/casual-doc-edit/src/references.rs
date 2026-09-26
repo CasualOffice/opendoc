@@ -186,7 +186,7 @@ fn roman_numeral(number: u32, upper: bool) -> String {
 }
 
 /// `1 -> A`, `26 -> Z`, `27 -> AA` — Word's spreadsheet-style alphabetic
-/// sequence.
+/// sequence. O(log_26 number); O(1) in document size.
 fn alphabetic(number: u32, first: u8) -> String {
     let mut left = number;
     let mut letters = Vec::new();
@@ -612,6 +612,8 @@ fn text_run(id: NodeId, text: &str) -> InlineNode {
     })
 }
 
+/// O(1) in document size, O(instruction + result length) in its arguments.
+///
 /// A field node carrying `instruction` and a single cached-result run. An empty
 /// `result` yields a field with no cached inlines rather than an illegal empty
 /// run — a field whose result a reader has not computed yet is legal OOXML and is
