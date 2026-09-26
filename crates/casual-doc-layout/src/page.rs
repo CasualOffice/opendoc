@@ -426,6 +426,34 @@ pub struct Page {
     pub flow: FlowSpan,
 }
 
+impl Page {
+    /// Drops everything the post-pagination passes put on this page, leaving the
+    /// pagination result — the placed body content, the page geometry and the flow
+    /// span — untouched.
+    ///
+    /// This is what lets a page be **reused** across an edit. The passes that
+    /// place running content, page borders, anchored floats, margin line numbers
+    /// and the watermark deliberately write to fields pagination leaves empty
+    /// (each of those fields says so), so re-running them over a page produced by
+    /// an earlier layout is correct as soon as their previous output is cleared.
+    /// Without the clear, the second run would place a second header on the page.
+    ///
+    /// `footnotes` is cleared with them: the only paginator that fills it is the
+    /// footnote one, and the incremental path that calls this runs only for a body
+    /// with no footnote in it, where a fresh pagination leaves the field empty too.
+    ///
+    /// `O(1)` in page content — it drops, it does not walk.
+    pub fn clear_post_pagination(&mut self) {
+        self.header.clear();
+        self.footer.clear();
+        self.anchored.clear();
+        self.footnotes.clear();
+        self.line_numbers.clear();
+        self.page_borders = None;
+        self.watermark = None;
+    }
+}
+
 /// The full paginated layout — the immutable result consumed by rendering and
 /// hit-testing.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]

@@ -461,12 +461,53 @@ pub fn repaginate_with_stats(
         .zip(prev_galley.iter())
         .position(|(a, b)| a != b)
         .unwrap_or(new_galley.len().min(prev_galley.len()));
+    repaginate_at(
+        prev.clone(),
+        prev_galley.len(),
+        new_galley,
+        first_dirty,
+        common_suffix_len(prev_galley, new_galley),
+        config,
+    )
+}
 
+/// [`repaginate_with_stats`] for a caller that already **knows** where the galley
+/// changed and no longer holds the galley it changed — the editor, which splices
+/// the new fragments into the retained galley in place and so has nothing left to
+/// diff against (`109` HF-182).
+///
+/// The guarantee is unchanged: the result is field-for-field identical to a full
+/// [`paginate`] of `new_galley`, which is what the `incremental_equals_full_*`
+/// tests assert. `first_dirty` and `common_suffix` may both be **conservative** —
+/// an index at or before the first real difference, and a count at or below the
+/// real common suffix — because both only steer how much of `prev` is reused, not
+/// what the answer is.
+///
+/// `prev` is taken **by value** and its reusable pages are moved into the result.
+/// That is not a convenience: a `Page` owns the placed fragments of its own
+/// content, so copying the reused prefix and tail would be `O(document)` in deep
+/// copies and would give back most of what resuming saves.
+///
+/// Cost: `O(pages disturbed by the edit)` in real pagination work, plus an
+/// `O(pages)` walk to find the resume point and build the halt lookup.
+#[must_use]
+pub fn repaginate_at(
+    prev: PaginatedLayout,
+    prev_galley_len: usize,
+    new_galley: &[BlockFragment],
+    first_dirty: usize,
+    common_suffix: u32,
+    config: &PageConfig,
+) -> (PaginatedLayout, RepaginateStats) {
     // Choose a safe resume point: a page that begins at a fragment boundary
     // (`line == 0`) that is also a keep-group start, at or before `first_dirty`.
     // Re-running the group walk from a group start with a fresh page-top cursor
     // reproduces exactly what a full paginate does from there.
-    let Some(resume_page) = safe_resume_page(prev, prev_galley, first_dirty, config) else {
+    //
+    // `new_galley` stands in for the previous one here: everything this reads
+    // lies strictly above `first_dirty`, where the two galleys are identical by
+    // construction.
+    let Some(resume_page) = safe_resume_page(&prev, new_galley, first_dirty, config) else {
         let layout = paginate(new_galley, config);
         let reflowed = layout.pages.len();
         return (
@@ -481,16 +522,17 @@ pub fn repaginate_with_stats(
     let resume_index = prev.pages[resume_page].flow.start.fragment as usize;
 
     // The unchanged tail the halt may splice, keyed by index-from-end.
-    let suffix = common_suffix_len(prev_galley, new_galley);
     let halt = HaltLookup::build(
-        prev,
-        prev_galley.len() as u32,
+        &prev,
+        prev_galley_len as u32,
         new_galley.len() as u32,
-        suffix,
+        common_suffix,
         resume_page,
     );
 
-    let prefix: Vec<Page> = prev.pages[..resume_page].to_vec();
+    let prev_page_count = prev.pages.len();
+    let mut prefix = prev.pages;
+    let tail = prefix.split_off(resume_page);
     let mut p = Paginator::new(
         config,
         new_galley,
@@ -510,15 +552,14 @@ pub fn repaginate_with_stats(
     // of the galley-relative flow indices by the insert/delete delta.
     let mut reused_tail = 0;
     if let Some(from) = p.halted {
-        let delta = new_galley.len() as i64 - prev_galley.len() as i64;
-        for page in &prev.pages[from..] {
-            let mut page = page.clone();
+        let delta = new_galley.len() as i64 - prev_galley_len as i64;
+        for mut page in tail.into_iter().skip(from.saturating_sub(resume_page)) {
             page.number = p.pages.len() as u32 + 1;
             page.flow.start.fragment = (i64::from(page.flow.start.fragment) + delta) as u32;
             page.flow.end.fragment = (i64::from(page.flow.end.fragment) + delta) as u32;
             p.pages.push(page);
         }
-        reused_tail = prev.pages.len() - from;
+        reused_tail = prev_page_count - from;
     }
     let stats = RepaginateStats {
         reused_prefix: resume_page,

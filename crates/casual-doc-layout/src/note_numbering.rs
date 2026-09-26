@@ -198,6 +198,28 @@ impl NoteLabels {
         self.restarts_each_page
     }
 
+    /// A stable fingerprint of these labels — the generation stamp the galley
+    /// cache keys a retained galley on, so a galley built before a note was
+    /// added, removed or renumbered is never reused after (`109` HF-182).
+    ///
+    /// `O(referenced notes)`, which is independent of document length; labels
+    /// exist only for notes the body references.
+    #[must_use]
+    pub(crate) fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for (kind, map) in [(0u8, &self.footnotes), (1, &self.endnotes)] {
+            kind.hash(&mut hasher);
+            map.len().hash(&mut hasher);
+            for (id, label) in map {
+                id.hash(&mut hasher);
+                label.hash(&mut hasher);
+            }
+        }
+        self.restarts_each_page.hash(&mut hasher);
+        hasher.finish()
+    }
+
     fn map(&self, kind: NoteKind) -> &BTreeMap<NoteId, String> {
         match kind {
             NoteKind::Footnote => &self.footnotes,
