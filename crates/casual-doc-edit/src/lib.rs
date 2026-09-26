@@ -41,6 +41,13 @@ use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
+/// Captions and cross-references: the OOXML field markup (`SEQ`, `REF`,
+/// `PAGEREF`, `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005).
+/// Its own module rather than more of this file, because it is pure construction
+/// with no document access — which is also what makes it unit-testable without a
+/// document.
+pub mod references;
+
 std::thread_local! {
     /// Per-thread, so a parallel test run never reads another test's scans and
     /// the single-threaded wasm engine sees exactly its own.
