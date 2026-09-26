@@ -108,14 +108,25 @@ export function createStatusChannel({ live, alert, toast, statusLine }) {
      * the toast when the status line cannot be seen or the message is a refusal.
      * This is the entry point for the status line's own messages.
      *
-     * An empty `text` is a clear, not a message: both regions empty and the toast
-     * goes, so a stale refusal cannot be found in the accessibility tree long
-     * after it stopped being true.
+     * An empty `text` is a clear, not a message: both regions empty, so a stale
+     * refusal cannot be found in the accessibility tree long after it stopped
+     * being true. A clear does NOT take down a toast that is still showing — see
+     * the rule below.
      */
     publish(text, kind = "") {
       announce(text, kind);
       if (text && needsToast(kind, statusLineVisible())) showToast(text, kind);
-      else hideToast();
+      // Otherwise the toast is LEFT ALONE to finish its dwell, and that is the
+      // rule rather than an oversight: a message that does not itself need the
+      // toast has been judged not-must-notice, so it must not evict one that is.
+      //
+      // Without this a refusal was destroyed by the informational line that
+      // followed it inside the same command. Review ▸ "Accept change and move to
+      // next" with the caret outside a change does exactly that: it refuses
+      // ("Place the caret inside a tracked change…") and then advances, which
+      // reports "This document has no comments or tracked changes". The user saw
+      // the reason for the refusal appear and vanish in one tick, and the message
+      // that survived was the one that did not matter.
     },
     /**
      * Speaks `text` without touching the on-screen channels.
