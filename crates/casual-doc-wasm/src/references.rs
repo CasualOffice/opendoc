@@ -795,6 +795,14 @@ impl WasmDocument {
     /// (`"entireCaption"`, `"pageNumber"`, `"aboveBelow"`, …); `hyperlink` writes
     /// the `\h` switch, which is Word's *Insert as hyperlink*.
     ///
+    /// `include_above_below` is Word's *Include above/below* checkbox, and it is
+    /// **two fields, one action**: the reference, then a space, then a second
+    /// ` REF … \p ` naming the same bookmark — which is exactly what Word writes
+    /// for it. It is ignored for a reference that already IS the above/below word.
+    /// Taking it as an argument rather than leaving the checkbox disabled is
+    /// deliberate: a control that cannot run is a dead control (`SKILL.md` §10),
+    /// and the alternative was shipping one.
+    ///
     /// **O(document)** — one walk for the target's text and document order, plus,
     /// for `"pageNumber"` only, one layout query for the page the target is on.
     /// That query is the single hard coupling to layout in this feature, and it is
@@ -808,6 +816,7 @@ impl WasmDocument {
         target_node: &str,
         reference_to: &str,
         hyperlink: bool,
+        include_above_below: bool,
     ) -> Result<EditResult, JsValue> {
         let caret = Pos::new(node_id(caret_node)?, caret_offset);
         let target = node_id(target_node)?;
@@ -908,6 +917,41 @@ impl WasmDocument {
             at: caret,
             field: Box::new(field),
         });
+
+        // *Include above/below*: a space and a second ` REF … \p ` after the
+        // reference, which is Word's own markup for that checkbox. Two fields in
+        // ONE undoable action, so a reader who regrets it presses undo once.
+        //
+        // Each op inserts at an offset in the paragraph AS THE PREVIOUS OPS LEFT
+        // IT, so the space goes after the reference's own cached text and the `\p`
+        // field after the space. Pushing all three at `caret` reverses them —
+        // measured, before this arithmetic: " belowFigure 1: Wiring diagram".
+        if include_above_below && to != ReferenceTo::AboveBelow {
+            let word = above_below(scan.order(target), scan.order(caret.node));
+            let space_field = self.fresh_id()?;
+            let space_result = self.fresh_id()?;
+            // A field, not a bare run: a bare run would merge with the surrounding
+            // text and a later edit could not tell the two references apart.
+            let above = reference_field(
+                space_field,
+                space_result,
+                ReferenceTo::AboveBelow,
+                &bookmark_name,
+                hyperlink,
+                word,
+            )
+            .map_err(|error| to_js(format!("{error:?}")))?;
+            let after_reference = caret.offset.saturating_add(result_text.len() as u32);
+            ops.push(Operation::InsertText {
+                at: Pos::new(caret.node, after_reference),
+                text: " ".to_owned(),
+            });
+            ops.push(Operation::InsertField {
+                at: Pos::new(caret.node, after_reference.saturating_add(1)),
+                field: Box::new(above),
+            });
+        }
+
         self.apply_action_caret_as(ops, caret, HistoryKind::FieldChange)
             .map_err(to_js)
     }
@@ -1428,7 +1472,7 @@ mod tests {
         let before = document.document.definitions().bookmarks.iter().count();
         for _ in 0..3 {
             document
-                .insert_cross_reference(&target, 0, &caption, "entireCaption", true)
+                .insert_cross_reference(&target, 0, &caption, "entireCaption", true, false)
                 .expect("insert cross-reference");
         }
         let after = document.document.definitions().bookmarks.iter().count();
@@ -1452,7 +1496,7 @@ mod tests {
 
         // The whole caption's text.
         document
-            .insert_cross_reference(&target, 0, &caption, "entireCaption", true)
+            .insert_cross_reference(&target, 0, &caption, "entireCaption", true, false)
             .expect("entire caption");
         let xml = exported_document_xml(&document);
         assert!(
@@ -1463,7 +1507,7 @@ mod tests {
 
         // The page, which comes from layout and is the one hard coupling.
         document
-            .insert_cross_reference(&target, 0, &caption, "pageNumber", true)
+            .insert_cross_reference(&target, 0, &caption, "pageNumber", true, false)
             .expect("page number");
         let xml = exported_document_xml(&document);
         assert!(
@@ -1473,7 +1517,7 @@ mod tests {
 
         // Above or below, which comes from document order.
         document
-            .insert_cross_reference(&target, 0, &caption, "aboveBelow", false)
+            .insert_cross_reference(&target, 0, &caption, "aboveBelow", false, false)
             .expect("above/below");
         let xml = exported_document_xml(&document);
         assert!(xml.contains("\\p "), "above/below is the REF \\p switch");
@@ -1494,7 +1538,7 @@ mod tests {
             .expect("the caption's node id")
             .to_owned();
         document
-            .insert_cross_reference(&target, 0, &caption, "entireCaption", true)
+            .insert_cross_reference(&target, 0, &caption, "entireCaption", true, false)
             .expect("insert cross-reference");
 
         let reopened = open_document(&document.export_docx().expect("export")).expect("reopen");
@@ -1677,7 +1721,7 @@ mod tests {
 
         let shown = |document: &mut WasmDocument, kind: &str| {
             document
-                .insert_cross_reference(&target, 0, &caption, kind, false)
+                .insert_cross_reference(&target, 0, &caption, kind, false, false)
                 .expect("insert cross-reference");
             // The field just inserted is the first `REF`/`PAGEREF` in the caret's
             // paragraph; read its cached result.
@@ -1741,7 +1785,7 @@ mod tests {
             .to_owned();
         let caption_id = caption.parse::<NodeId>().expect("a node id");
         document
-            .insert_cross_reference(&target, 0, &caption, "entireCaption", false)
+            .insert_cross_reference(&target, 0, &caption, "entireCaption", false, false)
             .expect("insert cross-reference");
 
         // The bookmark's end marker must sit at the caption paragraph's real end.
@@ -1767,6 +1811,72 @@ mod tests {
             Some(length),
             "the bookmark must end at the caption's real end ({length} bytes), not at \
              the end of its trimmed display text"
+        );
+    }
+
+    /// *Include above/below* inserts the word as a SECOND field, in one action.
+    ///
+    /// Word writes two fields for that checkbox — the reference, a space, and a
+    /// ` REF … \p ` — and the alternative to taking the argument was shipping the
+    /// checkbox disabled, which is a dead control.
+    #[test]
+    fn include_above_below_adds_a_second_reference_field_in_the_same_action() {
+        let mut document = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let body = body_paragraph_ids(&document);
+        // Caption a LATER paragraph and reference it from an earlier one, so the
+        // word is "below" — a guard that could only ever read "above" would pass
+        // on a build that hard-coded it.
+        insert_figure(&mut document, &body[4], ": Wiring diagram").expect("insert caption");
+        let caption = document.caption_entries()[0]
+            .split('\t')
+            .next()
+            .expect("the caption's node id")
+            .to_owned();
+
+        document
+            .insert_cross_reference(&body[0], 0, &caption, "entireCaption", true, true)
+            .expect("insert with above/below");
+
+        let mut instructions = Vec::new();
+        let mut text = String::new();
+        let anchor = body[0].parse::<NodeId>().expect("a node id");
+        crate::visit_paragraphs_all_surfaces(&document.document, &mut |paragraph| {
+            if paragraph.id != anchor {
+                return;
+            }
+            text = node_plain_text(&paragraph.inlines);
+            for inline in &paragraph.inlines {
+                if let InlineNode::Field(field) = inline {
+                    instructions.push(field.instruction.clone());
+                }
+            }
+        });
+        assert_eq!(
+            instructions.len(),
+            2,
+            "two fields: the reference and the above/below word — got {instructions:?}"
+        );
+        assert!(
+            instructions.iter().any(|i| i.contains("\\p")),
+            "the second field must be the REF \\p Word writes: {instructions:?}"
+        );
+        assert!(
+            text.starts_with("Figure 1: Wiring diagram below"),
+            "the paragraph must read the reference, a space, then the word: {text:?}"
+        );
+        // ONE undo, not three. This is the assertion that the three ops are one
+        // action; the undo LABEL cannot say so, because the caption insertion before
+        // it is also a "Field change" and comparing labels would pass either way.
+        document.undo().expect("undo");
+        let mut after = String::new();
+        crate::visit_paragraphs_all_surfaces(&document.document, &mut |paragraph| {
+            if paragraph.id == anchor {
+                after = node_plain_text(&paragraph.inlines);
+            }
+        });
+        assert!(
+            !after.contains("below") && !after.contains("Figure 1"),
+            "ONE undo must remove both fields and the space: {after:?}"
         );
     }
 
