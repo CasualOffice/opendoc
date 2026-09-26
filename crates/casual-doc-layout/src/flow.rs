@@ -1117,7 +1117,14 @@ pub(crate) fn build_galley_cached_labeled(
                 let mut fragment = fragment;
                 apply_section_break_to_fragment(&mut fragment, &paragraph.properties, &ctx);
                 galley.push(fragment);
-                cache.note_block(paragraph.id, block_start, 1, hash, !uncacheable && !numbered, true);
+                cache.note_block(
+                    paragraph.id,
+                    block_start,
+                    1,
+                    hash,
+                    !uncacheable && !numbered,
+                    true,
+                );
             }
             BlockNode::Table(table) => {
                 flow_table(table, shaper, content_width, &mut galley, &mut ctx);

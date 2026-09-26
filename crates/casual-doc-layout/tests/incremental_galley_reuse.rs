@@ -262,11 +262,13 @@ fn incremental_matches_the_fresh_path_with_a_note_reference() {
     let BlockNode::Paragraph(paragraph) = &mut body[8] else {
         unreachable!("prose bodies are paragraphs");
     };
-    paragraph.inlines.push(InlineNode::NoteReference(NoteReference {
-        id: node(802),
-        kind: NoteKind::Footnote,
-        note,
-    }));
+    paragraph
+        .inlines
+        .push(InlineNode::NoteReference(NoteReference {
+            id: node(802),
+            kind: NoteKind::Footnote,
+            note,
+        }));
     // A body footnote paginates through `paginate_section_footnotes`, which is
     // outside the page-resume path — so this case proves the GALLEY reuse only.
     assert_incremental_matches_fresh(document(body, definitions), 2, ReviewView::Editing, false);

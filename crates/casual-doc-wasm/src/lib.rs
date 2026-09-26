@@ -35514,14 +35514,12 @@ mod tests {
         let node = d.ordered_paragraphs()[0].0.to_string();
         // Three keystrokes: the first two establish the retained galley and the
         // reusable layout, the third is the steady state being measured.
-        let mut offset = 6u32;
         let mut dirty = Vec::new();
-        for _ in 0..3 {
+        for offset in 6u32..9 {
             dirty = d
                 .type_text(&node, offset, &node, offset, "x".to_owned(), 1)
                 .expect("typing into a plain-text document")
                 .dirty_pages();
-            offset += 1;
         }
         (
             d.galley_cache.rebuilt_last_build(),
@@ -35561,20 +35559,23 @@ mod tests {
              {small_page_count} and {large_page_count}"
         );
         assert_eq!(
-            large_blocks, small_blocks,
+            large_blocks,
+            small_blocks,
             "the blocks a keystroke re-derives must not grow with the document: \
              {small_blocks} at {small_n} paragraphs and {large_blocks} at {}",
             small_n * 2
         );
         assert_eq!(
-            large_pages, small_pages,
+            large_pages,
+            small_pages,
             "the pages a keystroke re-flows must not grow with the document: \
              {small_pages} of {small_page_count} at {small_n} paragraphs and \
              {large_pages} of {large_page_count} at {}",
             small_n * 2
         );
         assert_eq!(
-            large_dirty, small_dirty,
+            large_dirty,
+            small_dirty,
             "the pages a keystroke asks the host to repaint must not grow with \
              the document: {small_dirty} at {small_n} paragraphs and {large_dirty} \
              at {}",

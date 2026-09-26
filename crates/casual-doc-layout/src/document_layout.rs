@@ -956,7 +956,8 @@ fn resume_pagination(
     let [run] = runs else {
         return Resume::Refused(previous);
     };
-    let Some((first_dirty, dirty_end, previous_galley_len)) = cache.rebuilt_span_last_build() else {
+    let Some((first_dirty, dirty_end, previous_galley_len)) = cache.rebuilt_span_last_build()
+    else {
         return Resume::Refused(previous);
     };
     if !run.column_galleys.is_empty()

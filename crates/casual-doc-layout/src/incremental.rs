@@ -584,13 +584,7 @@ impl GalleyCache {
     /// `labels` is the note-label generation it is built under, and `dirty` must
     /// be [`DirtySet::is_complete`] for the retained galley to be offered at all.
     /// `O(1)`, except for the entry clear a width change forces.
-    pub(crate) fn begin_build(
-        &mut self,
-        width: Twip,
-        markup: bool,
-        labels: u64,
-        dirty: &DirtySet,
-    ) {
+    pub(crate) fn begin_build(&mut self, width: Twip, markup: bool, labels: u64, dirty: &DirtySet) {
         if self.width != Some(width) {
             self.entries.clear();
             self.bytes = 0;
