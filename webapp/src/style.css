@@ -1596,9 +1596,16 @@ body.modal-open {
   opacity: 0;
 }
 
+/* `min-height`, never `height`. The swatch holds a 47px letter whose LINE BOX is
+   the font's business, not ours: Georgia renders it 48px tall, and the Linux CI
+   runner — which has no Georgia and falls back to its own serif — renders it 54.
+   A fixed 52px box therefore fit on one platform and clipped on the other, which
+   is how the previous attempt at this passed locally and failed in CI. Sizing to
+   the content instead is correct for any face, which is the only thing that can
+   be true on every platform we run on. */
 .drop-cap-sample {
   display: grid;
-  height: 52px;
+  min-height: 52px;
   grid-template-columns: 24px 1fr;
   align-items: start;
   overflow: hidden;
