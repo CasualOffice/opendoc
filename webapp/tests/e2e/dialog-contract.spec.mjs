@@ -85,7 +85,7 @@ const MODALS = [
     id: "pageSetupMenu",
     name: "Page setup",
     opener: "#pageSetupBtn",
-    focus: '#pageOrientationSeg button[aria-pressed="true"]',
+    focus: '#pageOrientationSeg button[aria-checked="true"]',
     async open(page) {
       await gotoEditor(page);
       await clickIntoFirstPage(page);

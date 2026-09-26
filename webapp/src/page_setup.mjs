@@ -22,6 +22,7 @@
 // `io.runEdit` (which gates) and `setEnabled`.
 import { TWIPS_PER_INCH, inchesToTwips } from "./units.mjs";
 import { t } from "./i18n.mjs";
+import { bindRadioGroup } from "./radio_group.mjs";
 
 /** The Line Numbers presets, in Word's order. `rule` is merged over the
  *  section's current numbering, so switching mode keeps Start at / Count by /
@@ -63,6 +64,8 @@ export function createPageSetup(io) {
   const pageSetupBtn = el("pageSetupBtn");
   const pageSetupMenu = el("pageSetupMenu");
   const orientationSeg = el("pageOrientationSeg");
+  /** Bound below, once the width/height fields it swaps exist. */
+  let orientationGroup = null;
   const widthInput = el("pageWidth");
   const heightInput = el("pageHeight");
   const marginTop = el("pageMarginTop");
@@ -101,7 +104,7 @@ export function createPageSetup(io) {
 
   /** Where each opening intent lands. */
   const INTENTS = new Map([
-    ["orientation", () => orientationSeg.querySelector('button[aria-pressed="true"]')],
+    ["orientation", () => orientationGroup.selected()],
     ["margins", () => marginTop],
     ["size", () => widthInput],
     ["columns", () => columnCount],
@@ -190,9 +193,7 @@ export function createPageSetup(io) {
     reflectColumns(section.columns);
     const active =
       orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
-    for (const btn of orientationSeg.querySelectorAll("button")) {
-      btn.setAttribute("aria-pressed", String(btn.dataset.orientation === active));
-    }
+    orientationGroup.reflect(active);
     updatePreview();
   }
 
@@ -217,7 +218,7 @@ export function createPageSetup(io) {
 
   const modal = io.registerModal(pageSetupMenu, {
     initialFocus: () =>
-      focusIntent?.() ?? orientationSeg.querySelector('button[aria-pressed="true"]'),
+      focusIntent?.() ?? orientationGroup.selected(),
     fallbackFocus: () => pageSetupBtn,
   });
 
@@ -245,21 +246,23 @@ export function createPageSetup(io) {
     toggle();
   });
 
-  orientationSeg.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-orientation]");
-    if (!btn) return;
-    for (const b of orientationSeg.querySelectorAll("button")) {
-      b.setAttribute("aria-pressed", String(b === btn));
-    }
-    // Swap width/height to match, mirroring Word's orientation toggle.
-    const w = Number(widthInput.value) || 0;
-    const h = Number(heightInput.value) || 0;
-    if ((btn.dataset.orientation === "landscape") === w > h) return; // already matches
-    const widthTwips = fieldTwips(widthInput);
-    const heightTwips = fieldTwips(heightInput);
-    widthInput.value = inchText(heightTwips);
-    heightInput.value = inchText(widthTwips);
-    updatePreview();
+  // Portrait/landscape is exactly-one-of, so it is a real radio group and goes
+  // through the one implementation of that pattern (`109` UX-021). It used to
+  // declare `role="radiogroup"` over two `aria-pressed` toggles, which a screen
+  // reader announced as a contradiction, and the arrows did nothing.
+  orientationGroup = bindRadioGroup(orientationSeg, {
+    attr: "data-orientation",
+    onSelect: (orientation) => {
+      // Swap width/height to match, mirroring Word's orientation toggle.
+      const w = Number(widthInput.value) || 0;
+      const h = Number(heightInput.value) || 0;
+      if ((orientation === "landscape") === w > h) return; // already matches
+      const widthTwips = fieldTwips(widthInput);
+      const heightTwips = fieldTwips(heightInput);
+      widthInput.value = inchText(heightTwips);
+      heightInput.value = inchText(widthTwips);
+      updatePreview();
+    },
   });
 
   cancelBtn.addEventListener("click", () => toggle(false));
@@ -282,9 +285,7 @@ export function createPageSetup(io) {
         endTwips: fieldTwips(marginRight),
       },
       columns: columnsPayload(),
-      orientation:
-        orientationSeg.querySelector('button[aria-pressed="true"]')?.dataset.orientation ??
-        "portrait",
+      orientation: orientationGroup.value() ?? "portrait",
     };
     await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
     toggle(false);
@@ -451,6 +452,12 @@ export function createPageSetup(io) {
   const watermarkColor = el("watermarkColor");
   const watermarkSemi = el("watermarkSemiTransparent");
   const watermarkLayoutSeg = el("watermarkLayoutSeg");
+  // Diagonal/horizontal is exactly-one-of, so it is a real radio group (`109`
+  // UX-021). It needs nothing from the rest of the dialog when chosen: Apply
+  // reads it back.
+  const watermarkLayoutGroup = bindRadioGroup(watermarkLayoutSeg, {
+    attr: "data-watermark-layout",
+  });
   const watermarkTextFields = el("watermarkTextFields");
   const watermarkKinds = [...watermarkDialog.querySelectorAll('input[name="watermarkKind"]')];
 
@@ -488,10 +495,7 @@ export function createPageSetup(io) {
 
   /** Which way the stamp runs. */
   function watermarkLayout() {
-    return (
-      watermarkLayoutSeg.querySelector('button[aria-pressed="true"]')?.dataset.watermarkLayout ??
-      "diagonal"
-    );
+    return watermarkLayoutGroup.value() ?? "diagonal";
   }
 
   /** Fills the Font list from the editor's own inventory, so a watermark cannot
@@ -549,12 +553,7 @@ export function createPageSetup(io) {
     // stamp that nobody asked for.
     watermarkColor.value = /^#[0-9a-f]{6}$/i.test(state.color ?? "") ? state.color : "#c0c0c0";
     watermarkSemi.checked = state.semiTransparent === true;
-    for (const button of watermarkLayoutSeg.querySelectorAll("button")) {
-      button.setAttribute(
-        "aria-pressed",
-        String(button.dataset.watermarkLayout === (state.layout || "diagonal")),
-      );
-    }
+    watermarkLayoutGroup.reflect(state.layout || "diagonal");
     reflectWatermarkKind();
     return true;
   }
@@ -628,14 +627,6 @@ export function createPageSetup(io) {
       if (watermarkKind() === "text") watermarkText.focus();
     });
   }
-
-  watermarkLayoutSeg.addEventListener("click", (e) => {
-    const button = e.target.closest("button[data-watermark-layout]");
-    if (!button) return;
-    for (const other of watermarkLayoutSeg.querySelectorAll("button")) {
-      other.setAttribute("aria-pressed", String(other === button));
-    }
-  });
 
   el("watermarkCancel").addEventListener("click", () => toggleWatermark(false));
   el("watermarkClose").addEventListener("click", () => toggleWatermark(false));

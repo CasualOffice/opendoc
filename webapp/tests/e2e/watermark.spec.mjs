@@ -197,10 +197,10 @@ test("Diagonal and Horizontal are different stamps, not the same one relabelled"
   await openWatermark(page);
   await expect(
     page.locator('#watermarkLayoutSeg button[data-watermark-layout="horizontal"]'),
-  ).toHaveAttribute("aria-pressed", "true");
+  ).toHaveAttribute("aria-checked", "true");
   await expect(
     page.locator('#watermarkLayoutSeg button[data-watermark-layout="diagonal"]'),
-  ).toHaveAttribute("aria-pressed", "false");
+  ).toHaveAttribute("aria-checked", "false");
   await page.keyboard.press("Escape");
 
   expect(consoleErrors).toEqual([]);

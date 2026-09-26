@@ -78,6 +78,7 @@ import {
   slotIsLive,
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
+import { bindRadioGroup } from "./radio_group.mjs";
 import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
@@ -10301,11 +10302,6 @@ function makeUnderlineStyleOption(style, label) {
   option.type = "button";
   option.className = "color-row-action underline-style-option";
   option.dataset.underlineStyle = style;
-  option.setAttribute("role", "radio");
-  option.setAttribute(
-    "aria-checked",
-    String(!currentUnderlineMixed && style === currentUnderlineStyle),
-  );
   const preview = document.createElement("span");
   preview.className = `underline-style-preview underline-style-${style}`;
   preview.textContent = style === "none" ? "ab" : "Sample";
@@ -10325,6 +10321,14 @@ function renderUnderlineMenu() {
     styleGroup.appendChild(makeUnderlineStyleOption(style, label));
   }
   underlineMenu.appendChild(styleGroup);
+  // The menu is rebuilt on every open, so the group is bound per render. It is a
+  // real radio group — one of the eleven underline styles is always the current
+  // one — and it now gets the same single Tab stop and arrow behaviour as every
+  // other segmented control instead of eleven Tab stops and dead arrows.
+  bindRadioGroup(styleGroup, {
+    attr: "data-underline-style",
+    onSelect: (style) => applyUnderlineStyle(style),
+  }).reflect(currentUnderlineMixed ? null : currentUnderlineStyle);
 
   underlineMenu.appendChild(makeMenuHeading("Underline color"));
   const automatic = document.createElement("button");
@@ -10397,9 +10401,9 @@ function applyUnderlineColor(color) {
 }
 
 underlineMenu.addEventListener("click", (e) => {
-  const style = e.target.closest("[data-underline-style]")?.dataset.underlineStyle;
-  if (style) {
-    applyUnderlineStyle(style);
+  // The style radio group applies the pick itself (so the arrow keys work, which
+  // is the whole of `109` UX-021); what a POINTER pick adds is dismissal.
+  if (e.target.closest("[data-underline-style]")) {
     closePopover(underlinePopover);
     focusEditorSurface();
     return;
@@ -11239,10 +11243,7 @@ function reflectTableMenu() {
   if (rgb >= 0 && document.activeElement !== cellShade) {
     cellShade.value = `#${rgb.toString(16).padStart(6, "0")}`;
   }
-  const va = doc.cellVerticalAlignAt(node) || "top";
-  for (const b of cellVAlign.querySelectorAll("button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.valign === va));
-  }
+  cellVAlignGroup.reflect(doc.cellVerticalAlignAt(node) || "top");
   const edges = doc.cellBorderEdges(node);
   const bit = { top: 1, bottom: 2, left: 4, right: 8 };
   for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
@@ -11374,12 +11375,13 @@ cellShade.addEventListener("change", () => {
   runNodeEdit((n) => doc.setCellShading(n, r, g, b, false));
 });
 onButton(cellShadeNone, () => runNodeEdit((n) => doc.setCellShading(n, 0, 0, 0, true)));
-for (const b of cellVAlign.querySelectorAll("button")) {
-  onButton(b, () => {
-    runNodeEdit((n) => doc.setCellVerticalAlign(n, b.dataset.valign));
+const cellVAlignGroup = bindRadioGroup(cellVAlign, {
+  attr: "data-valign",
+  onSelect: (valign) => {
+    runNodeEdit((n) => doc.setCellVerticalAlign(n, valign));
     reflectTableMenu();
-  });
-}
+  },
+});
 for (const b of tableFmtMenu.querySelectorAll(".border-btn")) {
   onButton(b, () => {
     const [r, g, bl] = hexToRgb(cellBorderColor.value);
@@ -11435,9 +11437,7 @@ function reflectTableProperties(node = selection?.focus.node) {
   tableRowHeightRule.value = info.rowHeightRule || "auto";
   tableCellMargin.value = twipsToDialogInches(info.cellMarginTwips);
   tableCellSpacing.value = twipsToDialogInches(info.cellSpacingTwips);
-  for (const button of tableAlign.querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.talign === info.alignment));
-  }
+  tableAlignGroup.reflect(info.alignment);
   updateTableRowHeightField();
 
   tablePropertiesCurrent = {
@@ -11469,7 +11469,7 @@ function toggleTableProperties(open) {
     toggleParagraphProperties(false);
     closePopover(tablePopover);
     queueMicrotask(() =>
-      tableAlign.querySelector('button[aria-pressed="true"]')?.focus(),
+      tableAlignGroup.focusSelected(),
     );
   } else if (returnFocus) {
     tablePropertiesBtn.focus({ preventScroll: true });
@@ -11485,13 +11485,9 @@ tableFormulaApply.addEventListener("click", () => {
   runNodeEdit((node) => doc.calculateTableFormula(node, tableFormula.value));
 });
 tablePropertiesCloseBtn.addEventListener("click", () => toggleTableProperties(false));
-tableAlign.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-talign]");
-  if (!button) return;
-  for (const candidate of tableAlign.querySelectorAll("button")) {
-    candidate.setAttribute("aria-pressed", String(candidate === button));
-  }
-  commitTableProperties();
+const tableAlignGroup = bindRadioGroup(tableAlign, {
+  attr: "data-talign",
+  onSelect: () => commitTableProperties(),
 });
 tablePropertiesPanel.addEventListener("change", (event) => {
   if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement)) {
@@ -11526,8 +11522,7 @@ function tablePropertiesPatch() {
   }
 
   const next = {
-    alignment:
-      tableAlign.querySelector('button[aria-pressed="true"]')?.dataset.talign ?? "left",
+    alignment: tableAlignGroup.value() ?? "left",
     tableWidthTwips: optionalDialogTwips(tableWidth),
     tableIndentTwips: signedInchTwips(tableIndent),
     fixedLayout: tableFixedLayout.checked,
@@ -16631,16 +16626,7 @@ function applySettings() {
   // against whatever palette was live at the time.
   refreshStylePreviews();
 
-  for (const b of themeSeg.querySelectorAll("button")) {
-    const checked = b.dataset.theme === settings.theme;
-    // role=radio + aria-checked, because the group is declared a radiogroup and
-    // three aria-pressed toggles do not make one (docs/104 HF-070). Roving
-    // tabindex so Tab enters the group once and arrows move within it.
-    b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(checked));
-    b.tabIndex = checked ? 0 : -1;
-    b.removeAttribute("aria-pressed");
-  }
+  themeGroup.reflect(settings.theme);
   for (const b of accentSwatches.querySelectorAll(".acc[data-accent]")) {
     b.setAttribute(
       "aria-pressed",
@@ -16683,26 +16669,13 @@ draftsClearBtn?.addEventListener("click", () => void clearAllDrafts());
 spellCheckToggle?.addEventListener("change", () => setSpellCheckEnabled(spellCheckToggle.checked));
 grammarCheckToggle?.addEventListener("change", () => setGrammarCheckEnabled(grammarCheckToggle.checked));
 
-themeSeg.addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-theme]");
-  if (!b) return;
-  settings.theme = b.dataset.theme;
-  saveSettings();
-  applySettings();
-});
-themeSeg.addEventListener("keydown", (e) => {
-  const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
-    : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1
-      : 0;
-  if (!step) return;
-  e.preventDefault();
-  const items = [...themeSeg.querySelectorAll("button[data-theme]")];
-  const index = items.indexOf(document.activeElement);
-  const next = items[(Math.max(0, index) + step + items.length) % items.length];
-  settings.theme = next.dataset.theme;
-  saveSettings();
-  applySettings();
-  next.focus();
+const themeGroup = bindRadioGroup(themeSeg, {
+  attr: "data-theme",
+  onSelect: (theme) => {
+    settings.theme = theme;
+    saveSettings();
+    applySettings();
+  },
 });
 accentSwatches.addEventListener("click", (e) => {
   const b = e.target.closest(".acc[data-accent]");
@@ -16741,7 +16714,7 @@ settingsReset.addEventListener("click", () => {
 // focus restoration are one path, Tab cannot walk out into the chrome behind
 // the scrim, and application shortcuts stop firing behind it.
 const settingsModal = registerModal(settingsPanel, {
-  initialFocus: () => settingsPanel.querySelector("#themeSeg button[aria-checked='true']"),
+  initialFocus: () => themeGroup.selected(),
   fallbackFocus: () => settingsBtn,
 });
 
@@ -17010,14 +16983,7 @@ function setChromeMode(mode, { persist = true } = {}) {
   // bottom.
   const bar = document.getElementById("compactToolbar");
   if (bar) bar.hidden = !compact;
-  const cb = document.getElementById("modeCompact");
-  const rb = document.getElementById("modeRibbon");
-  if (cb && rb) {
-    cb.setAttribute("aria-checked", String(compact));
-    rb.setAttribute("aria-checked", String(!compact));
-    cb.tabIndex = compact ? 0 : -1;
-    rb.tabIndex = compact ? -1 : 0;
-  }
+  chromeModeGroup?.reflect(chromeMode);
   // With no document open the registry holds only `noDoc` commands, so the bar
   // would render nearly empty; it is rebuilt on `doc-loaded`. Rendering here
   // anyway keeps the adopted controls in place so the bar is never a bare strip.
@@ -17027,19 +16993,8 @@ function setChromeMode(mode, { persist = true } = {}) {
   setStatus(compact ? "Compact toolbar" : "Ribbon toolbar", "", { timeout: 1800 });
 }
 
-{
-  const cb = document.getElementById("modeCompact");
-  const rb = document.getElementById("modeRibbon");
-  if (cb) onButton(cb, () => setChromeMode("compact"));
-  if (rb) onButton(rb, () => setChromeMode("ribbon"));
-  // Arrow keys move within the radiogroup, as a radiogroup must.
-  for (const [el, other, mode] of [[cb, rb, "ribbon"], [rb, cb, "compact"]]) {
-    el?.addEventListener("keydown", (e) => {
-      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
-      e.preventDefault();
-      setChromeMode(mode);
-      other?.focus();
-    });
-  }
-  setChromeMode(chromeMode, { persist: false });
-}
+const chromeModeGroup = bindRadioGroup(document.querySelector(".chrome-mode"), {
+  attr: "data-chrome-mode",
+  onSelect: (mode) => setChromeMode(mode),
+});
+setChromeMode(chromeMode, { persist: false });

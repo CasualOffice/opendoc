@@ -124,9 +124,9 @@
         </span>
         <div data-i18n-label="ui.toolbarMode.label" class="chrome-mode" role="radiogroup" aria-label="Toolbar mode">
           <button data-i18n="ui.compact" type="button" id="modeCompact" class="chrome-mode-btn" role="radio"
-                  aria-checked="false" tabindex="-1">Compact</button>
+                  data-chrome-mode="compact" aria-checked="false" tabindex="-1">Compact</button>
           <button data-i18n="ui.ribbon" type="button" id="modeRibbon" class="chrome-mode-btn" role="radio"
-                  aria-checked="true" tabindex="0">Ribbon</button>
+                  data-chrome-mode="ribbon" aria-checked="true" tabindex="0">Ribbon</button>
         </div>
 
         <input id="file" type="file" accept=".docx,.odt,.rtf,.json,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,application/rtf,text/rtf,application/json,text/plain" hidden />
@@ -1081,8 +1081,8 @@
             </div>
             <label class="dialog-check"><input id="watermarkSemiTransparent" type="checkbox" /><span data-i18n="watermarkDialog.semitransparent">Semitransparent</span></label>
             <div data-i18n-label="watermarkDialog.layout.label" class="segmented orientation-segmented" id="watermarkLayoutSeg" role="radiogroup" aria-label="Watermark layout">
-              <button type="button" data-watermark-layout="diagonal" aria-pressed="true"><span class="ms" aria-hidden="true">text_rotation_angleup</span><span data-i18n="watermarkDialog.diagonal">Diagonal</span></button>
-              <button type="button" data-watermark-layout="horizontal" aria-pressed="false"><span class="ms" aria-hidden="true">text_rotation_none</span><span data-i18n="watermarkDialog.horizontal">Horizontal</span></button>
+              <button type="button" data-watermark-layout="diagonal" role="radio" aria-checked="true" tabindex="0"><span class="ms" aria-hidden="true">text_rotation_angleup</span><span data-i18n="watermarkDialog.diagonal">Diagonal</span></button>
+              <button type="button" data-watermark-layout="horizontal" role="radio" aria-checked="false" tabindex="-1"><span class="ms" aria-hidden="true">text_rotation_none</span><span data-i18n="watermarkDialog.horizontal">Horizontal</span></button>
             </div>
           </fieldset>
         </div>
@@ -1757,11 +1757,19 @@
               <label data-i18n="paragraphPropertiesPanel.style" class="dialog-field">Style<select id="paraPanelStyle" class="dialog-select"><option data-i18n="paraPanelStyle.style" value="">Style</option></select></label>
               <div class="dialog-field">
                 <span data-i18n="paragraphPropertiesPanel.alignment">Alignment</span>
-                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="radiogroup" aria-label="Paragraph alignment">
-                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
-                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
-                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
-                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
+                <!-- `role="group"`, NOT `radiogroup` (109 UX-021): over a
+                     multi-paragraph selection this control is tri-state and
+                     publishes `aria-pressed="mixed"`, and `aria-checked="mixed"`
+                     is not legal on a radio. Word, Google Docs and ONLYOFFICE all
+                     use toggle buttons for exactly this control for the same
+                     reason (ONLYOFFICE: Toolbar.js:559-607 `toggleGroup:
+                     'alignGroup'`, with no radiogroup wrapper). The groups that
+                     ARE always exactly-one-of go through `radio_group.mjs`. -->
+                <span data-i18n-label="paragraphPropertiesPanel.paragraphAlignment.label" class="segmented paragraph-align" id="paraPanelAlign" role="group" aria-label="Paragraph alignment">
+                  <button data-i18n-label="paraPanelAlign.alignLeft.label" type="button" data-palign="start" aria-pressed="false" aria-label="Align left"><span class="ms" aria-hidden="true">format_align_left</span></button>
+                  <button data-i18n-label="paraPanelAlign.center.label" type="button" data-palign="center" aria-pressed="false" aria-label="Center"><span class="ms" aria-hidden="true">format_align_center</span></button>
+                  <button data-i18n-label="paraPanelAlign.alignRight.label" type="button" data-palign="end" aria-pressed="false" aria-label="Align right"><span class="ms" aria-hidden="true">format_align_right</span></button>
+                  <button data-i18n-label="paraPanelAlign.justify.label" type="button" data-palign="justify" aria-pressed="false" aria-label="Justify"><span class="ms" aria-hidden="true">format_align_justify</span></button>
                 </span>
               </div>
             </fieldset>

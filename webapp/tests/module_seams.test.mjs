@@ -116,8 +116,15 @@ const SRC = new URL("../src/", import.meta.url);
  *  five lines the branch could not have known about, and the ceiling it had
  *  lowered was suddenly five under the file. Re-measured from the MERGED file,
  *  which is the only number that was ever meaningful — and 17,045 is still nine
- *  below main's 17,054, so the round still paid for itself. */
-const MAIN_JS_LINE_CEILING = 17045;
+ *  below main's 17,054, so the round still paid for itself.
+ *  Lowered again to 17,000 by the radio-group round (`109` UX-021): six segmented
+ *  controls each hand-rolled the same "set the clicked one, clear the others"
+ *  loop and only two of them ever published a radio's state, so the pattern
+ *  moved to `radio_group.mjs` and the call sites now say what they mean
+ *  (`reflect`, `select`, `value`) instead of querying `[aria-pressed="true"]`.
+ *  That is the ratchet doing its job: the file shrank BECAUSE six copies of one
+ *  rule became one, not because anything was trimmed. */
+const MAIN_JS_LINE_CEILING = 17000;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -149,6 +156,11 @@ const PURE_MODULES = [
   // answerable against the Rust source in node (`palettes.test.mjs`).
   "palettes.mjs",
   "popover_position.mjs",
+  // The radio-group pattern. It is handed its container and never reaches for a
+  // global one, which is what lets `radio_group.test.mjs` drive the arrow
+  // arithmetic in node and what would let a host mount a segmented control of
+  // its own on the same contract.
+  "radio_group.mjs",
   "review_labels.mjs",
   "review_layout.mjs",
   // Takes nodes as arguments and never reaches for a global one, which is what
