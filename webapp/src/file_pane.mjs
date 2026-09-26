@@ -1,3 +1,4 @@
+import { t } from "./i18n.mjs";
 import {
   SKIP_ROW,
   categoryRow,
@@ -66,7 +67,10 @@ export function renderFilePane(deps) {
     // element into the pane, and moving a node blurs whatever inside it had
     // the keyboard — so a `prepare` that focuses (the command pane's search
     // field) has to run after the move, not before it.
-    showPanelInFilePane(host, panelPane.panel, panelPane);
+    showPanelInFilePane(host, panelPane.panel, {
+      label: paneLabel(panelPane.id),
+      blurb: paneBlurb(panelPane.id),
+    });
     prepare?.(panelPane.id);
     return;
   }
@@ -98,40 +102,53 @@ export function renderFilePane(deps) {
  *
  *  Keyed by the command the rail row would otherwise run, so a row and its
  *  pane cannot drift apart. `panel` is the element MOVED into the pane and put
- *  back on close — one form in the document, never a copy. */
+ *  back on close — one form in the document, never a copy.
+ *
+ *  The English lives in `en_strings.mjs` and is read through `t()` at RENDER
+ *  time, not captured here: this page is the one full-window surface in the
+ *  product and it built its row names in script, so all eighteen languages saw
+ *  English on it. Reading at render also means a locale change repaints into
+ *  the new language without the registry being rebuilt. */
 export const PANEL_PANES = Object.freeze({
-  "view.settings": {
-    id: "settings",
-    label: "Settings",
-    blurb: "Appearance, your reviewer identity, autosave and proofing.",
-    panel: "settingsPanel",
-  },
-  "file.properties": {
-    id: "properties",
-    label: "Document properties",
-    blurb: "Title, author and the other metadata saved with the file.",
-    panel: "propertiesPanel",
-  },
-  "help.shortcuts": {
-    id: "shortcuts",
-    label: "Keyboard shortcuts",
-    blurb: "Every command that has one.",
-    panel: "shortcutsDialog",
-  },
-  "help.about": {
-    id: "about",
-    label: "About OpenDoc",
-    blurb: "Version, licence and where the source lives.",
-    panel: "aboutDialog",
-  },
-  "file.new": { id: "new", label: "New document", panel: null },
-  "help.commands": {
-    id: "commands",
-    label: "Find a command",
-    blurb: "Search everything the editor can do.",
-    panel: "cmdPalette",
-  },
+  "view.settings": { id: "settings", panel: "settingsPanel" },
+  "file.properties": { id: "properties", panel: "propertiesPanel" },
+  // Page setup was the last File row that still raised a modal OVER the page —
+  // the owner's report, and the same defect UX-026 closed for the other five.
+  // It is the tallest of them, so it was also the worst offender: a dialog
+  // taller than the window, over a full-window page, with its own scrollbar.
+  "layout.pageSetup": { id: "pageSetup", panel: "pageSetupMenu" },
+  "help.shortcuts": { id: "shortcuts", panel: "shortcutsDialog" },
+  "help.about": { id: "about", panel: "aboutDialog" },
+  "file.new": { id: "new", panel: null },
+  "help.commands": { id: "commands", panel: "cmdPalette" },
 });
+
+/** Each pane's text, as LITERAL `t()` calls.
+ *
+ *  Spelled out rather than built as `t(`filePane.${id}.label`)`, which reads
+ *  better and does not work: `build-locale.mjs` extracts keys by reading the
+ *  call sites, so an interpolated key is invisible to it — it reported
+ *  "2 called but undeclared: filePane.${id}.label" and the locale coverage test
+ *  failed. A key a tool cannot see is a key no translator is ever shown.
+ *
+ *  `new` and `export` carry no blurb: their panes explain themselves with a
+ *  template gallery and a format grid. */
+const PANE_TEXT = Object.freeze({
+  export: () => ({ label: t("filePane.export.label"), blurb: "" }),
+  new: () => ({ label: t("filePane.new.label"), blurb: "" }),
+  settings: () => ({ label: t("filePane.settings.label"), blurb: t("filePane.settings.blurb") }),
+  properties: () => ({ label: t("filePane.properties.label"), blurb: t("filePane.properties.blurb") }),
+  pageSetup: () => ({ label: t("filePane.pageSetup.label"), blurb: t("filePane.pageSetup.blurb") }),
+  shortcuts: () => ({ label: t("filePane.shortcuts.label"), blurb: t("filePane.shortcuts.blurb") }),
+  about: () => ({ label: t("filePane.about.label"), blurb: t("filePane.about.blurb") }),
+  commands: () => ({ label: t("filePane.commands.label"), blurb: t("filePane.commands.blurb") }),
+});
+
+/** A pane's row name, in the reader's language. */
+export const paneLabel = (id) => PANE_TEXT[id]?.().label ?? "";
+
+/** A pane's one-line description, or "" when it has none. */
+export const paneBlurb = (id) => PANE_TEXT[id]?.().blurb ?? "";
 
 const PANE_BY_ID = Object.fromEntries(
   Object.values(PANEL_PANES)
@@ -260,7 +277,7 @@ export function fileCategoryRowFor(id, ids, { itemClass, onSelect }) {
     if (id !== formats[0]) return SKIP_ROW;
     return categoryRow({
       id: "export",
-      label: "Export",
+      label: paneLabel("export"),
       itemClass,
       selected: filePane === "export",
       onSelect,
@@ -271,7 +288,7 @@ export function fileCategoryRowFor(id, ids, { itemClass, onSelect }) {
   if (!pane) return null;
   return categoryRow({
     id: pane.id,
-    label: pane.label,
+    label: paneLabel(pane.id),
     itemClass,
     selected: filePane === pane.id,
     onSelect,

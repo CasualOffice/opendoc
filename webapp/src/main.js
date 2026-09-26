@@ -12975,7 +12975,7 @@ function renderFilePage() {
         // interrupt anything they were doing.
         input?.focus();
       }
-      if (pane === "about") toggleAbout.stampVersion?.();
+      if (pane === "about") toggleAbout.stampVersion?.(); else if (pane === "pageSetup") pageSetup.reflect?.();
       if (pane === "properties" && doc) {
         const current = JSON.parse(doc.documentProperties());
         for (const [key, input] of PROP_FIELDS) input.value = current[key] ?? "";

@@ -396,6 +396,13 @@ export function createPageSetup(io) {
 
   const api = {
     open: toggle,
+    /** Fill the controls from the caret's section WITHOUT opening the dialog.
+     *  The File page shows this panel as a PANE rather than raising a modal over
+     *  itself, so it needs the half of `toggle` that reads the document — the
+     *  same preparation every other File pane does (`file_pane.mjs`). Returns
+     *  false when there is no section geometry to edit, exactly as `toggle`
+     *  treats that case. */
+    reflect,
     /** The palette's route to the popover. Clicking the trigger rather than
      *  opening directly keeps ONE path through the popover manager, so the
      *  light-dismiss contract and the `aria-expanded` state cannot diverge

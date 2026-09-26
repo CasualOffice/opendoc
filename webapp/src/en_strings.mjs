@@ -51,4 +51,22 @@ export const EN_STRINGS = Object.freeze({
   "dropCap.command": "Drop cap…",
   "dropCap.readError": "Drop cap settings could not be read",
   "dropCap.removed": "Drop cap removed",
+  // The File page. Every row name and description the page renders was an
+  // English literal in `file_pane.mjs`, so the one full-window surface in the
+  // product stayed in English in all eighteen languages — the rest of the
+  // chrome localises from `data-i18n`, but this page builds its rows in script.
+  "filePane.export.label": "Export",
+  "filePane.settings.label": "Settings",
+  "filePane.settings.blurb": "Appearance, your reviewer identity, autosave and proofing.",
+  "filePane.properties.label": "Document properties",
+  "filePane.properties.blurb": "Title, author and the other metadata saved with the file.",
+  "filePane.pageSetup.label": "Page setup",
+  "filePane.pageSetup.blurb": "Size, orientation, margins and columns for this section.",
+  "filePane.shortcuts.label": "Keyboard shortcuts",
+  "filePane.shortcuts.blurb": "Every command that has one.",
+  "filePane.about.label": "About OpenDoc",
+  "filePane.about.blurb": "Version, licence and where the source lives.",
+  "filePane.new.label": "New document",
+  "filePane.commands.label": "Find a command",
+  "filePane.commands.blurb": "Search everything the editor can do.",
 });
