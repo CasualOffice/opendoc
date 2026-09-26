@@ -82,6 +82,7 @@ import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
+import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
@@ -381,6 +382,8 @@ const reviewRejectBtn = document.getElementById("reviewRejectBtn");
 const reviewAcceptAllBtn = document.getElementById("reviewAcceptAllBtn");
 const reviewRejectAllBtn = document.getElementById("reviewRejectAllBtn");
 const reviewCommentBtn = document.getElementById("reviewCommentBtn");
+const reviewResolveBtn = document.getElementById("reviewResolveBtn");
+const reviewDeleteBtn = document.getElementById("reviewDeleteBtn");
 const reviewPanelBtn = document.getElementById("reviewPanelBtn");
 const reviewSpellCheckBtn = document.getElementById("reviewSpellCheckBtn");
 const reviewGrammarCheckBtn = document.getElementById("reviewGrammarCheckBtn");
@@ -8539,6 +8542,7 @@ function openObjectInspectorAt(selector) {
 // Enablement is deliberately just "a document is open": the commands
 // themselves report why nothing happened (no change at the cursor, none left to
 // accept), which is more use than a button that is silently dead.
+const reviewCommentActions = createReviewCommentActions({ runEdit, getDoc: () => doc, commentId: () => activeReviewCommentId, announce: (m) => announceReview(m), afterChange: () => drawSelection() });
 const REVIEW_SURFACE = [
   { command: "review.mode.suggesting", buttons: () => [reviewTrackBtn], run: () => setReviewMode(reviewMode === "suggesting" ? "editing" : "suggesting"), pressed: () => reviewMode === "suggesting" },
   { command: "view.showChanges", buttons: () => [reviewShowChangesBtn], run: () => toggleShowChanges(), pressed: () => showingChanges },
@@ -8549,6 +8553,11 @@ const REVIEW_SURFACE = [
   { command: "review.acceptAll", buttons: () => [reviewAcceptAllBtn], run: () => void decideAllReviewChanges(true) },
   { command: "review.rejectAll", buttons: () => [reviewRejectAllBtn], run: () => void decideAllReviewChanges(false) },
   { command: "review.comment", buttons: () => [reviewCommentBtn, reviewMarginCommentBtn], requires: "range", run: () => openReviewComposer() },
+  // `requires: "comment"` — the caret is inside a commented range. Word and
+  // ONLYOFFICE both target that comment rather than a sidebar selection, so a
+  // reviewer never has to open a panel to resolve what they are reading.
+  { command: "review.comment.resolve", buttons: () => [reviewResolveBtn], requires: "comment", run: () => void reviewCommentActions.resolve() },
+  { command: "review.comment.delete", buttons: () => [reviewDeleteBtn], requires: "comment", run: () => void reviewCommentActions.remove() },
   { command: "review.toggle", buttons: () => [reviewPanelBtn], run: () => toggleReview(), pressed: () => !reviewSidebar.hidden },
   // Proofing. Both switches were the whole content of a `Tools` menu, which is
   // one top-level name for two toggles — and one of the two names that scrolled
@@ -9524,7 +9533,7 @@ function updateToolbar() {
   for (const entry of REVIEW_SURFACE) {
     for (const button of entry.buttons()) {
       if (!button) continue;
-      if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range);
+      if (entry.requires !== "always") button.disabled = !doc || (entry.requires === "range" && !range) || (entry.requires === "comment" && !activeReviewCommentId);
       if (entry.pressed) button.setAttribute("aria-pressed", String(entry.pressed()));
     }
   }

@@ -767,6 +767,15 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReview.addCommentSelection.title" data-i18n-label="panelReview.addComment.label" id="reviewCommentBtn" type="button" class="fmt" title="Add a comment on the selection" aria-label="Add comment" disabled><span class="ms" aria-hidden="true">add_comment</span></button>
               <button data-i18n-title="panelReview.toggleCommentsSuggestions.title" data-i18n-label="panelReview.toggleCommentsSuggestions.label" id="reviewPanelBtn" type="button" class="fmt" title="Toggle comments and suggestions" aria-label="Toggle comments and suggestions" aria-pressed="false" disabled><span class="ms" aria-hidden="true">rate_review</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <!-- Resolve and Delete acted on the comment CARD only, so both
+                   existed solely while the review sidebar was open. ONLYOFFICE
+                   gives each a button in its Collaboration tab's Comments group,
+                   and Word the same. They act on the comment the caret is inside
+                   (`activeReviewCommentId`), which is Word's target too, and are
+                   disabled with a reason when the caret is not in one. -->
+              <button data-i18n-title="panelReview.resolveComment.title" data-i18n-label="panelReview.resolveComment.label" id="reviewResolveBtn" type="button" class="fmt" title="Resolve the comment the caret is in" aria-label="Resolve comment" disabled><span class="ms" aria-hidden="true">check_circle</span></button>
+              <button data-i18n-title="panelReview.deleteComment.title" data-i18n-label="panelReview.deleteComment.label" id="reviewDeleteBtn" type="button" class="fmt" title="Delete the comment the caret is in" aria-label="Delete comment" disabled><span class="ms" aria-hidden="true">delete</span></button>
             </div>
             <span data-i18n="panelReview.comments" class="rgroup-label">Comments</span>
           </div>
