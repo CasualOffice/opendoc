@@ -19,7 +19,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -164,4 +174,74 @@ test("the typings cannot claim a role or capability the code does not have", asy
   assert.deepEqual(literals("Capability"), [...CAPABILITIES]);
   assert.deepEqual(literals("Role"), [...ROLES]);
   assert.deepEqual(literals("Mode"), [...PRESET_NAMES]);
+});
+
+test("the package packs, installs, and imports — not just claims to", async () => {
+  // "Installable" is a published claim, and `docs/99` §9.1 is that a published
+  // claim is derived from a committed artifact or it is not published. The other
+  // tests here check the SHAPE of the manifest; this one does what a host does.
+  // That is the whole difference between a manifest and a package, and it is the
+  // reason this file gets to use the word "installable" at all.
+  //
+  // Offline on purpose: the package has no dependencies, so nothing legitimate
+  // needs the network, and a gate that reaches a registry fails for reasons that
+  // have nothing to do with the code.
+  const scratch = mkdtempSync(join(tmpdir(), "opendoc-embed-install-"));
+  try {
+    const packed = execFileSync("npm", ["pack", "--silent", "--pack-destination", scratch], {
+      cwd: PACKAGE,
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .pop();
+    const tarball = join(scratch, packed);
+    assert.ok(statSync(tarball).size > 0, "npm pack produced nothing");
+
+    const consumer = join(scratch, "consumer");
+    mkdirSync(consumer);
+    writeFileSync(
+      join(consumer, "package.json"),
+      JSON.stringify({ name: "consumer", private: true, type: "module", version: "1.0.0" }),
+    );
+    execFileSync("npm", ["install", "--no-audit", "--no-fund", "--offline", tarball], {
+      cwd: consumer,
+      stdio: "pipe",
+    });
+
+    // Imported by the BARE SPECIFIER, resolved through `exports` — importing the
+    // authority here would prove nothing about the package. The probe reports the
+    // capability contract back so the round trip is checked, not just the resolve.
+    const probe = join(consumer, "probe.mjs");
+    writeFileSync(
+      probe,
+      [
+        'import { ROLES, resolveCapabilities, editingModeFor, OpenDocEditorElement }',
+        '  from "@casualoffice/opendoc-embed";',
+        'import { resolveCapabilities as viaSubpath }',
+        '  from "@casualoffice/opendoc-embed/capabilities";',
+        'const readonly = [...resolveCapabilities({ mode: "readonly" })];',
+        "process.stdout.write(",
+        "  JSON.stringify({",
+        "    roles: ROLES,",
+        "    readonly,",
+        '    mode: editingModeFor(resolveCapabilities({ mode: "readonly" })),',
+        '    subpath: [...viaSubpath({ mode: "owner" })].length,',
+        "    element: typeof OpenDocEditorElement,",
+        "  }),",
+        ");",
+      ].join("\n"),
+    );
+    const out = JSON.parse(execFileSync("node", [probe], { cwd: consumer, encoding: "utf8" }));
+    const { CAPABILITIES: caps, ROLES: roles } = await import(
+      join(WEBAPP, "src", "capabilities.mjs")
+    );
+    assert.deepEqual(out.roles, [...roles], "the installed package has different roles");
+    assert.deepEqual(out.readonly, ["print"]);
+    assert.equal(out.mode, "viewing");
+    assert.equal(out.subpath, caps.length);
+    assert.equal(out.element, "function");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
