@@ -84,7 +84,7 @@ import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
-import { hostCapabilities } from "./capabilities.mjs";
+import { editingModeFor, hostCapabilities, reflectReviewModeAccess } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
@@ -1342,7 +1342,11 @@ const reviewSidebar = document.getElementById("reviewSidebar");
 const reviewSidebarBody = document.getElementById("reviewSidebarBody");
 const reviewSidebarHeader = document.getElementById("reviewSidebarHeader");
 const reviewMarginCommentBtn = document.getElementById("reviewMarginComment");
-let reviewMode = "editing";
+// The host's grant, resolved once: a `readonly` embed is Viewing ON ARRIVAL,
+// not an Editing page with disabled buttons. See `capabilities.mjs`.
+const HOST_CAPS = hostCapabilities();
+const HOST_MODE = editingModeFor(HOST_CAPS);
+let reviewMode = HOST_MODE;
 /** Why this DOCUMENT cannot be edited at all, or "" when it can be.
  *
  *  The engine answers this (`editingUnavailableReason`), and exactly one
@@ -1542,11 +1546,12 @@ function updateReviewControls() {
   try { count = (JSON.parse(doc.listRevisions()) ?? []).length; } catch { count = 0; }
   // A document the engine will not let anyone edit cannot offer Editing or
   // Suggesting: the buttons are disabled WITH the reason, not left live.
-  for (const button of reviewModeButtons) {
-    button.disabled = !!readOnlyReason;
-    if (readOnlyReason) button.title = readOnlyReason;
-    else button.removeAttribute("title");
-  }
+  reflectReviewModeAccess({
+    buttons: reviewModeButtons,
+    capabilities: HOST_CAPS,
+    readOnlyReason,
+    withheldReason: t("capability.embedded"),
+  });
   if (reviewPrevious) reviewPrevious.disabled = count === 0;
   if (reviewNext) reviewNext.disabled = count === 0;
   const canDecide = count > 0 && reviewMode !== "viewing";
@@ -3128,7 +3133,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // edited at all: everything downstream — the mode buttons, the banner,
     // every refusal message — reads this one answer (`docs/113` §8.7).
     readOnlyReason = String(doc.editingUnavailableReason ?? "");
-    reviewMode = readOnlyReason ? "viewing" : "editing";
+    reviewMode = readOnlyReason ? "viewing" : HOST_MODE;
     suggestingBanner.hidden = true;
     if (viewingBanner) viewingBanner.hidden = true;
     reviewSidebarPreference = null;
@@ -3145,7 +3150,10 @@ async function openBytes(bytes, name, onOpened, onRendered) {
       // Through the one function that owns mode state, so the banner, its
     // (removed) escape hatch and the disabled buttons cannot drift from
     // `reviewMode`.
-    if (readOnlyReason) setReviewMode("viewing");
+    // Through the one owner of mode state, so a withheld mode cannot drift.
+    if (readOnlyReason || HOST_MODE !== "editing") {
+      setReviewMode(readOnlyReason ? "viewing" : HOST_MODE);
+    }
     breakTypingSession();
     currentName = name;
     docTitleEl.value = name;
@@ -15727,17 +15735,9 @@ function safeSessionStorage() {
  *  hero demo would leave a draft on the origin — which a later real session
  *  would then be offered. `?autosave=1` lets a host opt back in, and
  *  `?autosave=0` lets one opt out of the top-level case (docs/112 O-2). */
-function autosaveAllowedHere() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get("autosave") === "0") return false;
-  if (params.get("autosave") === "1") return true;
-  try {
-    return window.self === window.top;
-  } catch {
-    return false; // cross-origin frame: `window.top` throws, so we are framed
-  }
-}
-const AUTOSAVE_ALLOWED_HERE = autosaveAllowedHere();
+// One authority. This used to re-derive framing here, which is exactly why
+// `capabilities.mjs` was not the single answer to "what may this page do".
+const AUTOSAVE_ALLOWED_HERE = HOST_CAPS.has("autosave");
 
 /** The user's switch. Defaults on; `settings` is read at call time. */
 function autosaveEnabled() {

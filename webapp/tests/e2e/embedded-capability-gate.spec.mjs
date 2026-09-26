@@ -173,16 +173,28 @@ test(`a ${READER} host cannot mutate the document through the engine, chrome def
   await page.goto("/embed.html");
   const { frame } = await mountPanel(page, "element", READER);
 
-  // Put the editor in the mode the CAPABILITY AUTHORITY says this role means.
-  // Not hardcoded: if `editingModeFor` ever mapped `readonly` somewhere else,
-  // this spec would follow it rather than pass while testing the wrong thing.
-  await frame.click('#reviewModeControl [data-review-mode="' + READER_MODE + '"]');
+  // THE ROLE ALONE, with nobody clicking anything.
+  //
+  // This is the assertion the phase turns on, and it is why the click that used
+  // to be here is gone. Clicking the mode control first proved the engine
+  // refuses mutation in Viewing — which was already true and already guarded by
+  // `viewing-mode-gate`. It did NOT prove that a `readonly` HOST ends up behind
+  // that gate, and while the startup hook was missing it did not: `?mode=readonly`
+  // disabled `file.open`/`file.new` and left the page in Editing. So the strongest
+  // claim in the suite was being made by the test's own click.
+  //
+  // Read from the authority, not hardcoded: if `editingModeFor` ever maps
+  // `readonly` elsewhere, this follows it rather than passing on the wrong mode.
   await expect(
     frame.locator('#reviewModeControl [data-review-mode="' + READER_MODE + '"]'),
+    'a ' + READER + ' embed must be in ' + READER_MODE + ' on arrival, not merely disabled',
   ).toHaveAttribute("aria-pressed", "true");
-  // WHEN THE main.js STARTUP HOOK LANDS, add here:
-  //   the assertion above should hold BEFORE the click — a `readonly` embed is
-  //   in `READER_MODE` on arrival, without anyone clicking anything.
+  // And the modes it was not granted are refused with a reason, still present —
+  // a host reading a MISSING button cannot tell a permission from a bug.
+  const editingButton = frame.locator('#reviewModeControl [data-review-mode="editing"]');
+  await expect(editingButton, "a withheld mode must still be offered").toBeVisible();
+  await expect(editingButton).toBeDisabled();
+  await expect(editingButton).not.toHaveAttribute("title", "");
 
   const before = await engineStats(frame);
   expect(before.words, "the document has no words to protect").not.toBe("0 words");

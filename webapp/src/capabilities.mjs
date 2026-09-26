@@ -168,6 +168,52 @@ export function editingModeFor(capabilities) {
   return "viewing";
 }
 
+/**
+ * Whether a capability set allows a review MODE to be chosen.
+ *
+ * Viewing is always allowed — a reader may always read. Suggesting needs
+ * `comment`; Editing needs `edit`. The inverse of [`editingModeFor`]: that one
+ * picks the strongest mode a host permits, this one answers whether a
+ * particular mode is among them, which is what a mode CONTROL has to know to
+ * disable itself with a reason rather than vanish.
+ *
+ * Complexity: O(1).
+ *
+ * @param {{has: (name: string) => boolean}} capabilities
+ * @param {string} mode
+ * @returns {boolean}
+ */
+export function allowsMode(capabilities, mode) {
+  if (mode === "suggesting") return grants(capabilities, "comment");
+  if (mode === "editing") return grants(capabilities, "edit");
+  return true;
+}
+
+/**
+ * Reflects a host's grant onto the review-mode buttons: a mode the host
+ * withheld is DISABLED WITH A REASON, never removed.
+ *
+ * Here rather than in `main.js` because it is the same question as
+ * `allowsMode` asked of the DOM, and because putting it here makes "a withheld
+ * mode still appears, and says why" answerable without a browser. A control
+ * that silently vanishes is worse than one that explains itself, and a host
+ * reading a missing button cannot tell a permission from a bug.
+ *
+ * `readOnlyReason` (the engine refusing the whole document) outranks a
+ * host-withheld mode: it is the more specific truth and names the document.
+ *
+ * Complexity: O(buttons).
+ */
+export function reflectReviewModeAccess({ buttons, capabilities, readOnlyReason, withheldReason }) {
+  for (const button of buttons ?? []) {
+    const withheld = !allowsMode(capabilities, button.dataset?.reviewMode);
+    button.disabled = !!readOnlyReason || withheld;
+    if (readOnlyReason) button.title = readOnlyReason;
+    else if (withheld) button.title = withheldReason;
+    else button.removeAttribute("title");
+  }
+}
+
 /** Whether a capability set grants `name`, for any value at all.
  *
  *  Fail closed on a shape that is not a set. A caller that has not resolved
