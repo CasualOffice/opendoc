@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedding OpenDoc — capability modes, two ways</title>
+    <meta
+      name="description"
+      content="A host page that embeds the OpenDoc editor twice — once in a plain iframe, once as the <opendoc-editor> custom element — and drives both through the five capability roles."
+    />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="./opendoc-mark.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./src/fonts.css" />
+    <link rel="stylesheet" href="./src/marketing.css" />
+    <style>
+      /* Only what this page needs. Every colour is a marketing.css token, so the
+         page inherits the AA contrast the design system already holds — the
+         tokens are deliberate (docs/63) and this page is not the place to
+         relitigate them. */
+      .embed-page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 40px 20px 64px;
+      }
+      .embed-lede {
+        max-width: 68ch;
+        color: var(--muted);
+      }
+      /* Stacked, not side by side. The editor's ribbon is designed to fit
+         1280px with about 55px of slack (docs/63), so two embeds in two columns
+         would put both of them into overflow and demonstrate the chrome's
+         narrow fallback rather than the capability contract. */
+      .embed-grid {
+        display: grid;
+        gap: 32px;
+        grid-template-columns: 1fr;
+        margin-top: 32px;
+      }
+      .embed-panel {
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .embed-panel > * {
+        padding: 16px 18px;
+      }
+      .embed-panel-head {
+        border-bottom: 1px solid var(--line);
+      }
+      .embed-panel-head h2 {
+        margin: 0 0 4px;
+        font-size: 1.05rem;
+      }
+      .embed-panel-head p {
+        margin: 0;
+        color: var(--muted-3);
+        font-size: 0.85rem;
+      }
+      .embed-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+        border-bottom: 1px solid var(--line);
+      }
+      .embed-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 0.8rem;
+        color: var(--muted-2);
+      }
+      .embed-field select {
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 6px 8px;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+      }
+      .embed-btn {
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 7px 14px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+        cursor: pointer;
+      }
+      .embed-btn[data-variant="quiet"] {
+        background: var(--surface);
+        border-color: var(--line-strong);
+        color: var(--ink);
+      }
+      .embed-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      .embed-readout {
+        border-bottom: 1px solid var(--line);
+        font-size: 0.85rem;
+      }
+      .embed-readout dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 6px 14px;
+        margin: 0;
+      }
+      .embed-readout dt {
+        color: var(--muted-3);
+      }
+      .embed-readout dd {
+        margin: 0;
+        color: var(--ink);
+      }
+      .embed-caps {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .embed-caps li {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        padding: 2px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        color: var(--muted-2);
+        background: var(--surface-2);
+      }
+      .embed-caps li[data-state="granted"] {
+        border-color: var(--accent-line);
+        background: var(--accent-tint);
+        color: var(--accent-2);
+      }
+      .embed-caps li[data-state="withheld"] {
+        text-decoration: line-through;
+        color: var(--muted-3);
+      }
+      .embed-stage {
+        padding: 0;
+        min-height: 560px;
+        background: var(--paper);
+        display: flex;
+      }
+      .embed-stage > * {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .embed-stage iframe,
+      .embed-stage opendoc-editor {
+        display: block;
+        width: 100%;
+        min-height: 560px;
+        border: 0;
+      }
+      .embed-idle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        color: var(--muted-3);
+        font-size: 0.85rem;
+        text-align: center;
+      }
+      .embed-note {
+        font-size: 0.85rem;
+        color: var(--muted);
+        max-width: 78ch;
+      }
+      .embed-note code {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="embed-page">
+      <h1>Embedding OpenDoc</h1>
+      <p class="embed-lede">
+        The same editor, embedded twice on one page: once in a plain
+        <code>&lt;iframe&gt;</code> a host wires itself, and once through the
+        <code>&lt;opendoc-editor&gt;</code> custom element. Both resolve their
+        capabilities from one authority before the frame's first navigation, so
+        neither can be talked out of the mode it was given.
+      </p>
+      <p class="embed-note">
+        Neither editor boots until you ask. Each one holds a WebAssembly instance
+        of roughly 100 MB, and a page that starts two of them on load is a page
+        that costs a visitor 200 MB for a demo they may not have wanted — the same
+        reason the home page's live demo is click-to-activate.
+      </p>
+
+      <div class="embed-grid">
+        <!-- Panel 1: the host wires the iframe itself. -->
+        <section
+          class="embed-panel"
+          data-embed="iframe"
+          data-frame-title="OpenDoc editor embedded in a plain iframe"
+          aria-labelledby="iframeHostHeading"
+        >
+          <div class="embed-panel-head">
+            <h2 id="iframeHostHeading">A plain iframe</h2>
+            <p>
+              The host builds the URL. <code>?mode=</code> carries the role, and
+              the editor resolves it before first paint.
+            </p>
+          </div>
+          <div class="embed-controls">
+            <p class="embed-field">
+              <label for="iframeRole">Role</label>
+              <select id="iframeRole" data-role-select></select>
+            </p>
+            <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            <button type="button" class="embed-btn" data-variant="quiet" data-release disabled>
+              Release it
+            </button>
+          </div>
+          <div class="embed-readout">
+            <dl>
+              <dt>Review mode</dt>
+              <dd data-editing-mode>—</dd>
+              <dt>Sandbox</dt>
+              <dd data-sandbox>—</dd>
+              <dt>Capabilities</dt>
+              <dd><ul
+                  class="embed-caps"
+                  data-caps
+                  data-granted-label="granted"
+                  data-withheld-label="withheld"
+                ></ul></dd>
+            </dl>
+          </div>
+          <div class="embed-stage" data-stage>
+            <p class="embed-idle" data-idle>Not mounted.</p>
+          </div>
+        </section>
+
+        <!-- Panel 2: the custom element. -->
+        <section
+          class="embed-panel"
+          data-embed="element"
+          data-frame-title="OpenDoc editor embedded as the opendoc-editor custom element"
+          aria-labelledby="elementHostHeading"
+        >
+          <div class="embed-panel-head">
+            <h2 id="elementHostHeading">The custom element</h2>
+            <p>
+              <code>&lt;opendoc-editor mode="…"&gt;</code>. The element resolves
+              the role, derives the iframe sandbox from it, and reports both back
+              on <code>opendoc-capabilities</code>.
+            </p>
+          </div>
+          <div class="embed-controls">
+            <p class="embed-field">
+              <label for="elementRole">Role</label>
+              <select id="elementRole" data-role-select></select>
+            </p>
+            <button type="button" class="embed-btn" data-mount>Mount the editor</button>
+            <button type="button" class="embed-btn" data-variant="quiet" data-release disabled>
+              Release it
+            </button>
+          </div>
+          <div class="embed-readout">
+            <dl>
+              <dt>Review mode</dt>
+              <dd data-editing-mode>—</dd>
+              <dt>Sandbox</dt>
+              <dd data-sandbox>—</dd>
+              <dt>Capabilities</dt>
+              <dd><ul
+                  class="embed-caps"
+                  data-caps
+                  data-granted-label="granted"
+                  data-withheld-label="withheld"
+                ></ul></dd>
+            </dl>
+          </div>
+          <div class="embed-stage" data-stage>
+            <p class="embed-idle" data-idle>Not mounted.</p>
+          </div>
+        </section>
+      </div>
+
+      <h2>What each layer actually enforces</h2>
+      <p class="embed-note">
+        The browser refuses a download the sandbox did not allow. The engine
+        refuses a mutation in Viewing mode at a single fail-closed choke point, so
+        a chrome defeated from devtools still meets it. And the chrome disables a
+        withheld capability <em>with a reason</em> rather than hiding it — a
+        control that vanishes teaches nothing, and a product that silently lacks a
+        feature is indistinguishable from one that is broken. Open the command
+        palette inside a <code>readonly</code> embed and look at
+        <em>Open…</em>: it is there, it is disabled, and it says why.
+      </p>
+    </main>
+
+    <script type="module" src="./src/embed_host_demo.js"></script>
+  </body>
+</html>

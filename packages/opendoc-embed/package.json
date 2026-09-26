@@ -1,0 +1,55 @@
+{
+  "name": "@casualoffice/opendoc-embed",
+  "version": "0.1.0",
+  "description": "Framework-free <opendoc-editor> custom element, and the capability contract it resolves before first paint.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/embed_element.mjs",
+  "module": "./src/embed_element.mjs",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/embed_element.mjs"
+    },
+    "./define": {
+      "types": "./types/index.d.ts",
+      "import": "./src/embed_define.js"
+    },
+    "./capabilities": {
+      "types": "./types/index.d.ts",
+      "import": "./src/capabilities.mjs"
+    }
+  },
+  "files": [
+    "src",
+    "types",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./src/embed_define.js"
+  ],
+  "keywords": [
+    "docx",
+    "document",
+    "editor",
+    "custom-element",
+    "embed",
+    "web-component"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CasualOffice/opendoc.git",
+    "directory": "packages/opendoc-embed"
+  },
+  "homepage": "https://github.com/CasualOffice/opendoc/tree/main/packages/opendoc-embed",
+  "bugs": {
+    "url": "https://github.com/CasualOffice/opendoc/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
