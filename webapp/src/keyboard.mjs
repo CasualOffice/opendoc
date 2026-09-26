@@ -159,6 +159,11 @@ export function parseShortcut(spec) {
   }
   const named = NAMED_KEYS.get(rest);
   if (named) return { ...wanted, key: named };
+  // "Space" is spelled out rather than given a glyph: the key it means is " ",
+  // and a spec ending in a literal space renders as a label with nothing visible
+  // after the modifier — "⌃" and "Ctrl+ " were what the palette actually showed
+  // before this case existed.
+  if (rest === "Space") return { ...wanted, key: " " };
   // A single printable character, or a named key the browser spells out (F5).
   if ([...rest].length === 1 || /^F\d{1,2}$/.test(rest)) return { ...wanted, key: rest };
   return null;

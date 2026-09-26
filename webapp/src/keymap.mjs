@@ -117,7 +117,7 @@ export const KEYMAP = [
   // reason `platform` exists: macOS reserves Control+Space for switching input
   // source, so binding it there would break text entry for anyone typing a
   // language that needs the switcher. Word's own Mac build leaves it alone too.
-  { chord: "⌃ ", command: "format.clear", scope: EDITOR_SCOPE, platform: STANDARD_PLATFORM },
+  { chord: "⌃Space", command: "format.clear", scope: EDITOR_SCOPE, platform: STANDARD_PLATFORM },
 
   // ---- Paragraph formatting — the Word chords the editor had none of -------
   { chord: "⌘L", command: "paragraph.align.start", scope: EDITOR_SCOPE },
@@ -158,8 +158,14 @@ export const KEYMAP = [
  *  FIRST wins the label, because a menu row shows one hint and Word shows the
  *  primary.
  */
-export function shortcutForCommand(commandId, keymap = KEYMAP) {
-  return keymap.find((row) => row.command === commandId)?.chord;
+export function shortcutForCommand(commandId, platform, keymap = KEYMAP) {
+  // A row narrowed to the OTHER keymap must not be advertised here: on a Mac,
+  // "Clear direct formatting" printing ⌃Space would be UX-007 in reverse — a
+  // chord promised on a surface and dead on the keyboard in front of the user.
+  // Driving the palette on Apple is how that was caught.
+  return keymap.find(
+    (row) => row.command === commandId && (!row.platform || row.platform === platform),
+  )?.chord;
 }
 
 /** The command a keystroke asks for, or `null`.

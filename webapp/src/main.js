@@ -7400,7 +7400,7 @@ function buildContextCommands(context) {
       icon: "link",
       // The same capability as `insert.link` under the annotate surface's own id,
       // so it reads its chord from the one table rather than restating it.
-      shortcut: shortcutForCommand("insert.link"),
+      shortcut: shortcutForCommand("insert.link", EDITOR_KEYBOARD_PLATFORM),
       enabled: context.sameParagraphRange && !context.suggesting,
       disabledReason: context.suggesting
         ? "Link changes cannot be tracked in Suggesting mode"
@@ -7424,7 +7424,7 @@ function buildContextCommands(context) {
       label: "Add comment",
       group: "annotate",
       icon: "comment",
-      shortcut: shortcutForCommand("comment.add"),
+      shortcut: shortcutForCommand("comment.add", EDITOR_KEYBOARD_PLATFORM),
       enabled: context.hasRange,
       disabledReason: "Select text to add a comment",
       run: () => openReviewComposer(),
@@ -12703,7 +12703,7 @@ function editorCommands(context = { surface: "palette" }) {
   // the compact bar's tooltip and the shortcut reference all read
   // `command.shortcut`, and the only thing that can set it is the table the
   // dispatcher matches against.
-  for (const command of cmds) command.shortcut = shortcutForCommand(command.id);
+  for (const command of cmds) command.shortcut = shortcutForCommand(command.id, EDITOR_KEYBOARD_PLATFORM);
   return cmds.filter((command) => doc || command.noDoc);
 }
 
