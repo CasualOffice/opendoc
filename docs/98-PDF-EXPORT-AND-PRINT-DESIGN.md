@@ -6,12 +6,12 @@ Phase 2 (tagged PDF / PDF-A) remain design-only. Everything below the *Implement
 status* section is the original design, unchanged; its effort estimates now overstate
 what Phase 0 still costs, because Phase 0 is done. Read *Implementation status* for what
 actually exists, family by family, and for what is still missing.
-**Date:** 2026-08-05; implementation status added 2026-09-21.
+**Date:** 2026-08-05; implementation status updated 2026-09-26.
 **Depends on:** ADR-003 (backend-neutral display list); `casual-doc-layout::display::DisplayList`; `casual-doc-render` (tiny-skia backend, reference implementation); `paginate.rs` per-page display lists; `casual-doc-io` format registry; `40-FONT-MANAGEMENT-DESIGN.md`; `94-ORACLE-VISUAL-FIDELITY-HARNESS-DESIGN.md`; `21-PARSER-LIMITS.md`; `20-ERROR-CODE-REGISTRY.md`.
 **Owner decision still required:** the Phase-2 scope gate (§10 item 2). ADR-031 is
 resolved below.
 **Addresses:** `104` HF-030 (the output half), `105` RM-04 Phase 0. Still open after it:
-the print dialog (`105` OO-010) and the host wiring listed below.
+the print dialog (`105` OO-010), live-font parity, and the semantic features listed below.
 
 ## Implementation status (2026-09-21)
 
@@ -98,16 +98,13 @@ OR Apache-2.0; the same version and codec feature set `casual-doc-render` builds
   compatibility report in the same shape DOCX and ODT return. Registration is opt-in
   rather than part of `builtin_registry` so a host decides when PDF appears in its
   save-as list.
-- **Not yet reachable from the product.** `casual-doc-wasm` and `webapp/src/main.js` are
-  untouched by this slice; Print and "Save as PDF" still take the 150-DPI raster path.
-  Two pieces of wiring close that:
-  1. `casual-doc-wasm`: call `casual_doc_io::register_pdf_exporter` on the registry built
-     in `available_export_formats` and on the one used by the export path, and update the
-     test that pins the exact export-format list.
-  2. `webapp/src/main.js`: point File → "Save as PDF" and the ⌘P "Save as PDF"
-     destination at `exportDocumentAs("application.pdf")` instead of the raster print
-     container, keeping the existing preview flow for physical printing. Neither command
-     may become a dead control while that happens.
+- **Reachable from the product.** The built-in registry includes the export-only PDF
+  adapter, so `casual-doc-wasm` exposes `application.pdf` from
+  `availableExportFormats()` and dispatches it through `exportAs(...)`. The web File
+  surface offers **Export as PDF…** through the same `exportDocumentAs` path as the
+  other formats. A browser regression downloads the file and checks the PDF 1.7 header,
+  `Type0` text font, and `ToUnicode` map. Physical **Print** remains a separate 150-DPI
+  raster path and is still open under `OO-010` / PDF-PRINT-0.
 
 ### Remaining work, in the order to take it
 

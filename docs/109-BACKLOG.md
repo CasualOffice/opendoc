@@ -115,7 +115,7 @@ L = more than a week. Both are carried across verbatim; neither was rescaled.
 
 ## Summary
 
-**132 rows in the one queue: 47 Hotfix, 70 Audit, 15 Roadmap.**
+**130 rows in the one queue: 47 Hotfix, 70 Audit, 13 Roadmap.**
 
 Derived from the rows below by `webapp/tests/tracker_counts.test.mjs`. Do not edit these
 cells by hand — re-derive them. (`104`'s summary drifted for exactly as long as nothing
@@ -127,8 +127,8 @@ and the old sum-to-Total check could not see either.)
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Hotfix | 47 | 0 | 7 | 26 | 14 | 0 |
 | Audit | 70 | 0 | 30 | 32 | 8 | 0 |
-| Roadmap | 15 | 0 | 0 | 0 | 0 | 15 |
-| **Total** | **132** | **0** | **37** | **58** | **22** | **15** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
+| Roadmap | 13 | 0 | 0 | 0 | 0 | 13 |
+| **Total** | **130** | **0** | **37** | **58** | **22** | **13** | **0** | **38** | **57** | **22** | **15** | **0** | **26** | **44** | **19** | **9** | **0** | **37** | **57** | **22** | **15** |
 
 **There are two P0s again, and that is a correction, not a regression.** Every P0 *inherited*
 from `104` and `105` is closed. HF-045 and HF-011 were re-graded into P0 on 2026-09-20
@@ -276,18 +276,16 @@ graded below the definition they meet.
 | 118 | Q2 | Roadmap | Decide how to acquire a rights-cleared **Word-produced** corpus | — | — | Open | 106 §9 | FID-P-02 | Gates Phase 0's exit, and therefore every fidelity claim. Recommendation on file: generate with a licensed copy, review for redistribution, keep sensitive documents local |
 | 119 | Q6 | Roadmap | Decide the mobile commitment — fund it, or downgrade the support matrix | — | — | Open | 106 §9 | UX-018, UX-019 | `18` declares mobile/tablet browsers supported. Recommendation on file: fund it |
 | 120 | Q1 | Roadmap | Decide the **D-6 embed contract** — what a host mounts, configures and receives | — | — | Open | 106 §9 | HF-109, CQ-010 | Gates Phase 4, which is the wedge. Recommendation on file: model the surface on `DocsAPI`, but local-first — no `callbackUrl`, no server-held key |
-| 121 | Q4 | Roadmap | Decide **ADR-031** — PDF writer and font subsetter, build vs buy | — | — | Open | 106 §9 | RM-04 | On the critical path for a disqualifying gap. Decide early |
-| 122 | Q3 | Roadmap | Decide charts and SmartArt scope — render, or preserve-and-disclose | — | — | Open | 106 §9 | OO-014, FID-R-08 | Recommendation on file: preserve-and-disclose for the v1 claim |
-| 123 | Q7 | Roadmap | Decide the `.docm` policy — currently rejected at open, undecided | — | — | Open | 106 §9 | — | Recommendation on file: strip-and-open with an explicit finding; macros stay unexecuted |
-| 124 | RM-01 | Roadmap | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | — | — | Open | 106 §6 Phase 3 | OO-001, OO-005, OO-008 | **Blocks the whole References tab.** ONLYOFFICE ships only 14 field codes, so the bar is low |
-| 125 | RM-02 | Roadmap | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | — | — | Open | 106 §6 Phase 4 | HF-109 | `99` order 5. Blocked-by Q1 and HF-085 |
-| 126 | RM-03 | Roadmap | Host storage contract, in the opencalc shape | — | — | Open | 106 §6 Phase 4 | OO-004 | Owner decision 2026-09: storage YES |
-| 127 | RM-04 | Roadmap | Real-text PDF export — a `casual-doc-pdf` backend transcribing the shared `DisplayList`, never rasterized | — | — | Open | 106 §6 Phase 5 | HF-030, OO-010 | Designed end to end in `98`. Blocked-by Q4 |
-| 128 | RM-05 | Roadmap | Complete ODT beyond the current bounded subset | — | — | Open | 106 §6 Phase 5 | — | `95`/`96`/`97` |
-| 129 | RM-06 | Roadmap | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | — | — | Open | 106 §6 Phase 5 | HF-160 | RTF is carried separately as HF-160, which is already in flight. `106` §8 notes this set is the first thing to narrow if the schedule has to compress |
-| 130 | RM-07 | Roadmap | Tagged PDF and PDF/A | — | — | Open | 106 §6 Phase 5 | RM-04 | Phased, per `98` |
-| 131 | RM-08 | Roadmap | OT step 6.3 — T1 transform, tie-break by `(revision, site_id)`, TP1 property tests, the §4 budget benchmarks. No network | — | — | Open | 106 §6 Phase 6.3 | CQ-002 | Blocked-by CQ-002. Independently valuable: it is what makes OO-007 (compare/combine) fall out |
-| 132 | RM-09 | Roadmap | OT step 6.4 — T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | — | — | Open | 106 §6 Phase 6.4 | FID-R-02 | Blocked-by RM-08. Every tombstone must be reported through the disposition taxonomy, never silently dropped |
+| 121 | Q3 | Roadmap | Decide charts and SmartArt scope — render, or preserve-and-disclose | — | — | Open | 106 §9 | OO-014, FID-R-08 | Recommendation on file: preserve-and-disclose for the v1 claim |
+| 122 | Q7 | Roadmap | Decide the `.docm` policy — currently rejected at open, undecided | — | — | Open | 106 §9 | — | Recommendation on file: strip-and-open with an explicit finding; macros stay unexecuted |
+| 123 | RM-01 | Roadmap | Field evaluation engine — host-provided evaluation context, recalculation, Update field, Toggle field codes | — | — | Open | 106 §6 Phase 3 | OO-001, OO-005, OO-008 | **Blocks the whole References tab.** ONLYOFFICE ships only 14 field codes, so the bar is low |
+| 124 | RM-02 | Roadmap | Consolidate the editor-proven commands and errors into a versioned public SDK boundary | — | — | Open | 106 §6 Phase 4 | HF-109 | `99` order 5. Blocked-by Q1 and HF-085 |
+| 125 | RM-03 | Roadmap | Host storage contract, in the opencalc shape | — | — | Open | 106 §6 Phase 4 | OO-004 | Owner decision 2026-09: storage YES |
+| 126 | RM-05 | Roadmap | Complete ODT beyond the current bounded subset | — | — | Open | 106 §6 Phase 5 | — | `95`/`96`/`97` |
+| 127 | RM-06 | Roadmap | HTML, Markdown, EPUB and FB2 import/export; DOTX/OTT templates | — | — | Open | 106 §6 Phase 5 | HF-160 | RTF is carried separately as HF-160, which is already in flight. `106` §8 notes this set is the first thing to narrow if the schedule has to compress |
+| 128 | RM-07 | Roadmap | Tagged PDF and PDF/A | — | — | Open | 106 §6 Phase 5 | RM-04 | Phased, per `98` |
+| 129 | RM-08 | Roadmap | OT step 6.3 — T1 transform, tie-break by `(revision, site_id)`, TP1 property tests, the §4 budget benchmarks. No network | — | — | Open | 106 §6 Phase 6.3 | CQ-002 | Blocked-by CQ-002. Independently valuable: it is what makes OO-007 (compare/combine) fall out |
+| 130 | RM-09 | Roadmap | OT step 6.4 — T2 anchor rebase and tombstoning with taxonomy reporting; T3 serialisation | — | — | Open | 106 §6 Phase 6.4 | FID-R-02 | Blocked-by RM-08. Every tombstone must be reported through the disposition taxonomy, never silently dropped |
 
 ## Rows that need re-verification
 
@@ -304,6 +302,8 @@ document does not own `105`.
 
 | Id | How it was settled |
 | --- | --- |
+| Q4 | **Closed, removed from the queue.** ADR-031 resolves the writer and TrueType subsetter as hand-rolled with no new dependency; `casual-doc-pdf` is merged and doc 98 records the decision and implementation. |
+| RM-04 | **Closed, removed from the queue.** Phase 0 real-text/vector PDF export is implemented, registered through the generic IO/WASM seam, and reachable from File → Export as PDF. Live-font parity, Phase 1 semantics, physical print, and tagged PDF/PDF-A remain explicit separate work in doc 98 and RM-07. |
 | UX-026 | **Closed, removed from the queue.** The File page's pane was Info-only because every other row either ran immediately or opened a dialog over the page. Seven categories render into it now — Export (a grid of format tiles), New document (template cards previewing their own first page), Document properties, Settings, Find a command, Keyboard shortcuts and About — the last five by MOVING the panel element into the pane and releasing it on close, so there is still exactly one of each form in the document. The owner's words: "basically in this view replace dialogs with this space"; ONLYOFFICE's File page has no dialogs either (`FileMenu.js:412-415`). `123` §5.3–5.5, guarded by `webapp/tests/e2e/file-page-panes.spec.mjs`. **The header gear's Settings popup is closed too**, on the same authority ("that panel doesn't make any sense now .. see dialog instead"): it is a modal dialog in the shared shell now, registered with `modal.mjs` like every other one, and the gear selects the File page's Settings pane while that page is open rather than raising a half-dialog out of it. `123` §5.7. |
 | UX-016 | **Closed, removed from the queue.** The Home band carried `Edit / Suggest / Read only` while the status bar carried `Editing / Suggesting / Read only` — one piece of state, two controls, one screen. The band copy is gone (the `data-group="mode"` group in `webapp/editor.html`), which also returns 159.5px of the Home band's 1280px budget. Neither ONLYOFFICE, Google Docs nor Word ships a second one. **Where the survivor should live is a separate question, open as UX-025**: all three references put the mode selector in the top chrome and none in a status bar, but moving ours touches the compact chrome. `123` §4.5 |
 | HF-016 | **Closed, removed from the queue.** The command is declared at `webapp/src/main.js:12468` (`{ id: "file.new", label: "New blank document", …, noDoc: true }`), implemented at `main.js:3261` (`newBlankDocument()`), and reachable from two surfaces — the File menu (`APP_MENU_SECTIONS.file`, `main.js:13005`) and the palette. `104` marked `Fixed (#542)`, matching `105` UX-011 |
