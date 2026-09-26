@@ -27,7 +27,7 @@
 // the paper it sits above, and its unshaded span covers exactly that page's text
 // column. A later change may compute either from somewhere else and should still
 // be held to both.
-import { test, expect } from "./fixtures.mjs";
+import { test, expect, documentPageCount, pageSheet } from "./fixtures.mjs";
 
 /** The fixture's committed geometry, in twips. Asserted against the engine by
  *  `generate_sections_fixture_docx`, so these are not a second source of truth —
@@ -40,17 +40,33 @@ const TWIPS_PER_INCH = 1_440;
 
 async function openSections(page) {
   await page.goto("/editor.html?fixture=sections");
-  await page.waitForFunction(() => document.querySelectorAll(".page-wrap").length >= 6, null, {
-    timeout: 45_000,
-  });
+  await page.waitForFunction(
+    () => {
+      const status = document.getElementById("status");
+      return (
+        status !== null &&
+        status.textContent === "" &&
+        document.querySelectorAll(".page-wrap").length > 0 &&
+        document.body.dataset.fontsReady === "true"
+      );
+    },
+    null,
+    { timeout: 45_000 },
+  );
+  // The DOCUMENT's page count, not the number of sheets on screen: only the pages
+  // near the viewport are materialized (`docs/113` §8.6), so waiting for six
+  // `.page-wrap` elements waits for something that never happens.
+  expect(await documentPageCount(page)).toBe(6);
   await expect(page.locator(".ruler")).toBeVisible();
 }
 
 /** Scrolls page `index` into existence and puts the caret in it. A page outside
- *  the viewport has no sheet at all, so it has to be scrolled to first. */
+ *  the viewport has no sheet at all, so it has to be scrolled to first — and it is
+ *  addressed by the page it IS, never by its position among the sheets that
+ *  happen to exist. */
 async function caretOnPage(page, index) {
+  await pageSheet(page, index + 1);
   const wrap = page.locator(`#pages .page-wrap[data-page-number="${index + 1}"]`);
-  await expect(wrap).toHaveCount(1);
   await wrap.evaluate((el) => el.scrollIntoView({ block: "center" }));
   await expect.poll(() => wrap.locator("canvas.page").count()).toBe(1);
   const box = await wrap.boundingBox();
@@ -67,14 +83,15 @@ async function rulerShape(page) {
     const c = content.getBoundingClientRect();
     return {
       width: r.width,
-      startFraction: (c.left - r.left) / r.width,
-      endFraction: (r.right - c.right) / r.width,
+      startPx: c.left - r.left,
+      endPx: r.right - c.right,
     };
   });
 }
 
-/** The rendered width of one page's paper. */
+/** The rendered width of one page's paper, scrolling it into existence first. */
 async function paperWidth(page, index) {
+  await pageSheet(page, index + 1);
   const box = await page
     .locator(`#pages .page-wrap[data-page-number="${index + 1}"]`)
     .boundingBox();
@@ -122,26 +139,32 @@ test.describe("the ruler follows the caret's page geometry", () => {
     // The width alone is not the whole defect: the margins came from the opening
     // section too, so a change that resized the strip and kept the old margins
     // would still shade the wrong part of it. Because both sections carry 1,440
-    // twip side margins, the FRACTION is the only thing that can tell them apart.
+    // twip side margins, the geometry is the only thing that can tell them apart —
+    // the same margin is a DIFFERENT fraction of a different page.
+    //
+    // Asserted in pixels with a 2px tolerance rather than as a fraction to three
+    // places: `.ruler-content` carries a 1px edge, which is 0.0012 of the strip and
+    // was enough to fail a fraction comparison while being visually exact. The
+    // tolerance is nowhere near loose enough to hide the defect — on the landscape
+    // page the wrong answer is ~28px away, an order of magnitude outside it.
     await openSections(page);
     for (const index of [0, 4]) {
       const { width, sideMargin, label } = SECTION_OF_PAGE[index];
-      const expected = sideMargin / width;
       await caretOnPage(page, index);
-      await expect
-        .poll(async () => (await rulerShape(page)).startFraction, {
-          message:
-            `on the ${label} page the shaded left margin should be ${expected.toFixed(4)} of ` +
-            `the ruler (${sideMargin}/${width}). Page 1's fraction is ` +
-            `${(SECTION_OF_PAGE[0].sideMargin / SECTION_OF_PAGE[0].width).toFixed(4)} — ` +
-            `reading that here is the defect.`,
-        })
-        .toBeCloseTo(expected, 3);
       const shape = await rulerShape(page);
+      const predicted = (sideMargin / width) * shape.width;
+      const wrongAnswer =
+        (SECTION_OF_PAGE[0].sideMargin / SECTION_OF_PAGE[0].width) * shape.width;
       expect(
-        shape.endFraction,
-        `on the ${label} page the shaded right margin should also be ${expected.toFixed(4)}`,
-      ).toBeCloseTo(expected, 3);
+        Math.abs(shape.startPx - predicted),
+        `on the ${label} page the shaded left margin should be ${predicted.toFixed(1)}px of a ` +
+          `${shape.width.toFixed(1)}px strip (${sideMargin}/${width}); page 1's geometry would ` +
+          `put it at ${wrongAnswer.toFixed(1)}px, and reading that here is the defect`,
+      ).toBeLessThanOrEqual(2);
+      expect(
+        Math.abs(shape.endPx - predicted),
+        `on the ${label} page the shaded right margin should also be ${predicted.toFixed(1)}px`,
+      ).toBeLessThanOrEqual(2);
     }
   });
 
