@@ -153,7 +153,7 @@ test("each Page setup button opens the dialog on the field it names", async ({
   await page.locator("#layoutOrientationBtn").click();
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
   await expect(
-    page.locator('#pageOrientationSeg button[aria-pressed="true"]'),
+    page.locator('#pageOrientationSeg button[aria-checked="true"]'),
   ).toBeFocused();
   await page.keyboard.press("Escape");
 
@@ -162,7 +162,7 @@ test("each Page setup button opens the dialog on the field it names", async ({
   await page.locator("#pageSetupBtn").click();
   await expect(page.locator("#pageSetupMenu")).toBeVisible();
   await expect(
-    page.locator('#pageOrientationSeg button[aria-pressed="true"]'),
+    page.locator('#pageOrientationSeg button[aria-checked="true"]'),
   ).toBeFocused();
   await page.keyboard.press("Escape");
 

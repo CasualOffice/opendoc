@@ -14,7 +14,7 @@ async function insertTwoByTwoTable(page) {
 async function tablePropertyValues(page) {
   return page.evaluate(() => ({
     alignment:
-      document.querySelector('#tableAlign button[aria-pressed="true"]')?.dataset.talign,
+      document.querySelector('#tableAlign button[aria-checked="true"]')?.dataset.talign,
     width: document.getElementById("tableWidth").value,
     indent: document.getElementById("tableIndent").value,
     fixed: document.getElementById("tableFixedLayout").checked,
