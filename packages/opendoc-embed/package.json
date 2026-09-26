@@ -4,17 +4,17 @@
   "description": "Framework-free <opendoc-editor> custom element, and the capability contract it resolves before first paint.",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/opendoc-editor.mjs",
-  "module": "./src/opendoc-editor.mjs",
+  "main": "./src/embed_element.mjs",
+  "module": "./src/embed_element.mjs",
   "types": "./types/index.d.ts",
   "exports": {
     ".": {
       "types": "./types/index.d.ts",
-      "import": "./src/opendoc-editor.mjs"
+      "import": "./src/embed_element.mjs"
     },
     "./define": {
       "types": "./types/index.d.ts",
-      "import": "./src/define.mjs"
+      "import": "./src/embed_define.js"
     },
     "./capabilities": {
       "types": "./types/index.d.ts",
@@ -27,7 +27,7 @@
     "README.md"
   ],
   "sideEffects": [
-    "./src/define.mjs"
+    "./src/embed_define.js"
   ],
   "keywords": [
     "docx",

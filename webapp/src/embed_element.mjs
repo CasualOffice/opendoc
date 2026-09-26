@@ -70,7 +70,7 @@ const SHADOW_STYLE = `
  * An embedded opendoc editor.
  *
  * ```html
- * <opendoc-editor mode="readonly" frame-title="Contract preview"></opendoc-editor>
+ * <opendoc-editor mode="readonly" frame-title="…"></opendoc-editor>
  * ```
  *
  * Attributes (all optional):
