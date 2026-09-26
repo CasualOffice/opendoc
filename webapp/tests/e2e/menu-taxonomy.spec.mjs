@@ -162,10 +162,17 @@ test("Page setup is on the File surface, where Docs puts it", async ({
   expect(await menuCommandIds(page, "file")).toContain("layout.pageSetup");
   await page.locator("#modeRibbon").click();
   await page.locator("#tabFile").click();
+  // What the page OFFERS, not how it renders the row. The two File surfaces
+  // render one roster two ways — a dropdown runs each command, the page may
+  // open a pane instead — and `data-covers` exists precisely so a parity test
+  // can see through that (`command_menu.mjs`, `categoryRow`). Page setup became
+  // a pane rather than a modal over the page, so it is now a category row like
+  // Settings and Document properties; asserting `data-command` was asserting
+  // the mechanism, and it broke on a change that did not remove anything.
   expect(
-    await page
-      .locator("#filePageBody .file-page-item")
-      .evaluateAll((rows) => rows.map((r) => r.dataset.command)),
+    await page.locator("#filePageBody .file-page-item").evaluateAll((rows) =>
+      rows.flatMap((r) => [r.dataset.command, ...(r.dataset.covers ?? "").split(" ")]),
+    ),
   ).toContain("layout.pageSetup");
   await page.keyboard.press("Escape");
 
