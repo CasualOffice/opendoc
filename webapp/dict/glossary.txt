@@ -185,6 +185,7 @@ WebGPU
 WordArt
 WordprocessingML
 XML
+XMP
 XObjects
 Yjs
 accessors
@@ -276,7 +277,6 @@ embeddable
 embeddings
 endnote
 endnotes
-eng
 enum
 enums
 escapeHtml
@@ -301,6 +301,7 @@ grep
 gridSpan
 gzip
 gzipped
+handoff
 hardcoded
 hardcodes
 hlinkClick
