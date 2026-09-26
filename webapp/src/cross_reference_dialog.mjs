@@ -85,6 +85,8 @@ function typeOf(value) {
  * `io`:
  *   `getDoc()`          the open document, or null
  *   `caret()`           `{ node, offset }` the reference is inserted at
+ *   `aboveBelowSupported()` whether this build's `insertCrossReference` carries
+ *                       the include-above/below argument
  *   `mutationBlocked()` true (having said why) when the review mode refuses
  *   `insert(options)`   Promise<boolean>; one gated, undoable engine call
  *   `status(text, kind)` the status line
@@ -120,20 +122,27 @@ export function createCrossReferenceDialog(io) {
     modal.close();
   }
 
+  /** "Include above/below" is live only where Word offers it AND where the engine
+   *  can carry it. Two different refusals, and the difference matters to the
+   *  reader: "Word does not offer it for this kind of reference" is a rule they
+   *  can work with, "the engine cannot do it yet" is a gap. Collapsing them into
+   *  one greyed box with one sentence would be the more comfortable lie.
+   *
+   *  The engine half is DETECTED rather than assumed, from the arity of the
+   *  binding this build is running against, so the switch comes alive the moment
+   *  `insertCrossReference` grows its sixth parameter instead of waiting for a
+   *  webapp commit to notice. */
   function reflectAboveBelow() {
     const { kind } = typeOf(typeSelect.value);
     const offered = aboveBelowEnabled(kind, toSelect.value);
-    // ALWAYS disabled, for one of two different reasons, and the reason is on
-    // the control rather than implied by its greyness. Word offers this switch
-    // for some pairs and not others; the engine's `insertCrossReference` takes
-    // no above/below argument at all, so even the pairs Word offers it for
-    // cannot be honoured yet. Reporting "not for this reference" when the truth
-    // is "not yet implemented" would be the more comfortable lie.
-    aboveBelow.disabled = true;
-    aboveBelow.checked = false;
-    aboveBelowRow.title = t(
-      offered ? "crossRefDialog.aboveBelowUnavailable" : "crossRefDialog.aboveBelowNotForThis",
-    );
+    const carried = io.aboveBelowSupported();
+    aboveBelow.disabled = !offered || !carried;
+    if (aboveBelow.disabled) aboveBelow.checked = false;
+    aboveBelowRow.title = !offered
+      ? t("crossRefDialog.aboveBelowNotForThis")
+      : carried
+        ? ""
+        : t("crossRefDialog.aboveBelowUnavailable");
   }
 
   /** Paints the target list and returns whether anything is in it. */
@@ -290,6 +299,10 @@ export function createCrossReferenceDialog(io) {
       targetNode: selectedNode,
       referenceTo: toSelect.value,
       hyperlink: hyperlink.checked,
+      // Passed whatever the binding's arity: a sixth argument to a five-argument
+      // function is ignored in JS, and the checkbox is disabled-and-clear in that
+      // build anyway, so the value is `false` either way.
+      includeAboveBelow: aboveBelow.checked,
     });
     if (!inserted) return;
     io.status(t("crossReference.inserted"));

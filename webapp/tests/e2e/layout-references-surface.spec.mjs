@@ -105,7 +105,12 @@ test("both new bands fit 1280px inline, with no overflow control and no horizont
 
   for (const [tab, panel, groups] of [
     ["tabLayout", "panelLayout", ["page-setup", "layout-paragraph", "arrange"]],
-    ["tabReferences", "panelReferences", ["ref-navigation", "ref-notes", "ref-fields"]],
+    // Four groups since OO-005: Word's Captions group joined them, and
+    // Cross-reference moved into it out of Navigation, where it had been parked
+    // while the command was unavailable. That is a group label, a divider and one
+    // more big button on a band that has to fit 1280px inline — which is exactly
+    // what the assertions below measure.
+    ["tabReferences", "panelReferences", ["ref-navigation", "ref-notes", "ref-captions", "ref-fields"]],
   ]) {
     await openTab(page, tab, panel);
     // Every authored group is still a child of the panel — none was relocated
@@ -303,9 +308,13 @@ test("table of contents, cross-reference and update fields are disabled WITH a r
   await clickIntoFirstPage(page);
   await openTab(page, "tabReferences", "panelReferences");
 
+  // Two, not three. `#refCrossRefBtn` used to be here with "A cross-reference
+  // needs the REF field engine, which does not exist yet"; OO-005 built that
+  // engine, so the row moved to the behaviour test below. A reason left standing
+  // after the gap it describes is closed is the same lie as a claim that is too
+  // generous — `109` EV-007, "understating is also false".
   const unavailable = [
     ["#refTocBtn", "Table of contents", /field evaluation/i],
-    ["#refCrossRefBtn", "Cross-reference", /REF field engine/i],
     ["#refUpdateFieldsBtn", "Update fields", /field-evaluation pass/i],
   ];
   for (const [selector, label, reason] of unavailable) {

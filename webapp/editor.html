@@ -689,6 +689,12 @@
             <div class="rgroup-ctl">
               <button data-i18n-title="panelReferences.insertCaption.title" data-i18n-label="panelReferences.insertCaption.label" id="refCaptionBtn" type="button" class="fmt fmt-big" title="Insert a numbered caption for a picture, table or equation" aria-label="Insert caption" aria-haspopup="dialog" aria-controls="captionDialog" disabled><span class="ms" aria-hidden="true">closed_caption</span><span data-i18n="tablePropertiesPanel.caption" class="fmt-big-label">Caption</span></button>
               <button data-i18n-title="panelReferences.insertCrossReference.title" data-i18n-label="panelReferences.crossReference.label" id="refCrossRefBtn" type="button" class="fmt fmt-big" title="Insert a reference to a caption, heading, bookmark or note" aria-label="Cross-reference" aria-haspopup="dialog" aria-controls="crossRefDialog" disabled><span class="ms" aria-hidden="true">swap_calls</span><span data-i18n="refCrossRefBtn.crossReference" class="fmt-big-label">Cross-reference</span></button>
+              <!-- Word has no equivalent button, and does not need one: it
+                   recomputes fields on print, on F9 and on open. Ours deliberately
+                   do NOT renumber on a Backspace, because that would make a
+                   keystroke O(document) — so the product has to offer the fix, or
+                   "dirty rather than silently stale" is just "stale". -->
+              <button data-i18n-title="panelReferences.updateCaptionNumbers.title" data-i18n-label="panelReferences.updateCaptionNumbers.label" id="refUpdateCaptionsBtn" type="button" class="fmt fmt-big" title="Renumber every caption whose number is out of date" aria-label="Update caption numbers" disabled><span class="ms" aria-hidden="true">format_list_numbered</span><span data-i18n="panelReferences.renumber" class="fmt-big-label">Renumber</span></button>
             </div>
             <span data-i18n="panelReferences.captions" class="rgroup-label">Captions</span>
           </div>
@@ -1502,16 +1508,15 @@
          ONLYOFFICE's (`insertReference()` at `:238` never calls `close()`),
          because a document usually needs several references in a row.
 
-         TWO THINGS ONLYOFFICE HAS THAT ARE NOT HERE, both because the engine's
-         `insertCrossReference(caretNode, caretOffset, targetNode, referenceTo,
-         hyperlink)` does not take them, and a checkbox that changes nothing is
-         worse than one that says why it cannot:
-           * "Include above/below" (`:158-161`) — present, disabled, with the
-             reason on the control, because the option list itself still offers
-             the standalone "Above/below" reference.
-           * "Separate numbers with" (`:163-176`), which only applies to a
-             full-context paragraph number — absent, since nothing in this
-             dialog hints at it. -->
+         "Include above/below" (`:158-161`) is live exactly where Word offers it
+         — the rule is `aboveBelowEnabled` in `cross_reference_model.mjs` — and
+         greyed with its own reason where Word does not, or where this build's
+         `insertCrossReference` does not yet carry the argument.
+
+         "Separate numbers with" (`:163-176`) is ABSENT. It applies only to a
+         full-context paragraph number, the engine's insert takes no separator,
+         and nothing else in this dialog hints that one exists — an absent option
+         is not a dead control. -->
     <div id="crossRefDialog" class="dialog-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="crossRefTitle" aria-describedby="crossRefDescription">
       <section class="dialog-card crossref-dialog">
         <header class="dialog-head">

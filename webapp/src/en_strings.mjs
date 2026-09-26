@@ -126,4 +126,10 @@ export const EN_STRINGS = Object.freeze({
   "crossRefDialog.aboveBelowUnavailable":
     "Including above/below needs an argument the engine’s insert operation does not take yet",
   "crossReference.inserted": "Cross-reference inserted.",
+  // References ▸ Update caption numbers, and the one place Insert caption refuses.
+  // Both are DISABLED-STATE reasons, which is why they are sentences a reader can
+  // act on rather than error text.
+  "caption.numbersAlreadyRight": "Every caption already shows the right number",
+  "caption.bodyOnly": "A caption can only go in the document body, not in a header, footer or note",
+  "caption.numbersUpdated": "Caption numbers updated.",
 });

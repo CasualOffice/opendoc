@@ -52,17 +52,20 @@ const CEILINGS = new Map([
   // one `NO_TABLE_STYLE` constant serving both the chooser row and the new palette
   // row, so one meaning stopped being two literals.
   //
-  // 338 → the number below in OO-005 (captions and cross-references): the object
-  // right-click menu's nine labels moved out with the menu itself (next entry),
-  // and the Outline panel's empty sentence and the cross-reference command's "not
-  // possible yet" reason are both routed now. The one string this round ADDED is
-  // the References palette row's "Insert caption" — that table's labels are read
-  // at import, before a catalogue exists, so English there is the same deliberate
-  // debt every other row in it carries.
+  // 338 → the number below in OO-005 (captions and cross-references). Out: the
+  // object right-click menu's nine labels, which moved with the menu itself (next
+  // entry); the Outline panel's empty sentence and the cross-reference command's
+  // "not possible yet" reason, both routed now; and the right-click menu's own
+  // Increase/Decrease indent rows, which now call the Home band's existing keys —
+  // those rows are built on right-click, long after the catalogue is installed, so
+  // unlike the surface table they CAN call `t()`. In: the References palette rows'
+  // "Insert caption" and "Update caption numbers", because that table's labels are
+  // read at import, before a catalogue exists, so English there is the same
+  // deliberate debt every other row in it carries.
   //
   // MEASURED from the rebased file, not arithmetic on the two branches' numbers.
   // Both lanes lowered this ceiling from 342 independently, and subtracting both
-  // reclaims would have been a guess: that is the exact shape of the merge trap
+  // reclaims would have been a guess — that is the exact shape of the merge trap
   // recorded in `module_seams.test.mjs`, where two branches each measured honestly
   // against a file the other was about to change.
   ["src/main.js", 325],

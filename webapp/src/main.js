@@ -22,8 +22,7 @@ import { createAboutDialog } from "./about_dialog.mjs";
 import { renderPagesPanel, reflectPagesPanelSelection } from "./pages_panel.mjs";
 import { createBookmarkManager } from "./bookmark_manager.mjs";
 import { createDropCapDialog } from "./drop_cap.mjs";
-import { createCaptionDialog } from "./caption_dialog.mjs";
-import { createCrossReferenceDialog } from "./cross_reference_dialog.mjs";
+import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
 import { createPageSetup } from "./page_setup.mjs";
@@ -393,6 +392,7 @@ const refCrossRefBtn = document.getElementById("refCrossRefBtn");
 const refFootnoteBtn = document.getElementById("refFootnoteBtn");
 const refEndnoteBtn = document.getElementById("refEndnoteBtn");
 const refFieldBtn = document.getElementById("refFieldBtn");
+const refUpdateCaptionsBtn = document.getElementById("refUpdateCaptionsBtn");
 const refUpdateFieldsBtn = document.getElementById("refUpdateFieldsBtn");
 const tabReviewBtn = document.getElementById("tabReview");
 const reviewTrackBtn = document.getElementById("reviewTrackBtn");
@@ -460,6 +460,10 @@ function selectRibbonTab(name) {
   if (typeof updateRibbonOverflow === "function") updateRibbonOverflow();
   // The band's single Tab stop belongs to the panel now showing, not to a
   // control that just went hidden with the previous one.
+  // Where the cached stale-caption count is earned: the References tab is the only
+  // route to the button, and a tab switch is a deliberate, infrequent interaction —
+  // the same budget the Outline panel already spends.
+  if (name === "references") referenceCommands.numbering.refresh();
   ribbonTabStop = null;
   syncRibbonTabStops();
 }
@@ -3215,6 +3219,7 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     // font it references is resolved; so do browsers, for the same reason.
     await renderAll();
     buildOutline();
+    referenceCommands.numbering.refresh();
     buildAccessibilityTree();
     drawSelection();
     armBackgroundMeasure();
@@ -7511,7 +7516,7 @@ function buildContextCommands(context) {
     },
     {
       id: "paragraph.indent.increase",
-      label: "Increase indent",
+      label: t("panelHome.increaseIndent.label"),
       group: "indent",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
@@ -7519,7 +7524,7 @@ function buildContextCommands(context) {
     },
     {
       id: "paragraph.indent.decrease",
-      label: "Decrease indent",
+      label: t("panelHome.decreaseIndent.label"),
       group: "indent",
       enabled: structuralEnabled,
       disabledReason: structuralReason,
@@ -8120,24 +8125,23 @@ const REFERENCE_SURFACE = [
     requires: "missing",
     reason: "A table of contents needs field evaluation and update, which the engine does not expose yet",
   },
-  // Word's Captions group. Both rows need an insertion point and nothing more:
-  // a caption attaches to the caret's block — which is also the block that holds
-  // a selected picture or table, since selecting an object puts the caret at its
-  // anchor — and a cross-reference is inserted at the caret. `contextMenu: true`
-  // is what puts Insert caption on the object and table right-click menus, the
-  // way ONLYOFFICE does (`DocumentHolderExt.js:46`), from this one declaration.
+  // Word's Captions group. A caption attaches to the caret's block — which is
+  // also the block that holds a selected picture or table, since selecting an
+  // object puts the caret at its anchor — and a cross-reference is inserted at
+  // the caret. `contextMenu: true` is what puts Insert caption on the object and
+  // table right-click menus, the way ONLYOFFICE does
+  // (`DocumentHolderExt.js:46`), from this one declaration.
   {
     command: "reference.caption",
-    // English, like every other row in this table: these labels are evaluated at
-    // import, before `startLocalisation` installs a catalogue, so a `t()` here
-    // would put the KEY in the palette. The context-menu row, which is built on
-    // demand, does route through the catalogue.
+    // English, like every other row here: these labels are read at import, before
+    // a catalogue exists, so `t()` would put the KEY in the palette. The
+    // context-menu row is built on demand and does route through the catalogue.
     label: "Insert caption",
     kw: "caption figure table equation label numbering sequence seq chapter",
     buttons: () => [refCaptionBtn],
-    requires: "caret",
+    requires: "bodyCaret",
     contextMenu: true,
-    run: () => captionDialog.open(),
+    run: () => referenceCommands.caption.open(),
   },
   {
     command: "reference.crossReference",
@@ -8145,7 +8149,19 @@ const REFERENCE_SURFACE = [
     kw: "cross reference ref heading bookmark figure numbered item caption footnote endnote",
     buttons: () => [refCrossRefBtn],
     requires: "caret",
-    run: () => crossRefDialog.open(),
+    run: () => referenceCommands.crossReference.open(),
+  },
+  // Word recomputes fields on print, on F9 and on open; ours are not recomputed
+  // on a Backspace, deliberately, because renumbering there would make a keystroke
+  // O(document). So the product has to OFFER the fix, or "dirty rather than
+  // silently stale" is just "stale".
+  {
+    command: "reference.updateCaptionNumbers",
+    label: "Update caption numbers",
+    kw: "update caption numbers renumber stale seq figure table refresh fix",
+    buttons: () => [refUpdateCaptionsBtn],
+    requires: "staleCaptions",
+    run: () => void referenceCommands.numbering.update(),
   },
   {
     command: "reference.updateFields",
@@ -8160,30 +8176,22 @@ const REFERENCE_SURFACE = [
   },
 ];
 
-/** The References rows Word and ONLYOFFICE put on the picture, table and
- *  equation right-click menus (`DocumentHolderExt.js:46` — Insert caption, at
- *  the top, ahead of their own separator). Derived from the ONE declaration in
- *  `REFERENCE_SURFACE` that carries `contextMenu`, so the ribbon button, the
- *  palette row and both menus cannot disagree about the command's label or about
- *  whether it is available — the single-surface/restated-row defect `docs/105`
- *  UX-004 keeps finding. Deliberately NOT on the prose menu: neither Word nor
- *  ONLYOFFICE offers a caption where there is nothing to caption. */
-function referenceObjectMenuRows() {
-  return REFERENCE_SURFACE.filter((entry) => entry.contextMenu).map((entry) => ({
-    id: entry.command,
-    label: entry.label,
-    group: "caption",
-    enabled: ribbonSurfaceEnabled(entry),
-    disabledReason: ribbonSurfaceReason(entry),
-    run: entry.run,
-  }));
-}
+/** The object/table right-click rows the References surface declares — see
+ *  `objectMenuRows`, which is where the rule and its citations live. */
+const referenceObjectMenuRows = () =>
+  objectMenuRows(REFERENCE_SURFACE, ribbonSurfaceEnabled, ribbonSurfaceReason);
 
 /** Whether a Layout/References row's precondition is met right now. */
 function ribbonSurfaceEnabled(entry) {
   if (entry.requires === "missing") return false;
   if (!doc) return false;
   if (entry.requires === "object") return !!(objectSelection && objectSelection.mode === "selected");
+  // A caption is body-only: the engine refuses one in a header, footer or note,
+  // as Word and ONLYOFFICE do, so the control says so rather than throwing.
+  if (entry.requires === "bodyCaret") return !!selection && !runningEditBand;
+  // O(1): the count is CACHED in `reference_commands.mjs` and never walked here.
+  // This runs on every keystroke, so a walk in it would make typing O(document).
+  if (entry.requires === "staleCaptions") return referenceCommands.numbering.count > 0;
   if (entry.requires === "caret") return !!selection;
   return true;
 }
@@ -8194,7 +8202,9 @@ function ribbonSurfaceReason(entry) {
   if (entry.requires === "missing") return entry.reason;
   if (!doc) return "Open a document first";
   if (entry.requires === "object") return "Select an image, shape or text box first";
-  if (entry.requires === "caret") return "Place the caret in a paragraph";
+  if (entry.requires === "staleCaptions") return t("caption.numbersAlreadyRight");
+  if (entry.requires === "bodyCaret" && selection) return t("caption.bodyOnly");
+  if (entry.requires === "caret" || entry.requires === "bodyCaret") return "Place the caret in a paragraph";
   return "";
 }
 
@@ -13089,27 +13099,17 @@ const dropCapDialog = createDropCapDialog({
   status: setStatus, fallbackFocus: () => pagesEl,
 });
 
-// ---- References ▸ Insert caption / Cross-reference (OO-005) -----------------
-// Both dialogs live in their own modules; both insert through the SAME gated,
-// tracked, undoable path every other edit uses (`runEdit({ gate: true })`), so
-// each is one Undo and each fails closed in Viewing and in Suggesting. The
-// caption's target is the caret's block: selecting a picture or a table puts the
-// caret at its anchor (`selectObject`), so one expression serves both.
-const referenceDialogHost = {
+// ---- References ▸ captions and cross-references (OO-005) --------------------
+// Both dialogs and the caption-numbering cache are `reference_commands.mjs`; what
+// is here is the application state they read. Every insert goes through the SAME
+// gated, tracked, undoable path as every other edit. The caption's target is the
+// caret's block — selecting a picture or table puts the caret at its anchor.
+const referenceCommands = createReferenceCommands({
   registerModal, getDoc: () => doc, status: setStatus, fallbackFocus: () => pagesEl,
   mutationBlocked: () => blockMutationInViewing() || blockUntrackedInSuggesting(),
-};
-const captionDialog = createCaptionDialog({
-  ...referenceDialogHost,
   targetNode: () => selection?.focus.node ?? "",
-  insert: (o) => runEdit(() => doc.insertCaption(o.targetNode, o.label, o.text, o.position,
-    o.excludeLabel, o.numberFormat, o.chapterLevel, o.separator), { gate: true }),
-});
-const crossRefDialog = createCrossReferenceDialog({
-  ...referenceDialogHost,
   caret: () => (selection ? { node: selection.focus.node, offset: selection.focus.offset } : null),
-  insert: (o) => runEdit(() => doc.insertCrossReference(o.caretNode, o.caretOffset,
-    o.targetNode, o.referenceTo, o.hyperlink), { gate: true }),
+  applyEdit: (run) => runEdit(run, { gate: true }),
 });
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------

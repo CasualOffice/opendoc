@@ -44,6 +44,8 @@ const BUILT_IN_LABELS = ["Equation", "Figure", "Table"];
  *                       selected picture or table
  *   `mutationBlocked()` true (having said why) when the review mode refuses
  *   `insert(options)`   Promise<boolean>; one gated, undoable engine call
+ *   `inserted()`        optional; run after a successful insert, for state the
+ *                       insert invalidates (the stale-caption count)
  *   `status(text, kind)` the status line
  *   `registerModal(dialog, options)` the host's modal registry
  *   `fallbackFocus()`   where focus goes when the opener has gone away
@@ -255,6 +257,7 @@ export function createCaptionDialog(io) {
     });
     if (!inserted) return;
     close();
+    io.inserted?.();
     io.status(t("caption.inserted"));
   });
 
