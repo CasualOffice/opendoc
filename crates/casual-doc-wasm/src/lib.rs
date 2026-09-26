@@ -102,6 +102,11 @@ use wasm_bindgen::prelude::*;
 
 mod window;
 
+// Captions and cross-references (`docs/105` OO-005). Its own module rather than
+// more of this file: it is one feature with one document walk, and this file is
+// already 35k lines and is owned by other lanes.
+mod references;
+
 use window::BodyLayout;
 use window::WindowedBody;
 
@@ -25946,9 +25951,23 @@ mod tests {
         const CEILING: usize = 16;
 
         type Read = fn(&WasmDocument);
-        let reads: [(&str, Read); 5] = [
+        let reads: [(&str, Read); 8] = [
             ("documentOutline", |d| {
                 let _ = d.document_outline();
+            }),
+            // The three reads captions and cross-references add (`105` OO-005).
+            // They enumerate the whole document by definition, which is exactly
+            // why they belong in this table and not in a guard of their own.
+            ("captionEntries — the cross-reference picker", |d| {
+                let _ = d.caption_entries();
+            }),
+            ("captionLabels — the Insert Caption dialog", |d| {
+                let _ = d.caption_labels();
+            }),
+            ("referenceTargets — every reference type", |d| {
+                for kind in ["heading", "bookmark", "footnote", "endnote", "Figure"] {
+                    let _ = d.reference_targets(kind);
+                }
             }),
             ("accessibilityTreeWindow", |d| {
                 let _ = d.accessibility_tree_window(0, 600);

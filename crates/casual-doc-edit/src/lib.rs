@@ -41,11 +41,15 @@ use casual_doc_model::v1::{Fill, GroupChild, GroupShape, ShapeStroke};
 use casual_doc_model::v1::{HeaderFooter, HeaderFooterId, HeaderFooterKind, HeaderFooterRef};
 use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 
-/// Captions and cross-references: the OOXML field markup (`SEQ`, `REF`,
-/// `PAGEREF`, `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005).
-/// Its own module rather than more of this file, because it is pure construction
-/// with no document access — which is also what makes it unit-testable without a
-/// document.
+// Captions and cross-references: the OOXML field markup (`SEQ`, `REF`, `PAGEREF`,
+// `STYLEREF`) and the model nodes that carry it (`docs/105` OO-005). Its own module
+// rather than more of this file, because it is pure construction with no document
+// access — which is also what makes it unit-testable without a document.
+//
+// A plain comment, not a doc comment: a doc comment here would be resolved in the
+// crate root's scope, where the module's own items are not in scope, and every
+// intra-doc link in it fails `RUSTDOCFLAGS="-D warnings" cargo doc`. The module's
+// documentation lives in its file, as `//!`.
 pub mod references;
 
 std::thread_local! {

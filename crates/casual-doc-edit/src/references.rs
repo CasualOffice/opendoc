@@ -512,12 +512,14 @@ pub fn caption_paragraph(
     chapter_number: &str,
     next_id: &mut impl FnMut() -> Result<NodeId, EditError>,
 ) -> Result<Paragraph, EditError> {
-    let mut properties = ParagraphProperties::default();
-    properties.style_ref = style;
-    // A caption above its item must stay with it; Word's own Caption style
-    // carries `keepNext` for exactly this reason, and a document whose Caption
-    // style predates us may not.
-    properties.keep_next = spec.position == CaptionPosition::Above;
+    let properties = ParagraphProperties {
+        style_ref: style,
+        // A caption above its item must stay with it; Word's own Caption style
+        // carries `keepNext` for exactly this reason, and a document whose
+        // Caption style predates us may not.
+        keep_next: spec.position == CaptionPosition::Above,
+        ..ParagraphProperties::default()
+    };
     Ok(Paragraph {
         id,
         properties: properties.into(),
@@ -568,11 +570,15 @@ pub fn above_below(target_order: usize, reference_order: usize) -> &'static str 
 /// this module reads no document). O(1).
 #[must_use]
 pub fn caption_style(based_on: Option<StyleId>) -> Style {
-    let mut run = RunProperties::default();
-    run.bold = Some(true);
-    run.size_half_points = Some(18);
-    let mut paragraph = ParagraphProperties::default();
-    paragraph.keep_next = true;
+    let run = RunProperties {
+        bold: Some(true),
+        size_half_points: Some(18),
+        ..RunProperties::default()
+    };
+    let paragraph = ParagraphProperties {
+        keep_next: true,
+        ..ParagraphProperties::default()
+    };
     Style {
         kind: StyleKind::Paragraph,
         is_default: false,
