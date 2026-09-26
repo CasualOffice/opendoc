@@ -823,7 +823,8 @@ fn a_substituted_glyph_with_no_character_map_entry_copies_out_too() {
     // in no character map at all, so those copied as NOTHING and were counted as
     // `pdf.font.unmapped_glyphs`. Same defect, other half.
     let text = "often afflicted by fjords";
-    let document = calibri_document(text);
+    // Carlito by name, not by substitution from "Calibri" -- see `document_in_font`.
+    let document = document_in_font("Carlito", text);
     let (glyphs, characters) = shaped_glyphs_vs_characters(&document);
     assert!(
         glyphs < characters,
@@ -867,7 +868,10 @@ fn display_lists_without_a_document_still_export_a_text_layer() {
     // `write_pdf` has no document to resolve clusters against, so its text layer
     // is the character-map inversion -- a real limitation, stated rather than
     // hidden. It must still produce a `ToUnicode` map and recover ordinary text.
-    let document = calibri_document("plain words");
+    // A bundled face by name: this test is the one that CANNOT tolerate the
+    // shaping face and the embedded face disagreeing, because the inversion is
+    // read straight off the embedded face's character map.
+    let document = document_in_font("Carlito", "plain words");
     let shaper = ParleyShaper::new();
     let laid_out = paginate_document(&document, &shaper);
     let lists: Vec<_> = laid_out
@@ -911,7 +915,20 @@ fn drawn_glyph_ids(document: &Document) -> BTreeSet<u32> {
 
 /// A one-paragraph document whose run asks for Calibri, which resolves to the
 /// bundled Carlito.
-fn calibri_document(text: &str) -> Document {
+/// A one-run document in `font`, which must be a BUNDLED face.
+///
+/// It used to ask for "Calibri" and rely on the shaper substituting the bundled
+/// metric-compatible Carlito. That is not a substitution every platform makes:
+/// Windows HAS Calibri, so there the shaper used the real system face while
+/// `write_pdf` embedded and inverted the bundled one, and the glyph ids were read
+/// against the wrong face. The character-map fallback then extracted
+/// "\u{2d8}\u{2fe}\u{24d}..." instead of "plain words" -- green on macOS and
+/// Linux, red only on Windows.
+///
+/// So the face is named outright. Both halves of the export then agree on every
+/// platform, and the ligature tests below exercise the same face everywhere
+/// instead of whichever face the host happens to own.
+fn document_in_font(font: &str, text: &str) -> Document {
     use casual_doc_model::NodeId;
     use casual_doc_model::v1::{
         BlockNode, Definitions, FontName, FontRef as ModelFontRef, InlineNode, Paragraph,
@@ -920,7 +937,7 @@ fn calibri_document(text: &str) -> Document {
     let node = |id: u64| NodeId::from_parts(id, 1).expect("a valid node id");
     let properties = RunProperties {
         font_ref: Some(ModelFontRef::Named(FontName {
-            name: "Calibri".to_owned(),
+            name: font.to_owned(),
         })),
         ..RunProperties::default()
     };
