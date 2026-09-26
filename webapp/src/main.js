@@ -44,6 +44,7 @@ import {
 } from "./page_scroll.mjs";
 import {
   compatibilityOccurrenceCount,
+  importFindingCount,
   downloadNameForFormat,
   formatInfo,
 } from "./format_io.mjs";
@@ -80,6 +81,7 @@ import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
+import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
@@ -3156,7 +3158,11 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     setDocumentState("opened");
     if (saveBtn) saveBtn.disabled = false;
     populateSaveFormats();
-    showCompatibilityFindings(0, "export");
+    // What the IMPORT lost, not a cleared slate. `importReportJson` was a shipped
+    // engine getter with zero consumers: loss was computed on every open and
+    // thrown away, while export loss was reported. SKILL §1 names reporting as
+    // the condition under which verbatim retention is an advantage at all.
+    showCompatibilityFindings(importFindingCount(doc.importReportJson), "import");
     railOutline.disabled = false;
     railPages.disabled = false;
     populateStyles();
@@ -16573,32 +16579,6 @@ const languageSelect = document.getElementById("languageSelect");
 const authorNameInput = document.getElementById("authorName");
 const authorInitialsInput = document.getElementById("authorInitials");
 
-const DEFAULT_SETTINGS = {
-  theme: "system",
-  // "" means follow the browser. A person who has never touched this gets
-  // their own language if we ship it, and a person who chose one keeps it even
-  // on a machine whose browser disagrees (docs/124 §5).
-  language: "",
-  accent: "#3355c4",
-  authorName: "",
-  authorInitials: "",
-  // On by default: the row this closes is a P0 data-safety row, and a safety
-  // net nobody switches on is not one. Turning it off deletes what is stored.
-  autosave: true,
-  // Spelling. On by default because a plain <textarea> checks spelling and an
-  // editor that does not is visibly behind one; remembered, because a user who
-  // turned it off did not mean "until the next reload" (docs/114 §5.6).
-  spellCheck: true,
-  // Grammar. A SEPARATE switch from spelling, as in Word: the two checks are
-  // independent, they mark differently, and the owner rates grammar the more
-  // important of the two — so it must not be reachable only by leaving
-  // spelling on.
-  grammarCheck: true,
-  // The language used where the document's own w:lang does not say. NOT
-  // navigator.language: that would make every test non-deterministic and the
-  // user could not see why the answer changed.
-  spellLanguage: "en-US",
-};
 let settings = loadSettings();
 
 function loadSettings() {

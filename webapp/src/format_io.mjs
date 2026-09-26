@@ -61,3 +61,16 @@ export function compatibilityOccurrenceCount(reportJson) {
     );
   }, 0);
 }
+
+/** Occurrences in an IMPORT report, which may legitimately not exist.
+ *
+ *  A blank document was never imported, and some formats report nothing, so the
+ *  engine hands back an empty string rather than an empty report. That is not an
+ *  error and must not stop a document opening. A report that exists but is
+ *  malformed still throws, because that is a real defect and silently reporting
+ *  "0 findings" would be the worst possible answer — it claims a clean import.
+ */
+export function importFindingCount(reportJson) {
+  if (!reportJson) return 0;
+  return compatibilityOccurrenceCount(reportJson);
+}
