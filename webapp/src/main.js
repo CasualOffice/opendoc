@@ -167,6 +167,7 @@ import {
 import { followExternalTarget } from "./link_targets.mjs";
 import { createPointerHover } from "./pointer_hover.mjs";
 import { createRuler } from "./ruler.mjs";
+import { createObjectPresence } from "./object_presence.mjs";
 
 
 /** url → Uint8Array of already-fetched font bytes (persists across documents). */
@@ -3090,6 +3091,9 @@ async function openBytes(bytes, name, onOpened, onRendered) {
     backgroundMeasure = null;
     if (doc) doc.free();
     doc = next;
+    // A different document, so the remembered object answer belongs to a
+    // document that no longer exists.
+    objectPresence.forget();
     currentSourceFormat = doc.sourceFormat;
     applyActiveAuthorToDocument();
     // Word/Docs: an open document always has an insertion point, so Insert ▸
@@ -4963,15 +4967,15 @@ function selectedObjectContext() {
 /** Whether the document holds any floating object at all, which is what decides
  *  if the "select next object" commands are offered rather than greyed. Asked of
  *  the engine's own paint order so the answer cannot drift from what traversal
- *  would actually land on. */
+ *  would actually land on — and memoized, because the question is asked on a
+ *  per-keystroke path while `objectOrder()` is O(objects) (`109` HF-183; the
+ *  whole argument, and the invalidation contract, is in `object_presence.mjs`).
+ *
+ *  Cost: O(1) per call, O(objects) once per edit. */
+const objectPresence = createObjectPresence(() => doc.objectOrder());
 function documentHasObjects() {
   if (!doc) return false;
-  try {
-    const objects = JSON.parse(doc.objectOrder());
-    return Array.isArray(objects) && objects.length > 0;
-  } catch {
-    return false;
-  }
+  return objectPresence.has();
 }
 
 /** Moves the object selection `step` places through the document's objects, in
@@ -8571,6 +8575,11 @@ function readRevision(res) {
  *  Call with the revision read BEFORE `res.free()`. */
 function noteDocumentEdited(revision) {
   clearFindParagraphCache();
+  // Every landed edit can add or remove a floating object, so the memoized
+  // yes/no answer is dropped here — the one choke point every edit passes
+  // (`109` HF-183). Costs one engine call on the next question, which is the
+  // price of not asking on every keystroke.
+  objectPresence.forget();
   if (revision === null || revision === undefined) revisionUnreadable = true;
   else currentRevision = revision;
   setDocumentState("edited");
