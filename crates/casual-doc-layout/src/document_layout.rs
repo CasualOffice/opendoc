@@ -1010,7 +1010,11 @@ fn resume_pagination(
     let changed_pages = if layout.pages.len() == previous_page_count {
         stats.reused_prefix..stats.reused_prefix + stats.reflowed
     } else {
-        0..layout.pages.len()
+        // Every page: a page appearing or disappearing changes every `NUMPAGES`
+        // and every page number after it. The range runs to the LONGER of the two
+        // page lists so a host that dropped pages is told which indices are gone,
+        // which is what comparing two layouts used to report.
+        0..layout.pages.len().max(previous_page_count)
     };
     Resume::Resumed {
         layout,

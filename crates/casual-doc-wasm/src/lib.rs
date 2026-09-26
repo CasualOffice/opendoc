@@ -41,8 +41,8 @@ use casual_doc_layout::block::BlockFragment;
 use casual_doc_layout::cascade::{StyleCascade, requested_font_family};
 use casual_doc_layout::compose::compose_page;
 use casual_doc_layout::document_layout::{
-    document_page_config, paginate_document, paginate_document_cached, paginate_document_view,
-    paginate_document_view_cached,
+    LayoutUpdate, document_page_config, paginate_document, paginate_document_view,
+    paginate_document_view_after_edit,
 };
 use casual_doc_layout::flow::{ReviewView, append_node_plain_text, node_plain_text};
 use casual_doc_layout::font_registry::{EmbeddedFontOutcome, register_embedded_fonts};
@@ -11785,16 +11785,35 @@ impl WasmDocument {
     /// correct and always `O(document)`.
     fn finish_edit_with(&mut self, caret: Pos, damage: &DirtySet) -> EditResult {
         self.revision += 1;
-        // Incremental re-pagination: reuse the shaped lines of every paragraph the
-        // edit did not touch. With a complete damage set the unchanged paragraphs
-        // are not even re-derived; without one, the cache's content hash still
-        // re-shapes only what changed, at the cost of hashing everything.
-        let new_layout = paginate_document_cached(
+        // The previous layout is TAKEN, not borrowed, and handed to the layout
+        // pass so the pages it reuses are moved rather than copied. `apply_group`
+        // refuses every mutation on a windowed body, so a whole one is what
+        // arrives here; the match is there so a windowed one is put back
+        // untouched rather than silently replaced.
+        let previous = match std::mem::replace(
+            &mut self.layout,
+            BodyLayout::Whole(PaginatedLayout::default()),
+        ) {
+            BodyLayout::Whole(layout) => Some(layout),
+            windowed => {
+                self.layout = windowed;
+                None
+            }
+        };
+        // Incremental re-layout: the unchanged blocks' fragments and the pages
+        // above and below the edit are reused, so the work is proportional to the
+        // edit rather than to the document (`docs/107` B1, `109` HF-182). With a
+        // damage set that is not complete this still produces the identical
+        // layout, by re-deriving and re-hashing every paragraph.
+        let update = paginate_document_view_after_edit(
             &self.document,
             &self.shaper,
             &mut self.galley_cache,
             damage,
+            ReviewView::Editing,
+            previous,
         );
+        let editing_dirty = pages_to_repaint(&update);
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
         // that is the markup layout, which `set_show_changes` built once and
@@ -11805,29 +11824,29 @@ impl WasmDocument {
         // review feature exists for.
         let dirty = match self.markup_layout.take() {
             Some(previous) => {
-                // Cached, like the editing layout beside it, and through the
+                // Incremental, like the editing layout beside it, and through the
                 // SAME cache: the entry hash is taken over flow items produced
                 // after the view is applied, so the two views cannot collide
-                // (`one_cache_serves_both_views`). Uncached this was 15.4 ms
+                // (`one_cache_serves_both_views`), and the retained galley has a
+                // slot per view so they do not thrash. Uncached this was 15.4 ms
                 // per keystroke against the editing path's 2.5 ms on a 28-page
                 // document — a dropped frame from layout alone, paid by
                 // exactly the users the review features are for.
-                let markup = paginate_document_view_cached(
+                let markup = paginate_document_view_after_edit(
                     &self.document,
                     &self.shaper,
                     &mut self.galley_cache,
                     damage,
                     ReviewView::Markup,
+                    Some(previous),
                 );
-                let dirty = dirty_pages(&previous, &markup);
-                self.markup_layout = Some(markup);
+                let dirty = pages_to_repaint(&markup);
+                self.markup_layout = Some(markup.layout);
                 dirty
             }
-            None => dirty_pages(self.editing_layout(), &new_layout),
+            None => editing_dirty,
         };
-        // Whole by construction: `apply_group` refuses every mutation on a
-        // windowed body, so nothing reaches here with one.
-        self.layout = BodyLayout::Whole(new_layout);
+        self.layout = BodyLayout::Whole(update.layout);
         EditResult {
             node: caret.node.to_string(),
             offset: caret.offset,
@@ -13170,17 +13189,6 @@ impl WasmDocument {
         }
         self.layout
             .ensure_resident(&self.document, &self.shaper, index as usize)
-    }
-
-    /// The editing layout, for bookkeeping that is deliberately independent of
-    /// what is painted: repagination, the dirty-page set, page counts for export,
-    /// and logical (non-geometric) caret movement.
-    ///
-    /// If you are answering a question that started as a pixel, or producing a
-    /// rectangle that will be drawn, this is the wrong one — use
-    /// [`Self::painted_layout`].
-    fn editing_layout(&self) -> &PaginatedLayout {
-        self.layout.resident()
     }
 
     /// A snapshot of the layout that produced the pixels, which is what every
@@ -23285,6 +23293,25 @@ fn prev_word_boundary(text: &str, offset: usize) -> Option<usize> {
     text.unicode_word_indices()
         .map(|(start, _)| start)
         .rfind(|&start| start < offset)
+}
+
+/// The pages the frontend must repaint after one layout pass.
+///
+/// An incremental pass **reports** the range, because it knows which pages it
+/// re-flowed and which it moved across untouched; comparing the two layouts
+/// instead is an `O(document)` deep comparison per keystroke, which is the cost
+/// `109` HF-182 is about. When the pass could not resume it hands the previous
+/// layout back and the comparison is still available; when it consumed the
+/// previous layout and then fell back (a body with paragraph-anchored floats),
+/// there is nothing to compare against and every page is repainted.
+///
+/// `O(reported pages)`, or `O(document)` on the comparison fallback.
+fn pages_to_repaint(update: &LayoutUpdate) -> Vec<u32> {
+    match (&update.changed_pages, &update.previous) {
+        (Some(changed), _) => changed.clone().map(|index| index as u32).collect(),
+        (None, Some(previous)) => dirty_pages(previous, &update.layout),
+        (None, None) => (0..update.layout.pages.len() as u32).collect(),
+    }
 }
 
 /// The indices of pages that differ between two layouts (changed, added, or
@@ -35479,47 +35506,88 @@ mod tests {
         );
     }
 
-    /// TEMPORARY HF-182 measurement probe. Removed before the PR.
-    #[test]
-    #[ignore]
-    fn zz_hf182_keystroke_probe() {
-        use std::time::Instant;
-        for n in [400usize, 800, 1600] {
-            let mut d = plain_text_document(n);
-            let ordered = d.ordered_paragraphs();
-            let first = ordered[0].0.to_string();
-            let last = ordered[ordered.len() - 1].0.to_string();
-            // warm
-            let _ = d.type_text(&last, 6, &last, 6, "x".to_owned(), 1).unwrap();
-            for (label, node) in [("first", &first), ("last", &last)] {
-                let mut d = plain_text_document(n);
-                let mut offset = 6u32;
-                let _ = d.type_text(node, offset, node, offset, "x".to_owned(), 1).unwrap();
-                offset += 1;
-                casual_doc_edit::reset_block_visits();
-                let start = Instant::now();
-                let k = 20;
-                for _ in 0..k {
-                    let _ = d.type_text(node, offset, node, offset, "x".to_owned(), 1).unwrap();
-                    offset += 1;
-                }
-                let per = start.elapsed().as_micros() / k as u128;
-                let visits = casual_doc_edit::block_visits() / k as u64;
-                // Split: how much of that is the layout call in `finish_edit`?
-                let mut cache = std::mem::take(&mut d.galley_cache);
-                let t = Instant::now();
-                for _ in 0..k {
-                    let _ = casual_doc_layout::document_layout::paginate_document_cached(
-                        &d.document,
-                        &d.shaper,
-                        &mut cache,
-                        &casual_doc_layout::incremental::DirtySet::new(),
-                    );
-                }
-                let layout_us = t.elapsed().as_micros() / k as u128;
-                d.galley_cache = cache;
-                println!("n={n:5} at={label:5} pages={:3} per_keystroke={per:6}us layout={layout_us:6}us block_visits={visits:8}", d.page_count());
-            }
+    /// The layout work one **keystroke through the public typing API** costs, at
+    /// `paragraphs` paragraphs: blocks whose layout was re-derived, pages
+    /// re-flowed, and pages the engine told the host to repaint.
+    fn keystroke_layout_work(paragraphs: usize) -> (usize, usize, usize, u32) {
+        let mut d = plain_text_document(paragraphs);
+        let node = d.ordered_paragraphs()[0].0.to_string();
+        // Three keystrokes: the first two establish the retained galley and the
+        // reusable layout, the third is the steady state being measured.
+        let mut offset = 6u32;
+        let mut dirty = Vec::new();
+        for _ in 0..3 {
+            dirty = d
+                .type_text(&node, offset, &node, offset, "x".to_owned(), 1)
+                .expect("typing into a plain-text document")
+                .dirty_pages();
+            offset += 1;
         }
+        (
+            d.galley_cache.rebuilt_last_build(),
+            d.galley_cache.pages_reflowed_last_build(),
+            dirty.len(),
+            d.page_count(),
+        )
+    }
+
+    /// A keystroke must cost the same layout work whatever the document's length
+    /// — `docs/107` §4 B1, and the defect `109` HF-182 reported.
+    ///
+    /// This guards the path a user is actually on: `typeText`, through
+    /// `apply_group`, `damage_of` and `finish_edit_with`. The layout crate's own
+    /// `incremental_galley_reuse` battery guards the engine it calls; this one
+    /// guards that the facade hands it a damage set it can use and the previous
+    /// layout it can resume from. Both are needed — the reuse is dormant unless
+    /// the caller opts in, and a layout-crate test cannot notice a facade that
+    /// never does.
+    ///
+    /// The assertion is that each count is **flat**, not that it grows slowly. A
+    /// doubling bound would accept the behaviour being replaced (which re-derived
+    /// every block and re-flowed every page), and a millisecond threshold cannot
+    /// tell a slow constant from a linear walk.
+    #[test]
+    fn a_keystroke_costs_the_same_layout_work_whatever_the_document_length() {
+        let small_n = 400;
+        let (small_blocks, small_pages, small_dirty, small_page_count) =
+            keystroke_layout_work(small_n);
+        let (large_blocks, large_pages, large_dirty, large_page_count) =
+            keystroke_layout_work(small_n * 2);
+        // The precondition: the two documents must really differ in size, or none
+        // of the assertions below could fail.
+        assert!(
+            large_page_count >= small_page_count * 2 - 1,
+            "doubling the paragraphs must roughly double the pages: \
+             {small_page_count} and {large_page_count}"
+        );
+        assert_eq!(
+            large_blocks, small_blocks,
+            "the blocks a keystroke re-derives must not grow with the document: \
+             {small_blocks} at {small_n} paragraphs and {large_blocks} at {}",
+            small_n * 2
+        );
+        assert_eq!(
+            large_pages, small_pages,
+            "the pages a keystroke re-flows must not grow with the document: \
+             {small_pages} of {small_page_count} at {small_n} paragraphs and \
+             {large_pages} of {large_page_count} at {}",
+            small_n * 2
+        );
+        assert_eq!(
+            large_dirty, small_dirty,
+            "the pages a keystroke asks the host to repaint must not grow with \
+             the document: {small_dirty} at {small_n} paragraphs and {large_dirty} \
+             at {}",
+            small_n * 2
+        );
+        assert_eq!(
+            small_blocks, 1,
+            "one keystroke touches one paragraph, so one block is re-derived"
+        );
+        assert!(
+            small_pages <= 2 && small_dirty <= 2,
+            "a keystroke disturbs the page it lands on, not {small_pages} pages \
+             ({small_dirty} repainted)"
+        );
     }
 }
