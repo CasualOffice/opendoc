@@ -714,8 +714,20 @@
           </div>
           <div class="rgroup">
             <div class="rgroup-ctl">
-              <button data-i18n-title="panelView.zoomOut.title" data-i18n-label="panelView.zoomOut.label" id="viewZoomOut" type="button" class="fmt" title="Zoom out" aria-label="Zoom out" disabled><span class="ms" aria-hidden="true">remove</span></button>
-              <button data-i18n-title="panelView.zoom.title" data-i18n-label="panelView.zoom.label" id="viewZoomIn" type="button" class="fmt" title="Zoom in" aria-label="Zoom in" disabled><span class="ms" aria-hidden="true">add</span></button>
+              <button data-zoom-action="out" data-i18n-title="panelView.zoomOut.title" data-i18n-label="panelView.zoomOut.label" id="viewZoomOut" type="button" class="fmt" title="Zoom out" aria-label="Zoom out" disabled><span class="ms" aria-hidden="true">remove</span></button>
+              <button data-zoom-action="in" data-i18n-title="panelView.zoom.title" data-i18n-label="panelView.zoom.label" id="viewZoomIn" type="button" class="fmt" title="Zoom in" aria-label="Zoom in" disabled><span class="ms" aria-hidden="true">add</span></button>
+              <span class="rgroup-mini-divider" aria-hidden="true"></span>
+              <!-- The three zoom operations people actually ask for, which the
+                   band did not offer: they existed only in the status-bar menu
+                   and the palette, so reaching "fit the page" from the ribbon
+                   meant stepping 10% at a time. ONLYOFFICE gives each its own
+                   View-tab button (`ViewTab.js:52-125`), and so does Word.
+                   `aria-pressed` because Fit width / Fit page / Actual size are
+                   mutually exclusive STATES, unlike the two steppers beside
+                   them, which are verbs. -->
+              <button data-zoom-action="fit-width" data-i18n-title="panelView.fitWidth.title" data-i18n-label="panelView.fitWidth.label" id="viewFitWidth" type="button" class="fmt" title="Fit width" aria-label="Fit width" aria-pressed="false" disabled><span class="ms" aria-hidden="true">fit_width</span></button>
+              <button data-zoom-action="fit-page" data-i18n-title="panelView.fitPage.title" data-i18n-label="panelView.fitPage.label" id="viewFitPage" type="button" class="fmt" title="Fit page" aria-label="Fit page" aria-pressed="false" disabled><span class="ms" aria-hidden="true">fit_page</span></button>
+              <button data-zoom-action="actual" data-i18n-title="panelView.actualSize.title" data-i18n-label="panelView.actualSize.label" id="viewZoomActual" type="button" class="fmt fmt-num" title="Actual size (100%)" aria-label="Actual size" aria-pressed="false" disabled><span data-i18n="panelView.zoom100">100%</span></button>
             </div>
             <span data-i18n="panelView.zoom" class="rgroup-label">Zoom</span>
           </div>

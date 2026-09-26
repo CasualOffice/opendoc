@@ -79,6 +79,7 @@ import {
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
+import { createViewZoom } from "./view_zoom.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
@@ -395,8 +396,6 @@ const filePageBody = document.getElementById("filePageBody");
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 const viewOutlineBtn = document.getElementById("viewOutlineBtn");
-const viewZoomOut = document.getElementById("viewZoomOut");
-const viewZoomIn = document.getElementById("viewZoomIn");
 const findBtn = document.getElementById("findBtn");
 const findPanel = document.getElementById("findPanel");
 const findInput = document.getElementById("findInput");
@@ -1289,8 +1288,7 @@ window.addEventListener("scroll", () => { if (tipTarget) disarmTip(tipTarget); }
 undoBtn.addEventListener("click", () => runEdit(() => doc.undo()));
 redoBtn.addEventListener("click", () => runEdit(() => doc.redo()));
 viewOutlineBtn.addEventListener("click", () => toggleOutline());
-viewZoomOut.addEventListener("click", () => stepZoom(-1));
-viewZoomIn.addEventListener("click", () => stepZoom(1));
+const viewZoom = createViewZoom({ stepZoom, setZoom, setZoomMode, zoomState: () => ({ mode: zoomMode, factor: zoomFactor }) });
 const railOutline = document.getElementById("railOutline");
 const railPages = document.getElementById("railPages");
 const railReview = document.getElementById("railReview");
@@ -9552,8 +9550,7 @@ function updateToolbar() {
   reviewBtn.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
   railReview.disabled = !doc;
   railReview.setAttribute("aria-pressed", String(!reviewSidebar.hidden));
-  viewZoomOut.disabled = !doc;
-  viewZoomIn.disabled = !doc;
+  viewZoom.setEnabled(!!doc);
   tabTable.disabled = !inTable;
   if (tabTable.disabled && tabTable.getAttribute("aria-selected") === "true") {
     selectRibbonTab("home");
@@ -15829,6 +15826,7 @@ function updateZoomDisplay() {
   for (const b of zoomMenu.querySelectorAll(".zoom-fit")) {
     b.setAttribute("aria-checked", String(zoomMode === b.dataset.zoomMode));
   }
+  viewZoom.reflect();
 }
 
 /** Sets a fixed zoom factor (exits any fit mode) and re-renders. A deliberate

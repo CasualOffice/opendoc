@@ -4106,6 +4106,22 @@ body.compact-mode {
   display: block;
 }
 
+/* A ribbon button whose face is a short piece of TEXT rather than an icon.
+   Material Symbols has no numeral ligature, so "100" as a `.ms` rendered the
+   literal three characters and `.fmt`'s fixed square clipped it to "10" — a
+   control that looks broken. The reference labels this one in words too:
+   ONLYOFFICE's `slot-btn-zoom-100` is a `btn-slot text` with a "100%" caption
+   (`ViewTab.js:79, 326-331`). Auto width, floored at the icon square so it
+   still lines up with the icon buttons beside it. */
+.fmt-num {
+  width: auto;
+  min-width: var(--h-control);
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .format-glyph {
   display: block;
   font-size: 15px;
