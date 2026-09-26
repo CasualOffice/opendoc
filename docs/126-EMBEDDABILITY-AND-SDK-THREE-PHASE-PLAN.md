@@ -120,6 +120,85 @@ guard rather than asserted.
 
 ---
 
+## Container policy — owner notes, 2026-09-27
+
+Three constraints the owner gave after Phase 1 landed. They are here rather than in a
+phase because they cut across all three.
+
+### 1. The policies are per capability, not per tier
+
+A host must be able to withhold **print, download, save, edit and comment
+independently** — "comments only, everything else off" is a real configuration, not a
+step on a ladder. The five roles stay, because most hosts want a name rather than a
+checklist, but they are **presets over the capability set, never the unit of
+enforcement**. Anything a role can express, an explicit capability list must also be
+able to express, and the two must resolve through the same code — one authority, or the
+roles and the fine-grained list will disagree the way the `shortcut:` labels and the
+key bindings did (`109` UX-006/UX-007).
+
+### 2. Surface composition is a different question from command gating
+
+"Never a dead control" (`SKILL.md` §10) says a command that cannot run **now** ships
+disabled **with a reason**, never hidden. That rule is about a *command inside a surface
+the user was offered*. It does NOT say every role gets every surface.
+
+So the two rules compose:
+
+* **A role that has no business with a whole surface does not get the surface.** A
+  `readonly` container has no editing ribbon. Not a ribbon full of greyed buttons — no
+  ribbon. Word, Google Docs and ONLYOFFICE all do this: their read-only/preview
+  presentations are a different chrome, not the editing chrome with everything dimmed.
+* **Within a surface a role DOES get, a command that cannot run right now is disabled
+  and says why.** That is where "never a dead control" applies, and Phase 1's
+  disabled-with-a-reason work is correct there.
+
+A wall of greyed controls is not honesty, it is noise: it tells a reader about
+capabilities they will never have, and it buries the one or two things they *can* do.
+The distinction to hold onto is **"never, for you" versus "not right now"** — the first
+is composition, the second is state.
+
+This refines what Phase 1 shipped. Phase 1 gates commands and disables review-mode
+buttons with a reason, which is right for `edit`/`commentor`, and wrong for `readonly`
+and `preview`, where the band should be absent.
+
+### 3. `preview` and `readonly` are NOT the same thing
+
+They were correctly given different capability sets in Phase 1 (`preview` grants
+nothing, `readonly` grants `print`), but the difference is bigger than one capability
+and the chrome has to reflect it:
+
+| | `preview` | `readonly` |
+| --- | --- | --- |
+| What it is | The runtime as a **layout and rendering engine** (`docs/83` §2) — a picture of the document | A **reading experience** of the document |
+| Chrome | Minimal to none. No ribbon, no menu bar. Possibly only the pages | Reading chrome: navigation, outline, find, zoom, page controls, print |
+| Who embeds it | A host showing a thumbnail, an attachment preview, a search result, a print preview | A host publishing a document for people to read |
+| The test of the difference | Could a static image replace it? For `preview`, nearly | For `readonly`, no — the reader navigates and searches |
+
+Consequence: `preview` is not "`readonly` minus print". Collapsing them would give every
+attachment preview a reading UI it does not want, or every published document a bare
+canvas with no way to get to page 40. They are separate presentations and Phase 2/3 must
+keep them so.
+
+## Site documentation is part of every phase, including Phase 1
+
+Owner instruction: the SDK documentation goes **on the site**, attached to the phases,
+and Phase 1's own page is owed now rather than at the end.
+
+The binding constraint is `docs/99` §9: the fidelity and landing pages have carried
+**fabricated claims twice, in both directions**. So for every phase:
+
+* **Every example on the site is extracted from code that runs in CI**, never
+  hand-written into the page. A snippet nobody executes is the next false claim.
+* Every number is generated from a committed artifact and re-derived by a guard, as
+  `site_claims.test.mjs` already does for the landing page.
+* Each page carries an honest **"what this does not do yet"** section. Phase 1's must
+  say there is no command/event API and nothing published to a registry.
+
+Phase 1's page has real material to point at: an installable package, `<opendoc-editor>`,
+the five roles, the three enforcement layers (browser sandbox / engine mode / chrome
+reason), and `webapp/embed.html` as a working demo — so it can link a thing that runs
+rather than describe one.
+
 ## Explicitly not in these three
 
 * **Collaboration, presence, sharing, roles-at-a-server** — `109` HF-114, and last by
