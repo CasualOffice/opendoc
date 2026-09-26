@@ -5511,8 +5511,8 @@ pub(crate) fn shape_field_run(
         shading: None,
         baseline_shift: Twip::ZERO,
     };
-    let node = NodeId::from_parts(1, 1).expect("1/1 is a valid node id");
-    let dummy = ModelRange::new(ModelPos::new(node, 0), ModelPos::new(node, 0));
+    let probe_node = NodeId::from_parts(1, 1).expect("1/1 is a valid node id");
+    let dummy = ModelRange::new(ModelPos::new(probe_node, 0), ModelPos::new(probe_node, 0));
     let layout = shaper.shape_paragraph(&[styled], tabs::unwrapped_constraints(), dummy);
     let mut glyphs: Vec<Glyph> = Vec::new();
     let (mut ascent, mut descent) = (Twip::ZERO, Twip::ZERO);
@@ -5535,6 +5535,10 @@ pub(crate) fn shape_field_run(
         run: GlyphRun {
             is_marker: false,
             is_leader: false,
+            // A literal field's glyphs carry real model offsets (`cluster_for`
+            // adds `base`), so the anchor names the paragraph they index. An
+            // atomic field's painted value is not model text, so it names none.
+            node: anchor.node,
             font: style.font,
             size: style.size,
             // Synthesized here rather than shaped, so there is no face to
@@ -5566,6 +5570,10 @@ pub(crate) fn shape_field_run(
 /// paragraph.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldAnchor {
+    /// The paragraph whose text [`base`](Self::base) is an offset into, when the
+    /// painted value IS that text. `None` for an atomic field, whose painted value
+    /// corresponds to no model characters at all.
+    node: Option<NodeId>,
     /// The model byte offset of the field's first character.
     base: u32,
     /// Whether the painted value IS the model text, character for character.
@@ -5578,9 +5586,10 @@ pub(crate) struct FieldAnchor {
 }
 
 impl FieldAnchor {
-    /// A field whose painted value is its model text.
-    pub(crate) fn literal(base: u32) -> Self {
+    /// A field whose painted value is its model text, at `base` within `node`.
+    pub(crate) fn literal(node: NodeId, base: u32) -> Self {
         Self {
+            node: Some(node),
             base,
             literal: true,
         }
@@ -5589,6 +5598,7 @@ impl FieldAnchor {
     /// A field painting a value that is not model text - one atomic position.
     pub(crate) fn atomic(base: u32) -> Self {
         Self {
+            node: None,
             base,
             literal: false,
         }
@@ -5942,7 +5952,7 @@ fn measure_fielded_segment(
                 // showing its cached result unchanged; a recomputed `PAGE`
                 // number, or the placeholder for an empty field, is not.
                 let anchor = if *model_len == value.len() as u32 {
-                    FieldAnchor::literal(byte)
+                    FieldAnchor::literal(node, byte)
                 } else {
                     FieldAnchor::atomic(byte)
                 };
@@ -7859,6 +7869,7 @@ mod tests {
             runs: vec![GlyphRun {
                 is_marker: false,
                 is_leader: false,
+                node: None,
                 font: FontId(0),
                 size: Twip(100),
                 ascent: Twip(0),

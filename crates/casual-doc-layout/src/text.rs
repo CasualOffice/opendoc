@@ -12,6 +12,8 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 
 use casual_doc_model::v1::{NoteId, NoteKind};
+// Own line (anti-conflict): the paragraph anchor `GlyphRun::node` carries.
+use casual_doc_model::NodeId;
 
 use crate::block::BlockFragment;
 use crate::model::ModelRange;
@@ -134,6 +136,29 @@ pub struct GlyphRun {
     /// while a caret click still lands in the body. Additive: defaults false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_marker: bool,
+    /// The paragraph node whose text the glyphs' [`Glyph::cluster`] offsets index,
+    /// when this run was shaped from model text.
+    ///
+    /// A fixed-size **anchor**, not the text: a `String` per run would be paid by
+    /// every document on every layout pass (a 1.3M-paragraph document would hold
+    /// 1.3M copies of text it already stores once) and read only by a consumer
+    /// that needs the source characters. With the anchor, such a consumer resolves
+    /// `cluster` against the paragraph's own text — `crate::flow::node_plain_text`,
+    /// the byte layout these offsets index — through one index built per pass
+    /// (`casual_doc_edit::ParagraphIndex`), never a lookup-by-id per run.
+    ///
+    /// `None` for a run that is not model text and therefore has no source
+    /// characters to recover: a list marker, a tab-leader fill, and the pre-shaped
+    /// runs of an inline math box (whose glyphs all carry the box's own offset).
+    /// The PDF text layer is the first consumer (`docs/98`): it needs the real
+    /// characters behind a ligature or a substituted glyph, which the face's
+    /// character map cannot name.
+    ///
+    /// Additive: defaulted and skipped when absent, so a galley written before
+    /// this field existed still deserializes and a run without it serializes
+    /// exactly as it used to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<NodeId>,
     /// Whether this run is a tab **leader** fill (the tiled dot/underscore/hyphen
     /// glyphs drawn across a tab's advance), not model text. Its glyphs all share
     /// the paragraph's start offset — a rendering artifact, never a caret anchor —
@@ -782,6 +807,7 @@ mod tests {
         let run = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip::from_points(11),
             ascent: Twip(0),

@@ -1104,6 +1104,7 @@ mod tests {
     /// is_whitespace)` pairs, with 200/50 twips of ascent/descent.
     fn run_of(glyphs: &[(i32, bool)]) -> GlyphRun {
         GlyphRun {
+            node: None,
             font: LIBERATION_SERIF.face_id(false, false),
             size: Twip(240),
             ascent: Twip(200),

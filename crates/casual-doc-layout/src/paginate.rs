@@ -2149,6 +2149,7 @@ mod tests {
                     runs: vec![GlyphRun {
                         is_marker: false,
                         is_leader: false,
+                        node: None,
                         font: FontId(0),
                         size: line_h,
                         ascent: Twip(0),
@@ -2230,6 +2231,7 @@ mod tests {
         second.runs.push(GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(100),
             ascent: Twip(0),

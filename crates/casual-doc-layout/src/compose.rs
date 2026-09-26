@@ -1576,6 +1576,7 @@ mod tests {
         let run = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(200),
             ascent: Twip(0),
