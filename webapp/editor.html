@@ -156,7 +156,14 @@
             <span class="ms" aria-hidden="true">close</span>
           </button>
         </header>
-        <div class="dialog-body">
+        <!-- Two columns: what you EDIT on the left, what the file REPORTS on the
+             right. Word splits exactly this content across the Summary and
+             Statistics tabs of its Properties dialog; with no tab strip here,
+             the two topics sit side by side instead of one scrolling past the
+             other. `.properties-facts` exists so the read-only half is one grid
+             item however many disclosures it grows — the alternative, placing
+             each block by nth-child, breaks the first time one is hidden. -->
+        <div class="dialog-body properties-body">
           <div class="properties-grid">
             <label data-i18n="propertiesPanel.title" class="dialog-field field-wide">Title<input id="propTitle" type="text" maxlength="4096" autocomplete="off" /></label>
             <label data-i18n="propertiesPanel.createdBy" class="dialog-field">Created by<input id="propCreator" type="text" maxlength="4096" autocomplete="off" /></label>
@@ -165,35 +172,37 @@
             <label data-i18n="propertiesPanel.keywords" class="dialog-field">Keywords<input id="propKeywords" type="text" maxlength="4096" autocomplete="off" /></label>
             <label data-i18n="propertiesPanel.comments" class="dialog-field field-wide">Comments<textarea id="propDescription" maxlength="4096" rows="3"></textarea></label>
           </div>
-          <section class="metadata-section" aria-labelledby="fileDetailsTitle">
-            <h3 data-i18n="propertiesPanel.fileDetails" id="fileDetailsTitle">File details</h3>
-            <dl class="metadata-facts">
-              <div><dt data-i18n="propertiesPanel.created">Created</dt><dd data-i18n="propertiesPanel.notSet" id="metaCreated">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.lastModified">Last modified</dt><dd data-i18n="propertiesPanel.notSet2" id="metaModified">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.lastModifiedBy">Last modified by</dt><dd data-i18n="propertiesPanel.notSet3" id="metaLastModifiedBy">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.lastPrinted">Last printed</dt><dd data-i18n="propertiesPanel.notSet4" id="metaLastPrinted">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.revision">Revision</dt><dd data-i18n="propertiesPanel.notSet5" id="metaRevision">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.language">Language</dt><dd data-i18n="propertiesPanel.notSet6" id="metaLanguage">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.contentStatus">Content status</dt><dd data-i18n="propertiesPanel.notSet7" id="metaContentStatus">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.version">Version</dt><dd data-i18n="propertiesPanel.notSet8" id="metaVersion">Not set</dd></div>
-            </dl>
-          </section>
-          <details class="metadata-disclosure">
-            <summary data-i18n="propertiesPanel.producerSavedStatistics">Producer and saved statistics</summary>
-            <dl class="metadata-facts metadata-facts-compact">
-              <div><dt data-i18n="propertiesPanel.application">Application</dt><dd data-i18n="propertiesPanel.notSet9" id="metaApplication">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.applicationVersion">Application version</dt><dd data-i18n="propertiesPanel.notSet10" id="metaAppVersion">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.template">Template</dt><dd data-i18n="propertiesPanel.notSet11" id="metaTemplate">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.company">Company</dt><dd data-i18n="propertiesPanel.notSet12" id="metaCompany">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.manager">Manager</dt><dd data-i18n="propertiesPanel.notSet13" id="metaManager">Not set</dd></div>
-              <div><dt data-i18n="propertiesPanel.totalEditingTime">Total editing time</dt><dd data-i18n="propertiesPanel.notSet14" id="metaTotalTime">Not set</dd></div>
-              <div class="metadata-fact-wide"><dt data-i18n="propertiesPanel.producerSavedCounts">Producer-saved counts</dt><dd data-i18n="propertiesPanel.notSet15" id="metaSavedStats">Not set</dd></div>
-            </dl>
-          </details>
-          <details id="metaCustomSection" class="metadata-disclosure" hidden>
-            <summary data-i18n="metaCustomSection.customProperties">Custom properties</summary>
-            <dl id="metaCustomList" class="metadata-facts metadata-facts-compact"></dl>
-          </details>
+          <div class="properties-facts">
+            <section class="metadata-section" aria-labelledby="fileDetailsTitle">
+              <h3 data-i18n="propertiesPanel.fileDetails" id="fileDetailsTitle">File details</h3>
+              <dl class="metadata-facts">
+                <div><dt data-i18n="propertiesPanel.created">Created</dt><dd data-i18n="propertiesPanel.notSet" id="metaCreated">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.lastModified">Last modified</dt><dd data-i18n="propertiesPanel.notSet2" id="metaModified">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.lastModifiedBy">Last modified by</dt><dd data-i18n="propertiesPanel.notSet3" id="metaLastModifiedBy">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.lastPrinted">Last printed</dt><dd data-i18n="propertiesPanel.notSet4" id="metaLastPrinted">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.revision">Revision</dt><dd data-i18n="propertiesPanel.notSet5" id="metaRevision">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.language">Language</dt><dd data-i18n="propertiesPanel.notSet6" id="metaLanguage">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.contentStatus">Content status</dt><dd data-i18n="propertiesPanel.notSet7" id="metaContentStatus">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.version">Version</dt><dd data-i18n="propertiesPanel.notSet8" id="metaVersion">Not set</dd></div>
+              </dl>
+            </section>
+            <details class="metadata-disclosure">
+              <summary data-i18n="propertiesPanel.producerSavedStatistics">Producer and saved statistics</summary>
+              <dl class="metadata-facts metadata-facts-compact">
+                <div><dt data-i18n="propertiesPanel.application">Application</dt><dd data-i18n="propertiesPanel.notSet9" id="metaApplication">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.applicationVersion">Application version</dt><dd data-i18n="propertiesPanel.notSet10" id="metaAppVersion">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.template">Template</dt><dd data-i18n="propertiesPanel.notSet11" id="metaTemplate">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.company">Company</dt><dd data-i18n="propertiesPanel.notSet12" id="metaCompany">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.manager">Manager</dt><dd data-i18n="propertiesPanel.notSet13" id="metaManager">Not set</dd></div>
+                <div><dt data-i18n="propertiesPanel.totalEditingTime">Total editing time</dt><dd data-i18n="propertiesPanel.notSet14" id="metaTotalTime">Not set</dd></div>
+                <div class="metadata-fact-wide"><dt data-i18n="propertiesPanel.producerSavedCounts">Producer-saved counts</dt><dd data-i18n="propertiesPanel.notSet15" id="metaSavedStats">Not set</dd></div>
+              </dl>
+            </details>
+            <details id="metaCustomSection" class="metadata-disclosure" hidden>
+              <summary data-i18n="metaCustomSection.customProperties">Custom properties</summary>
+              <dl id="metaCustomList" class="metadata-facts metadata-facts-compact"></dl>
+            </details>
+          </div>
         </div>
         <footer class="dialog-foot">
           <span data-i18n="propertiesPanel.changesApplyAsOne" class="dialog-note">Changes apply as one undoable action.</span>
@@ -1044,8 +1053,18 @@
           </button>
         </header>
         <div class="dialog-body watermark-body">
-          <fieldset class="dialog-group">
-            <legend data-i18n="watermarkDialog.kind">Watermark</legend>
+          <!-- No visible legend: it read "Watermark", eight pixels under a
+               dialog titled "Watermark", and a heading that repeats the title
+               is a row of height buying nothing. The group still has to be
+               NAMED for a screen reader, so the same string and the same
+               catalogue key move to the fieldset's `aria-label` — which is not
+               the `.sr-only` clip-rect trick, deliberately: a clipped 1px box
+               is content painted outside the box that holds it, and that is
+               exactly what `dialog-contract`'s clipping guard measures.
+               The three choices then read ACROSS rather than down; they are
+               three short phrases that between them name the whole decision,
+               which is what Word's Printed Watermark dialog opens with. -->
+          <fieldset class="dialog-group watermark-kinds" data-i18n-label="watermarkDialog.kind" aria-label="Watermark">
             <label class="dialog-check"><input id="watermarkKindNone" type="radio" name="watermarkKind" value="none" checked /><span data-i18n="watermarkDialog.noWatermark">No watermark</span></label>
             <label class="dialog-check"><input id="watermarkKindText" type="radio" name="watermarkKind" value="text" /><span data-i18n="watermarkDialog.textWatermark">Text watermark</span></label>
             <label data-i18n-title="watermarkDialog.pictureUnavailable.title" class="dialog-check" title="Picture watermarks need an image already registered in the document, and the editor cannot register one yet"><input id="watermarkKindPicture" type="radio" name="watermarkKind" value="picture" disabled /><span data-i18n="watermarkDialog.pictureWatermark">Picture watermark</span></label>
@@ -1357,8 +1376,11 @@
           <button data-i18n-title="watermarkDialog.close.title" data-i18n-label="dropCap.close.label" id="dropCapClose" type="button" class="dialog-close" title="Close" aria-label="Close drop cap"><span class="ms" aria-hidden="true">close</span></button>
         </header>
         <form id="dropCapForm" class="dialog-body drop-cap-body">
-          <fieldset class="dialog-group">
-            <legend data-i18n="dropCap.name">Drop cap</legend>
+          <!-- Same as the watermark kinds above: the legend read "Drop cap"
+               under a dialog titled "Drop cap". 625cb8d reported this one and
+               left it, because fixing it needs the markup rather than the CSS.
+               The name survives on the fieldset for assistive technology. -->
+          <fieldset class="dialog-group" data-i18n-label="dropCap.name" aria-label="Drop cap">
             <div class="drop-cap-options">
               <label class="drop-cap-choice"><input type="radio" name="dropCapMode" value="none" checked /><span class="drop-cap-sample" data-mode="none" aria-hidden="true"><b>A</b><i></i></span><span data-i18n="lineNumbersMenu.none">None</span></label>
               <label class="drop-cap-choice"><input type="radio" name="dropCapMode" value="drop" /><span class="drop-cap-sample" data-mode="drop" aria-hidden="true"><b>A</b><i></i></span><span data-i18n="dropCap.dropped">Dropped</span></label>
