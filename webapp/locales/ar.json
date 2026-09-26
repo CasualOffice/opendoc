@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "تعداد نقطي دائري مجوّف",
   "bulletGalleryMenu.triangularBullet.label": "تعداد نقطي مثلثي",
   "bulletGalleryMenu.triangularBullet.title": "تعداد نقطي مثلثي",
+  "capability.embedded": "هذا المحرر مضمَّن في تطبيق آخر",
   "cellVAlign.bottom": "أسفل",
   "cellVAlign.middle": "وسط",
   "cellVAlign.top": "أعلى",

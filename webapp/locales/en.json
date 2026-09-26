@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Hollow round bullet",
   "bulletGalleryMenu.triangularBullet.label": "Triangular bullet",
   "bulletGalleryMenu.triangularBullet.title": "Triangular bullet",
+  "capability.embedded": "This editor is embedded in another application",
   "cellVAlign.bottom": "Bottom",
   "cellVAlign.middle": "Middle",
   "cellVAlign.top": "Top",

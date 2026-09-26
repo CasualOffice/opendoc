@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Незакрашений круглий маркер",
   "bulletGalleryMenu.triangularBullet.label": "Трикутний маркер",
   "bulletGalleryMenu.triangularBullet.title": "Трикутний маркер",
+  "capability.embedded": "Цей редактор вбудовано в інший застосунок",
   "cellVAlign.bottom": "Знизу",
   "cellVAlign.middle": "Посередині",
   "cellVAlign.top": "Зверху",

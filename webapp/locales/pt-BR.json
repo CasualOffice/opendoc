@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Marcador redondo vazado",
   "bulletGalleryMenu.triangularBullet.label": "Marcador triangular",
   "bulletGalleryMenu.triangularBullet.title": "Marcador triangular",
+  "capability.embedded": "Este editor está incorporado em outro aplicativo",
   "cellVAlign.bottom": "Inferior",
   "cellVAlign.middle": "Centro",
   "cellVAlign.top": "Superior",

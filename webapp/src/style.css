@@ -8404,6 +8404,29 @@ body:not(.doc-loaded) .drop-title {
      the pane does not scroll (the page does), so the shades would never fire,
      and the fill would print a white block across the File page. */
   background: none;
+  /* ...and for the same reason it must stop being a SCROLL CONTAINER here.
+     As a modal body it is `overflow-y: auto` with `overscroll-behavior: contain`,
+     which is correct over a scrim. Borrowed into the pane it becomes a container
+     with nothing to scroll — its content fits it exactly — and `contain` on a
+     non-scrollable element BLOCKS scroll chaining in Chromium. So the wheel died
+     two levels below the only element that could move:
+
+         .dialog-body     auto / contain   scrollable: false   <- swallowed here
+         .dialog-card     hidden           scrollable: false
+         #filePageDetail  auto / contain   scrollable: TRUE    <- never reached
+
+     Every File-page pane was therefore unscrollable by wheel while its content
+     ran past the fold — Settings had 877px of content in 662px of pane. */
+  overflow: visible;
+  overscroll-behavior: auto;
+  max-height: none;
+}
+
+/* The card clips too: `overflow: hidden` keeps a floating card's corners clean,
+   but in the pane it is a second lid over content the page is trying to scroll. */
+#filePageDetail .panel-in-page > .dialog-card {
+  overflow: visible;
+  max-height: none;
 }
 
 /* Template cards are taller than export tiles because a page miniature sits on

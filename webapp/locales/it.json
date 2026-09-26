@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Punto elenco rotondo vuoto",
   "bulletGalleryMenu.triangularBullet.label": "Punto elenco triangolare",
   "bulletGalleryMenu.triangularBullet.title": "Punto elenco triangolare",
+  "capability.embedded": "Questo editor è incorporato in un'altra applicazione",
   "cellVAlign.bottom": "In basso",
   "cellVAlign.middle": "Al centro",
   "cellVAlign.top": "In alto",

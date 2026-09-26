@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Niewypełniony okrągły punktor",
   "bulletGalleryMenu.triangularBullet.label": "Punktor trójkątny",
   "bulletGalleryMenu.triangularBullet.title": "Punktor trójkątny",
+  "capability.embedded": "Ten edytor jest osadzony w innej aplikacji",
   "cellVAlign.bottom": "Dół",
   "cellVAlign.middle": "Środek",
   "cellVAlign.top": "Góra",

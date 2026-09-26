@@ -82,6 +82,7 @@ import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
 import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 import { createViewZoom } from "./view_zoom.mjs";
 import { DEFAULT_SETTINGS } from "./settings_defaults.mjs";
+import { hostCapabilities } from "./capabilities.mjs";
 import { createReviewCommentActions } from "./review_comment_actions.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
@@ -8397,7 +8398,7 @@ const INSERT_SURFACE = [
   // author) stay in the picker, where Word and ONLYOFFICE also keep them.
   { command: "insert.field.page", buttons: [insertPageNumberBtn], requires: "doc", activate: () => insertFieldAtCaret("page") },
   { command: "insert.field.date", buttons: [insertDateBtn], requires: "doc", activate: () => insertFieldAtCaret("date") },
-  { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => openDropCapDialog() },
+  { command: "insert.dropCap", buttons: [insertDropCapBtn], requires: "doc", activate: () => dropCapDialog.open() },
   // Notes live on References only, as they do in Word. The app-menu row and the
   // palette entry are untouched, so the command keeps three surfaces.
   { command: "insert.footnote", buttons: [refFootnoteBtn], requires: "doc", activate: () => insertNote("footnote") },
@@ -12450,8 +12451,8 @@ function editorCommands(context = { surface: "palette" }) {
     // No keyboard shortcut is claimed — ⌘N/Ctrl+N belongs to the browser window
     // and cannot be intercepted, and a shortcut hint the editor cannot honour
     // would be a lie printed in the palette.
-    { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, run: () => void newBlankDocument() },
-    { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, run: () => fileEl.click() },
+    { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, enabled: hostCapabilities().has("new"), disabledReason: t("capability.embedded"), run: () => void newBlankDocument() },
+    { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, enabled: hostCapabilities().has("open"), disabledReason: t("capability.embedded"), run: () => fileEl.click() },
     { id: "file.save", label: "Save", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocument() },
     ...exportCommands(exportDocumentAs),
     // Reachable with no document open, because the case it exists for is
@@ -12637,7 +12638,7 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "insert.footer", label: "Edit footer", group: "Insert", kw: "footer running page number bottom margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("footer") },
     { id: "insert.bookmark", label: "Bookmark…", group: "Insert", kw: "bookmark manager navigate create rename delete go to", enabled: insertCommandEnabled("insert.bookmark"), run: () => openBookmarkManager() },
     { id: "insert.field", label: "Field…", group: "Insert", kw: "field placeholder page number of pages date time file name author auto update", enabled: insertCommandEnabled("insert.field"), run: () => openFieldDialog() },
-    { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => openDropCapDialog() },
+    { id: "insert.dropCap", label: t("dropCap.command"), group: "Insert", kw: "initial letter dropped margin lines paragraph", enabled: insertCommandEnabled("insert.dropCap"), run: () => dropCapDialog.open() },
     { id: "insert.image", label: "Picture…", group: "Insert", kw: "image picture insert photo file png jpeg jpg gif paste", enabled: insertCommandEnabled("insert.image"), run: () => insertImageFromFile() },
     { id: "insert.shape", label: "Shape…", group: "Insert", kw: "shape drawing autoshape rectangle rounded ellipse circle triangle diamond line arrow callout", enabled: insertCommandEnabled("insert.shape"), run: () => openShapeGallery() },
     { id: "insert.textbox", label: "Text box", group: "Insert", kw: "text box textbox callout caption floating frame", enabled: insertCommandEnabled("insert.textbox"), run: () => void insertTextBoxObject() },
@@ -13446,7 +13447,6 @@ const dropCapDialog = createDropCapDialog({
   apply: (mode, lines) => runEdit(() => doc.setDropCap(selection.focus.node, mode, lines), { gate: true }),
   status: setStatus, fallbackFocus: () => pagesEl,
 });
-function openDropCapDialog() { dropCapDialog.open(); }
 
 // ---- Insert ▸ Symbol / Emoji pickers ---------------------------------------
 // Word's Insert ▸ Symbol and Docs' Insert ▸ Special characters / emoji, built to

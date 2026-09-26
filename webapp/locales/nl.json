@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Open rond opsommingsteken",
   "bulletGalleryMenu.triangularBullet.label": "Driehoekig opsommingsteken",
   "bulletGalleryMenu.triangularBullet.title": "Driehoekig opsommingsteken",
+  "capability.embedded": "Deze editor is ingesloten in een andere toepassing",
   "cellVAlign.bottom": "Onder",
   "cellVAlign.middle": "Midden",
   "cellVAlign.top": "Boven",

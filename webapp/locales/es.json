@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Viñeta redonda hueca",
   "bulletGalleryMenu.triangularBullet.label": "Viñeta triangular",
   "bulletGalleryMenu.triangularBullet.title": "Viñeta triangular",
+  "capability.embedded": "Este editor está incrustado en otra aplicación",
   "cellVAlign.bottom": "Inferior",
   "cellVAlign.middle": "Centro",
   "cellVAlign.top": "Superior",

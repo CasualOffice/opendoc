@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "İçi boş yuvarlak madde işareti",
   "bulletGalleryMenu.triangularBullet.label": "Üçgen madde işareti",
   "bulletGalleryMenu.triangularBullet.title": "Üçgen madde işareti",
+  "capability.embedded": "Bu düzenleyici başka bir uygulamaya gömülü",
   "cellVAlign.bottom": "Alt",
   "cellVAlign.middle": "Orta",
   "cellVAlign.top": "Üst",

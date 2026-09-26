@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Dấu đầu dòng tròn rỗng",
   "bulletGalleryMenu.triangularBullet.label": "Dấu đầu dòng tam giác",
   "bulletGalleryMenu.triangularBullet.title": "Dấu đầu dòng tam giác",
+  "capability.embedded": "Trình soạn thảo này được nhúng trong một ứng dụng khác",
   "cellVAlign.bottom": "Dưới",
   "cellVAlign.middle": "Giữa",
   "cellVAlign.top": "Trên",

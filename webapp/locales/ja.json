@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "白抜きの丸い箇条書き記号",
   "bulletGalleryMenu.triangularBullet.label": "三角形の箇条書き記号",
   "bulletGalleryMenu.triangularBullet.title": "三角形の箇条書き記号",
+  "capability.embedded": "このエディターは別のアプリケーションに埋め込まれています",
   "cellVAlign.bottom": "下",
   "cellVAlign.middle": "中央",
   "cellVAlign.top": "上",

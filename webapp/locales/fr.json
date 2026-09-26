@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Puce ronde creuse",
   "bulletGalleryMenu.triangularBullet.label": "Puce triangulaire",
   "bulletGalleryMenu.triangularBullet.title": "Puce triangulaire",
+  "capability.embedded": "Cet éditeur est intégré à une autre application",
   "cellVAlign.bottom": "Bas",
   "cellVAlign.middle": "Milieu",
   "cellVAlign.top": "Haut",

@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Butir bulat kosong",
   "bulletGalleryMenu.triangularBullet.label": "Butir segitiga",
   "bulletGalleryMenu.triangularBullet.title": "Butir segitiga",
+  "capability.embedded": "Editor ini disematkan di aplikasi lain",
   "cellVAlign.bottom": "Bawah",
   "cellVAlign.middle": "Tengah",
   "cellVAlign.top": "Atas",

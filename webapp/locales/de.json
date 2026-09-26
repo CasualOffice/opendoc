@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "Leerer runder Punkt",
   "bulletGalleryMenu.triangularBullet.label": "Dreieck als Aufzählungszeichen",
   "bulletGalleryMenu.triangularBullet.title": "Dreieck als Aufzählungszeichen",
+  "capability.embedded": "Dieser Editor ist in eine andere Anwendung eingebettet",
   "cellVAlign.bottom": "Unten",
   "cellVAlign.middle": "Mitte",
   "cellVAlign.top": "Oben",

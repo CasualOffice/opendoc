@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "비어 있는 원형 글머리 기호",
   "bulletGalleryMenu.triangularBullet.label": "삼각형 글머리 기호",
   "bulletGalleryMenu.triangularBullet.title": "삼각형 글머리 기호",
+  "capability.embedded": "이 편집기는 다른 애플리케이션에 포함되어 있습니다",
   "cellVAlign.bottom": "아래쪽",
   "cellVAlign.middle": "가운데",
   "cellVAlign.top": "위쪽",

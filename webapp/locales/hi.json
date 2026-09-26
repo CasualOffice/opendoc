@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "खोखला गोल बुलेट",
   "bulletGalleryMenu.triangularBullet.label": "त्रिकोणीय बुलेट",
   "bulletGalleryMenu.triangularBullet.title": "त्रिकोणीय बुलेट",
+  "capability.embedded": "यह संपादक किसी अन्य ऐप्लिकेशन में एम्बेड किया गया है",
   "cellVAlign.bottom": "नीचे",
   "cellVAlign.middle": "मध्य",
   "cellVAlign.top": "ऊपर",

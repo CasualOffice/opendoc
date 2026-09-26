@@ -70,6 +70,7 @@
   "bulletGalleryMenu.hollowRoundBullet.title": "空心圆形项目符号",
   "bulletGalleryMenu.triangularBullet.label": "三角形项目符号",
   "bulletGalleryMenu.triangularBullet.title": "三角形项目符号",
+  "capability.embedded": "此编辑器已嵌入其他应用程序",
   "cellVAlign.bottom": "底端",
   "cellVAlign.middle": "居中",
   "cellVAlign.top": "顶端",

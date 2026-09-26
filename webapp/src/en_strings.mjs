@@ -73,4 +73,8 @@ export const EN_STRINGS = Object.freeze({
   "reviewComment.resolve": "Resolve comment",
   "reviewComment.delete": "Delete comment",
   "reviewComment.needsCaret": "Put the caret in a comment first",
+  // Why New/Open are unavailable when the editor is framed by a host
+  // application. A reason, not a silent absence — the UI floor forbids a
+  // control that is simply missing with no explanation.
+  "capability.embedded": "This editor is embedded in another application",
 });
