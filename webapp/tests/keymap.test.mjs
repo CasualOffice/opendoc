@@ -128,17 +128,38 @@ test("no two chords collide on the same keyboard", () => {
 });
 
 // SKILL.md §10: a control that does nothing is worse than no control. A chord
-// naming a command that does not exist would be exactly that, and it would be
-// invisible — the dispatcher would find nothing and fall through in silence.
-test("every chord names a command the editor actually defines", () => {
-  const missing = [...new Set(KEYMAP.map((row) => row.command))].filter(
-    (id) => !MAIN_JS.includes(`id: "${id}"`),
+// naming a command the REGISTRY does not return is exactly that, and it is
+// invisible — the dispatcher finds nothing and falls through in silence.
+//
+// This test used to grep `main.js` for `id: "<command>"` and it was GREEN while
+// ⌘⌥M was dead: `comment.add` is the annotate surface's own id for adding a
+// comment, the string is in the file, and `editorCommands()` does not return it.
+// So the chord did nothing and the palette row showed its group where its hint
+// belonged. Existence in the source is not membership in the registry, and only
+// the second one is what the dispatcher looks a command up in. The registry is
+// not importable (`main.js` has no exports, HF-085), so what is checked here is
+// the set of ids `editorCommands` itself BUILDS — the array literals inside that
+// one function — rather than any `id:` anywhere in the file.
+const EDITOR_COMMANDS_SOURCE = (() => {
+  const start = MAIN_JS.indexOf("function editorCommands(");
+  assert.ok(start > 0, "editorCommands() has moved or been renamed");
+  const end = MAIN_JS.indexOf("\n}", MAIN_JS.indexOf("return cmds.filter", start));
+  assert.ok(end > start, "the end of editorCommands() could not be found");
+  return MAIN_JS.slice(start, end);
+})();
+
+test("every chord names a command the registry actually returns", () => {
+  const registered = new Set(
+    [...EDITOR_COMMANDS_SOURCE.matchAll(/id: "([\w.]+)"/g)].map((match) => match[1]),
   );
+  assert.ok(registered.size > 80, `only ${registered.size} commands found; the scan has drifted`);
+  const missing = [...new Set(KEYMAP.map((row) => row.command))].filter((id) => !registered.has(id));
   assert.deepEqual(
     missing,
     [],
-    "a chord bound to a command id that no descriptor defines is a dead chord: it " +
-      "would preventDefault nothing and do nothing, with no error anywhere",
+    "a chord bound to an id the command registry does not return is a dead chord: " +
+      "it would preventDefault nothing and do nothing, with no error anywhere, and " +
+      "its palette row would print its group where the hint belongs",
   );
 });
 

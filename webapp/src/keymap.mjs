@@ -143,7 +143,12 @@ export const KEYMAP = [
   { chord: "⌘-", command: "view.zoomOut", scope: APP_SCOPE },
 
   // ---- Review --------------------------------------------------------------
-  { chord: "⌘⌥M", command: "comment.add", scope: APP_SCOPE },
+  // `review.comment`, NOT `comment.add`: the latter is the annotate surface's own
+  // id for the same capability and is not in the command registry, so binding it
+  // here produced a dead chord AND a palette row with no hint. The source-text
+  // guard missed it because the string exists in the file; the registry guard
+  // that replaced it does not.
+  { chord: "⌘⌥M", command: "review.comment", scope: APP_SCOPE },
   { chord: "⌘⇧E", command: "review.mode.cycle", scope: APP_SCOPE },
   { chord: "⌘⌥⏎", command: "review.acceptNext", scope: EDITOR_SCOPE },
   { chord: "⌘⌥⌫", command: "review.rejectNext", scope: EDITOR_SCOPE },

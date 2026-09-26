@@ -7424,7 +7424,7 @@ function buildContextCommands(context) {
       label: "Add comment",
       group: "annotate",
       icon: "comment",
-      shortcut: shortcutForCommand("comment.add", EDITOR_KEYBOARD_PLATFORM),
+      shortcut: shortcutForCommand("review.comment", EDITOR_KEYBOARD_PLATFORM),
       enabled: context.hasRange,
       disabledReason: "Select text to add a comment",
       run: () => openReviewComposer(),
