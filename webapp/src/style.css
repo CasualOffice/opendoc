@@ -205,6 +205,16 @@
      a fixed 16px reads heavy on a small window and mean on a large one. */
   --chrome-card-radius: clamp(10px, 1.1vw, 18px);
   --chrome-card-inset-y: clamp(1px, 0.25vh, 4px);
+  /* ONE height for every ribbon band. It used to be whatever the tallest group
+     on the active tab happened to be — Home 79px (two control rows), Insert /
+     Layout / References 58px, Review / View 48px — so changing tab moved the
+     document up to 31px under the reader's cursor. Word and ONLYOFFICE both pin
+     the band and let the groups align inside it.
+     This is the two-control-row height the Home band needs, and it is a MINIMUM
+     rather than a fixed height on purpose: if Home ever grows a taller control,
+     the band grows with it and `ribbon-band-height.spec.mjs` fails until this
+     token is re-measured, rather than Home silently clipping. */
+  --ribbon-band-h: 74px;
   /* The card inset is CONTENT WIDTH the band no longer has. The Home band needs
      1254px of groups at 1280px, so the whole chrome overhead — this inset plus
      the panel's own padding — has to stay under 26px or the overflow pass
@@ -3503,6 +3513,12 @@ body.compact-mode {
      overflowing groups collapse into the "⋯" menu instead. */
   overflow: hidden;
   min-width: 0;
+  /* Every band is the same height, so switching tabs never moves the document.
+     `.rgroup` already centres its rows and `align-items: stretch` above makes a
+     one-row group fill the band, so its separator runs the full height — which
+     is what makes Review and View read as the same object as Home rather than
+     as a thinner strip. */
+  min-height: var(--ribbon-band-h);
 }
 
 .ribbon-panel[hidden] {
