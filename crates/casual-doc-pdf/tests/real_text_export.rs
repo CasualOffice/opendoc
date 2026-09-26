@@ -21,6 +21,10 @@ use casual_doc_pdf::{
     MapMediaSource, NoMediaSource, PdfError, PdfExport, PdfExportOptions, PdfFontSource, PdfPage,
     export_document, write_pdf,
 };
+// Own lines (anti-conflict): the ligature guards read the bundled face's own
+// character map, to prove a drawn glyph is genuinely outside it.
+use skrifa::FontRef;
+use skrifa::MetadataProvider;
 
 /// A real-producer document: headings, body text, a nested table, and one
 /// embedded picture. Latin-only, so no font-fallback tier can change the
@@ -722,6 +726,235 @@ fn a_transparent_picture_exports_with_a_constant_alpha_state() {
         !String::from_utf8_lossy(&opaque.bytes).contains("/ExtGState"),
         "an opaque picture must not emit a graphics state"
     );
+}
+
+// --- Ligatures and substituted glyphs (the exact `ToUnicode` guarantee) ------
+
+/// Every body paragraph's text, from the MODEL, in the byte layout the shaper
+/// indexes — so a guard compares the file against the document rather than
+/// against a string a test author typed.
+fn model_paragraphs(document: &Document) -> Vec<String> {
+    document
+        .body()
+        .iter()
+        .filter_map(|block| match block {
+            casual_doc_model::v1::BlockNode::Paragraph(paragraph) => {
+                Some(casual_doc_layout::flow::node_plain_text(&paragraph.inlines))
+            }
+            _ => None,
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect()
+}
+
+/// `(glyphs drawn, characters of model text)` for `document`, from the display
+/// lists the exporter transcribes. Fewer glyphs than characters is the proof that
+/// the face really substituted — without it, a ligature guard asserts nothing.
+fn shaped_glyphs_vs_characters(document: &Document) -> (usize, usize) {
+    let shaper = ParleyShaper::new();
+    let laid_out = paginate_document(document, &shaper);
+    let glyphs = laid_out
+        .pages
+        .iter()
+        .flat_map(|page| compose_page(page).items)
+        .filter_map(|item| match item {
+            PaintItem::Glyphs { run } => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .sum();
+    let characters = model_paragraphs(document)
+        .iter()
+        .map(|text| text.chars().count())
+        .sum();
+    (glyphs, characters)
+}
+
+/// The text the file gives back, through each font's `ToUnicode` map — what a
+/// reader's select, search and copy see.
+fn extracted_text(export: &PdfExport) -> String {
+    let pdf = inspect::parse(&export.bytes).expect("the export parses as a PDF");
+    pdf.pages()
+        .iter()
+        .map(|page| pdf.page_contents(page).plain_text())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_ligature_copies_out_as_the_characters_the_document_holds() {
+    // `synthetic-rich-metadata.docx` declares no font, so it lays out in bundled
+    // Roboto, whose `liga` feature turns the "fi" of "fixture" into ONE glyph.
+    // That glyph is in Roboto's character map, at U+FB01 -- so inverting the map
+    // produced a perfectly valid text layer saying "ﬁxture", a word the document
+    // does not contain and a search for "fixture" cannot find. Nothing was
+    // reported, either: the ligature was mapped, just not to the right thing.
+    let (document, media) = open(METADATA_DOCX);
+    let (glyphs, characters) = shaped_glyphs_vs_characters(&document);
+    assert!(
+        glyphs < characters,
+        "the bundled face must really substitute for this guard to mean anything: \
+         {glyphs} glyphs for {characters} characters"
+    );
+
+    let export = export_document(&document, &media, &PdfExportOptions::default()).expect("export");
+    let text = extracted_text(&export);
+    for expected in model_paragraphs(&document) {
+        assert!(
+            text.contains(&expected),
+            "the file gives back {text:?}, not the document's own {expected:?}"
+        );
+    }
+    assert!(
+        !text.contains('\u{fb01}') && !text.contains('\u{fb02}'),
+        "a ligature must copy as its characters, not as a presentation form: {text:?}"
+    );
+    assert!(
+        export.faces.iter().all(|face| face.unmapped_glyphs == 0),
+        "{:?}",
+        export.faces
+    );
+}
+
+#[test]
+fn a_substituted_glyph_with_no_character_map_entry_copies_out_too() {
+    // Roboto's ligature glyphs are all in its character map, so they only ever
+    // copied as the WRONG characters. Carlito -- the bundled metric-compatible
+    // substitute for Calibri -- ligates "ft", "ffl" and "fj" to glyphs that are
+    // in no character map at all, so those copied as NOTHING and were counted as
+    // `pdf.font.unmapped_glyphs`. Same defect, other half.
+    let text = "often afflicted by fjords";
+    // Carlito by name, not by substitution from "Calibri" -- see `document_in_font`.
+    let document = document_in_font("Carlito", text);
+    let (glyphs, characters) = shaped_glyphs_vs_characters(&document);
+    assert!(
+        glyphs < characters,
+        "Carlito must really ligate: {glyphs} glyphs for {characters} characters"
+    );
+
+    // ... and at least one drawn glyph is genuinely unreachable from the face's
+    // own character map, which is the case the cluster text exists to answer.
+    let face = FontRef::new(casual_doc_layout::fonts::face_bytes(FontId(8)))
+        .expect("skrifa reads bundled Carlito");
+    let charmap = face.charmap();
+    let drawn = drawn_glyph_ids(&document);
+    let unreachable: Vec<u32> = drawn
+        .iter()
+        .copied()
+        .filter(|id| !charmap.mappings().any(|(_, glyph)| glyph.to_u32() == *id))
+        .collect();
+    assert!(
+        !unreachable.is_empty(),
+        "no drawn glyph is outside the character map, so this guard would pass \
+         without the fix: drawn {drawn:?}"
+    );
+
+    let export =
+        export_document(&document, &NoMediaSource, &PdfExportOptions::default()).expect("export");
+    assert_eq!(extracted_text(&export).trim(), text);
+    assert!(
+        export.findings.is_empty(),
+        "nothing is left unnameable: {:?}",
+        export.findings
+    );
+    assert!(
+        export.faces.iter().all(|face| face.unmapped_glyphs == 0),
+        "{:?}",
+        export.faces
+    );
+}
+
+#[test]
+fn display_lists_without_a_document_still_export_a_text_layer() {
+    // `write_pdf` has no document to resolve clusters against, so its text layer
+    // is the character-map inversion -- a real limitation, stated rather than
+    // hidden. It must still produce a `ToUnicode` map and recover ordinary text.
+    // A bundled face by name: this test is the one that CANNOT tolerate the
+    // shaping face and the embedded face disagreeing, because the inversion is
+    // read straight off the embedded face's character map.
+    let document = document_in_font("Carlito", "plain words");
+    let shaper = ParleyShaper::new();
+    let laid_out = paginate_document(&document, &shaper);
+    let lists: Vec<_> = laid_out
+        .pages
+        .iter()
+        .map(|page| (page.page_size, compose_page(page)))
+        .collect();
+    let pages: Vec<PdfPage<'_>> = lists
+        .iter()
+        .map(|(size, list)| PdfPage {
+            width: size.width,
+            height: size.height,
+            list,
+        })
+        .collect();
+    let export = write_pdf(
+        &pages,
+        &casual_doc_pdf::BundledFontSource,
+        &NoMediaSource,
+        &PdfExportOptions::default(),
+    )
+    .expect("export");
+    assert_eq!(extracted_text(&export).trim(), "plain words");
+}
+
+/// Every glyph id the document draws, in its only face.
+fn drawn_glyph_ids(document: &Document) -> BTreeSet<u32> {
+    let shaper = ParleyShaper::new();
+    paginate_document(document, &shaper)
+        .pages
+        .iter()
+        .flat_map(|page| compose_page(page).items)
+        .filter_map(|item| match item {
+            PaintItem::Glyphs { run } => Some(run.glyphs),
+            _ => None,
+        })
+        .flatten()
+        .map(|glyph| glyph.id)
+        .collect()
+}
+
+/// A one-paragraph document whose run asks for Calibri, which resolves to the
+/// bundled Carlito.
+/// A one-run document in `font`, which must be a BUNDLED face.
+///
+/// It used to ask for "Calibri" and rely on the shaper substituting the bundled
+/// metric-compatible Carlito. That is not a substitution every platform makes:
+/// Windows HAS Calibri, so there the shaper used the real system face while
+/// `write_pdf` embedded and inverted the bundled one, and the glyph ids were read
+/// against the wrong face. The character-map fallback then extracted
+/// "\u{2d8}\u{2fe}\u{24d}..." instead of "plain words" -- green on macOS and
+/// Linux, red only on Windows.
+///
+/// So the face is named outright. Both halves of the export then agree on every
+/// platform, and the ligature tests below exercise the same face everywhere
+/// instead of whichever face the host happens to own.
+fn document_in_font(font: &str, text: &str) -> Document {
+    use casual_doc_model::NodeId;
+    use casual_doc_model::v1::{
+        BlockNode, Definitions, FontName, FontRef as ModelFontRef, InlineNode, Paragraph,
+        ParagraphProperties, Run, RunProperties,
+    };
+    let node = |id: u64| NodeId::from_parts(id, 1).expect("a valid node id");
+    let properties = RunProperties {
+        font_ref: Some(ModelFontRef::Named(FontName {
+            name: font.to_owned(),
+        })),
+        ..RunProperties::default()
+    };
+    Document::new(
+        node(1),
+        vec![BlockNode::Paragraph(Paragraph {
+            id: node(2),
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![InlineNode::Run(Run {
+                id: node(3),
+                properties: properties.into(),
+                text: text.to_owned(),
+            })],
+        })],
+        Definitions::default(),
+    )
+    .expect("a one-paragraph document is valid")
 }
 
 /// A display list placing one picture, for the picture guards.

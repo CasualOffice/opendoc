@@ -31,10 +31,22 @@
 //! - **PDF/A**, encryption, comment/markup export, page ranges.
 //! - **Emphasis marks** and SVG pictures, neither of which the raster backend
 //!   paints either.
-//! - **Ligature and substituted-glyph text recovery.** The `ToUnicode` map is
-//!   built by inverting the face's character map, so a glyph reached only
-//!   through substitution copies as nothing; the count is reported as
+//! - **The text layer of a run whose glyphs are not model text**, and of any
+//!   export driven through [`write_pdf`] rather than [`write_pdf_with_text`].
+//!   Ligatures and substituted glyphs *are* now named by their real characters,
+//!   resolved from the display list's cluster offsets against the document
+//!   ([`export_document`] does this): a `fi` ligature copies as `fi`, not as
+//!   `U+FB01`. What remains on the character map alone is a glyph with no source
+//!   characters to recover — a list marker, a tab-leader fill, an inline math
+//!   box, a recomputed `PAGE` field — plus a glyph a cluster cannot reach
+//!   because the model text and the shaped text diverge (`w:vanish`, `w:caps`).
+//!   Anything neither source names is still counted and reported as
 //!   `pdf.font.unmapped_glyphs`.
+//! - **`bfrange` and multi-glyph clusters.** The map is emitted as `bfchar`
+//!   entries, and a cluster drawn by several glyphs is left to the per-glyph
+//!   character map: since the map is keyed by glyph id rather than by position,
+//!   handing the whole cluster's text to its first glyph would emit that text
+//!   again for every later glyph of the cluster that is itself mapped.
 //!
 //! # Example
 //!
@@ -51,6 +63,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+mod cluster;
 mod content;
 mod font;
 pub mod inspect;
@@ -69,6 +82,9 @@ use casual_doc_layout::shape::ParleyShaper;
 use casual_doc_layout::text::FontId;
 use casual_doc_model::v1::Document;
 
+pub use cluster::DocumentText;
+pub use cluster::NoTextSource;
+pub use cluster::PdfTextSource;
 pub use content::PdfPage;
 pub use font::EmbeddedFace;
 pub use font::PdfFontSource;
@@ -76,6 +92,7 @@ pub use picture::MapMediaSource;
 pub use picture::NoMediaSource;
 pub use picture::PdfMediaSource;
 
+use cluster::ClusterText;
 use content::Transcriber;
 // Own line (anti-conflict): the multiply `ExtGState`'s name, shared with the
 // content stream that selects it so the two cannot disagree.
@@ -276,13 +293,21 @@ pub fn export_document(
         .then(|| document.properties().map(info_entries))
         .flatten()
         .unwrap_or_default();
-    write_pdf_with_metadata(&pages, &fonts, media, options, &metadata)
+    // The document is at hand, so the text layer can name a ligature or a
+    // substituted glyph by its real characters instead of whatever the face's
+    // character map happens to say.
+    let text = DocumentText::new(document);
+    write_pdf_with_metadata(&pages, &fonts, media, options, &metadata, &text)
 }
 
 /// Writes pages that have already been laid out.
 ///
 /// This is the seam a host uses when it already holds the display lists — the
-/// viewer, for instance, which must not lay the document out twice.
+/// viewer, for instance, which must not lay the document out twice. With no
+/// document at hand the text layer falls back to each face's own character map,
+/// so a ligature copies as its presentation-form character and a substituted
+/// glyph copies as nothing; a host that *does* hold the document should call
+/// [`write_pdf_with_text`] with a [`DocumentText`] instead.
 ///
 /// # Errors
 ///
@@ -294,7 +319,27 @@ pub fn write_pdf(
     media: &dyn PdfMediaSource,
     options: &PdfExportOptions,
 ) -> Result<PdfExport, PdfError> {
-    write_pdf_with_metadata(pages, fonts, media, options, &[])
+    write_pdf_with_metadata(pages, fonts, media, options, &[], &NoTextSource)
+}
+
+/// [`write_pdf`], plus the document text the glyph runs' cluster offsets index.
+///
+/// The exact-`ToUnicode` seam: with `text` in hand, a ligature's glyph maps to
+/// every character it stands for and a glyph reached only by substitution maps to
+/// the characters behind it, so the text layer says what the document says.
+///
+/// # Errors
+///
+/// Returns [`PdfError::TooManyPages`] past the page ceiling and
+/// [`PdfError::Font`] when a face cannot be embedded.
+pub fn write_pdf_with_text(
+    pages: &[PdfPage<'_>],
+    fonts: &dyn PdfFontSource,
+    media: &dyn PdfMediaSource,
+    options: &PdfExportOptions,
+    text: &dyn PdfTextSource,
+) -> Result<PdfExport, PdfError> {
+    write_pdf_with_metadata(pages, fonts, media, options, &[], text)
 }
 
 fn write_pdf_with_metadata(
@@ -303,6 +348,7 @@ fn write_pdf_with_metadata(
     media: &dyn PdfMediaSource,
     options: &PdfExportOptions,
     metadata: &[(&'static str, String)],
+    text: &dyn PdfTextSource,
 ) -> Result<PdfExport, PdfError> {
     if pages.len() > MAX_EXPORT_PAGES {
         return Err(PdfError::TooManyPages { pages: pages.len() });
@@ -382,7 +428,8 @@ fn write_pdf_with_metadata(
     let image_entries = transcriber.images.resource_dictionary();
     let has_fonts = !transcriber.fonts.is_empty();
     let has_images = !transcriber.images.is_empty();
-    let faces = transcriber.fonts.write(&mut writer, fonts)?;
+    let clusters = ClusterText::build(pages, text);
+    let faces = transcriber.fonts.write(&mut writer, fonts, &clusters)?;
     transcriber.images.write(&mut writer);
 
     for face in &faces {

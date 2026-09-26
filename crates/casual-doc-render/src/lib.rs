@@ -2101,6 +2101,7 @@ mod tests {
     fn unknown_font_is_skipped_not_panicked() {
         let mut surface = Surface::new(50, 50).unwrap();
         let run = GlyphRun {
+            node: None,
             font: FontId(9),
             size: Twip::from_points(12),
             ascent: Twip(0),

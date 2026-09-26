@@ -1441,6 +1441,7 @@ mod tests {
             let run = GlyphRun {
                 is_marker: false,
                 is_leader: false,
+                node: None,
                 font: FontId(0),
                 size: Twip(LINE_H),
                 ascent: Twip(0),
@@ -1502,6 +1503,7 @@ mod tests {
         let run = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(LINE_H),
             ascent: Twip(0),
@@ -2654,6 +2656,7 @@ mod tests {
         let label = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(LINE_H),
             ascent: Twip(0),
@@ -2677,6 +2680,7 @@ mod tests {
         let field = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(LINE_H),
             ascent: Twip(0),
@@ -2910,6 +2914,7 @@ mod tests {
         let small = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(240),
             ascent: Twip(200),
@@ -2977,6 +2982,7 @@ mod tests {
         let small = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(240),
             ascent: Twip(200),
@@ -3064,6 +3070,7 @@ mod tests {
         let bare = GlyphRun {
             is_marker: false,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(240),
             ascent: Twip(0),
@@ -3118,6 +3125,7 @@ mod tests {
         GlyphRun {
             is_marker: true,
             is_leader: false,
+            node: None,
             font: FontId(0),
             size: Twip(240),
             ascent: Twip(0),

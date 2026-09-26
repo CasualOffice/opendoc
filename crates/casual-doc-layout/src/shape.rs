@@ -1085,6 +1085,12 @@ impl ParleyShaper {
                             for source in &math.runs {
                                 let mut run = source.clone();
                                 run.origin = Point::new(run.origin.x + box_x, run.origin.y + box_y);
+                                // Every glyph of the box collapses onto the box's
+                                // own offset, so the clusters no longer address
+                                // characters in any paragraph's text: drop the
+                                // anchor rather than leave one that would resolve
+                                // to whatever follows the box.
+                                run.node = None;
                                 for glyph in &mut run.glyphs {
                                     glyph.cluster = cluster;
                                 }
@@ -1235,6 +1241,13 @@ impl ParleyShaper {
                 out_runs.push(GlyphRun {
                     is_marker: false,
                     is_leader: false,
+                    // The paragraph these glyphs' clusters are offsets into: every
+                    // cluster here is `base + <byte offset in the concatenated run
+                    // text>`, and `base`/`node` come from the shaped range. A
+                    // consumer that needs the source characters behind a ligature
+                    // or a substituted glyph resolves the cluster against this
+                    // paragraph's own text (`docs/98`, the PDF text layer).
+                    node: Some(node),
                     font,
                     size,
                     ascent: Twip(run_metrics.ascent.round() as i32),
@@ -1418,6 +1431,7 @@ mod tests {
             runs: vec![GlyphRun {
                 is_marker: false,
                 is_leader: false,
+                node: None,
                 font: FontId(0),
                 size: Twip(220),
                 ascent: Twip(0),

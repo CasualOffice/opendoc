@@ -1042,6 +1042,10 @@ fn leader_run(
         is_marker: false,
         // A leader is decorative fill, not model text: exclude it from caret slots.
         is_leader: true,
+        // ... and, for the same reason, it anchors no paragraph text: its glyphs
+        // all repeat one template glyph at the paragraph's start offset, so there
+        // are no source characters behind them to recover.
+        node: None,
         font: template.font,
         size: template.size,
         character_scale_percent: template.character_scale_percent,

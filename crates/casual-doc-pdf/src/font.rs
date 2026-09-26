@@ -16,6 +16,8 @@ use casual_doc_layout::text::FontId;
 use skrifa::FontRef;
 use skrifa::MetadataProvider;
 
+// Own line (anti-conflict): the exact-text source the `ToUnicode` map overlays.
+use crate::cluster::ClusterText;
 use crate::subset::Face;
 use crate::subset::SfntError;
 use crate::subset::closure;
@@ -167,12 +169,17 @@ impl FontTable {
     /// Writes every planned face: the `Type0` wrapper, its CID descendant, the
     /// descriptor, the embedded (subset) font program and the `ToUnicode` map.
     ///
+    /// `clusters` supplies the exact source text behind glyphs the face's own
+    /// character map cannot name (a ligature, a substituted glyph); it is empty
+    /// for an export driven from display lists with no document at hand.
+    ///
     /// Returns one [`EmbeddedFace`] report per face so the caller can account
     /// for what was subset and what had to be embedded whole.
     pub(crate) fn write(
         self,
         writer: &mut Writer,
         fonts: &dyn PdfFontSource,
+        clusters: &ClusterText,
     ) -> Result<Vec<EmbeddedFace>, FontError> {
         let mut reports = Vec::with_capacity(self.planned.len());
         for (id, planned) in self.planned {
@@ -181,7 +188,15 @@ impl FontTable {
             let index = fonts.face_index(font);
             let face =
                 Face::parse(bytes, index).map_err(|error| FontError::Malformed(id, error))?;
-            reports.push(write_face(writer, &face, bytes, index, id, &planned)?);
+            reports.push(write_face(
+                writer,
+                &face,
+                bytes,
+                index,
+                id,
+                &planned,
+                clusters.face(font),
+            )?);
         }
         Ok(reports)
     }
@@ -202,9 +217,13 @@ pub struct EmbeddedFace {
     /// was embedded, which happens for CFF (PostScript) outlines and for faces
     /// whose `OS/2.fsType` forbids subsetting.
     pub subset: bool,
-    /// Glyph ids for which no character could be recovered, so copying that
-    /// glyph out of the PDF yields nothing. See
+    /// How many of the glyphs this document **draws** with the face no character
+    /// could be recovered for, so copying one out of the PDF yields nothing. See
     /// [`crate::PdfFinding`] code `pdf.font.unmapped_glyphs`.
+    ///
+    /// Counted over drawn glyphs rather than over the whole retained subset: the
+    /// subsetter also keeps the components a composite glyph references, and no
+    /// content stream ever emits those, so there is nothing to copy.
     pub unmapped_glyphs: usize,
 }
 
@@ -215,6 +234,7 @@ fn write_face(
     index: u32,
     id: u32,
     planned: &PlannedFont,
+    clusters: Option<&BTreeMap<u16, String>>,
 ) -> Result<EmbeddedFace, FontError> {
     let fail = |error: SfntError| FontError::Malformed(id, error);
     let postscript = postscript_name(face);
@@ -270,7 +290,7 @@ fn write_face(
     let program_object = writer.reserve();
     let to_unicode = writer.reserve();
 
-    let (cmap, unmapped) = to_unicode_cmap(source, index, &kept);
+    let (cmap, unmapped) = to_unicode_cmap(source, index, &kept, &planned.glyphs, clusters);
     writer.stream(to_unicode, "", cmap.as_bytes(), true);
 
     let embedded_bytes = if face.is_cff() {
@@ -465,38 +485,70 @@ fn postscript_name(face: &Face<'_>) -> String {
 /// searchable and copyable, and reports how many retained glyphs it could not
 /// name.
 ///
-/// The display list carries glyph ids and cluster offsets but not the source
-/// text, so the mapping is recovered by **inverting the face's own character
-/// map**. That is exact for the overwhelming majority of text. Where one glyph
-/// stands for several characters (a ligature) or for none (a glyph reached only
-/// by substitution), the inversion cannot name it; those glyphs are counted and
-/// reported rather than guessed at. Carrying cluster text through the display
-/// list would make the mapping exact and is recorded as remaining work in
-/// `docs/98`.
-fn to_unicode_cmap(source: &[u8], index: u32, kept: &BTreeSet<u16>) -> (String, usize) {
-    let mut mapping: BTreeMap<u16, u32> = BTreeMap::new();
+/// Two sources, in this precedence:
+///
+/// 1. **Inverting the face's own character map**, which is exact wherever one
+///    character shaped to one glyph — the overwhelming majority of text. The
+///    lowest code point wins, so the map does not depend on the order the `cmap`
+///    lists its subtables in.
+/// 2. **The real source text behind the glyph**, resolved from the display list's
+///    cluster offsets against the document (`clusters`, see [`crate::cluster`]).
+///    It **overrides** the inversion when it names several characters, because
+///    that is a glyph standing for a sequence — a ligature — and no single code
+///    point can name it. Roboto maps its `fi` glyph to `U+FB01`, so the inversion
+///    alone turns "fixture" into "ﬁxture": valid, and not what the document says.
+///    A single-character reading only *fills a gap*, because there the inversion
+///    is already exact and the model text can legitimately differ from what was
+///    shaped (`w:caps` rewrites case, a `w:vanish` run contributes model bytes
+///    but no glyphs), so overriding a good answer would risk trading a right one
+///    for a wrong one.
+///
+/// A glyph neither source names is counted: copying it out of the PDF yields
+/// nothing, and that is reported as `pdf.font.unmapped_glyphs` rather than
+/// guessed at. The count is over the glyphs the document actually **draws**
+/// (`drawn`), not over everything the subset retains (`kept`): the subsetter also
+/// keeps the components a composite glyph references, and a glyph no content
+/// stream ever emits cannot be copied out at all, so counting it described a
+/// defect that was not there. `.notdef` is never copied either, so it is not
+/// counted.
+fn to_unicode_cmap(
+    source: &[u8],
+    index: u32,
+    kept: &BTreeSet<u16>,
+    drawn: &BTreeSet<u16>,
+    clusters: Option<&BTreeMap<u16, String>>,
+) -> (String, usize) {
+    let mut mapping: BTreeMap<u16, String> = BTreeMap::new();
     if let Ok(font) = FontRef::from_index(source, index) {
+        let mut lowest: BTreeMap<u16, u32> = BTreeMap::new();
         for (code, glyph) in font.charmap().mappings() {
             if let Ok(id) = u16::try_from(glyph.to_u32())
                 && kept.contains(&id)
             {
-                // The lowest code point wins, so the map is independent of the
-                // order the `cmap` happens to list its subtables in.
-                mapping.entry(id).or_insert(code);
+                lowest.entry(id).or_insert(code);
             }
+        }
+        for (glyph, code) in lowest {
+            if let Some(ch) = char::from_u32(code) {
+                mapping.insert(glyph, ch.to_string());
+            }
+        }
+    }
+    for (glyph, text) in clusters.into_iter().flatten() {
+        if !kept.contains(glyph) || text.is_empty() {
+            continue;
+        }
+        if text.chars().count() > 1 || !mapping.contains_key(glyph) {
+            mapping.insert(*glyph, text.clone());
         }
     }
 
     let mut body = String::new();
     let mut count = 0_usize;
     let mut chunk = String::new();
-    for (glyph, code) in &mapping {
-        let Some(ch) = char::from_u32(*code) else {
-            continue;
-        };
+    for (glyph, text) in &mapping {
         let mut utf16 = String::new();
-        let mut buffer = [0_u16; 2];
-        for unit in ch.encode_utf16(&mut buffer) {
+        for unit in text.encode_utf16() {
             utf16.push_str(&format!("{unit:04X}"));
         }
         chunk.push_str(&format!("<{glyph:04X}> <{utf16}>\n"));
@@ -524,8 +576,14 @@ fn to_unicode_cmap(source: &[u8], index: u32, kept: &BTreeSet<u16>) -> (String, 
          CMapName currentdict /CMap defineresource pop\n\
          end\nend\n"
     );
-    // `.notdef` is never copied out, so it is not counted as an unmapped glyph.
-    let unmapped = kept.len().saturating_sub(mapping.len()).saturating_sub(1);
+    // Counted glyph by glyph rather than as a difference of two sizes, so the
+    // number stays the answer to "how many retained glyphs copy as nothing" even
+    // when a face maps `.notdef` or the cluster texts name a glyph the inversion
+    // also named.
+    let unmapped = drawn
+        .iter()
+        .filter(|glyph| **glyph != 0 && !mapping.contains_key(*glyph))
+        .count();
     (cmap, unmapped)
 }
 
@@ -564,8 +622,71 @@ mod tests {
         let charmap = font.charmap();
         let glyph = u16::try_from(charmap.map('A').expect("A is covered").to_u32()).unwrap();
         let kept: BTreeSet<u16> = [0, glyph].into_iter().collect();
-        let (cmap, unmapped) = to_unicode_cmap(bytes, 0, &kept);
+        let (cmap, unmapped) = to_unicode_cmap(bytes, 0, &kept, &kept, None);
         assert!(cmap.contains(&format!("<{glyph:04X}> <0041>")), "{cmap}");
         assert_eq!(unmapped, 0);
+    }
+
+    #[test]
+    fn a_glyph_no_source_can_name_is_still_counted_as_unmapped() {
+        // The metric has to keep meaning something. A retained glyph the face's
+        // character map does not reach and no cluster resolved copies out of the
+        // PDF as nothing, and saying so is the point of
+        // `pdf.font.unmapped_glyphs`.
+        let bytes = fonts::face_bytes(FontId(0));
+        let font = FontRef::new(bytes).expect("skrifa reads the bundled face");
+        let charmap = font.charmap();
+        let mapped = u16::try_from(charmap.map('A').expect("A is covered").to_u32()).unwrap();
+        // Roboto's `fi` ligature: reachable only through GSUB from "fi", and one
+        // of the glyphs this fix names. Its own character-map entry is U+FB01.
+        let ligature = u16::try_from(charmap.map('\u{fb01}').expect("FB01").to_u32()).unwrap();
+        // A glyph id past the face's character map, standing in for anything the
+        // inversion cannot reach.
+        let orphan = 2050_u16;
+        assert!(
+            charmap
+                .mappings()
+                .all(|(_, glyph)| glyph.to_u32() != u32::from(orphan)),
+            "the stand-in glyph must genuinely have no character-map entry"
+        );
+        let kept: BTreeSet<u16> = [0, mapped, ligature, orphan].into_iter().collect();
+
+        let (_, unmapped) = to_unicode_cmap(bytes, 0, &kept, &kept, None);
+        assert_eq!(unmapped, 1, "only the orphan is unnameable");
+
+        // A cluster text names it, so it stops being unmapped -- and the count is
+        // not reported as zero by stopping the counting.
+        let clusters: BTreeMap<u16, String> = [(orphan, "ø".to_owned())].into_iter().collect();
+        let (cmap, unmapped) = to_unicode_cmap(bytes, 0, &kept, &kept, Some(&clusters));
+        assert_eq!(unmapped, 0);
+        assert!(cmap.contains(&format!("<{orphan:04X}> <00F8>")), "{cmap}");
+    }
+
+    #[test]
+    fn a_multi_character_cluster_overrides_the_character_map_but_a_single_one_does_not() {
+        let bytes = fonts::face_bytes(FontId(0));
+        let font = FontRef::new(bytes).expect("skrifa reads the bundled face");
+        let charmap = font.charmap();
+        let ligature = u16::try_from(charmap.map('\u{fb01}').expect("FB01").to_u32()).unwrap();
+        let letter = u16::try_from(charmap.map('A').expect("A is covered").to_u32()).unwrap();
+        let kept: BTreeSet<u16> = [0, ligature, letter].into_iter().collect();
+
+        let clusters: BTreeMap<u16, String> = [
+            (ligature, "fi".to_owned()),
+            // A single character never displaces a good inversion: the model text
+            // and the shaped text can legitimately differ (`w:caps`, `w:vanish`).
+            (letter, "z".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        let (cmap, _) = to_unicode_cmap(bytes, 0, &kept, &kept, Some(&clusters));
+        assert!(
+            cmap.contains(&format!("<{ligature:04X}> <00660069>")),
+            "the ligature names both of its characters: {cmap}"
+        );
+        assert!(
+            cmap.contains(&format!("<{letter:04X}> <0041>")),
+            "the letter keeps its character-map answer: {cmap}"
+        );
     }
 }

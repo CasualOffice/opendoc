@@ -170,6 +170,7 @@ dependencies = [
 name = "casual-doc-pdf"
 version = "0.0.1"
 dependencies = [
+ "casual-doc-edit",
  "casual-doc-import",
  "casual-doc-layout",
  "casual-doc-model",
