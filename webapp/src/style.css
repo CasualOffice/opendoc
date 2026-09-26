@@ -164,7 +164,11 @@
   --radius-dialog: 12px;
   --shadow-popover: 0 10px 34px rgba(20, 22, 28, 0.24);
   --shadow-lg: 0 18px 48px rgba(20, 22, 28, 0.28);
-  --shadow-dialog: 0 24px 72px rgba(20, 22, 28, 0.3);
+  /* Two layers, not one 30%-opacity slab: a tight contact shadow that seats the
+     card, plus a wide soft one for depth. The single heavy shadow read as a
+     drop-shadowed box from a decade ago, which is most of why the dialogs felt
+     heavier than the chrome around them. */
+  --shadow-dialog: 0 1px 2px rgba(20, 22, 28, 0.12), 0 16px 48px rgba(20, 22, 28, 0.18);
   /* Named type, control-height, and icon grids from doc 69 §3.3/§4.1/§4.2.
      Values preserve the existing shell except where the design explicitly
      consolidates equivalent caption/icon roles. */
@@ -1035,7 +1039,10 @@ body.modal-open {
   max-height: min(720px, calc(100vh - 48px));
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--line-strong);
+  /* No border. A card that carries BOTH a 1px outline and a 72px drop shadow is
+     saying the same thing twice, and the ribbon band next to it already
+     established the house rule — "white on grey, so it separates by SHADE and
+     needs no border". The dialog sits on a scrim, so the shadow alone lifts it. */
   border-radius: var(--radius-dialog);
   background: var(--surface);
   box-shadow: var(--shadow-dialog);
@@ -1096,9 +1103,13 @@ body.modal-open {
 .dialog-heading h2 {
   margin: 0;
   color: var(--ink);
-  font-size: var(--fs-title);
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  /* One step down from `--fs-title`. A dialog title names a task in a box the
+     user already chose to open; it is not a page heading and does not need to
+     compete with the document. Word and Docs both set theirs at body weight
+     plus a little. */
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .dialog-heading p {
@@ -1390,12 +1401,16 @@ body.modal-open {
   margin: 0;
 }
 
+/* Rows, not cards. These eight facts are READ-ONLY metadata; boxing each one in
+   a filled, outlined card gave the dialog eight more rectangles than it has
+   pieces of information, which is most of what made it read as boxy. Word's
+   Info pane and Docs' Document details both list them as plain label/value
+   pairs with a hairline between. The row separator carries the structure the
+   box used to, at a fraction of the weight. */
 .metadata-facts > div {
   min-width: 0;
-  padding: 10px 11px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .metadata-facts dt {
@@ -2439,11 +2454,14 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
+/* The unit sits INSIDE the field, not in a filled compartment beside it. A
+   ruled, shaded box around "in" made every measurement look like two controls
+   where there is one value, and Page setup alone shows six of them. Word and
+   Docs both render the unit as quiet text inside the field. */
 .number-control > span {
   display: grid;
   place-items: center;
-  border-left: 1px solid var(--line);
-  background: var(--bg-2);
+  padding-inline-end: 2px;
   color: var(--muted);
   font-size: var(--fs-small);
   font-weight: 500;
