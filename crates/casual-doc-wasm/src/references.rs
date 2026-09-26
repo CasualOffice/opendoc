@@ -118,7 +118,24 @@ struct InterestRecord {
     node: NodeId,
     order: usize,
     chapters: [u32; 9],
-    reference_bookmark: Option<BookmarkId>,
+    /// The paragraph's plain-text byte length — the end offset of a bookmark that
+    /// covers the whole paragraph.
+    ///
+    /// This is deliberately NOT the length of the trimmed display text a picker
+    /// shows. Using the trimmed length as a bookmark's end offset is a defect this
+    /// module shipped for exactly one commit: it never errors (a trimmed length is
+    /// never longer), so every test passed, and the bookmark silently covered less
+    /// of the paragraph than the reference claimed — which another word processor
+    /// then displays as truncated text.
+    length: u32,
+    /// The byte offset just past the first `SEQ` field's cached result, when the
+    /// paragraph is a caption. This is the boundary Word's *Only label and number*
+    /// and *Only caption text* reference kinds bookmark on either side of.
+    after_sequence: Option<u32>,
+    /// Every `_Ref`-prefixed bookmark in the paragraph, as `(id, start, end)`, so a
+    /// second reference of the same kind to the same target reuses the bookmark
+    /// whose extent actually matches rather than making another.
+    reference_bookmarks: Vec<(BookmarkId, u32, u32)>,
 }
 
 impl ReferenceScan {
@@ -159,9 +176,16 @@ impl ReferenceScan {
             .max(1)
     }
 
-    fn reference_bookmark(&self, node: NodeId) -> Option<BookmarkId> {
-        self.found(node)
-            .and_then(|record| record.reference_bookmark)
+    /// The `_Ref` bookmark on `node` covering exactly `[start, end)`, if there is
+    /// one.
+    fn reference_bookmark(&self, node: NodeId, start: u32, end: u32) -> Option<BookmarkId> {
+        self.found(node).and_then(|record| {
+            record
+                .reference_bookmarks
+                .iter()
+                .find(|(_, from, to)| *from == start && *to == end)
+                .map(|(bookmark, _, _)| *bookmark)
+        })
     }
 }
 
@@ -257,29 +281,60 @@ fn sequence_of(inlines: &[InlineNode]) -> Option<(String, String)> {
     None
 }
 
-/// The `_Ref`-prefixed bookmark opening at offset 0 of this paragraph, if any.
-/// O(inlines).
-fn leading_reference_bookmark(
+/// The plain-text byte offsets a cross-reference needs from one paragraph: its
+/// total length, the offset just past its first `SEQ` field, and every
+/// `_Ref`-prefixed bookmark's extent.
+///
+/// Offsets are derived by re-running `node_plain_text` over each prefix of the
+/// inline list rather than by re-implementing its rules. That is O(inlines^2) in
+/// the paragraph, and it is deliberate: this runs for the two paragraphs a command
+/// names, never per paragraph of the document, and the authoritative definition of
+/// "the paragraph's plain text" is that one function — a second implementation of
+/// it here would drift, and an offset that disagrees with it by one byte is an
+/// edit applied in the wrong place.
+fn paragraph_offsets(
     paragraph: &Paragraph,
     bookmarks: &casual_doc_model::v1::DefinitionMap<BookmarkId, Bookmark>,
-) -> Option<BookmarkId> {
-    for inline in &paragraph.inlines {
+) -> (u32, Option<u32>, Vec<(BookmarkId, u32, u32)>) {
+    let offset_at = |index: usize| node_plain_text(&paragraph.inlines[..index]).len() as u32;
+    let length = offset_at(paragraph.inlines.len());
+    let mut after_sequence = None;
+    let mut open: Vec<(BookmarkId, u32)> = Vec::new();
+    let mut extents: Vec<(BookmarkId, u32, u32)> = Vec::new();
+    for (index, inline) in paragraph.inlines.iter().enumerate() {
         match inline {
+            InlineNode::Field(field)
+                if after_sequence.is_none() && matches!(field.kind, FieldKind::Seq { .. }) =>
+            {
+                after_sequence = Some(offset_at(index + 1));
+            }
             InlineNode::BookmarkStart(marker) => {
                 if bookmarks
                     .get(&marker.bookmark)
                     .is_some_and(|bookmark| bookmark.name.starts_with(REFERENCE_BOOKMARK_PREFIX))
                 {
-                    return Some(marker.bookmark);
+                    open.push((marker.bookmark, offset_at(index)));
                 }
             }
-            // Any run of text means the paragraph has started; a bookmark after
-            // it does not cover the caption from its beginning.
-            InlineNode::Run(_) | InlineNode::Field(_) => return None,
+            InlineNode::BookmarkEnd(marker) => {
+                if let Some(position) = open
+                    .iter()
+                    .position(|(bookmark, _)| *bookmark == marker.bookmark)
+                {
+                    let (bookmark, start) = open.remove(position);
+                    extents.push((bookmark, start, offset_at(index)));
+                }
+            }
             _ => {}
         }
     }
-    None
+    // A bookmark whose end marker is in a later paragraph covers this paragraph to
+    // its end; reporting it as zero-length would make us reuse it for a reference
+    // that then shows nothing.
+    for (bookmark, start) in open {
+        extents.push((bookmark, start, length));
+    }
+    (length, after_sequence, extents)
 }
 
 /// Rewrites the cached result of the first `SEQ` field in `inlines` to `number`,
@@ -763,23 +818,47 @@ impl WasmDocument {
             interest: &[target, caret.node],
             keep_inlines: false,
         });
-        let target_text = scan
-            .captions
-            .iter()
-            .find(|caption| caption.node == target)
-            .map(|caption| caption.text.clone())
-            .or_else(|| {
-                scan.headings
-                    .iter()
-                    .find(|(_, node, _)| *node == target)
-                    .map(|(_, _, text)| text.clone())
-            })
-            .or_else(|| self.paragraph_text_of(target))
+        // The target's OWN plain text, untrimmed, because these offsets address the
+        // model. The trimmed text a picker displays is a different string and using
+        // it here silently shortens every bookmark.
+        let offsets = scan
+            .found(target)
+            .ok_or_else(|| to_js("the cross-reference target is not in the document".into()))?;
+        let length = offsets.length;
+        let after_sequence = offsets.after_sequence;
+        let text = self
+            .paragraph_text_of(target)
             .ok_or_else(|| to_js("the cross-reference target is not in the document".into()))?;
 
+        // Word's three caption reference kinds differ ONLY in what the bookmark
+        // covers, not in the field instruction — "Entire caption", "Only label and
+        // number" and "Only caption text" are all a plain `REF`. The boundary is the
+        // end of the `SEQ` field: before it is the label and number, after it is the
+        // author's text. Offering all three while bookmarking the whole paragraph
+        // for each would put three rows in the dialog that do the same thing, which
+        // is worse than offering one.
+        let (start, end) = match (to, after_sequence) {
+            (ReferenceTo::LabelAndNumber, Some(boundary)) => (0, boundary),
+            (ReferenceTo::CaptionTextOnly, Some(boundary)) => (boundary, length),
+            // A target with no `SEQ` field — a heading or a bookmark — has no such
+            // boundary, so those two kinds fall back to the whole paragraph rather
+            // than to an empty range. The host does not offer them for a
+            // non-caption target; this is the engine refusing to produce an empty
+            // reference if it ever does.
+            _ => (0, length),
+        };
+        let result_text_from_range = || {
+            text.get(start as usize..end as usize)
+                .unwrap_or(&text)
+                .trim()
+                .replace('\t', " ")
+        };
+
         let mut ops = Vec::new();
-        // Reuse the target's existing `_Ref` bookmark, or make one.
-        let (bookmark_name, bookmark_id) = match scan.reference_bookmark(target) {
+        // Reuse an existing `_Ref` bookmark on the target ONLY when its extent is
+        // the one this reference kind needs, so ten "entire caption" references share
+        // one bookmark while a "label and number" reference gets its own.
+        let (bookmark_name, bookmark_id) = match scan.reference_bookmark(target, start, end) {
             Some(existing) => (
                 self.document
                     .definitions()
@@ -795,11 +874,10 @@ impl WasmDocument {
             let bookmark = BookmarkId::new(self.fresh_id()?);
             let start_id = self.fresh_id()?;
             let end_id = self.fresh_id()?;
-            let end = target_text.len() as u32;
             ops.push(Operation::CreateBookmark {
                 bookmark,
                 name: bookmark_name.clone(),
-                start: Pos::new(target, 0),
+                start: Pos::new(target, start),
                 start_id,
                 end: Pos::new(target, end),
                 end_id,
@@ -809,11 +887,9 @@ impl WasmDocument {
         let result_text = match to {
             ReferenceTo::PageNumber => self.page_of(target).map(|page| page.to_string()),
             ReferenceTo::AboveBelow => {
-                let target_order = scan.order(target);
-                let caret_order = scan.order(caret.node);
-                Some(above_below(target_order, caret_order).to_owned())
+                Some(above_below(scan.order(target), scan.order(caret.node)).to_owned())
             }
-            _ => Some(target_text.clone()),
+            _ => Some(result_text_from_range()),
         }
         .unwrap_or_default();
 
@@ -911,11 +987,15 @@ impl WasmDocument {
             // Only the nodes the caller named get a row; a document-wide
             // enumeration names none and so allocates none.
             if request.interest.contains(&paragraph.id) {
+                let (length, after_sequence, reference_bookmarks) =
+                    paragraph_offsets(paragraph, bookmarks);
                 scan.interest.push(InterestRecord {
                     node: paragraph.id,
                     order,
                     chapters,
-                    reference_bookmark: leading_reference_bookmark(paragraph, bookmarks),
+                    length,
+                    after_sequence,
+                    reference_bookmarks,
                 });
             }
             if let Some((label, instruction)) = sequence_of(&paragraph.inlines) {
@@ -1573,6 +1653,120 @@ mod tests {
                 .list_styles()
                 .contains(&CAPTION_STYLE_NAME.to_owned()),
             "the Caption style must exist in the document, as Word creates it"
+        );
+    }
+
+    /// Word's three caption reference kinds show three DIFFERENT things.
+    ///
+    /// They are all a plain `REF` field — what differs is the extent of the bookmark
+    /// it names, either side of the `SEQ` field. A build that bookmarked the whole
+    /// caption for each would put three rows in the dialog that do the same thing,
+    /// and every instruction-level assertion would still pass, because the
+    /// instructions ARE identical. So this guard reads the cached result, which is
+    /// the only thing that differs.
+    #[test]
+    fn the_three_caption_reference_kinds_show_three_different_things() {
+        let mut document = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let target = first_body_paragraph(&document);
+        insert_figure(&mut document, &target, ": Wiring diagram").expect("insert caption");
+        let caption = document.caption_entries()[0]
+            .split('\t')
+            .next()
+            .expect("the caption's node id")
+            .to_owned();
+
+        let shown = |document: &mut WasmDocument, kind: &str| {
+            document
+                .insert_cross_reference(&target, 0, &caption, kind, false)
+                .expect("insert cross-reference");
+            // The field just inserted is the first `REF`/`PAGEREF` in the caret's
+            // paragraph; read its cached result.
+            let mut text = String::new();
+            crate::visit_paragraphs_all_surfaces(&document.document, &mut |paragraph| {
+                if paragraph.id.to_string() != target || !text.is_empty() {
+                    return;
+                }
+                for inline in &paragraph.inlines {
+                    if let InlineNode::Field(field) = inline
+                        && matches!(
+                            field.kind,
+                            FieldKind::Ref { .. } | FieldKind::PageRef { .. }
+                        )
+                    {
+                        text = node_plain_text(&field.inlines);
+                        return;
+                    }
+                }
+            });
+            document.undo().expect("undo the reference");
+            text
+        };
+
+        let entire = shown(&mut document, "entireCaption");
+        let label_and_number = shown(&mut document, "labelAndNumber");
+        let caption_text = shown(&mut document, "captionText");
+
+        assert_eq!(entire, "Figure 1: Wiring diagram");
+        assert_eq!(
+            label_and_number, "Figure 1",
+            "\"only label and number\" must stop at the end of the SEQ field"
+        );
+        assert_eq!(
+            caption_text, ": Wiring diagram",
+            "\"only caption text\" must start at the end of the SEQ field"
+        );
+        assert!(
+            entire != label_and_number && entire != caption_text,
+            "three reference kinds that show the same string are three dialog rows \
+             that do the same thing"
+        );
+    }
+
+    /// A whole-caption reference bookmarks the WHOLE caption, not the trimmed
+    /// display string a picker shows.
+    ///
+    /// Using the trimmed length as the bookmark's end offset never errors — a
+    /// trimmed length is never longer — so it passes every test that only checks the
+    /// instruction, and another word processor then shows truncated text. The
+    /// fixture's caption ends in a space so trimmed and untrimmed differ.
+    #[test]
+    fn a_reference_bookmark_covers_the_whole_target_not_its_trimmed_display_text() {
+        let mut document = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let target = first_body_paragraph(&document);
+        insert_figure(&mut document, &target, ": Wiring diagram   ").expect("insert caption");
+        let caption = document.caption_entries()[0]
+            .split('\t')
+            .next()
+            .expect("the caption's node id")
+            .to_owned();
+        let caption_id = caption.parse::<NodeId>().expect("a node id");
+        document
+            .insert_cross_reference(&target, 0, &caption, "entireCaption", false)
+            .expect("insert cross-reference");
+
+        // The bookmark's end marker must sit at the caption paragraph's real end.
+        let mut length = 0u32;
+        let mut end_offset = None;
+        crate::visit_paragraphs_all_surfaces(&document.document, &mut |paragraph| {
+            if paragraph.id != caption_id {
+                return;
+            }
+            length = node_plain_text(&paragraph.inlines).len() as u32;
+            for (index, inline) in paragraph.inlines.iter().enumerate() {
+                if matches!(inline, InlineNode::BookmarkEnd(_)) {
+                    end_offset = Some(node_plain_text(&paragraph.inlines[..index]).len() as u32);
+                }
+            }
+        });
+        assert!(
+            length > 0,
+            "the caption must have text, or this proves nothing"
+        );
+        assert_eq!(
+            end_offset,
+            Some(length),
+            "the bookmark must end at the caption's real end ({length} bytes), not at \
+             the end of its trimmed display text"
         );
     }
 
