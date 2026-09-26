@@ -26,6 +26,51 @@ unclaimable."*
 its licence gate, we ship ungated. That is the entire point, and it is free for
 us to do.
 
+### 1.1 Exactly what their licence gates — verified, and it is two gates
+
+Read from source at `web-apps@9c0ca538` / `sdkjs@72b0421`, not from their docs.
+
+There are **two independent, server-supplied flags**, both defaulting to `false`
+(`sdkjs/common/apiCommon.js:473-474`), both arriving over the co-authoring
+socket (`apiBase.js:1981-1986`):
+
+```js
+// apps/common/main/lib/controller/LayoutManager.js:66-68
+var _applyCustomization = function(config, el, prefix) {
+    !config && (config = _config);
+    if (!_licensed || !config) return;          //  ← gate 1: canBrandingExt
+```
+```js
+// apps/documenteditor/main/app/controller/Main.js:1803, 1809
+canBrandingExt = params.asc_getCanBranding() && …   //  chrome layout, plugins
+canBranding    = params.asc_getCustomization();     //  ← gate 2: logo, About
+```
+
+| Unlicensed you still get | Unlicensed you lose |
+|---|---|
+| theme/colours, `unit`, `zoom`, `autosave`, tab style, `feedback`, `goback`, anonymous naming, macro policy, `compactToolbar`, `hideRightMenu`, review display defaults | **all** `customization.layout.*` chrome hiding (22 named regions), header **logo**, the About **licensee block**, UI plugins, `features.spellcheck.change`, `reviewPermissions`, `submitForm` |
+
+Three details worth stating because they are the sharp end:
+
+1. **You cannot remove their About button.** `Main.js:2639-2640` force-sets
+   `customization.about = true` when `!canBrandingExt`. Setting it to `false` is
+   silently reverted.
+2. **A custom loader logo or app font is not blocked — it is *nagged*.** It
+   applies, then `Main.js:1650-1662` raises a *"paid feature — contact us"*
+   modal. Worse than refusing, because the integrator ships it and then
+   discovers the modal.
+3. **Removing one gate would not white-label it.** The logo and About sit behind
+   `canBranding`, the chrome behind `canBrandingExt`. Anyone reasoning about
+   "just patch the licence check" has to find both.
+
+Editing itself is also revoked at runtime on connection limits — `disableEditing(true)`
+plus `asc_coAuthoringDisconnect()` with a "Buy now" modal (`Main.js:1591-1663`).
+That is the per-concurrent-tab meter, enforced in the client.
+
+**Our position, concretely:** every row in the right-hand column above is a
+plain config field here, with no flag, no meter, no modal, and no About button
+we refuse to let a host remove.
+
 ---
 
 ## 2. What we actually have — audited, not assumed
@@ -428,7 +473,74 @@ audit — using only published packages and public docs.*
 6. **`casual-doc-sdk` convergence** accepted as the substrate rather than
    freezing the 340-name wasm facade.
 
-## 11. Open questions
+## 11. Borrowed and rejected, from the ONLYOFFICE source audit
+
+Their integration API is ten years of production experience and it would be
+foolish to ignore it. It is also full of decisions we should not repeat.
+
+### 11.1 Borrow
+
+- **Capability-by-handler-presence.** `api.js:407-434` derives 27 `can*` booleans
+  from `!!events.onX`, so a host cannot enable an affordance it has not
+  implemented. That is our own "never a dead control" rule, arrived at
+  independently. Borrow the mechanism; make it typed and derived, not 27
+  hand-written lines.
+- **Request/response pairing with a correlation tag.** `onRequestUsers` → `setUsers`
+  carries `c` and the reply is rejected when it does not match. Borrow it, but
+  use a real request id rather than a semantic string.
+- **Two-phase handshake.** `onAppReady` → host sends `init` + `openDocument`
+  separately, so configuration and document are independent and a warm frame can
+  open a second document.
+- **Zero-copy binary.** `openDocumentFromBinary` / `onSaveDocument` transfer an
+  `ArrayBuffer`. For a local-first engine this is the *primary* path, not an
+  optimisation.
+- **`warmUp()`.** Pre-loading the bundle into a hidden frame is a cheap, real
+  improvement to perceived open time.
+- **Deprecation logged at the read site**, with the old key still working.
+
+### 11.2 Reject, with the reason
+
+- **`callbackUrl` + server-held key.** Never used by their client; handed to the
+  document server in the socket `auth` frame together with `permissions` and
+  `mode`. So the *browser is the channel through which authorization reaches the
+  server*, and there is no client-side token verification at all
+  (`apiCommon.js:6483` is a bare setter). Our host is the authority; nothing
+  round-trips authorization through the editor.
+- **Permissions that are silently UI-only.** Only `edit`, `comment`, `fillForms`
+  and `copy` reach their engine. `print`, `download`, `protect`,
+  `modifyContentControl`, `review`, `chat`, `editCommentAuthorOnly`,
+  `deleteCommentAuthorOnly` are enforced by hiding buttons — and `permissions.reader`
+  and `modifyFilter` are read *nowhere* in the document editor. An integrator
+  cannot tell which half they are getting. **This is the direct justification
+  for §3.2:** if a permission cannot be enforced in the engine, the schema must
+  say so rather than implying a guarantee.
+- **No config versioning.** The decay is visible in their own surface:
+  `toolbar`/`leftMenu`/`rightMenu`/`statusBar` each superseded by `layout.*`,
+  `onRequestCompareFile` → `onRequestSelectDocument`, `onOutdatedVersion` →
+  `onRequestRefreshFile`. Hence `version: 1` being **required** in §4.
+- **Four defaults for one key.** `fillForms` defaults differently in `api.js`,
+  DE-main, the forms app, the PDF editor and mobile. Defaults belong in one
+  normalization function, once.
+- **Group permissions by string-splitting a display name.** `user.group` is
+  concatenated into `fullname` separated by `String.fromCharCode(160)` and parsed
+  back out by splitting on the NBSP. Group-scoped review and comment permissions
+  depend on that. Ours will carry structured identity or none.
+- **`postMessage(..., "*")` in both directions**, both marked
+  `// TODO: specify explicit origin`, shipped — while `init` carries
+  `callbackUrl` and `openDocument` carries the document URL and token. We pin the
+  target origin, and it is not optional.
+- **Validation by `window.alert`.** An invalid config alerts and returns an
+  object with no working methods. Ours fails closed with a typed error.
+- **Two configuration channels.** Chrome options travel in the **iframe URL**
+  (`customer`, `logo`, `uitheme`, `compact`) and are interpolated into markup by
+  `document.write` behind a four-character escaper, while everything else goes by
+  `postMessage`. One channel, validated once.
+- **Permissions derived exactly once, with no true revocation.**
+  `denyEditingRights` disconnects the socket and greys the UI without mutating a
+  single flag; the in-memory document stays editable. Our `setAccess()` must
+  actually narrow, live.
+
+## 12. Open questions
 
 - **Q-A** Does `owner` mean anything without a persistence/identity story, or is
   it a host-asserted label we simply reflect? (Storage is decided YES, opencalc
