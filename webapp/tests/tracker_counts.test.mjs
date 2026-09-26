@@ -446,11 +446,34 @@ test("docs/109: every summary cell is what the rows actually say", () => {
   );
 
   const stated = new Map();
+  const wrongWidth = [];
   for (const line of lines.slice(headerAt + 2)) {
     if (!line.startsWith("|")) break;
     const c = cells(line).map((x) => x.replaceAll("*", "").trim());
+    // A row must be exactly as wide as the header it sits under.
+    //
+    // This is here because the Total row carried TWENTY-ONE value cells against
+    // a six-column header: the six real ones followed by fifteen numbers left
+    // over from earlier edits. Every assertion below reads by column INDEX, so
+    // the extras were unreachable and the table published stale figures while
+    // this file stayed green — drift, in the summary of the row about drift.
+    // Checking the shape is what makes the value checks trustworthy, because a
+    // guard that indexes into a row it never measured can only ever see the
+    // prefix somebody happened to keep correct.
+    if (c.length - 1 !== columns.length) {
+      wrongWidth.push(
+        `${c[0] || "(unnamed)"} has ${c.length - 1} value cells, the header declares ` +
+          `${columns.length}: ${c.slice(1).join(" | ")}`,
+      );
+    }
     stated.set(c[0], c.slice(1).map(Number));
   }
+  assert.deepEqual(
+    wrongWidth,
+    [],
+    "docs/109's summary rows must be as wide as its header — extra cells are never read, " +
+      "so they are stale numbers nothing can correct",
+  );
 
   for (const name of LANES) {
     const derived = tally(queue.filter((r) => r.lane === name));
