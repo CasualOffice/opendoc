@@ -66,6 +66,40 @@ export function documentTabTitle({ name, dirty = false, fallback = "OpenDoc" }) 
   return `${dirty ? "• " : ""}${name} — OpenDoc`;
 }
 
+/** Whether a message needs the transient on-screen channel — the toast — as
+ *  well as the status line.
+ *
+ *  Two independent reasons, and `109` UX-017 is the first of them:
+ *
+ *  1. **The status line is not on screen.** Below 620px `.foot-left` is
+ *     `display: none`, so the line that carries every refusal paints nothing and
+ *     is pruned from the accessibility tree with it. A channel that disappears
+ *     is not a channel.
+ *  2. **The message is a refusal.** The user's action did not happen, and a 12px
+ *     line in the footer is somewhere the answer is *available* rather than
+ *     somewhere it is *noticed*. Word and ONLYOFFICE both answer a refusal with
+ *     a modal (ONLYOFFICE: 31 `Common.UI.warning` sites in the document editor
+ *     alone — `documenteditor/main/app/controller/Toolbar.js:1521-1528` is a
+ *     rejected font size, which even restores focus to the field), and Google
+ *     Docs with a viewport-anchored snackbar. Escalating errors to a transient
+ *     card is the cheaper half of that agreement; a modal per refused keystroke
+ *     would be worse than the defect.
+ *
+ *  Confirmations do not escalate while the line is showing them, or every
+ *  toolbar press would throw a card over the document. */
+export function needsToast(kind, statusLineVisible) {
+  return kind === "error" || !statusLineVisible;
+}
+
+/** How long a toast stays, in milliseconds.
+ *
+ *  A refusal outlives a confirmation because it has to be *read* — it names a
+ *  reason and usually a way out ("switch to Editing"). Both values sit in the
+ *  range Google Docs' snackbar uses; neither is long enough to be litter. */
+export function toastDuration(kind) {
+  return kind === "error" ? 6000 : 3500;
+}
+
 /** Whether a status line is one an object selection put there.
  *
  *  Clearing the status bar when the selection goes away must not wipe a message

@@ -143,6 +143,12 @@
   --z-review-card: 67;
   --z-palette: 90;
   --z-modal: 100;
+  /* Above the modal, for the same reason the tooltip below is: the toast is a
+     `pointer-events: none` card that never receives input, so it cannot let a
+     user act on chrome a modal has taken control of — and a refusal raised BY a
+     dialog (a page-setup change Suggesting cannot track) has to be readable
+     while that dialog is still on screen. */
+  --z-toast: 110;
   /* Above the modal on purpose, and the only thing that is: a tooltip is a
      `pointer-events: none` hint that never receives input, so it cannot let a
      user act on chrome the modal has taken control of. */
@@ -7094,6 +7100,64 @@ body:not(.doc-loaded) .drop-title {
 .status.error {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* --- The toast (`109` UX-017) ------------------------------------------------
+   Google Docs' snackbar shape: pinned to the VIEWPORT, bottom-left, above the
+   footer. Pinned to the viewport rather than to the footer is the point — the
+   footer's informational half is `display: none` below 620px, which is how the
+   editor came to refuse an edit silently and inaudibly at phone widths.
+
+   `pointer-events: none` and nothing focusable inside, so the card can sit over
+   the document and over a modal without ever stealing a click or a Tab stop.
+   The announcement is the body-level live region's job, not this element's; this
+   is `aria-hidden` so a refusal is spoken once. */
+.toast {
+  position: fixed;
+  /* Logical, not `left`: the editor sets `documentElement.dir` from the active
+     locale (`src/localize.mjs:95`), and a snackbar belongs on the reading-start
+     side in Arabic and Hebrew as much as in English. */
+  inset-inline-start: var(--space-3);
+  bottom: calc(var(--h-footer) + var(--space-3));
+  z-index: var(--z-toast);
+  max-width: min(420px, calc(100vw - 2 * var(--space-3)));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-small);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+
+.toast.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* A refusal is marked by a bar rather than by coloured body text: the reason is
+   often a whole sentence with a way out in it, and it has to stay at full
+   contrast in both themes. */
+.toast[data-kind="error"] {
+  border-inline-start: 3px solid var(--danger-line);
+  font-weight: 500;
+}
+
+/* Deliberately HERE rather than in the reduced-motion block near the top of this
+   file: a media query adds no specificity, so a rule up there would be overridden
+   by `.toast` down here and reduced motion would have been a comment rather than
+   a behaviour. The toast still APPEARS — it is the only visible channel below
+   620px, and removing it would put the silence back for anyone who asks for less
+   motion. Only the slide and the fade go. */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
+    transform: none;
+  }
 }
 
 .stats {
