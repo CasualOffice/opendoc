@@ -118,6 +118,95 @@ const SHORTCUT_GLYPHS = new Map([
   ["⇥", "Tab"],
 ]);
 
+/** The named keys a spec can end in, and the `KeyboardEvent.key` each means.
+ *
+ *  Deliberately the same glyph vocabulary `SHORTCUT_GLYPHS` renders, because
+ *  `matchesShortcut` below is the PARSE twin of `formatShortcut` above and the
+ *  two must agree about every character or a chord will be advertised in one
+ *  spelling and bound in another — which is `109` UX-006 and UX-007 in one
+ *  sentence. `⌘` is the platform's command modifier, `⌃` is a literal Control
+ *  even on Apple: the label table collapses both to "Ctrl" because that is what
+ *  a Windows keyboard calls them, but they are different physical keys.
+ */
+const NAMED_KEYS = new Map([
+  ["⏎", "Enter"],
+  ["⌫", "Backspace"],
+  ["⌦", "Delete"],
+  ["⎋", "Escape"],
+  ["⇥", "Tab"],
+]);
+const MODIFIER_GLYPHS = new Set(["⌘", "⌃", "⌥", "⇧"]);
+
+/** Splits a declared shortcut into the modifiers it asks for and its key.
+ *
+ *  Exported for the guard, which walks the whole keymap and checks that every
+ *  spec parses to something a keyboard can actually produce — an unparseable
+ *  spec would otherwise be a binding that silently never fires.
+ */
+export function parseShortcut(spec) {
+  if (!spec) return null;
+  const wanted = { mod: false, control: false, alt: false, shift: false };
+  let rest = "";
+  for (const character of spec) {
+    if (MODIFIER_GLYPHS.has(character)) {
+      if (character === "⌘") wanted.mod = true;
+      else if (character === "⌃") wanted.control = true;
+      else if (character === "⌥") wanted.alt = true;
+      else wanted.shift = true;
+      continue;
+    }
+    rest += character;
+  }
+  const named = NAMED_KEYS.get(rest);
+  if (named) return { ...wanted, key: named };
+  // A single printable character, or a named key the browser spells out (F5).
+  if ([...rest].length === 1 || /^F\d{1,2}$/.test(rest)) return { ...wanted, key: rest };
+  return null;
+}
+
+/** Whether `event` is the keystroke `spec` declares, on this platform.
+ *
+ * The point of this function is that it reads the SAME string `formatShortcut`
+ * renders, so the label in the palette and the binding in the dispatcher are one
+ * declaration rather than two tables that drift (`109` UX-006/UX-007). Before
+ * it, 25 `shortcut:` labels and four hand-written `keydown` if-chains were
+ * unrelated, and the editor both advertised chords it had never bound and bound
+ * one (⌘⇧E) it advertised nowhere.
+ *
+ * `⌘` resolves to Command on Apple and Control elsewhere, which is why one spec
+ * covers both platforms — the same economy as ONLYOFFICE putting
+ * `"command+f,ctrl+f"` in a single keymap key
+ * (`common/main/lib/util/Shortcuts.js`, used at
+ * `documenteditor/main/app/controller/LeftMenu.js:148`).
+ *
+ * Every modifier is matched EXACTLY: `⌘B` does not fire on ⌘⇧B, or Bold would
+ * steal the chord a future Bold-variant wants and the user would get an edit
+ * they did not ask for.
+ */
+export function matchesShortcut(spec, event, platform = keyboardPlatform()) {
+  const wanted = parseShortcut(spec);
+  if (!wanted || !event) return false;
+  const apple = platform === APPLE_PLATFORM;
+  if (apple) {
+    // Command and Control are different physical keys here, so ⌘B must not be
+    // satisfied by Ctrl+B and ⌃Space must not be satisfied by ⌘Space.
+    if ((event.metaKey === true) !== wanted.mod) return false;
+    if ((event.ctrlKey === true) !== wanted.control) return false;
+  } else {
+    // Everywhere else they are the SAME key: `⌘` and `⌃` both mean Control, so a
+    // spec asking for either is satisfied by Control and by nothing else. The
+    // Windows/Super key is not a chord modifier in this editor.
+    if ((event.ctrlKey === true) !== (wanted.mod || wanted.control)) return false;
+    if (event.metaKey === true) return false;
+  }
+  if ((event.altKey === true) !== wanted.alt) return false;
+  if ((event.shiftKey === true) !== wanted.shift) return false;
+  const key = event.key ?? "";
+  return key.length === 1 && wanted.key.length === 1
+    ? key.toLowerCase() === wanted.key.toLowerCase()
+    : key === wanted.key;
+}
+
 /** Renders a declared shortcut for the keyboard in front of the user.
  *
  * Apple keeps the glyphs, which is the platform convention and is what the

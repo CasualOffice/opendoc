@@ -49,6 +49,7 @@ import {
   formatInfo,
 } from "./format_io.mjs";
 import { formatShortcut, keyboardPlatform, lineDeletionDirection, navigationDirection, navigationShortcuts, wordDeletionDirection } from "./keyboard.mjs";
+import { chordCommand, shortcutForCommand } from "./keymap.mjs";
 import { clampContextMenuPosition, moveMenuIndex, normalizeMenuEntries } from "./context_menu.mjs";
 import {
   focusMenuIndex,
@@ -6872,36 +6873,16 @@ document.addEventListener("pointerdown", (event) => {
   if (event.target.closest?.("[data-review-revision-id]")) return;
   closeReviewInlineCard();
 });
-document.addEventListener("keydown", (event) => {
-  if (!doc || event.defaultPrevented) return;
-  const mod = event.metaKey || event.ctrlKey;
-  if (mod && event.altKey && event.key.toLowerCase() === "m") {
-    event.preventDefault();
-    openReviewComposer();
-  } else if (mod && event.shiftKey && event.key.toLowerCase() === "e") {
-    event.preventDefault();
-    // Cycle Editing → Suggesting → Viewing → Editing for keyboard access to
-    // all three modes (REVIEW-GAP-014).
-    const next =
-      reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing";
-    setReviewMode(next);
-  } else if (mod && event.altKey && event.key === "Enter" && !isInteractiveChromeTarget(event.target)) {
-    // Word's Accept ▸ Next (⌘/Ctrl+Alt+Enter): decide the change at the caret and
-    // advance to the next one (Q3). `stopImmediatePropagation` keeps the canvas
-    // editor's own Enter handling from also firing.
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    void decideReviewAndAdvance(true);
-  } else if (
-    mod && event.altKey && (event.key === "Backspace" || event.key === "Delete")
-    && !isInteractiveChromeTarget(event.target)
-  ) {
-    // Reject ▸ Next (⌘/Ctrl+Alt+Backspace).
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    void decideReviewAndAdvance(false);
-  }
-});
+/** Editing → Suggesting → Viewing → Editing, for keyboard access to all three
+ *  (REVIEW-GAP-014). Google Docs cycles its three modes from one chord too; Word
+ *  has no equivalent, so this is Docs' grammar rather than an invention. It is a
+ *  named command rather than an inline keydown branch so that the chord is
+ *  advertised on every surface (`109` UX-007). */
+function cycleReviewMode() {
+  setReviewMode(
+    reviewMode === "editing" ? "suggesting" : reviewMode === "suggesting" ? "viewing" : "editing",
+  );
+}
 viewportEl.addEventListener("scroll", hideLinkChip, { passive: true });
 window.addEventListener("resize", hideLinkChip);
 
@@ -7417,7 +7398,9 @@ function buildContextCommands(context) {
       label: "Add link…",
       group: "annotate",
       icon: "link",
-      shortcut: "⌘K",
+      // The same capability as `insert.link` under the annotate surface's own id,
+      // so it reads its chord from the one table rather than restating it.
+      shortcut: shortcutForCommand("insert.link"),
       enabled: context.sameParagraphRange && !context.suggesting,
       disabledReason: context.suggesting
         ? "Link changes cannot be tracked in Suggesting mode"
@@ -7441,7 +7424,7 @@ function buildContextCommands(context) {
       label: "Add comment",
       group: "annotate",
       icon: "comment",
-      shortcut: "⌘⌥M",
+      shortcut: shortcutForCommand("comment.add"),
       enabled: context.hasRange,
       disabledReason: "Select text to add a comment",
       run: () => openReviewComposer(),
@@ -12213,7 +12196,7 @@ function editorCommands(context = { surface: "palette" }) {
     // would be a lie printed in the palette.
     { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, enabled: hostCapabilities().has("new"), disabledReason: t("capability.embedded"), run: () => void newBlankDocument() },
     { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, enabled: hostCapabilities().has("open"), disabledReason: t("capability.embedded"), run: () => fileEl.click() },
-    { id: "file.save", label: "Save", group: "File", kw: "export download", shortcut: "⌘S", run: () => saveDocument() },
+    { id: "file.save", label: "Save", group: "File", kw: "export download", run: () => saveDocument() },
     ...exportCommands(exportDocumentAs),
     // Reachable with no document open, because the case it exists for is
     // arriving at a fresh tab after a crash (HF-011). Disabled WITH A REASON
@@ -12230,14 +12213,13 @@ function editorCommands(context = { surface: "palette" }) {
         : "Autosave is off in an embedded editor",
       run: () => showDraftRecovery(),
     },
-    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", shortcut: "⌘P", run: () => printDocument(doc) },
+    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", run: () => printDocument(doc) },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
       label: doc?.undoLabel ? `Undo ${doc.undoLabel}` : "Undo",
       group: "Edit",
       kw: "revert",
-      shortcut: "⌘Z",
       contextMenu: true,
       enabled: !!doc?.canUndo,
       disabledReason: "Nothing to undo",
@@ -12248,7 +12230,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: doc?.redoLabel ? `Redo ${doc.redoLabel}` : "Redo",
       group: "Edit",
       kw: "",
-      shortcut: "⌘⇧Z",
       contextMenu: true,
       enabled: !!doc?.canRedo,
       disabledReason: "Nothing to redo",
@@ -12259,7 +12240,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Cut",
       group: "Clipboard",
       kw: "",
-      shortcut: "⌘X",
       contextMenu: true,
       enabled: context.hasRange ?? hasRange(),
       disabledReason: "Select content to cut",
@@ -12270,7 +12250,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Copy",
       group: "Clipboard",
       kw: "",
-      shortcut: "⌘C",
       contextMenu: true,
       enabled: context.hasRange ?? hasRange(),
       disabledReason: "Select content to copy",
@@ -12281,7 +12260,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Paste",
       group: "Clipboard",
       kw: "",
-      shortcut: "⌘V",
       contextMenu: true,
       enabled: !!doc && !!selection,
       disabledReason: "Place the caret before pasting",
@@ -12292,7 +12270,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Paste without formatting",
       group: "Clipboard",
       kw: "plain text unformatted keep text only",
-      shortcut: "⌘⇧V",
       contextMenu: true,
       enabled: !!doc && !!selection,
       disabledReason: "Place the caret before pasting",
@@ -12303,20 +12280,19 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Select all",
       group: "Clipboard",
       kw: "selection document",
-      shortcut: "⌘A",
       contextMenu: true,
       enabled: !!doc,
       run: () => selectAll(),
     },
-    { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", shortcut: "⌘F", run: () => openFind() },
-    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", shortcut: "⌘B", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("bold") },
-    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", shortcut: "⌘I", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("italic") },
-    { id: "format.underline", label: "Underline", group: "Format", kw: "", shortcut: "⌘U", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("underline") },
+    { id: "edit.find", label: "Find and replace", group: "Edit", kw: "search replace", run: () => openFind() },
+    { id: "format.bold", label: "Bold", group: "Format", kw: "strong", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("bold") },
+    { id: "format.italic", label: "Italic", group: "Format", kw: "emphasis", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("italic") },
+    { id: "format.underline", label: "Underline", group: "Format", kw: "", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("underline") },
     { id: "format.strike", label: "Strikethrough", group: "Format", kw: "strike", enabled: !!selection, disabledReason: "Place the caret or select text", run: fmt("strike") },
     { id: "format.superscript", label: "Superscript", group: "Format", kw: "raise exponent", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => superBtn.click() },
     { id: "format.subscript", label: "Subscript", group: "Format", kw: "lower", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => subBtn.click() },
     { id: "format.clear", label: "Clear direct formatting", group: "Format", kw: "reset defaults", enabled: !!selection, disabledReason: "Place the caret or select text", run: () => clearFormattingBtn.click() },
-    { id: "format.painter", label: "Format painter", group: "Format", kw: "copy formatting paint brush clone style match", shortcut: "⌘⇧C", enabled: !!selection, disabledReason: "Place the caret or select text to copy its formatting", run: () => armFormatPainter(false) },
+    { id: "format.painter", label: "Format painter", group: "Format", kw: "copy formatting paint brush clone style match", enabled: !!selection, disabledReason: "Place the caret or select text to copy its formatting", run: () => armFormatPainter(false) },
     // HF-147 — the face and the exact size were ribbon chrome with no command
     // id, so nothing but a mouse on that one control could set either. These two
     // open the control's own picker; the exact values are generated further down
@@ -12388,8 +12364,8 @@ function editorCommands(context = { surface: "palette" }) {
     // is deliberately deferred, because the Insert ribbon and the Insert menu
     // are held at exact parity by `insert-surface.spec.mjs` and adding a control
     // to both is a chrome change, not this fix.
-    { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", shortcut: "⇧⏎", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
-    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", shortcut: "⌘K", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
+    { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
+    { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
     { id: "layout.firstPageVariant", label: `Different first page: ${runningVariantState().firstPage ? "on" : "off"}`, group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("firstPage") },
     { id: "layout.evenOddVariant", label: `Different odd & even pages: ${runningVariantState().evenOdd ? "on" : "off"}`, group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("evenOdd") },
     { id: "insert.footnote", label: "Footnote", group: "Insert", kw: "footnote note reference citation bottom of page", enabled: !!selection, disabledReason: "Place the caret where the note belongs", run: () => insertNote("footnote") },
@@ -12459,7 +12435,7 @@ function editorCommands(context = { surface: "palette" }) {
       disabledReason: ribbonSurfaceReason(entry),
       run: entry.run ?? (() => {}),
     })),
-    { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
+    { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", noDoc: true, run: () => openCmd() },
     { id: "help.shortcuts", label: "Keyboard shortcuts", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => toggleShortcutsReference(true) },
     { id: "help.about", label: "About OpenDoc", group: "Help", kw: "about version licence license apache build source repository issue report credits", noDoc: true, run: () => toggleAbout(true) },
     // Resolve/Delete must have a menu home, not only a ribbon button:
@@ -12472,7 +12448,6 @@ function editorCommands(context = { surface: "palette" }) {
       label: "Add comment",
       group: "Review",
       kw: "annotate note",
-      shortcut: "⌘⌥M",
       enabled: context.hasRange ?? hasRange(),
       disabledReason: "Select text to comment on",
       run: () => openReviewComposer(),
@@ -12485,6 +12460,12 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "tools.spellCheck", label: `Spell check: ${settings.spellCheck === false ? "off" : "on"}`, group: "Tools", kw: "spelling spell check squiggle dictionary misspelled proofing language red underline glossary", noDoc: true, run: () => setSpellCheckEnabled(settings.spellCheck === false) },
     { id: "tools.grammarCheck", label: `Grammar check: ${settings.grammarCheck === false ? "off" : "on"}`, group: "Tools", kw: "grammar check agreement doubled word article a an punctuation capitalisation capitalization proofing blue underline", noDoc: true, run: () => setGrammarCheckEnabled(settings.grammarCheck === false) },
     { id: "review.toggle", label: "Toggle comments & suggestions", group: "Review", kw: "sidebar review panel", run: () => toggleReview() },
+    // ⌘⇧E worked before this row and was advertised NOWHERE — no palette row, no
+    // menu row, no reference entry — because the binding was a hand-written
+    // keydown branch and only descriptors carry labels (`109` UX-007). It exists
+    // as a command now, so the chord is discoverable on every surface. Google Docs
+    // cycles its three modes from one chord too; Word has no equivalent.
+    { id: "review.mode.cycle", label: "Next review mode", group: "Review", kw: "review mode cycle switch editing suggesting viewing next", run: () => cycleReviewMode() },
     { id: "review.mode.editing", label: "Editing mode", group: "Review", kw: "review mode edit", run: () => setReviewMode("editing") },
     { id: "review.mode.suggesting", label: "Suggesting mode (track changes)", group: "Review", kw: "review mode track changes suggest", run: () => setReviewMode("suggesting") },
     { id: "review.mode.viewing", label: "Viewing mode (read-only)", group: "Review", kw: "review mode view read only", run: () => setReviewMode("viewing") },
@@ -12492,8 +12473,8 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "review.previous", label: "Previous comment or change", group: "Review", kw: "revision suggestion comment navigate back", run: () => navigateReview(-1) },
     { id: "review.acceptAtCaret", label: "Accept change at cursor", group: "Review", kw: "revision suggestion approve current", run: () => decideReviewAtCaret(true) },
     { id: "review.rejectAtCaret", label: "Reject change at cursor", group: "Review", kw: "revision suggestion discard current", run: () => decideReviewAtCaret(false) },
-    { id: "review.acceptNext", label: "Accept change and move to next", group: "Review", kw: "revision suggestion approve next advance", shortcut: "⌘⌥⏎", run: () => decideReviewAndAdvance(true) },
-    { id: "review.rejectNext", label: "Reject change and move to next", group: "Review", kw: "revision suggestion discard next advance", shortcut: "⌘⌥⌫", run: () => decideReviewAndAdvance(false) },
+    { id: "review.acceptNext", label: "Accept change and move to next", group: "Review", kw: "revision suggestion approve next advance", run: () => decideReviewAndAdvance(true) },
+    { id: "review.rejectNext", label: "Reject change and move to next", group: "Review", kw: "revision suggestion discard next advance", run: () => decideReviewAndAdvance(false) },
     { id: "review.acceptAll", label: "Accept all changes", group: "Review", kw: "revision suggestion approve", run: () => void decideAllReviewChanges(true) },
     { id: "review.rejectAll", label: "Reject all changes", group: "Review", kw: "revision suggestion discard", run: () => void decideAllReviewChanges(false) },
   ];
@@ -12716,6 +12697,13 @@ function editorCommands(context = { surface: "palette" }) {
       run: () => traverseObjects(-1),
     },
   );
+  // The chord a command advertises comes from the keymap, never from a literal
+  // written here (`109` UX-006/UX-007). This one line is what makes a label that
+  // disagrees with its binding unrepresentable: the palette hint, the menu hint,
+  // the compact bar's tooltip and the shortcut reference all read
+  // `command.shortcut`, and the only thing that can set it is the table the
+  // dispatcher matches against.
+  for (const command of cmds) command.shortcut = shortcutForCommand(command.id);
   return cmds.filter((command) => doc || command.noDoc);
 }
 
@@ -13612,44 +13600,66 @@ cmdInput.addEventListener("keydown", (e) => {
     runCommand(cmdSel);
   }
 });
+/** Runs the command `id` names, or says why it cannot run.
+ *
+ *  A chord that exists and does nothing is a dead control (SKILL.md §10), so a
+ *  shortcut whose command is unavailable refuses OUT LOUD with the same reason
+ *  the ribbon button and the menu row give — and since `109` UX-017 that reason
+ *  is perceivable at phone widths and to a screen reader too. Returns false only
+ *  when no such command exists in the current state, which is how a chord whose
+ *  command needs a document (⌘S) still falls through to the browser when nothing
+ *  is open, exactly as it did before.
+ *
+ *  Cost: one `editorCommands()` build per chord press. That is the same build the
+ *  command palette already performs on EVERY keystroke typed into its input
+ *  (`renderCommands` → `buildCommands`), so this is an accepted cost on an
+ *  existing path rather than a new one — but it is not O(1): `documentHasObjects`
+ *  inside the build calls `objectOrder()` and parses it, which is O(objects).
+ *  That is pre-existing and worth its own row; it is not introduced here.
+ */
+function runCommandById(id) {
+  const command = editorCommands({ surface: "palette" }).find((c) => c.id === id);
+  if (!command) return false;
+  if (command.enabled === false) {
+    setStatus(command.disabledReason ?? "That command is not available right now", "error");
+    return true;
+  }
+  command.run();
+  return true;
+}
+
+// THE dispatcher: the one place a keyboard chord becomes a command (`109`
+// UX-006). It replaces four separate `keydown` handlers that each carried their
+// own hand-written if-chain, which is why the editor could advertise a chord it
+// had never bound and bind one it advertised nowhere.
+//
+// No modal check here, and none is needed: `modal.mjs` already swallows
+// application chords in the capture phase while a dialog is open, with an
+// allowlist for text-editing chords and a `toggleChord` escape hatch. That is
+// ONLYOFFICE's `common/main/lib/util/Shortcuts.js:96-107` suspend/resume, with
+// the two refinements their version lacks.
+//
+// `stopImmediatePropagation` once a chord is claimed, because a chord the table
+// owns must not also be read by anything else — that is what made ⌘⌥⏎ need it by
+// hand, or it would both decide a tracked change and insert a paragraph. Every
+// other document-level `keydown` listener in this file is Escape-only or
+// popover-only, so nothing legitimate is cut off.
 document.addEventListener("keydown", (e) => {
-  const mod = e.metaKey || e.ctrlKey;
-  if (!mod) return;
-  const lower = e.key.toLowerCase();
-  // Command palette: ⌘⇧P (the VS Code / editor-palette convention). Moved off
-  // ⌘K so that ⌘K can carry the Word / Google Docs / Pages standard "insert or
-  // edit hyperlink" — the two used to collide (docs/67 audit row 8). The header
-  // Search pill is the discoverable on-screen entry point (doc 69 §1.4.1).
-  if (e.shiftKey && lower === "p") {
+  const id = chordCommand(e, EDITOR_KEYBOARD_PLATFORM, {
+    inEditor: !isInteractiveChromeTarget(e.target) && eventTargetsEditor(e),
+  });
+  if (!id) return;
+  // The palette is the one command that toggles: its own chord has to close it
+  // as well as open it.
+  if (id === "help.commands" && cmdModal.isOpen) {
     e.preventDefault();
-    cmdModal.isOpen ? closeCmd() : openCmd();
+    e.stopImmediatePropagation();
+    closeCmd();
     return;
   }
-  // ⌘K inserts/edits a hyperlink on the current text selection. Skipped while a
-  // chrome input (find box, dialog field, the palette itself) is focused so it
-  // never hijacks typing there.
-  if (!e.shiftKey && lower === "k" && doc && !isInteractiveChromeTarget(e.target)) {
-    e.preventDefault();
-    if (hasRange() && selection) {
-      editSelectionLink();
-    } else {
-      setStatus("Select text to add a link", "error");
-    }
-    return;
-  }
-  if (lower === "s" && doc) {
-    e.preventDefault();
-    saveDocument();
-    return;
-  }
-  // ⌘/Ctrl+P prints the document's rendered pages. Intercept the browser default
-  // (which would print the editor chrome and mostly-blank virtualized pages) and
-  // run our dedicated print path instead. Read-only, so it works in any mode
-  // with no unsaved-changes requirement.
-  if (!e.shiftKey && lower === "p" && doc) {
-    e.preventDefault();
-    printDocument(doc);
-  }
+  if (!runCommandById(id)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
 });
 // Visible entry point for the palette (doc 69 §1.4.1): the shortcut already
 // worked, it just had no on-screen affordance to discover it.
@@ -13982,16 +13992,6 @@ replaceOneBtn.addEventListener("click", replaceCurrentMatch);
 replaceAllBtn.addEventListener("click", replaceAllMatches);
 findCloseBtn.addEventListener("click", closeFind);
 findBtn.addEventListener("click", () => openFind());
-document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-    // No modal check here on purpose: the primitive's keydown lock refuses every
-    // application chord while a dialog is open, so Find can no longer open
-    // behind one (docs/104 HF-063). Guarding each shortcut individually is the
-    // enumeration this change exists to delete.
-    e.preventDefault();
-    openFind();
-  }
-});
 
 // Indentation: left/right absolute, and a first-line/hanging "special" indent
 // (setFirstLineIndent encodes hanging as a negative value, 0 clears both).
@@ -14956,8 +14956,6 @@ function smartQuoteFor(key, node, offset) {
   return smartQuoteChar(key, previous);
 }
 
-const FORMAT_KEYS = { b: "bold", i: "italic", u: "underline" };
-
 document.addEventListener("keydown", async (e) => {
   if (!doc) return;
   // The canvas editor owns keystrokes only while its focus owner is active.
@@ -14966,7 +14964,6 @@ document.addEventListener("keydown", async (e) => {
 
   const mod = e.metaKey || e.ctrlKey;
   const key = e.key;
-  const lower = key.toLowerCase();
 
   if (composingText || e.isComposing || key === "Process") return;
 
@@ -15061,8 +15058,9 @@ document.addEventListener("keydown", async (e) => {
 
   // Space ticks the form checkbox the caret is in, as in Word — the keyboard
   // half of the click in `onPointerDown` (`docs/118` §2). Collapsed caret and
-  // no modifier only: Ctrl+Space below is Clear Formatting, and a Space over a
-  // selection is a replacement, not a toggle.
+  // no modifier only: Ctrl+Space is Clear Formatting (a keymap row now, claimed
+  // by the dispatcher), and a Space over a selection is a replacement, not a
+  // toggle.
   if (key === " " && !e.ctrlKey && !e.metaKey && !e.altKey && !hasRange() && selection) {
     if (toggleFormCheckboxAt(selection.focus.node, selection.focus.offset)) {
       e.preventDefault();
@@ -15070,67 +15068,11 @@ document.addEventListener("keydown", async (e) => {
     }
   }
 
-  // Word's Windows/Linux shortcut for clearing direct character formatting.
-  // macOS keeps Ctrl+Space available to the host/input source.
-  if (e.ctrlKey && !e.metaKey && key === " " && hasRange()) {
-    e.preventDefault();
-    if (reviewMode === "suggesting") {
-      setStatus("Clear formatting is not tracked; switch to Editing to apply it", "error");
-      return;
-    }
-    await runToolbarEdit((a, b, c, d) => doc.clearFormatting(a, b, c, d));
-    return;
-  }
-
-  // Word's "copy formatting" shortcut — arm the format painter from the caret /
-  // selection. Its paste twin (⌘/Ctrl+Shift+V) is taken by paste-plain, so a
-  // single armed brush + a click/drag is how the copied format is put down.
-  if (mod && e.shiftKey && lower === "c") {
-    e.preventDefault();
-    breakTypingSession();
-    armFormatPainter(false);
-    return;
-  }
-  // Clipboard, select-all, history (⌘/Ctrl based).
-  if (mod && lower === "c") {
-    e.preventDefault();
-    breakTypingSession();
-    await copySelection();
-    return;
-  }
-  if (mod && lower === "x") {
-    e.preventDefault();
-    await cut();
-    return;
-  }
-  if (mod && lower === "v") {
-    e.preventDefault();
-    if (e.shiftKey) await pasteAsText(); // ⌘/Ctrl+Shift+V — keep text only
-    else await paste();
-    return;
-  }
-  if (mod && lower === "a") {
-    e.preventDefault();
-    selectAll();
-    return;
-  }
-  if (mod && lower === "z") {
-    e.preventDefault();
-    await runEdit(() => (e.shiftKey ? doc.redo() : doc.undo()));
-    return;
-  }
-  if (mod && lower === "y") {
-    e.preventDefault();
-    await runEdit(() => doc.redo());
-    return;
-  }
-  if (mod && FORMAT_KEYS[lower]) {
-    e.preventDefault();
-    breakTypingSession();
-    toggleFormat(FORMAT_KEYS[lower]);
-    return;
-  }
-
+  // Every ⌘/Ctrl chord this handler used to carry — clipboard, select-all,
+  // history, B/I/U, the format painter, clear-formatting — is now a row in
+  // `keymap.mjs` claimed by the one dispatcher, which runs before this listener
+  // and stops the event. What stays here is the keyboard that is NOT a chord:
+  // caret movement, Enter, Tab, Backspace, the object grammar and text input.
   if (!selection) return;
 
   // Navigation uses an explicit macOS/Windows keymap. It runs before the
