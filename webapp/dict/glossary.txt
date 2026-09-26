@@ -273,6 +273,7 @@ draggable
 drawingml
 dropdown
 dropdowns
+embeddability
 embeddable
 embeddings
 endnote
@@ -315,6 +316,7 @@ iframe
 impl
 incl
 inlines
+integrators
 intra
 invariants
 invertible
