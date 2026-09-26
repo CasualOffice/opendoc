@@ -185,7 +185,14 @@ test("document dialogs share the standard type and sizing system", async ({
   });
   expect(propertiesMetrics.width).toBeCloseTo(640, 0);
   expect(propertiesMetrics.radius).toBe(12);
-  expect(propertiesMetrics.titleSize).toBe(16);
+  // 13, not 16, since the dialog-weight pass: the owner's report was that the
+  // dialogs look "too heavy", and a 16px/650 title competing with the document
+  // behind it was one of the four things making them so. Word and Docs both set
+  // a dialog title at body size plus a little. What this test actually asserts
+  // is UNIFORMITY — that every dialog uses the one scale — and that still holds;
+  // the constant simply outgrew its old value and is re-measured here rather
+  // than the rule being weakened.
+  expect(propertiesMetrics.titleSize).toBe(13);
   expect(propertiesMetrics.closeSize).toBe(30);
   expect(propertiesMetrics.fieldHeight).toBe(36);
   expect(propertiesMetrics.actionHeight).toBe(34);
@@ -213,7 +220,8 @@ test("document dialogs share the standard type and sizing system", async ({
   const { width, ...shared } = pageSetupMetrics;
   expect(shared).toEqual({
     radius: 12,
-    titleSize: 16,
+    titleSize: 13, // see the note on the properties card above
+
     closeSize: 30,
     fieldHeight: 36,
     actionHeight: 34,
