@@ -39,7 +39,17 @@ import {
 } from "./fixtures.mjs";
 
 const MENUS = ["file", "edit", "view", "insert", "format", "table", "review"];
-const RIBBON_TABS = ["home", "insert", "layout", "references", "view", "review"];
+// The Table tab is included since `109` UX-005 stamped its controls: it was left
+// out while its 19 buttons carried no command id, so a dead Table control was
+// invisible to the one sweep that exists to find dead controls.
+const RIBBON_TABS = ["home", "insert", "layout", "references", "view", "review", "table"];
+
+// References is legitimately all-disabled: its three commands (`reference.*`) are
+// declared `requires: "missing"` because the engine has no field-evaluation pass,
+// and they ship greyed WITH the reason rather than hidden. Every other tab must
+// offer something live, or its sweep skips every button and passes having checked
+// nothing.
+const ALL_DISABLED_BY_DESIGN = new Set(["references"]);
 
 // The only commands this sweep may not activate, and why. Both hand control to
 // the operating system and never give it back to the test: `window.print()`
@@ -141,6 +151,18 @@ async function activate(page, label, click) {
 async function loadEditor(page) {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
+}
+
+/** The editor in the state a tab needs to exist at all. Only Table is
+ *  contextual: its panel is hidden and its controls disabled until the caret is
+ *  inside a table, so sweeping it from a plain load would skip all 19 buttons. */
+async function loadEditorForTab(page, tab) {
+  await loadEditor(page);
+  if (tab !== "table") return;
+  await page.locator('.ribbon-tab[data-tab="insert"]').click();
+  await page.locator("#insertTableBtn").click();
+  await page.locator('.gc[data-r="2"][data-c="3"]').click();
+  await expect(page.locator("#tabTable")).toBeEnabled();
 }
 
 /** The same editor with a RANGE selected.
@@ -290,7 +312,7 @@ test.describe("every ribbon control acts or explains itself", () => {
       page.on("pageerror", (error) => thrown.push(String(error)));
 
       const panel = `#panel${tab[0].toUpperCase()}${tab.slice(1)}`;
-      await loadEditor(page);
+      await loadEditorForTab(page, tab);
       await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();
       const buttons = await page.$$eval(`${panel} button`, (list) =>
         list
@@ -305,12 +327,19 @@ test.describe("every ribbon control acts or explains itself", () => {
           })),
       );
       expect(buttons.length, `the ${tab} tab has buttons`).toBeGreaterThan(0);
+      if (!ALL_DISABLED_BY_DESIGN.has(tab)) {
+        expect(
+          buttons.filter((button) => !button.disabled).length,
+          `every button on the ${tab} tab is greyed out, so this sweep activates ` +
+            "nothing and passes having checked nothing",
+        ).toBeGreaterThan(0);
+      }
 
       for (const button of buttons) {
         if (button.disabled || POINTER_UNSAFE.has(button.id)) continue;
 
         await page.reload();
-        await loadEditor(page);
+        await loadEditorForTab(page, tab);
         await page.locator(`.ribbon-tab[data-tab="${tab}"]`).click();
         thrown.length = 0;
 
