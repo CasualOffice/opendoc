@@ -1881,13 +1881,17 @@ body.modal-open {
    the three-cell Font/Size/Color grid, so the 640px standard constant would
    leave a third of every row empty. */
 .watermark-dialog {
-  width: min(fit-content, 100%);
+  /* `fit-content` on its own, NOT `min(fit-content, 100%)` — see `.field-dialog`
+     for why that spelling never parsed. `fit-content` already cannot exceed the
+     available space, so the `min()` bought nothing even in intent. */
+  width: fit-content;
   max-inline-size: min(100%, 56ch);
 }
 
 /* ---- Drop cap ------------------------------------------------------------- */
 .drop-cap-dialog {
-  width: min(fit-content, 100%);
+  /* `fit-content`, not the unparseable `min()` — see `.field-dialog`. */
+  width: fit-content;
   max-inline-size: min(100%, 52ch);
 }
 

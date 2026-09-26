@@ -13,8 +13,12 @@
 //    so a six-row list and a twenty-field form were the same size and the
 //    smaller one was mostly padding.
 //
-// The measured geometry — spinner widths, gap sizes, preview boxes — is guarded
-// in `webapp/tests/e2e/dialog-density.spec.mjs`, which needs a real layout.
+// The measured geometry — what a card actually renders at, and whether it hides
+// content below its own fold — needs a real layout, so it is guarded in
+// `webapp/tests/e2e/dialog-fit.spec.mjs`. (This line named
+// `e2e/dialog-density.spec.mjs` for several commits. That file has never
+// existed: the citation was a claim that geometry was covered when nothing
+// covered it.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -95,22 +99,21 @@ test("a dialog that shrank its contents is allowed to shrink", () => {
 // The keyword alone is both correct and sufficient: `fit-content` is defined as
 // `min(max-content, max(min-content, stretch))`, so it already cannot exceed
 // the space available to it and needs no clamp.
-// A RATCHET rather than a zero, for the same reason as the `main.js` one.
-// Three rules still carry the broken spelling and none of them is this change's
-// to correct:
+// A RATCHET rather than a zero, because one rule still carries the broken
+// spelling:
 //
-//   `.watermark-dialog`, `.drop-cap-dialog` — a change running in parallel with
-//     this one owns both, so fixing them here would collide rather than help.
 //   `.page-setup-dialog` — correcting the spelling changes that card's rendered
-//     width for the first time, and redesigning Page setup is not this change's
-//     job. (It also already fails the clipping contract on the commit this
-//     branched from, with and without the fix, for an unrelated reason.)
+//     width for the first time, and Page setup wants a layout pass of its own
+//     rather than a width change made in passing.
+//
+// `.watermark-dialog` and `.drop-cap-dialog` were the other two. They were left
+// at 3 while a parallel change owned them; both are corrected in this same
+// commit, so the number comes down with them — which is what a ratchet is for.
 //
 // The ratchet arms the rule for everything else immediately: no NEW card can be
-// written this way, and when those three are corrected this number comes down
-// with them. A ceiling nobody lowers stops being a ratchet and becomes a
+// written this way. A ceiling nobody lowers stops being a ratchet and becomes a
 // comment, so the test also fails if the count drops below it.
-const MIN_FIT_CONTENT_RATCHET = 3;
+const MIN_FIT_CONTENT_RATCHET = 1;
 
 test("no new card asks for `min(fit-content, …)`, which is not valid CSS", () => {
   // Comments first: the rules above explain this defect in prose, and a guard
