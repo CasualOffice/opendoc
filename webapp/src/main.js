@@ -4121,7 +4121,7 @@ function paintTableResizeHandles(focus) {
   for (let i = 0; i + 4 < handles.length; i += 5) {
     const [pageNumber, x, y, h, col] = handles.slice(i, i + 5);
     const page = pages[pageNumber - 1];
-    if (!page) continue;
+    if (!page?.overlay) continue;
     const { sx, sy } = scaleOf(page);
     const el = document.createElement("div");
     el.className = "table-col-resize-handle";
@@ -4151,7 +4151,7 @@ function paintObjectSelection() {
   for (let i = 0; i + 3 < handles.length; i += 4) {
     const [pageNumber, cx, cy, kind] = handles.slice(i, i + 4);
     const page = pages[pageNumber - 1];
-    if (!page) continue;
+    if (!page?.overlay) continue;
     const { sx, sy } = scaleOf(page);
     const el = document.createElement("div");
     el.className = "object-handle";
@@ -4223,7 +4223,7 @@ function paintObjectCrop() {
   if (rectFlat.length < 5) return;
   const pageNumber = rectFlat[0];
   const page = pages[pageNumber - 1];
-  if (!page) return;
+  if (!page?.overlay) return;
   const { sx, sy } = scaleOf(page);
   place([pageNumber, bx, by, bw, bh], "object-outline");
   // Kept rectangle in twips (source box minus cropped edges).
@@ -5983,7 +5983,7 @@ function showImePreedit(node, offset, text) {
   if (flat.length < 5) return;
   const [pageNumber, x, y, , h] = flat;
   const page = pages[pageNumber - 1];
-  if (!page) return;
+  if (!page?.overlay) return;
   const { sx, sy } = scaleOf(page);
   const el = document.createElement("div");
   el.className = "ime-preedit";
