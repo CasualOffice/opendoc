@@ -108,8 +108,16 @@ const SRC = new URL("../src/", import.meta.url);
  *  slack that were left, so the field VOCABULARY — the kind table and the
  *  host-side result formatter — moved to `field_kinds.mjs`. It is data plus one
  *  pure function, so what a date field caches is now answerable in node, which
- *  is the ratchet buying a seam rather than just a smaller file. */
-const MAIN_JS_LINE_CEILING = 17040;
+ *  is the ratchet buying a seam rather than just a smaller file.
+ *  RE-MEASURED to 17,045 on rebase, and this is the SAME merge trap the two
+ *  notes above record, caught before it landed rather than after. 17,040 was
+ *  measured against a base that did not yet carry the Resolve/Delete comment
+ *  commands' menu-and-palette entries; rebasing onto a main that does added
+ *  five lines the branch could not have known about, and the ceiling it had
+ *  lowered was suddenly five under the file. Re-measured from the MERGED file,
+ *  which is the only number that was ever meaningful — and 17,045 is still nine
+ *  below main's 17,054, so the round still paid for itself. */
+const MAIN_JS_LINE_CEILING = 17045;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
