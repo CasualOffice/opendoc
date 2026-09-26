@@ -10819,7 +10819,7 @@ impl WasmDocument {
                 operations: redo_group,
             },
         );
-        Ok(self.finish_edit(caret))
+        Ok(self.finish_edit_with(caret, &damage_of(&entry.operations)))
     }
 
     /// Redoes the last undone action.
@@ -10853,7 +10853,7 @@ impl WasmDocument {
                 operations: undo_group,
             },
         );
-        Ok(self.finish_edit(caret))
+        Ok(self.finish_edit_with(caret, &damage_of(&entry.operations)))
     }
 
     /// Serializes the current (edited) document to a `.docx` package the host can
@@ -11488,7 +11488,7 @@ impl WasmDocument {
             },
         );
         self.redo.clear();
-        Ok(self.finish_edit(caret))
+        Ok(self.finish_edit_with(caret, &damage_of(&ops)))
     }
 
     /// Like [`apply_action`](Self::apply_action) but rests the caret at `caret`
@@ -11523,7 +11523,7 @@ impl WasmDocument {
             },
         );
         self.redo.clear();
-        Ok(self.finish_edit(caret))
+        Ok(self.finish_edit_with(caret, &damage_of(&ops)))
     }
 
     /// Applies one incremental typing tick and optionally folds it into the
@@ -11569,7 +11569,7 @@ impl WasmDocument {
                     caret,
                     review_group: None,
                 });
-                Ok(self.finish_edit(caret))
+                Ok(self.finish_edit_with(caret, &damage_of(&ops)))
             }
             Err(error) => {
                 // The document is already rolled back by `apply_group`; the
@@ -11630,7 +11630,7 @@ impl WasmDocument {
                     caret,
                     review_group: Some(group),
                 });
-                Ok(self.finish_edit(caret))
+                Ok(self.finish_edit_with(caret, &damage_of(&ops)))
             }
             Err(error) => {
                 self.typing_history = None;
@@ -11761,23 +11761,39 @@ impl WasmDocument {
         Ok((caret, inverses))
     }
 
+    /// [`finish_edit_with`](Self::finish_edit_with) with no damage report — the
+    /// layout is rebuilt through the hashing path, which costs `O(document)` per
+    /// call. For a path that mutated the document through
+    /// [`apply_group`](Self::apply_group), call `finish_edit_with` with
+    /// [`damage_of`] instead; this form is for the paths that changed nothing a
+    /// damage set can describe.
+    fn finish_edit(&mut self, caret: Pos) -> EditResult {
+        self.finish_edit_with(caret, &DirtySet::new())
+    }
+
     /// Bumps the revision, re-paginates, and reports the caret + revision + the
     /// **dirty page set** (indices whose layout changed) so the frontend re-rasters
     /// only those pages, not the whole document. Infallible — the mutation already
     /// succeeded.
-    fn finish_edit(&mut self, caret: Pos) -> EditResult {
+    ///
+    /// `damage` is what the operations just applied actually touched. A
+    /// [`DirtySet::complete`] one lets the galley cache move every unchanged
+    /// block's fragments into the new galley instead of re-deriving them, which is
+    /// what keeps a keystroke's layout cost proportional to the edit rather than to
+    /// the document (`docs/107` B1, `109` HF-182). A non-complete set is a hint
+    /// only: the cache re-derives and re-hashes every paragraph, which is always
+    /// correct and always `O(document)`.
+    fn finish_edit_with(&mut self, caret: Pos, damage: &DirtySet) -> EditResult {
         self.revision += 1;
         // Incremental re-pagination: reuse the shaped lines of every paragraph the
-        // edit did not touch (hash-based invalidation inside the cache re-shapes any
-        // paragraph whose content changed), turning a keystroke from `O(document)`
-        // into `O(edit)`. An empty dirty set is correct — the cache's content hash
-        // already forces a re-shape of the edited paragraph(s); it is only the
-        // belt-and-suspenders override, unnecessary here.
+        // edit did not touch. With a complete damage set the unchanged paragraphs
+        // are not even re-derived; without one, the cache's content hash still
+        // re-shapes only what changed, at the cost of hashing everything.
         let new_layout = paginate_document_cached(
             &self.document,
             &self.shaper,
             &mut self.galley_cache,
-            &DirtySet::new(),
+            damage,
         );
         // Dirty pages — and the page count the host compares against — must be
         // measured on the layout the RENDERER reads. While "show changes" is on
@@ -11800,7 +11816,7 @@ impl WasmDocument {
                     &self.document,
                     &self.shaper,
                     &mut self.galley_cache,
-                    &DirtySet::new(),
+                    damage,
                     ReviewView::Markup,
                 );
                 let dirty = dirty_pages(&previous, &markup);
@@ -14260,6 +14276,51 @@ fn inlines_contain_node(inlines: &[InlineNode], node: NodeId) -> bool {
 /// Where an operation writes, as a paragraph and a byte offset, when it has a
 /// single definite position. `None` for a structural operation whose target is
 /// not one point in one paragraph.
+/// The **complete** damage an operation group did, or a hint-only set when this
+/// cannot be proven.
+///
+/// A complete set ([`DirtySet::complete`]) promises three things about the
+/// document the group left behind: only the listed nodes' layout inputs changed,
+/// the body's block structure is unchanged, and `definitions` are unchanged. The
+/// galley cache then moves every other block's shaped fragments into the next
+/// build instead of re-deriving them, which is what makes a keystroke's layout
+/// cost `O(edit)` rather than `O(document)` (`docs/107` B1, `109` HF-182).
+///
+/// The classifier is deliberately a **whitelist**, and a narrow one. Only the
+/// three operations whose effect is confined to the inlines of a single existing
+/// paragraph qualify:
+///
+/// - `InsertText` — inserts into one paragraph's inlines (a newline arrives as a
+///   separate `SplitParagraph`, which is structural and therefore excluded);
+/// - `DeleteText` — removes a range inside one paragraph;
+/// - `SetInlines` — replaces one paragraph's inlines wholesale.
+///
+/// Everything else is a hint: `SplitParagraph` and `JoinParagraphs` change the
+/// block structure; `SetParagraphProperties` can add or remove `numPr`, which
+/// moves the marker of every numbered paragraph after it; the table and object
+/// operations change structure or definitions. Being wrong in this direction
+/// costs a full re-derivation, which is what the code did before this existed.
+/// Being wrong in the other direction would serve a stale fragment, so a new
+/// operation must be added here deliberately or not at all.
+///
+/// `O(ops)`.
+#[must_use]
+fn damage_of(ops: &[Operation]) -> DirtySet {
+    let mut nodes = Vec::with_capacity(ops.len());
+    for op in ops {
+        let node = match op {
+            Operation::InsertText { at, .. } => at.node,
+            Operation::DeleteText { range } if range.start.node == range.end.node => {
+                range.start.node
+            }
+            Operation::SetInlines { node, .. } => *node,
+            _ => return DirtySet::new(),
+        };
+        nodes.push(node);
+    }
+    DirtySet::complete(nodes)
+}
+
 fn operation_write_position(op: &Operation) -> Option<(NodeId, u32)> {
     match op {
         Operation::InsertText { at, .. } => Some((at.node, at.offset)),

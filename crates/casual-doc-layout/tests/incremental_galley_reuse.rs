@@ -13,7 +13,9 @@
 //!    threshold: a threshold cannot tell a slow constant from a linear walk, and
 //!    a doubling bound would pass for the linear behaviour this replaces.
 
-use casual_doc_layout::document_layout::{paginate_document_view, paginate_document_view_cached};
+use casual_doc_layout::document_layout::{
+    paginate_document_view, paginate_document_view_after_edit, paginate_document_view_cached,
+};
 use casual_doc_layout::flow::ReviewView;
 use casual_doc_layout::incremental::{DirtySet, GalleyCache};
 use casual_doc_layout::shape::ParleyShaper;
@@ -82,15 +84,18 @@ fn incremental_and_fresh(
 ) -> (GalleyCache, bool) {
     let shaper = ParleyShaper::new();
     let mut cache = GalleyCache::new();
-    let _ = paginate_document_view_cached(&document, &shaper, &mut cache, &DirtySet::new(), view);
+    let previous =
+        paginate_document_view_cached(&document, &shaper, &mut cache, &DirtySet::new(), view);
     let edited = build(&mut document);
-    let incremental = paginate_document_view_cached(
+    let incremental = paginate_document_view_after_edit(
         &document,
         &shaper,
         &mut cache,
         &DirtySet::complete([edited]),
         view,
-    );
+        Some(previous),
+    )
+    .layout;
     let fresh = paginate_document_view(&document, &shaper, view);
     let equal = incremental == fresh;
     if !equal {
@@ -106,9 +111,17 @@ fn incremental_and_fresh(
     (cache, equal)
 }
 
-fn assert_incremental_matches_fresh(document: Document, edit_at: usize, view: ReviewView) {
-    let (cache, equal) =
-        incremental_and_fresh(|doc| type_into(doc, edit_at, 'z'), document, view);
+/// `resumes` is whether this body is one the PAGE reuse is defined for. A body
+/// carrying a footnote is not — footnotes paginate through their own paginator —
+/// so that case asserts galley reuse only, and says so rather than quietly
+/// asserting less.
+fn assert_incremental_matches_fresh(
+    document: Document,
+    edit_at: usize,
+    view: ReviewView,
+    resumes: bool,
+) {
+    let (cache, equal) = incremental_and_fresh(|doc| type_into(doc, edit_at, 'z'), document, view);
     assert!(
         equal,
         "an incrementally rebuilt layout must equal a freshly built one"
@@ -118,7 +131,12 @@ fn assert_incremental_matches_fresh(document: Document, edit_at: usize, view: Re
         "the incremental rebuild must actually have reused the retained galley, \
          or this case proves nothing"
     );
-    let _ = cache.rebuilt_last_build();
+    assert_eq!(
+        cache.resumed_previous_layout(),
+        resumes,
+        "page reuse must be taken exactly where it is defined: expected \
+         resumed={resumes}"
+    );
 }
 
 #[test]
@@ -128,6 +146,7 @@ fn incremental_matches_the_fresh_path_for_prose() {
             document(prose_body(40), Definitions::default()),
             at,
             ReviewView::Editing,
+            true,
         );
     }
 }
@@ -138,6 +157,7 @@ fn incremental_matches_the_fresh_path_in_the_markup_view() {
         document(prose_body(40), Definitions::default()),
         5,
         ReviewView::Markup,
+        true,
     );
 }
 
@@ -176,6 +196,7 @@ fn incremental_matches_the_fresh_path_across_a_table() {
         document(body, Definitions::default()),
         15,
         ReviewView::Editing,
+        true,
     );
 }
 
@@ -224,7 +245,7 @@ fn incremental_matches_the_fresh_path_with_a_numbered_list() {
     }
     // The edit lands BEFORE the list, so a wrongly reused numbered paragraph
     // would show a stale marker.
-    assert_incremental_matches_fresh(document(body, definitions), 1, ReviewView::Editing);
+    assert_incremental_matches_fresh(document(body, definitions), 1, ReviewView::Editing, true);
 }
 
 #[test]
@@ -246,7 +267,9 @@ fn incremental_matches_the_fresh_path_with_a_note_reference() {
         kind: NoteKind::Footnote,
         note,
     }));
-    assert_incremental_matches_fresh(document(body, definitions), 2, ReviewView::Editing);
+    // A body footnote paginates through `paginate_section_footnotes`, which is
+    // outside the page-resume path — so this case proves the GALLEY reuse only.
+    assert_incremental_matches_fresh(document(body, definitions), 2, ReviewView::Editing, false);
 }
 
 #[test]
@@ -275,41 +298,53 @@ fn incremental_matches_the_fresh_path_when_the_edit_adds_a_line() {
     assert!(cache.reused_retained_galley());
 }
 
-/// The complexity guard. Doubling the document must not increase the blocks a
-/// keystroke re-derives — the assertion is that the count is **flat**, because
-/// the behaviour being replaced re-derived every block and a doubling bound would
-/// accept it.
-#[test]
-fn a_keystroke_re_derives_a_bounded_number_of_blocks() {
-    let rebuilt = |paragraphs: usize| {
-        let shaper = ParleyShaper::new();
-        let mut cache = GalleyCache::new();
-        let mut document = document(prose_body(paragraphs), Definitions::default());
-        let _ = paginate_document_view_cached(
+/// The work one keystroke costs, at `n` and at `2n` paragraphs: the blocks whose
+/// layout was re-derived, and the pages that were re-flowed.
+fn keystroke_work(paragraphs: usize, edit_at: usize) -> (usize, usize, usize) {
+    let shaper = ParleyShaper::new();
+    let mut cache = GalleyCache::new();
+    let mut document = document(prose_body(paragraphs), Definitions::default());
+    let mut layout = paginate_document_view_cached(
+        &document,
+        &shaper,
+        &mut cache,
+        &DirtySet::new(),
+        ReviewView::Editing,
+    );
+    // Three keystrokes: the first establishes the retained galley and the
+    // reusable layout, the rest are the steady state being measured.
+    for _ in 0..3 {
+        let edited = type_into(&mut document, edit_at, 'z');
+        layout = paginate_document_view_after_edit(
             &document,
             &shaper,
             &mut cache,
-            &DirtySet::new(),
+            &DirtySet::complete([edited]),
             ReviewView::Editing,
-        );
-        // Two keystrokes: the first establishes the retained galley through the
-        // incremental path, the second is the steady state being measured.
-        let mut rebuilt = 0;
-        for _ in 0..2 {
-            let edited = type_into(&mut document, 0, 'z');
-            let _ = paginate_document_view_cached(
-                &document,
-                &shaper,
-                &mut cache,
-                &DirtySet::complete([edited]),
-                ReviewView::Editing,
-            );
-            rebuilt = cache.rebuilt_last_build();
-        }
-        rebuilt
-    };
-    let small = rebuilt(200);
-    let large = rebuilt(400);
+            Some(layout),
+        )
+        .layout;
+    }
+    (
+        cache.rebuilt_last_build(),
+        cache.pages_reflowed_last_build(),
+        layout.pages.len(),
+    )
+}
+
+/// The complexity guard for the galley half. Doubling the document must not
+/// increase the blocks a keystroke re-derives — the assertion is that the count is
+/// **flat**, because the behaviour being replaced re-derived every block and a
+/// doubling bound would accept it.
+#[test]
+fn a_keystroke_re_derives_a_bounded_number_of_blocks() {
+    let (small, _, small_pages) = keystroke_work(200, 0);
+    let (large, _, large_pages) = keystroke_work(400, 0);
+    assert!(
+        large_pages > small_pages,
+        "the two documents must differ in size for this to measure anything: \
+         {small_pages} pages and {large_pages}"
+    );
     assert_eq!(
         large, small,
         "the blocks a keystroke re-derives must not grow with the document: \
@@ -319,4 +354,128 @@ fn a_keystroke_re_derives_a_bounded_number_of_blocks() {
         small, 1,
         "one keystroke touches one paragraph, so exactly one block is re-derived"
     );
+}
+
+/// The complexity guard for the pagination half. An edit at the TOP of the
+/// document is the hard case: every page below it is a candidate for re-flow, and
+/// re-flowing them is what made a keystroke cost `O(document)` even once the
+/// galley stopped being re-derived.
+#[test]
+fn a_keystroke_re_flows_a_bounded_number_of_pages() {
+    let (_, small, small_pages) = keystroke_work(200, 0);
+    let (_, large, large_pages) = keystroke_work(400, 0);
+    assert!(
+        large_pages >= small_pages * 2 - 1,
+        "doubling the paragraphs must roughly double the pages, or this guard \
+         measures nothing: {small_pages} and {large_pages}"
+    );
+    assert_eq!(
+        large, small,
+        "the pages a keystroke re-flows must not grow with the document: \
+         {small} of {small_pages} pages at 200 paragraphs and {large} of \
+         {large_pages} at 400"
+    );
+    assert!(
+        small <= 3,
+        "a keystroke disturbs the page it lands on and its neighbours, not \
+         {small} pages"
+    );
+}
+
+/// The same for an edit at the END of the document, which must reuse the whole
+/// prefix rather than re-flowing up to it.
+#[test]
+fn a_keystroke_at_the_end_re_flows_a_bounded_number_of_pages() {
+    let (_, small, _) = keystroke_work(200, 199);
+    let (_, large, _) = keystroke_work(400, 399);
+    assert_eq!(
+        large, small,
+        "an edit at the end must cost the same in re-flowed pages whatever the \
+         document length: {small} at 200 paragraphs and {large} at 400"
+    );
+}
+
+/// `changed_pages` is what the host repaints, so a page left out of it must be
+/// **byte-identical** to the page that was there before. Under-reporting here is
+/// stale pixels on screen, which is worse than a slow repaint.
+#[test]
+fn the_reported_changed_pages_cover_every_page_that_actually_changed() {
+    for (paragraphs, edit_at, grow) in [
+        (200usize, 0usize, false),
+        (200, 90, false),
+        (200, 199, false),
+        // A paragraph that grows by eight lines pushes content onto a new page,
+        // which renumbers everything after it.
+        (200, 5, true),
+    ] {
+        let shaper = ParleyShaper::new();
+        let mut cache = GalleyCache::new();
+        let mut document = document(prose_body(paragraphs), Definitions::default());
+        let mut layout = paginate_document_view_cached(
+            &document,
+            &shaper,
+            &mut cache,
+            &DirtySet::new(),
+            ReviewView::Editing,
+        );
+        // One incremental pass first, so the retained galley exists and the
+        // measured pass is the steady state.
+        let edited = type_into(&mut document, edit_at, 'z');
+        layout = paginate_document_view_after_edit(
+            &document,
+            &shaper,
+            &mut cache,
+            &DirtySet::complete([edited]),
+            ReviewView::Editing,
+            Some(layout),
+        )
+        .layout;
+
+        let before = layout.clone();
+        let edited = if grow {
+            let mut body = document.body().to_vec();
+            let BlockNode::Paragraph(paragraph) = &mut body[edit_at] else {
+                unreachable!()
+            };
+            let id = paragraph.id;
+            let Some(InlineNode::Run(run)) = paragraph.inlines.first_mut() else {
+                unreachable!()
+            };
+            run.text.push_str(&LINE.repeat(8));
+            document = Document::new(document.id(), body, document.definitions().clone())
+                .expect("a longer run keeps the document well formed");
+            id
+        } else {
+            type_into(&mut document, edit_at, 'q')
+        };
+        let update = paginate_document_view_after_edit(
+            &document,
+            &shaper,
+            &mut cache,
+            &DirtySet::complete([edited]),
+            ReviewView::Editing,
+            Some(layout),
+        );
+        let changed = update
+            .changed_pages
+            .clone()
+            .unwrap_or_else(|| panic!("the pass must have resumed for {paragraphs}/{edit_at}"));
+        for (index, page) in update.layout.pages.iter().enumerate() {
+            if changed.contains(&index) {
+                continue;
+            }
+            assert_eq!(
+                Some(page),
+                before.pages.get(index),
+                "page {index} was reported unchanged for a {paragraphs}-paragraph \
+                 document edited at {edit_at} (grow={grow}), but it is not the page \
+                 that was there before; reported changed range {changed:?}"
+            );
+        }
+        assert_eq!(
+            update.layout,
+            paginate_document_view(&document, &shaper, ReviewView::Editing),
+            "and the layout itself must still equal a fresh one"
+        );
+    }
 }

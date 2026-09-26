@@ -410,6 +410,22 @@ pub struct GalleyCache {
     /// re-pagination needs, known exactly rather than recovered by diffing two
     /// galleys.
     first_rebuilt_last_build: Option<usize>,
+    /// One past the HIGHEST fragment index the most recent build re-derived.
+    /// Every fragment above it was moved across unchanged, which bounds the
+    /// common suffix the stabilization halt may splice.
+    last_rebuilt_end_last_build: Option<usize>,
+    /// The number of fragments in the galley the most recent build reused, when
+    /// it reused one. `repaginate_at` needs it to shift the flow indices of the
+    /// pages it splices.
+    reused_galley_len: Option<usize>,
+    /// Pages the most recent build actually **re-flowed**, as opposed to moved
+    /// across from the previous layout — the pagination half of the same
+    /// accounting `rebuilt_last_build` gives for the galley half.
+    pages_reflowed_last_build: usize,
+    /// Whether the most recent build resumed from the previous layout's pages
+    /// rather than paginating from page one. False whenever the caller passed no
+    /// previous layout or the body was not one the resume is defined for.
+    resumed_last_build: bool,
 }
 
 impl GalleyCache {
@@ -511,11 +527,54 @@ impl GalleyCache {
         self.first_rebuilt_last_build
     }
 
+    /// The half-open galley range the most recent build re-derived, and the
+    /// length of the galley it reused — everything an incremental re-pagination
+    /// needs to know without diffing two galleys. `None` unless the build both
+    /// reused a retained galley and re-derived something inside it.
+    ///
+    /// The range is conservative in the safe direction: blocks inside it may have
+    /// come out identical, which only costs re-flowed pages, never a wrong
+    /// answer.
+    #[must_use]
+    pub fn rebuilt_span_last_build(&self) -> Option<(usize, usize, usize)> {
+        if !self.reused_any {
+            return None;
+        }
+        Some((
+            self.first_rebuilt_last_build?,
+            self.last_rebuilt_end_last_build?,
+            self.reused_galley_len?,
+        ))
+    }
+
     /// Whether the most recent build reused a retained galley, i.e. took the
     /// incremental path rather than deriving every block of the document.
     #[must_use]
     pub fn reused_retained_galley(&self) -> bool {
         self.reused_any
+    }
+
+    /// Pages the most recent build re-flowed rather than moved across from the
+    /// previous layout — the number a pagination complexity guard reads. A full
+    /// build charges every page it produced.
+    #[must_use]
+    pub fn pages_reflowed_last_build(&self) -> usize {
+        self.pages_reflowed_last_build
+    }
+
+    /// Whether the most recent build resumed from the previous layout's pages
+    /// instead of paginating from page one. A guard asserts this so that an
+    /// equality test cannot pass by quietly having taken the full path.
+    #[must_use]
+    pub fn resumed_previous_layout(&self) -> bool {
+        self.resumed_last_build
+    }
+
+    /// Records how many pages the build in progress re-flowed, and whether it got
+    /// there by resuming from the previous layout.
+    pub(crate) fn note_reflowed_pages(&mut self, pages: usize, resumed: bool) {
+        self.pages_reflowed_last_build = pages;
+        self.resumed_last_build = resumed;
     }
 
     /// Begins a rebuild at `width`: resets the per-build counters and, if the
@@ -541,6 +600,9 @@ impl GalleyCache {
         self.evicted_last_build = 0;
         self.rebuilt_last_build = 0;
         self.first_rebuilt_last_build = None;
+        self.last_rebuilt_end_last_build = None;
+        self.pages_reflowed_last_build = 0;
+        self.resumed_last_build = false;
         self.reused_any = false;
         self.building_markup = markup;
         self.pending_blocks = Vec::new();
@@ -558,6 +620,7 @@ impl GalleyCache {
         self.reusing = slot.take().filter(|retained| {
             dirty.is_complete() && retained.width == width && retained.labels == labels
         });
+        self.reused_galley_len = self.reusing.as_ref().map(|r| r.fragments.len());
     }
 
     /// The fragments body block `index` produced during the previous build, moved
@@ -622,6 +685,11 @@ impl GalleyCache {
             self.first_rebuilt_last_build = Some(
                 self.first_rebuilt_last_build
                     .map_or(start, |first| first.min(start)),
+            );
+            let end = start + fragments;
+            self.last_rebuilt_end_last_build = Some(
+                self.last_rebuilt_end_last_build
+                    .map_or(end, |previous| previous.max(end)),
             );
         }
         if !self.pending_retainable {

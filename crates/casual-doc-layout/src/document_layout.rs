@@ -787,6 +787,66 @@ pub fn paginate_document_view_cached(
     dirty: &DirtySet,
     review_view: ReviewView,
 ) -> crate::page::PaginatedLayout {
+    paginate_document_view_after_edit(document, shaper, cache, dirty, review_view, None).layout
+}
+
+/// What one incremental layout pass produced, and how much of the previous layout
+/// it reused — see [`paginate_document_view_after_edit`].
+#[derive(Debug)]
+pub struct LayoutUpdate {
+    /// The new layout. Field-for-field what a fresh [`paginate_document_view`]
+    /// would have produced, however much was reused.
+    pub layout: crate::page::PaginatedLayout,
+    /// The previous layout, handed back **unconsumed** because the pass did not
+    /// resume from it. A caller that needs to know which pages changed can compare
+    /// against it.
+    pub previous: Option<crate::page::PaginatedLayout>,
+    /// The half-open range of page indices whose rendered content can differ from
+    /// the previous layout's, when the pass resumed from it. Every page outside it
+    /// was moved across unchanged and its post-pagination output recomputed
+    /// identically, so a host repaints only this range.
+    ///
+    /// `None` means the pass did not resume: the caller compares against
+    /// `previous` when that was handed back, and otherwise must treat every page
+    /// as changed.
+    pub changed_pages: Option<std::ops::Range<usize>>,
+}
+
+/// [`paginate_document_view_cached`] handed the layout the LAST build produced, so
+/// it can reuse that layout's pages as well as the galley's fragments.
+///
+/// This is the editor's entry point, and the whole of `109` HF-182. Re-deriving
+/// the galley and re-paginating it from page one is `O(document)` per keystroke,
+/// which `docs/107` §4 B1 forbids: measured on a plain-prose body, one keystroke
+/// cost 1.0 ms at 240 paragraphs, 1.9 ms at 480 and 3.9 ms at 960 — exactly
+/// linear. With `previous` supplied and a [`DirtySet::complete`] damage set, the
+/// work is bounded to the edit: the unchanged blocks' fragments move across, and
+/// the pages above the edit and below the stabilization point move across too.
+///
+/// `previous` is taken by value because its pages are **moved** into the result.
+/// Cloning them would be `O(document)` in deep copies, which is the cost being
+/// removed. Pass `None` for a first layout, or when the caller no longer holds the
+/// previous one; the result is identical either way — reuse changes what the pass
+/// costs, never what it produces, which
+/// `incremental_matches_the_fresh_path_*` asserts over every block shape the
+/// reuse path has to survive.
+///
+/// Complexity: `O(edit)` in derivation and re-flow, plus an `O(blocks)` walk of
+/// the body and an `O(pages)` walk for the resume point and the post-pagination
+/// passes, both at a small constant and neither touching the paint tier. It falls
+/// back to the full `O(document)` build — silently and correctly — for a
+/// multi-section body, multi-column text, body footnotes, mirrored margins,
+/// section `w:vAlign`, paragraph-anchored floats, `eachPage` note numbering, a
+/// drop-cap pair, a positioned table, or a damage set that is not complete.
+#[must_use]
+pub fn paginate_document_view_after_edit(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    cache: &mut GalleyCache,
+    dirty: &DirtySet,
+    review_view: ReviewView,
+    previous: Option<crate::page::PaginatedLayout>,
+) -> LayoutUpdate {
     let labels = resolve_note_labels(document, None);
     if labels.restarts_each_page() {
         // `eachPage` note numbering needs the pagination fixed point in
@@ -794,12 +854,41 @@ pub fn paginate_document_view_cached(
         // numbered for a page the reference no longer sits on. Correctness over
         // incrementality, on a rare path.
         cache.discard_retention();
-        return paginate_document_view(document, shaper, review_view);
+        return LayoutUpdate {
+            layout: paginate_document_view(document, shaper, review_view),
+            previous,
+            changed_pages: None,
+        };
     }
     let plans = build_section_plans(document, shaper, &labels);
     let mut runs =
         build_section_runs_cached(document, shaper, &plans, cache, dirty, &labels, review_view);
-    let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+    let resumed = match previous {
+        Some(previous) => resume_pagination(document, shaper, &plans, &runs, cache, previous),
+        None => Resume::NotOffered,
+    };
+    let (layout, returned, changed_pages) = match resumed {
+        Resume::Resumed {
+            layout,
+            reflowed,
+            changed_pages,
+        } => {
+            cache.note_reflowed_pages(reflowed, true);
+            (layout, None, Some(changed_pages))
+        }
+        Resume::Refused(previous) => {
+            let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+            // A full build re-flowed every page it produced. Charging it keeps the
+            // number a complexity guard reads honest whichever path ran.
+            cache.note_reflowed_pages(layout.pages.len(), false);
+            (layout, Some(previous), None)
+        }
+        Resume::NotOffered => {
+            let layout = finish_pagination(document, shaper, &plans, &runs, review_view, &labels);
+            cache.note_reflowed_pages(layout.pages.len(), false);
+            (layout, None, None)
+        }
+    };
     // Hand the body galley back to the cache so the NEXT edit can move the
     // fragments of its unchanged blocks across instead of deriving them
     // (`109` HF-182). The galley is moved, not copied: pagination is done with
@@ -809,7 +898,125 @@ pub fn paginate_document_view_cached(
     } else {
         cache.discard_retention();
     }
-    layout
+    LayoutUpdate {
+        layout,
+        previous: returned,
+        changed_pages,
+    }
+}
+
+/// The outcome of offering the previous layout to [`resume_pagination`].
+enum Resume {
+    /// It resumed. `reflowed` is the pages it re-flowed (the work), and
+    /// `changed_pages` the pages whose rendered content can differ (what a host
+    /// must repaint) — the two differ when the page COUNT changed, because then
+    /// every page's `NUMPAGES` moves and every page is changed.
+    Resumed {
+        layout: crate::page::PaginatedLayout,
+        reflowed: usize,
+        changed_pages: std::ops::Range<usize>,
+    },
+    /// It refused before consuming the previous layout — here it is back, so the
+    /// caller can still compare against it.
+    Refused(crate::page::PaginatedLayout),
+    /// No previous layout was offered, or it was consumed before the refusal.
+    NotOffered,
+}
+
+/// Re-paginates by **resuming from `previous`** instead of walking the galley from
+/// page one, or `None` when this body is not one the resume is defined for.
+///
+/// The result is field-for-field what [`finish_pagination`] would have produced —
+/// the guarantee [`crate::paginate::repaginate_at`] owns for the pages, and the
+/// post-pagination passes re-run over every page for the rest. Returning `None` is
+/// always safe: the caller then does the full build.
+///
+/// The conditions are deliberately narrow, and each one is a place where a reused
+/// page would not be the page a fresh pagination produces:
+///
+/// - the galley build must itself have reused the retained galley, which is what
+///   supplies the changed range without a galley diff (and only happens on the
+///   single-trailing-section, single-column, cached path);
+/// - no body footnote, which paginates through a different paginator that fills
+///   `Page::footnotes`;
+/// - no mirrored margins, which make a page's content area depend on its own
+///   parity, so a page that moves is no longer the page that was reused;
+/// - no section `w:vAlign`, because that pass SHIFTS placed content rather than
+///   writing to a field of its own, so it is not idempotent over a reused page;
+/// - no paragraph-anchored float, because those drive a pagination fixed point
+///   that re-flows the whole body anyway.
+fn resume_pagination(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    runs: &[SectionRun],
+    cache: &GalleyCache,
+    previous: crate::page::PaginatedLayout,
+) -> Resume {
+    let [run] = runs else {
+        return Resume::Refused(previous);
+    };
+    let Some((first_dirty, dirty_end, previous_galley_len)) = cache.rebuilt_span_last_build() else {
+        return Resume::Refused(previous);
+    };
+    if !run.column_galleys.is_empty()
+        || run.mirror_margins
+        || run_has_body_footnotes(run)
+        || previous.pages.is_empty()
+        || dirty_end > run.galley.len()
+    {
+        return Resume::Refused(previous);
+    }
+    if document.definitions().sections.iter().any(|section| {
+        !matches!(
+            section.vertical_alignment,
+            None | Some(PageVerticalAlignment::Top)
+        )
+    }) {
+        return Resume::Refused(previous);
+    }
+    let previous_page_count = previous.pages.len();
+    // Every fragment above `dirty_end` was moved across unchanged, so the galleys
+    // are identical from there to the end. A smaller suffix than the true one is
+    // safe (it only offers the halt fewer places to splice), which is why the
+    // conservative bound is used rather than a diff.
+    let suffix = (run.galley.len() - dirty_end) as u32;
+    let (mut layout, stats) = crate::paginate::repaginate_at(
+        previous,
+        previous_galley_len,
+        &run.galley,
+        first_dirty,
+        suffix,
+        &run.config,
+    );
+    // A reused page still carries the running content, borders, floats, line
+    // numbers and watermark the PREVIOUS layout's post-pagination passes put on
+    // it. Those passes are about to run again over every page, so their previous
+    // output goes first — otherwise the page gets a second header.
+    for page in &mut layout.pages {
+        page.clear_post_pagination();
+    }
+    post_pagination_passes(document, shaper, plans, &mut layout);
+    // A paragraph-anchored float drives the exclusion fixed point in
+    // `finish_pagination`, which re-flows the body at a narrowed width; there is
+    // nothing incremental about it, so hand the whole job back.
+    if !paragraph_float_exclusions(document, shaper, plans, &layout).is_empty() {
+        return Resume::NotOffered;
+    }
+    // What a host must repaint. A page outside the re-flowed range was moved
+    // across unchanged and its post-pagination output recomputed identically —
+    // UNLESS the page count moved, which changes every `NUMPAGES` in the document
+    // and every page number after the insertion, so then everything is changed.
+    let changed_pages = if layout.pages.len() == previous_page_count {
+        stats.reused_prefix..stats.reused_prefix + stats.reflowed
+    } else {
+        0..layout.pages.len()
+    };
+    Resume::Resumed {
+        layout,
+        reflowed: stats.reflowed,
+        changed_pages,
+    }
 }
 
 /// The shared pagination tail: paginate the section runs into pages, then run the
@@ -879,18 +1086,41 @@ fn finish_pagination_pass(
     runs: &[SectionRun],
     labels: &NoteLabels,
 ) -> crate::page::PaginatedLayout {
-    let fallback_config = plans[0].config;
     let mut layout = if runs.iter().any(run_has_body_footnotes) {
         paginate_section_footnotes(document, shaper, runs, labels)
     } else {
         paginate_columns(runs)
     };
+    post_pagination_passes(document, shaper, plans, &mut layout);
+    layout
+}
 
+/// Everything that runs AFTER pagination has decided the page boundaries, in the
+/// required order. Split out from [`finish_pagination_pass`] because the
+/// incremental path ([`resume_pagination`]) produces its pages a different way —
+/// by reusing the previous layout's — and then needs exactly these passes.
+///
+/// Every pass here writes to a field of [`crate::page::Page`] that pagination
+/// itself leaves empty (`header`, `footer`, `anchored`, `page_borders`,
+/// `line_numbers`, `watermark`), or stamps field values idempotently
+/// ([`resolve_fields_labeled`]). That is what makes a reused page safe to run them
+/// over again once those fields are cleared, and it is why
+/// [`crate::page::Page::clear_post_pagination`] exists.
+///
+/// `O(pages)`, at a small constant — measured at 13 us for 67 pages, against
+/// 1.5 ms for the galley rebuild it sits beside.
+fn post_pagination_passes(
+    document: &Document,
+    shaper: &dyn crate::text::LineShaper,
+    plans: &[SectionPlan],
+    layout: &mut crate::page::PaginatedLayout,
+) {
+    let fallback_config = plans[0].config;
     // Section `w:vAlign` (center/both/bottom): shift each page's placed body
     // content within its content area. Runs first, before any pass reads body
     // positions (float exclusions, anchored placement, the display list), since
     // every glyph/image/text-box origin is relative to its fragment's rect.
-    apply_page_vertical_alignment(&mut layout, &document.definitions().sections);
+    apply_page_vertical_alignment(layout, &document.definitions().sections);
 
     // Post-pagination passes, in the required order: running content is placed
     // first so its fields exist to stamp, then the field pass resolves every
@@ -918,27 +1148,25 @@ fn finish_pagination_pass(
     // Per-page `PAGE` labels honoring each section's `w:pgNumType` (@fmt format +
     // @start restart); the same labels feed the anchored-field pass below so a
     // floating page-number box matches the body/footer.
-    let page_labels = page_number_labels(&layout, &document.definitions().sections);
-    resolve_fields_labeled(&mut layout, &page_labels, shaper);
+    let page_labels = page_number_labels(layout, &document.definitions().sections);
+    resolve_fields_labeled(layout, &page_labels, shaper);
     // Floating objects last: anchored pictures, floating text boxes, and DrawingML
     // groups, over body AND header/footer bands, each resolved to a rect + z-key
     // for the float layer to paint in order.
-    place_floats(&mut layout, document, shaper, &fallback_config);
+    place_floats(layout, document, shaper, &fallback_config);
     // Positioned tables (`w:tblPr/w:tblpPr`) join the same float layer, straight
     // after the drawings, so one z-space covers both (`docs/109` row 64).
-    crate::table_float::place_floating_tables(&mut layout, document, shaper, &fallback_config);
+    crate::table_float::place_floating_tables(layout, document, shaper, &fallback_config);
     // A floating text box (e.g. the SDS footer's positioned `v:textbox` page-number
     // box) can itself hold `PAGE`/`NUMPAGES` fields; resolve them now that the
     // floats — and their flowed block content — exist on each page.
-    resolve_anchored_fields_labeled(&mut layout, &page_labels, shaper);
+    resolve_anchored_fields_labeled(layout, &page_labels, shaper);
     // Margin line numbers (`w:lnNumType`) last: they stamp each numbered line's
     // FINAL baseline, so they must follow the vertical-alignment shift above and
     // cannot precede it. Inert unless a section declares line numbering
     // (`docs/105` FID-L-09).
-    crate::line_number::place_line_numbers(&mut layout, document, shaper);
-    crate::watermark::place_watermarks(&mut layout, document, shaper);
-
-    layout
+    crate::line_number::place_line_numbers(layout, document, shaper);
+    crate::watermark::place_watermarks(layout, document, shaper);
 }
 
 /// The physical page geometry of page `number` under `w:mirrorMargins`: on a
