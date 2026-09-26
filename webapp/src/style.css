@@ -6884,8 +6884,19 @@ body:not(.doc-loaded) .drop-title {
     max-width: 84px;
   }
 
+  /* The compatibility count is SECONDARY: it reports what an import could not
+     represent, and the reader can act on it at any width. The menu bar is the
+     compact chrome's only navigation axis (`docs/122`). They share this row, so
+     at phone width one of them has to give — and it cannot be the axis.
+
+     This became reachable the day import findings started being reported at all:
+     the indicator had effectively never been visible on open, so its 72px never
+     competed for the row. With it visible, the bar was squeezed to width 0 —
+     `display: flex` and a 0x21 box — and the compact chrome lost every menu.
+     Caught by `responsive-shell.spec.mjs`, which asserts the bar signals a clip
+     rather than disappearing. */
   .compatibility-status {
-    max-width: 72px;
+    display: none;
   }
 
   .find-panel {

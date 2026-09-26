@@ -12673,6 +12673,11 @@ function editorCommands(context = { surface: "palette" }) {
     { id: "help.commands", label: "Find a command…", group: "Help", kw: "help command palette search run", shortcut: "⌘⇧P", noDoc: true, run: () => openCmd() },
     { id: "help.shortcuts", label: "Keyboard shortcuts", group: "Help", kw: "help shortcuts keys chords reference cheat sheet", noDoc: true, run: () => toggleShortcutsReference(true) },
     { id: "help.about", label: "About OpenDoc", group: "Help", kw: "about version licence license apache build source repository issue report credits", noDoc: true, run: () => toggleAbout(true) },
+    // Resolve/Delete must have a menu home, not only a ribbon button:
+    // `docs/105` command-surface parity forbids a capability reachable from one
+    // surface, and `review-surface.spec.mjs` enforces it.
+    { id: "review.comment.resolve", label: t("reviewComment.resolve"), group: "Review", kw: "resolve close comment thread done", enabled: !!activeReviewCommentId, disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.resolve() },
+    { id: "review.comment.delete", label: t("reviewComment.delete"), group: "Review", kw: "delete remove comment thread", enabled: !!activeReviewCommentId, disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.remove() },
     {
       id: "review.comment",
       label: "Add comment",

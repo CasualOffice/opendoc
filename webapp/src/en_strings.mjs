@@ -69,4 +69,8 @@ export const EN_STRINGS = Object.freeze({
   "filePane.new.label": "New document",
   "filePane.commands.label": "Find a command",
   "filePane.commands.blurb": "Search everything the editor can do.",
+  // Resolve / Delete comment, which act on the comment the caret is inside.
+  "reviewComment.resolve": "Resolve comment",
+  "reviewComment.delete": "Delete comment",
+  "reviewComment.needsCaret": "Put the caret in a comment first",
 });

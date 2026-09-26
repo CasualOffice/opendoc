@@ -177,6 +177,7 @@ export const APP_MENU_SECTIONS = {
     ["review.previous", "review.next"],
     ["review.acceptNext", "review.rejectNext"],
     ["review.acceptAll", "review.rejectAll"],
+    ["review.comment.resolve", "review.comment.delete"],
     // Proofing. Word's Review tab opens with a Proofing group, and these three
     // are the only proofing switches this editor has. They were the content of
     // a `Tools` menu that existed for them alone.
