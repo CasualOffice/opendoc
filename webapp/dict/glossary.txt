@@ -53,6 +53,7 @@ ECMA
 EMF
 EOF
 EPUB
+Embeddability
 Embeddable
 Endnote
 Esc
@@ -175,6 +176,7 @@ VBA
 VML
 Vello
 Virtualized
+Vue
 WAI
 WASM
 WCAG
@@ -390,6 +392,7 @@ rasterizes
 rasters
 reachability
 rebase
+rebased
 recalc
 rect
 rects
@@ -422,6 +425,7 @@ selectable
 serde
 serializer
 shaper
+shippable
 skia
 snapToGrid
 splitter
@@ -475,5 +479,6 @@ webapp
 webview
 whitespace
 widthless
+worktree
 writerfilter
 xml
