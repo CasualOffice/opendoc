@@ -185,6 +185,18 @@ test.describe("every ribbon control names a live command", () => {
 
 /** What a user could perceive, as one comparable value.
  *
+ *  FOCUS IS DELIBERATELY NOT PART OF THIS. It was tried and it reddens honestly:
+ *  a pointer activation legitimately leaves focus on the button that was clicked
+ *  (`active: "undoBtn"`, `"pasteBtn"`, `"cutBtn"`, `"copyBtn"`) while a palette
+ *  activation returns it to the editor, and on `table.cellFormat` the palette path
+ *  ends with focus on the body where the ribbon path does not. Those are
+ *  differences between two activation GESTURES, not between two implementations of
+ *  one command, so including them would make this guard fail for correct code.
+ *  The price is that a command whose only effect is focus — `format.size`, which
+ *  focuses and selects the font-size field — is compared vacuously here; its
+ *  reachability is covered by `one-axis-navigation.spec.mjs`'s VALUE_FAMILIES
+ *  check instead.
+ *
  *  Deliberately not a list of things a particular command does: this has to be
  *  the same question for a toggle, an edit, a dialog and a zoom change. So it is
  *  "what became visible, what stopped being visible, and what the chrome now
