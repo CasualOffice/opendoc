@@ -138,8 +138,19 @@ const SRC = new URL("../src/", import.meta.url);
  *  the merged file, because the two removed different code. Git applied both
  *  deletions, so the merge is smaller than either branch predicted. The number
  *  below is measured from the merged file; it is the only one that was ever
- *  meaningful. */
-const MAIN_JS_LINE_CEILING = 16779;
+ *  meaningful.
+ *  Lowered to 16,721 by the keymap round (`109` UX-006 + UX-007): four separate
+ *  `keydown` handlers and a `FORMAT_KEYS` table became one declarative chord ->
+ *  command map in `keymap.mjs`, which is also what makes a label and its binding
+ *  ONE declaration instead of two tables that drifted apart.
+ *  Measured and lowered AFTER the ratchet settled, not during: this branch was
+ *  told to leave the number alone while #617, #618 and #622 were all in flight
+ *  against a moving `main.js`, because each would otherwise have measured a file
+ *  the others were about to change — the merge trap the notes above record three
+ *  times. With those merged, 16,779 is the merged measurement and 16,721 is this
+ *  round's. Leaving the 58 lines of slack would hand the next change free growth,
+ *  which is the one thing a ratchet exists to refuse. */
+const MAIN_JS_LINE_CEILING = 16721;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
