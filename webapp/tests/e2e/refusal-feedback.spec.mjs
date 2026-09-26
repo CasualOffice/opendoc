@@ -19,6 +19,7 @@ import {
   gotoEditor,
   clickIntoFirstPage,
   expectEditorFocused,
+  runAppMenuCommand,
   setReviewMode,
 } from "./fixtures.mjs";
 
@@ -148,6 +149,30 @@ test("a confirmation does not throw a card over the document when the line is sh
     "a confirmation the status line is already showing must not be escalated",
   ).toEqual(["status"]);
 
+  expect(consoleErrors).toEqual([]);
+});
+
+test("a refusal is not destroyed by the informational message that follows it", async ({
+  page,
+  consoleErrors,
+}) => {
+  await page.setViewportSize(DESKTOP);
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Review ▸ Accept-next with the caret outside a tracked change publishes TWO
+  // messages in one activation: the refusal, then "no comments or tracked
+  // changes" from the advance that follows. The refusal is the one that matters
+  // and it was being wiped out in the same tick — the user saw it flash.
+  await runAppMenuCommand(page, "review", "review.acceptNext");
+
+  const toast = page.locator("#statusToast");
+  await expect(toast).not.toBeHidden();
+  await expect(toast).toContainText("Place the caret inside a tracked change");
+  // And it survives: still there after the activation is long over, rather than
+  // being yanked away by the message that came second.
+  await page.waitForTimeout(600);
+  await expect(toast).toContainText("Place the caret inside a tracked change");
   expect(consoleErrors).toEqual([]);
 });
 
