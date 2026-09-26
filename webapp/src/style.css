@@ -919,17 +919,34 @@ input {
   max-inline-size: min(100%, 520px);
 }
 
+/* 20px between groups, the same figure `.page-setup-fields` and
+   `.watermark-body` already use, so a group boundary is one distance in every
+   dialog. 14px was close enough to the 8px heading gap that a heading floated
+   between the group above it and the group it names. */
 .settings-section {
-  margin-bottom: 14px;
+  margin-bottom: var(--space-5);
 }
 
-.settings-label {
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--faint);
-  margin-bottom: 7px;
+/* Settings had its OWN heading style — 10px, 700, uppercase, `--faint` — while
+   every other dialog names a group with `.dialog-group legend` at 13px/650 in
+   `--ink`. Two consequences, both visible in a screenshot: Settings did not
+   look like Page setup sitting next to it, and inside Settings the group
+   heading "REVIEWER IDENTITY" was SMALLER and fainter than the field labels
+   "Name" and "Initials" underneath it — the hierarchy inverted. It is the
+   shared group heading now; see `.dialog-group legend`. (The uppercase micro
+   label survives where it means something different: `.bookmark-list-head` and
+   `.shortcuts-group h3` mark sections of a LIST, not groups of a form.) */
+.settings-label,
+.dialog-group legend,
+.metadata-section h3,
+.metadata-disclosure summary {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .segmented {
@@ -1052,13 +1069,45 @@ body.modal-open {
   width: min(var(--dialog-width-compact), 100%);
 }
 
+/* `hidden` is the weakest promise in the platform: it is a UA `display: none`,
+ * and ANY author `display` beats the entire UA sheet. So a rule as ordinary as
+ * `display: flex` un-hides every element it matches, silently — the markup
+ * still says `hidden` and the JS still sets it.
+ *
+ * Two of these were live in these dialogs, both found by looking rather than by
+ * reading. `.link-mode-panel { display: flex }` was painting the INACTIVE tab
+ * panel of the link dialog: with "Web address" chosen, the dialog also showed
+ * the bookmark picker reading "No bookmarks in this document" and its note —
+ * 52px of a 509px dialog that the user had not asked for, which also made the
+ * two tabs look inert. `.bookmark-list { display: flex }` was painting an empty
+ * hidden list at 416x0, whose only effect was to spend one 16px flex gap in the
+ * middle of the "No bookmarks yet" empty state.
+ *
+ * The stylesheet answers this per component in about a dozen places
+ * (`.ribbon-panel[hidden]`, `.side-panel[hidden]`, `.context-menu[hidden]`, …),
+ * and every one of those is a rule somebody had to remember. Inside a dialog it
+ * is answered once. `!important` is the point rather than a shortcut: the rule
+ * has to outrank an author `display` it has never seen, which is the only thing
+ * that can go wrong here. Guarded by `dialog-contract.spec.mjs` — "nothing it
+ * has hidden is painted", over every modal. */
+.dialog-card [hidden] {
+  display: none !important;
+}
+
+/* No rule under the head, and none over the foot — see `.dialog-body` below for
+   what replaces them. A dialog was three stacked bands: a white head, a
+   hairline, a white body, a hairline, and a GREY footer. Three bands is a box
+   drawn twice inside a box, and it is the largest remaining reason these read
+   as heavier than the rest of the app: the footer alone is a 49px full-width
+   slab in a different colour from everything above it. Neither Word's dialogs
+   nor Google Docs' divide a dialog this way — the card is one surface, and the
+   action row sits on it. */
 .dialog-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
   padding: var(--dlg-pad-y) var(--dlg-pad-x);
-  border-bottom: 1px solid var(--line);
 }
 
 .dialog-heading {
@@ -1118,6 +1167,21 @@ body.modal-open {
   font-size: var(--fs-small);
 }
 
+/* A confirmation has no `.dialog-body`: its whole message IS this paragraph, so
+   on those cards it is the content and not a subtitle. It was being painted at
+   12px in `--muted` — "Opening another file replaces X. Your edits have not been
+   saved and there is no copy of them anywhere else." set smaller and quieter
+   than the title above it, which is the one sentence in the product a user most
+   needs to read. Word and Docs both set a confirmation's message at body size
+   in body colour. Structural rather than per-dialog: any card that carries its
+   message in the head gets this, and any card with a body is unaffected. */
+.dialog-card:not(:has(.dialog-body)) .dialog-heading p {
+  margin-top: var(--space-2);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+}
+
 .dialog-close {
   display: grid;
   width: var(--h-control);
@@ -1141,11 +1205,33 @@ body.modal-open {
   color: var(--ink);
 }
 
+/* Scroll shadows, the established answer to "where did the divider go".
+ *
+ * The two hairlines the head and foot used to carry were painted whether or not
+ * there was anything on the other side of them, so on About — six lines of
+ * content — they drew a boundary around nothing. What a divider is actually for
+ * is saying "there is more content above/below the fold", and that is a state,
+ * not a constant. The technique is Roman Komarov's `background-attachment:
+ * local` pair: two cover gradients painted in the SCROLLER's coordinates hide
+ * two shade gradients painted in the VIEWPORT's, so each shade is revealed
+ * exactly when that edge has content scrolled past it. No JS, no scroll
+ * listener, and it is correct on the first frame.
+ *
+ * `color-mix` rather than a new token: the shade is --ink at 11%, so it follows
+ * the theme by construction and adds no colour literal to feature CSS. */
 .dialog-body {
   min-height: 0;
   overflow: auto;
   padding: var(--dlg-pad-y) var(--dlg-pad-x);
   overscroll-behavior: contain;
+  background:
+    linear-gradient(var(--surface) 30%, transparent) top / 100% 18px no-repeat local,
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 18px no-repeat local,
+    linear-gradient(color-mix(in srgb, var(--ink) 11%, transparent), transparent) top / 100% 7px
+      no-repeat scroll,
+    linear-gradient(transparent, color-mix(in srgb, var(--ink) 11%, transparent)) bottom / 100% 7px
+      no-repeat scroll,
+    var(--surface);
 }
 
 /* Keyboard shortcuts reference (HF-151). Two columns on a wide card so the
@@ -1215,12 +1301,39 @@ body.modal-open {
   column-gap: var(--space-6);
 }
 
+/* The GROUP owns the two columns, not each row.
+ *
+ * Every row was its own `max-content max-content` grid, so each chord started
+ * wherever its own label happened to end: inside MOVING AROUND the keys began
+ * at seven different x positions in seven consecutive rows, and a keymap is
+ * read by scanning the key column. Aligning per ROW is what the previous pass
+ * fixed away from — it had been `space-between` across a 347px column, leaving
+ * a 235px median gap. Per GROUP is the third option and the one both reference
+ * products use: the pair still sits together, because the group is only as wide
+ * as its widest label plus its widest chord, and the column is straight.
+ *
+ * `display: contents` on the row hands its two cells to this grid; the row
+ * padding it drops comes back as `row-gap`. */
 .shortcuts-group {
   break-inside: avoid;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: start;
+  align-items: baseline;
+  column-gap: clamp(8px, 1vw, 16px);
+  row-gap: 6px;
   margin: 0 0 var(--space-5);
 }
 
+.shortcuts-group .shortcuts-row {
+  display: contents;
+}
+
+/* Still the uppercase micro label rather than the form group heading: this
+   marks a section of a reference LIST, which is a different job from naming a
+   group of controls. Same reason `.bookmark-list-head` keeps it. */
 .shortcuts-group h3 {
+  grid-column: 1 / -1;
   margin: 0 0 var(--space-2);
   font-size: var(--fs-small);
   font-weight: 650;
@@ -1264,10 +1377,11 @@ body.modal-open {
   flex-wrap: wrap;
   gap: var(--space-4);
   /* The action row needs less vertical air than the body: it holds one line of
-     buttons. On the compact dialogs head+foot were eating 55% of the card. */
-  padding: calc(var(--dlg-pad-y) * 0.7) var(--dlg-pad-x);
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
+     buttons. On the compact dialogs head+foot were eating 55% of the card.
+     No fill and no rule (see `.dialog-head`): the buttons sit on the card, as
+     they do in Word and in Google Docs. The extra bottom padding is what now
+     separates them from the edge — it was the grey band doing that before. */
+  padding: calc(var(--dlg-pad-y) * 0.8) var(--dlg-pad-x) var(--dlg-pad-y);
 }
 
 .dialog-note {
@@ -1327,10 +1441,15 @@ body.modal-open {
   background: var(--primary-bg-hover);
 }
 
+/* 16px between rows against the 6px that binds a label to its own input: a
+   label must be visibly closer to the control it names than to the one above
+   it, and at 14px against 6px that ratio was 2.3 — near enough to ambiguous
+   that the eye had to read the words to pair them. Word and Docs both run
+   about 3:1 here. */
 .properties-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: var(--space-4) var(--space-5);
 }
 
 .field-wide {
@@ -1382,16 +1501,14 @@ body.modal-open {
 
 .metadata-section,
 .metadata-disclosure {
-  margin-top: 22px;
-  padding-top: 18px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--line);
 }
 
-.metadata-section h3 {
-  margin: 0 0 12px;
-  color: var(--ink);
-  font-size: var(--fs-body);
-  font-weight: 650;
+/* Typography lives with the shared group heading (`.settings-label` block). */
+.metadata-disclosure summary {
+  cursor: pointer;
 }
 
 .metadata-facts {
@@ -1435,15 +1552,8 @@ body.modal-open {
   font-weight: 450;
 }
 
-.metadata-disclosure summary {
-  color: var(--ink);
-  font-size: var(--fs-body);
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.metadata-disclosure[open] summary {
-  margin-bottom: 12px;
+.metadata-disclosure:not([open]) summary {
+  margin-bottom: 0;
 }
 
 .metadata-facts-compact {
@@ -1484,11 +1594,17 @@ body.modal-open {
   /* The preview column was a hard 250px and stretched to the full row height —
      587px of box around a 150x212 sheet, about a fifth of the whole dialog.
      It is now sized by the thumbnail and pinned to the top, as Word's is. */
-  grid-template-columns: clamp(140px, 16vw, 190px) minmax(0, 1fr);
-  gap: clamp(12px, 1.6vw, 24px);
+  grid-template-columns: clamp(120px, 13vw, 160px) minmax(0, 1fr);
+  gap: clamp(16px, 2vw, 28px);
   align-items: start;
 }
 
+/* No frame. The preview was a 190x288 filled, outlined, 22px-padded card around
+   a 150x212 picture of a sheet — a box drawn round a box drawn round a box, and
+   the single biggest rectangle left in any of these dialogs. Word's page-setup
+   preview is the sheet alone on the dialog's own surface, and the sheet already
+   carries a border and a shadow that say "this is paper". Dropping the frame
+   also gives the field column back ~50px, which is where the dialog was short. */
 .page-preview {
   display: flex;
   align-self: start;
@@ -1496,27 +1612,29 @@ body.modal-open {
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 12px;
-  padding: 22px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-2);
+  gap: var(--space-3);
+  padding: 2px 0 0;
 }
 
 .page-preview-sheet {
   position: relative;
-  width: 150px;
+  /* `min()`, not a constant: landscape is 210px and the preview column clamps
+     to as little as 120px, so a fixed width painted the sheet outside the
+     column that holds it. The portrait default fits today, which is the only
+     reason the clipping guard has not seen it — the guard opens the dialog in
+     its default state and landscape is one click away. */
+  width: min(150px, 100%);
   aspect-ratio: var(--page-ratio, 8.27 / 11.69);
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 2px;
   background: var(--paper);
-  box-shadow: 0 8px 24px rgba(20, 22, 28, 0.15);
+  box-shadow: 0 4px 14px rgba(20, 22, 28, 0.13);
   transition: width 0.16s ease, aspect-ratio 0.16s ease;
 }
 
 .page-preview-sheet[data-orientation="landscape"] {
-  width: 210px;
+  width: min(210px, 100%);
 }
 
 .page-preview-margins {
@@ -1611,9 +1729,13 @@ body.modal-open {
   color: var(--ink);
 }
 
+/* `outline-offset: 2px` outside an already-accent 1px border drew TWO
+   concentric blue rings around the selected tile — and the dialog focuses the
+   checked radio as it opens, so that is what it looks like every single time it
+   is used. One ring, seated on the border. */
 .drop-cap-choice:focus-within {
   outline: 2px solid var(--accent-text);
-  outline-offset: 2px;
+  outline-offset: -1px;
 }
 
 .drop-cap-choice input {
@@ -1685,8 +1807,16 @@ body.modal-open {
   background-clip: content-box;
 }
 
+/* Sized by what it holds, like `.number-control`: this takes 1 to 10, and it
+   was a 128px box for two digits. The allowance is four characters plus the
+   input's own padding plus Chromium's spin buttons, which is the same
+   arithmetic `.number-control` documents. */
 .drop-cap-lines {
-  width: 8rem;
+  width: fit-content;
+}
+
+.drop-cap-lines > input {
+  inline-size: calc(4ch + 2.25rem);
 }
 
 .drop-cap-lines:has(input:disabled) {
@@ -1755,6 +1885,12 @@ body.modal-open {
   padding: 0;
 }
 
+/* Bound to the field above it at the shared 6px, against this section's own
+   12px stack gap. */
+.table-property-section > .dialog-field-note {
+  margin-top: -6px;
+}
+
 .table-property-section:first-child {
   padding-top: 0;
 }
@@ -1785,6 +1921,39 @@ body.modal-open {
   outline: none;
   border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* A control is as wide as the choices it holds, not as wide as the dialog.
+ *
+ * Measured: Settings' Theme toggle was three 155px buttons spanning 476px to
+ * hold "System", "Light" and "Dark"; Page setup's Orientation was two 148px
+ * buttons; the Section dropdown was 303px to show "Section 1" and the Language
+ * dropdown 476px to show "System default (English)". This is the same defect
+ * the number spinners had before the last pass — a control stretched to the
+ * container instead of sized to its content — and it is most of why these
+ * dialogs read as big without being informative. Word and Docs size both of
+ * these to their content.
+ *
+ * Scoped to `.dialog-body` so the side panels, whose narrow measure genuinely
+ * is the control's width, are untouched. */
+.dialog-body .segmented {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.dialog-body .segmented button {
+  flex: 0 1 auto;
+  padding: 0 14px;
+}
+
+.dialog-body .dialog-select,
+.dialog-body .dialog-field > select {
+  /* `fit-content` on a select is its widest OPTION, so the box still fits every
+     value it can show. The floor keeps a one-digit list ("Columns ▸ Number")
+     from collapsing to a stub, and `100%` is the ceiling in a narrow cell. */
+  inline-size: fit-content;
+  min-inline-size: 11ch;
+  max-inline-size: 100%;
 }
 
 .dialog-check {
@@ -1820,8 +1989,21 @@ body.modal-open {
   line-height: 1.35;
 }
 
+/* A POSITIVE bind distance. `-4px` was written to claw back a flex `gap` that
+   the note's container happened to apply, and it is wrong wherever there is no
+   gap to claw back: in "Create a style" the body is a plain block, so the note
+   was pulled four pixels up and painted across the bottom edge of the input it
+   describes, straight through the focus ring. The two flex forms that DO carry
+   a gap (`.link-body`, `.bookmark-add`) pull the note back to this same 6px
+   themselves, via `--dlg-bind`, so the distance is now one number rather than a
+   correction to a number. */
 .dialog-field-note {
-  margin: -4px 0 0;
+  margin: 6px 0 0;
+}
+
+/* The panel's own 6px gap already places this one. */
+.link-mode-panel > .dialog-field-note {
+  margin-top: 0;
 }
 
 /* ---- Bookmark manager ---------------------------------------------------- */
@@ -1855,12 +2037,16 @@ body.modal-open {
   overscroll-behavior: contain;
 }
 
+/* 58px per row for a label and a six-word note put 350px of list in a 500px
+   dialog. A picker's rows are the densest thing in either reference product —
+   Word's Field dialog is a plain listbox — so the row keeps its note and loses
+   the air around it. */
 .field-choice {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -2052,10 +2238,35 @@ body.modal-open {
   width: min(460px, 100%);
 }
 
-.link-body {
+/* One rhythm for a stacked form, shared with `.bookmark-add` below.
+ *
+ * Measured, before: EVERY vertical gap in this dialog was 12px. "Text to
+ * display" sat exactly as far from its own input as that input sat from the
+ * next label, so nothing in the form was grouped — the eye had to read the
+ * words to work out which label belonged to which box. `.dialog-field`, which
+ * the rest of the dialogs use, has bound its label at 6px all along; this
+ * dialog and the bookmark manager are the two that build their labels by hand
+ * and so never inherited it.
+ *
+ * So: 16px between rows, and the element directly after a label is pulled back
+ * to 6px — the same 6/16 the `.dialog-field` + `.properties-grid` pair produce,
+ * and the same ratio Word and Docs use. A helper note is bound to the control
+ * ABOVE it by the same amount, because that is what it is about. */
+.link-body,
+.bookmark-add {
+  /* Pulls a bound element back from the row gap to the 6px label distance. */
+  --dlg-bind: calc(6px - var(--space-4));
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
+}
+
+.link-body > label + *,
+.link-body > .link-field-label + *,
+.link-body > .dialog-field-note,
+.bookmark-add > label + *,
+.bookmark-add > .dialog-field-note {
+  margin-top: var(--dlg-bind);
 }
 
 .link-body > label {
@@ -2106,8 +2317,13 @@ body.modal-open {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* Sized to its two choices, for the same reason as `.dialog-body .segmented`:
+   this is the same control idiom under a different class, and it was a 416px
+   strip holding two labels. */
 .link-mode {
   display: flex;
+  width: fit-content;
+  max-width: 100%;
   gap: 4px;
   padding: 3px;
   border: 1px solid var(--line);
@@ -2116,7 +2332,7 @@ body.modal-open {
 }
 
 .link-mode-tab {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   height: var(--h-search);
   padding: 0 10px;
   border: 1px solid transparent;
@@ -2150,6 +2366,13 @@ body.modal-open {
   gap: 6px;
 }
 
+/* "ScreenTip (optional)" was painting as "ScreenTip(optional)": the space
+   before this span is the label's trailing whitespace, and it collapses away at
+   the end of the text run. The gap belongs to the word, so it is set here. */
+.link-optional {
+  margin-inline-start: 0.35em;
+}
+
 #linkDialogNote.error,
 #linkPlaceEmpty {
   color: var(--danger);
@@ -2161,12 +2384,7 @@ body.modal-open {
   font-weight: 450;
 }
 
-.bookmark-add {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
+/* Layout and rhythm share `.link-body`'s rule above. */
 .bookmark-add > label {
   color: var(--muted);
   font-size: var(--fs-small);
@@ -2377,25 +2595,21 @@ body.modal-open {
 
 .bookmark-empty {
   margin: 0;
-  padding: 18px 4px;
+  /* The body's own 16px gap already separates this from the list head; 18px on
+     top of it opened a 34px void above one sentence. */
+  padding: var(--space-2) 4px var(--space-3);
   color: var(--muted);
   font-size: var(--fs-small);
   text-align: center;
 }
 
+/* The legend's typography lives with the shared group heading, up beside
+   `.settings-label`, so the two cannot drift apart again. */
 .dialog-group {
   min-width: 0;
   margin: 0;
   padding: 0;
   border: none;
-}
-
-.dialog-group legend {
-  margin-bottom: 9px;
-  padding: 0;
-  color: var(--ink);
-  font-size: var(--fs-body);
-  font-weight: 650;
 }
 
 .dialog-field-grid {
@@ -5750,11 +5964,21 @@ body.is-format-painting .page-wrap * {
 
 /* ---- Object alt-text / crop dialogs -------------------------------------- */
 .object-dialog { width: min(440px, 100%); }
+/* The third hand-built stacked form, on `.link-body`'s rhythm for the same
+   reason: a flat 12px gap put the alt-text label exactly as far from its own
+   textarea as from the note under it. */
 .object-dialog-body {
+  --dlg-bind: calc(6px - var(--space-4));
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
+
+.object-dialog-body > label + *,
+.object-dialog-body > .dialog-field-note {
+  margin-top: var(--dlg-bind);
+}
+
 .object-dialog-body > label {
   color: var(--muted);
   font-size: var(--fs-small);
@@ -8175,6 +8399,11 @@ body:not(.doc-loaded) .drop-title {
 #filePageDetail .panel-in-page .dialog-body {
   padding-left: 0;
   padding-right: 0;
+  /* The dialog body's scroll shadows come with an opaque `--surface` beneath
+     them, which is right for a card floating on a scrim and wrong for a pane:
+     the pane does not scroll (the page does), so the shades would never fire,
+     and the fill would print a white block across the File page. */
+  background: none;
 }
 
 /* Template cards are taller than export tiles because a page miniature sits on

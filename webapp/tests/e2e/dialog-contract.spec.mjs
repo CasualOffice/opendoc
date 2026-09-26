@@ -379,6 +379,56 @@ for (const modal of MODALS) {
     expect(consoleErrors).toEqual([]);
   });
 
+  // `hidden` is the weakest promise in the platform: it is a UA `display: none`,
+  // and ANY author `display` on the element beats the entire UA sheet. So a
+  // component rule as ordinary as `display: flex` silently un-hides everything
+  // it matches, with no warning anywhere — not in the markup, which still says
+  // `hidden`, and not in the JS, which still sets it.
+  //
+  // That shipped. `.link-mode-panel { display: flex }` was painting the INACTIVE
+  // tab panel of the link dialog: with "Web address" selected, the dialog showed
+  // the URL box and, twelve pixels under it, the bookmark picker reading "No
+  // bookmarks in this document" plus its explanatory note — 52px of a 509px
+  // dialog that the user had not chosen and could not act on, which also made
+  // the two tabs look like they did nothing. Found by screenshot; no test in the
+  // suite could see it, because every assertion about that panel asked the
+  // locator whether it was visible AFTER clicking its own tab.
+  //
+  // The stylesheet answers this per component in about a dozen places
+  // (`.ribbon-panel[hidden]`, `.side-panel[hidden]`, `.context-menu[hidden]`, …)
+  // and every one of those is a rule someone had to remember. This is the guard
+  // that means nobody has to: whatever the app has decided to hide inside a
+  // modal, the modal must not be painting it.
+  test(`${modal.name}: nothing it has hidden is painted`, async ({ page, consoleErrors }) => {
+    await modal.open(page);
+    await expect(dialog(page)).toBeVisible();
+    const painted = await page.evaluate((id) => {
+      const out = [];
+      for (const el of document.getElementById(id).querySelectorAll("[hidden]")) {
+        // `getClientRects()` is empty for anything `display: none` anywhere up
+        // the chain, so a hidden element inside a hidden ancestor is correctly
+        // silent here rather than double-reported.
+        const rects = el.getClientRects();
+        if (rects.length === 0) continue;
+        const { width, height } = rects[0];
+        if (width === 0 && height === 0) continue;
+        out.push(
+          `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}` +
+            `${el.className ? `.${String(el.className).trim().split(/\s+/).join(".")}` : ""}` +
+            ` is [hidden] and painting ${Math.round(width)}x${Math.round(height)}` +
+            ` (display: ${getComputedStyle(el).display})`,
+        );
+      }
+      return out;
+    }, modal.id);
+    expect(
+      painted,
+      `#${modal.id} paints elements it has marked hidden — an author \`display\` ` +
+        `beats the UA sheet's \`[hidden] { display: none }\`:\n  ${painted.join("\n  ")}`,
+    ).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
   // Chrome text interpolates user data, and the measured guard above only sees
   // whatever string the fixture happens to supply. It passed on `opendoc-demo.docx`
   // while the owner's `General_Loan_On_lend_and_loan_from_SMSF_Agreement.docx` was
