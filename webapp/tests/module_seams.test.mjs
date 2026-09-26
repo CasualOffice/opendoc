@@ -89,8 +89,20 @@ const SRC = new URL("../src/", import.meta.url);
  *  `page_setup.mjs`, beside the rest of Word's Page Setup group; what the handful
  *  of lines still here buy is the button binding, the `LAYOUT_SURFACE` row that
  *  makes the command reachable from the palette as well as the ribbon, and the
- *  font inventory handed to the module. */
-const MAIN_JS_LINE_CEILING = 17081;
+ *  font inventory handed to the module.
+ *  Lowered to 17,054 after a NEW shape of the merge trap above turned `main` red
+ *  with two green PRs and no conflict. At 17,081 the file had zero slack, so
+ *  #613 (popover anchoring) and #614 (drop caps) each bought their one new line
+ *  by deleting the SAME trailing blank line at the end of the file. Git applies
+ *  that deletion once, so the merge landed at 17,082 and this guard failed on
+ *  `main` while both branches had passed it. The lesson is not a number: paying
+ *  the ratchet in cosmetic whitespace is not paying it, because whitespace is
+ *  not per-branch currency. So the fix moves code out, as the failure message
+ *  asks — the swatch vocabularies (`TEXT_STANDARD_COLORS`, `HIGHLIGHT_COLORS`,
+ *  the name→hex/label maps) went to `palettes.mjs`, which also makes "every
+ *  highlight the engine can write is offerable" provable in node — and leaves
+ *  27 lines of slack so the next two concurrent PRs do not collide the same way. */
+const MAIN_JS_LINE_CEILING = 17054;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps
@@ -114,6 +126,10 @@ const PURE_MODULES = [
   // keeping them apart is what lets `pointer_cursor.test.mjs` drive the entire
   // hover cascade with plain objects, with no browser and no engine.
   "pointer_cursor.mjs",
+  // The swatch vocabularies: literal tables and one name->hex lookup, so the
+  // question "does the picker offer every highlight the engine can write?" is
+  // answerable against the Rust source in node (`palettes.test.mjs`).
+  "palettes.mjs",
   "popover_position.mjs",
   "review_labels.mjs",
   "review_layout.mjs",

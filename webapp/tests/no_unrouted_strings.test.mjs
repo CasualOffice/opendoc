@@ -43,8 +43,14 @@ const CEILINGS = new Map([
   ["src/format_io.mjs", 6],
   ["src/home-embed.js", 4],
   ["src/keyboard.mjs", 7],
-  ["src/main.js", 364],
+  ["src/main.js", 348],
   ["src/pages_panel.mjs", 4],
+  // The sixteen highlight labels ("Bright green", "Gray 50%", …). They were
+  // sixteen of `main.js`'s 364 and moved here with the table, so this is the
+  // same debt in a new place, not a new debt — main.js came down by exactly 16.
+  // Routing them is a locale-key change across all eighteen languages, which is
+  // its own piece of work; the ratchet is what keeps it from being forgotten.
+  ["src/palettes.mjs", 16],
   ["src/shortcut_labels.mjs", 2],
   ["src/spell_check.mjs", 6],
 ]);

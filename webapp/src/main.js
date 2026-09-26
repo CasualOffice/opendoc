@@ -78,6 +78,7 @@ import {
 } from "./drafts.mjs";
 import { rovingIndex, tabStopIndex } from "./ribbon_nav.mjs";
 import { popoverAnchor, popoverPosition } from "./popover_position.mjs";
+import { HIGHLIGHT_COLORS, HIGHLIGHT_LABEL, TEXT_STANDARD_COLORS, highlightHex } from "./palettes.mjs";
 // One line, deliberately: main.js is on a line ratchet (`module_seams`).
 import { createVerticalGoal, orderedSelectionEnds, recoverVerticalMove, sameModelPosition, selectionMatchesRange } from "./caret_navigation.mjs";
 import {
@@ -10132,38 +10133,9 @@ document.addEventListener("keydown", (e) => {
 // font <select>; A⁺/A⁻ step the standard sizes; a Change case menu transforms
 // the selection through the existing rich-run copy/paste ops (no new engine op).
 
-// Standard-colors palette (Google-Docs-style: a grayscale row + a hue row). The
-// document theme palette is not exposed to the webapp, so the theme-colors row
-// is omitted gracefully rather than faked.
-const TEXT_STANDARD_COLORS = [
-  "#000000", "#434343", "#666666", "#999999", "#b7b7b7", "#cccccc", "#d9d9d9", "#efefef", "#f3f3f3", "#ffffff",
-  "#980000", "#ff0000", "#ff9900", "#ffff00", "#00ff00", "#00ffff", "#4a86e8", "#0000ff", "#9900ff", "#ff00ff",
-];
-// The complete set of OOXML `w:highlight` named colors the engine accepts, with
-// their display swatch and a human label. `setHighlight` takes the name, not a hex.
-const HIGHLIGHT_COLORS = [
-  { name: "yellow", hex: "#ffff00", label: "Yellow" },
-  { name: "green", hex: "#00ff00", label: "Bright green" },
-  { name: "cyan", hex: "#00ffff", label: "Turquoise" },
-  { name: "magenta", hex: "#ff00ff", label: "Pink" },
-  { name: "blue", hex: "#0000ff", label: "Blue" },
-  { name: "red", hex: "#ff0000", label: "Red" },
-  { name: "darkYellow", hex: "#808000", label: "Dark yellow" },
-  { name: "darkGreen", hex: "#008000", label: "Green" },
-  { name: "darkCyan", hex: "#008080", label: "Teal" },
-  { name: "darkMagenta", hex: "#800080", label: "Violet" },
-  { name: "darkRed", hex: "#800000", label: "Dark red" },
-  { name: "darkBlue", hex: "#000080", label: "Dark blue" },
-  { name: "darkGray", hex: "#808080", label: "Gray 50%" },
-  { name: "lightGray", hex: "#c0c0c0", label: "Gray 25%" },
-  { name: "black", hex: "#000000", label: "Black" },
-  { name: "white", hex: "#ffffff", label: "White" },
-];
-const HIGHLIGHT_HEX = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.hex]));
-const HIGHLIGHT_LABEL = new Map(HIGHLIGHT_COLORS.map((c) => [c.name, c.label]));
-function highlightHex(name) {
-  return name && name !== "none" ? HIGHLIGHT_HEX.get(name) ?? null : null;
-}
+// The swatch vocabularies themselves live in `palettes.mjs`: literal data plus
+// one lookup, with the engine-parity guard that keeps the highlight list from
+// falling behind `HighlightColor`.
 
 // Session-remembered recently-used swatches (most-recent first, deduped, capped).
 const recentTextColors = [];
