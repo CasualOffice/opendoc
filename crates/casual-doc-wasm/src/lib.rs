@@ -33582,8 +33582,12 @@ mod tests {
         assert_eq!(copied, format!("{a_text}\n{b_text}"));
     }
 
-    #[test]
-    fn tabbed_toc_link_uses_layout_offset_space_and_is_clickable() {
+    /// A two-paragraph TOC-like document: one row that is a single internal
+    /// hyperlink holding `Tables`, a tab, and `page_number`, and the heading the
+    /// row's anchor bookmark marks. `page_number` is the only variable, so the
+    /// same geometry and hit-testing assertions can be charged to a flattened
+    /// run and to a real `PAGEREF` field alike.
+    fn toc_row_handle(page_number: InlineNode) -> (WasmDocument, NodeId, NodeId) {
         use casual_doc_model::v1::{Bookmark, BookmarkStart, Definitions, Hyperlink, Run, Tab};
 
         let document_id = NodeId::from_parts(90, 1).unwrap();
@@ -33618,11 +33622,7 @@ mod tests {
                             InlineNode::Tab(Tab {
                                 id: NodeId::from_parts(90, 7).unwrap(),
                             }),
-                            InlineNode::Run(Run {
-                                id: NodeId::from_parts(90, 8).unwrap(),
-                                properties: Default::default(),
-                                text: "3".to_owned(),
-                            }),
+                            page_number,
                         ],
                     }))],
                 }),
@@ -33674,7 +33674,13 @@ mod tests {
             active_author: None,
             paragraph_tracking: None,
         };
+        (handle, source_id, target_id)
+    }
 
+    /// The whole row — text, tab, and page number — is one clickable link whose
+    /// anchor range covers `Tables` + the tab (zero bytes in the layout anchor
+    /// space) + the page number.
+    fn assert_toc_row_is_clickable(handle: &WasmDocument, source_id: NodeId, target_id: NodeId) {
         let paragraph =
             find_paragraph(handle.document.body(), source_id).expect("source paragraph");
         let links = paragraph_links(&handle.document, paragraph);
@@ -33697,6 +33703,44 @@ mod tests {
         assert_eq!(hit.anchor(), "_Toc1");
         assert_eq!(hit.target_node(), target_id.to_string());
         assert!(hit.target_page() > 0);
+    }
+
+    #[test]
+    fn tabbed_toc_link_uses_layout_offset_space_and_is_clickable() {
+        use casual_doc_model::v1::Run;
+
+        let (handle, source_id, target_id) = toc_row_handle(InlineNode::Run(Run {
+            id: NodeId::from_parts(90, 8).unwrap(),
+            properties: Default::default(),
+            text: "3".to_owned(),
+        }));
+        assert_toc_row_is_clickable(&handle, source_id, target_id);
+    }
+
+    #[test]
+    fn a_toc_row_whose_page_number_is_a_pageref_field_is_still_one_clickable_link() {
+        use casual_doc_model::v1::{Field, FieldKind, Run};
+
+        // What a real table of contents actually holds after OO-001: the page
+        // number is the cached result of a `PAGEREF` field INSIDE the row's
+        // hyperlink, not a flattened run. The row must stay one link over the
+        // same anchor range, or the caret and the click land somewhere other than
+        // where they did while the field was being dropped on import.
+        let field = InlineNode::Field(Box::new(Field {
+            id: NodeId::from_parts(90, 8).unwrap(),
+            instruction: " PAGEREF _Toc1 \\h ".to_owned(),
+            kind: FieldKind::PageRef {
+                bookmark: "_Toc1".to_owned(),
+            },
+            inlines: vec![InlineNode::Run(Run {
+                id: NodeId::from_parts(90, 11).unwrap(),
+                properties: Default::default(),
+                text: "3".to_owned(),
+            })],
+            form: None,
+        }));
+        let (handle, source_id, target_id) = toc_row_handle(field);
+        assert_toc_row_is_clickable(&handle, source_id, target_id);
     }
 
     // --- REVIEW-GAP-007 phase 2: typing inside a pending insertion (docs/86) --
