@@ -203,6 +203,7 @@ XML
 XMP
 XObjects
 Yjs
+accessor
 accessors
 activatable
 additively
@@ -485,6 +486,7 @@ unreferenced
 unrepresentable
 unresolvable
 unrotated
+unrouted
 unstyled
 untracked
 untrusted

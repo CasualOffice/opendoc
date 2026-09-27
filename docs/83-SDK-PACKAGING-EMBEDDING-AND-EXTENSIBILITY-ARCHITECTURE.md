@@ -1,10 +1,14 @@
-# 83 — SDK Packaging, Embedding, Collaboration, MCP & Extensibility Architecture
+# 83 — SDK Packaging, Embedding, Collaboration, MCP and Extensibility Architecture
 
 **Status:** Approved Architectural Specification  
 **Date:** 2026-07-31  
 **Depends on:** docs 05, 14, 15, 45, 56, 57, 59, 63, 68  
 **Primary Implementation:** Rust (`crates/casual-doc-sdk`, `crates/casual-doc-wasm`)  
-**NPM Package:** `@casualoffice/document-runtime`  
+**NPM Package:** `@casualoffice/opendoc-embed` — what actually ships today.
+`@casualoffice/document-runtime` appears below as the FUTURE full-runtime package name and
+is **not published**; §Phase 3's task list is where it gets reserved. Corrected 2026-09-27:
+this field, and the install line in the overview, both named the unpublished one in the
+present tense, so a reader following this document ran `npm install` against nothing.  
 
 > **Status correction (2026-09-27):** the MCP/AI wording originally in section 5
 > and Phase 6 described an aspiration as if it already shipped. OpenDoc does **not**
@@ -18,7 +22,7 @@
 
 OpenDoc is designed as a **deterministic, headless document engine** written in Rust, compiled to **WebAssembly (WASM)**, and exposed to host environments through stable TypeScript, Rust, and C ABI interfaces.
 
-This specification details the architecture and in-depth implementation plan for distributing OpenDoc as an **embeddable, customizable SDK** that third-party developers can install via `npm install @casualoffice/document-runtime` to embed high-fidelity DOCX previewers, single-user editors, multiplayer co-editing, MCP AI agent tools, and custom plugin extensions into their applications.
+This specification details the architecture and in-depth implementation plan for distributing OpenDoc as an **embeddable, customizable SDK** that third-party developers can install — today via `npm install @casualoffice/opendoc-embed`, which is the published package — to embed high-fidelity DOCX previewers, single-user editors, multiplayer co-editing, MCP AI agent tools, and custom plugin extensions into their applications.
 
 ---
 

@@ -39,7 +39,7 @@ InlineNode::Run(..) | InlineNode::Tab(..) | InlineNode::Break(..) | InlineNode::
 _ => {}          // everything else is DROPPED
 ```
 
-`InlineNode` has **27** variants. Twenty-three of them fall into that arm. Among them:
+`InlineNode` has **27** variants at the time of writing. Twenty-three of them fall into that arm. (It is **29** since #637 added the paragraph-spanning field-range markers, so the drop was **25 of 29** by the time it was fixed.) Among them:
 
 * `Field` — which is the **`PAGE` field**. A page number is the single most common thing
   in a header.
@@ -53,12 +53,36 @@ _ => {}          // everything else is DROPPED
 variant (`Sdt`) rather than cloning it with duplicate ids — correct for a clipboard, wrong
 for this.
 
-That is a sanitizer doing its job: a clipboard fragment deliberately arrives as text,
-tabs, breaks and links. Reused for Link to Previous it becomes **silent data loss**, which
-`AGENTS.md` lists as a hard rule and not a preference — and silent in the worst available
-way. The user turns Link to Previous **off**, which in their mind is "give this section its
-own copy of that header", and the copy arrives **with the page number and the logo gone**.
-Nothing refuses, nothing reports, and the loss is only visible on the page.
+**CORRECTION, 2026-09-27 — this paragraph used to say the opposite, and it was wrong.**
+It read: *"That is a sanitizer doing its job: a clipboard fragment deliberately arrives as
+text, tabs, breaks and links."* It does not. Verified by driving the real methods: the
+payload is the model **verbatim**. `copy_structured` filters at BLOCK level only —
+`selected.iter().all(|b| matches!(b, Paragraph | Table))` — and then serialises every
+inline inside those blocks as it stands, pictures and fields included. Worse, whole blocks
+are captured even on a partial selection, so selecting *any part* of a table copies the
+whole table with its logo. So `sanitize_inlines` was never a sanitizer: it was this lossy
+deep copy already sitting in its first and most-used consumer, and **paste was already
+broken** before Link to Previous ever asked for a copy. The genuinely sanitizing path is
+the *external* one, `paste_external_structured` / `build_external_block`, which builds from
+a small JS `ExternalFragment` contract that cannot express anything but runs, tables and
+lists — and which never called `sanitize_inlines` at all.
+
+Measured, in a Rust test over `copy_structured` → `paste_structured` with a table cell
+holding a run, an inline `Drawing` and a `PAGE` field: the clipboard JSON carried
+`"type":"drawing"` and `"type":"field"`, and the document went from 1 picture and 1 field
+to **1 picture and 1 field** where it should have had 2 and 2. Fixed in #645, which closes
+`109` HF-191.
+
+The *conclusion* below was right all along, which is why the rest of this section stands.
+Reused for Link to Previous the same helper is **silent data loss**, which `AGENTS.md`
+lists as a hard rule and not a preference — and silent in the worst available way. The user
+turns Link to Previous **off**, which in their mind is "give this section its own copy of
+that header", and the copy arrives **with the page number and the logo gone**. Nothing
+refuses, nothing reports, and the loss is only visible on the page.
+
+The lesson worth keeping: this document reasoned from what the function's NAME implied
+about its caller, and the name was the only evidence for it. A premise about a path nobody
+drove is a guess wearing a citation.
 
 **So the copy does not belong in the clipboard sanitizer, and must not be built by calling
 it.** It belongs in `casual-doc-edit` beside the ops that consume it, as a structural clone
@@ -67,9 +91,9 @@ that preserves every variant and re-mints every `NodeId` — including the ids i
 inside inline SDTs.
 
 **And it must be total.** An exhaustive `match` with **no catch-all**, so that adding a
-28th `InlineNode` variant is a compile error in this helper rather than a new silent drop.
+30th `InlineNode` variant is a compile error in this helper rather than a new silent drop.
 That is the only form of this rule a build can enforce; a catch-all plus a comment is how
-`sanitize_inlines` came to drop twenty-three kinds without anybody deciding to.
+`sanitize_inlines` came to drop twenty-five kinds without anybody deciding to.
 
 ## 3. The second finding: `docs/85` §8.4's garbage-collection clause is not true
 

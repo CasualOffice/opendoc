@@ -292,11 +292,22 @@ test("the withheld list holds the decisions this work actually took", () => {
   // If the package name in the document ever matches a package this repository
   // ships, the reason is spent and the document should be published.
   const sdk = "docs/83-SDK-PACKAGING-EMBEDDING-AND-EXTENSIBILITY-ARCHITECTURE.md";
-  assert.ok(withheld.has(sdk), `${sdk} must stay withheld while its install line is wrong`);
-  assert.match(
+  assert.ok(withheld.has(sdk), `${sdk} must stay withheld while its title is too long`);
+  // The install-line defect that first withheld it is FIXED, so asserting it would
+  // now be asserting a lie. What still withholds it is the head check: the heading
+  // makes an 85-character page title against the site's 20-70 limit. Assert THAT,
+  // so the day somebody shortens the heading this test demands publication — which
+  // is exactly how the install-line fix surfaced.
+  const sdkHeading = readRepo(sdk).split("\n", 1)[0].replace(/^#\s+\d+\s+—\s+/, "");
+  assert.ok(
+    `${sdkHeading} — OpenDoc`.length > 70,
+    "docs/83's heading now makes a page title the site will accept — publish it, and " +
+      "delete this withheld entry",
+  );
+  assert.doesNotMatch(
     readRepo(sdk),
     /npm install @casualoffice\/document-runtime/,
-    "docs/83 no longer tells a reader to install a package that does not exist — publish it",
+    "docs/83 tells a reader to install a package that does not exist again",
   );
   assert.equal(
     JSON.parse(readRepo("packages/opendoc-embed/package.json")).name,
