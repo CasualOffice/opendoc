@@ -626,7 +626,14 @@ export function createVersionHistory({
 
   /** Left/Right across a row's two cells, which is how a grid's keyboard reaches
    *  the ⋮ without a pointer. Selects the first row when nothing is selected, so
-   *  a first ArrowRight is not silently ignored. O(rows). */
+   *  a first ArrowRight is not silently ignored. O(rows).
+   *
+   *  NOT mirrored for right-to-left locales, and that is a recorded gap rather
+   *  than an oversight: no keyboard navigation in this chrome mirrors — the
+   *  command menu, the glyph picker and the radio groups all read ArrowRight as
+   *  "next" — so mirroring only here would make this one widget the outlier. It
+   *  is one rule for the whole chrome or none, and that rule is its own piece of
+   *  work. */
   function moveCell(delta) {
     const ids = visibleIds();
     if (ids.length === 0) return;
