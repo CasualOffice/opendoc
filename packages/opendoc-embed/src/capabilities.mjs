@@ -113,6 +113,148 @@ export const LEGACY_PRESETS = Object.freeze({
 /** The preset names a host may ask for, for validation and for tests. */
 export const PRESET_NAMES = Object.freeze(Object.keys(PRESETS));
 
+// ---- Surface composition ---------------------------------------------------
+//
+// `docs/126`'s container policy, owner notes §2, draws a line this file did not
+// have: **surface composition is a different question from command gating.**
+//
+//   * Within a surface a role DOES get, a command that cannot run right now is
+//     disabled and says why. That is "never a dead control" (`SKILL` §10), it is
+//     what `reflectReviewModeAccess` below already does, and it is correct.
+//   * A role with no business with a WHOLE SURFACE does not get the surface. A
+//     `readonly` container has no editing ribbon — not a ribbon full of greyed
+//     buttons, no ribbon. Word, Google Docs and ONLYOFFICE all present read-only
+//     as different chrome, not the editing chrome dimmed.
+//
+// The distinction is "never, for you" versus "not right now", and a wall of
+// greyed controls is not honesty: it tells a reader about capabilities they will
+// never have and buries the one or two things they can do.
+//
+// SO THE TWO AXES ARE SEPARATE, AND BOTH RESOLVE HERE. A region is not a
+// capability and must never be made one: a withheld region is a presentation
+// decision the host made about their page, and a withheld capability is a
+// permission. Collapsing them would make every hidden band read as a refusal —
+// and, worse, would let a host defeat a permission by showing a surface.
+//
+// NAMING. Not "surface": in this codebase `surface` already means which command
+// menu a row appears on (`editorCommands({ surface: "palette" | "menu" | … })`),
+// and overloading it would make "is this capability reachable from two surfaces"
+// (`105` UX-004) ambiguous. `docs/126` says surfaces; the code says REGIONS.
+
+/** Every region of the chrome a host can withhold.
+ *
+ *  Each one is a whole presentation, not a control: the unit is "a reader has no
+ *  business with this at all". Deliberately not one entry per button — that is
+ *  what the capability set and the command registry are for.
+ *
+ *  The eight `band.*` entries are the ribbon's tabs, which is what this project
+ *  calls a band ("the Home band must fit 1280px"). A band is the right grain for
+ *  a host: "show Home and Insert only" is a real request, where "hide the third
+ *  group inside Home" is a request to redesign the ribbon. */
+export const REGIONS = Object.freeze([
+  "brand", // the product mark in the top bar
+  "title", // the document name, and renaming it
+  "menu", // the application menu bar — one of the two navigation axes
+  "ribbon", // the whole tabbed ribbon, strip and bands together
+  "band.file",
+  "band.home",
+  "band.insert",
+  "band.layout",
+  "band.references",
+  "band.review",
+  "band.view",
+  "band.table",
+  "rail", // the left navigation rail and its panels: outline, pages
+  "status", // the status bar
+  "zoom", // the zoom cluster in the status bar
+  "find", // the find/replace card
+  "selection", // the floating selection toolbar
+  "settings", // the settings dialog and its trigger
+]);
+
+/** Regions that are only meaningful inside the ribbon, so withholding `ribbon`
+ *  withholds them too. Derived, not listed twice. */
+const BAND_REGIONS = Object.freeze(REGIONS.filter((id) => id.startsWith("band.")));
+
+/** Every region — the presentation a page with no host gets. */
+const ALL_REGIONS = Object.freeze([...REGIONS]);
+
+/** READING CHROME, for `readonly`.
+ *
+ *  `docs/126` spells out what it is: "navigation, outline, find, zoom, page
+ *  controls, print" — a reading experience, where the reader navigates and
+ *  searches and a static image could not replace it. So: the menu bar rather
+ *  than the ribbon, because that is where File ▸ Print lives and because a
+ *  reader needs exactly one navigation axis, never two (`109` UX-014, `docs/122`,
+ *  and the invariant `style.css` states above its compact/ribbon rules). The
+ *  rail carries the outline and the page thumbnails; the status bar carries the
+ *  page count and the zoom; the find card is how a reader searches.
+ *
+ *  Not here: the ribbon and every band, the floating selection toolbar (it offers
+ *  formatting), and Settings (appearance, reviewer identity, autosave and
+ *  proofing are an author's preferences). */
+const READING_REGIONS = Object.freeze(["brand", "title", "menu", "rail", "status", "zoom", "find"]);
+
+/** PREVIEW CHROME.
+ *
+ *  Empty, and that is the point. `docs/126` is explicit that `preview` and
+ *  `readonly` are NOT the same thing and must not be collapsed: `preview` is the
+ *  runtime as a layout and rendering engine — a picture of the document, for a
+ *  thumbnail, an attachment preview, a search result — and its own test of the
+ *  difference is "could a static image replace it? For `preview`, nearly."
+ *  Giving it reading chrome would hand every attachment preview a navigation UI
+ *  it does not want; giving `readonly` a bare canvas would leave a published
+ *  document with no way to reach page 40. */
+const PREVIEW_REGIONS = Object.freeze([]);
+
+/** Preset → regions. Same table shape as the capability presets, and the same
+ *  rule: nothing downstream branches on a role NAME, it asks for the set. */
+const REGION_PRESETS = Object.freeze({
+  preview: PREVIEW_REGIONS,
+  readonly: READING_REGIONS,
+  // A commentor suggests, and a suggestion is a document change recorded as a
+  // tracked revision — so they need the formatting chrome an author needs. The
+  // capability set is what stops them committing it outright.
+  commentor: ALL_REGIONS,
+  edit: ALL_REGIONS,
+  owner: ALL_REGIONS,
+  standalone: ALL_REGIONS,
+  embedded: ALL_REGIONS,
+  viewer: READING_REGIONS,
+});
+
+/**
+ * Parses a withhold list: `"-print,-download"` or `"print,download"`.
+ *
+ * ONE DIRECTION, ALWAYS. A list can only take things away, whether or not the
+ * entries carry their minus sign, because a configuration channel that can widen
+ * a role is a configuration channel an attacker fills in. `docs/125` §5.2 states
+ * the rule for capabilities — "`can` may only narrow the role. A host cannot
+ * grant `edit` to `preview` by accident, and there is exactly one direction to
+ * audit" — and it holds for regions for the same reason plus one more: a
+ * `preview` with a ribbon is not a presentation anybody asked for.
+ *
+ * An unknown entry is DROPPED rather than refused, and dropping narrows nothing,
+ * so a typo in a host's URL can never widen the result. The same reasoning as an
+ * unrecognised `mode` falling back to the framed default.
+ *
+ * Complexity: O(entries).
+ *
+ * @param {string|null|undefined} raw
+ * @param {readonly string[]} known the vocabulary; anything else is dropped.
+ * @returns {readonly string[]}
+ */
+export function parseWithheld(raw, known) {
+  const out = [];
+  for (const entry of String(raw ?? "").split(",")) {
+    const name = entry.trim().replace(/^-/, "");
+    if (!name) continue;
+    if (!known.includes(name)) continue;
+    if (!out.includes(name)) out.push(name);
+  }
+  return Object.freeze(out);
+}
+
 /**
  * Resolves the capability set for this page load.
  *
@@ -138,13 +280,50 @@ export const PRESET_NAMES = Object.freeze(Object.keys(PRESETS));
  * @param {{mode?: string|null, framed?: boolean, autosave?: boolean|null}} [input]
  * @returns {Set<string>}
  */
-export function resolveCapabilities({ mode = null, framed = false, autosave = null } = {}) {
+export function resolveCapabilities({ mode = null, framed = false, autosave = null, withhold = null } = {}) {
   const asked = typeof mode === "string" ? mode.trim().toLowerCase() : "";
   const preset = PRESETS[asked] ?? PRESETS[framed ? "embedded" : "standalone"];
   const granted = new Set(preset);
   if (autosave === true) granted.add("autosave");
   else if (autosave === false) granted.delete("autosave");
+  // THE PER-CAPABILITY POLICY (`docs/126` container policy §1). "Print,
+  // download, save, edit and comment withholdable independently" — "comments
+  // only, everything else off" is a real configuration, not a rung on a ladder.
+  //
+  // It is applied HERE, after the preset, which is what makes the roles presets
+  // over the capability set rather than a parallel mechanism: a role is the
+  // starting set, a withhold list narrows it, and there is one function that
+  // answers "what may this page do". Two code paths — one for roles, one for
+  // explicit lists — would disagree exactly the way the `shortcut:` labels and
+  // the key bindings did.
+  for (const name of parseWithheld(withhold, CAPABILITIES)) granted.delete(name);
   return granted;
+}
+
+/**
+ * The chrome regions this page load gets.
+ *
+ * The same shape as `resolveCapabilities`, from the same `mode`, in the same
+ * file, because "one authority" has to mean one place that knows what a role is.
+ * A role names two sets, and a caller asks for whichever it needs.
+ *
+ * Complexity: O(1) plus O(withheld).
+ *
+ * @param {{mode?: string|null, framed?: boolean, withhold?: string|null}} [input]
+ * @returns {Set<string>}
+ */
+export function resolveRegions({ mode = null, framed = false, withhold = null } = {}) {
+  const asked = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  const preset = REGION_PRESETS[asked] ?? REGION_PRESETS[framed ? "embedded" : "standalone"];
+  const shown = new Set(preset);
+  for (const id of parseWithheld(withhold, REGIONS)) shown.delete(id);
+  // The ribbon's bands are inside the ribbon, so withholding the ribbon
+  // withholds them. Derived rather than asked of the host twice: a host who
+  // said `-ribbon` and still saw a band would have found a hole, and a host who
+  // had to say `-ribbon,-band.home,-band.insert,…` would be maintaining our
+  // containment rules for us.
+  if (!shown.has("ribbon")) for (const id of BAND_REGIONS) shown.delete(id);
+  return shown;
 }
 
 /**
@@ -265,9 +444,16 @@ export function sandboxTokensFor(capabilities) {
   return Object.freeze(tokens);
 }
 
-/** Reads the host inputs off a real page. Separated from `resolveCapabilities`
- *  so the decision itself stays pure and testable. */
-export function hostCapabilities(view = globalThis) {
+/** The host inputs carried on the page's URL, read once.
+ *
+ *  `mode` and `autosave` were already a published contract; `can` and `chrome`
+ *  join them, spelled the same way and read in the same place, because `?lang=`
+ *  already set the precedent that a host's configuration travels in the URL and
+ *  because that is the only channel that is decided BEFORE the frame's first
+ *  navigation (`embed_element.mjs`). A second channel — a `postMessage` after
+ *  load — would mean a window in which the editor was something else, and
+ *  `docs/104` is explicit that gating must apply before the first frame. */
+export function hostConfig(view = globalThis) {
   const search = view?.location?.search ?? "";
   let params = null;
   try {
@@ -275,9 +461,7 @@ export function hostCapabilities(view = globalThis) {
   } catch {
     params = null;
   }
-  const mode = params?.get("mode") ?? null;
   const asked = params?.get("autosave") ?? null;
-  const autosave = asked === "1" ? true : asked === "0" ? false : null;
   // `window.self !== window.top` throws on a cross-origin parent in some
   // engines; a throw means we ARE framed, which is the safer answer anyway.
   let framed = false;
@@ -286,5 +470,23 @@ export function hostCapabilities(view = globalThis) {
   } catch {
     framed = true;
   }
-  return resolveCapabilities({ mode, framed, autosave });
+  return {
+    mode: params?.get("mode") ?? null,
+    autosave: asked === "1" ? true : asked === "0" ? false : null,
+    withhold: params?.get("can") ?? null,
+    chrome: params?.get("chrome") ?? null,
+    framed,
+  };
+}
+
+/** Reads the host inputs off a real page. Separated from `resolveCapabilities`
+ *  so the decision itself stays pure and testable. */
+export function hostCapabilities(view = globalThis) {
+  return resolveCapabilities(hostConfig(view));
+}
+
+/** The regions a real page shows, from the same inputs. */
+export function hostRegions(view = globalThis) {
+  const config = hostConfig(view);
+  return resolveRegions({ mode: config.mode, framed: config.framed, withhold: config.chrome });
 }
