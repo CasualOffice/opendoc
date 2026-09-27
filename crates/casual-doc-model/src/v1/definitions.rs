@@ -13,6 +13,8 @@ use super::{
 use super::PropChange;
 // Same rule: the watermark types' own imports go on their own line.
 use super::{FontName, Rgba};
+// Same rule: the paragraph-spanning field range's own imports go on their own line.
+use super::{FieldKind, FieldRangeId};
 
 /// The table region a `w:tblStylePr` conditional format applies to
 /// (`w:tblStylePr/@w:type`, ECMA-376 §17.7.6). Each region carries its own
@@ -984,6 +986,35 @@ pub struct Bookmark {
     pub name: String,
 }
 
+/// A paragraph-spanning complex field (its id is the map key).
+///
+/// In OOXML a complex field is a **range, not a container**: `w:fldChar` markers
+/// are run-level elements, so a field's `begin` and `end` may sit in different
+/// paragraphs. This definition is the shared payload of one such range; its
+/// extent is delimited by a `FieldRangeStart`/`FieldRangeEnd` marker pair in body
+/// flow, and everything between the markers is the field's cached result as
+/// ordinary block and inline content.
+///
+/// A field whose markers fall in the **same** paragraph is an inline `Field`
+/// instead, unchanged — the contained encoding carries the stronger invariant and
+/// is available whenever the field fits in a paragraph. See `docs/128` §2c.
+///
+/// There is no `separate` boundary here for the same reason the inline `Field`
+/// has none: the instruction is a string rather than retained instruction runs,
+/// so the boundary between instruction and result has nothing left to delimit.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldRange {
+    /// The field instruction (non-empty, at most `MAX_FIELD_INSTRUCTION_BYTES`),
+    /// as the producer wrote it. Authoritative for export.
+    pub instruction: String,
+    /// The typed field-kind projection derived from `instruction`, by the same
+    /// best-effort `FieldKind::parse` the inline field uses. `instruction` stays
+    /// authoritative; this is a convenience for consumers.
+    #[serde(default)]
+    pub kind: FieldKind,
+}
+
 /// A media reference (its id is the map key).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1317,6 +1348,11 @@ pub struct Definitions {
     /// snapshots serialize byte-identically.
     #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
     pub bookmarks: DefinitionMap<BookmarkId, Bookmark>,
+    /// Paragraph-spanning complex field definitions by id — the instruction of
+    /// each `FieldRangeStart`/`FieldRangeEnd` pair in body flow. Additive:
+    /// omitted when empty so existing snapshots serialize byte-identically.
+    #[serde(default, skip_serializing_if = "DefinitionMap::is_empty")]
+    pub field_ranges: DefinitionMap<FieldRangeId, FieldRange>,
     /// Document-wide defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_defaults: Option<DocumentDefaults>,

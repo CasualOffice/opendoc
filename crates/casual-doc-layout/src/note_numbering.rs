@@ -477,6 +477,8 @@ fn visit_inline_note_refs(inlines: &[InlineNode], f: &mut impl FnMut(NoteKind, N
             | InlineNode::CommentRangeEnd(_)
             | InlineNode::BookmarkStart(_)
             | InlineNode::BookmarkEnd(_)
+            | InlineNode::FieldRangeStart(_)
+            | InlineNode::FieldRangeEnd(_)
             | InlineNode::MoveRangeStart(_)
             | InlineNode::MoveRangeEnd(_)
             | InlineNode::Math(_)

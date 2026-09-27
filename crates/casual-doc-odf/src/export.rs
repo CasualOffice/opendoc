@@ -2797,6 +2797,16 @@ impl Writer {
                 InlineNode::MoveRangeStart(_) | InlineNode::MoveRangeEnd(_) => self
                     .reporter
                     .record("odt.export.move_range", ModelOutcome::Omitted),
+                // A paragraph-spanning complex field (a table of contents) has no
+                // counterpart here: ODF's own `text:table-of-content` is a
+                // different construct with its own source/entry-template model, not
+                // a delimited range, so mapping one onto the other would invent
+                // structure. The marker is dropped and the field's cached RESULT
+                // survives as the ordinary paragraphs it already is — so no text is
+                // lost and the degrade is that the content stops being a field.
+                InlineNode::FieldRangeStart(_) | InlineNode::FieldRangeEnd(_) => self
+                    .reporter
+                    .record("odt.export.field_range", ModelOutcome::Degraded),
                 InlineNode::HorizontalRule(_) => self
                     .reporter
                     .record("odt.export.horizontal_rule", ModelOutcome::Omitted),

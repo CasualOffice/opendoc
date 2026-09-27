@@ -67,6 +67,16 @@ id_newtype!(
     /// Stable identity of a bookmark definition (shared by its start/end markers).
     BookmarkId
 );
+id_newtype!(
+    /// Stable identity of a paragraph-spanning complex field (shared by its
+    /// start/end markers), resolving in `Definitions::field_ranges`.
+    ///
+    /// Deliberately a definition id rather than a payload on the markers: the two
+    /// markers must agree about the field's instruction, and a shared definition
+    /// makes disagreement unrepresentable. Same reason `Bookmark::name` is not on
+    /// `BookmarkStart`. See `docs/128`.
+    FieldRangeId
+);
 
 /// A duplicate-key-rejecting, deterministically-ordered id map.
 #[derive(Clone, Debug, Eq, PartialEq)]
