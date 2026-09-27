@@ -8091,6 +8091,85 @@ mod tests {
     }
 
     #[test]
+    fn field_range_markers_are_inert_and_their_result_flows_as_paragraphs() {
+        // `docs/128` §6: nothing in layout learns what a table of contents is. The two
+        // markers are zero-width inert leaves — like the bookmark markers — and the
+        // field's cached result is ordinary paragraphs flowing through the ordinary
+        // pipeline.
+        //
+        // The guard is EQUALITY against the same body without the markers, because
+        // that is the property that matters and the only one a mutation cannot fake: a
+        // marker that shaped so much as a zero-width placeholder run would change the
+        // galley, and a marker that changed line breaking would change it visibly.
+        use casual_doc_model::v1::{
+            FieldRange, FieldRangeEnd, FieldRangeId, FieldRangeStart, FieldKind,
+        };
+        let field = FieldRangeId::new(NodeId::from_parts(90, 1).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.field_ranges.insert(
+            field,
+            FieldRange {
+                instruction: " TOC \\o \"1-3\" \\h \\z \\u ".to_owned(),
+                kind: FieldKind::Toc,
+            },
+        );
+        let start = InlineNode::FieldRangeStart(FieldRangeStart {
+            id: NodeId::from_parts(91, 1).unwrap(),
+            field,
+        });
+        let end = InlineNode::FieldRangeEnd(FieldRangeEnd {
+            id: NodeId::from_parts(92, 1).unwrap(),
+            field,
+        });
+
+        let entries = || {
+            vec![
+                paragraph(20, vec![run_node(21, "First chapter", RunProperties::default())]),
+                paragraph(30, vec![run_node(31, "Second chapter", RunProperties::default())]),
+            ]
+        };
+        let mut with_markers = vec![paragraph(10, vec![start])];
+        with_markers.extend(entries());
+        with_markers.push(paragraph(40, vec![end]));
+
+        let mut without_markers = vec![paragraph(10, Vec::new())];
+        without_markers.extend(entries());
+        without_markers.push(paragraph(40, Vec::new()));
+
+        let shaper = ParleyShaper::new();
+        let width = Twip::from_points(400);
+        let ranged = build_galley(
+            &document_with_definitions(with_markers, definitions),
+            &shaper,
+            width,
+        );
+        let plain = build_galley(&document(without_markers), &shaper, width);
+        // `BlockFragment` derives the equality this needs, and using it rather than
+        // picking fields apart means a marker that changed ANY geometry is caught, not
+        // only the geometry this test remembered to look at.
+        assert_eq!(
+            ranged, plain,
+            "the markers change nothing about the flowed galley: they are zero-width \
+             inert leaves and the field's result is ordinary paragraphs"
+        );
+        // And the result really is flowed entry paragraphs, so the equality above is
+        // not two empty galleys agreeing with each other.
+        assert_eq!(
+            ranged.len(),
+            4,
+            "one fragment per paragraph: the opener, two entries, the closer"
+        );
+        let BlockFragment::Paragraph { lines, .. } = &ranged[1] else {
+            panic!("the first entry is a paragraph fragment: {:?}", ranged[1]);
+        };
+        assert_eq!(lines.lines.len(), 1);
+        assert!(
+            !lines.lines[0].runs.is_empty(),
+            "the entry paragraph shaped its own text"
+        );
+    }
+
+    #[test]
     fn a_page_break_threads_a_marker_to_the_paginator() {
         use casual_doc_model::v1::{Break, BreakKind};
         let para = paragraph(
