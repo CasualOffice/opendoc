@@ -29,7 +29,13 @@
 // becomes a no-op on an editor that is already in that mode and this spec keeps
 // passing; the assertion to ADD at that point is marked below.
 import { readFileSync } from "node:fs";
-import { expect, test, openCommandPalette } from "./fixtures.mjs";
+import {
+  expect,
+  test,
+  mountEmbedPanel,
+  openCommandPalette,
+  waitForFramedEditor,
+} from "./fixtures.mjs";
 
 // Two WebAssembly editors boot in these tests, and the default 60 s is for one.
 // This is a real cost, not a slow environment: a wall of UNIFORM ~45 s timeouts
@@ -46,47 +52,10 @@ const { editingModeFor, resolveCapabilities } = await import("../../src/capabili
 const READER = "readonly";
 const READER_MODE = editingModeFor(resolveCapabilities({ mode: READER, framed: true }));
 
-/** Waits for a framed editor to have booted the engine, opened its document and
- *  finished its first render — the same condition `gotoEditor` waits for, asked
- *  of a frame instead of a page. */
-async function waitForFramedEditor(frame) {
-  await frame.waitForFunction(
-    () => {
-      const status = document.getElementById("status");
-      return (
-        status !== null &&
-        !status.classList.contains("error") &&
-        document.querySelectorAll(".page-wrap").length > 0 &&
-        document.body.dataset.fontsReady === "true"
-      );
-    },
-    null,
-    { timeout: 45_000 },
-  );
-}
-
-/** Mounts one panel of the demo host at `role` and returns its live frame.
- *
- *  Nothing boots on load: each editor holds a ~100 MB WebAssembly instance and
- *  a page that starts two of them unasked costs a visitor 200 MB. So the host
- *  activates on a click, which is also what makes this a test of a host DRIVING
- *  the embed rather than of a page that happened to contain one. */
-async function mountPanel(page, kind, role) {
-  const panel = page.locator(`[data-embed="${kind}"]`);
-  await panel.locator("[data-role-select]").selectOption(role);
-  await panel.locator("[data-mount]").click();
-  const iframe = panel.locator("iframe");
-  await expect(iframe).toHaveCount(1);
-  const frame = await (await iframe.elementHandle()).contentFrame();
-  await waitForFramedEditor(frame);
-  // Bring the panel into the HOST's viewport. Playwright scrolls within a frame
-  // but cannot scroll the page the frame is clipped by, so a control that is
-  // perfectly visible inside a below-the-fold embed reports "outside of the
-  // viewport" forever. A host's own user has exactly the same problem, which is
-  // why the fix belongs here rather than in a `force: true`.
-  await panel.scrollIntoViewIfNeeded();
-  return { panel, frame };
-}
+// `waitForFramedEditor` and `mountEmbedPanel` were local to this file until
+// `docs/126` phase 2's gate needed the same two, and two copies of "is this
+// editor ready" is how one of them ends up waiting for less. They live in
+// `fixtures.mjs` now, with every other shared driving helper.
 
 /** The engine's own view of the document, which is the only thing that settles
  *  whether a mutation landed. `#statWords` / `#statChars` are painted from
@@ -125,7 +94,7 @@ test("both embeds resolve their role before first paint, and the chrome refuses 
   // The element derives the frame's sandbox from the capability set, which is
   // the one layer the framed page cannot argue with: a frame without
   // `allow-downloads` cannot start a download however it is persuaded.
-  const { frame: elementFrame, panel: elementPanel } = await mountPanel(page, "element", READER);
+  const { frame: elementFrame, panel: elementPanel } = await mountEmbedPanel(page, "element", READER);
   const sandbox = await elementPanel.locator("iframe").getAttribute("sandbox");
   expect(sandbox.split(/\s+/)).not.toContain("allow-downloads");
   expect(sandbox.split(/\s+/)).toContain("allow-scripts");
@@ -134,7 +103,7 @@ test("both embeds resolve their role before first paint, and the chrome refuses 
   // inventing English for someone else's page.
   expect(await elementPanel.locator("iframe").getAttribute("title")).toBeTruthy();
 
-  const { frame: iframeFrame, panel: iframePanel } = await mountPanel(page, "iframe", READER);
+  const { frame: iframeFrame, panel: iframePanel } = await mountEmbedPanel(page, "iframe", READER);
 
   // Both framed editors refuse the two commands that ARE the HF-109 defect —
   // File ▸ Open and File ▸ New are what let a visitor replace the host's
@@ -171,7 +140,7 @@ test(`a ${READER} host cannot mutate the document through the engine, chrome def
   page,
 }) => {
   await page.goto("/embed.html");
-  const { frame } = await mountPanel(page, "element", READER);
+  const { frame } = await mountEmbedPanel(page, "element", READER);
 
   // THE ROLE ALONE, with nobody clicking anything.
   //
