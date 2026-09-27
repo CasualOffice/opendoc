@@ -1,9 +1,15 @@
 // Which command each ribbon control stands for — the Home, View and Table bands
 // (`109` UX-005 / `105` CQ-004).
 //
-// THE DEFECT, re-measured in the browser before anything was changed (the row's
-// own "~23 of ~90" and its 2026-09-20 recount of "39 of 109" are both stale):
-// 52 of 120 visible ribbon controls carried a command id. Insert (17/17), Layout
+// THE DEFECT AS IT STOOD WHEN THIS FILE WAS WRITTEN — a historical measurement,
+// not the current state, and dated because it kept being read as current. On
+// 2026-09-26, re-measured in the browser before anything was changed (the row's
+// own "~23 of ~90" and its 2026-09-20 recount of "39 of 109" were both stale
+// already): 52 of 120 visible ribbon controls carried a command id. The ribbon has
+// grown since — 123 controls, 114 with `data-command`, 9 declaring a chooser
+// family, 0 unclassified as of 2026-09-27 — so do not quote 120 as a control
+// count. `ribbon-command-faces.spec.mjs` measures the live figure; that is the
+// one to trust, and the numbers here only explain why the work happened. Insert (17/17), Layout
 // (13/13), References (7/7) and Review (15/15) are declarative — `INSERT_SURFACE`,
 // `LAYOUT_SURFACE`, `REFERENCE_SURFACE` and `REVIEW_SURFACE` each stamp
 // `dataset.command` onto their buttons — and Home (0/41), View (0/8) and Table

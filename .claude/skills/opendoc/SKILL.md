@@ -342,8 +342,19 @@ The owner asked for production/enterprise quality in code **and** UI/UX. Concret
   **Material Symbols Outlined**; `tests/chrome_fonts.test.mjs` asserts no
   `fonts.googleapis.com`/`gstatic.com` reference. Never add a CDN font link — it breaks
   local-first.
-- **The ribbon must fit 1280px.** There is ~55px of slack on the Home band; widening one
-  control exiles a whole group into the `⋯` overflow.
+- **The ribbon must fit 1280px**, and the budget is bigger than this file used to claim.
+  Measured in Chromium: the Home band has **~288px of growth headroom** at 1280 and fits
+  down to a **1017px** viewport; the other six bands fit down to 702-743px. This file said
+  "~55px of slack" and `ribbon-home.spec.mjs` said "10px" — both wrong, and the figure was
+  being quoted to reject ribbon additions, so a five-fold underestimate was keeping
+  capabilities unreachable on purpose.
+  **The mechanism was wrong too, which matters more than the number.** Widening a control
+  does *not* exile a group into the `⋯` overflow: that button tracks VIEWPORT width, not
+  content width. What breaks first is a **horizontal scrollbar** on the band. So the guard
+  that protects you is the no-horizontal-scroll rule, not the overflow button.
+  **Do not quote a number from here — derive it.** `webapp/tests/e2e/ribbon-width-budget.spec.mjs`
+  measures the headroom, publishes it, and holds a 120px floor; a budget that can be spent is
+  the point, and spending it to nothing silently is what the floor prevents.
 - `webapp/src/main.js` has **zero exports** and binds ~360 fixed DOM ids at import. There is
   no mount seam yet (HF-109).
 - **`pages[]` holds page RECORDS, not elements.** The sheet element is `page.wrap`, and

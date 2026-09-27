@@ -1,7 +1,9 @@
 // EVERY RIBBON CONTROL NAMES A COMMAND, AND REACHES IT (`109` UX-005, `105` CQ-004).
 //
-// Re-measured in this browser before anything was changed: 52 of 120 visible
-// ribbon controls carried a command id. Insert, Layout, References and Review are
+// Re-measured in this browser before anything was changed, on 2026-09-26 — a
+// historical figure, kept because it explains why this file exists and dated
+// because it was being read as the current one (123 controls, 114 with a command
+// id, as of 2026-09-27): 52 of 120 visible ribbon controls carried a command id. Insert, Layout, References and Review are
 // declarative and stamp one; Home (0 of 41), View (0 of 8) and Table (0 of 19)
 // were bound by hand. The row's own "~23 of ~90" and its 2026-09-20 recount of
 // "39 of 109" were both stale — which is why this file MEASURES rather than
