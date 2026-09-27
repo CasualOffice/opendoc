@@ -54,6 +54,19 @@ use casual_doc_model::v1::{Note, NoteId, NoteKind, NoteReference};
 // documentation lives in its file, as `//!`.
 pub mod references;
 
+// The one total structural deep copy in the tree (`docs/128` §2): clone a block
+// subtree, re-minting every node id, preserving every inline variant, and
+// reporting the reference markers a same-document copy cannot duplicate. Its own
+// module so the exhaustive match that makes a new `InlineNode` variant a COMPILE
+// ERROR is one screen rather than buried in this file, and so it is testable with
+// no document and no wasm.
+//
+// A plain comment, not a doc comment, for the same reason `references` above
+// carries one: a doc comment here resolves in the crate root's scope, where the
+// module's own items are not in scope, and every intra-doc link in it fails
+// `RUSTDOCFLAGS="-D warnings" cargo doc`.
+pub mod clone;
+
 std::thread_local! {
     /// Per-thread, so a parallel test run never reads another test's scans and
     /// the single-threaded wasm engine sees exactly its own.

@@ -14,6 +14,8 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::ParagraphIndex;
+// A separate `use` line: the total structural deep copy (`docs/128` §2).
+use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
 use casual_doc_edit::SplitProperties;
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
@@ -69,7 +71,7 @@ use casual_doc_model::v1::{
     PageMargins, PageOrientation, PageSize as SectionPageSize, Paragraph, ParagraphBorders,
     ParagraphProperties, PropChange, ReviewProjection, Revision, RevisionGroup, RevisionGroupKind,
     RevisionKind, RgbColor, RowHeight, Run, RunProperties, SectionColumns, SectionId, Spacing,
-    Style, StyleId, StyleKind, Tab, TabAlignment, TabStop, Table, TableBorders, TableCell,
+    Style, StyleId, StyleKind, TabAlignment, TabStop, Table, TableBorders, TableCell,
     TableCellProperties, TableLayout, TableProperties, TableRow, TableWidth, TextBoxAutoFit,
     TextBoxBodyProperties, UnderlineStyle, VerticalAlignment, VerticalAnchor, VerticalMerge,
     VerticalPosition, WordprocessingGroup, WrapMode,
@@ -2770,9 +2772,16 @@ impl WasmDocument {
     /// with fresh ids as one undoable action. Rejects a non-collapsed selection or a
     /// caret inside a table cell / SDT (the caller falls back to the flat rich-run
     /// paste for those), so the reconstruction target is always the document body.
-    /// Inline content is sanitized to text, formatting, and hyperlinks; exotic
-    /// inline objects (drawings, fields, comments, bookmarks, …) are dropped rather
-    /// than duplicated with dangling references.
+    /// Inline content is carried **whole**: text and formatting, hyperlinks,
+    /// pictures and anchored pictures, fields, text boxes, groups, embedded
+    /// objects, inline content controls, tracked changes, math, symbols, rules,
+    /// hyphens and positional tabs, each with a fresh id. The five reference
+    /// families a same-document copy cannot duplicate — bookmark markers, comment
+    /// reference/range markers, note references, paragraph-spanning field-range
+    /// markers, and tracked-move markers — are dropped and **reported** through
+    /// [`EditResult::paste_loss`](EditResult::paste_loss) so the host can say so;
+    /// `casual_doc_edit::clone` documents why each one cannot be carried. Nothing
+    /// is discarded silently.
     #[wasm_bindgen(js_name = pasteStructured)]
     pub fn paste_structured(
         &mut self,
@@ -2809,10 +2818,13 @@ impl WasmDocument {
         }
         let paragraph_len = node_plain_text(&caret_paragraph.inlines).len() as u32;
 
-        // Reconstruct the fragment blocks with fresh ids and sanitized inlines.
+        // Reconstruct the fragment blocks with fresh ids, carrying every inline
+        // kind. `report` collects the reference markers that cannot be duplicated
+        // in the same document; it rides back out on the `EditResult` below.
+        let mut report = CloneReport::default();
         let mut blocks = Vec::with_capacity(fragment.blocks.len());
         for block in &fragment.blocks {
-            blocks.push(self.fresh_block(block).map_err(to_js)?);
+            blocks.push(self.fresh_block(block, &mut report).map_err(to_js)?);
         }
         let caret = blocks
             .first()
@@ -2843,8 +2855,13 @@ impl WasmDocument {
             index: insert_index,
             blocks,
         });
-        self.apply_action_caret_as(ops, caret, HistoryKind::Paste)
-            .map_err(to_js)
+        let mut result = self
+            .apply_action_caret_as(ops, caret, HistoryKind::Paste)
+            .map_err(to_js)?;
+        // Attached AFTER the edit landed, so a refused paste cannot also claim to
+        // have degraded something. The host reports it; the engine holds no prose.
+        result.paste_loss = report.kinds().into_iter().map(str::to_owned).collect();
+        Ok(result)
     }
 
     /// Editing-mode paste of **externally**-parsed structure (foreign HTML: an
@@ -7754,6 +7771,7 @@ impl WasmDocument {
                     revision: self.revision,
                     page_count: self.page_count(),
                     dirty: Vec::new(),
+                    paste_loss: Vec::new(),
                 });
             };
             return self.remove_drop_cap(cap, body);
@@ -11976,6 +11994,9 @@ impl WasmDocument {
             revision: self.revision,
             page_count: self.page_count(),
             dirty,
+            // Every path through here carried everything; the one path that can
+            // degrade content fills this in on the result it returns.
+            paste_loss: Vec::new(),
         }
     }
 
@@ -12478,114 +12499,24 @@ impl WasmDocument {
         self.apply_action_caret_as(ops, Pos::new(start_node, 0), HistoryKind::ListFormatting)
     }
 
-    /// Deep-clones a structured-clipboard block, reassigning a fresh id to every
-    /// node (paragraph, table, row, cell, and each cell's blocks) so a pasted
-    /// fragment never collides with the ids it was copied from, and sanitizing
-    /// paragraph inline content through [`sanitize_inlines`](Self::sanitize_inlines).
-    /// Only paragraphs and tables are reconstructed — the same set
-    /// [`copy_structured`](Self::copy_structured) emits — so an unexpected block
-    /// kind is rejected rather than cloned with duplicate ids.
-    fn fresh_block(&mut self, block: &BlockNode) -> Result<BlockNode, String> {
-        let exhausted = || "id space exhausted".to_string();
-        match block {
-            BlockNode::Paragraph(p) => {
-                let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                Ok(BlockNode::Paragraph(Paragraph {
-                    id,
-                    properties: p.properties.clone(),
-                    inlines: self.sanitize_inlines(&p.inlines)?,
-                }))
-            }
-            BlockNode::Table(t) => {
-                let mut rows = Vec::with_capacity(t.rows.len());
-                for row in &t.rows {
-                    let mut cells = Vec::with_capacity(row.cells.len());
-                    for cell in &row.cells {
-                        let cell_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                        let mut blocks = Vec::with_capacity(cell.blocks.len());
-                        for inner in &cell.blocks {
-                            blocks.push(self.fresh_block(inner)?);
-                        }
-                        if blocks.is_empty() {
-                            // A cell's block list must stay non-empty.
-                            let pid = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                            blocks.push(BlockNode::Paragraph(Paragraph {
-                                id: pid,
-                                properties: ParagraphProperties::default().into(),
-                                inlines: Vec::new(),
-                            }));
-                        }
-                        cells.push(TableCell {
-                            id: cell_id,
-                            properties: cell.properties.clone(),
-                            blocks,
-                        });
-                    }
-                    let row_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    rows.push(TableRow {
-                        id: row_id,
-                        properties: row.properties.clone(),
-                        cells,
-                    });
-                }
-                let table_id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                Ok(BlockNode::Table(Box::new(Table {
-                    id: table_id,
-                    grid: t.grid.clone(),
-                    grid_change: t.grid_change.clone(),
-                    properties: t.properties.clone(),
-                    rows,
-                })))
-            }
-            _ => Err("unsupported block in structured paste".into()),
-        }
-    }
-
-    /// Rebuilds a paragraph's inline sequence for structured paste: text runs,
-    /// tabs, breaks, and hyperlinks are kept (with fresh ids and recursively
-    /// sanitized hyperlink content); every other inline — drawings, fields,
-    /// embedded objects, comment/bookmark/note markers — is dropped rather than
-    /// duplicated with a reference that would dangle or double-bind an existing
-    /// definition. Text, formatting, and links survive; exotic inline objects do
-    /// not (the documented bound of this internal structured-paste slice).
-    fn sanitize_inlines(&mut self, inlines: &[InlineNode]) -> Result<Vec<InlineNode>, String> {
-        let exhausted = || "id space exhausted".to_string();
-        let mut out = Vec::new();
-        for inline in inlines {
-            match inline {
-                InlineNode::Run(r) => {
-                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    out.push(InlineNode::Run(Run {
-                        id,
-                        properties: r.properties.clone(),
-                        text: r.text.clone(),
-                    }));
-                }
-                InlineNode::Tab(_) => {
-                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    out.push(InlineNode::Tab(Tab { id }));
-                }
-                InlineNode::Break(b) => {
-                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    out.push(InlineNode::Break(Break { id, kind: b.kind }));
-                }
-                InlineNode::Hyperlink(h) => {
-                    let inner = self.sanitize_inlines(&h.inlines)?;
-                    if inner.is_empty() {
-                        continue;
-                    }
-                    let id = self.edit_ids.next_id().map_err(|_| exhausted())?;
-                    out.push(InlineNode::Hyperlink(Box::new(Hyperlink {
-                        id,
-                        target: h.target.clone(),
-                        tooltip: h.tooltip.clone(),
-                        inlines: inner,
-                    })));
-                }
-                _ => {}
-            }
-        }
-        Ok(out)
+    /// Deep-clones a structured-clipboard block, re-minting a fresh id for every
+    /// node (paragraph, table, row, cell, each cell's blocks, every inline, and
+    /// everything nested inside a hyperlink / field / text box / group / content
+    /// control) so a pasted fragment never collides with the ids it was copied
+    /// from.
+    ///
+    /// The clone itself is [`casual_doc_edit::clone::clone_block_with_fresh_ids`]
+    /// — the **one** deep copy in the tree, and a total one. It used to be this
+    /// method plus a local `sanitize_inlines` that matched four of `InlineNode`'s
+    /// 29 variants behind a `_ => {}` arm, so a structured paste silently
+    /// discarded every picture, every field, text boxes, groups, embedded objects,
+    /// math, symbols, and every reference marker (`docs/128` §2). The report it
+    /// fills is the five reference families a same-document copy cannot duplicate;
+    /// [`paste_structured`](Self::paste_structured) hands it to the host so the
+    /// degradation is *reported* rather than swallowed.
+    fn fresh_block(&mut self, block: &BlockNode, report: &mut CloneReport) -> Result<BlockNode, String> {
+        clone_block_with_fresh_ids(block, &mut self.edit_ids, report)
+            .ok_or_else(|| "id space exhausted".to_string())
     }
 
     /// Every currently placed selectable inline object (image / text box) in the
@@ -22556,6 +22487,12 @@ pub struct EditResult {
     revision: u32,
     page_count: u32,
     dirty: Vec<u32>,
+    /// Stable family keys for content an edit could not carry faithfully, empty
+    /// on every path that carried everything. Only the structured paste fills it
+    /// today; it is on `EditResult` rather than on that one method's return type
+    /// because "this edit landed but degraded something" is a property of an edit,
+    /// and the next path that degrades something must not invent a second channel.
+    paste_loss: Vec<String>,
 }
 
 #[wasm_bindgen]
@@ -22593,6 +22530,20 @@ impl EditResult {
     #[must_use]
     pub fn dirty_pages(&self) -> Vec<u32> {
         self.dirty.clone()
+    }
+
+    /// Families of content this edit could not carry faithfully, as stable keys
+    /// (`bookmark`, `comment`, `note`, `fieldRange`, `trackedMove`) — empty when
+    /// nothing was degraded.
+    ///
+    /// The host maps each key to its own localized noun phrase and **must say
+    /// something**: a structured paste that quietly drops a comment anchor is the
+    /// silent loss `AGENTS.md` forbids. `casual_doc_edit::clone` documents why each
+    /// family cannot be duplicated inside one document.
+    #[wasm_bindgen(getter, js_name = pasteLoss)]
+    #[must_use]
+    pub fn paste_loss(&self) -> Vec<String> {
+        self.paste_loss.clone()
     }
 }
 
@@ -36153,5 +36104,849 @@ mod tests {
             "a keystroke disturbs the page it lands on, not {small_pages} pages \
              ({small_dirty} repainted)"
         );
+    }
+
+    /// The structured-paste fixture: a body paragraph to paste into, and a
+    /// one-cell table whose only paragraph holds a run, an inline picture and a
+    /// `PAGE` field. A table is what makes `copy_structured` engage at all (it
+    /// declines plain prose), and a picture inside a table cell is the ordinary
+    /// shape of a logo in a letterhead or a figure in a report — the most common
+    /// way a real document puts an image next to text.
+    fn picture_in_table_document() -> (Document, NodeId, NodeId) {
+        use casual_doc_model::v1::{
+            Definitions, Drawing, Field, FieldKind, MediaReference, TableLook,
+            TableRowProperties,
+        };
+
+        let media = MediaId::new(NodeId::from_parts(21, 900).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId21".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(21, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+
+        let destination = id();
+        let destination_block = BlockNode::Paragraph(Paragraph {
+            id: destination,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![run(id(), "Destination")],
+        });
+
+        let cell_paragraph = id();
+        let cell_block = BlockNode::Paragraph(Paragraph {
+            id: cell_paragraph,
+            properties: ParagraphProperties::default().into(),
+            inlines: vec![
+                run(id(), "Logo "),
+                InlineNode::Drawing(Box::new(Drawing {
+                    hyperlink: None,
+                    opacity: None,
+                    id: id(),
+                    media,
+                    extent: Some(Extent {
+                        width_emu: 914_400,
+                        height_emu: 914_400,
+                    }),
+                    descr: Some("Company logo".to_owned()),
+                    crop: None,
+                    border: None,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                })),
+                InlineNode::Field(Box::new(Field {
+                    id: id(),
+                    instruction: "PAGE".to_owned(),
+                    kind: FieldKind::Page,
+                    inlines: vec![run(id(), "7")],
+                    form: None,
+                })),
+            ],
+        });
+
+        let table = BlockNode::Table(Box::new(Table {
+            id: id(),
+            grid: Vec::new(),
+            grid_change: None,
+            properties: TableProperties {
+                look: TableLook::default(),
+                ..TableProperties::default()
+            },
+            rows: vec![TableRow {
+                id: id(),
+                properties: TableRowProperties::default(),
+                cells: vec![TableCell {
+                    id: id(),
+                    properties: TableCellProperties::default(),
+                    blocks: vec![cell_block],
+                }],
+            }],
+        }));
+
+        let document = Document::new(
+            NodeId::from_parts(21, 1).unwrap(),
+            vec![destination_block, table],
+            definitions,
+        )
+        .expect("a valid picture-in-a-table document");
+        (document, destination, cell_paragraph)
+    }
+
+    /// Counts the inline kinds a structured paste is charged with carrying, in one
+    /// block tree: `(drawings, fields)`.
+    fn count_objects(blocks: &[BlockNode]) -> (usize, usize) {
+        fn inlines(list: &[InlineNode], out: &mut (usize, usize)) {
+            for inline in list {
+                match inline {
+                    InlineNode::Drawing(_) => out.0 += 1,
+                    InlineNode::Field(_) => out.1 += 1,
+                    InlineNode::Hyperlink(h) => inlines(&h.inlines, out),
+                    _ => {}
+                }
+            }
+        }
+        fn blocks_of(list: &[BlockNode], out: &mut (usize, usize)) {
+            for block in list {
+                match block {
+                    BlockNode::Paragraph(p) => inlines(&p.inlines, out),
+                    BlockNode::Table(t) => {
+                        for row in &t.rows {
+                            for cell in &row.cells {
+                                blocks_of(&cell.blocks, out);
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(s) => blocks_of(&s.blocks, out),
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+        }
+        let mut out = (0, 0);
+        blocks_of(blocks, &mut out);
+        out
+    }
+
+    /// PROOF: a structured paste must not swallow the picture and the field.
+    #[test]
+    fn structured_paste_carries_pictures_and_fields() {
+        let (document, destination, cell_paragraph) = picture_in_table_document();
+        let mut d = wasm_document(document);
+
+        let (before_drawings, before_fields) = count_objects(d.document.body());
+        assert_eq!(
+            (before_drawings, before_fields),
+            (1, 1),
+            "the fixture holds one picture and one field before the copy"
+        );
+
+        let source = cell_paragraph.to_string();
+        let json = d.copy_structured(&source, 0, &source, 0);
+        assert!(
+            json.contains("\"drawing\""),
+            "the CLIPBOARD carries the picture, so any loss is the paste's: {json}"
+        );
+        assert!(
+            json.contains("\"field\""),
+            "the CLIPBOARD carries the field: {json}"
+        );
+
+        let target = destination.to_string();
+        let target_len = d.paragraph_length(&target);
+        d.paste_structured(&target, target_len, &target, target_len, json)
+            .expect("structured paste");
+
+        let (after_drawings, after_fields) = count_objects(d.document.body());
+        assert_eq!(
+            (after_drawings, after_fields),
+            (2, 2),
+            "the pasted copy keeps its picture and its field; got {after_drawings} \
+             pictures and {after_fields} fields where the source had 1 of each plus \
+             the pasted 1 of each"
+        );
+        d.document.validate().expect("valid after the paste");
+    }
+
+    /// A structured-clipboard fixture holding **every one of `InlineNode`'s 29
+    /// variants** inside a table cell, plus every definition they resolve
+    /// against. Returns `(document, destination paragraph, cell paragraph)`.
+    ///
+    /// A table is what makes `copy_structured` engage (it declines plain prose),
+    /// and a cell is where a real document puts a logo, a caption field or a
+    /// commented phrase. One fixture rather than 29 keeps "is this variant
+    /// decided?" a single question: the breadth guard below counts what arrived
+    /// and the report guard reads what was degraded, from the same paste.
+    #[allow(clippy::too_many_lines)]
+    fn every_inline_kind_document() -> (Document, NodeId, NodeId) {
+        use casual_doc_model::v1::{
+            AnchoredDrawing, Bookmark, BookmarkEnd, BookmarkId, Definitions, Drawing, EmbeddedKind,
+            EmbeddedObject, EmbeddedPart, Field, FieldKind, FieldRange, FieldRangeEnd,
+            FieldRangeId, FieldRangeStart, GroupPicture, GroupTextBox, HorizontalRule,
+            HorizontalRuleAlign, InlineSdt, Math, MediaReference, MoveRangeEnd, MoveRangeStart,
+            NoBreakHyphen, Note, NoteNumberMark, NoteReference, PositionalTab,
+            PositionalTabAlignment, PositionalTabLeader, PositionalTabRelativeTo, SdtProperties,
+            SoftHyphen, Tab, TableLook, TableRowProperties, TextBox, WrapDistances,
+        };
+        use casual_doc_model::v1::{BookmarkStart, Break};
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(31, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let paragraph = |id: NodeId, inlines: Vec<InlineNode>| {
+            BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties::default().into(),
+                inlines,
+            })
+        };
+
+        // --- Definitions the markers and objects resolve against. -------------
+        let media = MediaId::new(NodeId::from_parts(31, 900).unwrap());
+        let bookmark = BookmarkId::new(NodeId::from_parts(31, 901).unwrap());
+        let comment = CommentId::new(NodeId::from_parts(31, 902).unwrap());
+        let note = NoteId::new(NodeId::from_parts(31, 903).unwrap());
+        let field_range = FieldRangeId::new(NodeId::from_parts(31, 904).unwrap());
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId31".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        definitions.bookmarks.insert(
+            bookmark,
+            Bookmark {
+                name: "_Target".to_owned(),
+            },
+        );
+        definitions.comments.insert(
+            comment,
+            Comment {
+                blocks: vec![paragraph(id(), vec![run(id(), "a remark")])],
+                author: Some("Reviewer".to_owned()),
+                initials: None,
+                date: None,
+                para_id: None,
+                parent_para_id: None,
+                done: false,
+                durable_id: None,
+                person: None,
+            },
+        );
+        definitions.footnotes.insert(
+            note,
+            Note {
+                blocks: vec![paragraph(id(), vec![run(id(), "the note body")])],
+            },
+        );
+        definitions.field_ranges.insert(
+            field_range,
+            FieldRange {
+                instruction: "TOC \\o".to_owned(),
+                kind: FieldKind::Toc,
+            },
+        );
+
+        // --- One of every inline variant, in the cell paragraph. --------------
+        let anchor = DrawingAnchor {
+            horizontal: AnchorHorizontal {
+                relative_from: HorizontalAnchor::Column,
+                position: HorizontalPosition::Offset(0),
+            },
+            vertical: AnchorVertical {
+                relative_from: VerticalAnchor::Paragraph,
+                position: VerticalPosition::Offset(0),
+            },
+            wrap: WrapMode::None,
+            wrap_distances: WrapDistances::default(),
+            wrap_polygon: None,
+            behind_doc: false,
+        };
+        let extent = Extent {
+            width_emu: 914_400,
+            height_emu: 914_400,
+        };
+        let cell_paragraph = id();
+        let inlines = vec![
+            run(id(), "text"),
+            InlineNode::Tab(Tab { id: id() }),
+            InlineNode::Break(Break {
+                id: id(),
+                kind: BreakKind::Line,
+            }),
+            InlineNode::Hyperlink(Box::new(Hyperlink {
+                id: id(),
+                target: HyperlinkTarget::Internal(InternalTarget {
+                    anchor: "_Target".to_owned(),
+                }),
+                tooltip: None,
+                inlines: vec![run(id(), "link")],
+            })),
+            InlineNode::Drawing(Box::new(Drawing {
+                hyperlink: None,
+                opacity: None,
+                id: id(),
+                media,
+                extent: Some(extent),
+                descr: Some("Company logo".to_owned()),
+                crop: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })),
+            InlineNode::AnchoredDrawing(Box::new(AnchoredDrawing {
+                hyperlink: None,
+                opacity: None,
+                id: id(),
+                media,
+                extent,
+                anchor: anchor.clone(),
+                descr: None,
+                relative_height: None,
+                crop: None,
+                border: None,
+                flip_h: false,
+                flip_v: false,
+                rotation: None,
+            })),
+            InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+                id: id(),
+                kind: EmbeddedKind::Chart,
+                part: EmbeddedPart {
+                    relationship_id: "rId40".to_owned(),
+                    relationship_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart".to_owned(),
+                    part_name: "word/charts/chart1.xml".to_owned(),
+                },
+                extra_parts: Vec::new(),
+                preview: None,
+                extent,
+                prog_id: None,
+            })),
+            InlineNode::Field(Box::new(Field {
+                id: id(),
+                instruction: "PAGE".to_owned(),
+                kind: FieldKind::Page,
+                inlines: vec![run(id(), "7")],
+                form: None,
+            })),
+            InlineNode::TextBox(Box::new(TextBox {
+                hyperlink: None,
+                id: id(),
+                anchor: None,
+                relative_height: None,
+                extent: Some(extent),
+                fill: None,
+                border: None,
+                body_properties: TextBoxBodyProperties::default(),
+                blocks: vec![paragraph(id(), vec![run(id(), "in a box")])],
+            })),
+            InlineNode::Group(Box::new(WordprocessingGroup {
+                id: id(),
+                anchor: Some(anchor),
+                relative_height: None,
+                extent,
+                transform: GroupTransform {
+                    offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    extent,
+                    child_offset: PointEmu { x_emu: 0, y_emu: 0 },
+                    child_extent: extent,
+                    flip_h: false,
+                    flip_v: false,
+                    rotation: None,
+                },
+                hyperlink: None,
+                children: vec![
+                    GroupChild::Picture(GroupPicture {
+                        id: id(),
+                        media,
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        descr: None,
+                        crop: None,
+                        opacity: None,
+                        hyperlink: None,
+                        border: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    }),
+                    GroupChild::TextBox(GroupTextBox {
+                        id: id(),
+                        offset: PointEmu { x_emu: 0, y_emu: 0 },
+                        extent,
+                        blocks: vec![paragraph(id(), vec![run(id(), "in a grouped box")])],
+                        fill: None,
+                        border: None,
+                        body_properties: TextBoxBodyProperties::default(),
+                        hyperlink: None,
+                        flip_h: false,
+                        flip_v: false,
+                        rotation: None,
+                    }),
+                ],
+            })),
+            InlineNode::NoteNumberMark(NoteNumberMark {
+                id: id(),
+                kind: NoteKind::Footnote,
+                properties: RunProperties::default().into(),
+            }),
+            InlineNode::Revision(Box::new(Revision {
+                id: id(),
+                kind: RevisionKind::Insertion,
+                author: Some("Author".to_owned()),
+                date: None,
+                revision_id: Some("12".to_owned()),
+                editor_group: None,
+                inlines: vec![run(id(), "inserted")],
+            })),
+            InlineNode::Sdt(Box::new(InlineSdt {
+                id: id(),
+                properties: SdtProperties {
+                    tag: Some("title".to_owned()),
+                    ..SdtProperties::default()
+                },
+                inlines: vec![run(id(), "controlled")],
+            })),
+            InlineNode::Math(Box::new(Math {
+                id: id(),
+                omml: "<m:oMath/>".to_owned(),
+                text: "x+1".to_owned(),
+                expression: None,
+            })),
+            InlineNode::Symbol(Box::new(Symbol {
+                id: id(),
+                font: "Wingdings".to_owned(),
+                char: 0xF0FC,
+                properties: RunProperties::default().into(),
+            })),
+            InlineNode::HorizontalRule(HorizontalRule {
+                id: id(),
+                align: HorizontalRuleAlign::Center,
+                width_permille: 1000,
+                thickness_emu: 12_700,
+                color: Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            }),
+            InlineNode::NoBreakHyphen(NoBreakHyphen { id: id() }),
+            InlineNode::SoftHyphen(SoftHyphen { id: id() }),
+            InlineNode::PositionalTab(PositionalTab {
+                id: id(),
+                alignment: PositionalTabAlignment::Left,
+                relative_to: PositionalTabRelativeTo::Margin,
+                leader: PositionalTabLeader::None,
+            }),
+            // The ten markers of the five families that cannot be duplicated.
+            InlineNode::BookmarkStart(BookmarkStart {
+                id: id(),
+                bookmark,
+            }),
+            InlineNode::BookmarkEnd(BookmarkEnd {
+                id: id(),
+                bookmark,
+            }),
+            InlineNode::CommentRangeStart(CommentRangeStart {
+                id: id(),
+                comment,
+            }),
+            InlineNode::CommentRangeEnd(CommentRangeEnd {
+                id: id(),
+                comment,
+            }),
+            InlineNode::CommentReference(CommentReference {
+                id: id(),
+                comment,
+            }),
+            InlineNode::NoteReference(NoteReference {
+                id: id(),
+                kind: NoteKind::Footnote,
+                note,
+            }),
+            InlineNode::FieldRangeStart(FieldRangeStart {
+                id: id(),
+                field: field_range,
+            }),
+            InlineNode::FieldRangeEnd(FieldRangeEnd {
+                id: id(),
+                field: field_range,
+            }),
+            InlineNode::MoveRangeStart(Box::new(MoveRangeStart {
+                id: id(),
+                kind: MoveKind::To,
+                move_id: "3".to_owned(),
+                name: "move1".to_owned(),
+                author: Some("Author".to_owned()),
+                date: None,
+            })),
+            InlineNode::MoveRangeEnd(MoveRangeEnd {
+                id: id(),
+                kind: MoveKind::To,
+                move_id: "3".to_owned(),
+            }),
+        ];
+
+        let destination = id();
+        let document = Document::new(
+            NodeId::from_parts(31, 1).unwrap(),
+            vec![
+                paragraph(destination, vec![run(id(), "Destination")]),
+                BlockNode::Table(Box::new(Table {
+                    id: id(),
+                    grid: Vec::new(),
+                    grid_change: None,
+                    properties: TableProperties {
+                        look: TableLook::default(),
+                        ..TableProperties::default()
+                    },
+                    rows: vec![TableRow {
+                        id: id(),
+                        properties: TableRowProperties::default(),
+                        cells: vec![TableCell {
+                            id: id(),
+                            properties: TableCellProperties::default(),
+                            blocks: vec![paragraph(cell_paragraph, inlines)],
+                        }],
+                    }],
+                })),
+            ],
+            definitions,
+        )
+        .expect("a valid every-inline-kind document");
+        (document, destination, cell_paragraph)
+    }
+
+    /// Tallies the inline variants in a block tree by a stable name, so a guard
+    /// can assert what a paste carried without 29 separate counters.
+    fn inline_census(blocks: &[BlockNode]) -> BTreeMap<&'static str, usize> {
+        fn name(inline: &InlineNode) -> &'static str {
+            match inline {
+                InlineNode::Run(_) => "run",
+                InlineNode::Tab(_) => "tab",
+                InlineNode::Break(_) => "break",
+                InlineNode::Drawing(_) => "drawing",
+                InlineNode::AnchoredDrawing(_) => "anchoredDrawing",
+                InlineNode::EmbeddedObject(_) => "embeddedObject",
+                InlineNode::Hyperlink(_) => "hyperlink",
+                InlineNode::Field(_) => "field",
+                InlineNode::TextBox(_) => "textBox",
+                InlineNode::Group(_) => "group",
+                InlineNode::NoteReference(_) => "noteReference",
+                InlineNode::NoteNumberMark(_) => "noteNumberMark",
+                InlineNode::CommentReference(_) => "commentReference",
+                InlineNode::CommentRangeStart(_) => "commentRangeStart",
+                InlineNode::CommentRangeEnd(_) => "commentRangeEnd",
+                InlineNode::Revision(_) => "revision",
+                InlineNode::BookmarkStart(_) => "bookmarkStart",
+                InlineNode::BookmarkEnd(_) => "bookmarkEnd",
+                InlineNode::FieldRangeStart(_) => "fieldRangeStart",
+                InlineNode::FieldRangeEnd(_) => "fieldRangeEnd",
+                InlineNode::MoveRangeStart(_) => "moveRangeStart",
+                InlineNode::MoveRangeEnd(_) => "moveRangeEnd",
+                InlineNode::Sdt(_) => "sdt",
+                InlineNode::Math(_) => "math",
+                InlineNode::Symbol(_) => "symbol",
+                InlineNode::HorizontalRule(_) => "horizontalRule",
+                InlineNode::NoBreakHyphen(_) => "noBreakHyphen",
+                InlineNode::SoftHyphen(_) => "softHyphen",
+                InlineNode::PositionalTab(_) => "positionalTab",
+            }
+        }
+        fn inlines(list: &[InlineNode], out: &mut BTreeMap<&'static str, usize>) {
+            for inline in list {
+                *out.entry(name(inline)).or_default() += 1;
+                match inline {
+                    InlineNode::Hyperlink(node) => inlines(&node.inlines, out),
+                    InlineNode::Field(node) => inlines(&node.inlines, out),
+                    InlineNode::Revision(node) => inlines(&node.inlines, out),
+                    InlineNode::Sdt(node) => inlines(&node.inlines, out),
+                    InlineNode::TextBox(node) => visit(&node.blocks, out),
+                    InlineNode::Group(node) => group(&node.children, out),
+                    _ => {}
+                }
+            }
+        }
+        fn group(children: &[GroupChild], out: &mut BTreeMap<&'static str, usize>) {
+            for child in children {
+                match child {
+                    GroupChild::TextBox(node) => visit(&node.blocks, out),
+                    GroupChild::Group(nested) => group(&nested.children, out),
+                    GroupChild::Picture(_) | GroupChild::Shape(_) => {}
+                }
+            }
+        }
+        fn visit(list: &[BlockNode], out: &mut BTreeMap<&'static str, usize>) {
+            for block in list {
+                match block {
+                    BlockNode::Paragraph(p) => inlines(&p.inlines, out),
+                    BlockNode::Table(t) => {
+                        for row in &t.rows {
+                            for cell in &row.cells {
+                                visit(&cell.blocks, out);
+                            }
+                        }
+                    }
+                    BlockNode::Sdt(s) => visit(&s.blocks, out),
+                    BlockNode::AltChunk(_) => {}
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        visit(blocks, &mut out);
+        out
+    }
+
+    /// The whole decision table, driven through the real copy/paste path in one
+    /// pass: **every** inline kind that carries ink survives a structured paste,
+    /// and the five reference families that cannot be duplicated are dropped and
+    /// **named in the report** rather than swallowed.
+    ///
+    /// Mutation proof: restore the old `sanitize_inlines` (four arms and
+    /// `_ => {}`) behind `fresh_block` and the carried half fails with 18 of 19
+    /// kinds missing; delete the `result.paste_loss = …` line and the reported
+    /// half fails with an empty report.
+    #[test]
+    fn structured_paste_carries_every_inline_kind_and_reports_what_it_cannot() {
+        let (document, destination, cell_paragraph) = every_inline_kind_document();
+        let mut d = wasm_document(document);
+        let before = inline_census(d.document.body());
+
+        let source = cell_paragraph.to_string();
+        let json = d.copy_structured(&source, 0, &source, 0);
+        assert!(
+            !json.is_empty(),
+            "a table selection copies as a structured fragment"
+        );
+
+        let target = destination.to_string();
+        let target_len = d.paragraph_length(&target);
+        let result = d
+            .paste_structured(&target, target_len, &target, target_len, json)
+            .expect("structured paste");
+        let after = inline_census(d.document.body());
+
+        // Carried: every kind that carries ink arrives, doubling its count.
+        // `run` is not asserted by doubling because the destination paragraph has
+        // one of its own; it is covered by the kinds that wrap it.
+        let carried = [
+            "tab",
+            "break",
+            "hyperlink",
+            "drawing",
+            "anchoredDrawing",
+            "embeddedObject",
+            "field",
+            "textBox",
+            "group",
+            "noteNumberMark",
+            "revision",
+            "sdt",
+            "math",
+            "symbol",
+            "horizontalRule",
+            "noBreakHyphen",
+            "softHyphen",
+            "positionalTab",
+        ];
+        let missing: Vec<&str> = carried
+            .into_iter()
+            .filter(|kind| {
+                after.get(kind).copied().unwrap_or(0) != before.get(kind).copied().unwrap_or(0) * 2
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "a structured paste dropped {missing:?}; before {before:?} after {after:?}"
+        );
+        // The runs inside the carried wrappers came too, so a carried text box is
+        // not an empty text box.
+        assert_eq!(
+            after.get("run").copied().unwrap_or(0),
+            before.get("run").copied().unwrap_or(0) * 2 - 1,
+            "every run but the destination paragraph's own was duplicated"
+        );
+
+        // Degraded: the ten markers of the five unique-reference families are not
+        // duplicated — and every one of them is NAMED.
+        for marker in [
+            "bookmarkStart",
+            "bookmarkEnd",
+            "commentRangeStart",
+            "commentRangeEnd",
+            "commentReference",
+            "noteReference",
+            "fieldRangeStart",
+            "fieldRangeEnd",
+            "moveRangeStart",
+            "moveRangeEnd",
+        ] {
+            assert_eq!(
+                after.get(marker).copied().unwrap_or(0),
+                before.get(marker).copied().unwrap_or(0),
+                "{marker} must not be duplicated inside one document"
+            );
+        }
+        assert_eq!(
+            result.paste_loss(),
+            vec![
+                "bookmark".to_owned(),
+                "comment".to_owned(),
+                "note".to_owned(),
+                "fieldRange".to_owned(),
+                "trackedMove".to_owned(),
+            ],
+            "the paste reports every family it degraded, so the host can say so"
+        );
+
+        // And the document it produced is one that can be saved. Carrying a
+        // field-range marker verbatim would have failed here with
+        // `DuplicateFieldRangeMarker`, which is why that family degrades.
+        d.document
+            .validate()
+            .expect("the pasted document is valid and can be exported");
+
+        // One undoable action.
+        d.undo().expect("undo the structured paste");
+        assert_eq!(
+            inline_census(d.document.body()),
+            before,
+            "undo restores the document exactly"
+        );
+    }
+
+    /// A paste that degrades nothing must say nothing: a report that fires on
+    /// every paste is a report nobody reads.
+    #[test]
+    fn a_faithful_structured_paste_reports_no_loss() {
+        let (document, destination, cell_paragraph) = picture_in_table_document();
+        let mut d = wasm_document(document);
+        let source = cell_paragraph.to_string();
+        let json = d.copy_structured(&source, 0, &source, 0);
+        let target = destination.to_string();
+        let target_len = d.paragraph_length(&target);
+        let result = d
+            .paste_structured(&target, target_len, &target, target_len, json)
+            .expect("structured paste");
+        assert!(
+            result.paste_loss().is_empty(),
+            "a paste that carried everything reports nothing, got {:?}",
+            result.paste_loss()
+        );
+    }
+
+    /// A content control in a table cell used to fail the WHOLE paste: the old
+    /// `fresh_block` matched `Paragraph`/`Table` and returned
+    /// `Err("unsupported block in structured paste")` for `BlockNode::Sdt`, so the
+    /// clipboard bridge fell back to the flat rich-run path and the table
+    /// structure was lost with it. The clone is total over blocks too.
+    #[test]
+    fn structured_paste_carries_a_content_control_inside_a_cell() {
+        use casual_doc_model::v1::{
+            BlockSdt, Definitions, SdtProperties, TableLook, TableRowProperties,
+        };
+
+        let mut next = 1_u64;
+        let mut id = move || {
+            next += 1;
+            NodeId::from_parts(32, next).unwrap()
+        };
+        let run = |id: NodeId, text: &str| {
+            InlineNode::Run(Run {
+                id,
+                properties: RunProperties::default().into(),
+                text: text.to_owned(),
+            })
+        };
+        let paragraph = |id: NodeId, inlines: Vec<InlineNode>| {
+            BlockNode::Paragraph(Paragraph {
+                id,
+                properties: ParagraphProperties::default().into(),
+                inlines,
+            })
+        };
+        let cell_paragraph = id();
+        let destination = id();
+        let document = Document::new(
+            NodeId::from_parts(32, 1).unwrap(),
+            vec![
+                paragraph(destination, vec![run(id(), "Destination")]),
+                BlockNode::Table(Box::new(Table {
+                    id: id(),
+                    grid: Vec::new(),
+                    grid_change: None,
+                    properties: TableProperties {
+                        look: TableLook::default(),
+                        ..TableProperties::default()
+                    },
+                    rows: vec![TableRow {
+                        id: id(),
+                        properties: TableRowProperties::default(),
+                        cells: vec![TableCell {
+                            id: id(),
+                            properties: TableCellProperties::default(),
+                            blocks: vec![BlockNode::Sdt(Box::new(BlockSdt {
+                                id: id(),
+                                properties: SdtProperties {
+                                    tag: Some("cell".to_owned()),
+                                    ..SdtProperties::default()
+                                },
+                                blocks: vec![paragraph(
+                                    cell_paragraph,
+                                    vec![run(id(), "controlled cell")],
+                                )],
+                            }))],
+                        }],
+                    }],
+                })),
+            ],
+            Definitions::default(),
+        )
+        .expect("a valid content-control-in-a-cell document");
+
+        let mut d = wasm_document(document);
+        let source = cell_paragraph.to_string();
+        let json = d.copy_structured(&source, 0, &source, 0);
+        assert!(!json.is_empty(), "the table copies as a structured fragment");
+        let target = destination.to_string();
+        let target_len = d.paragraph_length(&target);
+        let result = d
+            .paste_structured(&target, target_len, &target, target_len, json)
+            .expect("a content control in a cell no longer fails the whole paste");
+        assert!(result.paste_loss().is_empty());
+        assert_eq!(
+            body_table_ids(&d).len(),
+            2,
+            "the table arrived rather than being refused"
+        );
+        d.document.validate().expect("valid after the paste");
     }
 }
