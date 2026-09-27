@@ -103,14 +103,49 @@ export function unroutableStrings() {
   return UNROUTABLE.map((entry) => ({ ...entry }));
 }
 
+/** The byte ranges of `<pre><code>…</code></pre>` blocks.
+ *
+ *  Source code, not prose. The site pages embed extracted Rust, JavaScript and
+ *  shell — `webapp/tools/build-embed-docs.mjs` generates most of it FROM the code
+ *  it documents — and `npm pack` or `let mut package = DocxPackage::open(…)` is
+ *  not translated into eighteen languages. Left counted, the embedding guide
+ *  alone would carry about eighty sites of debt that can never legitimately come
+ *  down, which is a ratchet nobody can turn.
+ *
+ *  This is a STRUCTURAL exemption, not an allowlist entry, and that is the point:
+ *  it cannot quietly cover real prose, because prose is not marked up as
+ *  preformatted code. `<pre>` alone is not enough — the `<code>` child is
+ *  required — so a `<pre>` holding a poem, a transcript or a wrapped paragraph
+ *  keeps counting, and `no_unrouted_strings.test.mjs` proves both directions. */
+function codeBlockRanges(source) {
+  const ranges = [];
+  for (const open of source.matchAll(/<pre\b[^>]*>/g)) {
+    const bodyStart = open.index + open[0].length;
+    if (!/^\s*<code\b/.test(source.slice(bodyStart, bodyStart + 40))) continue;
+    const close = source.indexOf("</pre>", bodyStart);
+    if (close === -1) continue;
+    // From the END of the `<pre …>` tag, so the `<pre>`'s own attributes are still
+    // scanned: `<pre title="Shell commands">` carries a caption a person reads,
+    // and only the code between the tags is exempt.
+    ranges.push([bodyStart, close + "</pre>".length]);
+  }
+  return ranges;
+}
+
 /** Markup sites: a human-readable attribute, or a text node, with no
  *  `data-i18n*` on the element that would route it through the seam. */
 export function scanMarkup(source) {
   const sites = [];
+  const code = codeBlockRanges(source);
+  const inCode = (index) => code.some(([from, to]) => index >= from && index < to);
   const tags = [...source.matchAll(/<([a-zA-Z][\w-]*)\b([^>]*)>/g)];
   for (const tag of tags) {
     const [whole, name, attributes] = tag;
     if (name === "script" || name === "style") continue;
+    // The `<pre>` itself and every tag inside it: the syntax-highlighting spans
+    // carry the code's own text, so skipping only the `<pre>` would count the
+    // keywords and string literals instead.
+    if (inCode(tag.index)) continue;
     const routed = /\bdata-i18n(-[a-z]+)?=/.test(attributes);
     for (const attribute of HUMAN_ATTRIBUTES) {
       const match = attributes.match(new RegExp(`\\b${attribute}="([^"]*)"`));
@@ -158,11 +193,34 @@ function lineOf(source, index) {
   return source.slice(0, index).split("\n").length;
 }
 
-/** Every unrouted site under `root`, by file, in a stable order. */
+/** Every unrouted site under `root`, by file, in a stable order.
+ *
+ *  Markup: `editor.html`, plus the SITE — every `*.page.html` template and every
+ *  shared partial under `_partials/`. Those were invisible to this scanner until
+ *  `109` HF-190: it read `editor.html` and `src/*.{js,mjs}` and nothing else, so
+ *  the public pages carried about five hundred unrouted strings against an
+ *  `editor.html` ceiling of sixteen and no gate could tell.
+ *
+ *  The TEMPLATES, deliberately, not the generated `*.html`. Each generated page
+ *  inlines the header and footer partials, so scanning both would charge the same
+ *  shared strings once per page and a single edit to a partial would move four
+ *  ceilings at once. A template plus a partial is counted exactly where it is
+ *  authored, which is also where it has to be fixed. `build-site.py --check`
+ *  already guarantees the generated pages are nothing but the templates. */
 export function scanTree(root) {
   const counts = new Map();
-  const markup = join(root, "editor.html");
-  counts.set("editor.html", scanMarkup(readFileSync(markup, "utf8")));
+  counts.set("editor.html", scanMarkup(readFileSync(join(root, "editor.html"), "utf8")));
+  for (const name of readdirSync(root)
+    .filter((entry) => entry.endsWith(".page.html"))
+    .sort()) {
+    counts.set(name, scanMarkup(readFileSync(join(root, name), "utf8")));
+  }
+  for (const name of readdirSync(join(root, "_partials"))
+    .filter((entry) => entry.endsWith(".html"))
+    .sort()) {
+    const sites = scanMarkup(readFileSync(join(root, "_partials", name), "utf8"));
+    if (sites.length) counts.set(`_partials/${name}`, sites);
+  }
   const sources = readdirSync(join(root, "src"))
     .filter((name) => name.endsWith(".mjs") || name.endsWith(".js"))
     .sort();
@@ -171,6 +229,12 @@ export function scanTree(root) {
     if (sites.length) counts.set(`src/${name}`, sites);
   }
   return counts;
+}
+
+/** The `<pre><code>` ranges in a source, for a guard that wants to check the
+ *  exemption is only ever covering code. */
+export function codeBlocks(source) {
+  return codeBlockRanges(source).map(([from, to]) => source.slice(from, to));
 }
 
 export function totalSites(counts) {

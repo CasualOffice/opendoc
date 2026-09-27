@@ -13,95 +13,23 @@
 // which is why this measures the rendered app instead of auditing hex codes.
 // The whole chrome is in scope, not just the ribbon, because the light failures
 // were in the header and the footer.
+//
+// This covers the EDITOR. The site pages are swept by `site-contrast.spec.mjs`,
+// which shares the same measurement (`contrast-audit.mjs`) — they used to be two
+// copies of it.
 import { test, expect, gotoEditor } from "./fixtures.mjs";
+import { auditRegion } from "./contrast-audit.mjs";
 
-/** Runs in the page: contrast ratio of every text-bearing element in a region
- *  against the background actually composited behind it. */
-const auditRegion = (selector) => {
-  // Colours are resolved by the canvas parser, not by regex. Chrome hands back
-  // whatever form the cascade produced — `rgb()`, `color(srgb …)`, `color-mix`,
-  // and, mid-transition, `oklab()` — and a regex that assumes one of those reads
-  // another's components as RGB. That is not a hypothetical: an earlier draft
-  // scraped `oklab(0.49 -0.01 -0.18)` into a near-black colour and reported two
-  // confident, entirely fictional failures. Canvas understands every CSS colour
-  // syntax there will ever be and answers in sRGB bytes.
-  const ctx = document
-    .createElement("canvas")
-    .getContext("2d", { willReadFrequently: true });
-  const parse = (value) => {
-    // An unparseable value leaves fillStyle untouched, so a sentinel is the only
-    // way to tell "transparent black" from "Chrome rejected this string".
-    ctx.fillStyle = "#ff00ff";
-    ctx.fillStyle = value;
-    if (ctx.fillStyle === "#ff00ff" && !/f0f|ff00ff|magenta/i.test(value)) {
-      throw new Error(`unparseable colour: ${value}`);
-    }
-    ctx.clearRect(0, 0, 1, 1);
-    ctx.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-    return { r, g, b, a: a / 255 };
-  };
-  const luminance = (c) => {
-    const channel = (v) => {
-      v /= 255;
-      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-    };
-    return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
-  };
-  const composite = (fg, bg) => ({
-    r: fg.r * fg.a + bg.r * (1 - fg.a),
-    g: fg.g * fg.a + bg.g * (1 - fg.a),
-    b: fg.b * fg.a + bg.b * (1 - fg.a),
-    a: 1,
-  });
-  // Walk to the first opaque ancestor, compositing the translucent layers on the
-  // way back down — a token is only as readable as whatever ends up behind it.
-  const backdrop = (el) => {
-    const layers = [];
-    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-      const c = parse(getComputedStyle(n).backgroundColor);
-      if (c.a > 0) layers.push(c);
-      if (c.a === 1) break;
-    }
-    let acc = { r: 255, g: 255, b: 255, a: 1 };
-    for (let i = layers.length - 1; i >= 0; i--) acc = composite(layers[i], acc);
-    return acc;
-  };
-  const contrast = (a, b) => {
-    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-    return (hi + 0.05) / (lo + 0.05);
-  };
-
-  const failures = [];
-  for (const el of document.querySelector(selector).querySelectorAll("*")) {
-    const own = [...el.childNodes]
-      .filter((n) => n.nodeType === 3)
-      .map((n) => n.textContent.trim())
-      .join("");
-    if (!own) continue;
-    const cs = getComputedStyle(el);
-    if (cs.visibility === "hidden" || cs.display === "none") continue;
-    const box = el.getBoundingClientRect();
-    if (box.width < 1 || box.height < 1) continue;
-    // Disabled controls are dimmed deliberately, and AA exempts them.
-    const control = el.closest("button,select,input,textarea");
-    if (control && control.disabled) continue;
-
-    const bg = backdrop(el);
-    const ratio = contrast(composite(parse(cs.color), bg), bg);
-    const size = parseFloat(cs.fontSize);
-    const isLarge =
-      size >= 24 || (size >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
-    const required = isLarge ? 3 : 4.5;
-    if (ratio < required) {
-      failures.push(
-        `${ratio.toFixed(2)}:1 (needs ${required}:1) — "${own.slice(0, 32)}" ` +
-          `<${el.tagName.toLowerCase()}.${el.className}> at ${size}px`,
-      );
-    }
-  }
-  return failures;
-};
+/** How many text-bearing elements the editor chrome must present before a sweep
+ *  over it means anything.
+ *
+ *  MEASURED at 95 in both themes, so the floor is 60. `gotoEditor` already waits
+ *  for the engine to boot and the document to paint, so this is not a boot check;
+ *  what it catches is the sweep silently measuring nothing — a selector that
+ *  stopped matching, a chrome that did not render, a stylesheet that 404'd. A
+ *  sweep over nothing reports no failures and reads exactly like a pass, which is
+ *  the one way a contrast gate can be green while the product is unreadable. */
+const MIN_EXAMINED = 60;
 
 for (const theme of ["light", "dark"]) {
   test(`app chrome text meets WCAG AA in the ${theme} theme`, async ({ page }) => {
@@ -119,8 +47,16 @@ for (const theme of ["light", "dark"]) {
     );
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
-    const failures = await page.evaluate(auditRegion, "body");
-    expect(failures, `unreadable text in the ${theme} theme`).toEqual([]);
+    const swept = await page.evaluate(auditRegion, { selector: "body" });
+    expect(
+      swept.examined,
+      `only ${swept.examined} text elements were measured in the ${theme} theme — ` +
+        "a sweep over an unpainted or unbooted editor finds no failures and passes",
+    ).toBeGreaterThan(MIN_EXAMINED);
+    expect(
+      swept.failures.map((failure) => failure.describe),
+      `unreadable text in the ${theme} theme`,
+    ).toEqual([]);
 
     // The toast (`109` UX-017) is `hidden` at rest, and this sweep skips
     // `display: none` — so a whole new text surface, and the one that carries
@@ -142,8 +78,9 @@ for (const theme of ["light", "dark"]) {
       // `body`, not `#statusToast`: `auditRegion` walks a region's DESCENDANTS,
       // and the toast's text is its own child node, so scoping to the element
       // would audit nothing at all and pass.
+      const withToast = await page.evaluate(auditRegion, { selector: "body" });
       expect(
-        await page.evaluate(auditRegion, "body"),
+        withToast.failures.map((failure) => failure.describe),
         `unreadable toast text (kind "${kind || "plain"}") in the ${theme} theme`,
       ).toEqual([]);
     }
