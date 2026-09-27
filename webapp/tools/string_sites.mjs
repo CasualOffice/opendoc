@@ -117,6 +117,40 @@ export function unroutableStrings() {
  *  preformatted code. `<pre>` alone is not enough — the `<code>` child is
  *  required — so a `<pre>` holding a poem, a transcript or a wrapped paragraph
  *  keeps counting, and `no_unrouted_strings.test.mjs` proves both directions. */
+/** The byte ranges of `<script>` and `<style>` BODIES.
+ *
+ *  `scanMarkup` has always skipped the `<script>` and `<style>` OPENING TAGS by
+ *  name, which is not the same thing, and the difference is a real defect: the
+ *  scanner walks tag by tag and captures the text after each tag up to the next
+ *  `<`, so a script body containing anything tag-SHAPED is read as markup. The
+ *  embedding guide's own description says "…the `<opendoc-editor>` custom
+ *  element…", and putting that sentence inside an `ld+json` block made the scanner
+ *  match `<opendoc-editor>` as an element and count the rest of the JSON line as
+ *  translatable prose:
+ *
+ *      { kind: "text", element: "opendoc-editor",
+ *        text: "custom element, and a capability contract." }
+ *
+ *  The ratchet itself found it, one site over a ceiling. It is also a reminder that
+ *  a measurement taken on a case which does not exercise the bug proves nothing: a
+ *  first check of "does the scanner read `ld+json` bodies?" used a block with no
+ *  tag-shaped text in it and answered, wrongly, no.
+ *
+ *  A script or style body is code by definition — there is no HTML element in there
+ *  to route, and the text is JavaScript, CSS or JSON. `editor.html`'s inline
+ *  scripts fall under this too, and `no_unrouted_strings.test.mjs` publishes how
+ *  many sites it suppresses per file, so it cannot become a hiding place. */
+function scriptBodyRanges(source) {
+  const ranges = [];
+  for (const open of source.matchAll(/<(script|style)\b[^>]*>/gi)) {
+    const bodyStart = open.index + open[0].length;
+    const close = source.toLowerCase().indexOf(`</${open[1].toLowerCase()}>`, bodyStart);
+    if (close === -1) continue;
+    ranges.push([bodyStart, close]);
+  }
+  return ranges;
+}
+
 function codeBlockRanges(source) {
   const ranges = [];
   for (const open of source.matchAll(/<pre\b[^>]*>/g)) {
@@ -133,18 +167,26 @@ function codeBlockRanges(source) {
 }
 
 /** Markup sites: a human-readable attribute, or a text node, with no
- *  `data-i18n*` on the element that would route it through the seam. */
-export function scanMarkup(source) {
+ *  `data-i18n*` on the element that would route it through the seam.
+ *
+ *  `exemptCode: false` turns OFF the `<pre><code>` and script/style-body
+ *  exemptions, so a guard can measure exactly how many sites they suppress by
+ *  scanning the same source both ways. It exists for that measurement and for
+ *  nothing else: a caller that wants the count uses the default. */
+export function scanMarkup(source, { exemptCode = true } = {}) {
   const sites = [];
-  const code = codeBlockRanges(source);
-  const inCode = (index) => code.some(([from, to]) => index >= from && index < to);
+  const skip = exemptCode
+    ? [...codeBlockRanges(source), ...scriptBodyRanges(source)]
+    : [];
+  const inCode = (index) => skip.some(([from, to]) => index >= from && index < to);
   const tags = [...source.matchAll(/<([a-zA-Z][\w-]*)\b([^>]*)>/g)];
   for (const tag of tags) {
     const [whole, name, attributes] = tag;
     if (name === "script" || name === "style") continue;
-    // The `<pre>` itself and every tag inside it: the syntax-highlighting spans
-    // carry the code's own text, so skipping only the `<pre>` would count the
-    // keywords and string literals instead.
+    // Inside a `<pre><code>` block, or inside a script/style body. Both are code,
+    // and in both cases it is the CONTENT that has to be skipped rather than the
+    // element: the highlighting spans in a code panel carry the code's own text,
+    // and a script body containing tag-shaped text is otherwise read as markup.
     if (inCode(tag.index)) continue;
     const routed = /\bdata-i18n(-[a-z]+)?=/.test(attributes);
     for (const attribute of HUMAN_ATTRIBUTES) {
@@ -231,10 +273,14 @@ export function scanTree(root) {
   return counts;
 }
 
-/** The `<pre><code>` ranges in a source, for a guard that wants to check the
- *  exemption is only ever covering code. */
-export function codeBlocks(source) {
-  return codeBlockRanges(source).map(([from, to]) => source.slice(from, to));
+/** How many sites the code exemptions suppress in a source.
+ *
+ *  Measured by scanning the same source with the exemptions on and off, which is
+ *  the only way to get it right — see `scanMarkup`'s `exemptCode` note. A guard
+ *  pins this per file, so wrapping real prose in `<pre><code>` or hiding it in a
+ *  script body moves a published number instead of moving nothing. */
+export function exemptedSites(source) {
+  return scanMarkup(source, { exemptCode: false }).length - scanMarkup(source).length;
 }
 
 export function totalSites(counts) {

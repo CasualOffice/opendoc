@@ -27,12 +27,7 @@ directions, not currently supported features.
 
 ## Site pages
 
-<!-- Generated from each page's own <title> and meta description by
-     webapp/tools/build-seo.mjs. Edit the page, not this list. -->
-- [OpenDoc — build documents on an engine you control](https://opendoc.casualoffice.org/): OpenDoc is a deterministic, open-source Word-document runtime written in Rust. Import, edit, lay out, render, and write .docx on native, WebAssembly, and headless hosts — with no required server, DOM, or UI framework.
-- [Documentation — OpenDoc](https://opendoc.casualoffice.org/docs.html): Documentation for OpenDoc, the open-source Rust DOCX engine and embeddable WebAssembly editor: embedding, import, dispositions, architecture, and the reference docs.
-- [Embed the editor — OpenDoc](https://opendoc.casualoffice.org/embedding.html): Embed the OpenDoc editor in your own page: an installable package, the <opendoc-editor> custom element, and a capability contract resolved before the frame's first navigation. Every example on this page is extracted from code that runs in CI.
-- [DOCX fidelity support matrix — OpenDoc](https://opendoc.casualoffice.org/fidelity.html): OpenDoc fidelity, measured against a LibreOffice oracle rather than a feature list: page-count parity, round-trip disposition, and honest per-construct support. The oracle geometry gate is manual (workflow_dispatch) and currently inert — no reference is committed — so these grades are hand-checked, not CI-enforced.
+<!-- @pages -->
 
 ## Other primary links
 
