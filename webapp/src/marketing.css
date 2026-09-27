@@ -2292,6 +2292,48 @@ main.home {
    block quotes, thematic breaks, and the reference index's entry list.
    ------------------------------------------------------------------------- */
 
+/* Content first in the source, navigation ordered into place beside it.
+ *
+ * A reference page's rail carries every published document, which is fifteen
+ * links and five group headings — fine in a column, two screenfuls on a phone,
+ * where `.doc-reader` collapses to one column and a rail-first page would make a
+ * reader scroll past the whole navigation to reach the document they asked for.
+ * So the article is first in the DOM (which is also the right reading order for
+ * a screen reader) and `order` puts the rail back in the left column at the
+ * widths that have one. Scoped to `.is-reference`: `docs.html` is authored
+ * rail-first and is not touched. */
+.doc-reader.is-reference .doc-rail {
+  order: -1;
+}
+
+@media (max-width: 820px) {
+  .doc-reader.is-reference .doc-rail {
+    order: 0;
+    margin-top: 12px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line-2);
+  }
+}
+
+/* The index has no "on this page" column of its own — it IS a list of pages — so
+ * it uses the space rather than leaving an empty third column.
+ *
+ * Guarded by `min-width`, deliberately. The narrow-width rules below are written
+ * against the bare `.doc-reader` class, so a two-class selector like this one
+ * would out-specify them and keep a 220px sidebar on a 390px phone. A rule that
+ * only ever applies above the breakpoint cannot do that. */
+@media (min-width: 821px) {
+  .doc-reader.is-index {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  /* Two columns instead of three is a wider measure, and a 120-character line is
+     harder to read than a narrow one. The column is wide; the text is not. */
+  .doc-reader.is-index .doc-article {
+    max-width: 780px;
+  }
+}
+
 /* Where the page comes from. One line, under the lede. */
 .doc-provenance {
   margin: 16px 0 0;

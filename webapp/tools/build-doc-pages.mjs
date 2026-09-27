@@ -986,14 +986,19 @@ export function renderPage(page) {
     "  </div>",
     "</aside>",
   ].join("\n");
+  // The ARTICLE comes first in the source, and the rail is ordered back into the
+  // left column by CSS where there is a column for it. On a phone `.doc-reader`
+  // collapses to one column, and a rail-first page would open with fifteen
+  // navigation links and push the document below two screenfuls of them. The
+  // reader came for the document.
   const main = [
-    '<main class="doc-reader">',
-    indent(railHtml(page.slug), "  "),
-    "",
+    '<main class="doc-reader is-reference">',
     '  <article class="doc-article">',
     indent(articleHead(page, `${BLOB}/${page.sourcePath}`), "    "),
     indent(`<div class="doc-prose">\n${body}\n</div>`, "    "),
     "  </article>",
+    "",
+    indent(railHtml(page.slug), "  "),
     "",
     headings.length ? indent(toc, "  ") : "",
     "</main>",
@@ -1048,15 +1053,15 @@ export function renderHub() {
     "never disagree. Documents deliberately not published here are named, with the " +
     "reason, in webapp/tools/build-doc-pages.mjs.";
   const main = [
-    '<main class="doc-reader">',
-    indent(railHtml(HUB.slug), "  "),
-    "",
+    '<main class="doc-reader is-reference is-index">',
     '  <article class="doc-article">',
     '    <p class="doc-eyebrow">Reference</p>',
     `    <h1 id="reference">${escapeHtml(heading)}</h1>`,
     `    <p class="doc-lede">${escapeHtml(summary)}</p>`,
     indent(`<div class="doc-prose">\n${cards.join("\n")}\n</div>`, "    "),
     "  </article>",
+    "",
+    indent(railHtml(HUB.slug), "  "),
     "</main>",
   ].join("\n");
   return pageDocument({
