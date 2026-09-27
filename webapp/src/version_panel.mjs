@@ -536,14 +536,33 @@ export function createVersionHistory({
    * Only when the panel HAD the keyboard, so a preview opened while the reader
    * is typing in the document does not snatch it back.
    *
+   * The panel's keyboard territory includes the ROW MENU, which is parented to
+   * `document.body` so it can paint over the canvas. Counting only
+   * `#versionPanel` fixed the arrow-key case and left the identical one a step
+   * further on: open a row's menu with the keyboard, and the preview the same
+   * arrow press scheduled settles 220 ms later and empties the menu of focus, so
+   * the next ArrowDown walks the document. Same defect, second doorway — so the
+   * question asked here is "does the timeline own the keyboard", not "is focus
+   * inside one element".
+   *
    * Found by asserting which element really holds focus rather than
    * `aria-activedescendant`, which does not move with it — the shipped listbox
    * had the same defect and no guard that could see it.
    */
   async function keepingFocus(work) {
-    const had = isOpen() && panel.contains(document.activeElement);
+    const owns = () => {
+      const el = document.activeElement;
+      if (!(el instanceof Node)) return false;
+      if (panel.contains(el)) return true;
+      return Boolean(rowMenuEl) && !rowMenuEl.hidden && rowMenuEl.contains(el);
+    };
+    const had = isOpen() && owns();
     await work();
-    if (had && !panel.contains(document.activeElement)) focusGrid();
+    if (!had || owns()) return;
+    // Back where it was: into the menu when one is still open, onto the grid's
+    // tab stop otherwise.
+    if (menuLevel) focusMenuIndex(menuLevel, menuLevel.index);
+    else focusGrid();
   }
 
   /** The visible rows, in list order — what the arrow keys walk. O(rows). */

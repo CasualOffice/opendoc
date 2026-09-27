@@ -403,6 +403,36 @@ test("the timeline keeps the keyboard when a preview opens under it", async ({ p
   // The guarantee, not the mechanism: the arrows still walk the list.
   await page.keyboard.press("ArrowUp");
   expect(await focusedCell(page)).toEqual({ row: ids[0], cell: "entry" });
+
+  // THE SECOND DOORWAY, and the reason this test has two halves. The row menu is
+  // parented to `document.body` so it can paint over the canvas, so a fix that
+  // asked "is focus inside `#versionPanel`" left the identical defect one step
+  // further on: open a row's menu from the keyboard, and the preview the arrow
+  // press before it scheduled settles underneath and empties the menu of focus.
+  // The condition is created the same way, and in the order that produces it:
+  // End schedules the older version's preview, and the menu is opened inside the
+  // 220 ms before it settles — which is what a reader does when they arrow to a
+  // version and reach straight for its actions.
+  await expect(page.locator("#versionPreviewBanner")).toBeHidden();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(rowMenu)).toBeVisible();
+  // If the preview had already landed, the wait below would prove nothing.
+  await expect(
+    page.locator("#versionPreviewBanner"),
+    "the preview settled before the menu opened, so this run cannot see the defect",
+  ).toBeHidden();
+  await expect(page.locator("#versionPreviewBanner")).toBeVisible();
+
+  expect(
+    await page.evaluate(() => !!document.activeElement?.closest("#versionRowMenu")),
+    "the preview took the keyboard out of the open row menu",
+  ).toBe(true);
+  // And the menu still works: the arrow moves the highlight rather than the page.
+  const before = await page.locator(`${rowMenu} .menu-item.active`).textContent();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(`${rowMenu} .menu-item.active`)).not.toHaveText(before);
 });
 
 test("the row's ⋮ menu carries that row's actions, and opens from the keyboard", async ({
