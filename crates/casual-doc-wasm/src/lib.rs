@@ -14,8 +14,10 @@
 //! `device_px = twip / 1440 * dpi`.
 
 use casual_doc_edit::ParagraphIndex;
-// A separate `use` line: the total structural deep copy (`docs/129` §2).
 use casual_doc_edit::SplitProperties;
+// The total structural deep copy (`docs/129` §2) and the report of what a
+// same-document copy could not duplicate. Its own `use` line, where the pinned
+// rustfmt sorts it, so a parallel branch adding an import does not conflict here.
 use casual_doc_edit::clone::{CloneReport, clone_block_with_fresh_ids};
 use casual_doc_edit::find_shape;
 use casual_doc_edit::{
