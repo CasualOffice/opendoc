@@ -146,7 +146,7 @@ test("the Insert ribbon exposes every Insert command, in Word's group order", as
     ["#insertHeaderBtn", "Edit header"],
     ["#insertFooterBtn", "Edit footer"],
     ["#insertPageNumberBtn", "Page number"],
-    ["#headerFooterSettingsBtn", "Header and footer settings"],
+    ["#headerFooterSettingsBtn", "Header and footer options"],
     ["#insertSymbolBtn", "Insert symbol"],
     ["#insertEmojiBtn", "Insert emoji"],
   ];
