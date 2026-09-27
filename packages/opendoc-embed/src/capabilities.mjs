@@ -223,6 +223,47 @@ const REGION_PRESETS = Object.freeze({
   viewer: READING_REGIONS,
 });
 
+/** Where a granted capability has a VISIBLE affordance, by region.
+ *
+ *  THE JOINT BETWEEN THE TWO AXES, and the thing that makes region composition
+ *  safe rather than merely possible. Composition removes surfaces; a permission
+ *  grants an action. Nothing mechanically stops a host from being handed a
+ *  capability and no way to use it — which is the recurring defect `105` UX-004
+ *  records one level down ("every capability must be reachable from ≥2 surfaces")
+ *  arriving at the container level. `roles.test.mjs` walks every preset and
+ *  refuses a preset that grants something its own chrome cannot reach.
+ *
+ *  It is also what settled the shape of reading chrome. `readonly` grants `print`
+ *  and nothing else; hiding the ribbon without revealing the MENU BAR would have
+ *  left that grant unreachable, and this table is what said so before any of it
+ *  was written.
+ *
+ *  An empty list means the capability needs no chrome at all, and each one says
+ *  why — an unexplained empty list would be a hole in the guard rather than a
+ *  fact about the product. */
+export const CAPABILITY_AFFORDANCES = Object.freeze({
+  // File-page or menu-bar commands, both of which exist in either navigation
+  // axis: File is the ribbon's first band and the menu bar's first menu.
+  open: Object.freeze(["menu", "band.file"]),
+  new: Object.freeze(["menu", "band.file"]),
+  save: Object.freeze(["menu", "band.file"]),
+  download: Object.freeze(["menu", "band.file"]),
+  print: Object.freeze(["menu", "band.file"]),
+  // Typing IS the affordance. A container with no chrome at all can still be
+  // edited, which is why `preview` withholds `edit` rather than relying on having
+  // hidden the ribbon — a permission enforced by hiding a button is not enforced
+  // (`docs/125` §3.2, and phase 1's devtools attack).
+  edit: Object.freeze([]),
+  // The ribbon's Review band, the floating selection toolbar, and the right-click
+  // menu — which belongs to no region, because a context menu is raised on the
+  // document rather than painted in the chrome.
+  comment: Object.freeze([]),
+  // Autosave is a preference, and Settings is where a preference lives.
+  autosave: Object.freeze(["settings"]),
+  // `branding` IS the brand region: showing our name and mark is the whole of it.
+  branding: Object.freeze(["brand"]),
+});
+
 /**
  * Parses a withhold list: `"-print,-download"` or `"print,download"`.
  *
