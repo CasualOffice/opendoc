@@ -3532,6 +3532,34 @@ impl WasmDocument {
             .collect()
     }
 
+    /// Every **paragraph-spanning** complex field as `id\tinstruction`, in ascending
+    /// id order.
+    ///
+    /// The host-facing name for what `docs/128` calls a field range: a complex field
+    /// whose `w:fldChar` markers sit in different paragraphs, which is the only way a
+    /// table of contents — one paragraph per entry — can be a field at all. A field
+    /// that fits inside one paragraph is an inline field and does NOT appear here;
+    /// `parseCommonField` and the field commands cover those.
+    ///
+    /// A host needs this to know a document HOLDS such a field before it can offer to
+    /// act on one (Word's "Update Table"). Generating and updating are not in this
+    /// layer, so there is deliberately no command here yet — an affordance backed by
+    /// nothing would be a dead control.
+    ///
+    /// O(field ranges), not O(document): it reads the definition map and never walks
+    /// the body. Shaped exactly like [`bookmarkEntries`](Self::bookmark_entries), for
+    /// the same reason — one mechanism for one kind of question.
+    #[wasm_bindgen(js_name = fieldRangeEntries)]
+    #[must_use]
+    pub fn field_range_entries(&self) -> Vec<String> {
+        self.document
+            .definitions()
+            .field_ranges
+            .iter()
+            .map(|(id, range)| format!("{}\t{}", id.node_id(), range.instruction))
+            .collect()
+    }
+
     /// Creates a bookmark named `name` over the current selection (which may span
     /// two paragraphs), inserting its start/end markers and registering the name
     /// under a fresh id. One undoable action. The new id is discoverable via
@@ -27469,6 +27497,58 @@ mod tests {
         let restored = d.bookmark_entries();
         assert_eq!(restored.len(), 1, "bookmark restored by undo");
         assert!(restored[0].ends_with("\tanchor"));
+    }
+
+    #[test]
+    fn field_range_entries_lists_a_paragraph_spanning_field_and_not_an_inline_one() {
+        // The host-facing accessor a surface needs before it can offer to act on a
+        // table of contents. Two halves, and the second is the one that matters: an
+        // INLINE field must not appear, or a host would think every PAGE field in
+        // every header were a table of contents.
+        //
+        // Built by importing the real markup rather than hand-assembling a model, so
+        // the fixture is one the importer can actually produce — a fixture that cannot
+        // reach the path under test is the specific trap in this area.
+        let spanning = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body>
+                <w:p>
+                    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+                    <w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>
+                    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+                </w:p>
+                <w:p><w:r><w:t>First chapter</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Second chapter</w:t></w:r>
+                     <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+            </w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        let document = wasm_document(spanning);
+        let entries = document.field_range_entries();
+        assert_eq!(entries.len(), 1, "one paragraph-spanning field: {entries:?}");
+        let (id, instruction) = entries[0].split_once('\t').expect("id\\tinstruction");
+        assert_eq!(instruction, r#" TOC \o "1-3" \h "#);
+        assert_eq!(id.len(), 32, "the 32-hex node id, as bookmarkEntries gives");
+
+        // An inline field — a complex field whose markers are in ONE paragraph, which is
+        // the shape `sample.docx` has — is not a range and must not be listed.
+        let inline = casual_doc_import::import_main_document_xml(
+            br#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r>
+                <w:fldChar w:fldCharType="begin"/>
+                <w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText>
+                <w:fldChar w:fldCharType="separate"/>
+                <w:t>Update this field in Word.</w:t>
+                <w:fldChar w:fldCharType="end"/>
+            </w:r></w:p></w:body></w:document>"#,
+            casual_doc_import::ImportConfig::default(),
+        )
+        .expect("import")
+        .document;
+        assert!(
+            wasm_document(inline).field_range_entries().is_empty(),
+            "an inline field is not a range"
+        );
     }
 
     #[test]
