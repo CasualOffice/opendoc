@@ -668,6 +668,130 @@ none; #635 added two and had to argue for them.
   body section is separate work.
 - `Blank Page` is no longer blocked: it is two page breaks, and needs no engine work.
 
+## ADR-038 — Durable version history lives on the draft seam; count and bytes are ceilings, age is a window, and a named version is never pruned
+
+**Status:** Accepted; storage, policy and restore implemented, **not yet reachable from the
+product** (the panel, the menu entries and the catalogue strings are a separate lane).
+Requirements: `docs/139`. Architecture: `docs/140`. Rows: `104` HF-068 / `105` OO-004.
+Code: `webapp/src/version_history.mjs`, schema v3 in `webapp/src/drafts.mjs`, defaults in
+`webapp/src/settings_defaults.mjs`.
+
+**Context:** `docs/139` and `docs/140` settle the shape of version history and deliberately
+leave ten product and twelve architecture questions open. The owner then ruled on the two
+that block a first implementation: history is **client-side, on IndexedDB, built on the
+autosave path — no server, no relay, no collaboration**, and retention is **configurable, in
+config or settings, "around 20-30" versions or "retain for 7 days"**. That ruling names both
+a count and an age and does not say what happens when they disagree, which is the question
+this ADR exists to answer. `docs/140` §13 meanwhile said retention works from a byte budget
+"**not** a raw version count"; the owner's ruling overrides that sentence, and it has been
+corrected rather than left to contradict the shipped policy.
+
+**Decision:**
+
+1. **One store, schema v3.** Four object stores — `documents`, `version_meta`,
+   `checkpoint_blobs`, `history_ops` — are added to the existing `opendoc-drafts` database,
+   as HF-068's decision cell requires ("same store as HF-011 — not a second store"). The
+   upgrade is additive (`if (!contains)`), so a version-1 or version-2 database comes through
+   it with every draft and every personal-dictionary word intact. A **pin is a boolean on the
+   version row**, not the separate `pins` store `docs/140` §7.1 sketched: the pin protects
+   exactly that row, and a second store would be a second thing to keep consistent with it.
+2. **A checkpoint is the artifact autosave already produces.** The draft path exports the
+   document in its own source format through Save's export ladder, because `docs/112` §3.2
+   measured that a normalized-JSON snapshot drops `binary_resources` and the retained
+   `source_envelope` — every picture gone. Version capture therefore takes **the same bytes**
+   rather than exporting a second time: one document-sized cost per capture instead of two,
+   one format decision in the codebase instead of two, and byte-for-byte what Save would have
+   written. Artifacts are **content-addressed by SHA-256**, so a Save followed by *Name this
+   version* costs one ~300-byte row and no second copy of the document.
+3. **Count and bytes are ceilings; age is a window with a floor.** This is the answer to the
+   disagreement the owner's ruling left open, and each half has a different job:
+   - the **count** (default 25, inside the owner's 20–30 band) and the **byte budget**
+     (default 120 MB) bound storage. They always apply and they prune the oldest eligible
+     version first, because a ceiling that can be talked out of applying is not a bound;
+   - the **age window** (default 7 days) bounds staleness and privacy — history holds content
+     the user deliberately deleted (`docs/139` §12) — but it is *a promise to keep versions
+     for at least seven days*, never an instruction to delete on day eight. The newest
+     `keepFloor` versions (default 3) survive it regardless of age, so a document nobody has
+     touched for a fortnight still has a past. Age-only pruning would empty the timeline of
+     an untouched document, which is the opposite of retaining it.
+4. **A named version is never pruned by automatic retention.** `docs/139` §8.7 and VH-006
+   already say so, and Google Docs prunes unnamed history while keeping named versions. When
+   a ceiling cannot be met without deleting a pin, the capture is **refused and reported**
+   (`history.fullPinned`, published as a refusal) rather than the pin being deleted "with
+   disclosure". A **pin limit** of 15 against a count cap of 25 is what keeps that refusal
+   rare: pins can never fill the store, so ten slots always remain for automatic capture.
+   This also answers `docs/139` §18 question 5 — yes, named versions get a count limit in
+   addition to the byte ceiling, and the limit exists to protect the refusal from being the
+   normal case.
+5. **An explicit Save always creates a version** (`docs/139` §18 question 3). It is a point a
+   person recognises, and content addressing makes a no-change Save cost a row rather than a
+   document.
+6. **History is on by default and tied to autosave** (`docs/139` §18 question 2), for
+   autosave's own reason: a document-safety net nobody switches on is not one. Turning
+   autosave off turns history off with it — one switch must not promise what the other has
+   stopped doing.
+7. **A version can be pinned without being named** (`docs/139` §18 question 4). The label is
+   what makes a version findable; the pin is what makes it durable, and they are separable.
+8. **Lineage identity is minted, and `documentKey` is only a rejoin hint.** `docs/140` §4.1
+   forbids deriving identity from a filename, a byte hash or a timestamp. A reopened file
+   finds its history through the bounded `documentKey` sample hash plus a name match; a hint
+   collision can only join two timelines that should have been separate — confusing, never
+   lossy — and *Make a copy* mints a new lineage explicitly.
+9. **Restore is prepare-then-commit, and the pre-restore checkpoint is a precondition.** The
+   current state becomes a version **before** the head moves, and if that capture is refused
+   the restore is refused with it: there is no state in which the work is in neither place,
+   which is what `docs/112`'s own history means by *never let a restore leave the work in
+   neither place*. The commit is one IndexedDB transaction that compare-and-sets the head, so
+   an interrupted restore leaves the complete old head with a prepared record that the next
+   boot resolves by reading which head actually committed — never by guessing from timestamps.
+   An idempotency key makes a retried restore return the first result instead of restoring
+   twice. Nothing is deleted to make a restore possible.
+10. **The capture decision is O(1) and touches no storage.** Autosave's contribution to
+    history is `VersionCapturePolicy.shouldCapture`: three comparisons over two numbers it
+    holds itself. A version is laid down at most once per `versionIntervalMinutes` (default
+    10) and only when the engine revision watermark has moved, so autosave never becomes
+    O(versions) and a 5-second quiesce cadence cannot spend a 25-version budget in two
+    minutes.
+
+**Consequences:**
+
+- Storage cost is explicit and bounded: worst case at the defaults is 25 × the document's own
+  Save artifact, capped at 120 MB, inside an origin quota shared with drafts. `docs/112`
+  measured that artifact at 1.0 MB for a real 14-page DOCX and 2.4 MB for a 471-page,
+  320,000-word document.
+- Quota is a **reported** state, never a silent stop: one eligible version is released and the
+  write retried once, and a still-failing write returns `history.quotaExhausted`, which
+  `historyStatusKind` classifies as a refusal so `status_channel.mjs` escalates it to the
+  assertive region and the toast. A browser eviction is reported as an eviction rather than as
+  an empty timeline.
+- **Compression stays deferred**, and `docs/112` §4.3's suggestion that HF-068 revisit it is
+  answered with a reason rather than a number: the artifacts are DOCX/ODT ZIP containers,
+  where the 37× that `docs/112` measured on normalized JSON does not apply, and content
+  addressing already removes the duplicate-save cost that made many-snapshot storage look
+  expensive. Measuring recompression on real ZIP artifacts remains `docs/140` §20 question 6.
+- Per-change authorship is still **not claimed**: a version records one actor, because exact
+  attribution needs the transaction-path unification in `docs/107` (H4). Nothing here asserts
+  otherwise, and the version diff service (H3) is not built.
+- What is **not** reachable yet: File ▸ Version history, the panel, preview, copy/download and
+  the settings controls for the four retention numbers. The storage layer is complete and
+  guarded but a user cannot get to it, which by this repository's own rule (SKILL §9.4)
+  means the row stays open until the wiring lands.
+
+**Alternatives rejected:**
+
+- **Age-only retention.** It deletes the entire history of a document nobody edited for a
+  week, which nobody means by "retain for 7 days".
+- **Count-only retention.** Twenty-five checkpoints of a media-heavy document can be hundreds
+  of megabytes, and the quota is shared with the crash-recovery drafts whose whole purpose is
+  to be there after a crash.
+- **Pruning a named version with disclosure.** A named version that disappears on day eight
+  makes naming a lie; refusing the new capture keeps the promise the user was given and says
+  what to do about it.
+- **A separate version database.** Two stores to migrate, two quotas, two clear controls and
+  two explanations, against one owner decision (D-1) that says the opposite.
+- **Storing normalized JSON.** Measured data loss (`docs/112` §3.2). It remains useful as a
+  derived diff projection, which is `docs/140` §11's business, not this one's.
+
 ## Pending ADRs
 
 - shaping stack: HarfBuzz wrapper versus platform-native shaping;

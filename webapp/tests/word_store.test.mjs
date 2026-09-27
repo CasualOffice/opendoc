@@ -19,8 +19,12 @@ import test from "node:test";
 
 import {
   BYTES_STORE,
+  CHECKPOINT_STORE,
+  DOCUMENTS_STORE,
   DRAFT_DB_VERSION,
+  HISTORY_OPS_STORE,
   META_STORE,
+  VERSION_META_STORE,
   WORDS_STORE,
   openDraftStore,
   openWordStore,
@@ -71,6 +75,13 @@ function fakeIndexedDB() {
       },
       createObjectStore(name) {
         db.stores.set(name, new Map());
+        // Version 3 (version history) creates indexes on the stores it adds, so
+        // the handle has to answer `createIndex`. Nothing in this file queries an
+        // index — `version_history.test.mjs` owns that — but a handle that
+        // cannot be indexed made the upgrade throw inside `onupgradeneeded`,
+        // where the failure surfaces as an open that never settles rather than
+        // as an error anybody can read.
+        return { createIndex() {} };
       },
       transaction(names) {
         const list = Array.isArray(names) ? names : [names];
@@ -122,7 +133,7 @@ test("a word survives a store round trip, and adding it twice is one entry", asy
   assert.deepEqual(await store.list(), []);
 });
 
-test("the words store is created at version 2 without disturbing the draft stores", async () => {
+test("a version-1 database upgrades to the current schema with its drafts intact", async () => {
   const indexedDB = fakeIndexedDB();
 
   // A tab on the OLD build: version 1, two stores, one draft in them.
@@ -143,6 +154,14 @@ test("the words store is created at version 2 without disturbing the draft store
 
   assert.equal(legacy.version, DRAFT_DB_VERSION, "the upgrade ran");
   assert.ok(legacy.stores.has(WORDS_STORE), "and created the words store");
+  for (const added of [
+    DOCUMENTS_STORE,
+    VERSION_META_STORE,
+    CHECKPOINT_STORE,
+    HISTORY_OPS_STORE,
+  ]) {
+    assert.ok(legacy.stores.has(added), `and ${added}, which version 3 adds`);
+  }
   assert.deepEqual(
     await drafts.readMeta("slot-1"),
     { slotId: "slot-1", name: "work.docx" },
