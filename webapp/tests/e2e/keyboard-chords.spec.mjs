@@ -7,7 +7,16 @@
 // dead chord. SKILL.md §10 — a control that does nothing is worse than none. So
 // every assertion here DRIVES the keystroke and reads the result back out of the
 // document or the chrome that reflects it.
-import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
+import {
+  test,
+  expect,
+  gotoEditor,
+  clickIntoFirstPage,
+  mirrorBlocks,
+  openCommandPalette,
+  moveCaretToDocStart,
+  MOD,
+} from "./fixtures.mjs";
 
 /** Which alignment the ribbon is showing as active — the engine's answer, round
  *  tripped through the toolbar's own reflection rather than through the keymap. */
@@ -162,46 +171,207 @@ test("a chord whose command cannot run says why instead of doing nothing", async
   await expect(page.locator("#linkDialog")).toBeHidden();
 });
 
-test("every chord the palette advertises is one the editor can run", async ({ page }) => {
+// Both keymaps, from either host. `data-command-shortcut` holds the RENDERED
+// label — `formatShortcut(chord)`, which is identity on Apple and "Ctrl+Shift+P"
+// everywhere else — while `KEYMAP` declares the chord in Apple glyphs. The first
+// version of this test compared the two directly, so it passed on a Mac (where
+// the rendering is a no-op) and reported all 37 advertised chords as unbound on
+// the Linux CI runner, which is where it ran:
+//
+//     Ctrl+S is printed by the palette but is in no keymap row
+//     Ctrl+Z is printed by the palette but is in no keymap row
+//     … 35 more
+//
+// That is the identity this test exists to guard, failing in the guard itself.
+// The comparison now renders the declaration the same way the palette does, and
+// both keymaps are driven from either host by telling the editor which keyboard
+// it is in front of — because a chord table with a per-platform row is a thing no
+// single-platform run can check, and this one had a per-platform row (⌃Space).
+const KEYBOARDS = {
+  apple: {
+    platform: "MacIntel",
+    uaPlatform: "macOS",
+    ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  },
+  standard: {
+    platform: "Linux x86_64",
+    uaPlatform: "Linux",
+    ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  },
+};
+
+/** Makes `keyboardPlatform()` resolve to one keymap regardless of the host.
+ *
+ *  All three hints are overridden because `keyboardPlatform` joins them and
+ *  matches /mac/ anywhere in the result — overriding only the user agent leaves
+ *  `navigator.platform` saying "MacIntel" and the spoof silently does nothing. */
+function useKeyboard({ platform, uaPlatform, ua }) {
+  for (const [name, value] of [
+    ["platform", platform],
+    ["userAgent", ua],
+    ["userAgentData", { platform: uaPlatform }],
+  ]) {
+    Object.defineProperty(navigator, name, { configurable: true, get: () => value });
+  }
+}
+
+for (const [keyboard, hints] of Object.entries(KEYBOARDS)) {
+  test(`every chord the palette advertises is one the editor can run (${keyboard} keyboard)`, async ({
+    page,
+  }) => {
+    await page.addInitScript(useKeyboard, hints);
+    await gotoEditor(page);
+    await clickIntoFirstPage(page);
+    // The palette is opened through a real surface rather than its own chord: the
+    // chord's modifier is the thing under test on one of these two runs, and a
+    // test that cannot open its own subject would fail for the wrong reason.
+    await openCommandPalette(page);
+
+    // The surfaces and the dispatcher read ONE table, so what the palette prints
+    // must be exactly what the dispatcher would match. Asked of the running app
+    // rather than of the module, so a build that shipped a stale copy of either
+    // side fails here.
+    const result = await page.evaluate(async () => {
+      const { KEYMAP, chordCommand } = await import("/src/keymap.mjs");
+      const { keyboardPlatform, parseShortcut, formatShortcut } = await import(
+        "/src/keyboard.mjs"
+      );
+      const platform = keyboardPlatform(navigator);
+      const advertised = [...document.querySelectorAll("#cmdList [data-command-shortcut]")].map(
+        (el) => el.dataset.commandShortcut,
+      );
+      const out = [];
+      for (const label of new Set(advertised)) {
+        const row = KEYMAP.find(
+          (r) =>
+            formatShortcut(r.chord, platform) === label &&
+            (!r.platform || r.platform === platform),
+        );
+        if (!row) {
+          out.push(`${label} is printed by the palette but is in no keymap row`);
+          continue;
+        }
+        const wanted = parseShortcut(row.chord);
+        if (!wanted.mod && !wanted.control && !wanted.alt) continue;
+        const apple = platform === "apple";
+        const event = {
+          key: wanted.key,
+          metaKey: apple ? wanted.mod : false,
+          ctrlKey: apple ? wanted.control : wanted.mod || wanted.control,
+          altKey: wanted.alt,
+          shiftKey: wanted.shift,
+        };
+        if (chordCommand(event, platform, { inEditor: true }) !== row.command) {
+          out.push(`${label} is printed for ${row.command} but does not dispatch to it`);
+        }
+      }
+      return { mismatches: out, count: advertised.length, platform };
+    });
+
+    // Without this the spoof could be a no-op and the second run would silently
+    // be a duplicate of the first — the shape of unfailable guard this repo has
+    // shipped before (`105` CQ-003).
+    expect(result.platform, "the editor did not adopt the emulated keyboard").toBe(keyboard);
+    expect(result.count, "the palette advertises no chords at all").toBeGreaterThan(25);
+    expect(result.mismatches).toEqual([]);
+  });
+}
+
+// ---- History through the chord ----------------------------------------------
+//
+// Undo and redo had no direct chord guard. When the keymap rewrite moved ⌘Z off
+// an inline `keydown` branch onto the dispatcher, the only things that noticed a
+// broken undo were `line-numbers` and `shape-editing` — two specs about
+// something else entirely, which caught it by measuring ink in a margin and a
+// hex fill. That is an accident, not coverage: the diagnosis had to start from
+// "the numbers are still painted" and work backwards to the keyboard.
+//
+// So these two assert the GUARANTEE — the document is back in the state it was
+// in — rather than the mechanism, and they assert it for the two families the
+// history stack has to serve: an edit that changes TEXT, and an edit that
+// changes a paragraph's FORMATTING without changing a character.
+
+test("the history chords put the text back, and forward again", async ({
+  page,
+  consoleErrors,
+}) => {
   await gotoEditor(page);
   await clickIntoFirstPage(page);
-  await page.keyboard.press(`${MOD}+Shift+p`);
-  await expect(page.locator("#cmdPalette")).toBeVisible();
+  await moveCaretToDocStart(page);
 
-  // The surfaces and the dispatcher read ONE table, so what the palette prints
-  // must be exactly what the dispatcher would match. Asked of the running app
-  // rather than of the module, so a build that shipped a stale copy of either
-  // side fails here.
-  const mismatches = await page.evaluate(async () => {
-    const { KEYMAP, chordCommand } = await import("/src/keymap.mjs");
-    const { keyboardPlatform, parseShortcut } = await import("/src/keyboard.mjs");
-    const platform = keyboardPlatform(navigator);
-    const advertised = [...document.querySelectorAll("#cmdList [data-command-shortcut]")].map(
-      (el) => el.dataset.commandShortcut,
-    );
-    const out = [];
-    for (const label of new Set(advertised)) {
-      const row = KEYMAP.find((r) => r.chord === label && (!r.platform || r.platform === platform));
-      if (!row) {
-        out.push(`${label} is printed by the palette but is in no keymap row`);
-        continue;
-      }
-      const wanted = parseShortcut(row.chord);
-      if (!wanted.mod && !wanted.control && !wanted.alt) continue;
-      const apple = platform === "apple";
-      const event = {
-        key: wanted.key,
-        metaKey: apple ? wanted.mod : false,
-        ctrlKey: apple ? wanted.control : wanted.mod || wanted.control,
-        altKey: wanted.alt,
-        shiftKey: wanted.shift,
-      };
-      if (chordCommand(event, platform, { inEditor: true }) !== row.command) {
-        out.push(`${label} is printed for ${row.command} but does not dispatch to it`);
-      }
-    }
-    return { mismatches: out, count: advertised.length };
-  });
-  expect(mismatches.count, "the palette advertises no chords at all").toBeGreaterThan(25);
-  expect(mismatches.mismatches).toEqual([]);
+  // The a11y mirror is the document as the engine has it, one string per block,
+  // so "the document returned to its prior state" is a comparison of the whole
+  // reading order rather than of one element's text. `#undoBtn` is deliberately
+  // NOT the subject here — that button is the other surface, and this test is
+  // about the keyboard.
+  const before = await mirrorBlocks(page);
+  const marker = "CHORDUNDOMARKER";
+  await page.keyboard.type(marker);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "the typing never reached the document, so undo cannot be measured",
+    })
+    .toBe(true);
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n"), {
+      message: "the undo chord did not put the document back",
+    })
+    .toBe(before.join("\n"));
+
+  // Redo, both spellings Word binds. ⌘⇧Z first; then undo again so ⌘Y has
+  // something to put forward, because a chord that fires on an empty redo stack
+  // proves nothing.
+  await page.keyboard.press(`${MOD}+Shift+z`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "the redo chord did not put the typing back",
+    })
+    .toBe(true);
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => (await mirrorBlocks(page)).join("\n")).toBe(before.join("\n"));
+  await page.keyboard.press(`${MOD}+y`);
+  await expect
+    .poll(async () => (await mirrorBlocks(page)).join("\n").includes(marker), {
+      message: "⌘Y is bound to redo as well and must reach the same command",
+    })
+    .toBe(true);
+
+  // Leave the document as it was found.
+  await page.keyboard.press(`${MOD}+z`);
+  await expect.poll(async () => (await mirrorBlocks(page)).join("\n")).toBe(before.join("\n"));
+  expect(consoleErrors).toEqual([]);
+});
+
+test("the undo chord puts back a formatting change too", async ({ page, consoleErrors }) => {
+  await gotoEditor(page);
+  await clickIntoFirstPage(page);
+
+  // Not a text edit: alignment leaves every character in place, and it is the
+  // family `line-numbers` and `shape-editing` were incidentally covering — a
+  // property change whose undo has to travel the same chord to the same command.
+  const before = await reflected(page);
+  const wasCentered = before.center === "true";
+  const chord = wasCentered ? `${MOD}+l` : `${MOD}+e`;
+  const changed = wasCentered ? "start" : "center";
+
+  await page.keyboard.press(chord);
+  await expect
+    .poll(async () => (await reflected(page))[changed], {
+      message: `${chord} did not change the alignment, so undo cannot be measured`,
+    })
+    .toBe("true");
+
+  await page.keyboard.press(`${MOD}+z`);
+  await expect
+    .poll(async () => (await reflected(page))[changed], {
+      message: "the undo chord left the alignment applied",
+    })
+    .not.toBe("true");
+  expect(await reflected(page), "undo restored something other than the prior state").toEqual(
+    before,
+  );
+  expect(consoleErrors).toEqual([]);
 });

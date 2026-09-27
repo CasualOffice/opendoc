@@ -10,7 +10,7 @@
 // you had clicked one. The comment beside that handler asserted it was "the only
 // way to reach an object without a pointer" — which made the whole surface
 // mouse-gated, since nothing else could select one either.
-import { test, expect, stableBox } from "./fixtures.mjs";
+import { test, expect, stableBox, MOD } from "./fixtures.mjs";
 
 async function gotoFloat(page) {
   await page.goto("/editor.html?fixture=float");
@@ -32,7 +32,7 @@ async function selectFloatWithMouse(page) {
 }
 
 async function paletteCommands(page, query) {
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press(`${MOD}+Shift+KeyP`);
   await expect(page.locator("#cmdInput")).toBeVisible();
   await page.locator("#cmdInput").fill(query);
   return page.locator("#cmdList [role=option]");
@@ -163,13 +163,13 @@ test("inserting the first object enables the object commands, with no reload", a
   });
 
   // A blank document: the one state where the answer is "no objects".
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press(`${MOD}+Shift+KeyP`);
   await page.locator("#cmdInput").fill("New blank");
   await page.locator("#cmdList [role=option]").first().click();
   await expect(page.locator("#docTitle")).toHaveValue("Untitled document.docx");
 
   const selectNext = async () => {
-    await page.keyboard.press("Meta+Shift+KeyP");
+    await page.keyboard.press(`${MOD}+Shift+KeyP`);
     await page.locator("#cmdInput").fill("select next object");
     const row = page.locator('#cmdList [data-command-id="object.selectNext"]').first();
     await expect(row).toBeVisible();
@@ -189,7 +189,7 @@ test("inserting the first object enables the object commands, with no reload", a
 
   // Insert one. Nothing reloads; the only thing that can make the answer change
   // is the invalidation at the edit choke point.
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press(`${MOD}+Shift+KeyP`);
   await page.locator("#cmdInput").fill("text box");
   await page.locator('#cmdList [data-command-id="insert.textbox"]').first().click();
   // A fresh text box opens for TEXT ENTRY rather than merely being selected, which
@@ -204,7 +204,7 @@ test("inserting the first object enables the object commands, with no reload", a
   ).toBe(false);
 
   // And back again: undo removes it, so the answer must return to "no objects".
-  await page.keyboard.press("Meta+KeyZ");
+  await page.keyboard.press(`${MOD}+KeyZ`);
   await expect.poll(async () => (await selectNext()).disabled).toBe(true);
 
   expect(consoleErrors).toEqual([]);

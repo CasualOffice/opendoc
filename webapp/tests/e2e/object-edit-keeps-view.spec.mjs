@@ -25,7 +25,7 @@
 // thirteen times: the fourteenth object command would have forgotten it. This
 // spec is written against that rule rather than against any one command, so a
 // new object operation is covered on the day it lands.
-import { test, expect, stableBox } from "./fixtures.mjs";
+import { test, expect, stableBox, MOD } from "./fixtures.mjs";
 
 /** Selecting the float in `float.docx`. The position is the one
  *  `object-command-reach.spec.mjs` uses, for the same object. */
@@ -60,7 +60,7 @@ async function scrollAwayFromCaret(page) {
 /** Runs an object command from the palette, so the object need not be on screen
  *  for the gesture — which is the whole point of the scenario. */
 async function runObjectCommand(page, query, match) {
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press(`${MOD}+Shift+KeyP`);
   await expect(page.locator("#cmdInput")).toBeVisible();
   await page.locator("#cmdInput").fill(query);
   const options = page.locator("#cmdList [role=option]");

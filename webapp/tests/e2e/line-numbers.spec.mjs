@@ -12,7 +12,7 @@
 // from the model's side and no user could see a number. `section-running-content`
 // records the same trap ("the previous specs were green while the wrong body was
 // being edited precisely because they only asserted host state").
-import { test, expect, gotoEditor, clickIntoFirstPage } from "./fixtures.mjs";
+import { test, expect, gotoEditor, clickIntoFirstPage, MOD } from "./fixtures.mjs";
 
 /** Ink in the leading margin of page one — the strip a line number is painted
  *  into. `place_line_numbers` right-aligns each number `w:distance` to the left
@@ -92,7 +92,7 @@ test("asking for line numbers puts numbers in the margin, and undo takes them aw
   expect(await activePreset(page)).toBe("newPage");
   await page.keyboard.press("Escape");
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect
     .poll(() => marginInk(page), { message: "undo clears the numbers" })
     .toBe(unnumbered);
@@ -213,7 +213,7 @@ test("the control is reachable from the palette as well as the ribbon", async ({
   // exactly one surface IS the defect, so the palette row has to open the same
   // popover rather than being a row that does nothing. It is declared
   // `ownsClick`, which is the one thing that could make it a dead row.
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press(`${MOD}+Shift+p`);
   await page.locator("#cmdInput").fill("line numbers");
   await page.locator(".cmd-item", { hasText: "Line numbers" }).first().click();
   await expect(page.locator("#lineNumbersMenu")).toBeVisible();

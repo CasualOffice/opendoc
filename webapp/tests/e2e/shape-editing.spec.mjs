@@ -85,7 +85,7 @@ test("Shape Fill applies a color and undo puts the old one back", async ({
   await expect.poll(async () => (await shapeFormat(page))?.fill).toBe("#ff0000");
   await expect(page.locator("#undoBtn")).toBeEnabled();
 
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   await expect.poll(async () => (await shapeFormat(page))?.fill).toBe(before.fill);
 
   expect(consoleErrors).toEqual([]);
