@@ -58,7 +58,11 @@ export const EN_STRINGS = Object.freeze({
   "headerFooter.stateOn": "on",
   "headerFooter.stateOff": "off",
   "headerFooter.changeFailed": "Could not change the page setup: {message}",
-  "headerFooter.settingsCommand": "Header and footer settings\u2026",
+  // Word's own word for this group: the Header & Footer tab's OPTIONS group.
+  // It was "settings", which is the word the Settings command owns — typing
+  // "settings" in the palette then put this row ABOVE Settings itself, which is
+  // a worse answer to that query than the one it displaced.
+  "headerFooter.settingsCommand": "Header and footer options\u2026",
   // The Watermark dialog's Font list is built from the editor's font inventory,
   // so only its first entry is a word: the one that means "whatever face the
   // document already uses", which is what an absent `w:rFonts` resolves to.
