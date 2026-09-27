@@ -102,7 +102,7 @@ the host's grant, the events and their payloads, the refusal codes, the
 `postMessage` envelope, and the origin rule. `host_session.mjs` (in process) gates
 and dispatches from it; `host_bridge.mjs` is an envelope and an origin check over
 that same session object, not a second implementation; `host_client.mjs` generates
-a host's verbs from the same schema. The decision is recorded as **ADR-034**.
+a host's verbs from the same schema. The decision is recorded as **ADR-036** (it was drafted as ADR-034, a number two already-published experimental ADRs held; see the register).
 
 The exit gate is `webapp/tests/e2e/host-contract.spec.mjs`, driven from
 `webapp/embed.html`, which mounts the editor twice and drives both panels. It

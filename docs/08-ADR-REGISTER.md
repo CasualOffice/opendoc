@@ -475,7 +475,66 @@ last-writer-wins). A tombstoned operation is **reported through the disposition 
 - A CRDT adapter remains possible later behind the same seam for peer-to-peer or
   partition-tolerant merge, which relay-ordered OT deliberately does not attempt.
 
-## ADR-034 — The host contract is one schema with two transports, gated as a fourth door
+## ADR-034 — Experimental local PDF semantic reconstruction
+
+**Status:** Proposed experimental future feature; not accepted, implemented, supported,
+or part of the current v1 commitment. Designed in
+`131-PDF-SEMANTIC-RECONSTRUCTION-AND-BROWSER-OCR-ARCHITECTURE.md`.
+
+**Proposed decision:** If the experiment later graduates, import PDFs through a staged,
+browser-local reconstruction path. Native PDF evidence is extracted before selective
+OCR; providers emit a strict bounded `PdfEvidenceV1` stream; Rust/WASM alone validates
+that evidence and creates the normalized `v1::Document`, source envelope, and
+compatibility report. OCR providers never emit DOCX or bypass the normalized model.
+Any future graduated release baseline has no remote document processing and no silent
+cloud fallback.
+
+**Why proposed:** PDF is a fixed-layout format and often lacks editable authoring
+semantics. Treating OCR Markdown or a third-party converted DOCX as truth would bypass
+the repository's normalized-model, loss-reporting, security, and determinism
+invariants. A staged evidence boundary can reuse the existing model and writers while
+keeping provider-specific inference outside editor state.
+
+**Proposed consequence:** the synchronous `FormatImporter` contract remains unchanged
+for current formats; a separate staged capability sits behind the target async SDK open
+surface. PDF parsing/OCR runs in bounded Workers, model weights remain outside the live
+OpenDoc WASM memory, and commit is atomic after schema validation. Doc 98's PDF-import
+non-goal and `PdfAdapter::can_import == false` remain authoritative until this ADR is
+accepted and the experimental graduation gates in doc 131 pass. PDF.js,
+PaddleOCR.js/ONNX Runtime Web, Tesseract.js, OvisOCR2, and UnlimitedOCR are research
+candidates only; this proposed ADR accepts no dependency or model.
+
+## ADR-035 — Experimental document assistance, semantic retrieval, and MCP adapter
+
+**Status:** Proposed experimental future feature; not accepted, implemented, supported,
+or part of the current v1 commitment. Designed in
+`132-EXPERIMENTAL-DOCUMENT-ASSISTANCE-SEMANTIC-SEARCH-AND-MCP-ARCHITECTURE.md`.
+
+**Proposed decision:** If this experiment later graduates, make user scenarios—not
+MCP tools or a particular model—the product boundary. A shared Document Assistance
+Layer resolves explicit document scope, gathers bounded structured context, invokes a
+host-approved provider, and returns a reviewable result or typed change proposal.
+Accepted mutations pass through the normal command/transaction path as one undoable
+unit. Keep embeddings, chunks, summaries, provider data, and unaccepted proposals in a
+rebuildable `NodeId`-anchored sidecar. MCP is an optional external adapter over these
+same services; it is neither a core dependency nor an alternate mutation path.
+
+**Why proposed:** translation, rewriting, formatting, text/table transformation,
+summarization, semantic search, and agent workflows share scope, context, policy,
+review, and commit requirements. Designing those services once prevents the embedded
+assistant, host SDK, and MCP server from acquiring incompatible behavior or bypassing
+document-safety guarantees. Browser-local retrieval is feasible behind Worker and
+provider boundaries, but no single embedding or generation model fits every browser,
+language, document size, and host policy.
+
+**Proposed consequence:** PDF/OCR remains a separate import architecture under doc
+131 and ADR-034. No model, inference runtime, vector database, MCP package, network
+service, or browser companion is selected by this ADR. Graduation requires the DAI-0
+owner decisions and the privacy, injection-resistance, stale-proposal, determinism,
+retrieval-quality, resource, cross-browser, conformance, and approval gates in docs
+132 and 15. Until then, older MCP/package language in doc 83 is aspirational only.
+
+## ADR-036 — The host contract is one schema with two transports, gated as a fourth door
 
 **Status:** Accepted and implemented (`docs/126` phase 2). Schema:
 `webapp/src/host_contract.mjs`; Rust declaration: `crates/casual-doc-sdk/src/host.rs`.

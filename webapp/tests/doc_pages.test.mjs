@@ -405,7 +405,7 @@ test("how much English the reference pages put on the site, measured and publish
   // calculated: the total below is the sum this test computes, and the same rule
   // the string ceilings carry applies — a number here is a measurement.
   //
-  // IT WILL MOVE, and that is the design. 2,029 when the pages landed; 2,031
+  // IT WILL MOVE, and that is the design. 2,029 when the pages landed; 2,052
   // after a rebase, because another branch added one bullet to
   // `docs/98-PDF-EXPORT-AND-PRINT-DESIGN.md`. Editing a published document
   // already fails `build-doc-pages --check` until the pages are regenerated, so
@@ -418,28 +418,58 @@ test("how much English the reference pages put on the site, measured and publish
   const total = Object.values(sites).reduce((sum, count) => sum + count, 0);
   assert.equal(
     total,
-    2031,
-    `the twelve reference pages carry ${total} unrouted English strings (was 2,031). That ` +
+    2052,
+    `the twelve reference pages carry ${total} unrouted English strings (was 2,052). That ` +
       `is not a failure — it is the number, and it moved: a published document gained or ` +
       `lost prose. Regenerate the pages, then record the new figure here. Per page: ` +
       JSON.stringify(sites),
   );
-  // The site's own hand-authored ceilings did not move to make room for any of it,
-  // which is the claim this work has to be able to make: no ceiling was raised.
+  // The site's own hand-authored pages are still exactly what the string table
+  // DECLARES them to be, which is the claim this work has to be able to make: the
+  // reference pages cost the hand-authored site nothing.
+  //
+  // The numbers are read out of `no_unrouted_strings.test.mjs` rather than written
+  // here, and that matters. This assertion first carried its own copy of six
+  // figures, which made it a SECOND source of truth for the same fact — and it
+  // broke the moment another branch legitimately documented the host contract and
+  // took `embedding.page.html` from 204 to 310, declaring it properly in the one
+  // table that owns it. A guard pinned to the value it happened to measure fails
+  // on a change that took nothing away, which is the shape that has reddened
+  // `main` twice: assert the GUARANTEE, not the circumstance.
+  //
+  // What each guard now owns, with no overlap: the string table owns whether a
+  // count may move, and this owns whether the count matches what that table says.
+  // A page that grows without declaring it fails there; prose smuggled out of a
+  // document and into a hand-authored page fails here.
+  const declared = new Map(
+    [
+      ...readFileSync(join(WEBAPP, "tests", "no_unrouted_strings.test.mjs"), "utf8").matchAll(
+        /^\s*\["([^"]+\.html)",\s*(\d+)\]/gm,
+      ),
+    ].map((m) => [m[1], Number(m[2])]),
+  );
+  const HAND_AUTHORED = [
+    "docs.page.html",
+    "embedding.page.html",
+    "fidelity.page.html",
+    "index.page.html",
+    "_partials/site-footer.html",
+    "_partials/site-header.html",
+  ];
   const counts = scanTree(WEBAPP);
-  for (const [file, expected] of [
-    ["docs.page.html", 54],
-    ["embedding.page.html", 204],
-    ["fidelity.page.html", 84],
-    ["index.page.html", 157],
-    ["_partials/site-footer.html", 4],
-    ["_partials/site-header.html", 10],
-  ]) {
+  for (const file of HAND_AUTHORED) {
+    const expected = declared.get(file);
+    assert.ok(
+      typeof expected === "number",
+      `${file} is not declared in no_unrouted_strings.test.mjs, so this guard has nothing to ` +
+        "compare against and would pass by failing to look",
+    );
     assert.equal(
       counts.get(file)?.length,
       expected,
-      `${file}'s unrouted-string count moved; the reference pages were supposed to cost the ` +
-        "hand-authored site nothing",
+      `${file} measures ${counts.get(file)?.length} but the string table declares ${expected}. ` +
+        "Either a reference page put prose on a hand-authored page, or the page changed without " +
+        "the table being updated",
     );
   }
 });

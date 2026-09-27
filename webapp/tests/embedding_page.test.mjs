@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -445,8 +445,15 @@ test("everything under 'does not do yet' is still not done", () => {
     "casual-doc-wasm now uses casual-doc-sdk: the facade IS becoming the runtime, so the page " +
       "must stop saying it is not",
   );
-  const dependants = readdirSync(join(REPO, "crates"))
-    .filter((name) => name !== "casual-doc-sdk")
+  // Directories only, and only ones that really are crates. Reading
+  // `<entry>/Cargo.toml` for every DIRECTORY ENTRY threw `ENOTDIR` on a stray
+  // file — macOS drops `.DS_Store` into any folder someone opens in Finder — so
+  // the guard crashed instead of asserting. A guard that throws on the
+  // developer's filesystem and passes in CI is a guard people learn to ignore.
+  const dependants = readdirSync(join(REPO, "crates"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== "casual-doc-sdk")
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(join(REPO, "crates", name, "Cargo.toml")))
     .filter((name) => read(join(REPO, "crates", name, "Cargo.toml")).includes("casual-doc-sdk"));
   assert.deepEqual(
     dependants,

@@ -261,3 +261,52 @@ test("a document's heading states its own number", () => {
       "the right file",
   );
 });
+
+// An ADR number is an address too, and nothing was checking it.
+//
+// Two documents' decisions were published as ADR-034 and ADR-035. A branch
+// developed in parallel drafted its own ADR-034, and when the two merged, git
+// resolved the conflict by taking one side: `main` ended up with the register
+// running 032, 033, 034 — the SDK host contract — and **both experimental ADRs
+// gone**, while five documents went on citing ADR-034 and ADR-035 meaning the
+// decisions that had been deleted. A reader following those citations found a real
+// section about something else.
+//
+// This is the document-number collision one register down, and it is worse in one
+// respect: a document that disappears leaves a dangling path a guard can see,
+// whereas a deleted ADR section leaves the citations resolving to the WRONG
+// decision, silently. So: numbers unique, and contiguous from 1, because a gap in
+// this register is how a deletion looks.
+test("every ADR number is unique, and the register has no gaps", () => {
+  const register = readFileSync(join(repoRoot, "docs", "08-ADR-REGISTER.md"), "utf8");
+  const numbers = [...register.matchAll(/^##\s+ADR-(\d+)\s*—/gm)].map((m) => Number(m[1]));
+
+  // The half that fails when the guard breaks rather than when the tree does.
+  assert.ok(
+    numbers.length > 25,
+    `only ${numbers.length} ADR headings found — the scan is looking in the wrong place, and a ` +
+      "guard that finds no ADRs passes by failing to look",
+  );
+
+  const seen = new Set();
+  const duplicated = numbers.filter((n) => (seen.has(n) ? true : (seen.add(n), false)));
+  assert.deepEqual(
+    [...new Set(duplicated)].map((n) => `ADR-${String(n).padStart(3, "0")}`),
+    [],
+    "two decisions claim the same ADR number, so every citation of it is ambiguous. Give the " +
+      "newer one the next free number and update its citations",
+  );
+
+  // Contiguous from 1. A gap means a section was dropped — which is exactly what
+  // a merge did here — and the citations that pointed at it now point at nothing
+  // or, worse, at whatever took the number.
+  const sorted = [...seen].sort((a, b) => a - b);
+  const missing = [];
+  for (let n = 1; n <= sorted[sorted.length - 1]; n += 1) if (!seen.has(n)) missing.push(n);
+  assert.deepEqual(
+    missing.map((n) => `ADR-${String(n).padStart(3, "0")}`),
+    [],
+    "the ADR register skips a number. If a decision was superseded it keeps its section and " +
+      "says so; if a merge dropped one, restore it — a gap is how a deleted decision looks",
+  );
+});
