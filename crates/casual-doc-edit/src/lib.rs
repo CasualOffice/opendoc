@@ -30,6 +30,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
+use casual_doc_model::v1::FieldUpdateState;
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
 use casual_doc_model::v1::PageNumbering;
@@ -320,6 +321,11 @@ impl CommonField {
             kind,
             inlines,
             form: None,
+            // A field the user inserts is neither locked nor dirty: we just
+            // computed its cached result, so it is current, and nothing has asked
+            // for it to be frozen. `w:fldLock` is an author decision made after
+            // insertion, not a property of insertion.
+            update: FieldUpdateState::default(),
         }
     }
 }

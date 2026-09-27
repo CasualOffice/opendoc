@@ -1147,6 +1147,7 @@ fn form_field_wrapping_a_revision_does_not_orphan_a_region() {
             exit_macro: None,
             kind: FormFieldKind::TextInput(FormTextInput::default()),
         }),
+        update: Default::default(),
     };
     let paragraph = Paragraph {
         id: para_id,
@@ -1388,6 +1389,7 @@ fn deletion_wrapping_non_text_content_stays_idempotent() {
                 kind: FieldKind::Page,
                 inlines: Vec::new(),
                 form: None,
+                update: Default::default(),
             }))];
         }
     }

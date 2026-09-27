@@ -8111,6 +8111,7 @@ mod tests {
             FieldRange {
                 instruction: " TOC \\o \"1-3\" \\h \\z \\u ".to_owned(),
                 kind: FieldKind::Toc,
+                update: Default::default(),
             },
         );
         let start = InlineNode::FieldRangeStart(FieldRangeStart {
@@ -10460,6 +10461,7 @@ mod tests {
                 id: NodeId::from_parts(20, 1).unwrap(),
                 instruction: " FORMCHECKBOX ".to_owned(),
                 kind: casual_doc_model::v1::FieldKind::default(),
+                update: Default::default(),
                 // The cached-result run carries the authored size/color the box
                 // should inherit.
                 inlines: vec![InlineNode::Run(Run {
@@ -11718,6 +11720,7 @@ mod tests {
                 RunProperties::default(),
             )],
             form: None,
+            update: Default::default(),
         }));
         let authored_box = InlineNode::TextBox(Box::new(TextBox {
             hyperlink: None,

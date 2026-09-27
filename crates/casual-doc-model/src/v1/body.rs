@@ -1452,6 +1452,64 @@ pub struct DrawingHyperlink {
 /// Maximum field-instruction length, in UTF-8 bytes.
 pub const MAX_FIELD_INSTRUCTION_BYTES: usize = 4096;
 
+/// A field's OOXML **update** attributes: `w:fldLock` and `w:dirty`.
+///
+/// Both are author intent about *recalculation*, not formatting, and dropping
+/// either changes what a reader sees rather than how it looks:
+///
+/// * `locked` (`w:fldLock`) — **do not update this field.** The author froze the
+///   cached result deliberately (a dated letter, a quoted total, a `REF` to text
+///   that has since moved). Losing it lets Word refresh the field on the
+///   reader's machine, so the document's *content* changes silently.
+/// * `dirty` (`w:dirty`) — **the cached result is stale; recalculate on open.**
+///   Losing it makes a reader trust a cached value the producer had already
+///   marked out of date.
+///
+/// They are independent: a field may be both (Word's own UI can produce it, and
+/// `w:fldLock` wins there), so this is two flags rather than one tri-state.
+///
+/// One type for both encodings on purpose. `w:fldSimple` and the `w:fldChar`
+/// sequence carry the same two attributes (`CT_SimpleField` and `CT_FldChar`,
+/// ECMA-376 Part 1 §17.16.19 / §17.16.18), and so do the two model shapes a
+/// field can take — the inline [`Field`] and the paragraph-spanning
+/// `FieldRange`. Sharing the type is what makes it impossible for the two to
+/// drift into different semantics, and lets one writer emit both (`docs/128`
+/// §5).
+///
+/// Absent from the JSON snapshot when neither flag is set, which is the
+/// overwhelming majority of fields.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldUpdateState {
+    /// `w:fldLock` — Word must not update this field.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub locked: bool,
+    /// `w:dirty` — the cached result is stale and must be recalculated on open.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub dirty: bool,
+}
+
+impl FieldUpdateState {
+    /// Whether neither flag is set (serializes to nothing, and writes no
+    /// attribute).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        !self.locked && !self.dirty
+    }
+
+    /// Folds another reading of the same field's attributes into this one.
+    ///
+    /// A complex field may legally carry `w:fldLock` / `w:dirty` on any of its
+    /// `w:fldChar` markers, not only the `begin` Word writes them on, so the
+    /// importer merges what it finds rather than letting a later marker's flag
+    /// overwrite — or be overwritten by — an earlier one. Set wins, because the
+    /// attribute's absence is its default rather than an assertion of `false`.
+    pub const fn merge(&mut self, other: Self) {
+        self.locked |= other.locked;
+        self.dirty |= other.dirty;
+    }
+}
+
 /// An inline field: a retained instruction and its cached result.
 ///
 /// A field's dynamic value is not evaluated; `instruction` is the opaque field
@@ -1463,6 +1521,12 @@ pub const MAX_FIELD_INSTRUCTION_BYTES: usize = 4096;
 /// by `w:fldChar` with a `w:ffData` block) additionally carries `form` — its
 /// input configuration (field name, type, default, entries, checkbox state).
 /// `None` for an ordinary field.
+///
+/// `update` carries `w:fldLock` / `w:dirty` — see [`FieldUpdateState`]. The
+/// *encoding* the field arrived in (`w:fldSimple` or the four-run `w:fldChar`
+/// sequence) is deliberately **not** recorded: the two spellings are the same
+/// field to any reader, and everything is written back in the complex spelling
+/// Word itself writes (`docs/128` §5a).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Field {
@@ -1486,6 +1550,10 @@ pub struct Field {
     /// form field. `None` for an ordinary field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<FormFieldData>,
+    /// The `w:fldLock` / `w:dirty` update attributes. Default (neither set) for
+    /// a field the producer left updatable and current, which is most of them.
+    #[serde(default, skip_serializing_if = "FieldUpdateState::is_empty")]
+    pub update: FieldUpdateState,
 }
 
 /// A typed projection of a Word field's leading instruction keyword and its

@@ -187,6 +187,7 @@ fn with_running_content(count: u64) -> Document {
                         instruction: "PAGE".to_owned(),
                         inlines: vec![run(432, "1")],
                         form: None,
+                        update: Default::default(),
                     })),
                     run(433, " of "),
                     InlineNode::Field(Box::new(Field {
@@ -195,6 +196,7 @@ fn with_running_content(count: u64) -> Document {
                         instruction: "NUMPAGES".to_owned(),
                         inlines: vec![run(435, "1")],
                         form: None,
+                        update: Default::default(),
                     })),
                 ],
             })],
@@ -271,6 +273,7 @@ fn with_restarted_page_numbers(count: u64) -> Document {
                     instruction: "PAGE".to_owned(),
                     inlines: vec![run(512, "1")],
                     form: None,
+                    update: Default::default(),
                 }))],
             })],
         },

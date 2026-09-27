@@ -34176,6 +34176,7 @@ mod tests {
                 text: "3".to_owned(),
             })],
             form: None,
+            update: Default::default(),
         }));
         let (handle, source_id, target_id) = toc_row_handle(field);
         assert_toc_row_is_clickable(&handle, source_id, target_id);

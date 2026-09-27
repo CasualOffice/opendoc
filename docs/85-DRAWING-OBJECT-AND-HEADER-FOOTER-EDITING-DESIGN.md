@@ -512,11 +512,29 @@ has **no `link_to_previous` field**. For editing we must decide (§9-Q7):
   `HeaderFooter` body (copying the inherited content) and add a `HeaderFooterRef`
   for that section/kind (`SetSectionRunningRef` with `Some`).
 - **Re-link** (turn "Link to Previous" back on) = remove the section's
-  `HeaderFooterRef` (`SetSectionRunningRef` with `None`) so it inherits again;
-  the now-orphaned body is garbage-collected on export.
+  `HeaderFooterRef` (`SetSectionRunningRef` with `None`) so it inherits again.
+  The now-orphaned body **stays in the model** and is **not written to the
+  package**: `casual-doc-export`'s semantic writer computes the set of running
+  bodies some `w:sectPr` actually references (`referenced_running_bodies`) and
+  skips every `headers` / `footers` entry outside it, reporting the drop as
+  `docx.export.header.unreferenced_dropped` /
+  `docx.export.footer.unreferenced_dropped`.
 - This keeps linkage as pure ref presence/absence (faithful to OOXML) rather than
   adding a boolean the writer would have to reconcile — **recommended**, pending
   owner confirmation.
+
+**Correction (2026-09-27).** This section previously said the orphaned body "is
+garbage-collected on export". That was **not true when it was written**: the
+writer iterated `definitions.headers` / `definitions.footers` with `.enumerate()`
+and emitted every entry as a `word/headerN.xml` part with a relationship,
+referenced or not, with no reachability pass anywhere. So *n* Link-to-Previous
+toggles left *n* unreferenced parts and every save wrote them all out again —
+unbounded package growth driven by a checkbox. A design doc asserting behaviour
+the code does not have is worse than a doc that admits a gap, because it is cited
+as evidence; the claim is now true because the pass exists, and the paragraph above
+names the function and the report ids so the next reader can check rather than
+believe. The decision, the alternative rejected and the watermark interaction are
+recorded in `docs/129-LINK-TO-PREVIOUS-DESIGN.md` §3a.
 
 ## 8b. Status reconciliation (2026-08-09)
 

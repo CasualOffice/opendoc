@@ -1769,6 +1769,7 @@ fn field_with_cached_result_validates_and_round_trips_json() {
         kind: FieldKind::Page,
         inlines: vec![run_inline(tid(11), "7")],
         form: None,
+        update: Default::default(),
     };
     let document = table_document(vec![field_paragraph(field)]).unwrap();
     let json = document.to_json().unwrap();
@@ -1793,6 +1794,7 @@ fn field_with_empty_cached_result_is_valid() {
         kind: FieldKind::Time { format: None },
         inlines: Vec::new(),
         form: None,
+        update: Default::default(),
     };
     assert!(table_document(vec![field_paragraph(field)]).is_ok());
 }
@@ -1805,6 +1807,7 @@ fn empty_field_instruction_is_rejected() {
         kind: FieldKind::default(),
         inlines: Vec::new(),
         form: None,
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -1983,6 +1986,7 @@ fn field_inside_a_hyperlink_is_accepted() {
         },
         inlines: vec![run_inline(tid(13), "2")],
         form: None,
+        update: Default::default(),
     }));
     assert!(
         table_document(vec![hyperlink_paragraph(vec![
@@ -2005,6 +2009,7 @@ fn a_field_inside_a_hyperlink_still_has_its_instruction_bounds_checked() {
         },
         inlines: Vec::new(),
         form: None,
+        update: Default::default(),
     }));
     assert!(matches!(
         table_document(vec![hyperlink_paragraph(vec![field])]),
@@ -2025,6 +2030,7 @@ fn a_field_inside_a_hyperlink_is_still_validated_as_leaf_only() {
         kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
+        update: Default::default(),
     }));
     let outer = |inner: InlineNode, id: u64| {
         InlineNode::Field(Box::new(Field {
@@ -2035,6 +2041,7 @@ fn a_field_inside_a_hyperlink_is_still_validated_as_leaf_only() {
             },
             inlines: vec![inner],
             form: None,
+            update: Default::default(),
         }))
     };
     assert!(matches!(
@@ -2092,6 +2099,7 @@ fn hyperlink_inside_a_field_is_rejected() {
         },
         inlines: vec![inner_link],
         form: None,
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -2107,6 +2115,7 @@ fn nested_field_inside_a_field_is_rejected() {
         kind: FieldKind::Page,
         inlines: Vec::new(),
         form: None,
+        update: Default::default(),
     }));
     let field = Field {
         id: tid(10),
@@ -2116,6 +2125,7 @@ fn nested_field_inside_a_field_is_rejected() {
         },
         inlines: vec![inner],
         form: None,
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -2131,6 +2141,7 @@ fn duplicate_id_inside_a_field_result_is_rejected() {
         kind: FieldKind::Page,
         inlines: vec![run_inline(tid(10), "7")], // run id collides with field id
         form: None,
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -2160,6 +2171,7 @@ fn legacy_form_field_validates_and_round_trips_json() {
                 entries: vec!["Red".to_owned(), "Green".to_owned()],
             }),
         }),
+        update: Default::default(),
     };
     let document = table_document(vec![field_paragraph(field)]).unwrap();
     let reloaded =
@@ -2187,6 +2199,7 @@ fn form_field_payload_disagreeing_with_instruction_is_rejected() {
             exit_macro: None,
             kind: FormFieldKind::CheckBox(FormCheckBox::default()),
         }),
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -2215,6 +2228,7 @@ fn form_field_overlong_name_is_rejected() {
             exit_macro: None,
             kind: FormFieldKind::TextInput(FormTextInput::default()),
         }),
+        update: Default::default(),
     };
     assert!(matches!(
         table_document(vec![field_paragraph(field)]),
@@ -5143,6 +5157,7 @@ fn toc_definitions() -> Definitions {
         FieldRange {
             instruction: " TOC \\h ".to_owned(),
             kind: FieldKind::Toc,
+            update: Default::default(),
         },
     );
     definitions
@@ -5381,6 +5396,7 @@ fn r4_a_field_range_opened_inside_another_is_rejected() {
         FieldRange {
             instruction: " PAGE ".to_owned(),
             kind: FieldKind::Page,
+            update: Default::default(),
         },
     );
     let document = Document::new(
@@ -5409,6 +5425,7 @@ fn r4_two_crossing_field_ranges_are_rejected() {
         FieldRange {
             instruction: " PAGE ".to_owned(),
             kind: FieldKind::Page,
+            update: Default::default(),
         },
     );
     let document = Document::new(
@@ -5440,6 +5457,7 @@ fn two_field_ranges_in_sequence_are_accepted() {
         FieldRange {
             instruction: " TOC \\h \\c \"Figure\" ".to_owned(),
             kind: FieldKind::Toc,
+            update: Default::default(),
         },
     );
     Document::new(
@@ -5494,6 +5512,7 @@ fn a_field_range_instruction_must_be_non_empty_and_bounded() {
                 kind: FieldKind::Other {
                     keyword: "TOC".to_owned(),
                 },
+                update: Default::default(),
             },
         );
         let document = Document::new(tid(99), vec![paragraph_block(tid(1))], definitions);
