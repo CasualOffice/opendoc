@@ -8772,10 +8772,19 @@ mod vml_fill_tests {
 /// it is not an assertion that the field is updatable, which is why
 /// `FieldUpdateState::merge` ORs rather than overwrites.
 ///
+/// Absence is checked BEFORE the value is interpreted, because `is_true` answers
+/// the `w:val` question — where a missing value means `true`, as in `<w:b/>` —
+/// and reusing it on a missing attribute marked every field in every document
+/// locked and dirty. That is how this function first shipped, and the
+/// paragraph-spanning-TOC export guard caught it.
+///
 /// O(attributes on the element).
 fn field_update_state(element: &BytesStart<'_>) -> FieldUpdateState {
+    let flag = |name: &[u8]| {
+        attribute_value(element, name).is_some_and(|value| is_true(Some(value.as_str())))
+    };
     FieldUpdateState {
-        locked: is_true(attribute_value(element, b"fldLock").as_deref()),
-        dirty: is_true(attribute_value(element, b"dirty").as_deref()),
+        locked: flag(b"fldLock"),
+        dirty: flag(b"dirty"),
     }
 }

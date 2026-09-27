@@ -405,14 +405,35 @@ mod semantic_tests {
             .unwrap()
             .read_to_string(&mut xml)
             .unwrap();
+        // The single-paragraph field goes back out in the COMPLEX spelling — the one
+        // Word writes — not as the `w:fldSimple` this writer used to normalize every
+        // ordinary field down to. That normalization was the recorded gap `docs/128`
+        // §5a named, and this assertion is what closed it.
+        //
+        // Still not byte-identical to the source, and this says so rather than
+        // claiming a fidelity we do not have: `sample.docx` packs all four
+        // `fldChar`/`instrText` children into a SINGLE `w:r`, and we write one run per
+        // marker (which is also what Word writes). The field is the same field to any
+        // reader; the bytes are not the same bytes. `docs/128` §5.
         assert!(
-            xml.contains(r#"<w:fldSimple w:instr=" TOC \o &quot;1-3&quot; \h \z \u ""#),
-            "the single-paragraph field is written as the w:fldSimple the inline \
-             writer has always emitted. NOT byte-identical to the source's \
-             single-`w:r` complex field, and this test says so rather than claiming a \
-             fidelity we do not have: a `w:fldSimple` is a field Word updates, but \
-             Word itself writes the complex spelling, so the normalization is a real \
-             (recorded) gap. `docs/128` §5."
+            !xml.contains("<w:fldSimple"),
+            "no field is written as a w:fldSimple any more: {xml}"
+        );
+        let begin = xml
+            .find(r#"<w:fldChar w:fldCharType="begin"/></w:r>"#)
+            .expect("the field opens with a fldChar begin in its own run");
+        let instr = xml
+            .find(r#"<w:instrText xml:space="preserve"> TOC \o &quot;1-3&quot; \h \z \u </w:instrText>"#)
+            .expect("the TOC instruction is written as instrText, verbatim");
+        let separate = xml
+            .find(r#"<w:fldChar w:fldCharType="separate"/></w:r>"#)
+            .expect("a fldChar separate closes the prologue");
+        let end = xml
+            .find(r#"<w:fldChar w:fldCharType="end"/></w:r>"#)
+            .expect("a fldChar end closes the field");
+        assert!(
+            begin < instr && instr < separate && separate < end,
+            "begin -> instrText -> separate -> result -> end, in that order: {xml}"
         );
     }
 
@@ -2304,15 +2325,24 @@ mod semantic_tests {
                 segment.contains(&format!("PAGEREF {anchor}")),
                 "the PAGEREF instruction is INSIDE the {anchor} hyperlink: {segment}"
             );
-            // And we write the canonical simple spelling, valid there because
-            // `CT_Hyperlink`'s content model is `EG_PContent`.
-            assert_eq!(
-                segment.matches("<w:fldSimple").count(),
-                1,
-                "one w:fldSimple inside {anchor}: {segment}"
-            );
+            // And we write the complex spelling Word writes — ALL FOUR markers
+            // inside this hyperlink, in order. Counting the markers per hyperlink
+            // rather than grepping the part is what makes a field that escaped its
+            // link fail here: a `begin` in one row and the matching `end` in the next
+            // would leave this row short a marker.
+            for marker in ["begin", "separate", "end"] {
+                assert_eq!(
+                    segment
+                        .matches(&format!(r#"<w:fldChar w:fldCharType="{marker}"/>"#))
+                        .count(),
+                    1,
+                    "one fldChar {marker} inside {anchor}: {segment}"
+                );
+            }
             assert!(
-                segment.contains(&format!(r#"w:instr=" PAGEREF {anchor} \h ""#)),
+                segment.contains(&format!(
+                    r#"<w:instrText xml:space="preserve"> PAGEREF {anchor} \h </w:instrText>"#
+                )),
                 "the instruction is re-emitted verbatim inside {anchor}: {segment}"
             );
         }
