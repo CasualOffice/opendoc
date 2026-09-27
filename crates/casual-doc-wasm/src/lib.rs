@@ -86,8 +86,8 @@ use casual_doc_model::v1::{
 use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
-use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{NoteId, NoteKind};
+use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{
     Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
 };
@@ -23938,7 +23938,10 @@ mod tests {
     fn read_section_layout(doc: &WasmDocument, node: &str) -> serde_json::Value {
         let raw = doc.section_layout(node);
         let list: serde_json::Value = serde_json::from_str(&raw).expect("section layout json");
-        let current = list["current"].as_str().expect("a current section").to_owned();
+        let current = list["current"]
+            .as_str()
+            .expect("a current section")
+            .to_owned();
         list["sections"]
             .as_array()
             .expect("a section array")
@@ -24031,9 +24034,11 @@ mod tests {
             r#"{{"section":"{section}","verticalAlignment":"bottom"}}"#
         ))
         .expect("align to the bottom");
-        assert!(doc.document.definitions().sections[0]
-            .vertical_alignment
-            .is_some());
+        assert!(
+            doc.document.definitions().sections[0]
+                .vertical_alignment
+                .is_some()
+        );
 
         doc.set_section_layout(&format!(
             r#"{{"section":"{section}","verticalAlignment":null}}"#
@@ -24058,7 +24063,10 @@ mod tests {
         let sections: serde_json::Value =
             serde_json::from_str(&doc.page_setup_sections(&node)).expect("page setup json");
         let current = sections["sections"][0].clone();
-        let section = current["section"].as_str().expect("a section id").to_owned();
+        let section = current["section"]
+            .as_str()
+            .expect("a section id")
+            .to_owned();
         let margins = &current["pageMargins"];
 
         doc.set_page_setup(&format!(
