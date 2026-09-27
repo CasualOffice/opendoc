@@ -485,10 +485,13 @@ fn collect_inline_ids(inlines: &[InlineNode], out: &mut Vec<NodeId>) {
             InlineNode::Sdt(sdt) => collect_inline_ids(&sdt.inlines, out),
             InlineNode::TextBox(text_box) => collect_block_ids(&text_box.blocks, out),
             InlineNode::Group(group) => collect_group_ids(&group.children, out),
-            // Every remaining variant is a leaf with no node children. This arm is
-            // a read-only traversal, not a rebuild, so a new variant that reached
-            // it would be visited (its own id is pushed above) and would cost
-            // nothing — unlike `clone_inlines`, where a catch-all is the defect.
+            // container-set: this walk names all six containers — `Hyperlink`,
+            // `Field`, `Revision`, `Sdt`, `TextBox`, `Group` — above, so the
+            // catch-all covers leaves only. It is kept as a catch-all rather than
+            // 23 named arms because this is a read-only traversal, not a rebuild: a
+            // new variant reaching it is still VISITED (its own id is pushed above)
+            // and loses nothing, whereas in `clone_inlines` a catch-all is the
+            // defect itself.
             _ => {}
         }
     }

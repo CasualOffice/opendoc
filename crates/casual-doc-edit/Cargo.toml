@@ -21,6 +21,13 @@ serde_json.workspace = true
 # one, so there is no cycle.
 casual-doc-import.workspace = true
 casual-doc-ooxml.workspace = true
+# `paragraph_length_agrees_with_the_text_the_reader_sees` compares this crate's
+# `inline_text_len` against `casual_doc_layout::flow::node_plain_text`, the two
+# answers to "how long is this paragraph" whose disagreement has now been found
+# three times (HF-213). A same-crate test cannot make a fourth one fail the build;
+# this can. Dev-only, and the layout crate depends on `casual-doc-model` alone, so
+# there is no cycle.
+casual-doc-layout.workspace = true
 
 [lints]
 workspace = true
