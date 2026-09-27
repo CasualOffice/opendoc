@@ -339,9 +339,14 @@ mod tests {
     /// catch-all over `InlineNode` from a catch-all over another enum in the same
     /// function, so it asks for a delegation or a declaration from both — which is
     /// why `ensure_run_boundary` and `run_at_path_mut` were rewritten as `let`/`if
-    /// let` instead of arguing with it. It reads only this crate. And it cannot
-    /// check that a declaration's reason is *true*; it checks that one was written
-    /// and that it names a container.
+    /// let` instead of arguing with it. It reads only this crate. It cannot check
+    /// that a declaration's reason is *true*; it checks that one was written and
+    /// that it names a container. And a declaration attaches to whatever function
+    /// follows it, so inserting a new function between a declaration and its own
+    /// function moves the declaration to the newcomer — observed while
+    /// mutation-testing this guard. The build still fails, but it names the
+    /// dispossessed function rather than the new one, so read the diff and not only
+    /// the message.
     fn scanned_fns(production: &str) -> Vec<Scanned> {
         let lines: Vec<&str> = production.split('\n').collect();
         let mut out = Vec::new();

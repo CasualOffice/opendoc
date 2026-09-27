@@ -3020,6 +3020,20 @@ fn set_object_extent_in_inlines(
             InlineNode::TextBox(text_box) if text_box.id == object => {
                 return Some(core::mem::replace(&mut text_box.extent, extent));
             }
+            // A chart, diagram or OLE object with a cached preview FLOWS as that
+            // picture (`embedded_object_items`) and `collect_para_objects` reports it
+            // as an inline image, so the host draws resize handles on it. Without
+            // this arm those handles answered `NodeNotFound` — the same
+            // selectable-but-uneditable hole HF-214 is about, one node kind over.
+            // Its extent is mandatory in the model, so a `None` request leaves it
+            // unchanged exactly as it does for an anchored drawing.
+            InlineNode::EmbeddedObject(embedded) if embedded.id == object => {
+                let previous = Some(embedded.extent);
+                if let Some(new) = extent {
+                    embedded.extent = new;
+                }
+                return Some(previous);
+            }
             _ => {}
         }
         // Otherwise descend. Both axes: an image can be an inline sibling inside a
@@ -12280,6 +12294,123 @@ mod tests {
             None
         }
         in_blocks(document.body(), object)
+    }
+
+    /// HF-214, the alignment arm: a **chart with a cached preview** inside a field
+    /// result is resizable.
+    ///
+    /// `collect_para_objects` in `casual-doc-wasm` now reports a preview-bearing
+    /// `EmbeddedObject` as an inline image, because layout paints it as one. So the
+    /// host draws resize handles on it, and until this test there was nothing behind
+    /// them: `SetExtent` answered `NodeNotFound`. Selection finding an object that
+    /// editing refuses is worse than selection missing it, which is the whole reason
+    /// the two halves are paired.
+    ///
+    /// What is still NOT available on this node kind is stated rather than left to be
+    /// discovered: the model gives an `EmbeddedObject` no `descr` and no `crop`, so
+    /// alt text and cropping have nothing to store and are reported as a row rather
+    /// than faked.
+    #[test]
+    fn a_charts_preview_inside_a_field_result_is_resizable() {
+        use casual_doc_model::v1::{
+            EmbeddedKind, EmbeddedObject, EmbeddedPart, Extent, MediaId, MediaReference,
+        };
+        let media = MediaId::new(n(900));
+        let mut definitions = Definitions::default();
+        definitions.media.insert(
+            media,
+            MediaReference {
+                relationship_id: "rId9".to_owned(),
+                media_type: "image/png".to_owned(),
+                part_name: "word/media/image1.png".to_owned(),
+            },
+        );
+        let object = n(50);
+        let chart = InlineNode::EmbeddedObject(Box::new(EmbeddedObject {
+            id: object,
+            kind: EmbeddedKind::Chart,
+            part: EmbeddedPart {
+                relationship_id: "rId10".to_owned(),
+                relationship_type:
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+                        .to_owned(),
+                part_name: "word/charts/chart1.xml".to_owned(),
+            },
+            extra_parts: Vec::new(),
+            preview: Some(media),
+            extent: Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            },
+            prog_id: None,
+        }));
+        let mut d = Document::new(
+            n(1000),
+            vec![para(
+                2,
+                vec![run(3, "Chart "), field_holding(4, vec![chart])],
+            )],
+            definitions,
+        )
+        .expect("valid document");
+        let mut ids = IdGenerator::new(9);
+
+        let resized = Some(Extent {
+            width_emu: 1_828_800,
+            height_emu: 914_400,
+        });
+        let inverse = apply(
+            &mut d,
+            &mut ids,
+            &Operation::SetExtent {
+                object,
+                extent: resized,
+            },
+        )
+        .expect("a previewed chart inside a field result is resizable");
+        assert_eq!(
+            embedded_extent(&d, object),
+            resized.expect("the request carried a size"),
+            "the resize must reach the embedded object inside the field's result"
+        );
+        apply(&mut d, &mut ids, &inverse).expect("the inverse applies");
+        assert_eq!(
+            embedded_extent(&d, object),
+            Extent {
+                width_emu: 914_400,
+                height_emu: 457_200,
+            },
+            "and restores the authored extent exactly — the operation is self-inverse"
+        );
+    }
+
+    /// The extent of the embedded object `object`, by an oracle written out here for
+    /// the reason `find_drawing` is.
+    fn embedded_extent(document: &Document, object: NodeId) -> casual_doc_model::v1::Extent {
+        // container-set: this reads one known fixture shape — a paragraph holding a
+        // `Field` — rather than the whole tree, so it names `Field` and nothing else
+        // on purpose; a general oracle already exists in `find_drawing`.
+        for block in document.body() {
+            let BlockNode::Paragraph(paragraph) = block else {
+                continue;
+            };
+            for inline in &paragraph.inlines {
+                let Some(children) = (match inline {
+                    InlineNode::Field(field) => Some(&field.inlines),
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                for child in children {
+                    if let InlineNode::EmbeddedObject(embedded) = child
+                        && embedded.id == object
+                    {
+                        return embedded.extent;
+                    }
+                }
+            }
+        }
+        panic!("the fixture must hold the embedded object");
     }
 
     /// HF-213: a paragraph holding an inline text box is as long as **its own**
