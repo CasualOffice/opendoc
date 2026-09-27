@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "त्रिकोणीय बुलेट",
   "bulletGalleryMenu.triangularBullet.title": "त्रिकोणीय बुलेट",
   "capability.embedded": "यह संपादक किसी अन्य ऐप्लिकेशन में एम्बेड किया गया है",
+  "capability.notGranted": "होस्ट एप्लिकेशन ने इसकी अनुमति नहीं दी है",
   "caption.bodyOnly": "कैप्शन केवल दस्तावेज़ के मुख्य भाग में लग सकता है, हेडर, फ़ुटर या नोट में नहीं",
   "caption.inserted": "कैप्शन सम्मिलित किया गया।",
   "caption.numbersAlreadyRight": "हर कैप्शन पहले से ही सही संख्या दिखा रहा है",

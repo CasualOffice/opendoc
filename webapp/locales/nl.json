@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Driehoekig opsommingsteken",
   "bulletGalleryMenu.triangularBullet.title": "Driehoekig opsommingsteken",
   "capability.embedded": "Deze editor is ingesloten in een andere toepassing",
+  "capability.notGranted": "De hosttoepassing heeft dit niet toegestaan",
   "caption.bodyOnly": "Een bijschrift kan alleen in de hoofdtekst staan, niet in een koptekst, voettekst of noot",
   "caption.inserted": "Bijschrift ingevoegd.",
   "caption.numbersAlreadyRight": "Elk bijschrift toont al het juiste nummer",

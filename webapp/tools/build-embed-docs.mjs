@@ -96,7 +96,10 @@ const CHROME_NOTES = Object.freeze({
   open: "File ▸ Open is present and disabled, with the reason as its title.",
   new: "File ▸ New is present and disabled, with the reason as its title.",
   edit: "Decides the review mode the editor arrives in, and whether the Editing button is offered.",
-  comment: "Decides whether Suggesting is offered as a mode.",
+  comment: "Decides whether Suggesting is offered as a mode, and whether a comment can be resolved or deleted.",
+  save: "File ▸ Save is present and disabled, with the reason as its title.",
+  download: "Every File ▸ Export row is present and disabled, with the reason as its title.",
+  print: "File ▸ Print is present and disabled, with the reason as its title.",
   autosave: "Decides whether this origin keeps drafts of the visitor's typing at all.",
 });
 

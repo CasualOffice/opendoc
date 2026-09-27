@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Üçgen madde işareti",
   "bulletGalleryMenu.triangularBullet.title": "Üçgen madde işareti",
   "capability.embedded": "Bu düzenleyici başka bir uygulamaya gömülü",
+  "capability.notGranted": "Ana uygulama buna izin vermedi",
   "caption.bodyOnly": "Resim yazısı yalnızca belge gövdesine eklenebilir; üst bilgiye, alt bilgiye veya nota eklenemez",
   "caption.inserted": "Resim yazısı eklendi.",
   "caption.numbersAlreadyRight": "Her resim yazısı zaten doğru numarayı gösteriyor",

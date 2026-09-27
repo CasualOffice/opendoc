@@ -301,7 +301,11 @@ test("the chrome table names only capabilities the editor page really consults",
   for (const [, id] of region("chrome-table").matchAll(/<div class="disp-cell"><code>([a-z]+\.[a-z]+)<\/code><\/div>/g)) {
     assert.match(
       main,
-      new RegExp(`id: "${id}"[^\\n]*hostCapabilities\\(\\)\\.has`),
+      // Either spelling of the ONE authority: `HOST_CAPS` is `hostCapabilities()`
+      // hoisted once at startup, so accepting only the call form made this fail on
+      // a command gated through the hoisted constant — a guard pinned to a spelling
+      // rather than to the guarantee.
+      new RegExp(`id: "${id}"[^\\n]*(?:HOST_CAPS|hostCapabilities\\(\\))\\.has`),
       `the page says ${id} is capability-gated, and main.js does not gate it`,
     );
   }
@@ -347,11 +351,27 @@ test("everything under 'does not do yet' is still not done", () => {
   const consulted = new Set(
     [...main.matchAll(/(?:HOST_CAPS|hostCapabilities\(\))\.has\("([a-z]+)"\)/g)].map((m) => m[1]),
   );
-  for (const capability of consulted) {
+  // The claim is "no reading or preview chrome": no SURFACE is composed out for a
+  // role. So the thing to assert is not WHICH capabilities are consulted — that
+  // list grows every time another command is gated, and an allowlist of today's
+  // three made this guard fail on a change that only disabled more controls,
+  // which is the "pinned to a circumstance" shape that reddened `main` twice on
+  // 2026-09-26. What must hold is HOW they are consulted: a capability may
+  // disable a control, and may not hide or remove one.
+  // The hiding mechanisms this codebase actually uses. A bare `.remove()` is
+  // deliberately NOT here: `reviewCommentActions.remove()` removes a COMMENT, and
+  // matching it made this guard fail on a line that hides nothing. The narrower
+  // pattern can be evaded by a DOM `element.remove()`, so this is a tripwire for
+  // the ordinary case rather than a proof — which is worth saying out loud instead
+  // of implying a completeness it does not have.
+  const COMPOSES_OUT = /\.hidden\s*=|style\.display|removeChild|replaceChildren\(\s*\)/;
+  for (const line of main.split("\n")) {
+    if (!/(?:HOST_CAPS|hostCapabilities\(\))\.has\("/.test(line)) continue;
     assert.ok(
-      ["open", "new", "autosave"].includes(capability),
-      `main.js now consults "${capability}" — if that composes a surface out, the page's ` +
-        "'no reading or preview chrome' and chrome table both need revisiting",
+      !COMPOSES_OUT.test(line),
+      "a capability now HIDES a surface rather than disabling it: " +
+        `${line.trim().slice(0, 140)} — surface composition is real and welcome, but the ` +
+        "page's 'no reading or preview chrome' claim and its chrome table must change with it",
     );
   }
 

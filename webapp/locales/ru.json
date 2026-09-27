@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Треугольный маркер",
   "bulletGalleryMenu.triangularBullet.title": "Треугольный маркер",
   "capability.embedded": "Этот редактор встроен в другое приложение",
+  "capability.notGranted": "Хост-приложение не предоставило это разрешение",
   "caption.bodyOnly": "Название можно вставить только в основной текст документа, но не в колонтитул или сноску",
   "caption.inserted": "Название вставлено.",
   "caption.numbersAlreadyRight": "Все названия уже показывают правильный номер",

@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "三角形の箇条書き記号",
   "bulletGalleryMenu.triangularBullet.title": "三角形の箇条書き記号",
   "capability.embedded": "このエディターは別のアプリケーションに埋め込まれています",
+  "capability.notGranted": "ホストアプリケーションがこれを許可していません",
   "caption.bodyOnly": "図表番号は本文にのみ挿入できます。ヘッダー、フッター、脚注には挿入できません",
   "caption.inserted": "図表番号を挿入しました。",
   "caption.numbersAlreadyRight": "すべての図表番号はすでに正しい番号を表示しています",

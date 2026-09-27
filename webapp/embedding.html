@@ -325,17 +325,17 @@ function resolveFor(role) {
           <div class="disp-row">
             <div class="disp-name"><code>save</code></div>
             <div class="disp-cell">Write the document back out.</div>
-            <div class="disp-cell">browser (<code>allow-downloads</code>)</div>
+            <div class="disp-cell">browser (<code>allow-downloads</code>), chrome</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>download</code></div>
             <div class="disp-cell">Export to a file the visitor keeps.</div>
-            <div class="disp-cell">browser (<code>allow-downloads</code>)</div>
+            <div class="disp-cell">browser (<code>allow-downloads</code>), chrome</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>print</code></div>
             <div class="disp-cell">Open the browser's print dialog.</div>
-            <div class="disp-cell">browser (<code>allow-modals</code>)</div>
+            <div class="disp-cell">browser (<code>allow-modals</code>), chrome</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>edit</code></div>
@@ -537,7 +537,7 @@ function resolveFor(role) {
           inside a <code>readonly</code> embed and look at <em>Open…</em> — it is
           present, it is disabled, and its title says why. This is the layer that
           is least complete today: the editor page consults
-          <span data-claim="chrome-consulted-count">5</span> of the
+          <span data-claim="chrome-consulted-count">8</span> of the
           <span data-claim="capability-count">9</span> capabilities.
         </p>
         <!-- @generated chrome-table -->
@@ -555,7 +555,12 @@ function resolveFor(role) {
           <div class="disp-row">
             <div class="disp-name"><code>comment</code></div>
             <div class="disp-cell">—</div>
-            <div class="disp-cell">Decides whether Suggesting is offered as a mode.</div>
+            <div class="disp-cell">Decides whether Suggesting is offered as a mode, and whether a comment can be resolved or deleted.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>download</code></div>
+            <div class="disp-cell">—</div>
+            <div class="disp-cell">Every File ▸ Export row is present and disabled, with the reason as its title.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>edit</code></div>
@@ -572,10 +577,20 @@ function resolveFor(role) {
             <div class="disp-cell"><code>file.open</code></div>
             <div class="disp-cell">File ▸ Open is present and disabled, with the reason as its title.</div>
           </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>print</code></div>
+            <div class="disp-cell"><code>file.print</code></div>
+            <div class="disp-cell">File ▸ Print is present and disabled, with the reason as its title.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>save</code></div>
+            <div class="disp-cell"><code>file.save</code></div>
+            <div class="disp-cell">File ▸ Save is present and disabled, with the reason as its title.</div>
+          </div>
         </div>
         <!-- @end chrome-table -->
         <p class="doc-body">
-          The other <span data-claim="chrome-unconsulted-count">4</span> are not
+          The other <span data-claim="chrome-unconsulted-count">1</span> are not
           consulted by the chrome at all. <code>print</code>,
           <code>download</code> and <code>save</code> are withheld by the sandbox
           — which works, but the refusal arrives from the browser rather than from

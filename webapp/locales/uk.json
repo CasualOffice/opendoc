@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Трикутний маркер",
   "bulletGalleryMenu.triangularBullet.title": "Трикутний маркер",
   "capability.embedded": "Цей редактор вбудовано в інший застосунок",
+  "capability.notGranted": "Хост-застосунок не надав цього дозволу",
   "caption.bodyOnly": "Підпис можна вставити лише в основний текст документа, а не в колонтитул чи виноску",
   "caption.inserted": "Підпис вставлено.",
   "caption.numbersAlreadyRight": "Кожен підпис уже показує правильний номер",

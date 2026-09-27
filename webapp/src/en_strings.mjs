@@ -77,6 +77,7 @@ export const EN_STRINGS = Object.freeze({
   // application. A reason, not a silent absence — the UI floor forbids a
   // control that is simply missing with no explanation.
   "capability.embedded": "This editor is embedded in another application",
+  "capability.notGranted": "The host has not granted this",
   // The Outline panel's empty state. It moved into the catalogue when the panel's
   // rows moved to `outline_panel.mjs`: the module takes its vocabulary as input,
   // so this is the one place the sentence is written down.

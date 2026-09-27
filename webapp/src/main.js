@@ -12081,8 +12081,8 @@ function editorCommands(context = { surface: "palette" }) {
     // would be a lie printed in the palette.
     { id: "file.new", label: "New blank document", group: "File", kw: "new blank empty create start untitled document", noDoc: true, enabled: hostCapabilities().has("new"), disabledReason: t("capability.embedded"), run: () => void newBlankDocument() },
     { id: "file.open", label: "Open…", group: "File", kw: "load docx odt json txt", noDoc: true, enabled: hostCapabilities().has("open"), disabledReason: t("capability.embedded"), run: () => fileEl.click() },
-    { id: "file.save", label: "Save", group: "File", kw: "export download", run: () => saveDocument() },
-    ...exportCommands(exportDocumentAs),
+    { id: "file.save", label: "Save", group: "File", kw: "export download", enabled: HOST_CAPS.has("save"), disabledReason: t("capability.notGranted"), run: () => saveDocument() },
+    ...exportCommands(exportDocumentAs, HOST_CAPS.has("download"), t("capability.notGranted")),
     // Reachable with no document open, because the case it exists for is
     // arriving at a fresh tab after a crash (HF-011). Disabled WITH A REASON
     // when the store is empty — never a control that silently does nothing.
@@ -12098,7 +12098,7 @@ function editorCommands(context = { surface: "palette" }) {
         : "Autosave is off in an embedded editor",
       run: () => showDraftRecovery(),
     },
-    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", run: () => printDocument(doc) },
+    { id: "file.print", label: "Print", group: "File", kw: "print pages paper hard copy pdf", enabled: HOST_CAPS.has("print"), disabledReason: t("capability.notGranted"), run: () => printDocument(doc) },
     { id: "file.properties", label: "Document properties", group: "File", kw: "metadata title author", run: () => toggleProperties(true) },
     {
       id: "edit.undo",
@@ -12326,8 +12326,8 @@ function editorCommands(context = { surface: "palette" }) {
     // Resolve/Delete must have a menu home, not only a ribbon button:
     // `docs/105` command-surface parity forbids a capability reachable from one
     // surface, and `review-surface.spec.mjs` enforces it.
-    { id: "review.comment.resolve", label: t("reviewComment.resolve"), group: "Review", kw: "resolve close comment thread done", enabled: !!activeReviewCommentId, disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.resolve() },
-    { id: "review.comment.delete", label: t("reviewComment.delete"), group: "Review", kw: "delete remove comment thread", enabled: !!activeReviewCommentId, disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.remove() },
+    { id: "review.comment.resolve", label: t("reviewComment.resolve"), group: "Review", kw: "resolve close comment thread done", enabled: !!activeReviewCommentId && HOST_CAPS.has("comment"), disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.resolve() },
+    { id: "review.comment.delete", label: t("reviewComment.delete"), group: "Review", kw: "delete remove comment thread", enabled: !!activeReviewCommentId && HOST_CAPS.has("comment"), disabledReason: t("reviewComment.needsCaret"), run: () => void reviewCommentActions.remove() },
     {
       id: "review.comment",
       label: "Add comment",
@@ -13411,7 +13411,7 @@ function renderCommands(query) {
     item.tabIndex = -1;
     item.setAttribute("aria-selected", String(i === cmdSel));
     item.disabled = c.enabled === false;
-    if (c.disabledReason) item.title = c.disabledReason;
+    if (c.enabled === false && c.disabledReason) item.title = c.disabledReason;
     // The hint column shows the disabled reason when unavailable, else the
     // command's keyboard shortcut when it has one (so the palette teaches the
     // shortcut), else its group.

@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "三角形項目符號",
   "bulletGalleryMenu.triangularBullet.title": "三角形項目符號",
   "capability.embedded": "此編輯器已嵌入其他應用程式",
+  "capability.notGranted": "宿主應用程式未授予此權限",
   "caption.bodyOnly": "標號只能放在文件內文中，不能放在頁首、頁尾或註解裡",
   "caption.inserted": "已插入標號。",
   "caption.numbersAlreadyRight": "每個標號都已顯示正確的編號",

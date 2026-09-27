@@ -71,6 +71,7 @@
   "bulletGalleryMenu.triangularBullet.label": "Triangular bullet",
   "bulletGalleryMenu.triangularBullet.title": "Triangular bullet",
   "capability.embedded": "This editor is embedded in another application",
+  "capability.notGranted": "The host has not granted this",
   "caption.bodyOnly": "A caption can only go in the document body, not in a header, footer or note",
   "caption.inserted": "Caption inserted.",
   "caption.numbersAlreadyRight": "Every caption already shows the right number",
