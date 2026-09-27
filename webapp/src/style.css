@@ -1756,10 +1756,38 @@ body.modal-open {
      The ch ceiling keeps a long margin label from stretching it back out. */
   /* This declaration DOES NOT PARSE and never has — see `.field-dialog`, which
      explains why, and `dialog_density.test.mjs`, which ratchets it. Left as
-     written rather than corrected in passing: the one-word fix changes this
-     card's rendered width, and Page setup is not this change's to redesign. */
+     written rather than corrected in passing: `fit-content` on its own would size
+     this card to its content, and what this dialog needs is the opposite — a
+     stated width wide enough to hold two columns of groups. The declaration below
+     is the one that applies. */
   width: min(fit-content, 100%);
-  max-inline-size: min(100%, 68ch);
+  /* A STATED width. MEASURED, on a 1280x720 laptop: the body held 602px of
+     content in a 560px box, so 42px of this dialog — the bottom of the Columns
+     group — was already below the fold before this round added anything, and
+     `dialog-fit.spec.mjs` did not cover it. Two more groups (a Gutter field, which
+     `auto-fit` absorbs into the existing Margins rows for free, and Vertical
+     alignment, which does not) would have made that 108px. The fix is two balanced
+     columns of groups, which needs a width the single tall stack did not.
+
+     756px AND NOT WIDER, and the ceiling is not arbitrary: `--dialog-width-wide` is
+     760px, the widest constant in this file's dialog scale, and
+     `header-menu.spec.mjs` asserts this card stays under it. A first attempt at
+     this layout used 900px, which made Page setup wider than any token in the
+     design system — that is a change to the scale, and it belongs to the owner
+     rather than to a section-properties round. It reddened `header-menu` (received
+     900, expected < 760), and that is why the two declarations below exist.
+
+     What 756px costs, and how it is paid — every figure measured, not estimated:
+     at 756 the two columns are 265px each, and `.dialog-field-grid`'s shared track
+     floor is 144px at this viewport, so each column held ONE field and the five
+     margin fields stacked into 701px of content in a 560px box — WORSE than the 602
+     it started at. So the preview column gives back 32px it was not using, and the
+     field floor is lowered FOR THIS DIALOG ONLY to 7.75rem, which puts two fields
+     back in a column. Result: 485px of content in 485px of box, card 596px tall.
+     Page setup is in `dialog-fit`'s roster now, so neither the overflow nor the
+     width can come back unnoticed. */
+  width: min(756px, 100%);
+  max-inline-size: min(100%, 100ch);
 }
 
 /* `min(fit-content, 100%)` IS NOT VALID CSS, and it is written on five cards in
@@ -1791,8 +1819,13 @@ body.modal-open {
   display: grid;
   /* The preview column was a hard 250px and stretched to the full row height —
      587px of box around a 150x212 sheet, about a fifth of the whole dialog.
-     It is now sized by the thumbnail and pinned to the top, as Word's is. */
-  grid-template-columns: clamp(120px, 13vw, 160px) minmax(0, 1fr);
+     It is now sized by the thumbnail and pinned to the top, as Word's is.
+     Narrowed again from `clamp(120px, 13vw, 160px)`: the sheet inside it is
+     `min(150px, 100%)` and a laptop resolved that clamp to its 160px cap, so 32px
+     of the column was empty. Those 32px are what let the field grid below keep two
+     fields per column inside a card that stays under the 760px wide constant — see
+     `.page-setup-dialog`. */
+  grid-template-columns: clamp(110px, 10vw, 128px) minmax(0, 1fr);
   gap: clamp(16px, 2vw, 28px);
   align-items: start;
 }
@@ -1875,11 +1908,42 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
+/* Two columns of GROUPS, not one tall stack — a BALANCED MULTI-COLUMN FLOW and
+   not a grid, which is the point worth recording.
+   A two-column grid aligns rows, so each row is as tall as its taller group: the
+   160px Margins group would have pinned an 88px Page size group's row to 160px
+   and left 72px of white space beside it, and the total would have been the sum of
+   the row maxima rather than half the content. `columns` balances instead — it is
+   the mechanism designed for "flow these blocks into n columns of equal height",
+   and the groups here are exactly a flow of independent blocks.
+   `break-inside: avoid` keeps a group whole; the DOM order is unchanged, so tab
+   order still reads down the first column and then the second. */
 .page-setup-fields {
-  display: flex;
   min-width: 0;
-  flex-direction: column;
-  gap: 20px;
+  columns: 2;
+  column-gap: clamp(20px, 2.4vw, 28px);
+}
+
+/* The rhythm is a bottom margin rather than the flex `gap` this was, because a
+   gap does not exist between multi-column boxes. `.dialog-group` zeroes its own
+   margin, so this is scoped to the children of this one container. */
+.page-setup-fields > .dialog-group {
+  margin-bottom: 20px;
+  break-inside: avoid;
+}
+
+/* A LOWER track floor than the shared one, for this dialog only.
+   `.dialog-field-grid`'s floor is `clamp(7rem, 20vw, 9rem)`, and `20vw` is the
+   VIEWPORT's width, not the column's — so on any laptop it resolves to the 9rem
+   cap, 144px. That floor was written for fields laid out across the full width of a
+   dialog body. Here they sit inside a 265px multi-column column, where 144px means
+   exactly one field per row and five margin fields stacking into a 701px body.
+   7.75rem (124px) fits two, which is what the Top/Bottom and Left/Right pairs are
+   supposed to be — `.dialog-field-grid`'s own comment refuses stacking them, and at
+   this column width this is the only way to honour that. Scoped, because the shared
+   floor is right everywhere else it applies. */
+.page-setup-fields .dialog-field-grid {
+  grid-template-columns: repeat(auto-fit, minmax(clamp(7rem, 20vw, 7.75rem), max-content));
 }
 
 /* ---- Caption and Cross-reference (`109` OO-005) ---------------------------- */
@@ -2004,6 +2068,71 @@ body.modal-open {
      available space, so the `min()` bought nothing even in intent. */
   width: fit-content;
   max-inline-size: min(100%, 56ch);
+}
+
+/* ---- Header and footer settings ------------------------------------------- */
+/* Sized by what it holds, like the cards above: the widest row is the Position
+   pair, and the standard 640px constant would leave a third of every row empty.
+   `fit-content` on its own, NOT the unparseable `min(fit-content, …)` — see
+   `.field-dialog`. */
+.header-footer-settings-dialog {
+  /* A STATED width, not `fit-content`. Sized to the content this card measured
+     476px and held 598px of groups in a 542px body — 56px below the fold on a
+     1280x720 laptop, the same defect `dialog-fit.spec.mjs` was written for. The
+     four groups are short and the card was narrow, so the fix is the same balanced
+     two-column flow Page setup now uses, and that needs a width that fits two
+     `.dialog-field-grid` cells per column (2 x 144px plus the gaps). */
+  width: min(620px, 100%);
+  max-inline-size: min(100%, 76ch);
+}
+
+/* Balanced across two columns, for the reason `.page-setup-fields` records: a grid
+   would align rows and pin a short group's row to a tall neighbour's height. */
+.header-footer-settings-body {
+  min-width: 0;
+  columns: 2;
+  column-gap: clamp(20px, 2.4vw, 28px);
+}
+
+.header-footer-settings-body > .dialog-group {
+  margin-bottom: 20px;
+  break-inside: avoid;
+}
+
+/* Apply to and Position run the FULL width rather than living in a column.
+   Measured: at two columns this card gives each one 274px, and a
+   `.dialog-field-grid` cell is 144px — so "Header from top" and "Footer from
+   bottom" stacked, which is precisely the outcome `.dialog-field-grid`'s own
+   comment refuses for a pair of short number fields. Spanning gives that pair the
+   whole 588px and keeps it side by side, and the two taller groups below then
+   balance against each other, which is what the two columns are for. */
+.header-footer-settings-body > .dialog-group-span {
+  column-span: all;
+}
+
+/* Rhythm on the ROWS and not as a gap on the fieldset, for the reason
+   `.watermark-body` records: `fieldset { display: flex }` takes the legend out of
+   the flow inconsistently across engines, and these legends are what a screen
+   reader reads the checkboxes and radios out under. */
+.header-footer-settings-body .dialog-check + .dialog-check,
+.header-footer-settings-body .dialog-check + .dialog-note,
+.header-footer-settings-body .dialog-check + .dialog-field,
+.header-footer-settings-body .dialog-field-grid + .dialog-check {
+  margin-top: 12px;
+}
+
+/* "Start at" and its spinner read across, so the number belongs to the words
+   beside it rather than sitting under them. */
+.header-footer-settings-body .dialog-check {
+  flex-wrap: wrap;
+}
+
+/* The reason a disabled control carries, under the control it explains. Indented
+   to the checkbox's text so it reads as that row's footnote and not as a note
+   about the whole group. */
+#headerFooterLinkReason {
+  margin-top: 6px;
+  padding-inline-start: 26px;
 }
 
 /* ---- Drop cap ------------------------------------------------------------- */
@@ -7647,8 +7776,16 @@ body:not(.doc-loaded) .drop-title {
     width: 130px;
   }
 
+  /* One column on a phone. `columns: 2` in ~360px of card would give two ~160px
+     columns, and a `.dialog-field-grid` cell is already 112px minimum — so the
+     Margins pair would have stacked, which is the outcome `.dialog-field-grid`
+     exists to refuse. */
   .page-setup-fields {
-    gap: 18px;
+    columns: 1;
+  }
+
+  .page-setup-fields > .dialog-group {
+    margin-bottom: 18px;
   }
 }
 

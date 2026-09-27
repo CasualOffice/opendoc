@@ -120,6 +120,33 @@ const MODALS = [
     },
   },
   {
+    id: "headerFooterSettingsDialog",
+    name: "Header and footer settings",
+    // ONLYOFFICE's grouping of the band distances, the two running-content
+    // switches and the section's page numbering
+    // (`apps/documenteditor/main/app/view/HeaderFooterTab.js` L63-87). It goes
+    // through the shared `registerModal`, so it answers this contract by
+    // construction; it is in the table because the coverage test below is what
+    // makes that a fact rather than an intention.
+    //
+    // No surviving opener, for the same reason as Watermark and Drop cap: the
+    // button is wired from a surface table through `onButton`, which
+    // preventDefaults mousedown so the ribbon never takes the keyboard off the
+    // document. The requirement that actually holds for this route is that Escape
+    // puts the keyboard back where it was.
+    opener: null,
+    restore: EDITOR_SURFACE,
+    // "Header from top" is the dialog's first field and the thing it is most often
+    // opened for, which is where `initialFocus` puts the keyboard.
+    focus: "#headerFromTop",
+    async open(page) {
+      await gotoEditor(page);
+      await clickIntoFirstPage(page);
+      await page.locator('[data-tab="insert"]').click();
+      await page.locator("#headerFooterSettingsBtn").click();
+    },
+  },
+  {
     id: "dropCapDialog",
     name: "Drop cap",
     // Shipped in #614 carrying `aria-modal="true"` but never added to this

@@ -72,6 +72,8 @@ export function createPageSetup(io) {
   const marginBottom = el("pageMarginBottom");
   const marginLeft = el("pageMarginLeft");
   const marginRight = el("pageMarginRight");
+  const marginGutter = el("pageMarginGutter");
+  const verticalAlignment = el("pageVerticalAlignment");
   const applyBtn = el("pageSetupApply");
   const cancelBtn = el("pageSetupCancel");
   const closeBtn = el("pageSetupClose");
@@ -127,8 +129,12 @@ export function createPageSetup(io) {
     columnSeparator.checked = value.separator === true;
   }
 
-  function columnsPayload() {
-    const previous = current.columns;
+  /** The columns half of a `setPageSetup` payload, compared against `section`'s
+   *  own columns rather than the dialog's open-time snapshot: Apply reads the
+   *  document fresh, so what counts as "the column controls did not change" has to
+   *  be measured against the same fresh answer. */
+  function columnsPayload(section) {
+    const previous = section.columns;
     const count = Number(columnCount.value) || 1;
     const spaceTwips = fieldTwips(columnGap);
     const separator = columnSeparator.checked;
@@ -177,6 +183,30 @@ export function createPageSetup(io) {
     return list?.sections?.length ? list : null;
   }
 
+  /** Every section's vertical alignment and page numbering, or null.
+   *
+   *  A SECOND engine call rather than a second field on the first: `setPageSetup`
+   *  installs page size, margins, orientation and columns and is documented to
+   *  leave the rest of the section alone, so folding two more properties into that
+   *  payload would make a Page setup Apply silently rewrite values this dialog does
+   *  not show. It is a list for the same reason `pageSetupSections` is — the
+   *  Section dropdown can pick any section, and painting the CARET's alignment
+   *  under a dropdown reading "Section 2" is the defect that plumbing exists to
+   *  prevent. Both calls happen once per opening, not per frame; each is
+   *  O(document). */
+  function layoutSections() {
+    const doc = io.getDoc();
+    if (!doc) return null;
+    const raw = doc.sectionLayout(io.selectionNode());
+    const list = raw === "null" ? null : JSON.parse(raw);
+    return list?.sections?.length ? list : null;
+  }
+
+  /** One section's layout entry, by id. */
+  function layoutOf(sectionId) {
+    return layoutSections()?.sections?.find((entry) => entry.section === sectionId) ?? null;
+  }
+
   /** Paints every field from one section's geometry. Both the initial reflect
    *  and the Section dropdown's change handler come through here; they were two
    *  copies of the same fourteen lines, which is how the column fields came to
@@ -190,6 +220,13 @@ export function createPageSetup(io) {
     marginBottom.value = inchText(pageMargins.bottomTwips);
     marginLeft.value = inchText(pageMargins.startTwips);
     marginRight.value = inchText(pageMargins.endTwips);
+    // `w:gutter` absent is 0, which layout already resolves it to, so 0 is the
+    // honest reading and not a placeholder for "unset".
+    marginGutter.value = inchText(pageMargins.gutterTwips ?? 0);
+    // An absent `w:vAlign` is top everywhere in this pipeline, so "Top" is what
+    // the absent value shows — and choosing Top writes the property away again
+    // rather than asserting a default no other producer writes.
+    verticalAlignment.value = layoutOf(section.section)?.verticalAlignment ?? "top";
     reflectColumns(section.columns);
     const active =
       orientation ?? (pageSize.widthTwips > pageSize.heightTwips ? "landscape" : "portrait");
@@ -271,23 +308,116 @@ export function createPageSetup(io) {
     input.addEventListener("input", updatePreview);
   }
 
+  /** Whether the geometry controls say anything different from what `section`
+   *  already carries — the test that decides whether Apply issues `setPageSetup`
+   *  at all.
+   *
+   *  ONE APPLY MUST BE ONE UNDO. This dialog writes two property families through
+   *  two engine calls (`setPageSetup` for the geometry in `w:pgSz`/`w:pgMar`,
+   *  `setSectionLayout` for `w:vAlign`), and `apply_action_caret` pushes a history
+   *  entry for every call it is given — it has no no-op detection, by design, since
+   *  an operation that reinstalls the same value is still an operation. So an
+   *  unconditional `setPageSetup` made "change the vertical alignment and press
+   *  Apply" cost TWO presses of undo: one for the alignment, one for a geometry
+   *  write that changed nothing. Header and footer settings already compares each
+   *  half before writing it for this exact reason; this is the other half of that
+   *  family, and it was missed the first time.
+   *
+   *  Every distance compares against the value the FIELD WOULD SHOW for it, not
+   *  against the stored twips. `inchText` keeps two decimals, so a section holding
+   *  851 twips paints "0.59" and reads back as 850: comparing 850 against 851 would
+   *  call an untouched field changed and defeat the whole function. What this asks
+   *  is "did the user move this control", and the painted value is the only reading
+   *  that answers it. The rounding itself is this dialog's existing behaviour and is
+   *  unchanged — such a section keeps its 851 until something is actually edited,
+   *  where before Apply quietly rewrote it to 850.
+   *
+   *  Orientation compares on its EFFECTIVE value, the way `paintSection` paints it:
+   *  `w:pgSz/@w:orient` is absent on a portrait section and the control still reads
+   *  "portrait", so comparing the control against a stored `null` would call every
+   *  Apply a change. Skipping the write also stops Apply asserting an orientation
+   *  the document had merely implied.
+   *
+   *  Columns compare by IDENTITY, because `columnsPayload` returns the section's own
+   *  object when no column control moved; a structural comparison here would have to
+   *  re-decide "did the columns change", and two answers to one question is how they
+   *  come to disagree. */
+  function geometryMoved(section, columns) {
+    const size = section.pageSize ?? {};
+    const margins = section.pageMargins ?? {};
+    const painted = (twip) => inchesToTwips(inchText(twip ?? 0));
+    const effective =
+      section.orientation ??
+      ((size.widthTwips ?? 0) > (size.heightTwips ?? 0) ? "landscape" : "portrait");
+    return (
+      fieldTwips(widthInput) !== painted(size.widthTwips) ||
+      fieldTwips(heightInput) !== painted(size.heightTwips) ||
+      fieldTwips(marginTop) !== painted(margins.topTwips) ||
+      fieldTwips(marginBottom) !== painted(margins.bottomTwips) ||
+      fieldTwips(marginLeft) !== painted(margins.startTwips) ||
+      fieldTwips(marginRight) !== painted(margins.endTwips) ||
+      fieldTwips(marginGutter) !== painted(margins.gutterTwips) ||
+      columns !== section.columns ||
+      (orientationGroup.value() ?? "portrait") !== effective
+    );
+  }
+
   applyBtn.addEventListener("click", async () => {
     const doc = io.getDoc();
     if (!doc || !current) return;
-    const payload = {
-      section: current.section,
-      pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
-      pageMargins: {
-        ...current.pageMargins,
-        topTwips: fieldTwips(marginTop),
-        bottomTwips: fieldTwips(marginBottom),
-        startTwips: fieldTwips(marginLeft),
-        endTwips: fieldTwips(marginRight),
-      },
-      columns: columnsPayload(),
-      orientation: orientationGroup.value() ?? "portrait",
-    };
-    await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+    // Read fresh rather than trusting the snapshot this dialog opened on, for the
+    // same reason Header and footer settings does: the two dialogs share `w:pgMar`,
+    // and an Apply built from a stale `pageMargins` would carry a band distance
+    // backwards. It is also what makes the comparisons below honest — measuring
+    // "did this change" against an old reading is how a needed write gets skipped.
+    const fresh = sections()?.sections?.find((section) => section.section === current.section);
+    if (!fresh) return; // the section went away under us; say nothing, change nothing
+
+    const columns = columnsPayload(fresh);
+    if (geometryMoved(fresh, columns)) {
+      const payload = {
+        section: fresh.section,
+        pageSize: { widthTwips: fieldTwips(widthInput), heightTwips: fieldTwips(heightInput) },
+        pageMargins: {
+          // The spread still matters: it carries the two BAND distances this dialog
+          // does not show (`headerTwips`/`footerTwips`, which Header and footer
+          // settings owns), so opening Page setup and changing a margin cannot
+          // silently move a header.
+          ...fresh.pageMargins,
+          topTwips: fieldTwips(marginTop),
+          bottomTwips: fieldTwips(marginBottom),
+          startTwips: fieldTwips(marginLeft),
+          endTwips: fieldTwips(marginRight),
+          gutterTwips: fieldTwips(marginGutter),
+        },
+        columns,
+        orientation: orientationGroup.value() ?? "portrait",
+      };
+      await io.runEdit(() => doc.setPageSetup(JSON.stringify(payload)), { gate: true });
+    }
+    // Vertical alignment is a second engine call, and it only happens when the
+    // control actually changed: `setSectionLayout` writes the page numbering too,
+    // so an unconditional call would make every Page setup Apply a page-numbering
+    // write as well — and a value read at dialog-open time could by then be stale.
+    // Read fresh, compare, and write only the difference.
+    const wanted = verticalAlignment.value === "top" ? null : verticalAlignment.value;
+    const layout = layoutOf(fresh.section);
+    if (layout && (layout.verticalAlignment ?? null) !== wanted) {
+      await io.runEdit(
+        () =>
+          doc.setSectionLayout(
+            JSON.stringify({
+              section: fresh.section,
+              verticalAlignment: wanted,
+              // Carried through untouched. This dialog does not show page
+              // numbering, so Apply must not invent values for it.
+              pageNumberFormat: layout.pageNumberFormat ?? null,
+              pageNumberStart: layout.pageNumberStart ?? null,
+            }),
+          ),
+        { gate: true },
+      );
+    }
     toggle(false);
   });
 

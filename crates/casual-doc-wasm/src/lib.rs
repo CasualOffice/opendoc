@@ -87,6 +87,7 @@ use casual_doc_model::v1::{Fill, Rgba, ShapeStroke};
 use casual_doc_model::v1::{LineNumberRestart, LineNumbering};
 use casual_doc_model::v1::{MarkRevision, MarkRevisionKind};
 use casual_doc_model::v1::{NoteId, NoteKind};
+use casual_doc_model::v1::{PageNumbering, PageVerticalAlignment};
 use casual_doc_model::v1::{
     Watermark, WatermarkContent, WatermarkLayout, WatermarkPicture, WatermarkText,
 };
@@ -711,6 +712,8 @@ fn history_kind_for_ops(operations: &[Operation]) -> HistoryKind {
         Operation::UpdateReviewState { .. } => HistoryKind::Review,
         Operation::SetSectionGeometry { .. }
         | Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
         | Operation::SetSectionWatermark { .. } => HistoryKind::PageSetup,
         Operation::SetStyleDefinition { .. } => HistoryKind::StyleChange,
         Operation::InsertField { .. } | Operation::RemoveField { .. } => HistoryKind::FieldChange,
@@ -7157,6 +7160,91 @@ impl WasmDocument {
         .map_err(to_js)
     }
 
+    /// EVERY section's page-layout properties — vertical alignment and page
+    /// numbering — plus the section holding `node` as the current one. `null` only
+    /// when the document has no section at all.
+    ///
+    /// Shaped like [`pageSetupSections`](Self::page_setup_sections) and not like
+    /// [`lineNumbering`](Self::line_numbering) on purpose. The surfaces that show
+    /// these carry a Section dropdown, so a caret-only answer would paint the
+    /// caret's alignment under a dropdown reading "Section 2" — the exact defect
+    /// (one section's values shown while another's are written) that made
+    /// `pageSetupSections` a list in the first place. Line numbering and the
+    /// watermark can be caret-only because their surfaces have no such dropdown.
+    ///
+    /// Each value comes back in its ABSENT form when the section does not carry it
+    /// (`verticalAlignment: null` = top, `pageNumberStart: null` = continue from
+    /// the previous section), so a host reflecting this never has to hold a second
+    /// idea of what a default is.
+    ///
+    /// O(document): resolving `node` to its section is a document walk
+    /// (`section_of`). Call it when a surface opens, not per frame.
+    #[wasm_bindgen(js_name = sectionLayout)]
+    #[must_use]
+    pub fn section_layout(&self, node: &str) -> String {
+        let sections = &self.document.definitions().sections;
+        if sections.is_empty() {
+            return "null".to_string();
+        }
+        let current = self.section_of(node);
+        let payload = SectionLayoutSectionsJson {
+            current: current.to_string(),
+            sections: sections
+                .iter()
+                .map(|section| SectionLayoutJson {
+                    section: section.id.node_id().to_string(),
+                    vertical_alignment: section.vertical_alignment,
+                    page_number_format: section.page_numbering.format.clone(),
+                    page_number_start: section.page_numbering.start,
+                })
+                .collect(),
+        };
+        serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
+    }
+
+    /// Installs a section's vertical alignment and page numbering from a JSON
+    /// object in the shape [`section_layout`](Self::section_layout) returns.
+    /// ONE undoable action covering both, because they are one dialog's Apply and
+    /// two history entries would make the user press undo twice to reverse one
+    /// press of one button.
+    ///
+    /// Each field's ABSENT form clears the corresponding property rather than
+    /// leaving it alone, which is what makes this a write of the whole payload
+    /// and not a patch: `verticalAlignment: null` removes `w:vAlign` (top), and a
+    /// null format with a null start removes `w:pgNumType`. A caller therefore
+    /// sends back what it read, with the fields it changed replaced — the same
+    /// contract [`set_watermark`](Self::set_watermark) and
+    /// [`set_line_numbering`](Self::set_line_numbering) already have.
+    ///
+    /// Rejected, with the document left exactly as it was, if `pageNumberStart`
+    /// falls outside the model's domain.
+    #[wasm_bindgen(js_name = setSectionLayout)]
+    pub fn set_section_layout(&mut self, section_layout_json: &str) -> Result<EditResult, JsValue> {
+        let payload: SectionLayoutJson = serde_json::from_str(section_layout_json)
+            .map_err(|e| to_js(format!("invalid section layout payload: {e}")))?;
+        let section = NodeId::from_str(&payload.section)
+            .map(SectionId::new)
+            .map_err(|_| to_js("invalid section id".to_string()))?;
+        let caret = Pos::new(self.document.id(), 0);
+        self.apply_action_caret(
+            vec![
+                Operation::SetSectionPageNumbering {
+                    section,
+                    page_numbering: PageNumbering {
+                        format: payload.page_number_format,
+                        start: payload.page_number_start,
+                    },
+                },
+                Operation::SetSectionVerticalAlignment {
+                    section,
+                    vertical_alignment: payload.vertical_alignment,
+                },
+            ],
+            caret,
+        )
+        .map_err(to_js)
+    }
+
     /// The watermark of the section holding `node`, in the shape
     /// [`set_watermark`](Self::set_watermark) accepts. `kind` is `"none"` when the
     /// section has none, which is also what the dialog opens on.
@@ -13513,6 +13601,42 @@ struct LineNumberingJson {
     /// owns the paragraph scope.
     #[serde(default)]
     suppressed: bool,
+}
+
+/// The read and write shape of the section properties Word keeps on its Page
+/// Setup ▸ Layout tab: where the page's content sits vertically (`w:vAlign`) and
+/// how its pages are numbered (`w:pgNumType`).
+///
+/// One payload rather than two because they are one question to the host — "what
+/// does this section's page layout say" — answered by one `section_of` walk,
+/// which is O(document). Two entry points would mean two walks per dialog
+/// opening for no gain.
+///
+/// `verticalAlignment` is `null` for top, which is how an absent `w:vAlign` is
+/// read everywhere else in this pipeline. `pageNumberStart` is `null` for
+/// "continue the count from the previous section", which is how an absent
+/// `w:start` is read — there is no separate restart flag in OOXML and none is
+/// invented here.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionLayoutJson {
+    section: String,
+    #[serde(default)]
+    vertical_alignment: Option<PageVerticalAlignment>,
+    #[serde(default)]
+    page_number_format: Option<NumberFormat>,
+    #[serde(default)]
+    page_number_start: Option<i32>,
+}
+
+/// Every section's [`SectionLayoutJson`] plus which one holds the caret — the
+/// read side, shaped like `PageSetupSectionsJson` so a surface with a Section
+/// dropdown can paint any section rather than only the caret's.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionLayoutSectionsJson {
+    current: String,
+    sections: Vec<SectionLayoutJson>,
 }
 
 fn default_section_columns() -> SectionColumns {
@@ -22306,10 +22430,14 @@ fn caret_after(op: &Operation, inverse: &Operation, document: &Document) -> Pos 
         // Also document-global — see the SetCoreProperties comment above.
         Operation::SetSectionGeometry { .. } => Pos::new(doc_id, 0),
         // Section-scoped, and the caret does not move: turning line numbers on
-        // must not scroll away from what the user was reading.
-        Operation::SetSectionLineNumbering { .. } | Operation::SetSectionWatermark { .. } => {
-            Pos::new(doc_id, 0)
-        }
+        // must not scroll away from what the user was reading. Page numbering and
+        // vertical alignment are the same promise — re-aligning a page's content
+        // moves the text under the caret, and moving the caret too would lose the
+        // user's place in a document they only asked to re-align.
+        Operation::SetSectionLineNumbering { .. }
+        | Operation::SetSectionPageNumbering { .. }
+        | Operation::SetSectionVerticalAlignment { .. }
+        | Operation::SetSectionWatermark { .. } => Pos::new(doc_id, 0),
         // The style registry is document-global; a style edit routes through
         // `apply_action_caret` with the caller's own caret, so this is a neutral
         // placeholder (see the SetCoreProperties comment above).
@@ -23802,6 +23930,183 @@ mod tests {
         assert!(
             read_line_numbering(&doc, &node)["countBy"].is_null(),
             "undo turns numbering back off"
+        );
+    }
+
+    /// The caret's section's entry from `sectionLayout`, which answers for EVERY
+    /// section (the host's Section dropdown can paint any of them).
+    fn read_section_layout(doc: &WasmDocument, node: &str) -> serde_json::Value {
+        let raw = doc.section_layout(node);
+        let list: serde_json::Value = serde_json::from_str(&raw).expect("section layout json");
+        let current = list["current"]
+            .as_str()
+            .expect("a current section")
+            .to_owned();
+        list["sections"]
+            .as_array()
+            .expect("a section array")
+            .iter()
+            .find(|entry| entry["section"] == serde_json::Value::String(current.clone()))
+            .cloned()
+            .expect("the current section is in the list")
+    }
+
+    /// Vertical alignment and page numbering, through the host's own JSON surface
+    /// and out the other side of a DOCX save.
+    ///
+    /// `sample.docx` on purpose: it is genuinely Microsoft-Word-produced, so what
+    /// it carries is what Word actually writes rather than what another
+    /// implementation chose to. The round trip is the whole point of the row —
+    /// these two properties were reachable from nothing, and a UI that set a value
+    /// the exporter dropped would be worse than the gap it closed.
+    #[test]
+    fn section_layout_round_trips_through_docx() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+
+        let before = read_section_layout(&doc, &node);
+        assert!(
+            before["verticalAlignment"].is_null(),
+            "an ordinary Word document asserts no w:vAlign, which reads as top"
+        );
+        assert!(
+            before["pageNumberStart"].is_null(),
+            "and no w:start, which reads as continue-from-previous"
+        );
+        let section = before["section"].as_str().expect("a section id").to_owned();
+
+        doc.set_section_layout(&format!(
+            r#"{{"section":"{section}","verticalAlignment":"center",
+                 "pageNumberFormat":"upperRoman","pageNumberStart":7}}"#
+        ))
+        .expect("set the section layout");
+
+        let after = read_section_layout(&doc, &node);
+        assert_eq!(after["verticalAlignment"], "center");
+        assert_eq!(after["pageNumberFormat"], "upperRoman");
+        assert_eq!(after["pageNumberStart"], 7);
+        doc.document.validate().expect("document still valid");
+
+        // ONE undo, not two: the dialog's Apply is one action, so the two ops it
+        // carries are one history entry.
+        doc.undo().expect("undo the section layout change");
+        let undone = read_section_layout(&doc, &node);
+        assert!(
+            undone["verticalAlignment"].is_null() && undone["pageNumberStart"].is_null(),
+            "one undo reverses the whole Apply, not half of it"
+        );
+
+        doc.redo().expect("redo");
+        let bytes = doc.export_docx().expect("export the document");
+        let reopened = open_document(&bytes).expect("reopen the exported document");
+        let (reopened_node, _len) = reopened.ordered_paragraphs()[0];
+        let survived = read_section_layout(&reopened, &reopened_node.to_string());
+        assert_eq!(
+            survived["verticalAlignment"], "center",
+            "w:vAlign survives the save"
+        );
+        assert_eq!(
+            survived["pageNumberFormat"], "upperRoman",
+            "w:pgNumType/@w:fmt survives the save"
+        );
+        assert_eq!(
+            survived["pageNumberStart"], 7,
+            "w:pgNumType/@w:start survives the save"
+        );
+    }
+
+    /// Top alignment CLEARS `w:vAlign` rather than asserting it. An absent
+    /// attribute already means top in import, layout and export, so writing
+    /// `Some(Top)` would emit an attribute no other producer writes for the
+    /// default — and a document opened, looked at, and closed again would come back
+    /// changed.
+    #[test]
+    fn choosing_top_alignment_clears_the_property_instead_of_asserting_it() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let section = read_section_layout(&doc, &node.to_string())["section"]
+            .as_str()
+            .expect("a section id")
+            .to_owned();
+
+        doc.set_section_layout(&format!(
+            r#"{{"section":"{section}","verticalAlignment":"bottom"}}"#
+        ))
+        .expect("align to the bottom");
+        assert!(
+            doc.document.definitions().sections[0]
+                .vertical_alignment
+                .is_some()
+        );
+
+        doc.set_section_layout(&format!(
+            r#"{{"section":"{section}","verticalAlignment":null}}"#
+        ))
+        .expect("back to top");
+        assert!(
+            doc.document.definitions().sections[0]
+                .vertical_alignment
+                .is_none(),
+            "top is the ABSENT value, not PageVerticalAlignment::Top"
+        );
+    }
+
+    /// The band distances and the binding gutter ride the page-setup payload, which
+    /// is why they needed no new operation — but nothing had ever written one, so
+    /// this is the first proof that a host CAN and that the value survives a save.
+    #[test]
+    fn the_band_distances_and_the_gutter_round_trip_through_page_setup() {
+        let mut doc = open_document(SAMPLE_DOCX).expect("open sample docx");
+        let (node, _len) = doc.ordered_paragraphs()[0];
+        let node = node.to_string();
+        let sections: serde_json::Value =
+            serde_json::from_str(&doc.page_setup_sections(&node)).expect("page setup json");
+        let current = sections["sections"][0].clone();
+        let section = current["section"]
+            .as_str()
+            .expect("a section id")
+            .to_owned();
+        let margins = &current["pageMargins"];
+
+        doc.set_page_setup(&format!(
+            r#"{{"section":"{section}",
+                 "pageSize":{{"widthTwips":{w},"heightTwips":{h}}},
+                 "pageMargins":{{"topTwips":{t},"bottomTwips":{b},
+                                 "startTwips":{s},"endTwips":{e},
+                                 "headerTwips":1080,"footerTwips":900,"gutterTwips":720}},
+                 "orientation":null}}"#,
+            w = current["pageSize"]["widthTwips"],
+            h = current["pageSize"]["heightTwips"],
+            t = margins["topTwips"],
+            b = margins["bottomTwips"],
+            s = margins["startTwips"],
+            e = margins["endTwips"],
+        ))
+        .expect("set the band distances and the gutter");
+
+        let written = &doc.document.definitions().sections[0].page_margins;
+        assert_eq!(written.header_twips, Some(1080));
+        assert_eq!(written.footer_twips, Some(900));
+        assert_eq!(written.gutter_twips, Some(720));
+
+        let bytes = doc.export_docx().expect("export");
+        let reopened = open_document(&bytes).expect("reopen");
+        let survived = &reopened.document.definitions().sections[0].page_margins;
+        assert_eq!(
+            survived.header_twips,
+            Some(1080),
+            "w:pgMar/@w:header survives the save"
+        );
+        assert_eq!(
+            survived.footer_twips,
+            Some(900),
+            "w:pgMar/@w:footer survives the save"
+        );
+        assert_eq!(
+            survived.gutter_twips,
+            Some(720),
+            "w:pgMar/@w:gutter survives the save"
         );
     }
 

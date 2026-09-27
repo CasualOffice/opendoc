@@ -102,7 +102,14 @@ const CEILINGS = new Map([
   // 327 is still a real lowering: `main` had 338 and this branch had 328. The two
   // draft-recovery strings are pre-existing debt that became visible here, not debt
   // this change added, and they are left for whoever owns that dialog.
-  ["src/main.js", 327],
+  // 325 after the section-properties round: the two running-content variant
+  // toggles moved into `header_footer_settings.mjs` and took their four English
+  // sentences through the catalogue on the way — the two palette switch labels
+  // ("Different first page: on") became `headerFooter.*Switch` with a translated
+  // on/off, and the failure message and the two status lines became keys. The new
+  // module therefore carries ZERO unrouted strings and needs no entry here, which
+  // is the direction this table is for. Measured, not calculated.
+  ["src/main.js", 325],
   // The object right-click menu's nine row labels ("Wrap text", "Alt text…",
   // "Shape fill", "No fill", "Shape outline", "No outline", "Crop image",
   // "Properties…", "Delete"). They were nine of `main.js`'s 342 and moved here

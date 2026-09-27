@@ -160,8 +160,20 @@ const SRC = new URL("../src/", import.meta.url);
  *  which is the same enumeration the References tab is about and took its one
  *  English sentence into the catalogue on the way. Both are worth more than the
  *  lines: 156 lines of menu policy now have a test, and `buildOutline` is
- *  answerable without a browser. */
-const MAIN_JS_LINE_CEILING = 16629;
+ *  answerable without a browser.
+ *  Lowered to 16,616 by the section-properties round. The file was AT its ceiling
+ *  again, and the round needed a surface row, a palette row, a button id and a
+ *  module construction — so it paid the same way: the two running-content variant
+ *  toggles (`runningVariantState` / `toggleRunningVariant`) moved into
+ *  `header_footer_settings.mjs`, which is the dialog whose Options group is those
+ *  same two switches. That is worth more than the lines. The dialog's checkboxes
+ *  and the Insert band's buttons are now ONE implementation, so they cannot
+ *  disagree about what `w:titlePg` says, and the four English sentences those
+ *  functions built went into the catalogue on the way — which is why the unrouted
+ *  ceiling below moved too. Re-measured from the file AFTER rebasing onto
+ *  `origin/main` at e8cdf0e, not before: measuring first is the trap the notes
+ *  above record three times. */
+const MAIN_JS_LINE_CEILING = 16616;
 
 /** Modules that must stay free of the browser: they are the ones a unit test,
  *  a host page or a non-DOM runtime can use, and the only thing that keeps

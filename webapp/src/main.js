@@ -25,6 +25,7 @@ import { createDropCapDialog } from "./drop_cap.mjs";
 import { createReferenceCommands, objectMenuRows } from "./reference_commands.mjs";
 import { buildObjectContextCommands } from "./object_context_menu.mjs";
 import { renderOutline, reflectOutlineActive } from "./outline_panel.mjs";
+import { createHeaderFooterSettings } from "./header_footer_settings.mjs";
 import { createPageSetup } from "./page_setup.mjs";
 import { createGlyphPicker } from "./glyph_picker.mjs";
 import { EMOJI_GROUPS, SYMBOL_GROUPS } from "./glyph_sets.mjs";
@@ -370,6 +371,7 @@ const insertHeaderBtn = document.getElementById("insertHeaderBtn");
 const insertFooterBtn = document.getElementById("insertFooterBtn");
 const insertFirstPageVariantBtn = document.getElementById("insertFirstPageVariantBtn");
 const insertEvenOddVariantBtn = document.getElementById("insertEvenOddVariantBtn");
+const headerFooterSettingsBtn = document.getElementById("headerFooterSettingsBtn");
 const insertSymbolBtn = document.getElementById("insertSymbolBtn");
 const insertEmojiBtn = document.getElementById("insertEmojiBtn");
 // Layout band (docs/105 UX-010).
@@ -5236,24 +5238,10 @@ function updateRunningMarker(page, event) {
   else hideRunningMarker();
 }
 
-/** Which running-content variants are on for the page the user is on, read from
- *  the engine rather than a local flag so the labels can never drift from the
- *  document.
- *
- *  `w:titlePg` is per SECTION, so this is a question about a PAGE: on a document
- *  whose page 5 changed orientation, the first section's answer is not the answer
- *  for the section the user is reading. */
-function runningVariantState(page = runningEditPageOrView()) {
-  if (!doc) return { firstPage: false, evenOdd: false };
-  try {
-    return JSON.parse(doc.runningVariants(page?.pageNumber ?? 1));
-  } catch {
-    return { firstPage: false, evenOdd: false };
-  }
-}
-
 /** The page every running-content command acts on: the page whose band is open
- *  while editing one, otherwise the page in view. */
+ *  while editing one, otherwise the page in view. Stays here rather than moving
+ *  with the variant toggles, because it reads `runningEditPage` and `pages` — the
+ *  application's own state — and is handed to the module as `io.runningPage`. */
 function runningEditPageOrView() {
   if (runningEditPage) {
     return pages.find((page) => page.pageNumber === runningEditPage) ?? pageInView();
@@ -5261,40 +5249,17 @@ function runningEditPageOrView() {
   return pageInView();
 }
 
-/** Toggles Word's "Different First Page" / "Different Odd & Even Pages".
- *
- *  Each only says a variant APPLIES; its content is a separate header/footer
- *  reference, so turning one on for a document that has no such variant shows an
- *  empty band until one is created — which is what Word does too.
- *
- *  "Different first page" is per section, so it applies to the section owning the
- *  page the user is on; "Different odd & even pages" is document-scoped, as OOXML
- *  carries it. */
-async function toggleRunningVariant(which) {
-  if (!doc) return;
-  if (blockMutationInViewing()) return;
+/** Whether a section-property change is forbidden right now, having already said
+ *  why. The two review gates every page-setup edit shares, in one place: the
+ *  modules that own those surfaces take this as `io.blockedFromMutating` rather
+ *  than each carrying its own copy of the review policy. */
+function blockedFromPageSetup() {
+  if (blockMutationInViewing()) return true;
   if (reviewMode === "suggesting") {
     setStatus("Page-setup changes cannot be tracked yet; switch to Editing", "error");
-    return;
+    return true;
   }
-  const page = runningEditPageOrView();
-  const state = runningVariantState(page);
-  const next = !state[which];
-  try {
-    const result =
-      which === "firstPage"
-        ? doc.setFirstPageVariant(next, page?.pageNumber ?? 1)
-        : doc.setEvenOddVariant(next);
-    await applyEditResult(result);
-  } catch (err) {
-    setStatus(`Could not change the page setup: ${err.message ?? err}`, "error");
-    return;
-  }
-  setStatus(
-    which === "firstPage"
-      ? `Different first page ${next ? "on" : "off"}`
-      : `Different odd & even pages ${next ? "on" : "off"}`,
-  );
+  return false;
 }
 
 /** Inserts a footnote or endnote at the caret and puts the caret IN the new
@@ -8100,8 +8065,12 @@ const LAYOUT_SURFACE = [
   // the Insert menu and the palette only, so a chrome with no menu bar left them
   // palette-only. `pressed` is what makes the button say which way the switch is
   // set, the way the Review toggles do.
-  { command: "layout.firstPageVariant", buttons: () => [insertFirstPageVariantBtn], requires: "doc", pressed: () => runningVariantState().firstPage, run: () => toggleRunningVariant("firstPage") },
-  { command: "layout.evenOddVariant", buttons: () => [insertEvenOddVariantBtn], requires: "doc", pressed: () => runningVariantState().evenOdd, run: () => toggleRunningVariant("evenOdd") },
+  { command: "layout.firstPageVariant", buttons: () => [insertFirstPageVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().firstPage, run: () => headerFooterSettings.toggleVariant("firstPage") },
+  { command: "layout.evenOddVariant", buttons: () => [insertEvenOddVariantBtn], requires: "doc", pressed: () => headerFooterSettings.variantState().evenOdd, run: () => headerFooterSettings.toggleVariant("evenOdd") },
+  // Header and footer settings. No `label`/`kw` for the same reason as the two
+  // above: `editorCommands` declares the palette row, and a second declaration
+  // here would put two rows for one command in the palette.
+  { command: "layout.headerFooterSettings", buttons: () => [headerFooterSettingsBtn], requires: "doc", run: () => headerFooterSettings.open(true) },
   { command: "layout.arrange.wrap", label: "Wrap text around object", kw: "wrap text square tight through behind front object image shape arrange", buttons: () => [layoutWrapBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-inspector-wrap-select]") },
   { command: "layout.arrange.position", label: "Object position and size", kw: "position size move object image shape arrange exact geometry", buttons: () => [layoutPositionBtn], requires: "object", run: () => openObjectInspectorAt("[data-object-prop=left]") },
   {
@@ -12251,8 +12220,9 @@ function editorCommands(context = { surface: "palette" }) {
     // to both is a chrome change, not this fix.
     { id: "insert.lineBreak", label: "Line break", group: "Insert", kw: "soft line break newline same paragraph shift enter", enabled: !!selection && reviewMode !== "suggesting", disabledReason: reviewMode === "suggesting" ? "Line breaks cannot be tracked yet" : "Place the caret where the break belongs", run: () => void insertLineBreakAtSelection() },
     { id: "insert.link", label: "Add or edit link", group: "Insert", kw: "hyperlink url bookmark toc", enabled: insertCommandEnabled("insert.link", context), disabledReason: "Select text to add a link", run: () => editSelectionLink() },
-    { id: "layout.firstPageVariant", label: `Different first page: ${runningVariantState().firstPage ? "on" : "off"}`, group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("firstPage") },
-    { id: "layout.evenOddVariant", label: `Different odd & even pages: ${runningVariantState().evenOdd ? "on" : "off"}`, group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => toggleRunningVariant("evenOdd") },
+    { id: "layout.firstPageVariant", label: t("headerFooter.firstPageSwitch", { state: t(headerFooterSettings.variantState().firstPage ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different first page header footer title page cover", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("firstPage") },
+    { id: "layout.evenOddVariant", label: t("headerFooter.evenOddSwitch", { state: t(headerFooterSettings.variantState().evenOdd ? "headerFooter.stateOn" : "headerFooter.stateOff") }), group: "Layout", kw: "different odd even pages header footer mirrored", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.toggleVariant("evenOdd") },
+    { id: "layout.headerFooterSettings", label: t("headerFooter.settingsCommand"), group: "Layout", kw: "header footer position from top bottom distance page numbering number format start at continue link to previous", enabled: !!doc, disabledReason: "Open a document first", run: () => headerFooterSettings.open(true) },
     { id: "insert.footnote", label: "Footnote", group: "Insert", kw: "footnote note reference citation bottom of page", enabled: !!selection, disabledReason: "Place the caret where the note belongs", run: () => insertNote("footnote") },
     { id: "insert.endnote", label: "Endnote", group: "Insert", kw: "endnote note reference citation end of document", enabled: !!selection, disabledReason: "Place the caret where the note belongs", run: () => insertNote("endnote") },
     { id: "insert.header", label: "Edit header", group: "Insert", kw: "header running title page top margin", enabled: !!doc, disabledReason: "Open a document first", run: () => editRunningContent("header") },
@@ -16565,6 +16535,23 @@ const pageSetup = createPageSetup({
   runEdit,
   registerModal,
   registerPopover,
+});
+
+// ---- Header and footer settings --------------------------------------------
+// The band distances, the two running-content variants and the section's page
+// numbering, in `header_footer_settings.mjs`: ONLYOFFICE's own grouping of the
+// four (`view/HeaderFooterTab.js` L63-87). The two variant toggles moved there
+// from here, so the checkbox faces in the dialog and the button faces on the
+// Insert band are one implementation rather than two that can disagree.
+const headerFooterSettings = createHeaderFooterSettings({
+  getDoc: () => doc,
+  selectionNode: () => selection?.focus?.node ?? "",
+  runningPage: runningEditPageOrView,
+  runEdit,
+  applyEditResult,
+  blockedFromMutating: blockedFromPageSetup,
+  setStatus,
+  registerModal,
 });
 
 fileEl.disabled = true;

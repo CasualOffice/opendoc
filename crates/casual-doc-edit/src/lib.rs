@@ -32,6 +32,8 @@ use std::collections::HashSet;
 // A separate `use` line for the field-editing types (doc 59 InsertField slice).
 use casual_doc_model::v1::FormFieldKind;
 use casual_doc_model::v1::LineNumbering;
+use casual_doc_model::v1::PageNumbering;
+use casual_doc_model::v1::PageVerticalAlignment;
 use casual_doc_model::v1::TextBoxBodyProperties;
 use casual_doc_model::v1::Watermark;
 use casual_doc_model::v1::{Bookmark, BookmarkEnd, BookmarkId, BookmarkStart};
@@ -875,6 +877,41 @@ pub enum Operation {
         section: SectionId,
         /// The rule to install; the empty value turns numbering off.
         line_numbering: LineNumbering,
+    },
+    /// Replace one section's page numbering (`w:pgNumType`) — the format the
+    /// `PAGE` field renders in, and the number the section's first page takes —
+    /// leaving every other section property alone.
+    ///
+    /// Self-inverse, carrying the previous value. Rejected (doc left unchanged)
+    /// if `start` falls outside the model's domain.
+    ///
+    /// The EMPTY value is how numbering returns to the document's defaults: an
+    /// attribute-less `w:pgNumType` is what import produces and what export
+    /// skips, and pagination reads an absent `start` as "continue the running
+    /// count from the previous section" (`casual-doc-layout/src/paginate.rs`).
+    /// There is deliberately no separate "restart" flag, because OOXML has none:
+    /// restarting IS `start` being present, which is why a host offering Word's
+    /// "Continue from previous section" / "Start at" pair writes `None`/`Some`.
+    SetSectionPageNumbering {
+        /// The section to update.
+        section: SectionId,
+        /// The numbering to install; the empty value clears `w:pgNumType`.
+        page_numbering: PageNumbering,
+    },
+    /// Set or clear one section's vertical alignment of content on the page
+    /// (`w:vAlign`) — Word's Page Setup ▸ Layout ▸ Vertical alignment — leaving
+    /// every other section property alone.
+    ///
+    /// Self-inverse, carrying the previous value. `None` CLEARS the property,
+    /// which is how top alignment is spelled: an absent `w:vAlign` already means
+    /// top everywhere in this pipeline (import, layout and export all read it
+    /// that way), so writing `Some(Top)` would emit an attribute no other
+    /// producer writes for the default.
+    SetSectionVerticalAlignment {
+        /// The section to update.
+        section: SectionId,
+        /// The alignment to install, or `None` to clear the property (top).
+        vertical_alignment: Option<PageVerticalAlignment>,
     },
     /// Turn distinct even/odd headers and footers on or off
     /// (`w:evenAndOddHeaders`) — Word's "Different Odd & Even Pages".
@@ -2108,6 +2145,54 @@ pub fn apply(
             Ok(Operation::SetSectionLineNumbering {
                 section: *section,
                 line_numbering: previous,
+            })
+        }
+        Operation::SetSectionPageNumbering {
+            section,
+            page_numbering,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = boundary.page_numbering.clone();
+            boundary.page_numbering = page_numbering.clone();
+            if doc.validate().is_err() {
+                // Restore before reporting, so a refused value never remains in
+                // the document — the same rollback the rule above performs and
+                // for the same reason.
+                doc.definitions_mut()
+                    .sections
+                    .iter_mut()
+                    .find(|candidate| candidate.id == *section)
+                    .expect("the section we just found still exists")
+                    .page_numbering = previous;
+                return Err(EditError::ValueTooLarge);
+            }
+            Ok(Operation::SetSectionPageNumbering {
+                section: *section,
+                page_numbering: previous,
+            })
+        }
+        Operation::SetSectionVerticalAlignment {
+            section,
+            vertical_alignment,
+        } => {
+            let boundary = doc
+                .definitions_mut()
+                .sections
+                .iter_mut()
+                .find(|candidate| candidate.id == *section)
+                .ok_or(EditError::NodeNotFound)?;
+            let previous = boundary.vertical_alignment;
+            boundary.vertical_alignment = *vertical_alignment;
+            // No `validate()` round: the value is a closed enum, so unlike a
+            // numeric field there is no out-of-domain case for it to refuse.
+            Ok(Operation::SetSectionVerticalAlignment {
+                section: *section,
+                vertical_alignment: previous,
             })
         }
         Operation::SetSectionWatermark { section, watermark } => {

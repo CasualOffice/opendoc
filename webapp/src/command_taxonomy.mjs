@@ -147,7 +147,7 @@ export const APP_MENU_SECTIONS = {
   // exact parity on the `insert.` namespace — a ribbon face with no menu row is
   // the drift that guard exists to catch. The remaining four kinds stay
   // picker-only and are reachable from the palette by name.
-  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field", "insert.field.page", "insert.field.date", "insert.dropCap"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
+  insert: [["insert.table", "insert.image", "insert.shape", "insert.textbox", "insert.link", "insert.bookmark", "insert.field", "insert.field.page", "insert.field.date", "insert.dropCap"], ["insert.header", "insert.footer"], ["insert.footnote", "insert.endnote"], ["layout.firstPageVariant", "layout.evenOddVariant", "layout.headerFooterSettings"], ["insert.symbol", "insert.emoji"], ["review.comment"]],
   format: [
     ["format.bold", "format.italic", "format.underline", "format.strike"],
     ["format.grow", "format.shrink", "format.color", "format.highlight"],
