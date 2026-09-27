@@ -106,8 +106,8 @@
         <p class="doc-body">
           <code data-claim="package-name">@casualoffice/opendoc-embed</code>
           version <span data-claim="package-version">0.1.0</span>:
-          <span data-claim="package-file-count">6</span> files,
-          <span data-claim="package-unpacked-kb">37 kB</span> unpacked,
+          <span data-claim="package-file-count">8</span> files,
+          <span data-claim="package-unpacked-kb">79 kB</span> unpacked,
           <span data-claim="package-dependencies">0</span> runtime dependencies.
           <b>Nothing publishes it to a registry yet</b>, so today a host installs
           the tarball <code>npm pack</code> produces from a checkout. The
@@ -127,7 +127,7 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
         </div>
         <!-- @end install-commands -->
         <p class="doc-body">
-          The package has <span data-claim="entry-point-count">3</span> entry
+          The package has <span data-claim="entry-point-count">5</span> entry
           points, and a set of typings generated from the capability authority's
           real values rather than typed out beside it:
         </p>
@@ -152,6 +152,16 @@ npm install /path/to/casualoffice-opendoc-embed-0.1.0.tgz</code></pre>
             <div class="disp-name"><code>./src/capabilities.mjs</code></div>
             <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />capabilities"</code></div>
             <div class="disp-cell">Resolve a capability set without mounting anything — no DOM, so it answers in Node.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./src/host_contract.mjs</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />contract"</code></div>
+            <div class="disp-cell">The host contract: what each command requires, which events exist, what a refusal can say, and the envelope. No DOM.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>./src/host_client.mjs</code></div>
+            <div class="disp-cell"><code>import "@casualoffice/<wbr />opendoc-embed/<wbr />client"</code></div>
+            <div class="disp-cell"><code>createHostClient</code> — the <code>postMessage</code> transport, for a host that cannot reach into the frame.</div>
           </div>
           <div class="disp-row">
             <div class="disp-name"><code>./types/index.d.ts</code></div>
@@ -595,6 +605,256 @@ function resolveFor(role) {
           would surrender the only structural advantage that cannot be copied.
         </p>
 
+        <h2 id="commanding" class="doc-h2">Commanding it, and being told what happened</h2>
+        <p class="doc-body">
+          A host gets a typed way to command the editor and to hear what it did,
+          and it is the same contract whether they hold a reference to the editor
+          or are talking to it across an iframe boundary. Contract version
+          <span data-claim="contract-version">1</span>:
+          <span data-claim="command-count">121</span> commands by name and
+          <span data-claim="family-count">10</span> families of value commands,
+          <span data-claim="event-count">7</span> events,
+          <span data-claim="refusal-code-count">7</span> refusal codes and
+          <span data-claim="verb-count">4</span> verbs
+          (<code data-claim="verbs">describe execute query ping</code>).
+        </p>
+        <p class="doc-body">
+          Both transports are built from one schema,
+          <code>webapp/<wbr />src/<wbr />host_contract.mjs</code>. Neither carries
+          a command list, an event list or a refusal code of its own — which is
+          what makes adding a command to one without the other a build failure
+          rather than a half-reachable API. The in-process handle is
+          <code>window.opendoc</code> inside the frame; the
+          <code>postMessage</code> client is
+          <code>createHostClient</code>. The demo host drives both, and the
+          only difference between them is how the call travels:
+        </p>
+        <!-- @generated command-transports -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/src/embed_host_demo.js — runCommand()</span></div>
+          <pre><code>/**
+ * Runs one command over one transport, and returns exactly what came back.
+ *
+ * The two branches are the whole demonstration, and they are four lines apart so a
+ * reader can see that the only difference between them is how the call travels.
+ */
+async function runCommand(panel, transport, id) {
+  if (transport === "post-message") {
+    const client = clients.get(panel);
+    return client ? client.execute(id) : null;
+  }
+  const session = liveFrame(panel)?.contentWindow?.opendoc ?? null;
+  return session ? session.execute(id) : null;
+}</code></pre>
+        </div>
+        <!-- @end command-transports -->
+        <p class="doc-body">
+          A command id is the unit of addressing because it already was: the
+          editor's registry is reached by id, every keyboard chord resolves to one,
+          and 111 ribbon controls carry <code>data-command</code>. Most ids are
+          literals; some name a <em>value</em> of a control
+          (<code>format.family.Georgia</code>, <code>style.Heading&nbsp;1</code>,
+          <code>view.zoom.150</code>) and those sets are generated from the
+          document, the font inventory or markup, so the schema declares the family
+          prefix instead. Measured in a browser, the registry offers 214 ids, of
+          which 93 are family members — and the font inventory differed between two
+          reads of the same document, so a table of literals would have been wrong
+          on arrival.
+        </p>
+
+        <h3 class="doc-h3">Events</h3>
+        <p class="doc-body">
+          <code>change</code> carries a revision handle and a dirty flag, never a
+          snapshot. An event that serialised the document on every keystroke would
+          make per-interaction work grow with the document, which is a defect
+          however fast it feels on a small file.
+        </p>
+        <!-- @generated event-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Event</div>
+            <div>Detail</div>
+            <div>When it fires</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>ready</code></div>
+            <div class="disp-cell"><code>contract</code> <code>capabilities</code> <code>editingMode</code> <code>commands</code></div>
+            <div class="disp-cell">Once, when the document is open and on screen.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>change</code></div>
+            <div class="disp-cell"><code>revision</code> <code>dirty</code></div>
+            <div class="disp-cell">After every applied edit, whoever made it.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>selection</code></div>
+            <div class="disp-cell"><code>anchor</code> <code>focus</code> <code>hasRange</code></div>
+            <div class="disp-cell">Whenever the caret or the selection moves.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>save</code></div>
+            <div class="disp-cell"><code>format</code> <code>name</code> <code>bytes</code></div>
+            <div class="disp-cell">After File ▸ Save writes the document out.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>export</code></div>
+            <div class="disp-cell"><code>format</code> <code>name</code> <code>bytes</code></div>
+            <div class="disp-cell">After an export writes another format out.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>error</code></div>
+            <div class="disp-cell"><code>code</code> <code>message</code> <code>command</code></div>
+            <div class="disp-cell">When something failed that was not a command being refused.</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>refusal</code></div>
+            <div class="disp-cell"><code>code</code> <code>command</code> <code>requires</code> <code>message</code></div>
+            <div class="disp-cell">Whenever a command is refused, including one nobody asked for over the API.</div>
+          </div>
+        </div>
+        <!-- @end event-table -->
+
+        <h3 class="doc-h3">A refusal is a value, not a toast</h3>
+        <p class="doc-body">
+          <code>execute</code> resolves to
+          <code>{ ok, command, revision }</code> or to
+          <code>{ ok: false, refusal: { code, command, requires, message } }</code>,
+          and a host branches on the <em>code</em> — never on the message, which is
+          localised and belongs to the chrome. This matters because the same defect
+          has already been fixed one layer down: Save on a <code>readonly</code>
+          embed used to run, fire no download, and report “Saved”. An API that
+          only emitted a toast would reintroduce it.
+        </p>
+        <!-- @generated refusal-table -->
+        <div class="disp-table">
+          <div class="disp-row head">
+            <div>Refusal code</div>
+            <div>What it means</div>
+            <div>Decided by</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>unknown-command</code></div>
+            <div class="disp-cell">No such command in this state.</div>
+            <div class="disp-cell">the contract</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>capability-withheld</code></div>
+            <div class="disp-cell">The host did not grant what this command requires. Decided before dispatch, so the engine is never asked.</div>
+            <div class="disp-cell">the API</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>unavailable</code></div>
+            <div class="disp-cell">The command exists and cannot run right now; the message is the chrome's own reason.</div>
+            <div class="disp-cell">the chrome</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>engine-refused</code></div>
+            <div class="disp-cell">It ran and the engine refused it — a read-only document, or Viewing mode.</div>
+            <div class="disp-cell">the engine</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>threw</code></div>
+            <div class="disp-cell">It raised; the message is the exception's.</div>
+            <div class="disp-cell">the command</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>bad-request</code></div>
+            <div class="disp-cell">The envelope or the arguments were not the contract's.</div>
+            <div class="disp-cell">the transport</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>timeout</code></div>
+            <div class="disp-cell">The transport gave up waiting for an answer.</div>
+            <div class="disp-cell">the transport</div>
+          </div>
+        </div>
+        <!-- @end refusal-table -->
+        <p class="doc-body">
+          The capability gate is the fourth enforcement layer, beside the browser
+          sandbox, the engine's Viewing choke point and the chrome, and it runs
+          <em>before</em> dispatch. A host that was not granted <code>edit</code>
+          cannot run an editing command through the API either — which is the whole
+          point, because three locked doors and an unlocked one is one unlocked
+          door. It is deliberately <em>stricter</em> than the chrome in one place:
+          deciding a tracked change writes it into the document outright, so
+          <code>review.accept*</code> requires <code>edit</code> and a
+          <code>commentor</code> cannot accept their own suggestions. Google Docs'
+          Commenter cannot either.
+        </p>
+
+        <h3 class="doc-h3">The origin contract</h3>
+        <p class="doc-body">
+          A wildcard target origin in an editor that can be embedded anywhere is a
+          security decision, not a default, so there is no default: the editor
+          accepts its own origin and any origin the deployment names with
+          <code>?hostOrigin=</code>, and nothing else. A message from an unknown
+          origin is dropped in silence rather than answered with an error, because
+          an error reply tells whoever is probing what this frame is. Every outbound
+          post names an explicit target;
+          <code>postMessage(msg,&nbsp;"*")</code> appears nowhere, and that is
+          driven rather than grepped — a source scan would pass the moment the
+          wildcard arrived through a variable.
+        </p>
+        <!-- @generated origin-policy -->
+        <div class="code-panel">
+          <div class="code-panel-head"><span>webapp/src/host_contract.mjs — parseOriginAllowlist()</span></div>
+          <pre><code>/**
+ * Parses a host-declared origin allowlist.
+ *
+ * THE ORIGIN CONTRACT, stated rather than defaulted. A wildcard target origin in
+ * an editor that can be embedded anywhere is a security decision, not a default:
+ * `postMessage(documentContent, "*")` hands the bytes to whatever page happens
+ * to be the parent. ONLYOFFICE does exactly that, with a TODO where the decision
+ * should be (`reference/web-apps/apps/api/documents/api.js:1303-1306`).
+ *
+ * WHAT WE ACCEPT, AND WHY:
+ *
+ *   * The editor's OWN origin, always and implicitly. A same-origin embed — the
+ *     shape `&lt;opendoc-editor&gt;` produces, because `sandboxTokensFor` grants
+ *     `allow-same-origin` so the frame can reach its own WebAssembly — is the
+ *     common case, and it needs no configuration to work.
+ *   * Any origin the host names explicitly, as `?hostOrigin=https://app.example`
+ *     (comma-separated for several). Explicit, so a cross-origin host is a
+ *     deliberate act by whoever deployed the editor rather than whoever framed
+ *     it.
+ *   * Nothing else. `*` and `null` are REJECTED rather than honoured: they are
+ *     the two spellings of "anyone", and an editor that accepts them has no
+ *     origin contract at all. A rejected entry is dropped, so a typo narrows the
+ *     allowlist and never widens it.
+ *
+ * Complexity: O(entries).
+ *
+ * @param {string|null|undefined} raw the `hostOrigin` parameter, if any.
+ * @param {string} selfOrigin the editor's own origin.
+ * @returns {readonly string[]} absolute origins, deduplicated, `selfOrigin` first.
+ */
+export function parseOriginAllowlist(raw, selfOrigin) {
+  const allowed = [];
+  const add = (value) =&gt; {
+    if (typeof value !== "string") return;
+    const origin = value.trim();
+    // "null" is the origin a sandboxed or `data:` document reports, and "*" is
+    // the wildcard. Neither identifies anybody.
+    if (!origin || origin === "*" || origin === "null") return;
+    let parsed = null;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      return;
+    }
+    // An entry must BE an origin, not a URL with a path: `https://x/y` and
+    // `https://x` are the same origin, and accepting the first spelling invites
+    // a host to believe the path is part of the check.
+    if (parsed.origin !== origin) return;
+    if (!allowed.includes(parsed.origin)) allowed.push(parsed.origin);
+  };
+  add(selfOrigin);
+  for (const entry of String(raw ?? "").split(",")) add(entry);
+  return Object.freeze(allowed);
+}</code></pre>
+        </div>
+        <!-- @end origin-policy -->
+
         <h2 id="evidence" class="doc-h2">How this page is kept honest</h2>
         <p class="doc-body">
           The pages of this site have carried fabricated claims twice, in both
@@ -649,6 +909,36 @@ function resolveFor(role) {
             <div class="disp-cell">the simplest possible embed is not a standalone editor</div>
           </div>
           <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />host_contract.test.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:unit</code></div>
+            <div class="disp-cell">both transports return the identical result, for every command in the contract</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />host_contract.test.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:unit</code></div>
+            <div class="disp-cell">nothing is ever posted to a wildcard, in either direction</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />host_contract.test.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:unit</code></div>
+            <div class="disp-cell">a message from an origin the editor does not know is dropped in silence</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />host-contract.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">the contract covers the command registry exactly, in every state a family needs</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />host-contract.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">a refusal the CHROME makes is a refusal the API makes</div>
+          </div>
+          <div class="disp-row">
+            <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />host-contract.spec.mjs</code></div>
+            <div class="disp-cell"><code>npm run test:e2e</code></div>
+            <div class="disp-cell">a command the contract calls ungated really does not touch the document</div>
+          </div>
+          <div class="disp-row">
             <div class="disp-name"><code>webapp/<wbr />tests/<wbr />e2e/<wbr />embedded-capability-gate.spec.mjs</code></div>
             <div class="disp-cell"><code>npm run test:e2e</code></div>
             <div class="disp-cell">a readonly host cannot mutate the document through the engine, chrome defeated</div>
@@ -663,13 +953,34 @@ function resolveFor(role) {
         </p>
         <ul class="doc-body">
           <li>
-            <b>No command or event API.</b> You cannot tell the embedded editor to
-            do something, or be told what it did. The element fires exactly one
-            event — <code>opendoc-capabilities</code>, once per mount, which is the
-            capability contract announcing itself, not the editor reporting on a
-            document. There is no <code>postMessage</code> protocol in the package
-            at all. One schema over two transports (in-process and
-            <code>postMessage</code>) is phase 2.
+            <b>The element itself has no command methods.</b> The command and event
+            API is reached through <code>window.opendoc</code> inside the frame or
+            through <code>createHostClient</code> over
+            <code>postMessage</code>; <code>&lt;opendoc-editor&gt;</code> still
+            fires exactly one event of its own,
+            <code>opendoc-capabilities</code>, which is the capability contract
+            announcing itself rather than the editor reporting on a document. A
+            host holds the contract, not the element.
+          </li>
+          <li>
+            <b>No arguments for most commands.</b> The schema declares an argument
+            list, and exactly one command has one
+            (<code>view.zoom</code>, a percentage). Everything else is a verb: you
+            cannot yet ask for a font size by value through
+            <code>execute</code>'s arguments, only by naming the command that
+            already means that value (<code>format.size.14</code>).
+          </li>
+          <li>
+            <b>No document I/O through the contract.</b> There is no
+            <code>open(bytes)</code> and no <code>export()</code> that returns the
+            bytes to the host: <code>file.export.*</code> hands the file to the
+            visitor, and the <code>export</code> event reports the format, the name
+            and the byte count. A host that wants the bytes cannot have them yet.
+          </li>
+          <li>
+            <b>The context menu's word-level commands are outside the contract.</b>
+            Spelling suggestions and grammar rules are built per word when the menu
+            opens, so they are reachable by a person and not by a host.
           </li>
           <li>
             <b>No way to hand it your document.</b> The element takes
@@ -746,6 +1057,7 @@ function resolveFor(role) {
             <li><a href="#presentations">preview is not readonly</a></li>
             <li><a href="#enforcement">Three layers of enforcement</a></li>
             <li><a href="#licence">Nothing here is gated</a></li>
+            <li><a href="#commanding">Commanding it</a></li>
             <li><a href="#evidence">How this page is kept honest</a></li>
             <li><a href="#not-yet">What this does not do yet</a></li>
           </ul>

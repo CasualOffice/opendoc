@@ -82,6 +82,100 @@ export declare class OpenDocEditorElement extends HTMLElement {
  *  that registered it. */
 export declare function defineOpenDocEditor(tag?: string): boolean;
 
+// ---- The host contract (`docs/126` phase 2) --------------------------------
+//
+// The unions below are emitted from the real exported values of
+// webapp/src/host_contract.mjs, for the same reason the capability unions are: a
+// hand-written literal union is a second copy of the table that compiles happily
+// while being wrong.
+
+/** Every event a host can hear. */
+export type HostEventName = "ready" | "change" | "selection" | "save" | "export" | "error" | "refusal";
+
+/** Everything a refusal can say, as a code to branch on — never the message,
+ *  which is localised and belongs to the chrome. */
+export type RefusalCode = "unknown-command" | "capability-withheld" | "unavailable" | "engine-refused" | "threw" | "bad-request" | "timeout";
+
+/** What a command can require of the host's grant. `mutate` is not a capability:
+ *  it asks whether this page may change the document at all, which is granted by
+ *  `edit` OR by `comment` (a commentor's changes are tracked suggestions). */
+export type Requirement = "mutate" | "edit" | "comment" | "save" | "download" | "print" | "open" | "new" | "autosave";
+
+export declare const CONTRACT_VERSION: number;
+export declare const HOST_EVENT_NAMES: readonly HostEventName[];
+export declare const REFUSAL_CODES: readonly RefusalCode[];
+export declare const REQUIREMENTS: readonly Requirement[];
+
+export interface Refusal {
+  code: RefusalCode;
+  command: string | null;
+  requires: Requirement | null;
+  /** Already localised, and for a person to read. Do not branch on it. */
+  message: string;
+}
+
+export interface CommandResult {
+  ok: boolean;
+  command: string;
+  /** The engine's revision watermark, or null when it could not be read. */
+  revision: number | null;
+  refusal?: Refusal;
+}
+
+export interface CommandState {
+  id: string;
+  /** In the contract at all. */
+  known: boolean;
+  /** In the registry right now — the table commands exist only with a caret in a
+   *  table. Distinct from `granted`, which is about permission. */
+  present: boolean;
+  requires: Requirement | null;
+  granted: boolean;
+  available: boolean;
+  /** The chrome's own reason when it is unavailable. */
+  reason: string;
+}
+
+export interface HostEvent<Detail = Record<string, unknown>> {
+  event: HostEventName;
+  detail: Detail;
+}
+
+/** The editor, as a host addresses it. Both transports expose this. */
+export interface OpenDocHostSession {
+  describe(): Promise<unknown> | unknown;
+  execute(id: string, args?: readonly unknown[]): Promise<CommandResult>;
+  query(id: string): Promise<CommandState> | CommandState;
+  ping(): Promise<unknown> | unknown;
+  on(event: HostEventName, listener: (event: HostEvent) => void): () => void;
+  off(event: HostEventName, listener: (event: HostEvent) => void): void;
+}
+
+/**
+ * A client for an embedded editor, over `postMessage`.
+ *
+ * `editorOrigin` is REQUIRED and may not be `"*"`: the only default that would
+ * always work is a wildcard, and posting document content to a wildcard target is
+ * a decision no library should make for a host.
+ */
+export declare function createHostClient(io: {
+  frame: HTMLIFrameElement | Window;
+  editorOrigin: string;
+  view?: Window;
+  timeout?: number;
+}): OpenDocHostSession & { dispose(): void; inFlight(): number };
+
+/** Whether a capability set may run a command with this requirement. */
+export declare function grantsRequirement(
+  requires: Requirement | null,
+  capabilities: unknown,
+): boolean;
+
+/** The contract row for a command id, or null when it is outside the contract. */
+export declare function commandContract(
+  id: string,
+): { id: string; requires: Requirement | null; args: readonly object[]; family?: string } | null;
+
 declare global {
   interface HTMLElementTagNameMap {
     "opendoc-editor": OpenDocEditorElement;

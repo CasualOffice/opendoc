@@ -8,6 +8,53 @@ ONLYOFFICE's host-customization path early-returns when unlicensed
 (`LayoutManager.js`, `if (!_licensed || !config) return;`), and the permissive
 licence is the only structural advantage that cannot be copied.
 
+## Commanding the editor
+
+The element mounts an editor; the **host contract** is how you tell it to do
+something and hear what it did. One schema, two transports — identical whether
+you hold a reference or are across an origin boundary.
+
+Across an origin, use the client. `editorOrigin` is required and may not be `"*"`:
+the only default that would always work is a wildcard, and posting document
+content to a wildcard target is not a decision a library should make for you.
+
+```js
+import { createHostClient } from "@casualoffice/opendoc-embed/client";
+
+const editor = document.querySelector("opendoc-editor");
+const client = createHostClient({
+  frame: editor.frame,
+  editorOrigin: "https://docs.example",
+});
+
+client.on("change", ({ detail }) => save(detail.revision, detail.dirty));
+client.on("refusal", ({ detail }) => report(detail.code, detail.message));
+
+const result = await client.execute("format.bold");
+if (!result.ok) {
+  // Branch on the CODE. The message is localised and belongs to the editor.
+  if (result.refusal.code === "capability-withheld") askForEditRights();
+}
+```
+
+Same origin, you can hold the session directly — `window.opendoc` inside the
+frame — and it answers exactly the same thing:
+
+```js
+const result = await editor.frame.contentWindow.opendoc.execute("format.bold");
+```
+
+`describe()` enumerates every command with its requirement and its current
+state, so a host never hard-codes a command list. `query(id)` answers for one.
+`change` carries a revision handle and a dirty flag, never a snapshot.
+
+The editor accepts messages from its own origin, and from any origin the
+deployment names with `?hostOrigin=https://your.app`. Anything else is dropped in
+silence.
+
+Capabilities gate the API, not only the chrome: a `readonly` embed refuses an
+editing command **before** it reaches the engine, and says so in the result.
+
 ## Install
 
 ```sh
